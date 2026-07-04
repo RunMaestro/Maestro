@@ -272,6 +272,12 @@ export interface HistoryEntry {
 	cueTriggerName?: string;
 	cueEventType?: string;
 	cueSourceSession?: string;
+	/**
+	 * Cross-agent attribution: the display name of the agent that consulted this
+	 * one via an `@mention`. Set on the history entry the TARGET agent keeps so it
+	 * "remembers who consulted it" (mirrors GroupChatHistoryEntry.participantName).
+	 */
+	sourceAgentName?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
 	/**

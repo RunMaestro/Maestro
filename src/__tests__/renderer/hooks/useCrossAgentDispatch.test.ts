@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	accumulateCrossAgentChunk,
 	buildCrossAgentLogEntry,
+	buildConsultTabName,
+	ensureConsultTab,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../helpers/mockSession';
 import type { CrossAgentResponseChunk } from '../../../shared/crossAgentTypes';
 
 /**
@@ -103,5 +107,149 @@ describe('buildCrossAgentLogEntry', () => {
 	it('omits the error field on a normal (non-error) entry', () => {
 		const ok = buildCrossAgentLogEntry('e1', 123, 'done', chunk({ done: true }));
 		expect(ok.metadata?.crossAgent?.error).toBeUndefined();
+	});
+
+	it('carries the consult tab id (fromTabId) so the jump arrow can deep-link to it', () => {
+		const entry = buildCrossAgentLogEntry(
+			'e1',
+			123,
+			'answer',
+			chunk({ done: true, targetTabId: 'consult-tab-1' })
+		);
+		expect(entry.metadata?.crossAgent?.fromTabId).toBe('consult-tab-1');
+	});
+});
+
+describe('buildConsultTabName', () => {
+	it('labels the consult tab with an inbound marker and the caller name', () => {
+		expect(buildConsultTabName('Scratch')).toBe('↩ Scratch');
+	});
+});
+
+describe('ensureConsultTab', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] } as never);
+	});
+
+	const seedTarget = (): void => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'target',
+					name: 'Maestro Marketing',
+					activeTabId: 'main-tab',
+					aiTabs: [
+						{
+							id: 'main-tab',
+							agentSessionId: null,
+							name: 'Main',
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: 0,
+							state: 'idle',
+						},
+					],
+				}),
+			],
+		} as never);
+	};
+
+	it('creates a consult tab tagged with its origin and appends the question, without stealing focus', () => {
+		seedTarget();
+		const result = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'what is the status?',
+		});
+		expect(result).not.toBeNull();
+
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		// Focus must NOT move to the new consult tab.
+		expect(target.activeTabId).toBe('main-tab');
+		const consult = target.aiTabs.find((t) => t.id === result!.targetTabId)!;
+		expect(consult.consultOrigin).toEqual({
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+		});
+		expect(consult.name).toBe('↩ Scratch');
+		expect(consult.logs.map((l) => l.text)).toEqual(['what is the status?']);
+		// First mention has no session to resume yet.
+		expect(result!.resumeAgentSessionId).toBeUndefined();
+	});
+
+	it('reuses the same consult tab (and resumes its session) on a repeat mention from the same source tab', () => {
+		seedTarget();
+		const first = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q1',
+		})!;
+		// Simulate the captured provider session id being stored after the first consult.
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) =>
+				s.id !== 'target'
+					? s
+					: {
+							...s,
+							aiTabs: s.aiTabs.map((t) =>
+								t.id === first.targetTabId ? { ...t, agentSessionId: 'provider-abc' } : t
+							),
+						}
+			),
+		} as never);
+
+		const second = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q2',
+		})!;
+
+		expect(second.targetTabId).toBe(first.targetTabId);
+		expect(second.resumeAgentSessionId).toBe('provider-abc');
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		expect(target.aiTabs.filter((t) => t.consultOrigin)).toHaveLength(1);
+		const consult = target.aiTabs.find((t) => t.id === first.targetTabId)!;
+		expect(consult.logs.map((l) => l.text)).toEqual(['q1', 'q2']);
+	});
+
+	it('creates a separate consult tab for a mention from a DIFFERENT source tab (fresh context)', () => {
+		seedTarget();
+		const a = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q-from-tab-1',
+		})!;
+		const b = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-2',
+			sourceAgentName: 'Scratch',
+			question: 'q-from-tab-2',
+		})!;
+
+		expect(b.targetTabId).not.toBe(a.targetTabId);
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		expect(target.aiTabs.filter((t) => t.consultOrigin)).toHaveLength(2);
+	});
+
+	it('returns null when the target session no longer exists', () => {
+		const result = ensureConsultTab({
+			targetSessionId: 'ghost',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'anyone home?',
+		});
+		expect(result).toBeNull();
 	});
 });

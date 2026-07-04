@@ -243,6 +243,12 @@ export interface LogEntry {
 			requestId: string;
 			/** The consulted agent's (target) session id. */
 			fromSessionId: string;
+			/**
+			 * The consult tab on the target agent that holds the persisted copy of
+			 * this exchange. The jump arrow deep-links to it so it lands on the actual
+			 * conversation, not a blank agent. Absent on older entries.
+			 */
+			fromTabId?: string;
 			/** The consulted agent's display name. */
 			fromAgentName: string;
 			/** The consulted agent's tool type (for the provider icon). */
@@ -522,6 +528,20 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	/**
+	 * When set, this tab holds the persisted transcript of a cross-agent consult:
+	 * another agent (`sourceSessionId` + `sourceTabId`) @mentioned this agent and
+	 * the answer was written here. It is the continuity key - a later mention from
+	 * the SAME source tab reuses this tab (and resumes its `agentSessionId`), while
+	 * a mention from a fresh source tab creates a new consult tab. Absent on normal
+	 * user-driven tabs.
+	 */
+	consultOrigin?: {
+		/** The calling agent (session) that consulted this agent. */
+		sourceSessionId: string;
+		/** The AI tab within the calling agent the mention was typed in. */
+		sourceTabId: string;
+	};
 }
 
 // A single "thinking item" — one busy tab within a session.

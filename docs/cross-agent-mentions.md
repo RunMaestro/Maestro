@@ -32,11 +32,13 @@ The picker uses a **single `@` for everything**. Maestro tells files and agents 
 The consultation is **non-blocking and isolated**:
 
 - Maestro forwards a window of your current tab's transcript plus your prompt to the target agent.
-- The target runs as a **fresh, ephemeral process** - it is not injected into that agent's own live chat, so the consultation never pollutes the other agent's conversation and it will not remember the exchange afterward.
+- The target runs as a **fresh, ephemeral process** - it is not injected into that agent's own live chat, so the consultation never pollutes the other agent's main conversation.
+- The answer is still kept. Maestro writes it to a dedicated **consult tab** on the target agent, labeled with who asked (`↩ YourAgent`), so the target has a durable record of what it was consulted about. That agent's History also logs a "Consulted by _YourAgent_" entry, so it remembers who reached out.
+- **Continuity per thread.** Ask the same agent again from the **same tab** and Maestro resumes its consult session, so it carries forward your earlier consults from that thread. A mention from a different tab starts a fresh consult in its own tab.
 - Your chat is never blocked. A small pill at the top of the input shows in-flight consultations (each agent's name and elapsed seconds); click it to expand the list. Keep typing while you wait.
 - When the target finishes, its reply streams back **inline into the chat you are already in**, attributed to the agent that answered.
 
-Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent in the Left Bar so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
+Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent's consult tab in the Left Bar, where the full exchange is kept, so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
 
 Mention several agents in one message and each runs independently and concurrently, so a fan-out returns as fast as the slowest agent, not the sum of them.
 
@@ -85,11 +87,11 @@ Groups sort above individual agents in the picker, so a name that matches both s
 
 Both let agents talk to each other, but they solve different problems:
 
-|                      | Cross-Agent Mentions            | [Group Chat](./group-chat)            |
-| -------------------- | ------------------------------- | ------------------------------------- |
-| **Where it happens** | Inline, in your existing chat   | A dedicated group conversation        |
-| **Coordination**     | None - a direct one-off consult | A moderator AI routes and synthesizes |
-| **Best for**         | Quick questions and fan-out     | Multi-round discussions and synthesis |
-| **The other agent**  | Answers once, statelessly       | Is a persistent participant           |
+|                      | Cross-Agent Mentions                               | [Group Chat](./group-chat)            |
+| -------------------- | -------------------------------------------------- | ------------------------------------- |
+| **Where it happens** | Inline, in your existing chat                      | A dedicated group conversation        |
+| **Coordination**     | None - a direct one-off consult                    | A moderator AI routes and synthesizes |
+| **Best for**         | Quick questions and fan-out                        | Multi-round discussions and synthesis |
+| **The other agent**  | Answers in its own consult tab, resumed per thread | Is a persistent participant           |
 
 Reach for a mention when you just need an answer; open Group Chat when you need agents to deliberate together over several rounds.

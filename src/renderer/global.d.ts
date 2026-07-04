@@ -1902,6 +1902,7 @@ interface MaestroAPI {
 				elapsedTimeMs?: number;
 				validated?: boolean;
 				hostname?: string;
+				sourceAgentName?: string;
 			},
 			sharedContext?: { sshRemoteId: string; remoteCwd: string }
 		) => Promise<boolean>;

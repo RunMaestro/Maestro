@@ -78,17 +78,24 @@ export const DEFAULT_RECENT_TURNS = 5;
  * - A bare-word body (`@review-bot`, `@Codex`) is an agent candidate, returned
  *   in input order with slice bounds. Case is preserved to match
  *   `normalizeMentionName` output; downstream matching folds to lowercase.
- * - Path-like bodies (`@src/x`, `@notes.md`) are files, not agents, and skipped.
+ * - Path-like bodies (`@src/x`, `@notes.md`) are files, not agents, and skipped -
+ *   UNLESS the body names a known agent/group (see `knownMentionNames`), so an
+ *   agent named with a dot or slash (`@RunMaestro.ai`) is still an agent mention.
  * - Mid-word (`foo@bar`) and `@`-run (`@@x`) candidates are skipped.
  *
- * Whether a candidate resolves to a real agent is decided later by the send-path
- * resolver, so an unknown `@word` here simply resolves to no target.
+ * @param knownMentionNames - lowercased set of mentionable agent/group names.
+ *   Pass it so a file-shaped agent name resolves; omit it for pure-shape parsing.
+ *   Whether a candidate resolves to a real agent is still decided by the send-path
+ *   resolver, so an unknown `@word` here simply resolves to no target.
  */
-export function parseAgentMentions(input: string): CrossAgentMention[] {
+export function parseAgentMentions(
+	input: string,
+	knownMentionNames?: ReadonlySet<string>
+): CrossAgentMention[] {
 	if (!input) return [];
 
 	const mentions: CrossAgentMention[] = [];
-	for (const span of scanMentionSpans(input)) {
+	for (const span of scanMentionSpans(input, knownMentionNames)) {
 		// Files and non-bare-word bodies are not agent mentions.
 		if (span.isFile || !span.isName) continue;
 		mentions.push({
@@ -114,13 +121,18 @@ export function parseAgentMentions(input: string): CrossAgentMention[] {
  * about that file, so it does not suppress the local send.
  *
  * Shape-only: whether the leading name resolves to a real agent is decided by
- * the caller (it pairs this with a non-empty resolved-target list).
+ * the caller (it pairs this with a non-empty resolved-target list). Pass
+ * `knownMentionNames` so a leading file-shaped agent name (`@RunMaestro.ai fix
+ * this`) is recognized as a leading agent mention and suppresses the local send.
  */
-export function messageStartsWithAgentMention(message: string): boolean {
+export function messageStartsWithAgentMention(
+	message: string,
+	knownMentionNames?: ReadonlySet<string>
+): boolean {
 	if (!message) return false;
 	// Offset of the first non-whitespace character.
 	const leadingOffset = message.length - message.trimStart().length;
-	const [first] = scanMentionSpans(message);
+	const [first] = scanMentionSpans(message, knownMentionNames);
 	return !!first && first.start === leadingOffset && first.isName && !first.isFile;
 }
 

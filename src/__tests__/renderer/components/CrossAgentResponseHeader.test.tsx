@@ -87,6 +87,21 @@ describe('CrossAgentResponseHeader', () => {
 		expect(openMaestroLink).toHaveBeenCalledWith(`maestro://session/${SESSION_ID}`);
 	});
 
+	it('deep-links to the consult tab when the entry carries a fromTabId', () => {
+		// The persisted answer lives in a consult tab on the target; the jump must
+		// land there rather than on whatever tab was last active.
+		render(
+			<CrossAgentResponseHeader
+				crossAgent={makeMeta({ fromTabId: 'consult-tab-1' })}
+				theme={makeTheme()}
+			/>
+		);
+		fireEvent.click(screen.getByText('Maestro Marketing'));
+		expect(openMaestroLink).toHaveBeenCalledWith(
+			`maestro://session/${SESSION_ID}/tab/consult-tab-1`
+		);
+	});
+
 	it('flashes and does NOT jump when the consulted agent no longer exists', () => {
 		mockSessions = []; // agent was deleted since it answered
 		render(<CrossAgentResponseHeader crossAgent={makeMeta()} theme={makeTheme()} />);

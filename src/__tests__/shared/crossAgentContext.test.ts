@@ -53,6 +53,34 @@ describe('parseAgentMentions', () => {
 		expect(parseAgentMentions('open @notes.md now')).toEqual([]);
 	});
 
+	it('parses a dotted agent name when it is in the roster (the @RunMaestro.ai regression)', () => {
+		const roster = new Set(['runmaestro.ai']);
+		const result = parseAgentMentions('ping @RunMaestro.ai now', roster);
+		expect(result.map((m) => m.mentionName)).toEqual(['RunMaestro.ai']);
+		// Slice bounds still map back to the exact token.
+		const [mention] = result;
+		expect('ping @RunMaestro.ai now'.slice(mention.startIndex, mention.endIndex)).toBe(
+			'@RunMaestro.ai'
+		);
+	});
+
+	it('parses all three mentions when the middle agent name carries a dot', () => {
+		const roster = new Set(['maestro-marketing', 'runmaestro.ai', 'pedtome-pedsidian']);
+		const result = parseAgentMentions(
+			'next? @Maestro-Marketing @RunMaestro.ai @PedTome-Pedsidian',
+			roster
+		);
+		expect(result.map((m) => m.mentionName)).toEqual([
+			'Maestro-Marketing',
+			'RunMaestro.ai',
+			'PedTome-Pedsidian',
+		]);
+	});
+
+	it('still skips a dotted body that is NOT in the roster', () => {
+		expect(parseAgentMentions('open @notes.md now', new Set(['runmaestro.ai']))).toEqual([]);
+	});
+
 	it('skips mid-word mentions like "foo@bar"', () => {
 		expect(parseAgentMentions('foo@bar')).toEqual([]);
 	});
@@ -101,6 +129,13 @@ describe('messageStartsWithAgentMention', () => {
 	it('is false when the message leads with a FILE mention (a local question)', () => {
 		expect(messageStartsWithAgentMention('@src/app.ts explain this')).toBe(false);
 		expect(messageStartsWithAgentMention('@notes.md summarize')).toBe(false);
+	});
+
+	it('is true when the leading agent name carries a dot and is in the roster', () => {
+		const roster = new Set(['runmaestro.ai']);
+		expect(messageStartsWithAgentMention('@RunMaestro.ai fix this', roster)).toBe(true);
+		// Without the roster the dotted name reads as a file, so the local send stands.
+		expect(messageStartsWithAgentMention('@RunMaestro.ai fix this')).toBe(false);
 	});
 
 	it('is false for plain text and empty input', () => {

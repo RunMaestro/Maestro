@@ -89,4 +89,29 @@ describe('resolveMentionedTargetSessionIds', () => {
 			'a',
 		]);
 	});
+
+	it('resolves an agent whose name contains a dot (the @RunMaestro.ai regression)', () => {
+		const sessions = [agent('rm', 'RunMaestro.ai'), agent('other', 'Other')];
+		expect(resolveMentionedTargetSessionIds('@RunMaestro.ai status?', sessions, [], 'cur')).toEqual(
+			['rm']
+		);
+	});
+
+	it('routes all three when a dotted agent name is mentioned alongside two others', () => {
+		// The exact reported case: `@RunMaestro.ai` used to drop because the dot
+		// classified it as a file, so only 2 of the 3 agents responded.
+		const sessions = [
+			agent('mm', 'Maestro-Marketing'),
+			agent('rm', 'RunMaestro.ai'),
+			agent('pp', 'PedTome-Pedsidian'),
+		];
+		expect(
+			resolveMentionedTargetSessionIds(
+				'where are we at? @Maestro-Marketing @RunMaestro.ai @PedTome-Pedsidian',
+				sessions,
+				[],
+				'cur'
+			)
+		).toEqual(['mm', 'rm', 'pp']);
+	});
 });

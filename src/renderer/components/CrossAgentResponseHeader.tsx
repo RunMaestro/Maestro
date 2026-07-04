@@ -72,7 +72,11 @@ export function CrossAgentResponseHeader({
 			});
 			return;
 		}
-		openMaestroLink(buildSessionDeepLink(crossAgent.fromSessionId));
+		// Deep-link to the consult tab that holds the persisted answer when we have
+		// its id, so the jump lands on the actual conversation rather than whatever
+		// tab was last active. Falls back to a plain agent jump for older entries
+		// (pre-persistence) that carry no `fromTabId`.
+		openMaestroLink(buildSessionDeepLink(crossAgent.fromSessionId, crossAgent.fromTabId));
 	};
 
 	const copySessionId = async (): Promise<void> => {

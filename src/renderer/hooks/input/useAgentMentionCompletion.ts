@@ -138,8 +138,8 @@ export function resolveMentionedTargetSessionIds(
 	groups: Group[] | undefined,
 	currentSessionId: string | null | undefined
 ): string[] {
-	const mentions = parseAgentMentions(message);
-	if (mentions.length === 0) return [];
+	// Fast path: no `@` at all -> nothing to resolve, skip building the roster.
+	if (!message.includes('@')) return [];
 
 	const items = buildAgentMentionSuggestions(sessions, groups, currentSessionId);
 	const byToken = new Map<string, AgentMentionSuggestion>();
@@ -147,6 +147,13 @@ export function resolveMentionedTargetSessionIds(
 		const token = suggestionToken(item);
 		if (!byToken.has(token)) byToken.set(token, item);
 	}
+
+	// Pass the roster (the token keys) so a file-shaped agent name like
+	// `@RunMaestro.ai` parses as an agent mention instead of being dropped as a
+	// file. Without it, the dot classifies the body as a path and the mention is
+	// silently lost.
+	const mentions = parseAgentMentions(message, new Set(byToken.keys()));
+	if (mentions.length === 0) return [];
 
 	const targetIds: string[] = [];
 	const seen = new Set<string>();

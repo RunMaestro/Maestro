@@ -12,7 +12,15 @@ function reconstruct(segments: MentionSegment[]): string {
 }
 
 /** Roster used by the agent-mention cases below (lowercased, as callers pass). */
-const KNOWN = new Set(['review-bot', 'codex', 'squad', '☁-substrate', 'café-bot', '日本語-agent']);
+const KNOWN = new Set([
+	'review-bot',
+	'codex',
+	'squad',
+	'☁-substrate',
+	'café-bot',
+	'日本語-agent',
+	'runmaestro.ai',
+]);
 
 describe('AGENT_MENTION_PATTERN_SOURCE', () => {
 	it('matches @name (single at, case-insensitive, hyphens allowed)', () => {
@@ -94,6 +102,39 @@ describe('tokenizeMentions', () => {
 		expect(tokenizeMentions('hey @review-bot look')).toEqual([
 			{ kind: 'text', value: 'hey @review-bot look' },
 		]);
+	});
+
+	it('chips a dotted agent name as an agent, not a file (the @RunMaestro.ai regression)', () => {
+		// `RunMaestro.ai` is path-shaped (dotted extension) but names a known agent,
+		// so the roster wins and it must chip as an agent - otherwise the mention is
+		// silently dropped from dispatch.
+		expect(tokenizeMentions('ping @RunMaestro.ai now', KNOWN)).toEqual([
+			{ kind: 'text', value: 'ping ' },
+			{ kind: 'agent', value: '@RunMaestro.ai', name: 'RunMaestro.ai' },
+			{ kind: 'text', value: ' now' },
+		]);
+	});
+
+	it('still chips a dotted body as a file when it is NOT a known agent', () => {
+		// No roster entry for `notes.md`, so the shape classification stands.
+		expect(tokenizeMentions('open @notes.md please', KNOWN)).toEqual([
+			{ kind: 'text', value: 'open ' },
+			{ kind: 'file', value: '@notes.md', path: 'notes.md', extension: 'md' },
+			{ kind: 'text', value: ' please' },
+		]);
+	});
+
+	it('routes all three mentions when one agent name carries a dot', () => {
+		// The exact reported case: three @mentions where the middle name has a dot.
+		const roster = new Set(['maestro-marketing', 'runmaestro.ai', 'pedtome-pedsidian']);
+		const input = 'next? @Maestro-Marketing @RunMaestro.ai @PedTome-Pedsidian';
+		const agents = tokenizeMentions(input, roster).filter((s) => s.kind === 'agent');
+		expect(agents.map((s) => (s.kind === 'agent' ? s.name : ''))).toEqual([
+			'Maestro-Marketing',
+			'RunMaestro.ai',
+			'PedTome-Pedsidian',
+		]);
+		expect(reconstruct(tokenizeMentions(input, roster))).toBe(input);
 	});
 
 	it('tokenizes a file mention and captures the extension', () => {

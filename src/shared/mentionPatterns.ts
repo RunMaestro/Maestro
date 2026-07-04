@@ -9,11 +9,14 @@
  * {@link scanMentionSpans} helper, so "what the picker inserts", "what dispatch
  * routes", and "what renders as a chip" all trace back to one definition.
  *
- * Disambiguation is by SHAPE, so a single `@` covers both kinds:
- *   - A path-like body (`@src/main`, `@notes.md`) is a file mention.
- *   - A bare word (`@codex`, `@review-bot`) is an agent/group mention, but only
- *     when it names a KNOWN agent/group (see `knownMentionNames` below); an
- *     unknown bare `@word` stays plain text, exactly like a bare `@todo` is not
+ * Disambiguation is by SHAPE, with the agent/group roster as the tie-breaker:
+ *   - A body that names a KNOWN agent/group always wins as an agent mention,
+ *     even when its shape is path-like (an agent named `RunMaestro.ai` must not
+ *     be misread as the file `RunMaestro.ai`). The roster is authoritative.
+ *   - Otherwise, a path-like body (`@src/main`, `@notes.md`) is a file mention.
+ *   - Otherwise, a bare word (`@codex`, `@review-bot`) is an agent/group mention,
+ *     but only when it names a KNOWN agent/group (see `knownMentionNames` below);
+ *     an unknown bare `@word` stays plain text, exactly like a bare `@todo` is not
  *     treated as a file.
  *
  * Kept dependency-free (shared/) so it imports cleanly from the main, renderer,
@@ -141,14 +144,24 @@ export interface MentionSpan {
 /**
  * Scan `text` left-to-right for `@…` mentions and classify each by shape.
  *
+ * @param knownMentionNames - lowercased set of mentionable agent/group names. A
+ *   body that matches one is classified as an agent (`isName`, not `isFile`)
+ *   regardless of its shape, so an agent whose name carries a dot or slash
+ *   (`@RunMaestro.ai`) isn't misread as a file. Omit it and classification is
+ *   purely by shape (files win), which is what file-only callers want.
+ *
  * Guarantees:
  * - Mid-word (`foo@bar`, `email@host`) and `@`-run (`@@x`) candidates are
  *   dropped, so the overlay, the picker, and the dispatch scanner agree on what
  *   counts as a standalone mention.
- * - Files always win the file/agent split: an agent name never contains `/` or
- *   `.`, so a path-like body can never be misread as an agent.
+ * - The roster wins the file/agent split: a body that names a known agent/group
+ *   is an agent mention even when path-like. Absent the roster, a path-like body
+ *   (`/` or a dotted extension) is a file.
  */
-export function scanMentionSpans(text: string): MentionSpan[] {
+export function scanMentionSpans(
+	text: string,
+	knownMentionNames?: ReadonlySet<string>
+): MentionSpan[] {
 	const spans: MentionSpan[] = [];
 	if (!text) return spans;
 
@@ -175,13 +188,18 @@ export function scanMentionSpans(text: string): MentionSpan[] {
 		const body = value.slice(1);
 		if (!body) continue;
 
+		// The roster is authoritative: a body that names a known agent/group is an
+		// agent mention even when its shape is path-like, so an agent named with a
+		// dot or slash (`@RunMaestro.ai`) isn't dropped as a file.
+		const isKnownName = knownMentionNames?.has(body.toLowerCase()) ?? false;
+
 		spans.push({
 			start,
 			end: start + value.length,
 			value,
 			body,
-			isFile: isFileMentionBody(body),
-			isName: AGENT_NAME_RE.test(body),
+			isFile: !isKnownName && isFileMentionBody(body),
+			isName: isKnownName || AGENT_NAME_RE.test(body),
 		});
 	}
 
@@ -213,7 +231,7 @@ export function tokenizeMentions(
 		if (end > cursor) segments.push({ kind: 'text', value: text.slice(cursor, end) });
 	};
 
-	for (const span of scanMentionSpans(text)) {
+	for (const span of scanMentionSpans(text, knownMentionNames)) {
 		if (span.isFile) {
 			flushTextTo(span.start);
 			segments.push({

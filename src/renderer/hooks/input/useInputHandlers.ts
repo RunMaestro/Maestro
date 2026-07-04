@@ -33,7 +33,10 @@ import { useMentionPicker, type MentionPickerItem, type MentionCategory } from '
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import { useCrossAgentDispatch } from '../agent/useCrossAgentDispatch';
-import { resolveMentionedTargetSessionIds } from './useAgentMentionCompletion';
+import {
+	resolveMentionedTargetSessionIds,
+	buildKnownMentionNameSet,
+} from './useAgentMentionCompletion';
 import { messageStartsWithAgentMention } from '../../../shared/crossAgentContext';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
@@ -523,11 +526,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			).filter((id) => id !== sourceSession.id); // Self-mention guard (defend at dispatch).
 			if (targetSessionIds.length === 0) return false;
 
+			// Roster for the leading-mention check below, so a message that leads with
+			// a file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
+			// send just like a bare `@Codex` does.
+			const knownMentionNames = buildKnownMentionNameSet(allSessions, allGroups, sourceSession.id);
+
 			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
 			const sourceLogs = sourceTab?.logs ?? [];
 			for (const targetSessionId of targetSessionIds) {
 				sendCrossAgentRequest({
 					sourceSessionId: sourceSession.id,
+					sourceAgentName: sourceSession.name,
 					sourceTabId,
 					targetSessionId,
 					userPrompt: message,
@@ -538,7 +547,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				});
 			}
 
-			return messageStartsWithAgentMention(message);
+			return messageStartsWithAgentMention(message, knownMentionNames);
 		},
 		[sendCrossAgentRequest]
 	);

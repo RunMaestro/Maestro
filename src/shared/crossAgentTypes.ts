@@ -41,10 +41,31 @@ export interface CrossAgentRequest {
 	requestId: string;
 	/** The agent (session) the user typed the mention in. */
 	sourceSessionId: string;
+	/**
+	 * Display name of the source (calling) agent. Stamped onto the consult tab and
+	 * the history entry the target keeps, so the target "remembers who consulted
+	 * it". Optional so older payloads / tests stay valid.
+	 */
+	sourceAgentName?: string;
 	/** The AI tab within the source agent that owns the conversation. */
 	sourceTabId: string;
 	/** The agent (session) being consulted. */
 	targetSessionId: string;
+	/**
+	 * The consult tab on the TARGET agent that this request writes into. The
+	 * renderer finds-or-creates one tab per (sourceSessionId, sourceTabId,
+	 * targetSessionId) triple and passes its id so the answer is persisted there
+	 * (and the jump arrow can deep-link to it). Absent on the very first dispatch
+	 * before the tab exists is not possible - the renderer always creates it first.
+	 */
+	targetTabId?: string;
+	/**
+	 * The target's captured provider session id to RESUME, when this (source tab ->
+	 * target) pairing has been consulted before. Null/undefined on the first
+	 * mention (fresh session); on later mentions in the SAME source tab it carries
+	 * the id captured from the first consult, so the target keeps continuity.
+	 */
+	resumeAgentSessionId?: string;
 	/** The user's message (still contains the `@target` token verbatim). */
 	userPrompt: string;
 	/** The (already windowed by Phase 02) source transcript to forward. */
@@ -83,10 +104,23 @@ export interface CrossAgentResponseChunk {
 	sourceTabId: string;
 	/** The consulted agent (session) that produced this response. */
 	targetSessionId: string;
+	/**
+	 * The consult tab on the target agent this response is persisted into. Echoed
+	 * back from the request so the renderer writes into the same tab it created and
+	 * the jump arrow can deep-link to it.
+	 */
+	targetTabId?: string;
 	/** Display name of the consulted agent (for provenance rendering). */
 	targetAgentName: string;
 	/** Tool type of the consulted agent (for provenance rendering). */
 	targetToolType: ToolType;
+	/**
+	 * The target's own provider session id, captured from its output stream. Sent
+	 * on the terminal chunk so the renderer can store it on the consult tab and
+	 * RESUME it on the next mention (continuity). Undefined for agents that don't
+	 * report one.
+	 */
+	targetAgentSessionId?: string;
 	/** The response text for this chunk (may be the whole response). */
 	chunk: string;
 	/** True once the target agent has finished (or errored). */

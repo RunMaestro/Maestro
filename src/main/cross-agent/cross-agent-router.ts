@@ -15,11 +15,18 @@
  *   helper. We deliberately DO NOT duplicate that SSH/token-mode logic.
  * - Output parsing reuses {@link extractTextFromStreamJson}, the same helper
  *   Group Chat's exit listener uses.
- * - We spawn a FRESH ephemeral process (session id `cross-agent-<requestId>`)
- *   rather than injecting into the target agent's live tab. That keeps the
- *   consultation isolated (it can't pollute the user's own conversation with
- *   the target) and lets multiple `@` requests run concurrently. The forwarded
- *   transcript IS the target's context for this turn.
+ * - We spawn a FRESH ephemeral PROCESS (process id `cross-agent-<requestId>`)
+ *   rather than injecting into the target agent's live/main tab. That keeps the
+ *   consultation off the user's own conversation with the target and lets
+ *   multiple `@` requests run concurrently.
+ * - Continuity WITHOUT pollution: the answer is persisted to a dedicated consult
+ *   tab on the target (one per source-tab -> target pairing, owned by the
+ *   renderer). When that pairing has been consulted before, the renderer forwards
+ *   the target's captured provider session id as `resumeAgentSessionId`, so the
+ *   consult resumes (the target remembers prior consults from that source tab)
+ *   while the forwarded transcript still supplies the source's latest context.
+ *   We capture the target's provider session id off its output stream (the
+ *   `session-id` event) and hand it back on the terminal chunk.
  * - Non-blocking by contract: `startCrossAgentRequest` returns once the spawn is
  *   initiated; the response arrives later via `onChunk`.
  */
@@ -189,6 +196,7 @@ export async function startCrossAgentRequest(
 		sourceSessionId: request.sourceSessionId,
 		sourceTabId: request.sourceTabId,
 		targetSessionId: request.targetSessionId,
+		targetTabId: request.targetTabId,
 		targetAgentName: target?.name ?? request.targetSessionId,
 		targetToolType: (target?.toolType ?? 'claude-code') as ToolType,
 		chunk: '',
@@ -239,11 +247,19 @@ export async function startCrossAgentRequest(
 	// custom-config overrides. Read-write (readOnlyMode: false), matching a
 	// Group Chat participant, so the consulted agent can answer fully without
 	// stalling on an approval prompt.
+	//
+	// Continuity: when the source tab has consulted this target before, the
+	// renderer forwards the target's captured provider session id here. Passing it
+	// as `agentSessionId` makes buildAgentArgs append the agent's resume flag
+	// (`--resume <id>` etc.), so the target keeps memory of prior consults from the
+	// same source tab. Absent on the first mention (fresh session), exactly like a
+	// Group Chat participant's first turn.
 	const baseArgs = buildAgentArgs(agent, {
 		baseArgs: [...agent.args],
 		prompt: fullPrompt,
 		cwd: target.cwd,
 		readOnlyMode: false,
+		agentSessionId: request.resumeAgentSessionId,
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 		agentConfigValues,
@@ -261,6 +277,11 @@ export async function startCrossAgentRequest(
 	// emitting 'exit', so by the time onExit fires our buffer is complete.
 	let buffer = '';
 	let settled = false;
+	// The target's own provider session id, captured from its output stream (the
+	// same `session-id` event the desktop/group-chat listeners consume). Forwarded
+	// on the terminal chunk so the renderer stores it on the consult tab and
+	// resumes it on the next mention from this source tab.
+	let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
 	// Held on a const object so `cleanup` can close over the (later-assigned)
 	// handle without a `let` that trips prefer-const.
 	const timer: { handle?: ReturnType<typeof setTimeout> } = {};
@@ -269,9 +290,14 @@ export async function startCrossAgentRequest(
 		if (sid === sessionId) buffer += data;
 	};
 
+	const onSessionId = (sid: string, agentSessionId: string): void => {
+		if (sid === sessionId && agentSessionId) capturedAgentSessionId = agentSessionId;
+	};
+
 	const cleanup = (): void => {
 		processManager.off('data', onData);
 		processManager.off('exit', onExit);
+		processManager.off('session-id', onSessionId);
 		if (timer.handle) clearTimeout(timer.handle);
 	};
 
@@ -281,6 +307,14 @@ export async function startCrossAgentRequest(
 		cleanup();
 		try {
 			const text = extractTextFromStreamJson(buffer, target.toolType).trim();
+			// Only forward a captured provider session id on a SUCCESSFUL consult, so
+			// the renderer never persists (and later resumes) a session id from a run
+			// that auth/usage/CLI-errored - matching Group Chat's recovery, which
+			// clears the id on failure to force a fresh session next time.
+			const continuity =
+				code === 0 && capturedAgentSessionId
+					? { targetAgentSessionId: capturedAgentSessionId }
+					: {};
 			if (code !== 0) {
 				// Non-zero exit is a failed consult (auth/usage/CLI error), even if the
 				// process printed something. Keep any text so the user still sees what
@@ -296,7 +330,7 @@ export async function startCrossAgentRequest(
 					})
 				);
 			} else if (text) {
-				onChunk(baseChunk({ chunk: text, done: true }));
+				onChunk(baseChunk({ chunk: text, done: true, ...continuity }));
 			} else {
 				onChunk(
 					baseChunk({
@@ -324,6 +358,7 @@ export async function startCrossAgentRequest(
 
 	processManager.on('data', onData);
 	processManager.on('exit', onExit);
+	processManager.on('session-id', onSessionId);
 
 	// Safety net: never leave the listeners attached forever if the target hangs.
 	timer.handle = setTimeout(() => {

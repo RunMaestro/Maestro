@@ -18,8 +18,9 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { LogEntry } from '../../types';
-import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
+import { createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import { inferContextStrategy, selectContextWindow } from '../../../shared/crossAgentContext';
@@ -32,6 +33,8 @@ import type {
 export interface SendCrossAgentRequestOptions {
 	/** The agent the user typed the mention in. */
 	sourceSessionId: string;
+	/** Display name of the source (calling) agent, for the target's consult tab + history. */
+	sourceAgentName: string;
 	/** The AI tab within the source agent. */
 	sourceTabId: string;
 	/** The resolved target agent (session) to consult. */
@@ -84,6 +87,9 @@ export function buildCrossAgentLogEntry(
 			crossAgent: {
 				requestId: chunk.requestId,
 				fromSessionId: chunk.targetSessionId,
+				// The consult tab on the target that holds the persisted answer, so the
+				// attribution pill's jump arrow lands on the real conversation.
+				fromTabId: chunk.targetTabId,
 				fromAgentName: chunk.targetAgentName,
 				fromToolType: chunk.targetToolType,
 				// Streaming until the terminal (`done`) chunk lands. Phase 04's
@@ -97,12 +103,145 @@ export function buildCrossAgentLogEntry(
 	};
 }
 
+/** Label for a consult tab on the target: signals an inbound consult + who from. */
+export function buildConsultTabName(sourceAgentName: string): string {
+	return `↩ ${sourceAgentName}`;
+}
+
+/**
+ * Find-or-create the consult tab on the TARGET agent for this (source tab ->
+ * target) pairing, and append the user's question to it.
+ *
+ * The consult tab is the continuity store: one per
+ * (sourceSessionId, sourceTabId, targetSessionId) triple, tagged with
+ * `consultOrigin`. A repeat mention from the SAME source tab reuses it (and
+ * resumes its captured provider `agentSessionId`); a mention from a fresh source
+ * tab makes a new one. Creation does NOT steal focus - the user stays put in the
+ * source agent.
+ *
+ * Returns the consult tab id plus the provider session id to resume (undefined on
+ * the first mention), or null if the target session no longer exists.
+ */
+export function ensureConsultTab(opts: {
+	targetSessionId: string;
+	sourceSessionId: string;
+	sourceTabId: string;
+	sourceAgentName: string;
+	question: string;
+}): { targetTabId: string; resumeAgentSessionId?: string } | null {
+	const questionEntry: LogEntry = {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'user',
+		text: opts.question,
+	};
+
+	let resolvedTabId: string | null = null;
+	let resumeAgentSessionId: string | undefined;
+
+	updateSessionWith(opts.targetSessionId, (session) => {
+		const existing = session.aiTabs.find(
+			(t) =>
+				t.consultOrigin?.sourceSessionId === opts.sourceSessionId &&
+				t.consultOrigin?.sourceTabId === opts.sourceTabId
+		);
+		if (existing) {
+			resolvedTabId = existing.id;
+			resumeAgentSessionId = existing.agentSessionId ?? undefined;
+			return {
+				...session,
+				aiTabs: session.aiTabs.map((t) =>
+					t.id === existing.id ? { ...t, logs: [...t.logs, questionEntry] } : t
+				),
+			};
+		}
+
+		// Reuse the canonical tab factory (defaults + unifiedTabOrder insertion),
+		// then restore the pre-existing focus pointers so the new consult tab is
+		// added silently rather than yanking the user into the target agent.
+		const created = createTab(session, {
+			name: buildConsultTabName(opts.sourceAgentName),
+			logs: [questionEntry],
+			saveToHistory: false,
+		});
+		if (!created) return session;
+		resolvedTabId = created.tab.id;
+		resumeAgentSessionId = undefined;
+		return {
+			...created.session,
+			activeTabId: session.activeTabId,
+			activeFileTabId: session.activeFileTabId,
+			activeBrowserTabId: session.activeBrowserTabId,
+			activeTerminalTabId: session.activeTerminalTabId,
+			inputMode: session.inputMode,
+			aiTabs: created.session.aiTabs.map((t) =>
+				t.id === created.tab.id
+					? {
+							...t,
+							consultOrigin: {
+								sourceSessionId: opts.sourceSessionId,
+								sourceTabId: opts.sourceTabId,
+							},
+						}
+					: t
+			),
+		};
+	});
+
+	if (!resolvedTabId) return null;
+	return { targetTabId: resolvedTabId, resumeAgentSessionId };
+}
+
 /** Per-request tracking so streamed chunks land on one stable LogEntry. */
 interface TrackedRequest {
 	sourceSessionId: string;
 	sourceTabId: string;
+	/** The attribution-bubble entry id on the SOURCE tab. */
 	logEntryId: string;
+	/** The consulted (target) agent + its consult tab, so chunks persist there too. */
+	targetSessionId: string;
+	targetTabId?: string;
+	/** The answer entry id inside the consult tab on the target. */
+	targetLogEntryId: string;
+	/** The calling agent's display name (for the target's history entry). */
+	sourceAgentName?: string;
 	accumulated: string;
+}
+
+/**
+ * Record a durable History entry on the TARGET agent for a finished consult,
+ * attributed to the calling agent (so the target's History shows who consulted
+ * it). Best-effort: a failure here never disrupts response streaming.
+ */
+function recordConsultHistory(tracked: TrackedRequest, chunk: CrossAgentResponseChunk): void {
+	if (!tracked.targetTabId) return; // No consult tab -> nothing to attribute.
+	const state = useSessionStore.getState();
+	const target = state.sessions.find((s) => s.id === chunk.targetSessionId);
+	if (!target) return; // Target agent removed mid-flight; skip.
+
+	const sourceAgentName =
+		tracked.sourceAgentName ??
+		state.sessions.find((s) => s.id === chunk.sourceSessionId)?.name ??
+		'another agent';
+	const consultTab = target.aiTabs.find((t) => t.id === tracked.targetTabId);
+
+	void window.maestro.history
+		.add({
+			id: generateId(),
+			type: 'AUTO',
+			timestamp: Date.now(),
+			summary: `Consulted by ${sourceAgentName}`,
+			fullResponse: tracked.accumulated || undefined,
+			agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
+			sessionId: chunk.targetSessionId,
+			sessionName: consultTab?.name ?? target.name ?? undefined,
+			projectPath: target.cwd,
+			sourceAgentName,
+			success: !chunk.error,
+		})
+		.catch((err) => {
+			logger.warn('[useCrossAgentDispatch] Failed to record consult history', undefined, err);
+		});
 }
 
 export interface UseCrossAgentDispatchResult {
@@ -125,11 +264,14 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 		if (!tracked) {
 			// Chunk for a request this instance didn't register (e.g. a reload
 			// mid-flight). Fall back to the chunk's own ids so the response still
-			// lands, on a fresh entry.
+			// lands, on a fresh entry - including the consult tab if the chunk names one.
 			tracked = {
 				sourceSessionId: chunk.sourceSessionId,
 				sourceTabId: chunk.sourceTabId,
 				logEntryId: generateId(),
+				targetSessionId: chunk.targetSessionId,
+				targetTabId: chunk.targetTabId,
+				targetLogEntryId: generateId(),
 				accumulated: '',
 			};
 			map.set(chunk.requestId, tracked);
@@ -141,6 +283,7 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 		const entryId = tracked.logEntryId;
 		const sourceTabId = tracked.sourceTabId;
 
+		// 1. The attribution bubble on the SOURCE tab (what the user reads inline).
 		updateSessionWith(tracked.sourceSessionId, (session) => {
 			const tab = session.aiTabs.find((t) => t.id === sourceTabId);
 			if (!tab) return session; // Source tab was closed; nothing to update.
@@ -160,7 +303,40 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 			};
 		});
 
+		// 2. The persisted copy on the TARGET's consult tab (what the jump arrow
+		// lands on, and what makes the target "remember it was consulted"). Written
+		// as a native `ai` answer - no crossAgent provenance, since from the target's
+		// point of view this IS its own reply.
+		const targetTabId = tracked.targetTabId;
+		if (targetTabId) {
+			const answerId = tracked.targetLogEntryId;
+			updateAiTab(chunk.targetSessionId, targetTabId, (tab) => {
+				const existingIndex = tab.logs.findIndex((l) => l.id === answerId);
+				const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
+				const answer: LogEntry = {
+					id: answerId,
+					timestamp,
+					source: chunk.error ? 'error' : 'ai',
+					text: displayText,
+				};
+				const nextLogs =
+					existingIndex >= 0
+						? tab.logs.map((l, i) => (i === existingIndex ? answer : l))
+						: [...tab.logs, answer];
+				// On success, store the target's captured provider session id so the
+				// next mention from this source tab resumes it (continuity).
+				const agentSessionId =
+					chunk.done && chunk.targetAgentSessionId
+						? chunk.targetAgentSessionId
+						: tab.agentSessionId;
+				return { ...tab, logs: nextLogs, agentSessionId };
+			});
+		}
+
 		if (chunk.done) {
+			// The target now has a durable record of the consult, attributed to the
+			// caller so its History shows who consulted it.
+			recordConsultHistory(tracked, chunk);
 			map.delete(chunk.requestId);
 			completedRef.current.add(chunk.requestId);
 			// Drop it from the live "N agents responding…" indicator.
@@ -182,12 +358,27 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 			timestamp: l.timestamp,
 		}));
 
+		// Find-or-create the consult tab on the target BEFORE dispatch, so the
+		// question is persisted immediately and we know which provider session to
+		// resume. A repeat mention from the same source tab reuses the tab (and its
+		// captured `agentSessionId`); a fresh source tab makes a new one.
+		const consult = ensureConsultTab({
+			targetSessionId: opts.targetSessionId,
+			sourceSessionId: opts.sourceSessionId,
+			sourceTabId: opts.sourceTabId,
+			sourceAgentName: opts.sourceAgentName,
+			question: opts.userPrompt,
+		});
+
 		// Fire-and-forget: never await before the caller clears the input.
 		void window.maestro.crossAgent
 			.send({
 				sourceSessionId: opts.sourceSessionId,
+				sourceAgentName: opts.sourceAgentName,
 				sourceTabId: opts.sourceTabId,
 				targetSessionId: opts.targetSessionId,
+				targetTabId: consult?.targetTabId,
+				resumeAgentSessionId: consult?.resumeAgentSessionId,
 				userPrompt: opts.userPrompt,
 				transcript,
 				strategy,
@@ -203,6 +394,10 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 						sourceSessionId: opts.sourceSessionId,
 						sourceTabId: opts.sourceTabId,
 						logEntryId: generateId(),
+						targetSessionId: opts.targetSessionId,
+						targetTabId: consult?.targetTabId,
+						targetLogEntryId: generateId(),
+						sourceAgentName: opts.sourceAgentName,
 						accumulated: '',
 					});
 				}
