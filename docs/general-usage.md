@@ -117,13 +117,15 @@ The confirmation modal focuses "Publish Secret" by default, so you can press `En
 The share button only appears when viewing files (not in edit mode) and when GitHub CLI is available and authenticated.
 </Note>
 
-### @ File Mentions
+### @ Mentions
 
 Reference files in your AI prompts using `@` mentions:
 
 1. Type `@` followed by a filename
 2. Select from the autocomplete dropdown
 3. The file path is inserted, giving the AI context about that file
+
+The same `@` picker can also reference **other agents**. Alongside files, it has an **Agents** section - pick one to [consult it inline](./cross-agent-mentions) and stream its reply back into your chat. Maestro tells files and agents apart by shape: a path-like `@src/app.ts` is a file, while a bare `@codex` is an agent.
 
 ## Prompt Composer
 

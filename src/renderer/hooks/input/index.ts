@@ -25,8 +25,27 @@ export type {
 	UseTabCompletionReturn,
 } from './useTabCompletion';
 
-// @-mention autocomplete
+// @-mention autocomplete (files/directories)
 export { useAtMentionCompletion } from './useAtMentionCompletion';
+export type { AtMentionSuggestion } from './useAtMentionCompletion';
+
+// @-mention autocomplete (agents/groups) - the Agents data source for the picker
+export { useAgentMentionCompletion } from './useAgentMentionCompletion';
+export type {
+	AgentMentionSuggestion,
+	UseAgentMentionCompletionReturn,
+} from './useAgentMentionCompletion';
+
+// Unified `@` mention picker (files + directories + agents + groups)
+export { useMentionPicker, buildMentionAccept, MENTION_CATEGORY_CYCLE } from './useMentionPicker';
+export type {
+	MentionCategory,
+	MentionPickerItem,
+	FileMentionItem,
+	MentionAcceptResult,
+	UseMentionPickerParams,
+	UseMentionPickerReturn,
+} from './useMentionPicker';
 
 // Template variable autocomplete
 export { useTemplateAutocomplete } from './useTemplateAutocomplete';

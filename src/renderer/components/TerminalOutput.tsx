@@ -45,10 +45,80 @@ import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { RetryStatusCard } from './RetryStatusCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { CrossAgentResponseHeader } from './CrossAgentResponseHeader';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
+
+/**
+ * Collapse a tab's logs into render groups for the AI transcript.
+ *
+ * Consecutive LOCAL response entries (the active agent's own stdout/ai/system
+ * output for one turn) fold into ONE bubble per user message, so a turn made of
+ * several streamed entries reads as a single reply. These kinds stay standalone:
+ *   - `user` messages,
+ *   - `tool` / `thinking` entries,
+ *   - Agent Resilience outage markers (`retryOutageId`), which render as a live
+ *     status card and must not fold into a text group,
+ *   - cross-agent (`@mention`) replies. Each cross-agent reply already streams
+ *     into its own single entry and carries its own attribution header, so it
+ *     must never fold into the local response group OR into a sibling
+ *     cross-agent reply. Without this, several agents' answers (plus the local
+ *     one) merge into a single bubble that inherits the FIRST entry's provenance
+ *     - e.g. two remote replies and the local one all rendering inside one
+ *     agent's error bubble.
+ *
+ * Pure + exported so the grouping is unit-testable independent of the component.
+ */
+export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
+	const result: LogEntry[] = [];
+	let currentResponseGroup: LogEntry[] = [];
+
+	// Flush the accumulated LOCAL response group into one combined entry.
+	const flushResponseGroup = () => {
+		if (currentResponseGroup.length > 0) {
+			const combinedText = currentResponseGroup.map((l) => l.text).join('');
+			// The token-source pill keys off `renderStyle === 'text-stream'`
+			// (maestro-p TUI capture). A response group can lead with a non-stream
+			// entry (e.g. the "Adaptive Mode: switched ..." system banner), and
+			// basing the combined entry only on `[0]` would inherit that entry's
+			// missing renderStyle and mislabel an interactive turn as "API".
+			// Preserve text-stream if ANY grouped entry carries it.
+			const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
+			result.push({
+				...currentResponseGroup[0],
+				text: combinedText,
+				// Keep the first entry's timestamp and id.
+				...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
+			});
+			currentResponseGroup = [];
+		}
+	};
+
+	for (const log of logs) {
+		if (log.source === 'user') {
+			flushResponseGroup();
+			result.push(log);
+		} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
+			// Flush the response group, then keep tool/thinking and Agent Resilience
+			// outage markers as their own entries. The outage marker must not merge
+			// into a text group — it renders as a live status card.
+			flushResponseGroup();
+			result.push(log);
+		} else if (log.metadata?.crossAgent) {
+			// Standalone, individually-attributed bubble (see fn doc).
+			flushResponseGroup();
+			result.push(log);
+		} else {
+			// Accumulate the local agent's own response entries.
+			currentResponseGroup.push(log);
+		}
+	}
+
+	flushResponseGroup();
+	return result;
+}
 
 /** Handle command values that may be strings or string arrays (Codex uses arrays) */
 const safeCommand = (v: unknown): string | null => {
@@ -484,6 +554,25 @@ const LogItemComponent = memo(
 			);
 		}
 
+		// Cross-agent (@@mention) reply provenance. When set, this AI entry was
+		// produced by a DIFFERENT agent the user consulted; it gets a tinted
+		// bubble + attribution pill (Phase 04). Themes may override the tint via
+		// the crossAgentBubbleBg / crossAgentBubbleBorder tokens; otherwise we
+		// derive a subtle accent wash with the same color-mix idiom the user
+		// bubble uses below, so every theme reads correctly for free.
+		const crossAgent = log.metadata?.crossAgent;
+		const isCrossAgentStreaming = !!crossAgent?.streaming;
+		// Phase 05: a failed consult surfaces inline as a red-tinted variant of the
+		// cross-agent bubble (never throws). Otherwise the normal accent wash.
+		const isCrossAgentError = !!crossAgent?.error;
+		const crossAgentBubbleBg = isCrossAgentError
+			? `color-mix(in srgb, ${theme.colors.error} 12%, ${theme.colors.bgActivity})`
+			: (theme.colors.crossAgentBubbleBg ??
+				`color-mix(in srgb, ${theme.colors.accent} 14%, ${theme.colors.bgActivity})`);
+		const crossAgentBubbleBorder = isCrossAgentError
+			? theme.colors.error + '66'
+			: (theme.colors.crossAgentBubbleBorder ?? theme.colors.accent + '55');
+
 		return (
 			<div
 				ref={logItemRef}
@@ -525,25 +614,39 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
 					style={{
-						backgroundColor: isUserMessage
-							? isAIMode
-								? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
-								: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
-							: log.source === 'stderr' || log.source === 'error'
-								? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
-								: isAIMode
-									? theme.colors.bgActivity
-									: 'transparent',
-						borderColor:
-							isUserMessage && isAIMode
+						backgroundColor: crossAgent
+							? crossAgentBubbleBg
+							: isUserMessage
+								? isAIMode
+									? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
+									: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
+								: log.source === 'stderr' || log.source === 'error'
+									? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
+									: isAIMode
+										? theme.colors.bgActivity
+										: 'transparent',
+						borderColor: crossAgent
+							? crossAgentBubbleBorder
+							: isUserMessage && isAIMode
 								? theme.colors.accent + '40'
 								: log.source === 'stderr' || log.source === 'error'
 									? theme.colors.error
 									: theme.colors.border,
+						// Drives the accent hue of the streaming pulse (.animate-status-glow).
+						...(isCrossAgentStreaming
+							? ({ '--status-glow-color': theme.colors.accent } as React.CSSProperties)
+							: {}),
 					}}
 				>
+					{/* Cross-agent attribution header - this AI reply was routed back from a
+					    DIFFERENT agent the user consulted via @mention. Names the agent,
+					    provider, and session id, and offers two ways to jump into that
+					    agent to continue the dialogue. Streaming shows a spinner; a failed
+					    consult tints it red. In a group fan-out it's what tells each
+					    response apart. */}
+					{crossAgent && <CrossAgentResponseHeader crossAgent={crossAgent} theme={theme} />}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -1054,10 +1157,15 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
+					{/* Cross-agent attribution now lives in the header at the TOP of the
+					    bubble (CrossAgentResponseHeader); no bottom pill is rendered here. */}
 					{/* Mode pill — shows which CLI captured this Claude turn (TUI Wrapper =
 					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
-					    session has Dynamic Mode enabled (auto-switching between the two). */}
-					{isClaudeCode &&
+					    session has Dynamic Mode enabled (auto-switching between the two).
+					    Suppressed on cross-agent entries so the attribution pill above
+					    replaces it. */}
+					{!crossAgent &&
+						isClaudeCode &&
 						log.source !== 'user' &&
 						(() => {
 							const { label, title } = getTokenSourcePill({
@@ -1267,6 +1375,13 @@ const LogItemComponent = memo(
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// Cross-agent streaming flips true->false on the final chunk (which may
+			// carry no new text), so the pill/glow needs this to settle.
+			prevProps.log.metadata?.crossAgent?.streaming ===
+				nextProps.log.metadata?.crossAgent?.streaming &&
+			// A terminal error chunk may add `error` without changing text; the
+			// red-tinted bubble variant depends on it.
+			prevProps.log.metadata?.crossAgent?.error === nextProps.log.metadata?.crossAgent?.error &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
@@ -1660,57 +1775,11 @@ export const TerminalOutput = memo(
 		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
 
-		// In AI mode, collapse consecutive non-user entries into single response blocks
-		// This provides a cleaner view where each user message gets one response
-		// Tool and thinking entries are kept separate (not collapsed)
-		const collapsedLogs = useMemo(() => {
-			const result: LogEntry[] = [];
-			let currentResponseGroup: LogEntry[] = [];
-
-			// Helper to flush accumulated response group
-			const flushResponseGroup = () => {
-				if (currentResponseGroup.length > 0) {
-					// Combine all response entries into one
-					const combinedText = currentResponseGroup.map((l) => l.text).join('');
-					// The token-source pill keys off `renderStyle === 'text-stream'`
-					// (maestro-p TUI capture). A response group can lead with a
-					// non-stream entry — e.g. the "Adaptive Mode: switched ..." system
-					// banner — and basing the combined entry only on `[0]` would inherit
-					// that entry's missing renderStyle and mislabel an interactive turn
-					// as "API". Preserve text-stream if ANY grouped entry carries it.
-					const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
-					result.push({
-						...currentResponseGroup[0],
-						text: combinedText,
-						// Keep the first entry's timestamp and id
-						...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
-					});
-					currentResponseGroup = [];
-				}
-			};
-
-			for (const log of activeLogs) {
-				if (log.source === 'user') {
-					// Flush any accumulated response group before user message
-					flushResponseGroup();
-					result.push(log);
-				} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
-					// Flush response group before tool/thinking and Agent Resilience
-					// outage markers, then add them standalone. The outage marker must
-					// not merge into a text group — it renders as a live status card.
-					flushResponseGroup();
-					result.push(log);
-				} else {
-					// Accumulate non-user entries (AI responses)
-					currentResponseGroup.push(log);
-				}
-			}
-
-			// Flush final response group
-			flushResponseGroup();
-
-			return result;
-		}, [activeLogs]);
+		// In AI mode, collapse consecutive local response entries into single blocks
+		// so each user message gets one bubble. Tool/thinking entries, Agent
+		// Resilience outage markers, and cross-agent (@mention) replies stay
+		// standalone (see collapseAiResponseLogs).
+		const collapsedLogs = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
 
 		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);

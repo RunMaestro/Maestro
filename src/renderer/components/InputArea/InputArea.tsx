@@ -7,6 +7,8 @@ import {
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
+import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
@@ -73,7 +75,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		atMentionStartIndex = -1,
 		setAtMentionStartIndex,
-		atMentionSuggestions = [],
+		atMentionItems = [],
+		atMentionCounts,
+		atMentionCategory = 'all',
+		setAtMentionCategory,
 		selectedAtMentionIndex = 0,
 		setSelectedAtMentionIndex,
 		thinkingItems = [],
@@ -240,7 +245,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
-		atMentionSuggestions.length
+		atMentionItems.length
 	);
 
 	const filteredCommandHistory = useMemo(
@@ -267,6 +272,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const handleTextChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		atMentionOpen,
 		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,
@@ -275,6 +281,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 	});
 
 	// Voice dictation (Web Speech API). Interim results live-update the draft via
@@ -365,6 +372,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
 
+			{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
+			    agents stream replies into this tab. Only meaningful in AI mode. */}
+			{session.inputMode === 'ai' && (
+				<CrossAgentResponseIndicator
+					theme={theme}
+					sourceSessionId={session.id}
+					sourceTabId={getActiveTab(session)?.id}
+				/>
+			)}
+
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
 				<ThinkingStatusPill
@@ -445,7 +462,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<AtMentionPopover
 				isOpen={atMentionOpen}
 				isTerminalMode={isTerminalMode}
-				suggestions={atMentionSuggestions}
+				items={atMentionItems}
+				counts={atMentionCounts}
+				category={atMentionCategory}
+				setCategory={setAtMentionCategory}
 				selectedIndex={selectedAtMentionIndex}
 				filter={atMentionFilter}
 				startIndex={atMentionStartIndex}

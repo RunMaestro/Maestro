@@ -64,12 +64,15 @@ export const MainPanel = React.memo(
 			atMentionOpen,
 			atMentionFilter,
 			atMentionStartIndex,
-			atMentionSuggestions,
+			atMentionItems,
+			atMentionCounts,
+			atMentionCategory,
 			selectedAtMentionIndex,
 			setAtMentionOpen,
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
+			setAtMentionCategory,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -973,7 +976,10 @@ export const MainPanel = React.memo(
 							setAtMentionFilter={setAtMentionFilter}
 							atMentionStartIndex={atMentionStartIndex}
 							setAtMentionStartIndex={setAtMentionStartIndex}
-							atMentionSuggestions={atMentionSuggestions}
+							atMentionItems={atMentionItems}
+							atMentionCounts={atMentionCounts}
+							atMentionCategory={atMentionCategory}
+							setAtMentionCategory={setAtMentionCategory}
 							selectedAtMentionIndex={selectedAtMentionIndex}
 							setSelectedAtMentionIndex={setSelectedAtMentionIndex}
 							inputRef={inputRef}

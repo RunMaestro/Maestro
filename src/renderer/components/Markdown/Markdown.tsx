@@ -171,6 +171,7 @@ export const Markdown = memo(function Markdown({
 			chatMath: isChat ? chatMath : false,
 			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
+			mentionChips: isChat,
 			extraRemarkPlugins,
 			extraRehypePlugins,
 		});

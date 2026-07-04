@@ -57,6 +57,12 @@ export interface HistoryEntryInput {
 	tokenSource?: 'interactive' | 'api';
 	/** Claude-only, per-turn token source reason override. See {@link tokenSource}. */
 	tokenSourceReason?: 'auto' | 'limit';
+	/**
+	 * Cross-agent attribution: the calling agent's display name, stamped when this
+	 * entry records a consult the agent answered (so its History shows who
+	 * consulted it).
+	 */
+	sourceAgentName?: string;
 }
 
 /**
@@ -232,6 +238,8 @@ export function useAgentSessionManagement(
 					success: entry.success,
 					// Pass through task execution time
 					elapsedTimeMs: entry.elapsedTimeMs,
+					// Cross-agent attribution: which agent consulted this one (if any)
+					...(entry.sourceAgentName ? { sourceAgentName: entry.sourceAgentName } : {}),
 				},
 				buildSharedHistoryContext(activeSession)
 			);
