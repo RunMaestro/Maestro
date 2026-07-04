@@ -14,6 +14,8 @@ export const SUPPORTED_AGENTS = [
 	'copilot-cli',
 	'qwen3-coder',
 	'omp',
+	'hermes',
+	'pi',
 ];
 
 export interface AgentDebugInfo {
