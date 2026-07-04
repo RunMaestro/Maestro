@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type {
 	Session,
 	SessionState,
@@ -774,9 +775,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
 							// token mode from the persisted session - it falls back to these.
-							enableMaestroP: sessionConfig?.enableMaestroP,
-							maestroPMode: sessionConfig?.maestroPMode,
-							maestroPPath: sessionConfig?.maestroPPath,
+							// Shared extractor guarantees the SAME complete triple - no
+							// partial/drifting forward possible.
+							...getClaudeTokenSourceFields(sessionConfig),
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
 							sendPromptViaStdin,
