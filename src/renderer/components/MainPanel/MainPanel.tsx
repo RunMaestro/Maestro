@@ -945,7 +945,6 @@ export const MainPanel = React.memo(
 							handleInputFocus={handleInputFocus}
 							handleSessionClick={handleSessionClick}
 							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
-							currentSessionBatchState={currentSessionBatchState}
 							displayBatchRunState={displayBatchRunState}
 							displayBatchRunSessionId={displayBatchRunSessionId}
 							hasCapability={hasCapability}

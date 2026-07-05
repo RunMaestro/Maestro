@@ -8,7 +8,7 @@ import type { QuitHandler } from './quit-handler';
 
 export interface PrimaryWindowClosePolicyDependencies {
 	getPrimaryWindow: () => BrowserWindow | null;
-	quitHandler: QuitHandler;
+	getQuitHandler: () => QuitHandler | null;
 }
 
 /**
@@ -17,7 +17,7 @@ export interface PrimaryWindowClosePolicyDependencies {
  */
 export function attachPrimaryWindowClosePolicy({
 	getPrimaryWindow,
-	quitHandler,
+	getQuitHandler,
 }: PrimaryWindowClosePolicyDependencies): void {
 	const primaryWindow = getPrimaryWindow();
 	if (!primaryWindow) {
@@ -25,7 +25,7 @@ export function attachPrimaryWindowClosePolicy({
 	}
 
 	primaryWindow.on('close', (event: Event) => {
-		if (quitHandler.isQuitConfirmed()) {
+		if (getQuitHandler()?.isQuitConfirmed()) {
 			return;
 		}
 

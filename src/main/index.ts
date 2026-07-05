@@ -485,7 +485,7 @@ function createWindow(windowId?: string, sessionIds?: string[]) {
 	if (createdEntry?.isMain) {
 		attachPrimaryWindowClosePolicy({
 			getPrimaryWindow: () => mainWindow,
-			quitHandler,
+			getQuitHandler: () => quitHandler,
 		});
 	}
 	// Handle closed event to clear the reference

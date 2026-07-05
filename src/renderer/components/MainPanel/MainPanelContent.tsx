@@ -102,7 +102,6 @@ export interface MainPanelContentProps {
 
 	// Auto mode
 	isCurrentSessionAutoMode: boolean;
-	currentSessionBatchState?: BatchRunState | null;
 	displayBatchRunState?: BatchRunState | null;
 	displayBatchRunSessionId?: string;
 
@@ -303,7 +302,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleInputFocus,
 		handleSessionClick,
 		isCurrentSessionAutoMode,
-		currentSessionBatchState,
 		displayBatchRunState,
 		displayBatchRunSessionId,
 		hasCapability,

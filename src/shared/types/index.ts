@@ -459,7 +459,7 @@ export interface AgentConfig {
 	 * after stripping non-serializable agent fields. May be absent on first
 	 * boot before any detection has run.
 	 */
-	snapshot?: import('./agentCapabilities').AgentCapabilitiesSnapshot;
+	snapshot?: import('../agentCapabilities').AgentCapabilitiesSnapshot;
 }
 
 // ============================================================================

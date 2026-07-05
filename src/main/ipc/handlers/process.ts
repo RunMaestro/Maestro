@@ -282,8 +282,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		agentConfigsStore,
 		settingsStore,
 		getMainWindow,
-		getCueProcesses,
-		interactiveReplayController,
 		windowManager,
 		windowStateStore,
 	} = deps;
@@ -1280,7 +1278,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 
 				if (result.success) {
-					assignSpawnSessionToSenderWindow(event, config.sessionId, windowManager, windowStateStore);
+					assignSpawnSessionToSenderWindow(
+						event,
+						config.sessionId,
+						windowManager,
+						windowStateStore
+					);
 				}
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
