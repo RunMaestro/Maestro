@@ -2,12 +2,8 @@ import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
 import { findAvailablePort } from './dev-port.mjs';
 
-const packageRunner =
-	process.env.npm_execpath && /bun(?:\.exe)?$/i.test(process.env.npm_execpath)
-		? process.env.npm_execpath
-		: process.platform === 'win32'
-			? 'bun.exe'
-			: 'bun';
+const isWindows = process.platform === 'win32';
+const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 const rendererScript = 'dev:renderer';
 const mainScript = process.env.USE_PROD_DATA ? 'dev:main:prod-data' : 'dev:main';
 const startupTimeoutMs = 20000;
@@ -84,13 +80,12 @@ const sharedEnv = { ...process.env, VITE_PORT: String(port) };
 
 console.log(`[dev] Using VITE_PORT=${port}`);
 
-const renderer = spawn(packageRunner, ['run', rendererScript], {
+const renderer = spawnNpm(['run', rendererScript], {
 	env: sharedEnv,
 	stdio: 'inherit',
 });
 
 let shuttingDown = false;
-let rendererPortReady = false;
 let main = null;
 
 const shutdown = (code = 0) => {
@@ -106,13 +101,9 @@ const shutdown = (code = 0) => {
 process.on('SIGINT', () => shutdown(130));
 process.on('SIGTERM', () => shutdown(143));
 
-renderer.once('exit', (code, signal) => {
+renderer.once('exit', (code) => {
 	if (shuttingDown) return;
-	const message = rendererPortReady
-		? 'Renderer dev server exited after Electron launch'
-		: 'Renderer exited before Electron started';
-	const status = signal ? `signal ${signal}` : `code ${code ?? 0}`;
-	console.error(`[dev] ${message} (${status})`);
+	console.error(`[dev] Renderer exited before Electron started (code ${code ?? 0})`);
 	shutdown(code ?? 1);
 });
 
@@ -124,7 +115,6 @@ try {
 	);
 	shutdown(1);
 }
-rendererPortReady = true;
 
 const cdpPort = process.env.MAESTRO_CDP_PORT;
 const mainArgs = ['run', mainScript];
@@ -133,15 +123,12 @@ if (cdpPort) {
 	console.log(`[dev] Electron CDP enabled on port ${cdpPort}`);
 }
 
-main = spawn(packageRunner, mainArgs, {
+main = spawnNpm(mainArgs, {
 	env: sharedEnv,
 	stdio: 'inherit',
 });
 
-main.once('exit', (code, signal) => {
+main.once('exit', (code) => {
 	if (shuttingDown) return;
-	if (signal) {
-		console.error(`[dev] Electron exited (signal ${signal})`);
-	}
-	shutdown(signal ? 1 : (code ?? 0));
+	shutdown(code ?? 0);
 });
