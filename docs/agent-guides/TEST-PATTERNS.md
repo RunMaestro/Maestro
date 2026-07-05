@@ -223,6 +223,32 @@ vi.mocked(window.maestro.settings.get).mockResolvedValue('custom-value');
 
 ---
 
+## Cross-Platform Path Assertions
+
+Tests run on the CI matrix (Linux + Windows), so any assertion about a filesystem path must be OS-agnostic. Production code emits native paths via `path.join`, `path.resolve`, and `os.homedir()`, which differ per platform (`/a/b` vs `C:\a\b`), and `os.homedir()` is not `process.env.HOME` on Windows.
+
+```typescript
+// WRONG - POSIX-only; passes on the Linux leg, fails on the Windows leg
+expect(outputPath.startsWith('/')).toBe(true);
+expect(outputPath.endsWith('/sub/out.zip')).toBe(true);
+expect(outputPath).toBe(`${process.env.HOME}/Desktop/p.zip`);
+expect(key).toBe('/home/u/.claude');
+
+// CORRECT - assert the behavior through the path/os API
+import path from 'path';
+import os from 'os';
+expect(path.isAbsolute(outputPath)).toBe(true);
+expect(outputPath.endsWith(path.join('sub', 'out.zip'))).toBe(true);
+expect(outputPath).toBe(path.join(os.homedir(), 'Desktop', 'p.zip'));
+const configDir = path.join(os.tmpdir(), '.claude-test'); // native absolute fixture
+const key = resolveConfigDirKeyFromEnv({ CLAUDE_CONFIG_DIR: configDir });
+expect(key).toBe(path.resolve(configDir));
+```
+
+Never hardcode `/`, `\`, or `process.env.HOME` in path assertions or path fixtures. Use `path.isAbsolute`, `path.join`, `path.resolve`, `os.homedir()`, and `os.tmpdir()` so the test verifies identical behavior on every OS.
+
+---
+
 ## Common Mock Patterns
 
 ### Mocking Zustand Stores
