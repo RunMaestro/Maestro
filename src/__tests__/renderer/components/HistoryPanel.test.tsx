@@ -137,6 +137,12 @@ describe('HistoryPanel', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 
+		// Clear persisted history filters (localStorage) between tests. Filter
+		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without this, a test
+		// that deselects a type leaks the restrictive filter into every later
+		// test, hiding their entries and failing all entry-render assertions.
+		localStorage.clear();
+
 		// Reset uiStore state used by HistoryPanel
 		useUIStore.setState({ historySearchFilterOpen: false });
 
