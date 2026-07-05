@@ -203,6 +203,10 @@ export interface HostHandlerDeps {
 	openExternal?: (url: string, opts?: unknown) => Promise<void>;
 	powerPreventSleep?: (reason: string) => void;
 	powerReleaseSleep?: (reason: string) => void;
+	/** Registers a per-plugin resource-cleanup callback with the host lifecycle
+	 * so the sandbox can release wake locks and close fs watchers when a plugin
+	 * stops, crashes, or is uninstalled. Invoked once during handler construction. */
+	registerResourceCleanup?: (cleanup: (pluginId: string) => void) => void;
 	backgroundRegister?: (
 		pluginId: string,
 		service: PluginBackgroundService
@@ -562,7 +566,7 @@ function resolveRealPath(target: string): string {
 }
 
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
-	const fsWatchers = new Map<string, fs.FSWatcher>();
+	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
 
@@ -640,7 +644,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					}
 				}
 			);
-			fsWatchers.set(watchId, watcher);
+			fsWatchers.set(watchId, { pluginId, watcher });
 			return { watchId, path: real };
 		},
 
@@ -1204,6 +1208,33 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			);
 		};
 	}
+
+	// Release a plugin's still-open host resources (wake locks + fs watchers) when
+	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
+	// call these maps are never pruned, so a stopped plugin would otherwise leak an
+	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
+	// call for the same plugin finds nothing left to release.
+	const cleanupPluginResources = (pluginId: string): void => {
+		for (const [watchId, entry] of fsWatchers) {
+			if (entry.pluginId !== pluginId) continue;
+			try {
+				entry.watcher.close();
+			} catch {
+				// best-effort: the watcher may already be closed
+			}
+			fsWatchers.delete(watchId);
+		}
+		for (const [handleId, handle] of sleepHandles) {
+			if (handle.pluginId !== pluginId) continue;
+			try {
+				deps.powerReleaseSleep?.(handle.reason);
+			} catch {
+				// best-effort: releasing a stale reason must not abort cleanup
+			}
+			sleepHandles.delete(handleId);
+		}
+	};
+	deps.registerResourceCleanup?.(cleanupPluginResources);
 
 	return handlers;
 }

@@ -993,3 +993,122 @@ describe('background service supervision (delegated handlers)', () => {
 		);
 	});
 });
+
+describe('resource cleanup on plugin stop', () => {
+	it('releases a stopped plugin wake lock and closes its fs watcher once', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const registerResourceCleanup = vi.fn((fn: (pluginId: string) => void) => {
+			cleanup = fn;
+		});
+		const powerPreventSleep = vi.fn();
+		const powerReleaseSleep = vi.fn();
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-cleanup-'));
+		const probe = fs.watch(tmp, { persistent: false }, () => {});
+		const watcherPrototype = Object.getPrototypeOf(probe);
+		probe.close();
+		const closeSpy = vi.spyOn(watcherPrototype, 'close');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('power:preventSleep'), grant('fs:watch')]),
+				powerPreventSleep,
+				powerReleaseSleep,
+				registerResourceCleanup,
+			})
+		);
+
+		try {
+			expect(registerResourceCleanup).toHaveBeenCalledTimes(1);
+			expect(cleanup).toBeDefined();
+
+			const sleep = (await h['power.preventSleep']!('p', { reason: 'sync' })) as {
+				handleId: string;
+			};
+			await expect(h['fs.watch']!('p', { path: tmp })).resolves.toEqual(
+				expect.objectContaining({ path: fs.realpathSync(tmp), watchId: expect.any(String) })
+			);
+			const expectedReason = `plugin:p:sync:${sleep.handleId}`;
+
+			cleanup!('p');
+
+			expect(powerReleaseSleep).toHaveBeenCalledTimes(1);
+			expect(powerReleaseSleep).toHaveBeenCalledWith(expectedReason);
+			expect(closeSpy).toHaveBeenCalledTimes(1);
+			await expect(h['power.releaseSleep']!('p', sleep)).rejects.toThrow(/unknown sleep handle/);
+
+			expect(() => cleanup!('p')).not.toThrow();
+			expect(powerReleaseSleep).toHaveBeenCalledTimes(1);
+			expect(closeSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			try {
+				cleanup?.('p');
+			} catch {
+				// already cleaned
+			}
+			closeSpy.mockRestore();
+			fs.rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('does not clean another plugin resources', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const registerResourceCleanup = vi.fn((fn: (pluginId: string) => void) => {
+			cleanup = fn;
+		});
+		const powerReleaseSleep = vi.fn();
+		const tmpA = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-cleanup-a-'));
+		const tmpB = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-cleanup-b-'));
+		const probe = fs.watch(tmpA, { persistent: false }, () => {});
+		const watcherPrototype = Object.getPrototypeOf(probe);
+		probe.close();
+		const closeSpy = vi.spyOn(watcherPrototype, 'close');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('power:preventSleep'), grant('fs:watch')]),
+				powerPreventSleep: vi.fn(),
+				powerReleaseSleep,
+				registerResourceCleanup,
+			})
+		);
+
+		try {
+			expect(cleanup).toBeDefined();
+
+			const sleepA = (await h['power.preventSleep']!('a', { reason: 'a-work' })) as {
+				handleId: string;
+			};
+			const sleepB = (await h['power.preventSleep']!('b', { reason: 'b-work' })) as {
+				handleId: string;
+			};
+			await h['fs.watch']!('a', { path: tmpA });
+			await h['fs.watch']!('b', { path: tmpB });
+			const reasonA = `plugin:a:a-work:${sleepA.handleId}`;
+			const reasonB = `plugin:b:b-work:${sleepB.handleId}`;
+
+			cleanup!('a');
+
+			expect(powerReleaseSleep).toHaveBeenCalledTimes(1);
+			expect(powerReleaseSleep).toHaveBeenCalledWith(reasonA);
+			expect(powerReleaseSleep).not.toHaveBeenCalledWith(reasonB);
+			expect(closeSpy).toHaveBeenCalledTimes(1);
+
+			await expect(h['power.releaseSleep']!('b', sleepB)).resolves.toEqual({ ok: true });
+			expect(powerReleaseSleep).toHaveBeenCalledTimes(2);
+			expect(powerReleaseSleep).toHaveBeenLastCalledWith(reasonB);
+			expect(closeSpy).toHaveBeenCalledTimes(1);
+
+			cleanup!('b');
+			expect(closeSpy).toHaveBeenCalledTimes(2);
+			expect(powerReleaseSleep).toHaveBeenCalledTimes(2);
+		} finally {
+			try {
+				cleanup?.('a');
+				cleanup?.('b');
+			} catch {
+				// already cleaned
+			}
+			closeSpy.mockRestore();
+			fs.rmSync(tmpA, { recursive: true, force: true });
+			fs.rmSync(tmpB, { recursive: true, force: true });
+		}
+	});
+});

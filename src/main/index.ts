@@ -1925,6 +1925,7 @@ app
 			}
 		}
 
+		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -1984,6 +1985,9 @@ app
 				},
 				powerPreventSleep: (reason) => powerManager.addBlockReason(reason),
 				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),
+				registerResourceCleanup: (cleanup) => {
+					pluginResourceCleanup = cleanup;
+				},
 				backgroundRegister: async (pluginId, service) =>
 					backgroundSupervisor.register(pluginId, service),
 				backgroundUnregister: async (pluginId, serviceId) =>
@@ -2068,10 +2072,14 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
+				pluginResourceCleanup?.(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
 			},
-			onStop: (pluginId) => backgroundSupervisor.onPluginStopped(pluginId),
+			onStop: (pluginId) => {
+				pluginResourceCleanup?.(pluginId);
+				backgroundSupervisor.onPluginStopped(pluginId);
+			},
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
