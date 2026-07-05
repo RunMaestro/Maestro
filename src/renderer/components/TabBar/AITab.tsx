@@ -152,6 +152,7 @@ export const AITab = memo(function AITab({
 		overlayPosition,
 		setOverlayPosition,
 		setOverlayRef,
+		hoverTimeoutRef,
 		positionReady,
 		setTabRef,
 		handleMouseEnter,

@@ -1,12 +1,4 @@
-import React, {
-	useState,
-	useEffect,
-	useRef,
-	useMemo,
-	useCallback,
-	lazy,
-	Suspense,
-} from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
 // SettingsModal is now lazy-loaded inside AppStandaloneModals
 import { SessionList } from './components/SessionList';
@@ -3187,9 +3179,6 @@ function MaestroConsoleInner() {
 					onCloseFileSearch={handleCloseFileSearch}
 					onFileSearchSelect={handleFileSearchSelect}
 					onClosePromptComposer={handleClosePromptComposer}
-					promptComposerInitialValue={
-						activeGroupChat ? activeGroupChat.draftMessage || '' : deferredInputValue
-					}
 					onPromptComposerSubmit={handlePromptComposerSubmit}
 					onPromptComposerSend={handlePromptComposerSend}
 					promptComposerSessionName={activeGroupChat ? activeGroupChat.name : activeSession?.name}
@@ -3396,7 +3385,10 @@ function MaestroConsoleInner() {
 				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
 				{!logViewerOpen && activeGroupChatId && activeGroupChat && (
 					<>
-						<div className="flex-1 flex flex-col min-w-0 relative" {...groupChatDropZone.dragHandlers}>
+						<div
+							className="flex-1 flex flex-col min-w-0 relative"
+							{...groupChatDropZone.dragHandlers}
+						>
 							{groupChatDropZone.overlay}
 							<GroupChatPanel
 								theme={theme}
@@ -3465,9 +3457,7 @@ function MaestroConsoleInner() {
 								onPublishMessageGist={(text: string, messageId?: string) => {
 									if (!text.trim()) return;
 									const filename = `group_chat_response_${Date.now()}.md`;
-									useTabStore
-										.getState()
-										.setTabGistContent({ filename, content: text, messageId });
+									useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
 									setGistPublishModalOpen(true);
 								}}
 							/>
