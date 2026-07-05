@@ -262,7 +262,7 @@ describe('AgentRunDashboardModal', () => {
 		expect(await screen.findByText('src/parser.ts')).toBeInTheDocument();
 		expect(screen.getByText('src/parser.test.ts')).toBeInTheDocument();
 		expect(screen.getByText('Focused vitest passed')).toBeInTheDocument();
-		expect(screen.getByText('Review parser error mapping')).toBeInTheDocument();
+		expect(screen.getByText(/Review parser error mapping/)).toBeInTheDocument();
 		expect(screen.getByText('Run started')).toBeInTheDocument();
 	});
 

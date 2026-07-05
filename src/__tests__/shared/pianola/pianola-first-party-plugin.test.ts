@@ -53,6 +53,7 @@ describe('first-party plugin registry', () => {
 			['maestroCue', 'com.maestro.cue'],
 			['directorNotes', 'com.maestro.director-notes'],
 			['pianola', 'com.maestro.pianola'],
+			['coworking', 'com.maestro.coworking'],
 		]);
 	});
 

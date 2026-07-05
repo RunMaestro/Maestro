@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * @file plugin-panel.test.ts
  * @description The broker-only panel guest preload forwards EXACTLY the
