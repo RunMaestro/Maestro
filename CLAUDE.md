@@ -114,6 +114,8 @@ After refactoring: identify now-unreachable code, list it explicitly, ask "Shoul
 
 Before pushing any branch, re-run the relevant formatting, lint, type-check, and test commands for the changes you made. Fix any issues those commands surface, include the fixes in the branch, and only then push or update the PR.
 
+Local validation runs on a single OS and cannot catch platform-specific breakage (path separators, home directories, drive letters). A branch is not mergeable until both CI matrix legs, `test (ubuntu-latest)` and `test (windows-latest)`, are green; never merge on a local single-OS pass alone.
+
 ---
 
 ## Standardized Vernacular
