@@ -8,6 +8,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
+
+const mockWindowContextState = vi.hoisted(() => ({
+	value: null as {
+		windowId: string | null;
+		sessionIds: string[];
+	} | null,
+}));
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useOptionalWindowContext: () => mockWindowContextState.value,
+}));
+
 import {
 	useAgentListeners,
 	getErrorTitleForType,
@@ -165,6 +177,7 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockWindowContextState.value = null;
 
 	// Reset captured handlers
 	onDataHandler = undefined;
