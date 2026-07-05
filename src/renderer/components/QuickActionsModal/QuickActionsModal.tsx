@@ -353,20 +353,23 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// - Bookmarked: prefer whichever section the agent is already visible in. If
 	//   neither bookmarks nor the parent group is open, expand bookmarks (the
 	//   pinned bookmark row is the lighter-weight reveal of the two).
-	const revealJumpTarget = useCallback((s: Session) => {
-		if (!s.bookmarked) {
-			if (s.groupId) {
-				setGroups((prev) =>
-					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-				);
+	const revealJumpTarget = useCallback(
+		(s: Session) => {
+			if (!s.bookmarked) {
+				if (s.groupId) {
+					setGroups((prev) =>
+						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+					);
+				}
+				return;
 			}
-			return;
-		}
-		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
-		if (bookmarksCollapsed && !groupOpen) {
-			setBookmarksCollapsed(false);
-		}
-	}, [bookmarksCollapsed, groups, setBookmarksCollapsed, setGroups]);
+			const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
+			if (bookmarksCollapsed && !groupOpen) {
+				setBookmarksCollapsed(false);
+			}
+		},
+		[bookmarksCollapsed, groups, setBookmarksCollapsed, setGroups]
+	);
 
 	const handleJumpToSession = useCallback(
 		async (session: Session) => {

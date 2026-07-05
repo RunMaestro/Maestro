@@ -175,12 +175,12 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		closeStatsDB,
 		stopCliWatcher,
 		stopSettingsWatcher,
-	powerManager,
-	stopSessionCleanup,
-	getPersistedSessions,
-	getWindowRegistry,
-	windowStateStore,
-} = deps;
+		powerManager,
+		stopSessionCleanup,
+		getPersistedSessions,
+		getWindowRegistry,
+		windowStateStore,
+	} = deps;
 
 	const state: QuitHandlerState = {
 		quitConfirmed: false,

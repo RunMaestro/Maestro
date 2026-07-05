@@ -611,9 +611,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					{
 						label: 'Add to Dictionary',
 						click: () =>
-							mainWindow.webContents.session.addWordToSpellCheckerDictionary(
-								params.misspelledWord
-							),
+							mainWindow.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
 					},
 					{ type: 'separator' }
 				);
@@ -651,8 +649,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				exitCode: details.exitCode,
 			});
 
-			const intentionalTermination =
-				details.reason === 'killed' || details.reason === 'clean-exit';
+			const intentionalTermination = details.reason === 'killed' || details.reason === 'clean-exit';
 			if (!intentionalTermination) {
 				// Report to Sentry from main process (always available)
 				reportCrashToSentry(`Renderer process gone: ${details.reason}`, 'fatal', {

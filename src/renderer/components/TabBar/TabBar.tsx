@@ -436,8 +436,11 @@ function TabBarInner({
 				setTimeout(() => dragImage.remove(), 0);
 			}
 
-			window.maestro?.windows
-				?.getWindowBounds?.()
+			const windowBoundsPromise = window.maestro?.windows?.getWindowBounds?.();
+			if (!windowBoundsPromise) {
+				return;
+			}
+			windowBoundsPromise
 				.then((bounds) => {
 					windowBoundsRef.current = bounds;
 					setDragPreview({

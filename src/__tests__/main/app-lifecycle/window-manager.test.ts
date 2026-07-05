@@ -98,15 +98,13 @@ vi.mock('electron', () => ({
 			id: 1,
 			workArea: { x: 0, y: 0, width: 1920, height: 1080 },
 		})),
+		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
 	},
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
 	},
 	Menu: {
 		buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
-	},
-	screen: {
-		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
 	},
 }));
 
@@ -464,7 +462,7 @@ describe('app-lifecycle/window-manager', () => {
 
 			// Trigger close handler
 			expect(windowCloseHandler).not.toBeNull();
-			windowCloseHandler!();
+			windowEventHandlers.close![0]();
 
 			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
 				x: 100,
@@ -547,7 +545,7 @@ describe('app-lifecycle/window-manager', () => {
 			});
 
 			windowManager.createWindow();
-			windowCloseHandler!();
+			windowEventHandlers.close![0]();
 
 			// Should save isMaximized but not bounds
 			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
@@ -614,7 +612,7 @@ describe('app-lifecycle/window-manager', () => {
 				>[0]['windowStateStore'],
 				isDevelopment: false,
 				preloadPath: '/path/to/preload.js',
-				rendererPath: '/path/to/index.html',
+				rendererProductionUrl: 'app://app/index.html',
 				devServerUrl: 'http://localhost:5173',
 				useNativeTitleBar: false,
 				autoHideMenuBar: false,
@@ -623,7 +621,7 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow('primary', ['session-1']);
 			windowManager.createSecondaryWindow(['session-2', 'session-3'], {});
-			windowCloseHandler!();
+			windowEventHandlers.close![1]();
 
 			expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual([
 				'session-1',
@@ -832,9 +830,9 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow file:// navigation within the renderer's directory (/path/to/)
+			// Should allow navigation to the exact production app entry URL.
 			const mockEvent = { preventDefault: vi.fn() };
-			navigateHandler(mockEvent, 'file:///path/to/index.html');
+			navigateHandler(mockEvent, 'app://app/index.html');
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
 		});
 
@@ -888,9 +886,9 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow dev server navigation
+			// Should allow the exact dev server entry URL.
 			const mockEvent = { preventDefault: vi.fn() };
-			navigateHandler(mockEvent, 'http://localhost:5173/some/path');
+			navigateHandler(mockEvent, 'http://localhost:5173/');
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
 		});
 
@@ -959,11 +957,11 @@ describe('app-lifecycle/window-manager', () => {
 
 			// Clipboard permissions should be allowed
 			const allowedCb = vi.fn();
-			handler(null, 'clipboard-read', allowedCb);
+			handler(mockWebContents, 'clipboard-read', allowedCb);
 			expect(allowedCb).toHaveBeenCalledWith(true);
 
 			const writeCb = vi.fn();
-			handler(null, 'clipboard-sanitized-write', writeCb);
+			handler(mockWebContents, 'clipboard-sanitized-write', writeCb);
 			expect(writeCb).toHaveBeenCalledWith(true);
 
 			// All other permissions should be denied

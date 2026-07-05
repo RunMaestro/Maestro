@@ -474,7 +474,7 @@ describe('notificationStore', () => {
 		describe('OS notifications', () => {
 			it('calls show when enabled', () => {
 				notifyToast({ type: 'success', title: 'Done', message: 'Task complete.' });
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Task complete.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Task complete.');
 			});
 
 			it('does not call show when disabled', () => {
@@ -490,7 +490,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					project: 'MyAgent',
 				});
-				expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Finished.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Finished.');
 			});
 
 			it('builds body with group prefix', () => {
@@ -500,7 +500,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					group: 'Backend',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend: Finished.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend: Finished.');
 			});
 
 			it('builds body with tab prefix', () => {
@@ -510,7 +510,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					tabName: 'Tab1',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'Tab1: Finished.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Tab1: Finished.');
 			});
 
 			it('builds body with group > tab prefix', () => {
@@ -521,12 +521,7 @@ describe('notificationStore', () => {
 					group: 'Backend',
 					tabName: 'Tab1',
 				});
-				expect(mockShow).toHaveBeenCalledWith(
-					'Done',
-					'Backend > Tab1: Finished.',
-					undefined,
-					undefined
-				);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Backend > Tab1: Finished.');
 			});
 
 			it('uses short agentSessionId when no tabName', () => {
@@ -536,7 +531,7 @@ describe('notificationStore', () => {
 					message: 'Finished.',
 					agentSessionId: 'abcdefgh-1234-5678-9abc-def012345678',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'abcdefgh: Finished.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'abcdefgh: Finished.');
 			});
 
 			it('extracts first sentence from message', () => {
@@ -545,7 +540,7 @@ describe('notificationStore', () => {
 					title: 'Done',
 					message: 'First sentence. Second sentence.',
 				});
-				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.', undefined, undefined);
+				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.');
 			});
 
 			it('passes window metadata for notification click routing', () => {
@@ -822,12 +817,7 @@ describe('notificationStore', () => {
 				tabName: 'Tab2',
 			});
 			// project overrides title
-			expect(mockShow).toHaveBeenCalledWith(
-				'MyAgent',
-				'Backend > Tab2: Finished.',
-				undefined,
-				undefined
-			);
+			expect(mockShow).toHaveBeenCalledWith('MyAgent', 'Backend > Tab2: Finished.');
 		});
 
 		it('builds body with no prefix when no metadata', () => {
@@ -836,7 +826,7 @@ describe('notificationStore', () => {
 				title: 'Done',
 				message: 'Finished.',
 			});
-			expect(mockShow).toHaveBeenCalledWith('Done', 'Finished.', undefined, undefined);
+			expect(mockShow).toHaveBeenCalledWith('Done', 'Finished.');
 		});
 
 		it('handles message with no sentence-ending punctuation', () => {
@@ -845,7 +835,7 @@ describe('notificationStore', () => {
 				title: 'Done',
 				message: 'No period here',
 			});
-			expect(mockShow).toHaveBeenCalledWith('Done', 'No period here', undefined, undefined);
+			expect(mockShow).toHaveBeenCalledWith('Done', 'No period here');
 		});
 	});
 

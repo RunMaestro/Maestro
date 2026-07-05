@@ -8,6 +8,7 @@ class MockBrowserWindow {
 	isDestroyed = vi.fn().mockReturnValue(false);
 	isMaximized = vi.fn().mockReturnValue(false);
 	isFullScreen = vi.fn().mockReturnValue(false);
+	isMinimized = vi.fn().mockReturnValue(false);
 	getBounds = vi.fn().mockReturnValue({ x: 10, y: 20, width: 800, height: 600 });
 
 	constructor(options: unknown) {

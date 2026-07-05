@@ -29,11 +29,11 @@ describe('app-lifecycle/window-close-policy', () => {
 
 		attachPrimaryWindowClosePolicy({
 			getPrimaryWindow: () => primaryWindow as never,
-			quitHandler: {
+			getQuitHandler: () => ({
 				setup: vi.fn(),
 				isQuitConfirmed: () => false,
 				confirmQuit: vi.fn(),
-			},
+			}),
 		});
 
 		closeHandlers[0]?.({ preventDefault });
@@ -57,11 +57,11 @@ describe('app-lifecycle/window-close-policy', () => {
 
 		attachPrimaryWindowClosePolicy({
 			getPrimaryWindow: () => primaryWindow as never,
-			quitHandler: {
+			getQuitHandler: () => ({
 				setup: vi.fn(),
 				isQuitConfirmed: () => true,
 				confirmQuit: vi.fn(),
-			},
+			}),
 		});
 
 		closeHandlers[0]?.({ preventDefault });
@@ -76,11 +76,11 @@ describe('app-lifecycle/window-close-policy', () => {
 
 		attachPrimaryWindowClosePolicy({
 			getPrimaryWindow: () => null,
-			quitHandler: {
+			getQuitHandler: () => ({
 				setup: vi.fn(),
 				isQuitConfirmed: () => false,
 				confirmQuit: vi.fn(),
-			},
+			}),
 		});
 
 		expect(mockAppQuit).not.toHaveBeenCalled();
