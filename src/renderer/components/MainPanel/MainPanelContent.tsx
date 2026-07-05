@@ -85,8 +85,12 @@ export interface MainPanelContentProps {
 	handleFilePreviewSearchQueryChange: (searchQuery: string) => void;
 	handleFilePreviewReload: () => void;
 	handleBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
-	/** Ref registry for the currently-mounted BrowserTabView — used to extract the active tab's content */
-	browserViewRef?: React.MutableRefObject<import('./BrowserTabView').BrowserTabViewHandle | null>;
+	/** Ref to the active (visible) BrowserTabView handle - used to extract the active tab's content. */
+	browserViewRef?: React.MutableRefObject<BrowserTabViewHandle | null>;
+	/** Per-tab BrowserTabView handle map for ALL mounted browser tabs of the active
+	 *  agent. Lifted from MainPanel so the coworking browser responder can reach a
+	 *  mounted (possibly hidden) tab's handle without stealing focus. */
+	browserViewRefs?: React.MutableRefObject<Map<string, BrowserTabViewHandle>>;
 
 	// Terminal mounting props
 	terminalViewRefs: React.MutableRefObject<
@@ -305,6 +309,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleFilePreviewReload,
 		handleBrowserTabUpdate,
 		browserViewRef,
+		browserViewRefs: browserViewRefsProp,
 		terminalViewRefs,
 		mountedTerminalSessionIds,
 		mountedTerminalSessionsRef,
@@ -592,7 +597,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const { layerCount } = useLayerStack();
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
-	const browserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
+	const fallbackBrowserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
+	const browserViewRefs = browserViewRefsProp ?? fallbackBrowserViewRefs;
 	React.useEffect(() => {
 		if (!browserViewRef) return;
 		const activeId = activeSession.activeBrowserTabId;

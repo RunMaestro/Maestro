@@ -33,7 +33,10 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session } from '../../types';
 import { isLimitError } from '../../../shared/types';
-import { sanitizeBrowserTabForPersistence } from '../../utils/browserTabPersistence';
+import {
+	isEphemeralBrowserTab,
+	sanitizeBrowserTabForPersistence,
+} from '../../utils/browserTabPersistence';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
@@ -178,9 +181,11 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const newActiveTerminalTabId = activeTerminalTabExists
 		? session.activeTerminalTabId
 		: (cleanedTerminalTabs[0]?.id ?? null);
-	const cleanedBrowserTabs = (session.browserTabs || []).map((tab) =>
-		sanitizeBrowserTabForPersistence(tab, session.id)
-	);
+	// Ephemeral (incognito) tabs never reach disk: their in-memory partition is
+	// gone after restart, so persisting the tab would resurrect it with no state.
+	const cleanedBrowserTabs = (session.browserTabs || [])
+		.filter((tab) => !isEphemeralBrowserTab(tab))
+		.map((tab) => sanitizeBrowserTabForPersistence(tab, session.id));
 	const activeBrowserTabExists = cleanedBrowserTabs.some(
 		(tab) => tab.id === session.activeBrowserTabId
 	);

@@ -74,6 +74,7 @@ import type {
 	ClosedTab,
 	ClosedTabEntry,
 	FilePreviewTab,
+	TerminalTab,
 	QueuedItem,
 } from '../../../renderer/types';
 import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
@@ -2840,6 +2841,99 @@ describe('tabHelpers', () => {
 			expect(result).not.toBeNull();
 			expect(result!.tabType).toBe('ai');
 			expect(result!.wasDuplicate).toBe(false);
+		});
+
+		it('restores a closed terminal tab with a freshly minted coworkingId and bumps the counter', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const closedTerminalTab: TerminalTab = {
+				id: 'term-1',
+				name: null,
+				shellType: 'zsh',
+				pid: 0,
+				cwd: '/test',
+				createdAt: Date.now(),
+				state: 'idle',
+			};
+			const closedEntry = {
+				type: 'terminal' as const,
+				tab: closedTerminalTab,
+				unifiedIndex: 1,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				nextCoworkingId: 5,
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabType).toBe('terminal');
+			// The restored tab must carry a numeric coworkingId (its term:N id) so it
+			// stays addressable by the coworking list_terminals registry, which only
+			// exposes terminal tabs where typeof coworkingId === 'number'. An id-less
+			// restore would be silently filtered out.
+			const restored = result!.session.terminalTabs.find((t) => t.id === result!.tabId);
+			expect(restored).toBeDefined();
+			expect(typeof restored!.coworkingId).toBe('number');
+			// nextCoworkingId was 5 and no terminal tabs existed, so the mint is 5.
+			expect(restored!.coworkingId).toBe(5);
+			// Counter bumps strictly past the minted id so ids are never reused.
+			expect(result!.session.nextCoworkingId).toBe(6);
+		});
+
+		it('clamps the restored terminal coworkingId past the highest existing terminal id', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const closedTerminalTab: TerminalTab = {
+				id: 'term-1',
+				name: null,
+				shellType: 'zsh',
+				pid: 0,
+				cwd: '/test',
+				createdAt: Date.now(),
+				state: 'idle',
+			};
+			const closedEntry = {
+				type: 'terminal' as const,
+				tab: closedTerminalTab,
+				unifiedIndex: 2,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				// nextCoworkingId intentionally left unset (legacy session). The mint must
+				// still clamp against max(existing coworkingId) + 1, not restart at 1.
+				terminalTabs: [
+					{
+						id: 'term-existing',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '/test',
+						createdAt: Date.now(),
+						state: 'idle',
+						coworkingId: 9,
+					},
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-existing' },
+				],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabType).toBe('terminal');
+			const restored = result!.session.terminalTabs.find((t) => t.id === result!.tabId);
+			expect(restored).toBeDefined();
+			expect(restored!.coworkingId).toBe(10);
+			expect(result!.session.nextCoworkingId).toBe(11);
 		});
 	});
 

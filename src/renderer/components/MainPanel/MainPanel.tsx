@@ -29,6 +29,9 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
+import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
+import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
+import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -39,6 +42,8 @@ import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
+import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
+import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
@@ -191,6 +196,10 @@ export const MainPanel = React.memo(
 		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
 		// tab is rendered, so this points to that one (or null if no browser tab is active).
 		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
+		// Per-tab BrowserTabView handle map for the active agent's mounted browser
+		// tabs (visible + kept-alive hidden). Lifted here so the coworking browser
+		// responder can reach a mounted tab's handle without stealing focus.
+		const browserViewRefs = useRef<Map<string, BrowserTabViewHandle>>(new Map());
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -199,6 +208,13 @@ export const MainPanel = React.memo(
 			terminalSearchOpen,
 			setTerminalSearchOpen,
 		} = useTerminalMounting(activeSession);
+
+		// Coworking - mirror active session's terminal tabs into the main-process registry
+		// so the MCP `list_terminals` tool is accurate, and answer buffer-fetch requests
+		// from main via the per-session TerminalView ref map. Both hooks no-op when the
+		// `coworking` Encore flag is off.
+		useCoworkingRegistrySync();
+		useCoworkingBufferResponder(terminalViewRefs);
 
 		// Extract tab handlers from props
 		const {
@@ -240,6 +256,12 @@ export const MainPanel = React.memo(
 			onTerminalTabRename,
 			onTerminalTabConfigureStartupCommand,
 		} = props;
+
+		// Coworking browser responder - answers browser-op requests by resolving
+		// the target tab's live (or kept-alive hidden) webview handle. It never
+		// switches the user's visible tab. No-ops when the `coworking` Encore flag
+		// is off.
+		useCoworkingBrowserResponder(browserViewRefs);
 
 		// Get the active tab for header display
 		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
@@ -346,7 +368,7 @@ export const MainPanel = React.memo(
 		);
 
 		// Fetch available models, effort levels, and agent defaults when agent type changes.
-		// Uses a stale flag to prevent race conditions when switching between agents —
+		// Uses a stale flag to prevent race conditions when switching between agents -
 		// without this, a slow response (e.g., `opencode models` subprocess) from the
 		// previous agent can overwrite the current agent's model list.
 		useEffect(() => {
@@ -363,7 +385,7 @@ export const MainPanel = React.memo(
 					if (!stale) setPillModels([]);
 				});
 			// Fetch effort options. Agents use either `effort` (Claude Code) or
-			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) — probe both
+			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both
 			// and use whichever the agent defines, so this stays correct as new
 			// agents are added without touching this file.
 			Promise.all([
@@ -519,7 +541,7 @@ export const MainPanel = React.memo(
 					tabElement.focus({ preventScroll: true });
 				},
 				reloadBrowserTab: () => {
-					// Same stale-closure caveat as `focusBrowserAddressBar` — read fresh.
+					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.
 					const session = selectActiveSession(useSessionStore.getState());
 					if (!session?.activeBrowserTabId) return;
 					const host = document.querySelector('[data-testid="browser-tab-host"]');
@@ -569,7 +591,7 @@ export const MainPanel = React.memo(
 			[refreshGitStatus, activeSession?.id]
 		);
 
-		// Terminal buffer action wrappers — resolve the terminal tab's scrollback to text,
+		// Terminal buffer action wrappers - resolve the terminal tab's scrollback to text,
 		// then delegate to the App-level text handlers (copy / gist / send to agent).
 		const resolveBuffer = useCallback(
 			(tabId: string): { content: string; displayName: string } | null => {
@@ -623,7 +645,7 @@ export const MainPanel = React.memo(
 			[props.onCopyText]
 		);
 
-		// Right-click "Send to Agent" on highlighted text — resolve the tab's display name
+		// Right-click "Send to Agent" on highlighted text - resolve the tab's display name
 		// so the Send-to-Agent modal shows e.g. "Terminal 2 Selection" as the source.
 		const handleSendTerminalSelectionToAgent = useCallback(
 			(tabId: string, text: string) => {
@@ -638,7 +660,7 @@ export const MainPanel = React.memo(
 			[activeSession, props.onSendTextToAgent]
 		);
 
-		// Browser content action wrappers — extract the rendered text of a browser tab
+		// Browser content action wrappers - extract the rendered text of a browser tab
 		// (activating it first if necessary) and delegate to the App-level text handlers.
 		const resolveBrowserContent = useCallback(
 			async (
@@ -831,7 +853,7 @@ export const MainPanel = React.memo(
 				setGitDiffPreview(diff.diff);
 			} else {
 				notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-				// Polling cache said there were changes but `git diff` is empty —
+				// Polling cache said there were changes but `git diff` is empty -
 				// repo state changed since the last poll. Re-sync so the widget
 				// stops advertising stale stats.
 				void refreshGitStatus();
@@ -862,72 +884,76 @@ export const MainPanel = React.memo(
 			return <EmptyMainPanel theme={theme} />;
 		}
 
-		// Show log viewer
-		if (logViewerOpen) {
+		// Coworking hosts (approval dialog + background browser webviews) mount
+		// OUTSIDE the branch switch below so an approval requested while the log,
+		// sessions, or memory viewer (or the empty state) is showing still has a
+		// mount point and the agent's browser tool call never hangs.
+		const renderBranch = () => {
+			// Show log viewer
+			if (logViewerOpen) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<LogViewer
+							theme={theme}
+							onClose={() => setLogViewerOpen(false)}
+							logLevel={logLevel}
+							savedSelectedLevels={logViewerSelectedLevels}
+							onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
+							onShortcutUsed={props.onShortcutUsed}
+							onSessionClick={handleLogSessionClick}
+						/>
+					</div>
+				);
+			}
+
+			// Show agent sessions browser (only if agent supports session storage)
+			if (agentSessionsOpen && hasCapability('supportsSessionStorage')) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<AgentSessionsBrowser
+							theme={theme}
+							activeSession={activeSession || undefined}
+							activeAgentSessionId={activeAgentSessionId}
+							onClose={() => setAgentSessionsOpen(false)}
+							onResumeSession={onResumeAgentSession}
+							onNewSession={onNewAgentSession}
+							onUpdateTab={props.onUpdateTabByClaudeSessionId}
+						/>
+					</div>
+				);
+			}
+
+			// Show memory viewer (only if agent supports per-project memory)
+			if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
+				return (
+					<div
+						className="flex-1 flex flex-col min-w-0 relative"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<MemoryViewer
+							theme={theme}
+							activeSession={activeSession || undefined}
+							onClose={() => setMemoryViewerOpen(false)}
+						/>
+					</div>
+				);
+			}
+
+			// Show empty state when no active session
+			if (!activeSession) {
+				return <EmptyMainPanel theme={theme} />;
+			}
+
+			// File preview eligibility checked inline below
+
+			// Show normal session view
 			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<LogViewer
-						theme={theme}
-						onClose={() => setLogViewerOpen(false)}
-						logLevel={logLevel}
-						savedSelectedLevels={logViewerSelectedLevels}
-						onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
-						onShortcutUsed={props.onShortcutUsed}
-						onSessionClick={handleLogSessionClick}
-					/>
-				</div>
-			);
-		}
-
-		// Show agent sessions browser (only if agent supports session storage)
-		if (agentSessionsOpen && hasCapability('supportsSessionStorage')) {
-			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<AgentSessionsBrowser
-						theme={theme}
-						activeSession={activeSession || undefined}
-						activeAgentSessionId={activeAgentSessionId}
-						onClose={() => setAgentSessionsOpen(false)}
-						onResumeSession={onResumeAgentSession}
-						onNewSession={onNewAgentSession}
-						onUpdateTab={props.onUpdateTabByClaudeSessionId}
-					/>
-				</div>
-			);
-		}
-
-		// Show memory viewer (only if agent supports per-project memory)
-		if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
-			return (
-				<div
-					className="flex-1 flex flex-col min-w-0 relative"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<MemoryViewer
-						theme={theme}
-						activeSession={activeSession || undefined}
-						onClose={() => setMemoryViewerOpen(false)}
-					/>
-				</div>
-			);
-		}
-
-		// Show empty state when no active session
-		if (!activeSession) {
-			return <EmptyMainPanel theme={theme} />;
-		}
-
-		// File preview eligibility checked inline below
-
-		// Show normal session view
-		return (
-			<>
 				<ErrorBoundary>
 					<div
 						className="flex-1 flex flex-col relative isolate"
@@ -1083,6 +1109,7 @@ export const MainPanel = React.memo(
 							handleFilePreviewReload={handleFilePreviewReload}
 							handleBrowserTabUpdate={onBrowserTabUpdate}
 							browserViewRef={browserViewRef}
+							browserViewRefs={browserViewRefs}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}
@@ -1225,6 +1252,14 @@ export const MainPanel = React.memo(
 						/>
 					</div>
 				</ErrorBoundary>
+			);
+		};
+
+		return (
+			<>
+				{renderBranch()}
+				<CoworkingApprovalHost theme={theme} />
+				<CoworkingBackgroundBrowsers theme={theme} />
 			</>
 		);
 	})

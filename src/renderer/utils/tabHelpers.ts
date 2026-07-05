@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
-import { createTerminalTab } from './terminalTabHelpers';
+import { createTerminalTab, nextTerminalCoworkingId } from './terminalTabHelpers';
 import {
 	findActiveUnifiedTabIndex,
 	insertAfterActiveInUnifiedTabOrder,
@@ -1791,13 +1791,20 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 			wasDuplicate: false,
 		};
 	} else {
-		// Terminal tab restore — create a fresh terminal tab (old PTY is gone, can't restore)
+		// Terminal tab restore: create a fresh terminal tab (old PTY is gone, can't restore).
+		// Mint a coworkingId from the same session counter new terminal tabs use so the
+		// restored tab keeps its term:N pill and stays visible to list_terminals (coworking
+		// MCP); without it the tab would restore id-less and be filtered out of the registry.
 		const closedTerminalTab = closedEntry.tab;
-		const freshTab = createTerminalTab(
-			closedTerminalTab.shellType,
-			closedTerminalTab.cwd,
-			closedTerminalTab.name
-		);
+		const { coworkingId, nextCoworkingId } = nextTerminalCoworkingId(session);
+		const freshTab = {
+			...createTerminalTab(
+				closedTerminalTab.shellType,
+				closedTerminalTab.cwd,
+				closedTerminalTab.name
+			),
+			coworkingId,
+		};
 
 		// Insert into unifiedTabOrder at the original position
 		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);
@@ -1818,6 +1825,7 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 				unifiedTabOrder: updatedUnifiedTabOrder,
 				unifiedClosedTabHistory: remainingHistory,
 				inputMode: 'terminal',
+				nextCoworkingId,
 			},
 			wasDuplicate: false,
 		};

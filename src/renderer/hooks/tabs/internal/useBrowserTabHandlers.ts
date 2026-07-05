@@ -12,7 +12,7 @@ import { createBrowserTab, normalizeBrowserTabUpdates } from './browserTabHelper
 import type { BrowserTabHandlersReturn } from './types';
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
-	const handleNewBrowserTab = useCallback(() => {
+	const handleNewBrowserTab = useCallback((options?: { ephemeral?: boolean }) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
 		setSessions((prev: Session[]) =>
@@ -22,6 +22,7 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 				const newBrowserTab = createBrowserTab(s.id, homeUrl, {
 					title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
 					isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
+					ephemeral: options?.ephemeral,
 				});
 
 				return {

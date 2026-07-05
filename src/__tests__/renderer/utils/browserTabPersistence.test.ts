@@ -5,7 +5,9 @@ import {
 	getBrowserTabLabel,
 	getBrowserTabPartition,
 	getBrowserTabTitle,
+	getEphemeralBrowserTabPartition,
 	getSafeBrowserTabPartition,
+	isEphemeralBrowserTab,
 	isHttpBrowserTabUrl,
 	normalizeBrowserTabUrl,
 	sanitizeBrowserTabForPersistence,
@@ -197,6 +199,44 @@ describe('browserTabPersistence', () => {
 				title: DEFAULT_BROWSER_TAB_TITLE,
 				partition: 'persist:maestro-browser-session-session-2',
 				favicon: null,
+			});
+		});
+
+		describe('ephemeral (incognito) partitions', () => {
+			const baseTab: BrowserTab = {
+				id: 'browser-eph',
+				url: 'https://example.com',
+				title: 'Example',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			};
+
+			it('mints partitions that satisfy the main-process clear/attach gates', () => {
+				// Must match EPHEMERAL_BROWSER_TAB_PARTITION_PATTERN in
+				// src/main/ipc/handlers/browser-session.ts (and the will-attach-webview
+				// allowlist): a minted incognito partition that fails those gates would
+				// make ephemeral tabs unattachable/unclearable.
+				const partition = getEphemeralBrowserTabPartition(' My Session/1! ');
+				expect(partition).toMatch(/^maestro-ephemeral-[A-Za-z0-9_-]+-[a-z0-9]{8}$/);
+				// No persist: scheme - Electron must keep the data in memory only.
+				expect(partition.startsWith('persist:')).toBe(false);
+			});
+
+			it('mints a distinct partition per call so incognito tabs never share state', () => {
+				expect(getEphemeralBrowserTabPartition('s')).not.toBe(getEphemeralBrowserTabPartition('s'));
+			});
+
+			it('isEphemeralBrowserTab recognizes the flag OR the partition prefix', () => {
+				expect(isEphemeralBrowserTab({ ...baseTab, ephemeral: true })).toBe(true);
+				expect(
+					isEphemeralBrowserTab({ ...baseTab, partition: 'maestro-ephemeral-s-a1b2c3d4' })
+				).toBe(true);
+				expect(
+					isEphemeralBrowserTab({ ...baseTab, partition: 'persist:maestro-browser-session-s' })
+				).toBe(false);
+				expect(isEphemeralBrowserTab(baseTab)).toBe(false);
 			});
 		});
 	});

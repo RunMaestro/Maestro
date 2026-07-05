@@ -336,6 +336,43 @@ describe('useDebouncedPersistence', () => {
 				]);
 			});
 
+			it('drops ephemeral (incognito) tabs from persistence and nulls a stale active id', () => {
+				const keeper = makeBrowserTab({
+					id: 'browser-keep',
+					partition: 'persist:maestro-browser-session-session-eph',
+				});
+				// Ephemeral is recognized by flag OR partition prefix; cover both.
+				const flagged: BrowserTab = {
+					...makeBrowserTab({ id: 'browser-flagged' }),
+					ephemeral: true,
+				};
+				const prefixOnly = makeBrowserTab({
+					id: 'browser-prefix',
+					partition: 'maestro-ephemeral-session-eph-a1b2c3d4',
+				});
+				const session = makeSession({
+					id: 'session-eph',
+					browserTabs: [keeper, flagged, prefixOnly],
+					activeBrowserTabId: 'browser-flagged',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				// Only the normal tab reaches disk; both incognito markers are dropped.
+				expect(persisted[0].browserTabs.map((tab) => tab.id)).toEqual(['browser-keep']);
+				// The active pointer referenced a dropped incognito tab: nulled, so a
+				// restart cannot resurrect a tab whose in-memory partition is gone.
+				expect(persisted[0].activeBrowserTabId).toBeNull();
+			});
+
 			it('repairs unsafe persisted browser partitions and stale active browser ids', () => {
 				const browserTab = makeBrowserTab({
 					id: 'browser-1',

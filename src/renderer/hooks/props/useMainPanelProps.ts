@@ -203,7 +203,7 @@ export interface UseMainPanelPropsDeps {
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
 	handleNewFileTab: () => void;
-	handleNewBrowserTab: () => void;
+	handleNewBrowserTab: (options?: { ephemeral?: boolean }) => void;
 	handleBrowserTabSelect: (tabId: string) => void;
 	handleBrowserTabClose: (tabId: string) => void;
 	handleBrowserTabRename: (tabId: string) => void;

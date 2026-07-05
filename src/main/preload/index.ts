@@ -58,6 +58,8 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createCoworkingApi } from './coworking';
+import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 
@@ -224,6 +226,10 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Coworking API (per-agent MCP installer + terminal registry sync)
+	coworking: createCoworkingApi(),
+	// Browser Session API (clear per-partition browsing data)
+	browserSession: createBrowserSessionApi(),
 
 	// Multi-window API (window.maestro.windows.* — enumerate/create/move windows)
 	windows: createWindowsApi(),
@@ -320,6 +326,10 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// Coworking
+	createCoworkingApi,
+	// Browser Session
+	createBrowserSessionApi,
 	// Multi-window
 	createWindowsApi,
 	// Session Images
@@ -563,6 +573,17 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+export type {
+	// From coworking
+	CoworkingApi,
+	CoworkingTerminalEntry,
+	CoworkingTerminalRecord,
+	CoworkingInstallStatus,
+} from './coworking';
+export type {
+	// From browserSession
+	BrowserSessionApi,
+} from './browserSession';
 export type {
 	// From windows
 	WindowsApi,

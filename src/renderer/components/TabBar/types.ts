@@ -13,7 +13,7 @@ export interface TabBarProps {
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */
 	onNewTerminalTab?: () => void;
 	onRequestRename?: (tabId: string) => void;

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Session } from '../../types';
 import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	useCoworkingBrowserKeepAliveStore,
+	activePinnedTabIds,
+} from '../../stores/coworkingBrowserKeepAliveStore';
 
 /**
  * Decides which of the active agent's browser tabs stay mounted.
@@ -28,6 +32,10 @@ import { useSettingsStore } from '../../stores/settingsStore';
 export function useBrowserTabMounting(activeSession: Session | null): string[] {
 	const keepAlive = useSettingsStore((s) => s.browserTabKeepAlive);
 	const keepAliveLimit = useSettingsStore((s) => s.browserTabKeepAliveLimit);
+	// Browser tabs a coworking agent is actively driving (TTL pins) must stay
+	// mounted even when backgrounded, so the agent can keep interacting after the
+	// user clicks away. Subscribing re-renders when a pin is added or lapses.
+	const pins = useCoworkingBrowserKeepAliveStore((s) => s.pins);
 
 	const sessionId = activeSession?.id ?? null;
 	const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
@@ -91,11 +99,18 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 			(groupBrowserLeafKey ? groupBrowserLeafKey.split(',') : []).filter((id) => liveSet.has(id))
 		);
 
-		if (keepAlive === 'all') {
-			return liveIds;
+		// Tabs to keep mounted. Always includes the active tab and any tab a
+		// coworking agent has recently driven (TTL pin), so a backgrounded
+		// agent-driven tab stays live/interactive regardless of the keepAlive mode.
+		const keep = new Set<string>();
+		if (activeBrowserTabId && liveSet.has(activeBrowserTabId)) keep.add(activeBrowserTabId);
+		for (const id of activePinnedTabIds(pins)) {
+			if (liveSet.has(id)) keep.add(id);
 		}
 
-		if (keepAlive === 'recent') {
+		if (keepAlive === 'all') {
+			for (const id of liveIds) keep.add(id);
+		} else if (keepAlive === 'recent') {
 			const cap = Math.max(1, Math.floor(keepAliveLimit) || 1);
 			const ordered = recency.order.filter((id) => liveSet.has(id));
 			// The active tab must always be mounted even if recency hasn't caught up.
@@ -105,18 +120,24 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 				!ordered.includes(activeBrowserTabId)
 					? [activeBrowserTabId, ...ordered]
 					: ordered;
-			const kept = new Set(withActive.slice(0, cap));
-			// Tiled group browser panes are mounted in ADDITION to the LRU cap so a
-			// group with more browser panes than the limit still renders every pane.
-			groupLeaves.forEach((id) => kept.add(id));
-			// Emit in live-tab order so the rendered webview nodes never reorder.
-			return liveIds.filter((id) => kept.has(id));
+			for (const id of withActive.slice(0, cap)) keep.add(id);
 		}
+		// 'off': only the active tab (plus any pins), already added above.
 
-		// 'off' — the active browser tab plus any tiled group browser panes.
-		const kept = new Set(groupLeaves);
-		if (activeBrowserTabId && liveSet.has(activeBrowserTabId)) kept.add(activeBrowserTabId);
-		if (kept.size === 0) return [];
-		return liveIds.filter((id) => kept.has(id));
-	}, [liveIdsKey, keepAlive, keepAliveLimit, activeBrowserTabId, recency, groupBrowserLeafKey]);
+		// Tiled group browser panes are always mounted in ADDITION to the keep-alive
+		// policy above so a group with more browser panes than the limit still renders
+		// every pane.
+		groupLeaves.forEach((id) => keep.add(id));
+		if (keep.size === 0) return [];
+		// Emit in live-tab order so the rendered webview nodes never reorder.
+		return liveIds.filter((id) => keep.has(id));
+	}, [
+		liveIdsKey,
+		keepAlive,
+		keepAliveLimit,
+		activeBrowserTabId,
+		recency,
+		pins,
+		groupBrowserLeafKey,
+	]);
 }

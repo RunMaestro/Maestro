@@ -306,6 +306,7 @@
 		"better-sqlite3": "^12.11.1",
 		"canvas-confetti": "^1.9.4",
 		"chokidar": "^3.6.0",
+		"comment-json": "^4.2.5",
 		"commander": "^14.0.2",
 		"d3-force": "^3.0.0",
 		"date-fns": "^4.1.0",

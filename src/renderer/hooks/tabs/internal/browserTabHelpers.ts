@@ -4,6 +4,7 @@ import {
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabPartition,
 	getBrowserTabTitle,
+	getEphemeralBrowserTabPartition,
 	normalizeBrowserTabUrl,
 } from '../../../utils/browserTabPersistence';
 import { generateId } from '../../../utils/ids';
@@ -11,7 +12,7 @@ import { generateId } from '../../../utils/ids';
 export function createBrowserTab(
 	sessionId: string,
 	url: string,
-	options?: { title?: string; isLoading?: boolean }
+	options?: { title?: string; isLoading?: boolean; ephemeral?: boolean }
 ): BrowserTab {
 	return {
 		id: generateId(),
@@ -20,11 +21,14 @@ export function createBrowserTab(
 			options?.title ??
 			(url === DEFAULT_BROWSER_TAB_URL ? DEFAULT_BROWSER_TAB_TITLE : getBrowserTabTitle(url, url)),
 		createdAt: Date.now(),
-		partition: getBrowserTabPartition(sessionId),
+		partition: options?.ephemeral
+			? getEphemeralBrowserTabPartition(sessionId)
+			: getBrowserTabPartition(sessionId),
 		canGoBack: false,
 		canGoForward: false,
 		isLoading: options?.isLoading ?? true,
 		favicon: null,
+		...(options?.ephemeral ? { ephemeral: true } : {}),
 	};
 }
 

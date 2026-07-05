@@ -12,8 +12,12 @@ import {
 	ChevronDown,
 	ChevronUp,
 	ExternalLink,
+	Eye,
+	EyeOff,
 	Globe,
 	RotateCw,
+	Trash2,
+	VenetianMask,
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
@@ -45,6 +49,7 @@ type ElectronWebviewElement = HTMLElement & {
 		options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
 	) => number;
 	stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
+	capturePage?: () => Promise<{ toDataURL: () => string }>;
 };
 
 interface BrowserTabViewProps {
@@ -71,7 +76,7 @@ export interface BrowserTabViewHandle {
 	 * Returns `""` if the webview cannot be reached or the script throws.
 	 */
 	getContent(): Promise<string>;
-	/** The tabId this view is currently rendering — used for ref-to-tab reconciliation. */
+	/** The tabId this view is currently rendering - used for ref-to-tab reconciliation. */
 	getTabId(): string;
 	/** Open the in-page find bar and focus its input. */
 	openFind(): void;
@@ -81,6 +86,93 @@ export interface BrowserTabViewHandle {
 	goForward(): void;
 	/** Move focus into the webview guest content (so arrow keys scroll the page). */
 	focusWebview(): void;
+	/** Extract the page's rendered text or HTML in the requested format. Like
+	 *  getContent but format-aware; waits briefly for dom-ready. */
+	extract(format: 'text' | 'innerText' | 'html'): Promise<string>;
+	/** Current url + title of the loaded page (best-effort: webview-fresh with a
+	 *  fallback to the last-known tab metadata). */
+	getMeta(): { url: string; title: string };
+	/** Navigate the tab to a url/search target. Returns the resolved url; throws
+	 *  on an invalid target. Used by the coworking browser_navigate tool. */
+	navigate(url: string): string;
+	/** Reload the current page. */
+	reload(): void;
+	/** Stop the in-flight load. */
+	stop(): void;
+	/** Run JavaScript in the guest page and resolve its result. Used by the
+	 *  coworking browser_click / browser_type / browser_eval tools. */
+	executeJavaScript(code: string): Promise<unknown>;
+	/** Capture a PNG screenshot of the tab as a data URL. Throws when capture is
+	 *  unavailable (e.g. webview not ready). */
+	capturePage(): Promise<string>;
+}
+
+/** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
+ *  project's ES2020 lib). Used to poll for dom-ready without busy-waiting. */
+function delay(ms: number): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	setTimeout(resolve, ms);
+	return promise;
+}
+
+/** Poll until the guest webview reports it has stopped loading, or the deadline
+ *  passes. An unreachable isLoading() is treated as "not loading" so a read is
+ *  best-effort rather than hanging. */
+async function waitNotLoading(webview: ElectronWebviewElement, deadline: number): Promise<void> {
+	while (Date.now() < deadline) {
+		let loading = false;
+		try {
+			loading = webview.isLoading();
+		} catch {
+			loading = false;
+		}
+		if (!loading) return;
+		await delay(50);
+	}
+}
+
+/** Wait for the guest to be dom-ready AND to have finished loading before an
+ *  extract, so a read right after a navigation returns the loaded page rather
+ *  than a mid-load or pre-navigation snapshot. A short lead delay lets a just
+ *  issued navigation flip isLoading before we sample it, and a post-load settle
+ *  lets content that renders right after stop-loading (SPAs) appear. Bounded so
+ *  a page that never goes network-idle still resolves. */
+async function waitForReadyToRead(
+	webview: ElectronWebviewElement,
+	isDomReadyRef: React.MutableRefObject<boolean>,
+	maxMs = 10000
+): Promise<void> {
+	const deadline = Date.now() + maxMs;
+	await delay(150);
+	while (!isDomReadyRef.current && Date.now() < deadline) {
+		await delay(50);
+	}
+	await waitNotLoading(webview, deadline);
+	await delay(300);
+	await waitNotLoading(webview, deadline);
+}
+
+/** Extract page text/HTML from the guest webview. Returns "" if unreachable or
+ *  the injected script throws. Electron's executeJavaScript queues until the
+ *  page is ready, so this is safe to call mid-navigation. */
+async function extractFromWebview(
+	webview: ElectronWebviewElement,
+	isDomReadyRef: React.MutableRefObject<boolean>,
+	format: 'text' | 'innerText' | 'html'
+): Promise<string> {
+	await waitForReadyToRead(webview, isDomReadyRef);
+	const expr =
+		format === 'html'
+			? '(document.documentElement && document.documentElement.outerHTML) || ""'
+			: format === 'innerText'
+				? '(document.documentElement && document.documentElement.innerText) || ""'
+				: '(document.body && document.body.innerText) || ""';
+	try {
+		const result = await webview.executeJavaScript(expr);
+		return typeof result === 'string' ? result : '';
+	} catch {
+		return '';
+	}
 }
 
 function syncWebviewLayout(webview: ElectronWebviewElement | null) {
@@ -109,6 +201,16 @@ export const BrowserTabView = React.memo(
 		const hostRef = useRef<HTMLDivElement | null>(null);
 		const isDomReadyRef = useRef(false);
 		const latestTabRef = useRef(tab);
+		// The <webview> src is set ONCE at mount and never re-driven from React
+		// afterward. Both navigation paths (address-bar `navigateToAddress` and the
+		// coworking `navigate()` handle) assign `webview.src` imperatively with a
+		// `!==` guard, while `did-navigate` writes the live URL into `tab.url` only
+		// for the address bar / persistence. Binding `<webview src={tab.url}>` to
+		// that mutated value made React re-assign the src attribute on every
+		// navigation event, and re-assigning a <webview>'s src reloads it, so a
+		// redirecting/canonicalizing site (e.g. google.com to www.google.com/)
+		// refreshed forever. Capturing the initial url in a ref breaks the loop.
+		const initialSrcRef = useRef(tab.url || DEFAULT_BROWSER_TAB_URL);
 		const isAddressFocusedRef = useRef(false);
 		// Track whether the user explicitly clicked into the webview host area.
 		// Used to distinguish intentional focus (user click) from programmatic
@@ -122,6 +224,18 @@ export const BrowserTabView = React.memo(
 		const [findMatches, setFindMatches] = useState({ active: 0, total: 0 });
 		const findInputRef = useRef<HTMLInputElement | null>(null);
 		const findRequestIdRef = useRef(0);
+		// Two-step confirm for the destructive clear-browsing-data action: first
+		// click arms the button (auto-disarms after 4s), second click clears.
+		const [clearArmed, setClearArmed] = useState(false);
+		const clearDisarmTimerRef = useRef<number | null>(null);
+
+		useEffect(() => {
+			return () => {
+				if (clearDisarmTimerRef.current !== null) {
+					window.clearTimeout(clearDisarmTimerRef.current);
+				}
+			};
+		}, []);
 
 		// In the web-desktop browser bundle the Electron <webview> element is inert
 		// (no goBack/executeJavaScript host APIs), so it would render a dead pane.
@@ -151,23 +265,20 @@ export const BrowserTabView = React.memo(
 				async getContent(): Promise<string> {
 					const webview = webviewRef.current;
 					if (!webview) return '';
-					// Wait up to 2s for dom-ready so extraction works immediately after a
-					// tab activation. If the guest is still navigating, we still attempt —
-					// Electron's executeJavaScript queues until the page is ready.
-					if (!isDomReadyRef.current) {
-						const deadline = Date.now() + 2000;
-						while (!isDomReadyRef.current && Date.now() < deadline) {
-							await new Promise((r) => setTimeout(r, 50));
-						}
-					}
-					try {
-						const result = await webview.executeJavaScript(
-							'(document.body && document.body.innerText) || ""'
-						);
-						return typeof result === 'string' ? result : '';
-					} catch {
-						return '';
-					}
+					return extractFromWebview(webview, isDomReadyRef, 'text');
+				},
+				async extract(format: 'text' | 'innerText' | 'html'): Promise<string> {
+					const webview = webviewRef.current;
+					if (!webview) return '';
+					return extractFromWebview(webview, isDomReadyRef, format);
+				},
+				getMeta(): { url: string; title: string } {
+					const tab = latestTabRef.current;
+					const webview = webviewRef.current;
+					return {
+						url: webview?.getURL?.() || tab.url || '',
+						title: webview?.getTitle?.() || tab.title || '',
+					};
 				},
 				getTabId(): string {
 					return latestTabRef.current.id;
@@ -192,6 +303,70 @@ export const BrowserTabView = React.memo(
 					userClickedRef.current = true;
 					webviewRef.current?.focus();
 				},
+				navigate(rawUrl: string): string {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					const result = resolveBrowserTabNavigationTarget(rawUrl);
+					if (result.kind === 'error') throw new Error(result.message);
+					if (webview.src !== result.url) {
+						// The old page stays loaded until the new src reaches dom-ready;
+						// mark not-ready so a follow-up read/waitFor extracts the NEW page.
+						isDomReadyRef.current = false;
+						webview.src = result.url;
+					}
+					return result.url;
+				},
+				reload(): void {
+					webviewRef.current?.reload();
+				},
+				stop(): void {
+					webviewRef.current?.stop();
+				},
+				async executeJavaScript(code: string): Promise<unknown> {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					return webview.executeJavaScript(code);
+				},
+				async capturePage(): Promise<string> {
+					const webview = webviewRef.current;
+					if (!webview || !webview.capturePage) {
+						throw new Error('Screenshot is not available for this tab');
+					}
+					// Electron can only capture a PAINTING webview; a kept-alive-but-hidden
+					// tab (host visibility:hidden) throws UnknownVizError. If this tab is not
+					// on the visible compositor, momentarily force it to paint behind an
+					// opaque cover so the capture succeeds without the user ever seeing it -
+					// capturePage returns the guest's own frame, not the cover. We trigger
+					// only on visibility:hidden (the active-agent kept-alive mount); the
+					// off-screen background host paints already and needs no cover.
+					const host = hostRef.current;
+					const hidden = !!host && getComputedStyle(host).visibility === 'hidden';
+					const priorVisibility = host ? host.style.visibility : '';
+					let cover: HTMLDivElement | null = null;
+					if (host && hidden) {
+						cover = document.createElement('div');
+						cover.style.cssText = `position:absolute;inset:0;z-index:2147483647;background:${
+							theme.colors.bgMain || '#000'
+						};`;
+						host.appendChild(cover);
+						host.style.visibility = 'visible';
+						// Give the compositor a beat to produce a frame for the now-visible guest.
+						await delay(180);
+					}
+					try {
+						let dataUrl = (await webview.capturePage()).toDataURL();
+						if (dataUrl.length < 64 && hidden) {
+							await delay(160);
+							dataUrl = (await webview.capturePage()).toDataURL();
+						}
+						return dataUrl;
+					} finally {
+						if (host && hidden) {
+							host.style.visibility = priorVisibility;
+							cover?.remove();
+						}
+					}
+				},
 			}),
 			[]
 		);
@@ -209,7 +384,7 @@ export const BrowserTabView = React.memo(
 			};
 			const onFocusIn = () => {
 				if (!userClickedRef.current) {
-					// Focus was not user-initiated — push it back out, but leave the
+					// Focus was not user-initiated - push it back out, but leave the
 					// find-bar input alone (Cmd+F intentionally focuses it
 					// programmatically, and that is exactly the case this guard
 					// would otherwise mistakenly reject).
@@ -254,6 +429,18 @@ export const BrowserTabView = React.memo(
 			}
 		}, [tab.id, tab.url]);
 
+		// The component instance is reused across tab switches (see the addressValue
+		// reset above), so reset the two-step clear-session confirm too: arming Clear
+		// on tab A then switching to tab B must not leave B pre-armed, where one click
+		// would wipe B's data and skip the guard.
+		useEffect(() => {
+			setClearArmed(false);
+			if (clearDisarmTimerRef.current !== null) {
+				window.clearTimeout(clearDisarmTimerRef.current);
+				clearDisarmTimerRef.current = null;
+			}
+		}, [tab.id]);
+
 		useEffect(() => {
 			const webview = webviewRef.current;
 			if (!webview) return;
@@ -290,6 +477,12 @@ export const BrowserTabView = React.memo(
 
 			const handleStartLoading = () => updateTabState({ isLoading: true });
 			const handleStopLoading = () => {
+				// did-stop-loading is a strictly later signal than dom-ready: the guest
+				// has finished loading, so the page is committed and readable. Re-affirm
+				// readiness here because handleNavigationStart clears isDomReadyRef on
+				// every main-frame nav; if dom-ready does not fire again before
+				// stop-loading, readWebviewState would bail and leave the spinner stuck.
+				isDomReadyRef.current = true;
 				syncWebviewLayout(webview);
 				updateNavigationState();
 			};
@@ -311,6 +504,12 @@ export const BrowserTabView = React.memo(
 			};
 			const handleNavigationStart = (event: Event) => {
 				if ((event as Event & { isMainFrame?: boolean }).isMainFrame === false) return;
+				// Any main-frame navigation (link click, redirect, or imperative
+				// navigate) invalidates the loaded page, so mark not-ready; a coworking
+				// read then waits for the NEW document instead of sampling the old one.
+				// handleStopLoading re-affirms readiness on stop-loading so the spinner
+				// never sticks even when dom-ready does not fire again.
+				isDomReadyRef.current = false;
 				const nextUrl =
 					(event as Event & { url?: string }).url ||
 					webview.getURL?.() ||
@@ -650,6 +849,47 @@ export const BrowserTabView = React.memo(
 			void window.maestro.shell.openExternal(tab.url);
 		}, [tab.url]);
 
+		const handleToggleHiddenFromAgent = useCallback(() => {
+			onUpdateTab(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent });
+		}, [onUpdateTab, tab.id, tab.hiddenFromAgent]);
+
+		const handleClearSessionData = useCallback(() => {
+			const partition = tab.partition;
+			if (!partition) return;
+			if (!clearArmed) {
+				setClearArmed(true);
+				if (clearDisarmTimerRef.current !== null) {
+					window.clearTimeout(clearDisarmTimerRef.current);
+				}
+				clearDisarmTimerRef.current = window.setTimeout(() => setClearArmed(false), 4000);
+				return;
+			}
+			if (clearDisarmTimerRef.current !== null) {
+				window.clearTimeout(clearDisarmTimerRef.current);
+				clearDisarmTimerRef.current = null;
+			}
+			setClearArmed(false);
+			void (async () => {
+				try {
+					// Optional-chain the namespace: older preload bundles / test mocks may
+					// not expose browserSession, and that must degrade to a visible error
+					// instead of an unhandled rejection.
+					const res = await window.maestro.browserSession?.clearSessionData(partition);
+					if (res?.ok) {
+						webviewRef.current?.reload();
+					} else {
+						setAddressError(
+							`Could not clear browsing data: ${res?.error ?? 'not supported by this build'}`
+						);
+					}
+				} catch (err) {
+					setAddressError(
+						`Could not clear browsing data: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			})();
+		}, [clearArmed, tab.partition]);
+
 		return (
 			<div className="flex-1 min-h-0 flex flex-col" data-testid="browser-tab-view">
 				<div
@@ -708,6 +948,16 @@ export const BrowserTabView = React.memo(
 										borderColor: theme.colors.border,
 									}}
 								>
+									{tab.ephemeral ? (
+										<VenetianMask
+											aria-label="Incognito tab"
+											className="w-4 h-4 shrink-0"
+											style={{ color: theme.colors.textDim }}
+											data-testid="browser-tab-incognito-badge"
+										>
+											<title>Incognito tab - browsing data is kept in memory only</title>
+										</VenetianMask>
+									) : null}
 									{tab.favicon ? (
 										<img alt="" className="w-4 h-4 shrink-0" src={tab.favicon} />
 									) : (
@@ -759,6 +1009,40 @@ export const BrowserTabView = React.memo(
 						>
 							<ExternalLink className="w-4 h-4" />
 						</button>
+						<button
+							type="button"
+							onClick={handleToggleHiddenFromAgent}
+							className="flex items-center justify-center w-8 h-8 rounded transition-colors"
+							style={{
+								color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
+							}}
+							title={
+								tab.hiddenFromAgent
+									? 'Hidden from agents - click to expose this tab to coworking agents'
+									: 'Visible to agents - click to hide this tab from coworking agents'
+							}
+							aria-pressed={tab.hiddenFromAgent === true}
+						>
+							{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+						</button>
+						<button
+							type="button"
+							onClick={handleClearSessionData}
+							disabled={!tab.partition}
+							className="flex items-center justify-center w-8 h-8 rounded transition-colors disabled:opacity-40"
+							style={{
+								color: clearArmed ? theme.colors.error : theme.colors.textDim,
+							}}
+							title={
+								clearArmed
+									? 'Click again to clear ALL browsing data (cookies, storage, logins) for this agent\u2019s browser session'
+									: 'Clear browsing data for this agent\u2019s browser session (cookies, storage, logins - shared by all its tabs)'
+							}
+							aria-pressed={clearArmed}
+							data-testid="browser-tab-clear-session-data"
+						>
+							<Trash2 className="w-4 h-4" />
+						</button>
 					</div>
 				</div>
 
@@ -798,7 +1082,7 @@ export const BrowserTabView = React.memo(
 							}}
 							className="w-full h-full border-0 bg-white"
 							partition={tab.partition}
-							src={tab.url || DEFAULT_BROWSER_TAB_URL}
+							src={initialSrcRef.current}
 						/>
 					)}
 					{findOpen ? (
@@ -831,7 +1115,7 @@ export const BrowserTabView = React.memo(
 										(event.metaKey || event.ctrlKey) &&
 										!event.altKey
 									) {
-										// Cmd+G / Cmd+Shift+G — next/prev match (standard browser shortcut)
+										// Cmd+G / Cmd+Shift+G - next/prev match (standard browser shortcut)
 										event.preventDefault();
 										event.stopPropagation();
 										handleFindNext(!event.shiftKey);
@@ -841,7 +1125,7 @@ export const BrowserTabView = React.memo(
 										!event.altKey &&
 										!event.shiftKey
 									) {
-										// Cmd+F while find bar is open — re-focus and select the query
+										// Cmd+F while find bar is open - re-focus and select the query
 										event.preventDefault();
 										event.stopPropagation();
 										event.currentTarget.select();

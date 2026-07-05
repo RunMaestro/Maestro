@@ -439,6 +439,71 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockLogger.warn).toHaveBeenCalled();
 		});
 
+		it('gates webview attachment on the two minted browser-tab partition schemes', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+			expect(handler).toBeTruthy();
+
+			const cases: Array<{ name: string; partition: string; allowed: boolean }> = [
+				{
+					name: 'persistent browser-tab partition',
+					partition: 'persist:maestro-browser-session-sess-1',
+					allowed: true,
+				},
+				{
+					name: 'ephemeral (incognito) partition',
+					partition: 'maestro-ephemeral-sess-1-a1b2c3d4',
+					allowed: true,
+				},
+				{ name: 'foreign persist partition', partition: 'persist:evil', allowed: false },
+				{ name: 'ephemeral-lookalike prefix', partition: 'maestro-evil-sess-1', allowed: false },
+				{
+					// Correct `maestro-ephemeral-` prefix but missing the `-<random8>`
+					// suffix: the old startsWith gate allowed this, the full regex must
+					// now reject it so an attacker cannot attach with a lookalike prefix.
+					name: 'ephemeral prefix without the random-8 suffix',
+					partition: 'maestro-ephemeral-x',
+					allowed: false,
+				},
+				{
+					name: 'default session (empty partition)',
+					partition: '',
+					allowed: false,
+				},
+			];
+
+			for (const c of cases) {
+				const preventDefault = vi.fn();
+				handler?.(
+					{ preventDefault },
+					{ partition: c.partition },
+					{
+						src: 'https://example.com/',
+					}
+				);
+				if (c.allowed) {
+					expect(preventDefault, c.name).not.toHaveBeenCalled();
+				} else {
+					expect(preventDefault, c.name).toHaveBeenCalled();
+				}
+			}
+		});
+
 		it('hardens attached browser-tab guests with popup and navigation restrictions', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 

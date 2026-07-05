@@ -27,7 +27,7 @@ import { useSessionRestoration } from '../../../renderer/hooks/session/useSessio
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
-import type { Session } from '../../../renderer/types';
+import type { BrowserTab, Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Cast to access mock methods
@@ -385,6 +385,51 @@ describe('restoreSession — Migration logic', () => {
 
 		expect(restored!.activeBrowserTabId).toBeNull();
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
+	});
+
+	it('drops ephemeral (incognito) tabs during restoration and cleans their refs', async () => {
+		// An ephemeral tab should never reach disk, but a crash mid-write (or a
+		// hand-edited payload) can leave one behind. Restoration must drop it:
+		// its in-memory partition is gone, so reviving it yields a dead tab.
+		const keeper: BrowserTab = {
+			id: 'browser-keep',
+			url: 'https://example.com/docs',
+			title: 'Example Docs',
+			createdAt: 1,
+			partition: 'persist:maestro-browser-session-session-1',
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		const flagged: BrowserTab = { ...keeper, id: 'browser-flagged', ephemeral: true };
+		const prefixOnly: BrowserTab = {
+			...keeper,
+			id: 'browser-prefix',
+			partition: 'maestro-ephemeral-session-1-a1b2c3d4',
+		};
+		const session = createMockSession({
+			browserTabs: [keeper, flagged, prefixOnly],
+			activeBrowserTabId: 'browser-flagged',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-keep' },
+				{ type: 'browser' as const, id: 'browser-flagged' },
+				{ type: 'browser' as const, id: 'browser-prefix' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs.map((tab) => tab.id)).toEqual(['browser-keep']);
+		expect(restored!.activeBrowserTabId).toBeNull();
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-keep' },
+		]);
 	});
 
 	it('repairs unified tab order for restored browser tabs without changing active AI focus', async () => {

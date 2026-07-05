@@ -1,7 +1,11 @@
 import type { BrowserTab } from '../types';
+import { PERSISTENT_BROWSER_TAB_PARTITION_PATTERN } from '../../shared/browserTabPartition';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
-const BROWSER_TAB_PARTITION_PATTERN = /^persist:maestro-browser-session-[a-zA-Z0-9_-]+$/;
+// Ephemeral (incognito) browser tabs use a partition WITHOUT the `persist:`
+// prefix, so Electron keeps their session data purely in memory and discards
+// it when the app quits.
+export const EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX = 'maestro-ephemeral-';
 export const DEFAULT_BROWSER_TAB_URL = 'about:blank';
 export const DEFAULT_BROWSER_TAB_TITLE = 'New Tab';
 
@@ -18,11 +22,43 @@ export function getBrowserTabPartition(sessionId: string): string {
 	return `${BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}`;
 }
 
+// 8 lowercase alphanumerics. Uniqueness (not unguessability) is the goal: each
+// ephemeral tab gets its own partition so no state is shared between incognito
+// tabs, mirroring one-off private windows.
+function randomEphemeralSuffix(): string {
+	const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let suffix = '';
+	for (let i = 0; i < 8; i++) {
+		suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+	}
+	return suffix;
+}
+
+export function getEphemeralBrowserTabPartition(sessionId: string): string {
+	return `${EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}-${randomEphemeralSuffix()}`;
+}
+
+/**
+ * True when a tab is an ephemeral (incognito) browser tab. Checks the flag and
+ * the partition prefix so a tab that carries only one of the two markers is
+ * still recognized and excluded from persistence.
+ */
+export function isEphemeralBrowserTab(tab: BrowserTab): boolean {
+	return (
+		tab.ephemeral === true ||
+		(typeof tab.partition === 'string' &&
+			tab.partition.startsWith(EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX))
+	);
+}
+
 export function getSafeBrowserTabPartition(
 	partition: string | null | undefined,
 	sessionId: string
 ): string {
-	if (typeof partition === 'string' && BROWSER_TAB_PARTITION_PATTERN.test(partition.trim())) {
+	if (
+		typeof partition === 'string' &&
+		PERSISTENT_BROWSER_TAB_PARTITION_PATTERN.test(partition.trim())
+	) {
 		return partition.trim();
 	}
 

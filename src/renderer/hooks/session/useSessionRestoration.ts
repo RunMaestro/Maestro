@@ -20,7 +20,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
-import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
+import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
@@ -422,9 +422,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					state: 'idle' as const,
 					exitCode: undefined,
 				}));
-			const resetBrowserTabs = (correctedSession.browserTabs || []).map((tab) =>
-				rehydrateBrowserTab(tab, correctedSession.id)
-			);
+			// Ephemeral (incognito) tabs are never persisted, but drop any that leak
+			// through anyway (older snapshots): their in-memory partition did not
+			// survive the restart, so rehydrating them would produce a blank tab.
+			const resetBrowserTabs = (correctedSession.browserTabs || [])
+				.filter((tab) => !isEphemeralBrowserTab(tab))
+				.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
 			const validAiTabIds = new Set(resetAiTabs.map((tab) => tab.id));
 			const validBrowserTabIds = new Set(resetBrowserTabs.map((tab) => tab.id));
 			const validTerminalTabIds = new Set(resetTerminalTabs.map((tab) => tab.id));

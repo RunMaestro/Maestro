@@ -105,19 +105,52 @@ export function parseTerminalSessionId(
 // ─── CRUD Mutations ──────────────────────────────────────────────────────────
 
 /**
+ * Mint the next `coworkingId` for a terminal tab plus the bumped session
+ * counter. Shared by addTerminalTab and the reopen-closed-tab restore path so
+ * every terminal tab (new or restored) draws a stable, monotonic, never-reused
+ * `term:N` id from the same source. Clamps the persisted counter against the
+ * max id already present to survive legacy / corrupted sessions.
+ */
+export function nextTerminalCoworkingId(session: Session): {
+	coworkingId: number;
+	nextCoworkingId: number;
+} {
+	const maxExistingCoworkingId = (session.terminalTabs ?? []).reduce(
+		(max, t) => (typeof t.coworkingId === 'number' && t.coworkingId > max ? t.coworkingId : max),
+		0
+	);
+	const coworkingId = Math.max(session.nextCoworkingId ?? 1, maxExistingCoworkingId + 1);
+	return { coworkingId, nextCoworkingId: coworkingId + 1 };
+}
+
+/**
  * Add a terminal tab to a session.
  * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
  * the right of the currently active tab, and makes it the active terminal tab.
+ *
+ * Mints a stable, monotonic, never-reused `coworkingId` (used by the coworking
+ * MCP server to address terminals as "term:N") via the session-level counter
+ * `nextCoworkingId`. The counter increments on every add and never decrements,
+ * so closed-tab ids are never reused within the same session lifetime.
  *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
  * @returns New session with the tab added and set as active
  */
 export function addTerminalTab(session: Session, tab: TerminalTab): Session {
+	// Mint the base id + bumped counter from the shared source, then let an
+	// explicit tab.coworkingId (e.g. a restored tab) win if it's higher so we
+	// never hand out a duplicate term:N.
+	const { coworkingId: mintedCoworkingId, nextCoworkingId: bumpedCounter } =
+		nextTerminalCoworkingId(session);
+	const tabWithCoworkingId: TerminalTab = {
+		...tab,
+		coworkingId: tab.coworkingId ?? mintedCoworkingId,
+	};
 	const newTabRef: UnifiedTabRef = { type: 'terminal', id: tab.id };
 	return {
 		...session,
-		terminalTabs: [...(session.terminalTabs || []), tab],
+		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
 		activeTerminalTabId: tab.id,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
@@ -127,6 +160,9 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 		// overlay bleeds over the terminal view (its webview sits above at z-index 2).
 		activeGroupId: null,
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
+		// Bump strictly past the larger of the bumped counter and the chosen id so
+		// we never hand out the same id twice within a session.
+		nextCoworkingId: Math.max(bumpedCounter, (tabWithCoworkingId.coworkingId ?? 0) + 1),
 	};
 }
 

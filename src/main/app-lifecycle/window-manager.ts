@@ -22,8 +22,8 @@ import type { WindowRegistry } from '../window-registry';
 import { saveWindowState, WINDOW_STATE_SAVE_DEBOUNCE_MS } from '../window-state-persistence';
 import { debounce } from '../utils/debounce';
 import { isWebContentsAvailable } from '../utils/safe-send';
+import { isAllowedBrowserTabPartition } from '../../shared/browserTabPartition';
 
-const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // `file:` is allowed so users can open local HTML they just generated
 // (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
 // browser. The webview is still hardened (sandbox, no node, webSecurity true)
@@ -81,10 +81,6 @@ function isAllowedBrowserTabUrl(rawUrl: string): boolean {
 	} catch {
 		return false;
 	}
-}
-
-function isAllowedBrowserTabPartition(partition: string): boolean {
-	return partition.startsWith(BROWSER_TAB_PARTITION_PREFIX);
 }
 
 function hardenBrowserTabWebPreferences(webPreferences: BrowserTabWebPreferences): void {

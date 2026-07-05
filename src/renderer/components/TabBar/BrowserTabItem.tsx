@@ -10,6 +10,7 @@ import {
 	Check,
 	Pencil,
 	RotateCcw,
+	VenetianMask,
 } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
@@ -359,6 +360,15 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			>
 				{label}
 			</span>
+
+			{tab.ephemeral && (
+				<span
+					className="shrink-0 flex items-center"
+					title="Incognito tab - browsing data is kept in memory only and discarded when the app closes"
+				>
+					<VenetianMask className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+				</span>
+			)}
 
 			{showBrowserTabDomain && host && host !== label && (
 				<span
