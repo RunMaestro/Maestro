@@ -196,6 +196,7 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 // Mock cliDetection to provide a resolved SSH path
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
+	getExpandedEnv: vi.fn(() => ({ ...process.env })),
 }));
 
 // Mock platformDetection. Default mirrors the host so the existing
