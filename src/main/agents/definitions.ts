@@ -166,25 +166,15 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// desktop spawner (see `src/main/ipc/handlers/process.ts`) to pick a binary per turn
 		// based on per-tab Claude interactive mode state.
 		command: 'claude',
-		// YOLO mode (--dangerously-skip-permissions) is always enabled - Maestro requires it
-		args: [
-			'--print',
-			'--verbose',
-			'--output-format',
-			'stream-json',
-			'--dangerously-skip-permissions',
-		],
+		args: ['--print', '--verbose', '--output-format', 'stream-json'],
 		apiCommand: 'claude',
-		apiModeArgs: [
-			'--print',
-			'--verbose',
-			'--output-format',
-			'stream-json',
-			'--dangerously-skip-permissions',
-		],
+		apiModeArgs: ['--print', '--verbose', '--output-format', 'stream-json'],
 		interactiveCommand: 'maestro-p',
 		// maestro-p forwards these to the underlying claude TUI invocation.
-		interactiveModeArgs: ['--dangerously-skip-permissions'],
+		interactiveModeArgs: [],
+		// Full permission mode: bypass all Claude permission checks. In 'standard'
+		// mode the permission relay mediates each tool call instead.
+		fullAccessArgs: ['--dangerously-skip-permissions'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan

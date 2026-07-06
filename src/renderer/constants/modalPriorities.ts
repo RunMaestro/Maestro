@@ -32,6 +32,9 @@ export const MODAL_PRIORITIES = {
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
+	/** Claude Code standard-mode permission prompt - blocks until the user decides */
+	PERMISSION_PROMPT: 1008,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 

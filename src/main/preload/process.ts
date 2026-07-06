@@ -40,6 +40,7 @@ export interface ProcessConfig {
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
+	permissionMode?: 'full' | 'standard' | 'readonly'; // 3-way permission mode (overrides readOnlyMode/yoloMode)
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
 	// Stdin-based prompt delivery (Windows workaround for CLI length limits)
@@ -262,6 +263,35 @@ export function createProcessApi() {
 			ipcRenderer.on('process:exit', handler);
 			return () => ipcRenderer.removeListener('process:exit', handler);
 		},
+
+		/**
+		 * Subscribe to Claude Code permission-relay requests (standard mode).
+		 * The renderer shows a prompt and replies via respondPermission().
+		 */
+		onPermissionRequest: (
+			callback: (request: {
+				requestId: string;
+				sessionId: string;
+				tabId?: string;
+				toolName: string;
+				input: Record<string, unknown>;
+				createdAt: number;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);
+			ipcRenderer.on('process:permission-request', handler);
+			return () => ipcRenderer.removeListener('process:permission-request', handler);
+		},
+
+		/**
+		 * Send the user's allow/deny decision for a relayed permission request.
+		 */
+		respondPermission: (
+			requestId: string,
+			decision:
+				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+				| { behavior: 'deny'; message: string }
+		): Promise<boolean> => ipcRenderer.invoke('permission:respond', requestId, decision),
 
 		/**
 		 * Subscribe to agent session ID events

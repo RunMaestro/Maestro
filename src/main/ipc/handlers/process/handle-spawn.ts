@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
 import * as fsp from 'fs/promises';
@@ -40,6 +40,7 @@ import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
+import { preparePermissionRelayArgs } from '../../../permission-relay';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -116,8 +117,14 @@ export async function handleProcessSpawn(
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 	});
-	const { baseSessionId, claudeResolvedMode, resolvedMaestroPBinPath, resolvedConfigDirKey } =
-		claudeContext;
+	const {
+		baseSessionId,
+		claudeResolvedMode,
+		resolvedMaestroPBinPath,
+		resolvedConfigDirKey,
+		isClaudeCode,
+		isSshEnabled,
+	} = claudeContext;
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -126,6 +133,7 @@ export async function handleProcessSpawn(
 		readOnlyMode: config.readOnlyMode,
 		modelId: config.modelId,
 		yoloMode: config.yoloMode,
+		permissionMode: config.permissionMode,
 		agentSessionId: config.agentSessionId,
 	});
 
@@ -157,10 +165,17 @@ export async function handleProcessSpawn(
 		);
 	}
 
-	// In read-only mode, apply agent-specific env var overrides to strip
-	// blanket permission grants (e.g., OpenCode's "*":"allow" YOLO config)
+	// Derive effective read-only state, honoring the legacy boolean flag only
+	// when permissionMode wasn't explicitly set (back-compat for older configs).
+	const hasExplicitPermissionMode = config.permissionMode !== undefined;
+	const isReadOnly =
+		config.permissionMode === 'readonly' ||
+		(!hasExplicitPermissionMode && config.readOnlyMode === true);
+
+	// In read-only mode, apply agent-specific env var overrides to strip blanket
+	// permission grants.
 	let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
-	if (config.readOnlyMode && agent?.readOnlyEnvOverrides) {
+	if (isReadOnly && agent?.readOnlyEnvOverrides) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
 			...agent.readOnlyEnvOverrides,
@@ -263,6 +278,67 @@ export async function handleProcessSpawn(
 				`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} tools)`,
 				LOG_CONTEXT
 			);
+		}
+	}
+
+	// ========================================================================
+	// Standard permission mode (Claude Code, API/print path): route tool
+	// permission prompts through the Maestro relay. Without this, Claude
+	// aborts the whole run on the first non-allowed tool call. The relay
+	// injects `--permission-prompt-tool` + `--mcp-config` pointing at a
+	// stdio bridge that dials Maestro's loopback socket for a user
+	// decision. Not applicable to full/read-only modes, non-claude agents,
+	// or the interactive (maestro-p/TUI) path, which renders its own
+	// native prompts.
+	// ========================================================================
+	if (isClaudeCode && claudeResolvedMode === 'api' && config.permissionMode === 'standard') {
+		if (isSshEnabled) {
+			// Fail loud: never silently downgrade to full/unsafe over SSH.
+			// The relay socket is local-only, so it cannot mediate a remote
+			// spawn's tool calls; running standard mode remotely without it
+			// would leave the agent unable to act. Matches the SSH fail-loud
+			// convention (see CLAUDE.md / agent-spawner sshUnresolvedFailure).
+			logger.error(
+				'Claude Code standard permission mode is not supported over SSH',
+				LOG_CONTEXT,
+				{ sessionId: config.sessionId }
+			);
+			const win = getMainWindow();
+			if (win && isWebContentsAvailable(win)) {
+				win.webContents.send(
+					'process:data',
+					config.sessionId,
+					'\r\n[Maestro] Standard permission mode is not available for Claude Code over SSH. ' +
+						'Switch this agent to Full Access or Read-Only, or disable SSH.\r\n'
+				);
+			}
+			return { success: false, pid: 0 };
+		}
+		try {
+			const relayArgs = await preparePermissionRelayArgs({
+				sessionId: config.sessionId,
+				tabId: config.tabId,
+				userDataDir: app.getPath('userData'),
+				execPath: process.execPath,
+			});
+			finalArgs = [...finalArgs, ...relayArgs];
+		} catch (e) {
+			// Fail loud: don't spawn standard mode without the relay (it would
+			// abort on the first tool call).
+			logger.error('Failed to prepare permission relay', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+			const win = getMainWindow();
+			if (win && isWebContentsAvailable(win)) {
+				win.webContents.send(
+					'process:data',
+					config.sessionId,
+					'\r\n[Maestro] Could not start the permission relay for Standard mode. ' +
+						'Switch to Full Access or Read-Only to continue.\r\n'
+				);
+			}
+			return { success: false, pid: 0 };
 		}
 	}
 
@@ -483,6 +559,7 @@ export async function handleProcessSpawn(
 		...(agentSessionId && { agentSessionId }),
 		...(config.readOnlyMode && { readOnlyMode: true }),
 		...(config.yoloMode && { yoloMode: true }),
+		...(config.permissionMode && { permissionMode: config.permissionMode }),
 		...(config.modelId && { modelId: config.modelId }),
 		...(config.prompt && {
 			prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
@@ -745,6 +822,7 @@ export async function handleProcessSpawn(
 					readOnlyMode: originalConfig.readOnlyMode,
 					modelId: originalConfig.modelId,
 					yoloMode: originalConfig.yoloMode,
+					permissionMode: originalConfig.permissionMode,
 					agentSessionId: freshAgentSessionId,
 				});
 

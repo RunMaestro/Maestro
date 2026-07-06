@@ -19,6 +19,7 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
+import { PermissionPrompt } from './PermissionPrompt';
 import type { Group, GroupChat, Session, Theme } from '../types';
 
 type SessionListProps = ComponentProps<typeof SessionList>;
@@ -245,6 +246,8 @@ export function AppShell({
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
+			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
+			<PermissionPrompt theme={theme} />
 		</div>
 	);
 }

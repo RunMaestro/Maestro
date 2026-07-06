@@ -57,6 +57,7 @@ interface ProcessConfig {
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -328,6 +329,22 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		onPermissionRequest: (
+			callback: (request: {
+				requestId: string;
+				sessionId: string;
+				tabId?: string;
+				toolName: string;
+				input: Record<string, unknown>;
+				createdAt: number;
+			}) => void
+		) => () => void;
+		respondPermission: (
+			requestId: string,
+			decision:
+				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+				| { behavior: 'deny'; message: string }
+		) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;

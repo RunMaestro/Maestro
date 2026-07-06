@@ -20,6 +20,7 @@ export interface SpawnProcessConfig {
 	readOnlyMode?: boolean; // For read-only/plan mode
 	modelId?: string; // For model selection
 	yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
+	permissionMode?: 'full' | 'standard' | 'readonly'; // 3-way permission mode (overrides readOnlyMode/yoloMode)
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string; // Session-specific custom path
 	sessionCustomArgs?: string; // Session-specific custom args

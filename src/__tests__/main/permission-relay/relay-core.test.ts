@@ -1,0 +1,100 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+	registerSpawn,
+	lookupBinding,
+	createPending,
+	resolvePending,
+	relayRegistryStats,
+} from '../../../main/permission-relay/registry';
+import { buildRelayArgs } from '../../../main/permission-relay/spawn-args';
+import {
+	RELAY_PERMISSION_PROMPT_TOOL,
+	RELAY_MCP_SERVER_NAME,
+} from '../../../main/permission-relay/types';
+
+describe('permission-relay registry', () => {
+	it('registers a spawn and looks up its binding', () => {
+		const { token, cleanup } = registerSpawn({ sessionId: 's1', tabId: 't1' });
+		expect(lookupBinding(token)).toEqual({ sessionId: 's1', tabId: 't1' });
+		cleanup();
+		expect(lookupBinding(token)).toBeUndefined();
+	});
+
+	it('generates unique tokens per spawn', () => {
+		const a = registerSpawn({ sessionId: 's1' });
+		const b = registerSpawn({ sessionId: 's1' });
+		expect(a.token).not.toBe(b.token);
+		a.cleanup();
+		b.cleanup();
+	});
+
+	it('resolves a pending request via resolvePending', async () => {
+		const { token, cleanup } = registerSpawn({ sessionId: 's1' });
+		const promise = createPending('req-1', token, 10_000);
+		expect(resolvePending('req-1', { behavior: 'allow' })).toBe(true);
+		await expect(promise).resolves.toEqual({ behavior: 'allow' });
+		cleanup();
+	});
+
+	it('returns false when resolving an unknown request', () => {
+		expect(resolvePending('does-not-exist', { behavior: 'allow' })).toBe(false);
+	});
+
+	it('auto-denies a pending request after the timeout', async () => {
+		vi.useFakeTimers();
+		try {
+			const { token, cleanup } = registerSpawn({ sessionId: 's1' });
+			const promise = createPending('req-timeout', token, 1_000);
+			vi.advanceTimersByTime(1_001);
+			await expect(promise).resolves.toEqual({
+				behavior: 'deny',
+				message: 'Permission request timed out with no response.',
+			});
+			cleanup();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('cleanup denies any still-pending requests for that spawn', async () => {
+		const { token, cleanup } = registerSpawn({ sessionId: 's1' });
+		const promise = createPending('req-live', token, 10_000);
+		cleanup();
+		await expect(promise).resolves.toEqual({
+			behavior: 'deny',
+			message: 'Agent process exited.',
+		});
+	});
+
+	afterEach(() => {
+		// Sanity: no bindings should leak across tests that clean up.
+		// (Not strict - other tests may register; just ensure it's callable.)
+		expect(typeof relayRegistryStats().bindings).toBe('number');
+	});
+});
+
+describe('permission-relay spawn-args', () => {
+	it('builds the permission-prompt-tool + mcp-config args', () => {
+		const { args } = buildRelayArgs(
+			'/path/to/node',
+			'/path/to/bridge.js',
+			'/tmp/relay.sock',
+			'tok'
+		);
+		expect(args[0]).toBe('--permission-prompt-tool');
+		expect(args[1]).toBe(RELAY_PERMISSION_PROMPT_TOOL);
+		expect(args[2]).toBe('--mcp-config');
+
+		const config = JSON.parse(args[3]);
+		const server = config.mcpServers[RELAY_MCP_SERVER_NAME];
+		expect(server.command).toBe('/path/to/node');
+		expect(server.args).toEqual(['/path/to/bridge.js']);
+		expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1');
+		expect(server.env.MAESTRO_RELAY_SOCKET).toBe('/tmp/relay.sock');
+		expect(server.env.MAESTRO_RELAY_TOKEN).toBe('tok');
+	});
+
+	it('uses the mcp__server__tool naming for the prompt tool', () => {
+		expect(RELAY_PERMISSION_PROMPT_TOOL).toBe(`mcp__${RELAY_MCP_SERVER_NAME}__approve`);
+	});
+});

@@ -38,6 +38,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	'claude-code': {
 		supportsResume: true, // --resume flag
 		supportsReadOnlyMode: true, // --permission-mode plan
+		supportsStandardPermissionMode: true, // standard mode via the permission relay (--permission-prompt-tool)
 		supportsJsonOutput: true, // --output-format stream-json
 		supportsSessionId: true, // session_id in JSON output
 		supportsImageInput: true, // Supports image attachments

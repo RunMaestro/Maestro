@@ -365,6 +365,7 @@ describe('process IPC handlers', () => {
 				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
+				'permission:respond',
 			];
 
 			for (const channel of expectedChannels) {

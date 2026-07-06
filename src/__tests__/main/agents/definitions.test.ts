@@ -67,7 +67,10 @@ describe('agent-definitions', () => {
 			expect(claudeCode?.args).toContain('--verbose');
 			expect(claudeCode?.args).toContain('--output-format');
 			expect(claudeCode?.args).toContain('stream-json');
-			expect(claudeCode?.args).toContain('--dangerously-skip-permissions');
+			// Base args are the standard-permission default; --dangerously-skip-permissions
+			// only applies in full permission mode via fullAccessArgs.
+			expect(claudeCode?.args).not.toContain('--dangerously-skip-permissions');
+			expect(claudeCode?.fullAccessArgs).toContain('--dangerously-skip-permissions');
 		});
 
 		it('should have codex with batch mode configuration', () => {
