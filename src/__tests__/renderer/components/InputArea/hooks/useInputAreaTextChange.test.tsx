@@ -91,4 +91,22 @@ describe('useInputAreaTextChange', () => {
 
 		expect(handlers.setAtMentionOpen).not.toHaveBeenCalled();
 	});
+
+	it('scrolls the textarea to the caret after the keystroke resize (issue #1169)', () => {
+		const handlers = createHandlers();
+		const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+			cb(0);
+			return 0;
+		});
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+
+		fireEvent.change(textarea, {
+			target: { value: 'a'.repeat(500), selectionStart: 500, selectionEnd: 500 },
+		});
+
+		expect(textarea.scrollTop).toBe(400);
+		rafSpy.mockRestore();
+	});
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	resizeTextareaToContent,
+	scrollTextareaToCaretEnd,
 	shouldScrollTextareaToEnd,
 } from '../../../../../renderer/components/InputArea/utils/textareaSizing';
 
@@ -33,5 +34,27 @@ describe('InputArea textareaSizing utils', () => {
 
 	it('does not scroll normal mid-text typing', () => {
 		expect(shouldScrollTextareaToEnd(2, 5, 6)).toBe(false);
+	});
+
+	it('scrolls to the bottom when the caret is at the end (issue #1169)', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'a'.repeat(500);
+		Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 500, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(400);
+	});
+
+	it('leaves the scroll position untouched when the caret is mid-text', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'a'.repeat(500);
+		Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 10, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(0);
 	});
 });
