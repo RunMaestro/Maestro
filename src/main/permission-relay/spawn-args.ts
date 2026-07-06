@@ -65,21 +65,13 @@ export function resolveBridgeScriptPath(): string | null {
 export interface RelayArgsResult {
 	/** Args to append to the Claude spawn (permission-prompt-tool + mcp-config). */
 	args: string[];
+	/** Temp file holding the MCP config JSON; caller deletes it on cleanup. */
+	configPath: string;
 }
 
-/**
- * Build the relay CLI args. `execPath` is the Node/Electron binary the bridge
- * runs under (pass `process.execPath`); `bridgeScriptPath` from
- * `resolveBridgeScriptPath()`. Returns null if the bridge can't be located
- * (caller must fail loud rather than silently spawn without the relay).
- */
-export function buildRelayArgs(
-	execPath: string,
-	bridgeScriptPath: string,
-	socketPath: string,
-	token: string
-): RelayArgsResult {
-	const mcpConfig = {
+/** Build the MCP server config object Claude loads via --mcp-config. */
+function buildMcpConfig(execPath: string, bridgeScriptPath: string, socketPath: string, token: string) {
+	return {
 		mcpServers: {
 			[RELAY_MCP_SERVER_NAME]: {
 				command: execPath,
@@ -93,13 +85,43 @@ export function buildRelayArgs(
 			},
 		},
 	};
+}
+
+/**
+ * Build the relay CLI args. `execPath` is the Node/Electron binary the bridge
+ * runs under (pass `process.execPath`); `bridgeScriptPath` from
+ * `resolveBridgeScriptPath()`; `configDir` a writable dir for the temp config
+ * (pass the app's userData dir).
+ *
+ * The MCP config is written to a temp JSON file and passed to --mcp-config by
+ * PATH rather than as an inline JSON string. On Windows, non-SSH agent spawns
+ * run through a shell (`useShell: true`, to dodge cmd.exe length limits), and a
+ * raw `JSON.stringify(...)` arg's embedded quotes would not be re-escaped for
+ * PowerShell/cmd - Claude would receive a malformed --mcp-config and standard
+ * mode would silently abort on the first tool call. A file path has no shell
+ * metacharacters, so it survives quoting on every platform. `--mcp-config` has
+ * accepted a file path since the flag was introduced.
+ */
+export function buildRelayArgs(
+	execPath: string,
+	bridgeScriptPath: string,
+	socketPath: string,
+	token: string,
+	configDir: string
+): RelayArgsResult {
+	const mcpConfig = buildMcpConfig(execPath, bridgeScriptPath, socketPath, token);
+	// Token is a 64-hex-char nonce; a short prefix keeps the filename unique
+	// per spawn without leaking the full auth token into a predictable path.
+	const configPath = path.join(configDir, `permission-relay-mcp-${token.slice(0, 16)}.json`);
+	fs.writeFileSync(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
 	return {
 		args: [
 			'--permission-prompt-tool',
 			RELAY_PERMISSION_PROMPT_TOOL,
 			'--mcp-config',
-			JSON.stringify(mcpConfig),
+			configPath,
 		],
+		configPath,
 	};
 }

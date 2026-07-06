@@ -92,15 +92,29 @@ export class PermissionRelayServer {
 
 		const server = net.createServer((socket) => this.handleConnection(socket));
 
-		await new Promise<void>((resolve, reject) => {
-			server.once('error', reject);
-			server.listen(socketPath, () => {
-				server.removeListener('error', reject);
-				resolve();
+		// Create the socket with 0600 from the start. listen() creates the socket
+		// file immediately, so a later chmod leaves a window where another local
+		// user could connect (on a permissive umask like 022). Constraining the
+		// umask around listen() makes the file restrictive at creation time; the
+		// chmod below is a belt-and-suspenders backstop. Not applicable on win32
+		// (named pipes are per-user by ACL and umask has no effect).
+		const prevUmask =
+			process.platform !== 'win32' ? process.umask(0o177) : undefined;
+		try {
+			await new Promise<void>((resolve, reject) => {
+				server.once('error', reject);
+				server.listen(socketPath, () => {
+					server.removeListener('error', reject);
+					resolve();
+				});
 			});
-		});
+		} finally {
+			if (prevUmask !== undefined) {
+				process.umask(prevUmask);
+			}
+		}
 
-		// Lock the socket down to the current user (no-op / unsupported on win32).
+		// Backstop: ensure 0600 even if the umask path was ineffective.
 		if (process.platform !== 'win32') {
 			try {
 				fs.chmodSync(socketPath, 0o600);

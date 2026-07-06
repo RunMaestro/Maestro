@@ -52,7 +52,21 @@ export const usePermissionRequestStore = create<PermissionRequestState>((set) =>
 		set((state) => ({ queue: state.queue.filter((r) => r.requestId !== requestId) }));
 	},
 	clearSession: (sessionId) =>
-		set((state) => ({ queue: state.queue.filter((r) => r.sessionId !== sessionId) })),
+		set((state) => {
+			// Explicitly deny any queued requests for the exiting session so the
+			// awaiting bridge call unblocks immediately, rather than waiting on the
+			// main-side exit cleanup or the ~300s registry timeout. Denying an
+			// already-resolved request is a harmless no-op in the registry.
+			for (const r of state.queue) {
+				if (r.sessionId === sessionId) {
+					void window.maestro?.process?.respondPermission?.(r.requestId, {
+						behavior: 'deny',
+						message: 'Agent exited.',
+					});
+				}
+			}
+			return { queue: state.queue.filter((r) => r.sessionId !== sessionId) };
+		}),
 }));
 
 /** Selector: the request currently shown (head of the queue), or undefined. */

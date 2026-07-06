@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	registerSpawn,
 	lookupBinding,
@@ -74,24 +77,34 @@ describe('permission-relay registry', () => {
 });
 
 describe('permission-relay spawn-args', () => {
-	it('builds the permission-prompt-tool + mcp-config args', () => {
-		const { args } = buildRelayArgs(
-			'/path/to/node',
-			'/path/to/bridge.js',
-			'/tmp/relay.sock',
-			'tok'
-		);
-		expect(args[0]).toBe('--permission-prompt-tool');
-		expect(args[1]).toBe(RELAY_PERMISSION_PROMPT_TOOL);
-		expect(args[2]).toBe('--mcp-config');
+	it('writes the mcp config to a file and passes it by path (shell-safe)', () => {
+		const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-args-'));
+		try {
+			const { args, configPath } = buildRelayArgs(
+				'/path/to/node',
+				'/path/to/bridge.js',
+				'/tmp/relay.sock',
+				'toktokreallylong0123456789abcdef',
+				configDir
+			);
+			expect(args[0]).toBe('--permission-prompt-tool');
+			expect(args[1]).toBe(RELAY_PERMISSION_PROMPT_TOOL);
+			expect(args[2]).toBe('--mcp-config');
+			// The 4th arg is a FILE PATH, not inline JSON (no shell metacharacters).
+			expect(args[3]).toBe(configPath);
+			expect(configPath.startsWith(configDir)).toBe(true);
+			expect(args[3]).not.toContain('{');
 
-		const config = JSON.parse(args[3]);
-		const server = config.mcpServers[RELAY_MCP_SERVER_NAME];
-		expect(server.command).toBe('/path/to/node');
-		expect(server.args).toEqual(['/path/to/bridge.js']);
-		expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1');
-		expect(server.env.MAESTRO_RELAY_SOCKET).toBe('/tmp/relay.sock');
-		expect(server.env.MAESTRO_RELAY_TOKEN).toBe('tok');
+			const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+			const server = config.mcpServers[RELAY_MCP_SERVER_NAME];
+			expect(server.command).toBe('/path/to/node');
+			expect(server.args).toEqual(['/path/to/bridge.js']);
+			expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1');
+			expect(server.env.MAESTRO_RELAY_SOCKET).toBe('/tmp/relay.sock');
+			expect(server.env.MAESTRO_RELAY_TOKEN).toBe('toktokreallylong0123456789abcdef');
+		} finally {
+			fs.rmSync(configDir, { recursive: true, force: true });
+		}
 	});
 
 	it('uses the mcp__server__tool naming for the prompt tool', () => {

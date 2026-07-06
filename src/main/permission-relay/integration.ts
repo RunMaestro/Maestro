@@ -10,6 +10,7 @@
 
 import type { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'events';
+import * as fs from 'fs';
 import { logger } from '../utils/logger';
 import { permissionRelayServer } from './PermissionRelayServer';
 import { registerSpawn, resolvePending } from './registry';
@@ -107,12 +108,29 @@ export async function preparePermissionRelayArgs(params: {
 		sessionId: params.sessionId,
 		tabId: params.tabId,
 	});
-	sessionCleanups.set(params.sessionId, cleanup);
+
+	const { args, configPath } = buildRelayArgs(
+		params.execPath,
+		bridgeScriptPath,
+		socketPath,
+		token,
+		params.userDataDir
+	);
+
+	// Wrap the registry cleanup so process exit also deletes the temp MCP config.
+	sessionCleanups.set(params.sessionId, () => {
+		cleanup();
+		try {
+			fs.unlinkSync(configPath);
+		} catch {
+			// Already gone - fine.
+		}
+	});
 
 	logger.debug('Prepared permission relay for spawn', LOG_CONTEXT, {
 		sessionId: params.sessionId,
 		socketPath,
 	});
 
-	return buildRelayArgs(params.execPath, bridgeScriptPath, socketPath, token).args;
+	return args;
 }
