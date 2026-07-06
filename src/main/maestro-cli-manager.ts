@@ -32,11 +32,20 @@ function splitOutputLines(output: string): string[] {
  * sync one below so the two never drift.
  */
 export function getBundledCliCandidates(): string[] {
-	return [
-		path.join(process.resourcesPath, 'maestro-cli.js'),
-		path.resolve(app.getAppPath(), 'dist', 'cli', 'maestro-cli.js'),
-		path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'),
-	];
+	const candidates: string[] = [];
+	// `process.resourcesPath` and `app.getAppPath()` only exist in a real Electron
+	// runtime; guard each so this never throws in a plain-Node context (tests) and
+	// degrades to just the __dirname-relative candidate instead.
+	if (typeof process.resourcesPath === 'string') {
+		candidates.push(path.join(process.resourcesPath, 'maestro-cli.js'));
+	}
+	try {
+		candidates.push(path.resolve(app.getAppPath(), 'dist', 'cli', 'maestro-cli.js'));
+	} catch {
+		// app not ready or not in Electron - skip this candidate.
+	}
+	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
+	return candidates;
 }
 
 /**
