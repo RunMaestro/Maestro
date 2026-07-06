@@ -370,6 +370,65 @@ describe('Windows IPC Handlers', () => {
 		});
 	});
 
+	describe('web-desktop bridge (senderless event)', () => {
+		// The web-desktop WS bridge dispatches ipcMain handlers with a synthetic
+		// event that has no `sender` (bridgeHandlers.ts FAKE_EVENT). Passing an
+		// undefined webContents to BrowserWindow.fromWebContents throws
+		// "Cannot read properties of undefined (reading 'getOwnerBrowserWindow')",
+		// which crashed WindowContext's boot hydrate() and broke the whole page.
+		// A senderless invoke must resolve to the primary window instead.
+		const bridgeEvent = {} as unknown as Electron.IpcMainInvokeEvent;
+
+		it('windows:getState resolves a senderless invoke to the primary window', async () => {
+			const secondary = makeFakeWindow();
+			const primaryWin = makeFakeWindow({
+				getBounds: vi.fn(() => ({ x: 1, y: 2, width: 1000, height: 700 })),
+			});
+			registry.create({ browserWindow: secondary, sessionIds: ['b'], isMain: false });
+			const primaryId = registry.create({
+				browserWindow: primaryWin,
+				sessionIds: ['a'],
+				isMain: true,
+			});
+
+			const result = (await handlers.get('windows:getState')!(bridgeEvent)) as {
+				id: string;
+				sessionIds: string[];
+			} | null;
+
+			// fromWebContents must never be called for a senderless invoke - calling
+			// it with undefined is exactly the crash we are guarding against.
+			expect(BrowserWindow.fromWebContents).not.toHaveBeenCalled();
+			expect(result).not.toBeNull();
+			expect(result!.id).toBe(primaryId);
+			expect(result!.sessionIds).toEqual(['a']);
+		});
+
+		it('windows:getState returns null when no primary window is registered', async () => {
+			registry.create({ browserWindow: makeFakeWindow(), sessionIds: [], isMain: false });
+
+			const result = await handlers.get('windows:getState')!(bridgeEvent);
+
+			expect(result).toBeNull();
+		});
+
+		it('windows:registerSession claims the agent into the primary window', async () => {
+			const primaryWin = makeFakeWindow();
+			const primaryId = registry.create({
+				browserWindow: primaryWin,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			const result = (await handlers.get('windows:registerSession')!(bridgeEvent, 'agent-web')) as {
+				registered: boolean;
+			};
+
+			expect(result.registered).toBe(true);
+			expect(registry.get(primaryId)?.sessionIds).toEqual(['agent-web']);
+		});
+	});
+
 	describe('windows:registerSession', () => {
 		it('claims a new agent for the calling window resolved from event.sender', async () => {
 			const win = makeFakeWindow();

@@ -77,6 +77,12 @@ function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
 	registry: WindowRegistry
 ): RegisteredWindow | undefined {
+	// The web-desktop bridge dispatches ipcMain handlers with a synthetic event
+	// that has no `sender` (see web-server/handlers/bridgeHandlers.ts FAKE_EVENT).
+	// Electron implements BrowserWindow.fromWebContents(wc) as wc.getOwnerBrowserWindow(),
+	// which throws on an undefined webContents. A browser client remote-controls the
+	// desktop's primary window, so resolve a senderless invoke to it rather than crash.
+	if (!event.sender) return registry.getPrimary();
 	const browserWindow = BrowserWindow.fromWebContents(event.sender);
 	if (!browserWindow) return undefined;
 	return registry.getAll().find((entry) => entry.browserWindow === browserWindow);
