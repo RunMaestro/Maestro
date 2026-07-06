@@ -427,6 +427,38 @@ describe('Windows IPC Handlers', () => {
 			expect(result.registered).toBe(true);
 			expect(registry.get(primaryId)?.sessionIds).toEqual(['agent-web']);
 		});
+
+		it('windows:setPanelState writes to the primary window on a senderless invoke', async () => {
+			registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['b'], isMain: false });
+			const primaryId = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: ['a'],
+				isMain: true,
+			});
+
+			await handlers.get('windows:setPanelState')!(bridgeEvent, {
+				leftPanelCollapsed: true,
+				rightPanelCollapsed: true,
+			});
+
+			expect(BrowserWindow.fromWebContents).not.toHaveBeenCalled();
+			const state = registry.get(primaryId);
+			expect(state?.leftPanelCollapsed).toBe(true);
+			expect(state?.rightPanelCollapsed).toBe(true);
+		});
+
+		it('windows:getBounds resolves a senderless invoke to the primary window', async () => {
+			registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['b'], isMain: false });
+			const primaryWin = makeFakeWindow({
+				getBounds: vi.fn(() => ({ x: 5, y: 6, width: 1280, height: 800 })),
+			});
+			registry.create({ browserWindow: primaryWin, sessionIds: ['a'], isMain: true });
+
+			const result = await handlers.get('windows:getBounds')!(bridgeEvent);
+
+			expect(BrowserWindow.fromWebContents).not.toHaveBeenCalled();
+			expect(result).toEqual({ x: 5, y: 6, width: 1280, height: 800 });
+		});
 	});
 
 	describe('windows:registerSession', () => {
