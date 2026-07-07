@@ -35,6 +35,8 @@ import type {
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+import { ModelUsageAccumulator } from '../../shared/modelUsage';
+import type { ModelTokenUsage } from '../../shared/tokenUsage';
 
 const LOG_CONTEXT = '[OpenCodeSessionStorage]';
 
@@ -653,6 +655,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCacheReadTokens: number;
 		totalCacheWriteTokens: number;
 		totalCost: number;
+		byModel: ModelTokenUsage[] | undefined;
 	}> {
 		const messageDir = this.getMessageDir(sessionId);
 		const messages: OpenCodeMessage[] = [];
@@ -662,6 +665,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		let totalCacheReadTokens = 0;
 		let totalCacheWriteTokens = 0;
 		let totalCost = 0;
+		const modelAcc = new ModelUsageAccumulator();
 
 		try {
 			const messageFiles = await listJsonFiles(messageDir);
@@ -680,6 +684,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 					}
 					if (msg.cost) {
 						totalCost += msg.cost;
+					}
+					if (msg.tokens || msg.cost) {
+						modelAcc.add(
+							msg.model?.modelID,
+							{
+								inputTokens: msg.tokens?.input || 0,
+								outputTokens: msg.tokens?.output || 0,
+								cacheReadTokens: msg.tokens?.cache?.read || 0,
+								cacheCreationTokens: msg.tokens?.cache?.write || 0,
+							},
+							msg.cost
+						);
 					}
 
 					// Load parts for this message
@@ -716,6 +732,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			totalCacheReadTokens,
 			totalCacheWriteTokens,
 			totalCost,
+			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 		};
 	}
 
@@ -989,6 +1006,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			let totalCost = 0;
 			let firstMessage = row.title || '';
 			let durationSeconds = 0;
+			const modelAcc = new ModelUsageAccumulator();
 
 			if (messages.length >= 2) {
 				const first = messages[0].time_created;
@@ -1012,6 +1030,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				}
 				if (data.cost) {
 					totalCost += data.cost;
+				}
+				if (data.tokens || data.cost) {
+					modelAcc.add(
+						data.modelID,
+						{
+							inputTokens: data.tokens?.input || 0,
+							outputTokens: data.tokens?.output || 0,
+							cacheReadTokens: data.tokens?.cache?.read || 0,
+							cacheCreationTokens: data.tokens?.cache?.write || 0,
+						},
+						data.cost
+					);
 				}
 
 				if (!foundPreview && data.role === 'assistant') {
@@ -1061,6 +1091,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				cacheReadTokens: totalCacheReadTokens,
 				cacheCreationTokens: totalCacheWriteTokens,
 				durationSeconds,
+				byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 			});
 		}
 
@@ -1321,6 +1352,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				totalCacheReadTokens,
 				totalCacheWriteTokens,
 				totalCost,
+				byModel,
 			} = await this.loadSessionMessages(sessionData.id);
 
 			// Get preview message - prefer first assistant response, fall back to user message or title
@@ -1386,6 +1418,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				cacheReadTokens: totalCacheReadTokens,
 				cacheCreationTokens: totalCacheWriteTokens,
 				durationSeconds,
+				byModel,
 			});
 		}
 

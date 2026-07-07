@@ -21,6 +21,8 @@ import type {
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { ModelUsageAccumulator } from '../../shared/modelUsage';
+import type { ModelTokenUsage } from '../../shared/tokenUsage';
 
 const LOG_CONTEXT = '[CopilotSessionStorage]';
 
@@ -70,6 +72,7 @@ interface ParsedCopilotSessionData {
 	parsedEventCount: number;
 	malformedEventCount: number;
 	hasMeaningfulContent: boolean;
+	byModel: ModelTokenUsage[] | undefined;
 }
 
 interface CopilotEvent {
@@ -218,6 +221,7 @@ function parseEvents(content: string): ParsedCopilotSessionData {
 		cacheCreationTokens: 0,
 		durationSeconds: 0,
 	};
+	const modelAcc = new ModelUsageAccumulator();
 
 	for (const line of content.split(/\r?\n/)) {
 		if (!line.trim()) continue;
@@ -260,11 +264,17 @@ function parseEvents(content: string): ParsedCopilotSessionData {
 
 			if (entry.type === 'session.shutdown') {
 				const modelMetrics = entry.data?.modelMetrics || {};
-				for (const metric of Object.values(modelMetrics)) {
+				for (const [modelId, metric] of Object.entries(modelMetrics)) {
 					stats.inputTokens += metric.usage?.inputTokens || 0;
 					stats.outputTokens += metric.usage?.outputTokens || 0;
 					stats.cacheReadTokens += metric.usage?.cacheReadTokens || 0;
 					stats.cacheCreationTokens += metric.usage?.cacheWriteTokens || 0;
+					modelAcc.add(modelId, {
+						inputTokens: metric.usage?.inputTokens || 0,
+						outputTokens: metric.usage?.outputTokens || 0,
+						cacheReadTokens: metric.usage?.cacheReadTokens || 0,
+						cacheCreationTokens: metric.usage?.cacheWriteTokens || 0,
+					});
 				}
 				if (entry.data?.sessionDurationMs) {
 					stats.durationSeconds = Math.max(0, Math.floor(entry.data.sessionDurationMs / 1000));
@@ -297,6 +307,7 @@ function parseEvents(content: string): ParsedCopilotSessionData {
 		parsedEventCount,
 		malformedEventCount,
 		hasMeaningfulContent,
+		byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 	};
 }
 
@@ -855,6 +866,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 				cacheReadTokens: parsedEvents.stats.cacheReadTokens,
 				cacheCreationTokens: parsedEvents.stats.cacheCreationTokens,
 				durationSeconds: parsedEvents.stats.durationSeconds,
+				byModel: sshConfig ? undefined : parsedEvents.byModel,
 			};
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code;

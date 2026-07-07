@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { computeClaudeUsageCost } from '../utils/pricing';
+import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
@@ -156,6 +157,7 @@ function parseSessionContent(
 			cacheReadTokens: totalCacheReadTokens,
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
+			byModel,
 		} = computeClaudeUsageCost(content);
 
 		// Extract last timestamp for duration
@@ -196,6 +198,7 @@ function parseSessionContent(
 			outputTokens: totalOutputTokens,
 			cacheReadTokens: totalCacheReadTokens,
 			cacheCreationTokens: totalCacheCreationTokens,
+			byModel: claudeModelUsage(byModel),
 			durationSeconds,
 		};
 	} catch (error) {

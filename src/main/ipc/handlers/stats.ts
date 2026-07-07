@@ -29,6 +29,8 @@ import {
 	StatsTimeRange,
 	StatsFilters,
 } from '../../../shared/stats-types';
+import type { TokenUsageQuery } from '../../../shared/tokenUsage';
+import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
 
 const LOG_CONTEXT = '[Stats]';
 
@@ -240,6 +242,19 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			const db = getStatsDB();
 			return db.getAggregatedStats(range);
 		})
+	);
+
+	// Token & cost usage aggregate for the Cost & Tokens dashboard. Reads each
+	// agent's on-disk session storage (not the stats DB), served through a
+	// per-session incremental cache. `force` bypasses the in-memory memo.
+	ipcMain.handle(
+		'stats:get-token-usage',
+		withIpcErrorLogging(
+			handlerOpts('getTokenUsage'),
+			async (query: TokenUsageQuery = {}, force = false) => {
+				return getTokenUsageAggregate(query, force);
+			}
+		)
 	);
 
 	// Export query events to CSV
