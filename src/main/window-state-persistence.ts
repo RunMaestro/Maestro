@@ -70,7 +70,9 @@ export function registeredWindowToWindowState(entry: RegisteredWindow): WindowSt
 export function buildMultiWindowState(registry: WindowRegistry): MultiWindowState {
 	const windows: WindowState[] = [];
 	let primaryWindowId = '';
-	for (const entry of registry.getAll()) {
+	// Only persist session-owning app windows; feature windows like the cadenza
+	// HUD must not be snapshotted and replayed as a normal window on restart.
+	for (const entry of registry.getAppWindows()) {
 		if (entry.browserWindow.isDestroyed()) continue;
 		windows.push(registeredWindowToWindowState(entry));
 		if (entry.isMain) primaryWindowId = entry.id;

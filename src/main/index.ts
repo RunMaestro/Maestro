@@ -633,7 +633,13 @@ const windowManager = createWindowManager({
 
 // Deps shared by every cadenza HUD window operation (the HUD reuses the main
 // preload + renderer bundle, loaded with `?cadenzaHud`).
-const cadenzaHudDeps = { isDevelopment, preloadPath, rendererProductionUrl, devServerUrl };
+const cadenzaHudDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
 
 /**
  * Route a cadenza payload to the HUD window (creating it lazily). Returns

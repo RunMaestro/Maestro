@@ -22,6 +22,7 @@
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import { logger } from '../utils/logger';
+import type { WindowRegistry } from '../window-registry';
 
 /** A card's hit region in HUD-window content coordinates (CSS px == DIP). */
 interface CardRect {
@@ -38,9 +39,14 @@ export interface CadenzaHudWindowDeps {
 	rendererProductionUrl: string;
 	/** Development server URL. */
 	devServerUrl: string;
+	/** Window registry - the HUD registers as a `cadenza-hud` kind so it's tracked
+	 *  uniformly and torn down through the registry on close. */
+	windowRegistry: WindowRegistry;
 }
 
 let hudWindow: BrowserWindow | null = null;
+/** Registry id for the HUD window, so its `closed` handler can deregister it. */
+let hudWindowId: string | null = null;
 /**
  * The Maestro main window that owns the HUD conceptually. The HUD is deliberately
  * NOT an OS child (`parent`) window: on Windows, clicking an owned window can
@@ -256,6 +262,16 @@ export function ensureCadenzaHudWindow(
 
 	hudWindow = win;
 	ownerWindow = parent;
+	// Track the HUD in the registry as a `cadenza-hud` kind. The multi-window
+	// machinery (persistence, "Move to Window", auto-close, telemetry) skips this
+	// kind; registering it just keeps window tracking uniform + gives the close
+	// path a single deregistration point.
+	hudWindowId = deps.windowRegistry.create({
+		browserWindow: win,
+		kind: 'cadenza-hud',
+		isMain: false,
+		sessionIds: [],
+	});
 
 	// The constructor clamps width/height to ~a single display's default size on
 	// Windows, so a full-monitor window (esp. a hi-DPI one) comes out too small.
@@ -281,6 +297,13 @@ export function ensureCadenzaHudWindow(
 
 	win.on('closed', () => {
 		if (hudWindow === win) {
+			// Deregister from the window registry (it has no auto-teardown), then
+			// reset the HUD's own feature state - notably clearing the hover-poll
+			// interval, which nothing else will do for us.
+			if (hudWindowId) {
+				deps.windowRegistry.remove(hudWindowId);
+				hudWindowId = null;
+			}
 			hudWindow = null;
 			ownerWindow = null;
 			hudReady = false;
