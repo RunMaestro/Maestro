@@ -17,6 +17,11 @@ export interface PointerDragOptions {
 }
 
 export function usePointerDrag() {
+	// Assumes one active drag at a time (true for mouse - a single pointer). The
+	// unmount-cleanup ref tracks only the latest drag; a second concurrent drag
+	// (multi-pointer touch+pen) would overwrite it, but each drag still removes its
+	// own listeners on its own pointer-up, so at worst the earlier drag loses only
+	// unmount protection until then. Revisit if these surfaces gain multi-touch drag.
 	const cleanupRef = useRef<(() => void) | null>(null);
 
 	useEffect(() => () => cleanupRef.current?.(), []);
