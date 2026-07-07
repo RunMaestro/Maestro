@@ -71,16 +71,26 @@ export const AGENT_MENTION_PATTERN_SOURCE = `@[${NAME_CHAR}]+`;
 const AGENT_NAME_RE = new RegExp(`^[${NAME_CHAR}]+$`, 'u');
 
 /**
+ * Quote characters that, sitting immediately before an `@`, deliberately escape
+ * the mention: `"@codex"`, `'@codex'`, and `` `@codex` `` are the user opting OUT
+ * of a lookup (quote/backtick the name so it stays literal text, not a chip or a
+ * dispatch target). Straight and curly single/double quotes plus the backtick.
+ */
+const MENTION_QUOTE_ESCAPE = `"'\`‘’“”`;
+
+/**
  * A char that, sitting immediately before an `@`, glues the `@…` to a preceding
  * token so it is NOT a standalone mention. Covers name chars (any script /
- * emoji), another `@` (`@@x`), and the path/URL separators a mention body can
- * itself contain (`_ . / -`). This is what keeps `foo@bar`, `email@host`, and a
- * URL segment like `https://host/@codex` from being read as a mention - a
- * mention must begin at a real boundary (start of text, whitespace, or non-path
- * punctuation). `@` leads so the trailing `-` of BODY_CHAR stays a literal.
+ * emoji), another `@` (`@@x`), the path/URL separators a mention body can itself
+ * contain (`_ . / -`), and the {@link MENTION_QUOTE_ESCAPE} quotes a user wraps a
+ * name in to escape it. This is what keeps `foo@bar`, `email@host`, a URL segment
+ * like `https://host/@codex`, and a quoted `"@codex"` from being read as a
+ * mention - a mention must begin at a real boundary (start of text, whitespace,
+ * or non-path punctuation). `@` leads so the trailing `-` of BODY_CHAR stays a
+ * literal.
  */
 // eslint-disable-next-line no-misleading-character-class
-const MENTION_PREV_BLOCK = new RegExp(`[@${BODY_CHAR}]`, 'u');
+const MENTION_PREV_BLOCK = new RegExp(`[@${MENTION_QUOTE_ESCAPE}${BODY_CHAR}]`, 'u');
 
 /**
  * A single scan alternative covers both mention kinds: a leading `@` plus a

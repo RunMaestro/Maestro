@@ -174,6 +174,20 @@ describe('tokenizeMentions', () => {
 		]);
 	});
 
+	it('escapes a mention when the name is quoted or backticked', () => {
+		// A quote/backtick immediately before `@` is the user opting out of a
+		// lookup, so `"@codex"`, `'@codex'`, and `` `@codex` `` stay plain text.
+		for (const wrap of ['"', "'", '`', '‘', '“']) {
+			expect(tokenizeMentions(`say ${wrap}@codex${wrap}`, KNOWN)).toEqual([
+				{ kind: 'text', value: `say ${wrap}@codex${wrap}` },
+			]);
+		}
+		// A quoted file body is likewise left literal.
+		expect(tokenizeMentions('open `@docs/releases.md`', KNOWN)).toEqual([
+			{ kind: 'text', value: 'open `@docs/releases.md`' },
+		]);
+	});
+
 	it('trims trailing sentence punctuation off a file mention', () => {
 		expect(tokenizeMentions('open @docs/releases.md.', KNOWN)).toEqual([
 			{ kind: 'text', value: 'open ' },
