@@ -15,7 +15,6 @@
  */
 
 import { useMovementStore } from '../stores/movementStore';
-import { useCadenzaStore } from '../stores/cadenzaStore';
 
 export interface ConcertoTarget {
 	surface: 'movement' | 'cadenza';
@@ -41,15 +40,17 @@ export function parseConcertoHref(href: string | undefined | null): ConcertoTarg
 	return { surface: match[1].toLowerCase() as ConcertoTarget['surface'], id };
 }
 
-/** Flash/focus the Movement or Cadenza a `concerto:` link points at. Usable
- *  outside React (it drives the stores directly). No-op for a non-concerto href. */
+/** Flash/focus the Movement or Cadenza a `concerto:` link points at. No-op for a
+ *  non-concerto href. Movements live in this (main) window, so flash the store
+ *  directly; cadenzas live in the separate HUD renderer, so route the flash
+ *  through main, which forwards it to whichever renderer holds the card. */
 export function flashConcertoTarget(href: string | undefined | null): boolean {
 	const target = parseConcertoHref(href);
 	if (!target) return false;
 	if (target.surface === 'movement') {
 		useMovementStore.getState().flashItem(target.id);
 	} else {
-		useCadenzaStore.getState().flashItem(target.id);
+		window.maestro?.process?.flashCadenza?.(target.id);
 	}
 	return true;
 }

@@ -8,7 +8,7 @@ import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
-import { applyCadenzaPayload } from '../../stores/cadenzaStore';
+import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
 import {
 	applyMovementPayload,
 	getMovementSnapshot,
@@ -671,8 +671,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = proc.onRemoteCadenza((params) => {
 			applyCadenzaPayload(params);
 		});
+		// Flash a cadenza when a chat chip points at it. Main routes the flash here
+		// only in the in-app fallback case (no HUD window); normally it goes to the HUD.
+		const unsubscribeFlash = proc.onRemoteCadenzaFlash?.((id) => {
+			useCadenzaStore.getState().flashItem(id);
+		});
 		return () => {
 			unsubscribe();
+			unsubscribeFlash?.();
 		};
 	}, []);
 

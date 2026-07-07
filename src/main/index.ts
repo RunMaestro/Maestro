@@ -239,6 +239,7 @@ import {
 	createQuitHandler,
 	deliverCadenzaToHud,
 	closeCadenzaHudWindow,
+	getCadenzaHudWindow,
 	type QuitHandler,
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
@@ -667,6 +668,19 @@ ipcMain.on('cadenza-hud:decision', (_event, sessionId: string, message: string) 
 	// agent is busy by definition; without the force flag the renderer's busy
 	// guard would silently drop the choice while the UI reports it was sent.
 	mainWindow.webContents.send('remote:executeCommand', sessionId, message, 'ai', undefined, true);
+});
+
+// A chat "point" chip that targets a cadenza asks main to pulse it. Cadenzas live
+// in the HUD renderer (a separate window with its own store), so the flash must be
+// routed to whichever renderer actually holds the card: the HUD window when it's
+// up, otherwise the main window (the in-app fallback layer). Gated by Concerto so
+// it's inert when off (no cadenzas exist then anyway).
+ipcMain.on('cadenza:flash', (_event, id: string) => {
+	if (!id) return;
+	if (store.get('encoreFeatures')?.concerto !== true) return;
+	const hud = getCadenzaHudWindow();
+	const target = hud && !hud.isDestroyed() ? hud : mainWindow;
+	if (target && !target.isDestroyed()) target.webContents.send('remote:cadenzaFlash', id);
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)

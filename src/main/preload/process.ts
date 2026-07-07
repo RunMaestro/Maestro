@@ -630,6 +630,18 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to a cadenza "flash" pulse (from a chat "point" chip). The main
+		 * process routes it to whichever renderer holds the cadenza - the HUD window,
+		 * or the in-app fallback layer - so the card pulses even though cadenzas
+		 * normally live in the separate HUD renderer.
+		 */
+		onRemoteCadenzaFlash: (callback: (id: string) => void): (() => void) => {
+			const handler = (_: unknown, id: string) => callback(id);
+			ipcRenderer.on('remote:cadenzaFlash', handler);
+			return () => ipcRenderer.removeListener('remote:cadenzaFlash', handler);
+		},
+
+		/**
 		 * Subscribe to remote movement operations (add/update/move/remove/clear) from
 		 * the CLI/web interface. The renderer applies them to the movement store and
 		 * opens the movement view.
@@ -675,6 +687,15 @@ export function createProcessApi() {
 		 */
 		notifyCadenzaHudReady: (): void => {
 			ipcRenderer.send('cadenza-hud:ready');
+		},
+
+		/**
+		 * Ask main to flash (pulse) a cadenza by id - used by the chat "point" chip.
+		 * Main routes it to whichever renderer holds the cadenza (HUD window, or the
+		 * in-app fallback layer), respecting the Concerto gate.
+		 */
+		flashCadenza: (id: string): void => {
+			ipcRenderer.send('cadenza:flash', id);
 		},
 
 		/**

@@ -8,7 +8,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseConcertoHref, flashConcertoTarget } from '../../../renderer/utils/concertoLinks';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
-import { useCadenzaStore } from '../../../renderer/stores/cadenzaStore';
 
 describe('parseConcertoHref', () => {
 	it('parses the canonical maestro:// form for both surfaces', () => {
@@ -51,15 +50,22 @@ describe('parseConcertoHref', () => {
 });
 
 describe('flashConcertoTarget', () => {
+	let flashCadenza: ReturnType<typeof vi.fn>;
+	let origMaestro: unknown;
+	const win = window as unknown as { maestro: unknown };
+
 	beforeEach(() => {
 		vi.useFakeTimers();
 		useMovementStore.setState({ flashedId: null, hidden: true });
-		useCadenzaStore.setState({ flashedId: null });
+		flashCadenza = vi.fn();
+		origMaestro = win.maestro;
+		win.maestro = { process: { flashCadenza } };
 	});
 
 	afterEach(() => {
 		vi.clearAllTimers();
 		vi.useRealTimers();
+		win.maestro = origMaestro;
 	});
 
 	it('flashes the movement store (and un-stashes it) for a movement href', () => {
@@ -68,14 +74,14 @@ describe('flashConcertoTarget', () => {
 		expect(useMovementStore.getState().hidden).toBe(false);
 	});
 
-	it('flashes the cadenza store for a cadenza href', () => {
+	it('routes a cadenza href through main (flashCadenza), since cadenzas live in the HUD', () => {
 		expect(flashConcertoTarget('maestro://concerto/cadenza/tests')).toBe(true);
-		expect(useCadenzaStore.getState().flashedId).toBe('tests');
+		expect(flashCadenza).toHaveBeenCalledWith('tests');
 	});
 
 	it('is a no-op returning false for a non-concerto href', () => {
 		expect(flashConcertoTarget('https://example.com')).toBe(false);
 		expect(useMovementStore.getState().flashedId).toBeNull();
-		expect(useCadenzaStore.getState().flashedId).toBeNull();
+		expect(flashCadenza).not.toHaveBeenCalled();
 	});
 });

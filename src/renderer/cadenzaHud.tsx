@@ -17,7 +17,7 @@ import { useEffect } from 'react';
 import { loadAllSettings } from './stores/settingsStore';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { CadenzaLayer } from './components/Cadenza';
-import { applyCadenzaPayload } from './stores/cadenzaStore';
+import { applyCadenzaPayload, useCadenzaStore } from './stores/cadenzaStore';
 
 export function CadenzaHudRoot() {
 	// The HUD window boots its own renderer context, so hydrate settings here (for
@@ -34,10 +34,18 @@ export function CadenzaHudRoot() {
 		const off = window.maestro?.process?.onRemoteCadenza?.((payload) => {
 			applyCadenzaPayload(payload);
 		});
+		// A chat "point" chip flashes a cadenza; main routes it here since cadenzas
+		// live in this HUD renderer.
+		const offFlash = window.maestro?.process?.onRemoteCadenzaFlash?.((id) => {
+			useCadenzaStore.getState().flashItem(id);
+		});
 		// Tell main the subscription is live so it can flush the cadenza that
 		// triggered this (lazily created) window - otherwise the first one is lost.
 		window.maestro?.process?.notifyCadenzaHudReady?.();
-		return () => off?.();
+		return () => {
+			off?.();
+			offFlash?.();
+		};
 	}, []);
 
 	// Click-through management lives in the main process (it polls the cursor

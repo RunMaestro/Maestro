@@ -434,6 +434,8 @@ interface MaestroAPI {
 				sessionId?: string;
 			}) => void
 		) => () => void;
+		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
+		flashCadenza: (id: string) => void;
 		onRemoteMovement: (
 			callback: (params: {
 				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
