@@ -50,7 +50,15 @@ export class ProcessManager extends EventEmitter {
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
-	constructor() {
+	constructor(
+		/**
+		 * Live read of the `encoreFeatures.opencodeServer` gate. Defaults to off so
+		 * tests and any caller that builds ProcessManager without the wiring never
+		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
+		 * takes effect without an app restart.
+		 */
+		private readonly isOpencodeServerEnabled: () => boolean = () => false
+	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
@@ -155,7 +163,8 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Route local, interactive OpenCode prompt turns through the SDK server path.
+	 * Route local, interactive OpenCode prompt turns through the SDK server path,
+	 * gated behind the default-off `encoreFeatures.opencodeServer` plugin.
 	 *
 	 * Excluded (stay on the CLI path):
 	 * - SSH-remote sessions (the SDK server spawn is local-only; deferred).
@@ -165,6 +174,10 @@ export class ProcessManager extends EventEmitter {
 	 */
 	private shouldUseOpencodeServer(config: ProcessConfig): boolean {
 		return (
+			// Default-off plugin gate (encoreFeatures.opencodeServer). While it is
+			// off, OpenCode stays on the CLI path — which keeps the Coworking MCP
+			// working, since the serve transport can't inject per-session env.
+			this.isOpencodeServerEnabled() &&
 			config.toolType === 'opencode' &&
 			!!config.prompt &&
 			!config.sshRemoteId &&

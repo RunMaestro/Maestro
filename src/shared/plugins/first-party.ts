@@ -36,7 +36,8 @@ export type FirstPartyEncoreFlag =
 	| 'symphony'
 	| 'maestroCue'
 	| 'pianola'
-	| 'coworking';
+	| 'coworking'
+	| 'opencodeServer';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -185,6 +186,33 @@ export const COWORKING_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// No supervised background service tied to the flag: the coworking IPC bridge
 	// is app-scoped (main startup/shutdown owns its lifecycle), so disable = flag
 	// off + per-agent MCP uninstall; nothing flag-supervised keeps running.
+	backgroundServices: [],
+};
+
+/** Broker capabilities the OpenCode Server path actually touches. It re-reads
+ * its own Encore flag to route each turn; the shared `opencode serve` process
+ * is spawned host-side (the user's resolved binary, same authority as the CLI
+ * path) and is app-scoped via OpencodeServerManager (lazy start, torn down on
+ * quit), so there is no broker verb and no flag-supervised background service. */
+export const OPENCODE_SERVER_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: 'com.maestro.opencode-server',
+	name: 'OpenCode Server',
+	description:
+		'Run local, interactive OpenCode through a shared `opencode serve` process (SDK) instead of a per-prompt CLI spawn — the foundation for live permission prompts. Known limitation: the Coworking MCP is unavailable on this path (tracked follow-up).',
+	firstParty: true,
+	category: 'agents',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason:
+				'Re-read the OpenCode Server Encore flag before routing each OpenCode prompt turn to the shared server path.',
+		},
+	],
+	settingsNamespace: 'opencodeServer',
+	encoreFlag: 'opencodeServer',
+	// The shared `opencode serve` process is app-scoped (spawned lazily by
+	// OpencodeServerManager, torn down on quit), not flag-supervised: disable =
+	// flag off, and routing falls back to the CLI path. Nothing keeps running.
 	backgroundServices: [],
 };
 
@@ -494,6 +522,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	DIRECTOR_NOTES_FIRST_PARTY_PLUGIN,
 	PIANOLA_FIRST_PARTY_PLUGIN,
 	COWORKING_FIRST_PARTY_PLUGIN,
+	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -511,4 +540,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	maestroCue: MAESTRO_CUE_FIRST_PARTY_PLUGIN,
 	pianola: PIANOLA_FIRST_PARTY_PLUGIN,
 	coworking: COWORKING_FIRST_PARTY_PLUGIN,
+	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 };

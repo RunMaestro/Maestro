@@ -1220,6 +1220,11 @@ export interface EncoreFeatureFlags {
 	// Off by default. Optional so existing literals (older test fixtures, persisted
 	// settings without the key) continue to type-check.
 	coworking?: boolean;
+	// OpenCode Server - run local interactive OpenCode via a shared `opencode
+	// serve` process (SDK) instead of a per-prompt CLI spawn. Off by default.
+	// Optional so existing literals (older fixtures, persisted settings without
+	// the key) continue to type-check.
+	opencodeServer?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

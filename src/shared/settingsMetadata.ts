@@ -1033,6 +1033,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			pianola: false,
 			plugins: false,
 			coworking: false,
+			opencodeServer: false,
 		},
 		category: 'advanced',
 	},

@@ -137,14 +137,37 @@ describe('ProcessManager per-spawn coworking socket override', () => {
 		expect(mockGetBridgeSocketPath).not.toHaveBeenCalled();
 	});
 
-	it('does not inject coworking env on the OpenCode SDK-serve path', () => {
+	it('routes OpenCode prompts through the CLI child path with coworking env when the server gate is off', () => {
+		pm.spawn({
+			sessionId: 'oc-gate-off',
+			toolType: 'opencode',
+			cwd: '/tmp',
+			command: 'opencode',
+			args: [],
+			prompt: 'do a thing',
+		});
+
+		// The default-OFF server gate keeps local interactive OpenCode on the CLI path.
+		expect(captured.child).toHaveLength(1);
+		expect(captured.server).toHaveLength(0);
+		expect(captured.pty).toHaveLength(0);
+
+		const forwarded = captured.child[0];
+		const forwardedSessionId = forwarded.customEnvVars?.[SESSION_ID_ENV];
+		expect(forwardedSessionId).toEqual(expect.any(String));
+		expect(forwardedSessionId).not.toBe('');
+		expect(forwarded.customEnvVars?.[OVERRIDE_ENV]).toBe(SENTINEL_SOCKET);
+	});
+
+	it('does not inject coworking env on the OpenCode SDK-serve path when the server gate is on', () => {
 		// An OpenCode prompt turn routes to the shared `opencode serve` spawner.
 		// Coworking env MUST NOT be injected there: MAESTRO_COWORKING_SESSION_ID is
 		// per-session and would fingerprint into a separate server per session
 		// (OpencodeServerManager.buildServerKey), fragmenting the shared server. The
 		// serve decision runs on the raw config, before injection.
-		pm.spawn({
-			sessionId: 'oc-1',
+		const pmOn = new ProcessManager(() => true);
+		pmOn.spawn({
+			sessionId: 'oc-gate-on',
 			toolType: 'opencode',
 			cwd: '/tmp',
 			command: 'opencode',
@@ -153,9 +176,9 @@ describe('ProcessManager per-spawn coworking socket override', () => {
 		});
 
 		// Routes to the server spawner, not child/pty.
+		expect(captured.server).toHaveLength(1);
 		expect(captured.child).toHaveLength(0);
 		expect(captured.pty).toHaveLength(0);
-		expect(captured.server).toHaveLength(1);
 
 		const forwarded = captured.server[0];
 		expect(forwarded.customEnvVars?.[SESSION_ID_ENV]).toBeUndefined();

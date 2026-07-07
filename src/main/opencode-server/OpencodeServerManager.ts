@@ -34,6 +34,23 @@ const AUTO_APPROVE_CONFIG = {
 	tools: { question: false },
 } as const;
 
+// COWORKING FOLLOW-UP (gated behind encoreFeatures.opencodeServer): the shared
+// serve process gets no per-session coworking env, so its env-less MCP
+// subprocess fails the bridge handshake (ppid → serve PID, untracked) and
+// coworking tools are cleanly unavailable. The way around, when we want
+// coworking on this transport, is to move identity off the process env and onto
+// a per-session MCP *registration*: (1) add `mcp: { 'maestro-coworking': { enabled: false } }`
+// here so the global env-less entry never loads, then (2) per session call
+// `client.mcp.add({ query: { directory }, body: { name: 'maestro-coworking-<maestroSessionId>',
+// config: { type: 'local', command: [node, scriptPath], environment: {
+// MAESTRO_COWORKING_SESSION_ID, MAESTRO_COWORKING_SOCKET_OVERRIDE } } } })` so the
+// id rides the named server (existing bridge handshake + fail-closed logic work
+// unchanged), and (3) scope visibility with the per-prompt `tools` map on
+// `session.promptAsync` so one session can't see another's `maestro-coworking-*`
+// tools. Blockers to verify against the live opencode build first: mcp.add
+// scoping/persistence semantics, no de-registration endpoint (only disconnect),
+// and the tool-key wildcard semantics of the per-prompt `tools` filter.
+
 /** How long to wait for the server to print its readiness line before failing. */
 const SERVER_START_TIMEOUT_MS = 15000;
 

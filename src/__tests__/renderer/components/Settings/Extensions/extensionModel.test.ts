@@ -92,6 +92,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'directorNotes',
 			'pianola',
 			'coworking',
+			'opencodeServer',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
