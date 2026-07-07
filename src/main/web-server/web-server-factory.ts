@@ -34,6 +34,36 @@ import {
 	importMarketplacePlaybook,
 } from '../services/marketplace-service';
 
+/**
+ * One request/reply round-trip with a renderer over IPC: mint a fresh response
+ * channel, send it on `requestChannel`, and resolve with the renderer's reply
+ * (mapped by `parse`) or `fallback` if it doesn't answer within `timeoutMs`.
+ * Extracts the hand-rolled once-listener + timeout dance used by several
+ * `remote:*` reads. Caller must have already confirmed the window's webContents.
+ */
+function requestFromRenderer<T>(
+	win: BrowserWindow,
+	requestChannel: string,
+	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number }
+): Promise<T> {
+	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000 } = options;
+	return new Promise<T>((resolve) => {
+		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
+		let settled = false;
+		const finish = (value: T) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeoutId);
+			ipcMain.removeListener(responseChannel, onReply);
+			resolve(value);
+		};
+		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
+		ipcMain.once(responseChannel, onReply);
+		win.webContents.send(requestChannel, responseChannel);
+		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
+	});
+}
+
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -950,24 +980,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				return null;
 			const mainWindow = getMainWindow();
 			if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
-			return new Promise<MovementStateSnapshot | null>((resolve) => {
-				const responseChannel = `remote:getMovementState:response:${randomUUID()}`;
-				let resolved = false;
-				const handleResponse = (_event: Electron.IpcMainEvent, snapshot: unknown) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve((snapshot as MovementStateSnapshot) ?? null);
-				};
-				ipcMain.once(responseChannel, handleResponse);
-				mainWindow.webContents.send('remote:getMovementState', responseChannel);
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(null);
-				}, 3000);
-			});
+			return requestFromRenderer<MovementStateSnapshot | null>(
+				mainWindow,
+				'remote:getMovementState',
+				{ fallback: null, parse: (raw) => (raw as MovementStateSnapshot) ?? null }
+			);
 		});
 
 		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
