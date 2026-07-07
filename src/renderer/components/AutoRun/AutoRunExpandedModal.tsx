@@ -17,12 +17,14 @@ import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 interface AutoRunExpandedModalProps {
 	theme: Theme;
@@ -248,6 +250,11 @@ export function AutoRunExpandedModal({
 		},
 		[onModeChange]
 	);
+	const resizableModal = useResizableModal({
+		resizeKey: 'auto-run-expanded',
+		defaultSize: { width: 960, height: 720 },
+		minSize: { width: 680, height: 460 },
+	});
 
 	return createPortal(
 		<div
@@ -261,12 +268,23 @@ export function AutoRunExpandedModal({
 		>
 			{/* Modal - same size as PromptComposer for consistency */}
 			<div
-				className="relative w-[90vw] h-[80vh] max-w-5xl overflow-hidden rounded-xl border shadow-2xl flex flex-col"
+				ref={resizableModal.modalRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Auto Run"
+				className="relative overflow-hidden rounded-xl border shadow-2xl flex flex-col"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="auto-run-expanded"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header with controls */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b shrink-0"

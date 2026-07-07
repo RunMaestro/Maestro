@@ -21,6 +21,7 @@ import type { Theme, Session } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
@@ -28,6 +29,7 @@ import { estimateTokensFromLogs } from '../../shared/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 /**
  * View modes for the modal
@@ -537,12 +539,18 @@ export function MergeSessionModal({
 		if (viewMode === 'paste') return pastedIdValid && pastedIdMatch !== null;
 		return selectedTarget !== null;
 	}, [viewMode, pastedIdValid, pastedIdMatch, selectedTarget, isMerging]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'merge-session',
+		defaultSize: { width: 680, height: 720 },
+		minSize: { width: 500, height: 360 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="merge-modal-title"
@@ -554,13 +562,20 @@ export function MergeSessionModal({
 			<ScreenReaderAnnouncement {...announcementProps} />
 
 			<div
-				className="modal-w-md rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				ref={resizableModal.modalRef}
+				className="relative rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up select-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
-					maxHeight: 'calc(100vh - 128px)',
 				}}
+				data-modal-resize-key="merge-session"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="p-4 border-b flex items-center justify-between shrink-0"

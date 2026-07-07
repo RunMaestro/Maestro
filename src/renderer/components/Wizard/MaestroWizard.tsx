@@ -15,10 +15,12 @@ import {
 	type WizardStep,
 } from './WizardContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { WizardExitConfirmModal } from './WizardExitConfirmModal';
 import { ScreenReaderAnnouncement } from './ScreenReaderAnnouncement';
 import type { Theme } from '../../types';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 /**
  * Selector for all focusable elements within a container
@@ -414,6 +416,13 @@ export function MaestroWizard({
 				return null;
 		}
 	}, [displayedStep, theme, onLaunchSession, onWizardComplete, showThinking]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'wizard',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		enabled: state.isOpen,
+		externalRef: modalRef,
+	});
 
 	// Don't render if wizard is not open
 	if (!state.isOpen) {
@@ -443,15 +452,22 @@ export function MaestroWizard({
 
 			<div
 				ref={modalRef}
-				className="modal-w-2xl h-[85vh] rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
+				className="relative rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="wizard"
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="wizard-title"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-6 py-4 border-b wizard-header"

@@ -727,6 +727,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'display-modal-layout',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Modal Layout',
+		description: 'Reset saved modal sizes',
+		keywords: ['modal', 'dialog', 'resize', 'size', 'reset', 'layout', 'window'],
+	},
+	{
 		id: 'display-file-edit-preview',
 		tab: 'display',
 		tabLabel: 'Display',

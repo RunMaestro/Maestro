@@ -25,6 +25,7 @@ import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import type { Theme, AutoRunStats, LeaderboardRegistration, KeyboardMasteryStats } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
@@ -33,6 +34,7 @@ import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
@@ -755,6 +757,11 @@ export function LeaderboardRegistrationModal({
 		},
 		[isFormValid, submitState, handleSubmit]
 	);
+	const resizableModal = useResizableModal({
+		resizeKey: 'leaderboard-registration',
+		defaultSize: { width: 480, height: 680 },
+		minSize: { width: 360, height: 360 },
+	});
 
 	return (
 		<div
@@ -767,9 +774,20 @@ export function LeaderboardRegistrationModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="modal-w-sm max-h-[90vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				ref={resizableModal.modalRef}
+				className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="leaderboard-registration"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="p-4 border-b flex items-center justify-between"
@@ -789,7 +807,7 @@ export function LeaderboardRegistrationModal({
 				</div>
 
 				{/* Content */}
-				<div className="p-5 space-y-4 overflow-y-auto">
+				<div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
 					{/* Info text */}
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Join the global Maestro leaderboard at{' '}

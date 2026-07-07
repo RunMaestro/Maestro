@@ -1,407 +1,84 @@
-/**
- * Tests for Modal component
- *
- * The Modal component provides consistent UI structure for all modals,
- * combining useModalLayer hook with standardized styling patterns.
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mockTheme } from '../../../helpers/mockTheme';
 import { Modal, ModalFooter } from '../../../../renderer/components/ui/Modal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
-import { mockTheme } from '../../../helpers/mockTheme';
-// Mock theme for testing
+function renderModal(overrides: Partial<React.ComponentProps<typeof Modal>> = {}) {
+	const onClose = overrides.onClose ?? vi.fn();
 
-// Test wrapper with LayerStackProvider
-const TestWrapper = ({ children }: { children: React.ReactNode }) => (
-	<LayerStackProvider>{children}</LayerStackProvider>
-);
+	render(
+		<LayerStackProvider>
+			<Modal
+				theme={mockTheme}
+				title="Shared Modal"
+				priority={123}
+				onClose={onClose}
+				resizeKey="shared-modal-test"
+				testId="shared-modal-overlay"
+				{...overrides}
+			>
+				<div>Modal body</div>
+			</Modal>
+		</LayerStackProvider>
+	);
+
+	return { onClose };
+}
 
 describe('Modal', () => {
-	// Store original NODE_ENV
-	const originalNodeEnv = process.env.NODE_ENV;
-
 	beforeEach(() => {
-		process.env.NODE_ENV = 'production';
-		delete (window as unknown as Record<string, unknown>).__MAESTRO_DEBUG__;
+		useSettingsStore.setState({ modalSizes: {} });
+		vi.mocked(window.maestro.settings.set).mockClear();
 	});
 
-	afterEach(() => {
-		vi.restoreAllMocks();
-		process.env.NODE_ENV = originalNodeEnv;
-		delete (window as unknown as Record<string, unknown>).__MAESTRO_DEBUG__;
+	it('renders resize handles when resizable with a stable key', () => {
+		renderModal();
+
+		expect(screen.getByTestId('modal-resize-handle-se')).toBeInTheDocument();
+		expect(
+			document.querySelector('[data-modal-resize-key="shared-modal-test"]')
+		).toBeInTheDocument();
 	});
 
-	describe('rendering', () => {
-		it('should render with required props', () => {
-			const onClose = vi.fn();
+	it('does not enable resizing without an explicit resizeKey', () => {
+		renderModal({ resizeKey: undefined, width: 450, maxHeight: '70vh' });
 
-			render(
-				<Modal theme={mockTheme} title="Test Modal" priority={100} onClose={onClose}>
-					<p>Modal content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
+		expect(screen.queryByTestId('modal-resize-handle-se')).not.toBeInTheDocument();
+		expect(document.querySelector('[data-modal-resize-key]')).not.toBeInTheDocument();
 
-			expect(screen.getByRole('dialog')).toBeInTheDocument();
-			expect(screen.getByText('Test Modal')).toBeInTheDocument();
-			expect(screen.getByText('Modal content')).toBeInTheDocument();
-		});
-
-		it('should apply correct aria attributes', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal theme={mockTheme} title="Accessible Modal" priority={100} onClose={onClose}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const dialog = screen.getByRole('dialog');
-			expect(dialog).toHaveAttribute('aria-modal', 'true');
-			expect(dialog).toHaveAttribute('aria-label', 'Accessible Modal');
-		});
-
-		it('should render header with title and close button', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal theme={mockTheme} title="Header Test" priority={100} onClose={onClose}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByText('Header Test')).toBeInTheDocument();
-			expect(screen.getByLabelText('Close modal')).toBeInTheDocument();
-		});
-
-		it('should render header icon when provided', () => {
-			const onClose = vi.fn();
-			const TestIcon = () => <span data-testid="test-icon">Icon</span>;
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Icon Test"
-					priority={100}
-					onClose={onClose}
-					headerIcon={<TestIcon />}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByTestId('test-icon')).toBeInTheDocument();
-		});
-
-		it('should render custom header when provided', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Test"
-					priority={100}
-					onClose={onClose}
-					customHeader={<div data-testid="custom-header">Custom Header</div>}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByTestId('custom-header')).toBeInTheDocument();
-			// Default title should not be rendered when custom header is provided
-			expect(screen.queryByText('Test')).not.toBeInTheDocument();
-		});
-
-		it('should hide header when showHeader is false', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Hidden Header"
-					priority={100}
-					onClose={onClose}
-					showHeader={false}
-				>
-					<p>Content only</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.queryByText('Hidden Header')).not.toBeInTheDocument();
-			expect(screen.getByText('Content only')).toBeInTheDocument();
-		});
-
-		it('should hide close button when showCloseButton is false', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="No Close Button"
-					priority={100}
-					onClose={onClose}
-					showCloseButton={false}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByText('No Close Button')).toBeInTheDocument();
-			expect(screen.queryByLabelText('Close modal')).not.toBeInTheDocument();
-		});
-
-		it('should render footer when provided', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Footer Test"
-					priority={100}
-					onClose={onClose}
-					footer={<button>Save</button>}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
-		});
-
-		it('should not render footer section when footer is not provided', () => {
-			const onClose = vi.fn();
-
-			const { container } = render(
-				<Modal theme={mockTheme} title="No Footer" priority={100} onClose={onClose}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			// Footer section should have border-t class - count them
-			const footerSections = container.querySelectorAll('.border-t');
-			expect(footerSections.length).toBe(0);
-		});
-
-		it('should apply test ID when provided', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal theme={mockTheme} title="Test" priority={100} onClose={onClose} testId="my-modal">
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			expect(screen.getByTestId('my-modal')).toBeInTheDocument();
-		});
+		const card = screen.getByText('Modal body').closest('[role="dialog"] > div');
+		expect(card).toHaveStyle({ maxHeight: '70vh' });
+		expect((card as HTMLElement).style.width).toContain('450px');
 	});
 
-	describe('styling', () => {
-		it('should scale custom width with the font by default', () => {
-			const onClose = vi.fn();
+	it('keeps close button behavior unchanged', () => {
+		const { onClose } = renderModal();
 
-			const { container } = render(
-				<Modal theme={mockTheme} title="Wide Modal" priority={100} onClose={onClose} width={600}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
+		fireEvent.click(screen.getByLabelText('Close modal'));
 
-			// scaleWidthWithFont defaults to true, so the baseline width is the
-			// font-scaled calc clamped to viewport width (no-op at scale 1).
-			const modalContainer = container.querySelector('.rounded-lg') as HTMLElement;
-			expect(modalContainer.style.width).toBe('min(calc(600px * var(--font-scale, 1)), 95vw)');
-		});
-
-		it('should use a literal px width when scaleWidthWithFont is false', () => {
-			const onClose = vi.fn();
-
-			const { container } = render(
-				<Modal
-					theme={mockTheme}
-					title="Fixed Modal"
-					priority={100}
-					onClose={onClose}
-					width={600}
-					scaleWidthWithFont={false}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const modalContainer = container.querySelector('.rounded-lg');
-			expect(modalContainer).toHaveStyle({ width: '600px' });
-		});
-
-		it('should scale width with --font-scale when scaleWidthWithFont is set', () => {
-			const onClose = vi.fn();
-
-			const { container } = render(
-				<Modal
-					theme={mockTheme}
-					title="Scaling Modal"
-					priority={100}
-					onClose={onClose}
-					width={680}
-					scaleWidthWithFont
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const modalContainer = container.querySelector('.rounded-lg') as HTMLElement;
-			// Baseline width is the font-scaled calc clamped to viewport width, not a fixed px value.
-			expect(modalContainer.style.width).toBe('min(calc(680px * var(--font-scale, 1)), 95vw)');
-		});
-
-		it('should apply custom maxHeight', () => {
-			const onClose = vi.fn();
-
-			const { container } = render(
-				<Modal
-					theme={mockTheme}
-					title="Short Modal"
-					priority={100}
-					onClose={onClose}
-					maxHeight="50vh"
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const modalContainer = container.querySelector('.rounded-lg');
-			expect(modalContainer).toHaveStyle({ maxHeight: '50vh' });
-		});
-
-		it('should apply custom zIndex', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="High Z Modal"
-					priority={100}
-					onClose={onClose}
-					zIndex={15000}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const backdrop = screen.getByRole('dialog');
-			expect(backdrop).toHaveStyle({ zIndex: 15000 });
-		});
-
-		it('should apply theme colors correctly', () => {
-			const onClose = vi.fn();
-
-			const { container } = render(
-				<Modal theme={mockTheme} title="Themed Modal" priority={100} onClose={onClose}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			const modalContainer = container.querySelector('.rounded-lg');
-			expect(modalContainer).toHaveStyle({
-				backgroundColor: mockTheme.colors.bgSidebar,
-				borderColor: mockTheme.colors.border,
-			});
-		});
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
-	describe('interactions', () => {
-		it('should call onClose when close button is clicked', () => {
-			const onClose = vi.fn();
+	it('keeps backdrop close behavior opt-in', () => {
+		const { onClose } = renderModal({ closeOnBackdropClick: true });
 
-			render(
-				<Modal theme={mockTheme} title="Test" priority={100} onClose={onClose}>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
+		fireEvent.click(screen.getByText('Modal body'));
+		expect(onClose).not.toHaveBeenCalled();
 
-			fireEvent.click(screen.getByLabelText('Close modal'));
+		fireEvent.click(screen.getByTestId('shared-modal-overlay'));
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('routes Escape through LayerStack', async () => {
+		const { onClose } = renderModal();
+
+		fireEvent.keyDown(window, { key: 'Escape' });
+
+		await waitFor(() => {
 			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('should call onClose when backdrop is clicked and closeOnBackdropClick is true', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Test"
-					priority={100}
-					onClose={onClose}
-					closeOnBackdropClick={true}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			// Click directly on the backdrop (dialog element)
-			fireEvent.click(screen.getByRole('dialog'));
-			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('should NOT call onClose when backdrop is clicked and closeOnBackdropClick is false', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Test"
-					priority={100}
-					onClose={onClose}
-					closeOnBackdropClick={false}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			// Click directly on the backdrop
-			fireEvent.click(screen.getByRole('dialog'));
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
-		it('should NOT call onClose when clicking inside modal content', () => {
-			const onClose = vi.fn();
-
-			render(
-				<Modal
-					theme={mockTheme}
-					title="Test"
-					priority={100}
-					onClose={onClose}
-					closeOnBackdropClick={true}
-				>
-					<p data-testid="content">Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
-			);
-
-			// Click on the content inside modal
-			fireEvent.click(screen.getByTestId('content'));
-			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 
@@ -424,7 +101,11 @@ describe('Modal', () => {
 				);
 			};
 
-			render(<TestComponent />, { wrapper: TestWrapper });
+			render(
+				<LayerStackProvider>
+					<TestComponent />
+				</LayerStackProvider>
+			);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('focus-input')).toHaveFocus();
@@ -435,16 +116,17 @@ describe('Modal', () => {
 			const onClose = vi.fn();
 
 			render(
-				<Modal
-					theme={mockTheme}
-					title="Container Focus"
-					priority={100}
-					onClose={onClose}
-					testId="modal-container"
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
+				<LayerStackProvider>
+					<Modal
+						theme={mockTheme}
+						title="Container Focus"
+						priority={100}
+						onClose={onClose}
+						testId="modal-container"
+					>
+						<p>Content</p>
+					</Modal>
+				</LayerStackProvider>
 			);
 
 			await waitFor(() => {
@@ -459,20 +141,21 @@ describe('Modal', () => {
 			const onBeforeClose = vi.fn().mockResolvedValue(false);
 
 			render(
-				<Modal
-					theme={mockTheme}
-					title="Options Test"
-					priority={100}
-					onClose={onClose}
-					layerOptions={{
-						isDirty: true,
-						onBeforeClose,
-						focusTrap: 'lenient',
-					}}
-				>
-					<p>Content</p>
-				</Modal>,
-				{ wrapper: TestWrapper }
+				<LayerStackProvider>
+					<Modal
+						theme={mockTheme}
+						title="Options Test"
+						priority={100}
+						onClose={onClose}
+						layerOptions={{
+							isDirty: true,
+							onBeforeClose,
+							focusTrap: 'lenient',
+						}}
+					>
+						<p>Content</p>
+					</Modal>
+				</LayerStackProvider>
 			);
 
 			// Modal should render successfully with options

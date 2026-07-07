@@ -705,20 +705,20 @@ describe('AutoRunExpandedModal', () => {
 			expect(overlay).toHaveStyle({ backgroundColor: 'rgba(0,0,0,0.7)' });
 		});
 
-		it('should have 90vw width and 80vh height', () => {
+		it('should render a resizable modal shell', () => {
 			const props = createDefaultProps();
 			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const modal = container.querySelector('.w-\\[90vw\\].h-\\[80vh\\]');
+			const modal = container.querySelector('[data-modal-resize-key="auto-run-expanded"]');
 			expect(modal).toBeInTheDocument();
 		});
 
-		it('should have max-w-5xl class', () => {
+		it('should clamp the resizable shell to the modal viewport ceiling', () => {
 			const props = createDefaultProps();
 			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const modal = container.querySelector('.max-w-5xl');
-			expect(modal).toBeInTheDocument();
+			const modal = container.querySelector('[data-modal-resize-key="auto-run-expanded"]');
+			expect(modal).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
 		});
 
 		it('should have rounded corners and border', () => {

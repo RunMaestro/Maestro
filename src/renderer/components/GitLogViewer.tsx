@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { GitCommit, GitBranch, Tag } from 'lucide-react';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Diff, Hunk } from 'react-diff-view';
 import { parseGitDiff } from '../utils/gitDiffParser';
@@ -10,6 +11,7 @@ import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
+import { ResizeHandles } from './ui/ResizeHandles';
 import 'react-diff-view/style/index.css';
 
 interface GitLogEntry {
@@ -51,6 +53,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [loadingDiff, setLoadingDiff] = useState(false);
 
 	const listRef = useRef<HTMLDivElement>(null);
+	const dialogRef = useRef<HTMLDivElement>(null);
 	const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
@@ -275,6 +278,16 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 		return stats.length > 0 ? stats : null;
 	}, [selectedCommitDiff]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'git-log',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 720, height: 480 },
+		externalRef: dialogRef,
+	});
+
+	useEffect(() => {
+		dialogRef.current?.focus();
+	}, []);
 
 	return (
 		<div
@@ -282,19 +295,25 @@ export const GitLogViewer = memo(function GitLogViewer({
 			onClick={onClose}
 		>
 			<div
-				className="w-[90vw] h-[90vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+				ref={dialogRef}
+				className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-					border: '1px solid',
+					border: `1px solid ${theme.colors.border}`,
 				}}
+				data-modal-resize-key="git-log"
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Git Log Viewer"
 				tabIndex={-1}
-				ref={(el) => el?.focus()}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-6 py-4 border-b"

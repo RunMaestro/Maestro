@@ -10,6 +10,7 @@ import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MarketplaceBrowseTab, MarketplaceHeader, PlaybookDetailView } from './components';
 import { partitionPlaybooksByCompatibility } from './helpers';
 import {
@@ -19,6 +20,7 @@ import {
 	usePlaybookImportActions,
 } from './hooks';
 import type { MarketplaceModalProps } from './types';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 export function MarketplaceModal({
 	theme,
@@ -169,25 +171,39 @@ export function MarketplaceModal({
 		onCategoryChange: handleCategoryChange,
 		onSelectDocument: handleSelectDocument,
 	});
+	const resizableModal = useResizableModal({
+		resizeKey: 'marketplace',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
 	const modalContent = (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
 		>
 			<div
+				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="marketplace-title"
 				tabIndex={-1}
-				className="modal-w-2xl rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none select-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="marketplace"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{showDetailView && selectedPlaybook ? (
 					<PlaybookDetailView
 						theme={theme}

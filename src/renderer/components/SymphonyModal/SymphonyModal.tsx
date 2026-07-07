@@ -14,6 +14,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { RegisteredRepository, SymphonyIssue } from '../../../shared/symphony-types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useSymphony } from '../../hooks/symphony';
 import { useContributorStats } from '../../hooks/symphony/useContributorStats';
@@ -28,6 +29,7 @@ import {
 } from './hooks';
 import { RepositoryDetailView, BuildToolsWarningDialog, SymphonyHeader } from './components';
 import { ProjectsTab, ActiveTab, HistoryTab, StatsTab } from './tabs';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 // ============================================================================
 // Main SymphonyModal
@@ -257,22 +259,39 @@ export function SymphonyModal({
 		searchInputRef,
 		tileGridRef,
 	});
+	const resizableModal = useResizableModal({
+		resizeKey: 'symphony',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
 	const modalContent = (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
 		>
 			<div
+				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="symphony-modal-title"
 				tabIndex={-1}
-				className="modal-w-2xl rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none select-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="symphony"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Detail view for projects */}
 				{activeTab === 'projects' && showDetailView && selectedRepo ? (
 					<RepositoryDetailView

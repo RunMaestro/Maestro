@@ -19,12 +19,14 @@ import { Spinner } from './ui/Spinner';
 import type { Theme, AgentConfig } from '../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
 import { isAdaptiveModeDefaultOn } from '../../shared/agentConstants';
 import { logger } from '../utils/logger';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 // ============================================================================
 // Types
@@ -324,6 +326,12 @@ export function AgentCreationDialog({
 		maestroPPathByAgent,
 		onCreateAgent,
 	]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'symphony-agent-creation',
+		defaultSize: { width: 640, height: 720 },
+		minSize: { width: 480, height: 420 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
@@ -333,13 +341,24 @@ export function AgentCreationDialog({
 			style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }}
 		>
 			<div
+				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="agent-creation-dialog-title"
 				tabIndex={-1}
-				className="modal-w-lg max-h-[90vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="symphony-agent-creation"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b shrink-0"
@@ -361,9 +380,12 @@ export function AgentCreationDialog({
 				</div>
 
 				{/* Content - scrollable */}
-				<div className="p-4 space-y-4 overflow-y-auto flex-1">
+				<div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
 					{/* Issue info */}
-					<div className="p-3 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
+					<div
+						className="p-3 rounded-lg select-text"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
 						<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
 							Contributing to
 						</p>

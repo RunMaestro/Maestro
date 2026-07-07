@@ -85,6 +85,7 @@ function resetStore() {
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
+		modalSizes: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		groupChatAutoScroll: true,
@@ -166,7 +167,7 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
-		it('has correct default values for all 68 fields', () => {
+		it('has correct default values for the initial settings fields', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -190,6 +191,7 @@ describe('settingsStore', () => {
 			expect(state.defaultShowThinking).toBe('off');
 			expect(state.leftSidebarWidth).toBe(256);
 			expect(state.rightPanelWidth).toBe(384);
+			expect(state.modalSizes).toEqual({});
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.groupChatAutoScroll).toBe(true);
@@ -750,6 +752,30 @@ describe('settingsStore', () => {
 			useSettingsStore.getState().setLeftSidebarWidth(400);
 			expect(useSettingsStore.getState().leftSidebarWidth).toBe(400);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('leftSidebarWidth', 400);
+		});
+
+		it('setModalSize persists a normalized size by key', () => {
+			useSettingsStore.getState().setModalSize('settings', { width: 812.4, height: 620.6 });
+
+			expect(useSettingsStore.getState().modalSizes).toEqual({
+				settings: { width: 812, height: 621 },
+			});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('modalSizes', {
+				settings: { width: 812, height: 621 },
+			});
+		});
+
+		it('resetModalSizes clears persisted modal sizes', () => {
+			useSettingsStore.setState({
+				modalSizes: {
+					settings: { width: 812, height: 621 },
+				},
+			});
+
+			useSettingsStore.getState().resetModalSizes();
+
+			expect(useSettingsStore.getState().modalSizes).toEqual({});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('modalSizes', {});
 		});
 
 		it('setWebInterfaceCustomPort persists only valid 1024-65535', () => {
@@ -1526,6 +1552,22 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().leftSidebarWidth).toBe(256);
+		});
+
+		it('sanitizes modalSizes on load', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				modalSizes: {
+					settings: { width: 900.2, height: 700.8 },
+					broken: { width: -1, height: 400 },
+					alsoBroken: { width: 500 },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().modalSizes).toEqual({
+				settings: { width: 900, height: 701 },
+			});
 		});
 
 		it('converts maxOutputLines null to Infinity', async () => {

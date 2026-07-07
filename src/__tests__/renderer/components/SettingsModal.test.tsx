@@ -2831,9 +2831,13 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// The modal container is the first child div under the dialog overlay.
-			const container = screen.getByRole('dialog').querySelector('div');
-			expect(container?.className).toContain('h-[min(900px,90dvh)]');
+			// Height clamping is now owned by the resizable-modal system (inline
+			// style, not a static Tailwind class) - it always caps at 90vh rather
+			// than switching between a fixed 900px and a viewport-relative class.
+			const container = screen
+				.getByRole('dialog')
+				.querySelector('[data-modal-resize-key="settings"]');
+			expect(container).toHaveStyle({ maxHeight: '90vh' });
 			expect(container?.className).not.toContain('h-[900px]');
 		});
 

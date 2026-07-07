@@ -23,9 +23,11 @@ import { Spinner } from './ui/Spinner';
 import type { Theme, ToolType } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getAgentDisplayName } from '../services/contextGroomer';
 import { formatElapsedTime } from '../../shared/formatters';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 /**
  * Progress stage definition for transfer display
@@ -304,6 +306,12 @@ export function TransferProgressModal({
 			setShowCancelConfirm(true);
 		}
 	}, [progress.stage, onCancel, onComplete]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'transfer-progress',
+		defaultSize: { width: 440, height: 520 },
+		minSize: { width: 340, height: 320 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
@@ -318,13 +326,21 @@ export function TransferProgressModal({
 			tabIndex={-1}
 		>
 			<div
-				className="modal-w-sm rounded-xl shadow-2xl border outline-none relative overflow-hidden"
+				ref={resizableModal.modalRef}
+				className="rounded-xl shadow-2xl border outline-none relative overflow-hidden flex flex-col"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
 				onClick={(e) => e.stopPropagation()}
+				data-modal-resize-key="transfer-progress"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Cancel Confirmation Overlay */}
 				{showCancelConfirm && (
 					<CancelConfirmDialog

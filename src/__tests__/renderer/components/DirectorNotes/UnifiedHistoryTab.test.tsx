@@ -284,7 +284,8 @@ beforeEach(() => {
 	// Install a fresh in-memory localStorage mock between tests so a filter
 	// toggle in one test can't leak a restrictive selection (UNIFIED_HISTORY_FILTERS_KEY)
 	// into later tests, which would hide entries and fail their assertions.
-	// jsdom here provides no working Storage, so a mock is required.
+	// jsdom here provides no working Storage, so a mock is required. This
+	// installs a fresh in-memory store, which also serves as the per-test reset.
 	installLocalStorageMock();
 	mockDirNotesSettings.defaultLookbackDays = 7;
 	(window as any).maestro = {

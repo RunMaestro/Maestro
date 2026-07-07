@@ -1256,10 +1256,13 @@ svg.wand-profiling-active path:nth-child(8) {
    Delete/Prev/Next button labels to their icons so every control stays
    on-screen. data-bp is set by useViewportBreakpoint on <html>. */
 :root[data-bp='xs'] .history-detail-modal {
-	width: 100vw;
-	max-width: 100vw;
-	height: 100dvh;
-	max-height: 100dvh;
+	/* !important: the modal is resizable and sets width/height/max-width/
+	   max-height inline (higher specificity than any class selector), which
+	   would otherwise silently defeat this phone breakpoint override. */
+	width: 100vw !important;
+	max-width: 100vw !important;
+	height: 100dvh !important;
+	max-height: 100dvh !important;
 	border-radius: 0;
 	border-width: 0;
 }

@@ -1242,7 +1242,7 @@ describe('PromptComposerModal', () => {
 			});
 		});
 
-		it('should have 90vw width and 80vh height', () => {
+		it('should render a resizable modal shell', () => {
 			const { container } = renderWithProvider(
 				<PromptComposerModal
 					isOpen={true}
@@ -1254,8 +1254,11 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const modalContent = container.querySelector('.w-\\[90vw\\].h-\\[80vh\\]');
+			const modalContent = container.querySelector(
+				'[data-modal-resize-key="prompt-composer-compact"]'
+			);
 			expect(modalContent).toBeInTheDocument();
+			expect(modalContent).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
 		});
 	});
 

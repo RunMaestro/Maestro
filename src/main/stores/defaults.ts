@@ -74,6 +74,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
+	modalSizes: {},
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	annotatorPenColor: '#9146FF',

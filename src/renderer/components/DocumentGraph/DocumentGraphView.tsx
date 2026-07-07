@@ -35,8 +35,10 @@ import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { useDebouncedCallback } from '../../hooks/utils';
 import {
 	buildGraphData,
@@ -1364,6 +1366,13 @@ export function DocumentGraphView({
 			return Math.round(clamped * 10) / 10;
 		});
 	}, []);
+	const resizableModal = useResizableModal({
+		resizeKey: 'document-graph',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		enabled: isOpen,
+		externalRef: containerRef,
+	});
 
 	if (!isOpen) return null;
 
@@ -1397,16 +1406,21 @@ export function DocumentGraphView({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Document Graph"
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
-					width: '90vw',
-					height: '90vh',
 				}}
+				data-modal-resize-key="document-graph"
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={handleContainerKeyDown}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"

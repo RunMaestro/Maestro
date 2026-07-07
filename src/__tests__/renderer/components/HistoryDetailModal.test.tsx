@@ -1430,7 +1430,7 @@ describe('HistoryDetailModal', () => {
 			fireEvent.click(screen.getByTitle('Delete this history entry'));
 
 			// Find the confirmation modal content
-			const modalContent = baseElement.querySelector('.w-\\[400px\\]');
+			const modalContent = baseElement.querySelector('.modal-w-xs');
 			if (modalContent) {
 				fireEvent.click(modalContent);
 				// Modal should still be open
@@ -1639,7 +1639,7 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
 			);
 
-			const modal = baseElement.querySelector('.w-full.max-w-3xl');
+			const modal = baseElement.querySelector('[data-modal-resize-key="history-detail"]');
 			expect(modal).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 

@@ -46,6 +46,14 @@ export { useContextMenuPosition } from './useContextMenuPosition';
 export { useResizablePanel } from './useResizablePanel';
 export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
 
+// Resizable modal drag behavior
+export { useResizableModal } from './useResizableModal';
+export type {
+	ModalResizeDirection,
+	UseResizableModalOptions,
+	UseResizableModalReturn,
+} from './useResizableModal';
+
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';
 export type { UseAppHandlersDeps, UseAppHandlersReturn } from './useAppHandlers';

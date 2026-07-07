@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { CheckSquare, RefreshCw, X } from 'lucide-react';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import type { DocumentSelectorModalProps } from '../types';
 import { useDocumentSelection } from '../hooks/useDocumentSelection';
@@ -9,6 +10,7 @@ import { useDocumentSelectorRefresh } from '../hooks/useDocumentSelectorRefresh'
 import { DocumentSelectorFlatList } from './DocumentSelectorFlatList';
 import { DocumentSelectorFooter } from './DocumentSelectorFooter';
 import { DocumentSelectorTree } from './DocumentSelectorTree';
+import { ResizeHandles } from '../../ui/ResizeHandles';
 
 export function DocumentSelectorModal({
 	theme,
@@ -49,6 +51,11 @@ export function DocumentSelectorModal({
 		allDocumentsLength: allDocuments.length,
 		onRefresh,
 	});
+	const resizableModal = useResizableModal({
+		resizeKey: 'document-selector',
+		defaultSize: { width: 760, height: 620 },
+		minSize: { width: 520, height: 360 },
+	});
 
 	return (
 		<div
@@ -66,18 +73,34 @@ export function DocumentSelectorModal({
 				aria-label="Close document selector"
 			/>
 			<div
+				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
-				className="relative z-10 modal-w-xl max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				aria-labelledby="document-selector-title"
+				className="relative z-10 border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
 				onClick={(e) => e.stopPropagation()}
+				data-modal-resize-key="document-selector"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				<div
 					className="p-4 border-b flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
 					<div className="flex items-center gap-2">
-						<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+						<h3
+							id="document-selector-title"
+							className="text-sm font-bold"
+							style={{ color: theme.colors.textMain }}
+						>
 							Select Documents
 						</h3>
 						<span
@@ -131,7 +154,7 @@ export function DocumentSelectorModal({
 					</div>
 				</div>
 
-				<div className="flex-1 overflow-y-auto p-2">
+				<div className="flex-1 min-h-0 overflow-y-auto p-2">
 					{allDocuments.length === 0 ? (
 						<div className="p-4 text-center" style={{ color: theme.colors.textDim }}>
 							<p className="text-sm">No documents found in folder</p>

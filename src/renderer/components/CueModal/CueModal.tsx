@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -32,6 +33,7 @@ import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
 import { BackupTab } from './BackupTab';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 export interface CueModalProps {
 	theme: Theme;
@@ -265,6 +267,11 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		refresh();
 		refreshGraphData();
 	}, [refresh, refreshGraphData]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'cue',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 520 },
+	});
 
 	return (
 		<>
@@ -281,14 +288,23 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 					{/* Modal */}
 					<div
+						ref={resizableModal.modalRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Maestro Cue"
 						className="relative rounded-xl shadow-2xl flex flex-col select-none"
 						style={{
-							width: '90vw',
-							height: '90vh',
+							...resizableModal.style,
 							backgroundColor: theme.colors.bgMain,
 							border: `1px solid ${theme.colors.border}`,
 						}}
+						data-modal-resize-key="cue"
 					>
+						<ResizeHandles
+							onResizeStart={resizableModal.onResizeStart}
+							accentColor={theme.colors.accent}
+						/>
+
 						<CueModalHeader
 							theme={theme}
 							activeTab={activeTab}
@@ -328,7 +344,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								/>
 							</div>
 						) : activeTab === 'activity' ? (
-							<div className="flex-1 min-h-0 px-5 py-4">
+							<div className="flex-1 min-h-0 px-5 py-4 select-text">
 								<ActivityLog
 									log={activityLog}
 									theme={theme}

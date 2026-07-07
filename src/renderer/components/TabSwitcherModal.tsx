@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
@@ -22,6 +23,7 @@ import { getTabDisplayName } from '../utils/tabHelpers';
 import { EscCloseHint } from './ui/EscCloseHint';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -594,21 +596,37 @@ export function TabSwitcherModal({
 		},
 		[listKeyDown, toggleViewMode]
 	);
+	const resizableModal = useResizableModal({
+		resizeKey: 'tab-switcher',
+		defaultSize: { width: 600, height: 700 },
+		minSize: { width: 420, height: 320 },
+	});
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			onClick={onClose}
 		>
 			<div
+				ref={resizableModal.modalRef}
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Tab Switcher"
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[700px] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="tab-switcher"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Search Header */}
 				<div
 					className="p-4 border-b flex items-center gap-3"

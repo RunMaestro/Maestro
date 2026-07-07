@@ -415,6 +415,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 384,
 		category: 'editor',
 	},
+	modalSizes: {
+		description:
+			'Per-modal remembered sizes in pixels, keyed by modal identifier. Values are clamped to the current viewport when used.',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
 	markdownEditMode: {
 		description: 'Show raw markdown source instead of rendered markdown in chat.',
 		type: 'boolean',

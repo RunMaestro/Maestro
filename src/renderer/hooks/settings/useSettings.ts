@@ -43,6 +43,7 @@ import type {
 	FilePreviewToolbarButton,
 	FilePreviewToolbarVisibility,
 } from '../../stores/settingsStore';
+import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSizing';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
@@ -108,6 +109,7 @@ export interface UseSettingsReturn {
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
+	modalSizes: ModalSizes;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	groupChatAutoScroll: boolean;
@@ -116,6 +118,8 @@ export interface UseSettingsReturn {
 	bionifyAlgorithm: string;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
+	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	resetModalSizes: () => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setGroupChatAutoScroll: (value: boolean) => void;

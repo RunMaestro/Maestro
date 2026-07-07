@@ -21,6 +21,7 @@ import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
@@ -48,6 +49,7 @@ import {
 	ProviderQuotaUsageView,
 	ShortcutsView,
 } from './views';
+import { ResizeHandles } from '../../ui/ResizeHandles';
 
 const EMPTY_SESSIONS: Session[] = [];
 
@@ -161,6 +163,16 @@ export function UsageDashboardModal({
 		tabsRef,
 		sectionRefs,
 		setFocusedSection,
+	});
+	const resizableModal = useResizableModal({
+		resizeKey: 'usage-dashboard',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		// Preserves the previous fixed 80vw/2200px x 85vh/1400px chart-layout
+		// ceiling so charts don't stretch past their designed layout on large displays.
+		maxSize: { width: 2200, height: 1400 },
+		enabled: isOpen,
+		externalRef: containerRef,
 	});
 
 	const renderTabContent = () => {
@@ -336,14 +348,17 @@ export function UsageDashboardModal({
 				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				onClick={(e) => e.stopPropagation()}
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
-					width: '80vw',
-					maxWidth: '2200px',
-					height: '85vh',
-					maxHeight: '1400px',
 				}}
+				data-modal-resize-key="usage-dashboard"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				<UsageDashboardHeader
 					theme={theme}
 					showNewDataIndicator={showNewDataIndicator}

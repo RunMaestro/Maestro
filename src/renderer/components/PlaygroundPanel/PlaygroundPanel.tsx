@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { StandingOvationOverlay } from '../StandingOvationOverlay';
 import { KeyboardMasteryCelebration } from '../KeyboardMasteryCelebration';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { usePlaygroundData } from './hooks';
 import {
 	AchievementsView,
@@ -35,6 +37,11 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 	useEffect(() => {
 		shouldFocusRef.current = false;
 	}, []);
+	const resizableModal = useResizableModal({
+		resizeKey: 'developer-playground',
+		defaultSize: { width: 960, height: 760 },
+		minSize: { width: 720, height: 520 },
+	});
 
 	return (
 		<>
@@ -47,9 +54,20 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 				tabIndex={-1}
 			>
 				<div
-					className="w-[90vw] h-[90vh] max-w-5xl border rounded-lg shadow-2xl overflow-hidden flex flex-col"
-					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+					ref={resizableModal.modalRef}
+					className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
+					style={{
+						...resizableModal.style,
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: theme.colors.border,
+					}}
+					data-modal-resize-key="developer-playground"
 				>
+					<ResizeHandles
+						onResizeStart={resizableModal.onResizeStart}
+						accentColor={theme.colors.accent}
+					/>
+
 					<PlaygroundHeader theme={theme} onClose={onClose} />
 					<PlaygroundTabs theme={theme} activeTab={activeTab} onSelectTab={setActiveTab} />
 

@@ -142,7 +142,8 @@ describe('HistoryPanel', () => {
 		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without a reset, a test
 		// that deselects a type leaks the restrictive filter into every later
 		// test, hiding their entries and failing all entry-render assertions.
-		// jsdom here provides no working Storage, so a mock is required.
+		// jsdom here provides no working Storage, so a mock is required. This
+		// installs a fresh in-memory store, which also serves as the per-test reset.
 		installLocalStorageMock();
 
 		// Reset uiStore state used by HistoryPanel

@@ -18,6 +18,7 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, ThinkingMode, Session, Group } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { estimateTokenCount } from '../../shared/formatters';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../shared/agentMetadata';
@@ -29,6 +30,7 @@ import {
 import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -306,6 +308,19 @@ export function PromptComposerModal({
 			}
 		}
 	}, []);
+	// Fullscreen and compact modes persist independent sizes so the pre-existing
+	// Expand/Collapse toggle keeps switching between two distinct footprints even
+	// after the user has manually resized one of them (a single shared key would
+	// let the first manual resize permanently override the other mode's default).
+	const promptComposerResizeKey = isFullscreen
+		? 'prompt-composer-fullscreen'
+		: 'prompt-composer-compact';
+	const resizableModal = useResizableModal({
+		resizeKey: promptComposerResizeKey,
+		defaultSize: isFullscreen ? { width: 1200, height: 760 } : { width: 960, height: 680 },
+		minSize: { width: 680, height: 440 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
@@ -484,17 +499,21 @@ export function PromptComposerModal({
 				aria-label="Close prompt composer"
 			/>
 			<div
-				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden rounded-xl border ${
-					// Expanded state is capped at the Maestro Cue modal size (90vw x 90vh),
-					// the app-wide max modal footprint. Compact state caps width at max-w-5xl.
-					isFullscreen ? 'w-[90vw] h-[90vh]' : 'w-[90vw] h-[80vh] max-w-5xl'
-				}`}
+				ref={resizableModal.modalRef}
+				className="relative z-10 shadow-2xl flex flex-col overflow-hidden rounded-xl border"
 				onClick={(e) => e.stopPropagation()}
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key={promptComposerResizeKey}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b"

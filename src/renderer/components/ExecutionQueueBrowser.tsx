@@ -14,6 +14,7 @@ import {
 	Pencil,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
@@ -27,6 +28,7 @@ import {
 	QueueDragShimmer,
 	queueDragCardStyle,
 } from './queue/queueDrag';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface ExecutionQueueBrowserProps {
 	isOpen: boolean;
@@ -72,6 +74,7 @@ export function ExecutionQueueBrowser({
 	const { dragState, dropIndicator, isAnyDragging, startDrag, overDrag, endDrag, cancelDrag } =
 		useQueueReorder(onReorderItems);
 	const onCloseRef = useRef(onClose);
+	const modalRef = useRef<HTMLDivElement>(null);
 	onCloseRef.current = onClose;
 
 	useModalLayer(
@@ -95,6 +98,13 @@ export function ExecutionQueueBrowser({
 		},
 		{ enabled: isOpen && !editing }
 	);
+	const resizableModal = useResizableModal({
+		resizeKey: 'execution-queue',
+		defaultSize: { width: 672, height: 640 },
+		minSize: { width: 520, height: 360 },
+		enabled: isOpen,
+		externalRef: modalRef,
+	});
 
 	if (!isOpen) return null;
 
@@ -126,13 +136,24 @@ export function ExecutionQueueBrowser({
 
 			{/* Modal */}
 			<div
-				className="relative w-full max-w-2xl max-h-[80vh] rounded-lg border shadow-2xl flex flex-col"
+				ref={modalRef}
+				className="relative rounded-lg border shadow-2xl flex flex-col"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="execution-queue"
 				onClick={(e) => e.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Execution Queue"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b"

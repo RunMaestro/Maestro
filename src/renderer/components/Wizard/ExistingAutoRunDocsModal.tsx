@@ -11,7 +11,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Trash2, BookOpen, FolderOpen, AlertTriangle, FileText } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 interface ExistingAutoRunDocsModalProps {
 	theme: Theme;
@@ -79,6 +81,11 @@ export function ExistingAutoRunDocsModal({
 
 	// Get folder name from path
 	const folderName = directoryPath.split('/').pop() || directoryPath;
+	const resizableModal = useResizableModal({
+		resizeKey: 'existing-auto-run-docs',
+		defaultSize: { width: 520, height: 620 },
+		minSize: { width: 360, height: 320 },
+	});
 
 	return (
 		<div
@@ -90,9 +97,20 @@ export function ExistingAutoRunDocsModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				ref={resizableModal.modalRef}
+				className="relative border rounded-xl shadow-2xl overflow-hidden flex flex-col"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="existing-auto-run-docs"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div className="p-5 border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="flex items-center gap-3">
@@ -114,7 +132,7 @@ export function ExistingAutoRunDocsModal({
 				</div>
 
 				{/* Content */}
-				<div className="p-5 space-y-4">
+				<div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
 					{/* Project info */}
 					<div
 						className="rounded-lg p-4 space-y-3"

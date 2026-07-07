@@ -5,10 +5,12 @@ import type { Theme, Shortcut } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isAbsolutePath, getBasename } from '../../shared/formatters';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 /** Flattened file item for the search list */
 export interface FlatFileItem {
@@ -431,17 +433,33 @@ export function FileSearchModal({
 		const lastSlash = fullPath.lastIndexOf('/');
 		return lastSlash > 0 ? fullPath.substring(0, lastSlash) : '';
 	};
+	const resizableModal = useResizableModal({
+		resizeKey: 'file-search',
+		defaultSize: { width: 600, height: 550 },
+		minSize: { width: 420, height: 320 },
+	});
 
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-start justify-center pt-32 z-[9999] animate-in fade-in duration-100">
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100">
 			<div
+				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Fuzzy File Search"
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="file-search"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Search Header */}
 				<div
 					className="p-4 border-b flex items-center gap-3"

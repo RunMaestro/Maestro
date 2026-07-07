@@ -28,7 +28,7 @@ All stores are in `src/renderer/stores/`.
 | **agentStore**        | `agentStore.ts`        | `useAgentStore`        | Agent detection cache, error recovery, queue processing, agent lifecycle                    |
 | **modalStore**        | `modalStore.ts`        | `useModalStore`        | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields               |
 | **groupChatStore**    | `groupChatStore.ts`    | `useGroupChatStore`    | Group chat state: chats list, messages, moderator, participants, execution queue            |
-| **settingsStore**     | `settingsStore.ts`     | `useSettingsStore`     | App settings (theme, font, shortcuts, agent configs, etc.)                                  |
+| **settingsStore**     | `settingsStore.ts`     | `useSettingsStore`     | App settings (theme, font, shortcuts, agent configs, per-modal `modalSizes`, etc.)          |
 | **fileExplorerStore** | `fileExplorerStore.ts` | `useFileExplorerStore` | File explorer panel state                                                                   |
 | **batchStore**        | `batchStore.ts`        | `useBatchStore`        | Batch/Auto Run execution state                                                              |
 | **notificationStore** | `notificationStore.ts` | `useNotificationStore` | In-app notification queue                                                                   |

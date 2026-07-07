@@ -11,8 +11,10 @@ import { useEffect, useRef, useState } from 'react';
 import { FileText, Trash2, ArrowRight } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { logger } from '../../utils/logger';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 interface ExistingDocsModalProps {
 	theme: Theme;
@@ -88,6 +90,11 @@ export function ExistingDocsModal({
 			setIsDeleting(false);
 		}
 	};
+	const resizableModal = useResizableModal({
+		resizeKey: 'existing-docs',
+		defaultSize: { width: 520, height: 580 },
+		minSize: { width: 360, height: 320 },
+	});
 
 	return (
 		<div
@@ -100,12 +107,20 @@ export function ExistingDocsModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
+				ref={resizableModal.modalRef}
+				className="relative border rounded-xl shadow-2xl overflow-hidden flex flex-col"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="existing-docs"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="p-4 border-b flex items-center gap-3"
@@ -124,7 +139,7 @@ export function ExistingDocsModal({
 				</div>
 
 				{/* Content */}
-				<div className="p-6">
+				<div className="p-6 flex-1 min-h-0 overflow-y-auto">
 					<p
 						id="existing-docs-description"
 						className="text-sm leading-relaxed"

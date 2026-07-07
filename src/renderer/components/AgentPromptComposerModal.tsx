@@ -3,11 +3,13 @@ import { X, FileText, Variable, ChevronDown, ChevronRight } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { estimateTokenCount } from '../../shared/formatters';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface AgentPromptComposerModalProps {
 	isOpen: boolean;
@@ -98,6 +100,13 @@ export function AgentPromptComposerModal({
 		{ enabled: isOpen }
 	);
 
+	const resizableModal = useResizableModal({
+		resizeKey: 'agent-prompt-composer',
+		defaultSize: { width: 960, height: 720 },
+		minSize: { width: 680, height: 440 },
+		enabled: isOpen,
+	});
+
 	if (!isOpen) return null;
 
 	const handleDone = () => {
@@ -146,12 +155,22 @@ export function AgentPromptComposerModal({
 			}}
 		>
 			<div
-				className="w-[90vw] h-[85vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+				ref={resizableModal.modalRef}
+				role="dialog"
+				aria-modal="true"
+				className="relative rounded-xl border shadow-2xl flex flex-col overflow-hidden"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="agent-prompt-composer"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b shrink-0"

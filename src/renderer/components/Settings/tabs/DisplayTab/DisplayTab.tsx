@@ -16,6 +16,7 @@ import {
 	MaxLogBufferSection,
 	MaxOutputLinesSection,
 	MessageAlignmentSection,
+	ModalLayoutSection,
 	TabOptionsSection,
 	WindowChromeSection,
 } from './components';
@@ -113,6 +114,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				showWorktreeBranchName={settings.showWorktreeBranchName}
 				setShowWorktreeBranchName={settings.setShowWorktreeBranchName}
 			/>
+			<ModalLayoutSection theme={theme} resetModalSizes={settings.resetModalSizes} />
 			<FileEditPreviewSection
 				theme={theme}
 				fileEditShowLineNumbers={settings.fileEditShowLineNumbers}

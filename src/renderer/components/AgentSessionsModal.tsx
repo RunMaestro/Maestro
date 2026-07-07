@@ -16,9 +16,11 @@ import { EscCloseHint } from './ui/EscCloseHint';
 import type { Theme, Session } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { useListNavigation } from '../hooks';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
 import { ToolCallCard } from './ToolCallCard';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface AgentSession {
 	sessionId: string;
@@ -77,6 +79,7 @@ export function AgentSessionsModal({
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const sessionsContainerRef = useRef<HTMLDivElement>(null);
+	const modalRef = useRef<HTMLDivElement>(null);
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -442,17 +445,34 @@ export function AgentSessionsModal({
 	}, [viewingSession, onResumeSession, onClose]);
 
 	// formatSize and formatRelativeTime imported from ../utils/formatters
+	const resizableModal = useResizableModal({
+		resizeKey: 'agent-sessions',
+		defaultSize: { width: 720, height: 600 },
+		minSize: { width: 520, height: 360 },
+		externalRef: modalRef,
+	});
 
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-start justify-center pt-24 z-[9999] animate-in fade-in duration-100">
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100">
 			<div
+				ref={modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Agent Sessions"
 				tabIndex={-1}
-				className="modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[600px] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="agent-sessions"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="p-4 border-b flex items-center gap-3"
@@ -514,7 +534,7 @@ export function AgentSessionsModal({
 				{viewingSession ? (
 					<div
 						ref={messagesContainerRef}
-						className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin"
+						className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin select-text"
 						onScroll={handleMessagesScroll}
 					>
 						{/* Load more indicator */}

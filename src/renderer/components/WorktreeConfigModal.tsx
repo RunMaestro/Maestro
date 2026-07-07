@@ -4,9 +4,11 @@ import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
 import { openUrl } from '../utils/openUrl';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface WorktreeConfigModalProps {
 	isOpen: boolean;
@@ -179,6 +181,12 @@ export function WorktreeConfigModal({
 		onDisableConfig();
 		onClose();
 	};
+	const resizableModal = useResizableModal({
+		resizeKey: 'worktree-config',
+		defaultSize: { width: 560, height: 620 },
+		minSize: { width: 420, height: 360 },
+		enabled: isOpen,
+	});
 
 	if (!isOpen) return null;
 
@@ -189,12 +197,23 @@ export function WorktreeConfigModal({
 
 			{/* Modal */}
 			<div
-				className="relative w-full max-w-lg rounded-lg shadow-2xl border max-h-[80vh] flex flex-col"
+				ref={resizableModal.modalRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Worktree Configuration"
+				className="relative rounded-lg shadow-2xl border flex flex-col overflow-hidden select-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="worktree-config"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b shrink-0"

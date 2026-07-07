@@ -20,7 +20,9 @@ import { useClickOutside } from '../../hooks';
 import { getExplorerFileIcon } from '../../utils/theme';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
 // closing/reopening and the component remounting (e.g. switching agents) until
@@ -377,6 +379,12 @@ export const AutoRunDocumentSelector = forwardRef<
 			});
 		}
 	}, [showCreateModal]);
+	const createDocumentModal = useResizableModal({
+		resizeKey: 'auto-run-create-document',
+		defaultSize: { width: 400, height: 360 },
+		minSize: { width: 320, height: 280 },
+		enabled: showCreateModal,
+	});
 
 	const handleSelectDocument = (doc: string) => {
 		onSelectDocument(doc);
@@ -659,10 +667,21 @@ export const AutoRunDocumentSelector = forwardRef<
 					}}
 				>
 					<div
-						className="modal-w-xs border rounded-lg shadow-2xl overflow-hidden"
-						style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+						ref={createDocumentModal.modalRef}
+						className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+						style={{
+							...createDocumentModal.style,
+							backgroundColor: theme.colors.bgSidebar,
+							borderColor: theme.colors.border,
+						}}
 						onClick={(e) => e.stopPropagation()}
+						data-modal-resize-key="auto-run-create-document"
 					>
+						<ResizeHandles
+							onResizeStart={createDocumentModal.onResizeStart}
+							accentColor={theme.colors.accent}
+						/>
+
 						{/* Header */}
 						<div
 							className="p-4 border-b flex items-center justify-between"

@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { notifyToast } from '../../stores/notificationStore';
@@ -32,6 +33,7 @@ import {
 } from './utils/quickActionSorting';
 import { QuickActionsList } from './components/QuickActionsList';
 import { QuickActionsSearchBar } from './components/QuickActionsSearchBar';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
@@ -888,10 +890,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			e.stopPropagation();
 		}
 	};
+	const resizeKey = mode === 'agents' ? 'agent-switcher' : 'quick-actions';
+	const resizableModal = useResizableModal({
+		resizeKey,
+		defaultSize: { width: 600, height: 680 },
+		minSize: { width: 420, height: 320 },
+		externalRef: modalRef,
+	});
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-32 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			onMouseDown={(e) => {
 				// Dismiss when clicking outside the modal content (backdrop only).
 				if (e.target === e.currentTarget && !renamingSession && !renamingWindow) {
@@ -905,9 +914,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[min(680px,calc(100vh-10rem))] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key={resizeKey}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				<QuickActionsSearchBar
 					theme={theme}
 					mode={mode}

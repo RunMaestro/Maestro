@@ -5,11 +5,13 @@ import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
+import { ResizeHandles } from './ui/ResizeHandles';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -92,6 +94,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		() => readStoredViewType() ?? initialViewType
 	);
 	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	const dialogRef = useRef<HTMLDivElement>(null);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
 	// Persist the user's chosen view type so it sticks across all diff views and app restarts.
@@ -169,6 +172,16 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, [parsedFiles.length]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'git-diff',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 720, height: 480 },
+		externalRef: dialogRef,
+	});
+
+	useEffect(() => {
+		dialogRef.current?.focus();
+	}, []);
 
 	if (parsedFiles.length === 0) {
 		return (
@@ -177,18 +190,25 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				onClick={onClose}
 			>
 				<div
-					className="w-[90vw] h-[90vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+					ref={dialogRef}
+					className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden"
 					style={{
+						...resizableModal.style,
 						backgroundColor: theme.colors.bgMain,
 						border: `1px solid ${theme.colors.border}`,
 					}}
+					data-modal-resize-key="git-diff"
 					onClick={(e) => e.stopPropagation()}
 					role="dialog"
 					aria-modal="true"
 					aria-label="Git Diff Preview"
 					tabIndex={-1}
-					ref={(el) => el?.focus()}
 				>
+					<ResizeHandles
+						onResizeStart={resizableModal.onResizeStart}
+						accentColor={theme.colors.accent}
+					/>
+
 					<div
 						className="flex items-center justify-between px-6 py-4 border-b"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
@@ -225,19 +245,25 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			onClick={onClose}
 		>
 			<div
-				className="w-[90vw] h-[90vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+				ref={dialogRef}
+				className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-					border: '1px solid',
+					border: `1px solid ${theme.colors.border}`,
 				}}
+				data-modal-resize-key="git-diff"
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Git Diff Preview"
 				tabIndex={-1}
-				ref={(el) => el?.focus()}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 sm:py-4 border-b"

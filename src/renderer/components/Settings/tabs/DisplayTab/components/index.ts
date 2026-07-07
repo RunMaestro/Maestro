@@ -13,5 +13,6 @@ export { MainHeaderPanelSection } from './MainHeaderPanelSection';
 export { MaxLogBufferSection } from './MaxLogBufferSection';
 export { MaxOutputLinesSection } from './MaxOutputLinesSection';
 export { MessageAlignmentSection } from './MessageAlignmentSection';
+export { ModalLayoutSection } from './ModalLayoutSection';
 export { TabOptionsSection } from './TabOptionsSection';
 export { WindowChromeSection } from './WindowChromeSection';
