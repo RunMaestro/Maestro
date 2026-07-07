@@ -145,8 +145,14 @@ function TabBarInner({
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				const container = tabBarRef.current;
-				const targetTabId =
-					inputMode === 'terminal'
+				// A tiled group takes over the panel and IS the current tab, so it must
+				// win here too - its chip carries data-tab-id={group.id}, while the
+				// standalone active ids are cleared (and activeTabId is synced to a leaf
+				// pane that has no standalone chip). Without this, jumping to a group
+				// (e.g. Cmd+0 to a rightmost group) never scrolls the group chip into view.
+				const targetTabId = activeGroupId
+					? activeGroupId
+					: inputMode === 'terminal'
 						? activeTerminalTabId || activeTabId
 						: activeFileTabId || activeBrowserTabId || activeTabId;
 				const tabElement = container?.querySelector(
@@ -176,6 +182,7 @@ function TabBarInner({
 		activeFileTabId,
 		activeBrowserTabId,
 		activeTerminalTabId,
+		activeGroupId,
 		inputMode,
 		activeTabName,
 		showUnreadOnly,
