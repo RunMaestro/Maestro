@@ -32,6 +32,7 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import type {
 	AgentSessionInfo,
 	SessionMessagesResult,
@@ -449,6 +450,23 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 				const modifiedAt =
 					messages[messages.length - 1]?.timestamp || jsonlStat.mtime.toISOString();
 
+				// Factory Droid is single-model per session with a flat, pre-aggregated
+				// tokenUsage; attribute the whole bucket to settings.model.
+				const modelAcc = new ModelUsageAccumulator();
+				if (
+					settings?.tokenUsage?.inputTokens ||
+					settings?.tokenUsage?.outputTokens ||
+					settings?.tokenUsage?.cacheReadTokens ||
+					settings?.tokenUsage?.cacheCreationTokens
+				) {
+					modelAcc.add(settings.model, {
+						inputTokens: settings.tokenUsage?.inputTokens || 0,
+						outputTokens: settings.tokenUsage?.outputTokens || 0,
+						cacheReadTokens: settings.tokenUsage?.cacheReadTokens || 0,
+						cacheCreationTokens: settings.tokenUsage?.cacheCreationTokens || 0,
+					});
+				}
+
 				sessions.push({
 					sessionId,
 					projectPath,
@@ -462,6 +480,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					cacheReadTokens: settings?.tokenUsage?.cacheReadTokens || 0,
 					cacheCreationTokens: settings?.tokenUsage?.cacheCreationTokens || 0,
 					durationSeconds,
+					byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 					// Factory Droid doesn't provide cost in settings.json
 				});
 			} catch (e) {

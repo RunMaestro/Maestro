@@ -164,7 +164,27 @@ describe('computeClaudeUsageCost', () => {
 			cacheReadTokens: 0,
 			cacheCreationTokens: 0,
 			costUsd: 0,
+			byModel: [],
 		});
+	});
+
+	it('exposes the per-model split the grand totals were summed from', () => {
+		const content = [
+			assistantLine('claude-opus-4-8', { input_tokens: 1_000_000 }),
+			assistantLine('claude-fable-5', { output_tokens: 1_000_000 }),
+		].join('\n');
+
+		const result = computeClaudeUsageCost(content);
+		expect(result.byModel).toHaveLength(2);
+		const opus = result.byModel.find((m) => m.model === 'claude-opus-4-8');
+		const fable = result.byModel.find((m) => m.model === 'claude-fable-5');
+		expect(opus).toMatchObject({ inputTokens: 1_000_000, outputTokens: 0 });
+		expect(opus?.costUsd).toBeCloseTo(5, 10); // 1M Opus input
+		expect(fable).toMatchObject({ inputTokens: 0, outputTokens: 1_000_000 });
+		expect(fable?.costUsd).toBeCloseTo(50, 10); // 1M Fable output
+		// Per-model costs sum to the grand total.
+		const summed = result.byModel.reduce((acc, m) => acc + m.costUsd, 0);
+		expect(summed).toBeCloseTo(result.costUsd, 10);
 	});
 
 	it('tolerates usage/model at the entry top level (not nested under message)', () => {

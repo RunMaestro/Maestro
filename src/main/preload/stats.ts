@@ -24,6 +24,8 @@ export type {
 	ShortcutUsageDay,
 	StatsAggregation,
 } from '../../shared/stats-types';
+import type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
+export type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
 
 /**
  * Session lifecycle event for recording session creation.
@@ -115,6 +117,11 @@ export function createStatsApi() {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		): Promise<StatsAggregation> => ipcRenderer.invoke('stats:get-aggregation', range),
+
+		// Token & cost usage aggregate (Cost & Tokens tab). Reads agent session
+		// storage; `force` bypasses the accessor's in-memory memo for a refresh.
+		getTokenUsage: (query: TokenUsageQuery = {}, force = false): Promise<TokenUsageAggregate> =>
+			ipcRenderer.invoke('stats:get-token-usage', query, force),
 
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'): Promise<string> =>

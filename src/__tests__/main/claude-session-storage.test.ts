@@ -39,6 +39,9 @@ vi.mock('../../main/utils/pricing', () => {
 				cacheReadTokens,
 				cacheCreationTokens,
 				costUsd: flatCost(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens),
+				// Per-model split the storage now maps via `claudeModelUsage`; this
+				// simplified mock doesn't track models, so an empty split is honest.
+				byModel: [],
 			};
 		}),
 	};

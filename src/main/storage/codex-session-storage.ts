@@ -36,6 +36,7 @@ import type {
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { ModelUsageAccumulator } from '../../shared/modelUsage';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -299,10 +300,22 @@ async function parseSessionFile(
 		let totalCachedTokens = 0;
 		let firstTimestamp = timestamp;
 		let lastTimestamp = timestamp;
+		// Codex is single-model per session; the model id lives on turn_context /
+		// session_meta entries rather than on the usage events. Capture the last
+		// seen one so per-model token attribution has a real model to key on.
+		let capturedModel: string | undefined =
+			metadata?.payload && 'model' in metadata.payload
+				? (metadata.payload as { model?: string }).model
+				: undefined;
 
 		for (let i = 0; i < lines.length; i++) {
 			try {
 				const entry = JSON.parse(lines[i]);
+
+				// Capture the model id from turn_context entries (current Codex format)
+				if (entry.type === 'turn_context' && entry.payload?.model) {
+					capturedModel = entry.payload.model;
+				}
 
 				// Handle turn.completed for usage stats
 				if (entry.type === 'turn.completed' && entry.usage) {
@@ -426,6 +439,16 @@ async function parseSessionFile(
 		// Extract session ID from metadata (new format uses payload.id, legacy uses id)
 		const metadataSessionId = metadata?.payload?.id || metadata?.id || sessionId;
 
+		const modelAcc = new ModelUsageAccumulator();
+		if (totalInputTokens || totalOutputTokens || totalCachedTokens) {
+			modelAcc.add(capturedModel, {
+				inputTokens: totalInputTokens,
+				outputTokens: totalOutputTokens,
+				cacheReadTokens: totalCachedTokens,
+				cacheCreationTokens: 0,
+			});
+		}
+
 		return {
 			sessionId: metadataSessionId,
 			projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
@@ -443,6 +466,7 @@ async function parseSessionFile(
 			cacheReadTokens: totalCachedTokens,
 			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
 			durationSeconds,
+			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 		};
 	} catch (error) {
 		// RangeError: Invalid string length occurs when the file is too large for V8

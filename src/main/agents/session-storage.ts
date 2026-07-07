@@ -15,6 +15,7 @@
  */
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type { ModelTokenUsage } from '../../shared/tokenUsage';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
@@ -63,6 +64,14 @@ export interface AgentSessionInfo {
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/**
+	 * Per-model token/cost split summing to the session totals above. Optional
+	 * because most callers only need the totals; populated by storages that can
+	 * recover the model id from their transcript (claude/opencode/copilot inline,
+	 * codex/factory as a single session-model bucket) for the Cost & Tokens
+	 * dashboard. Absent means "not computed", not "no models".
+	 */
+	byModel?: ModelTokenUsage[];
 	durationSeconds: number;
 	origin?: AgentSessionOrigin;
 	sessionName?: string;
