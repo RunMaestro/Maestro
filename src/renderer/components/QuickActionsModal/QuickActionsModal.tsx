@@ -52,6 +52,7 @@ import {
 } from './commands/sessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
+import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
 
@@ -561,6 +562,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			},
 			tabShortcuts,
 			toggleInputMode,
+		}),
+		...buildTabGroupCommands({
+			activeSession,
+			setQuickActionOpen,
 		}),
 		...buildFeatureCommands({
 			activeSession,

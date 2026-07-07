@@ -15,10 +15,21 @@ interface RenameTabModalProps {
 	onAutoName?: () => void;
 	/** Whether the tab has conversation logs (controls Auto button visibility) */
 	hasLogs?: boolean;
+	/** Modal header; defaults to "Rename Tab" (overridden for tab groups). */
+	title?: string;
 }
 
 export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModalProps) {
-	const { theme, initialName, agentSessionId, onClose, onRename, onAutoName, hasLogs } = props;
+	const {
+		theme,
+		initialName,
+		agentSessionId,
+		onClose,
+		onRename,
+		onAutoName,
+		hasLogs,
+		title = 'Rename Tab',
+	} = props;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [value, setValue] = useState(initialName);
 
@@ -45,7 +56,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 	return (
 		<Modal
 			theme={theme}
-			title="Rename Tab"
+			title={title}
 			priority={MODAL_PRIORITIES.RENAME_TAB}
 			onClose={onClose}
 			width={400}

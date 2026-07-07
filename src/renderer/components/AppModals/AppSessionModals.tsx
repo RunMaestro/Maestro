@@ -156,6 +156,10 @@ export const AppSessionModals = memo(function AppSessionModals({
 	const renamingTerminalTabIndex = renamingTerminalTab
 		? terminalTabs.findIndex((t) => t.id === renameTabId)
 		: -1;
+	// A rename targeting a tiled group id reuses the same modal with a group-aware title.
+	const renamingGroup = renameTabId
+		? activeSession?.tabGroups?.find((g) => g.id === renameTabId)
+		: undefined;
 
 	const newAgentChoiceOpen = useModalStore(selectModalOpen('newAgentChoice'));
 	const closeNewAgentChoice = () => useModalStore.getState().closeModal('newAgentChoice');
@@ -224,10 +228,11 @@ export const AppSessionModals = memo(function AppSessionModals({
 				<RenameTabModal
 					theme={theme}
 					initialName={renameTabInitialName}
+					title={renamingGroup ? 'Rename Tab Group' : 'Rename Tab'}
 					agentSessionId={activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.agentSessionId}
 					onClose={onCloseRenameTabModal}
 					onRename={onRenameTab}
-					onAutoName={onAutoNameTab}
+					onAutoName={renamingGroup ? undefined : onAutoNameTab}
 					hasLogs={
 						(activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.logs?.length ?? 0) > 0
 					}

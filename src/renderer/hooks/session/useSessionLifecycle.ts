@@ -30,6 +30,8 @@ import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
+import { useTabStore } from '../../stores/tabStore';
+import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../../utils/panelLayout';
 import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
@@ -248,6 +250,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			if (!activeSession || !renameTabId) return;
+
+			// If this is a tiled tab group, rename the group. Resolve the auto-name
+			// fallback from the group's first pane title (matching the chip rename), so
+			// clearing the field never leaves an unnamed group.
+			const group = activeSession.tabGroups?.find((g) => g.id === renameTabId);
+			if (group) {
+				const firstRef = collectLeafTabRefs(group.layout)[0];
+				const fallback = firstRef
+					? generateGroupName(resolveTabRefTitle(activeSession, firstRef))
+					: group.name || 'Group';
+				useTabStore.getState().renameGroup(renameTabId, newName, fallback);
+				return;
+			}
 
 			// If this is a terminal tab, delegate to terminal tab rename helper
 			if (activeSession.terminalTabs?.some((t) => t.id === renameTabId)) {

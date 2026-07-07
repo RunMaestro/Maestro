@@ -22,7 +22,9 @@ import {
 	buildNewTabCommands,
 	buildTabCommands,
 } from '../../../../../renderer/components/QuickActionsModal/commands/tabCommands';
+import { buildTabGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/tabGroupCommands';
 import { buildSupportCommands } from '../../../../../renderer/components/QuickActionsModal/commands/supportCommands';
+import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -486,6 +488,47 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(debugCommandIds).toContain('debugReleaseQueued');
 		expect(debugCommandIds).toContain('debugAgentProbe');
+	});
+
+	describe('buildTabGroupCommands', () => {
+		const groupSession = (activeGroupId: string | null) => {
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'My Group'
+			);
+			const session = createMockSession({
+				id: 's1',
+				tabGroups: [group],
+				activeGroupId: activeGroupId === 'match' ? group.id : activeGroupId,
+			});
+			return { session, group };
+		};
+
+		it('emits no commands when not under a tab group', () => {
+			const { session } = groupSession(null);
+			expect(buildTabGroupCommands({ activeSession: session, setQuickActionOpen: close })).toEqual(
+				[]
+			);
+		});
+
+		it('emits no commands when activeGroupId does not resolve to a group', () => {
+			const { session } = groupSession('missing-group');
+			expect(buildTabGroupCommands({ activeSession: session, setQuickActionOpen: close })).toEqual(
+				[]
+			);
+		});
+
+		it('emits rename and break-apart when under a tab group', () => {
+			const { session } = groupSession('match');
+			const ids = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+			}).map((a) => a.id);
+			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
+		});
 	});
 });
 

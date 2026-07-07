@@ -26,6 +26,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 
 // ============================================================================
 // Test Helpers
@@ -564,6 +565,77 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.logger.log).not.toHaveBeenCalled();
+		});
+
+		it('renames a tiled tab group when renameTabId is a group id', () => {
+			const tabA = createMockAITab({ id: 'tab-a', name: 'Alpha' });
+			const tabB = createMockAITab({ id: 'tab-b', name: 'Beta' });
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'Old Group'
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tabA, tabB],
+				tabGroups: [group],
+				activeGroupId: group.id,
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore
+				.getState()
+				.openModal('renameTab', { tabId: group.id, initialName: 'Old Group' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('New Group');
+			});
+
+			const renamed = useSessionStore
+				.getState()
+				.sessions[0].tabGroups.find((g) => g.id === group.id);
+			expect(renamed?.name).toBe('New Group');
+			// Group renames don't touch agent session storage.
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('falls back to an auto name when a group is renamed to blank', () => {
+			const tabA = createMockAITab({ id: 'tab-a', name: 'Alpha' });
+			const tabB = createMockAITab({ id: 'tab-b', name: 'Beta' });
+			const group = createGroupFromTabRefs(
+				[
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+				],
+				'Old Group'
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tabA, tabB],
+				tabGroups: [group],
+				activeGroupId: group.id,
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore
+				.getState()
+				.openModal('renameTab', { tabId: group.id, initialName: 'Old Group' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('   ');
+			});
+
+			const renamed = useSessionStore
+				.getState()
+				.sessions[0].tabGroups.find((g) => g.id === group.id);
+			expect(renamed?.name.trim().length).toBeGreaterThan(0);
+			expect(renamed?.name).not.toBe('Old Group');
 		});
 	});
 
