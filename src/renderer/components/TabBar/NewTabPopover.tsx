@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Globe, MessageSquare, Plus, Terminal } from 'lucide-react';
+import { FileText, Globe, MessageSquare, Plus, Terminal, VenetianMask } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { getTabKindColor } from './tabBarUtils';
 
 // Single source of truth for the popover width. Used both for the overflow
@@ -14,7 +15,7 @@ interface NewTabPopoverProps {
 	theme: Theme;
 	onNewTab: () => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onNewTerminalTab?: () => void;
 	/** Shortcut keys config for new tab */
 	newTabKeys: string[];
@@ -189,7 +190,9 @@ export const NewTabPopover = memo(function NewTabPopover({
 								</span>
 							</button>
 						)}
-						{onNewBrowserTab && (
+						{/* Browser tabs rely on the Electron <webview>, which is inert in the
+						    web-desktop browser bundle - hide the create affordance there. */}
+						{onNewBrowserTab && !isWebDesktop() && (
 							<button
 								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
@@ -203,6 +206,20 @@ export const NewTabPopover = memo(function NewTabPopover({
 								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 									{formatShortcutKeys(browserTabKeys)}
 								</span>
+							</button>
+						)}
+						{onNewBrowserTab && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(() => onNewBrowserTab({ ephemeral: true }))}
+								title="Browsing data is kept in memory only and discarded when the app closes"
+							>
+								<VenetianMask
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('browser', theme) }}
+								/>
+								New Incognito Browser
 							</button>
 						)}
 						<button

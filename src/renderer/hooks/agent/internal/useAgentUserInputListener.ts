@@ -9,6 +9,7 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import type { LogEntry, SessionState } from '../../../types';
 import { getInputBroadcastOriginId } from '../../../utils/ids';
 import { getActiveTab } from '../../../utils/tabHelpers';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 interface ProcessUserInputPayload {
 	originId: string;
@@ -23,9 +24,12 @@ function hasEntry(logs: LogEntry[] | undefined, id: string): boolean {
 }
 
 export function useAgentUserInputListener(): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onUserInput((payload: ProcessUserInputPayload) => {
 			if (payload.originId === getInputBroadcastOriginId()) return;
+			// Window scoping: ignore agents this window doesn't own (broadcast events).
+			if (!ownedGate.current?.(payload.sessionId)) return;
 
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((session) => {
@@ -89,5 +93,5 @@ export function useAgentUserInputListener(): void {
 		});
 
 		return () => unsubscribe();
-	}, []);
+	}, [ownedGate]);
 }

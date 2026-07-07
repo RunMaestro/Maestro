@@ -18,8 +18,8 @@ import type {
 	UsePullToRefreshReturn,
 } from '../../../web/hooks/usePullToRefresh';
 
-// Mock the constants module
-vi.mock('../../../web/mobile/constants', () => ({
+// Mock the shared touch utilities so the hook sees stable gesture thresholds.
+vi.mock('../../../renderer/utils/touch', () => ({
 	GESTURE_THRESHOLDS: {
 		swipeDistance: 50,
 		swipeTime: 300,

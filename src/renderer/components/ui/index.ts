@@ -38,3 +38,5 @@ export { HoverTooltip } from './HoverTooltip';
 export type { HoverTooltipProps } from './HoverTooltip';
 
 export { ResizeHandles } from './ResizeHandles';
+
+export { EscCloseHint } from './EscCloseHint';

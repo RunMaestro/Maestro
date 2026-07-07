@@ -7,7 +7,7 @@ import {
 	Cpu,
 	Settings,
 	Palette,
-	FlaskConical,
+	Puzzle,
 	Server,
 	Monitor,
 	Globe,
@@ -18,6 +18,7 @@ import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { AICommandsPanel } from '../AICommandsPanel';
@@ -68,16 +69,57 @@ const TAB_ITEMS: Array<{
 	{ id: 'about', label: 'About', icon: Info },
 	{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
 	{ id: 'display', label: 'Display', icon: Monitor },
-	{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
 	{ id: 'environment', label: 'Environment', icon: Globe },
 	{ id: 'general', label: 'General', icon: Settings },
 	...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
 	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 	{ id: 'notifications', label: 'Notifications', icon: Bell },
+	// Internal id stays 'encore' (deep links, persisted last-tab, searchable
+	// settings all key on it); the user-facing surface is the Plugins tab.
+	{ id: 'encore', label: 'Plugins', icon: Puzzle },
 	{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
 	{ id: 'ssh', label: 'SSH Hosts', icon: Server },
 	{ id: 'theme', label: 'Themes', icon: Palette },
 ];
+
+// Single source of truth for a settings-tab button so the vertical sidebar
+// (md and up) and the horizontal tab strip (xs phones) render identical
+// markup. `orientation` only swaps the active-edge indicator (right border in
+// the sidebar, bottom border in the strip) and the flex sizing.
+function SettingsTabButton({
+	tab,
+	isActive,
+	orientation,
+	theme,
+	onClick,
+}: {
+	tab: (typeof TAB_ITEMS)[number];
+	isActive: boolean;
+	orientation: 'vertical' | 'horizontal';
+	theme: Theme;
+	onClick: () => void;
+}) {
+	const Icon = tab.icon;
+	const activeEdge = `2px solid ${theme.colors.accent}`;
+	const inactiveEdge = '2px solid transparent';
+	return (
+		<button
+			onClick={onClick}
+			className={`flex items-center gap-2.5 px-4 py-2 text-sm text-left transition-colors cursor-pointer ${orientation === 'vertical' ? 'w-full' : 'flex-shrink-0'} ${isActive ? 'font-bold' : 'opacity-70 hover:opacity-100'}`}
+			style={{
+				backgroundColor: isActive ? theme.colors.bgActivity : 'transparent',
+				color: isActive ? theme.colors.accent : theme.colors.textMain,
+				...(orientation === 'vertical'
+					? { borderRight: isActive ? activeEdge : inactiveEdge }
+					: { borderBottom: isActive ? activeEdge : inactiveEdge }),
+			}}
+			title={tab.label}
+		>
+			<Icon className="w-4 h-4 flex-shrink-0" />
+			<span className="whitespace-nowrap">{tab.label}</span>
+		</button>
+	);
+}
 
 // In-memory only — last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
@@ -195,6 +237,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// Search state
 	const [searchActive, setSearchActive] = useState(false);
 	const contentRef = useRef<HTMLDivElement>(null);
+
+	// On xs phones the fixed 248px sidebar leaves too little room for content,
+	// so collapse the two-column layout into a horizontal tab strip above the
+	// content. sm and up keep the pixel-identical sidebar layout.
+	const { isXs } = useViewportBreakpoint();
 
 	const handleSearchActiveChange = useCallback((active: boolean) => {
 		setSearchActive(active);
@@ -518,37 +565,47 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					/>
 				)}
 
-				{/* Body: Sidebar + Content */}
-				<div className={`flex flex-1 overflow-hidden ${searchActive ? 'hidden' : ''}`}>
-					{/* Left Sidebar Tabs */}
-					<nav
-						className="w-[248px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
-						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-						aria-label="Settings tabs"
-					>
-						{TAB_ITEMS.map((tab) => {
-							const Icon = tab.icon;
-							const isActive = activeTab === tab.id;
-							return (
-								<button
+				{/* Body: Sidebar + Content (two-column on sm+, stacked on xs) */}
+				<div
+					className={`flex ${isXs ? 'flex-col' : ''} flex-1 overflow-hidden ${searchActive ? 'hidden' : ''}`}
+				>
+					{isXs ? (
+						/* Horizontal tab strip above content (xs phones) */
+						<nav
+							className="flex-shrink-0 flex border-b overflow-x-auto scrollbar-thin"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+							aria-label="Settings tabs"
+						>
+							{TAB_ITEMS.map((tab) => (
+								<SettingsTabButton
 									key={tab.id}
+									tab={tab}
+									isActive={activeTab === tab.id}
+									orientation="horizontal"
+									theme={theme}
 									onClick={() => setActiveTab(tab.id)}
-									className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm text-left transition-colors cursor-pointer ${isActive ? 'font-bold' : 'opacity-70 hover:opacity-100'}`}
-									style={{
-										backgroundColor: isActive ? theme.colors.bgActivity : 'transparent',
-										color: isActive ? theme.colors.accent : theme.colors.textMain,
-										borderRight: isActive
-											? `2px solid ${theme.colors.accent}`
-											: '2px solid transparent',
-									}}
-									title={tab.label}
-								>
-									<Icon className="w-4 h-4 flex-shrink-0" />
-									<span className="whitespace-nowrap">{tab.label}</span>
-								</button>
-							);
-						})}
-					</nav>
+								/>
+							))}
+						</nav>
+					) : (
+						/* Left Sidebar Tabs (sm and up) */
+						<nav
+							className="w-[248px] flex-shrink-0 border-r py-2 overflow-y-auto scrollbar-thin"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+							aria-label="Settings tabs"
+						>
+							{TAB_ITEMS.map((tab) => (
+								<SettingsTabButton
+									key={tab.id}
+									tab={tab}
+									isActive={activeTab === tab.id}
+									orientation="vertical"
+									theme={theme}
+									onClick={() => setActiveTab(tab.id)}
+								/>
+							))}
+						</nav>
+					)}
 
 					{/* Content Area */}
 					<div

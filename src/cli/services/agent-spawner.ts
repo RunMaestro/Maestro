@@ -16,6 +16,20 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
+import {
+	getClaudeTokenMode,
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../shared/claudeTokenMode';
+import {
+	resolveClaudeSpawnModeCore,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+	isMaestroPBinaryPath,
+	resolveConfigDirKeyFromEnv,
+	defaultSelectMode,
+	type ClaudeSpawnCoreDeps,
+} from '../../main/agents/claudeSpawnCore';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
 // happens for non-SSH sessions — the SSH chain pulls in execFile/which helpers
@@ -23,6 +37,59 @@ import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
 // implementation is dynamically imported inside maybeWrapSpawnWithSsh().
 type SshSpawnWrapConfig = import('../../main/utils/ssh-spawn-wrapper').SshSpawnWrapConfig;
 type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnWrapResult;
+
+/**
+ * Locate the maestro-p script shipped beside the bundled CLI. esbuild emits the
+ * CLI as `dist/cli/maestro-cli.js` (CJS), so `__dirname` at runtime is
+ * `dist/cli/`, where `maestro-p.js` is a sibling. Returns null when it isn't
+ * readable there - the resolver then falls the spawn back to API rather than
+ * failing, so a CLI without maestro-p degrades safely.
+ */
+function getCliMaestroPBinPath(): string | null {
+	const candidate = path.join(__dirname, 'maestro-p.js');
+	try {
+		fs.accessSync(candidate, fs.constants.R_OK);
+		return candidate;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * CLI-side collaborators for the shared Claude spawn-mode decision core. Mirrors
+ * the desktop `defaultDeps` in `resolveClaudeSpawnMode.ts`, but with lightweight,
+ * native-free implementations so the `maestro-cli` bundle (no electron-store, no
+ * SQLite) can run the SAME decision every desktop surface runs. This is what
+ * makes the per-agent Claude token source honored for CLI Auto Run / playbooks /
+ * `send` exactly as it is for the desktop chat.
+ */
+const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = {
+	getMaestroPBinPath: getCliMaestroPBinPath,
+	isMaestroPBinaryPath,
+	resolveConfigDirKey: resolveConfigDirKeyFromEnv,
+	// The standalone CLI has no SQLite usage store, so no dynamic usage snapshot
+	// exists. selectMode(null) resolves to interactive - i.e. Dynamic prefers the
+	// TUI (it can't observe quota exhaustion to fall back), which honors the
+	// user's "start on TUI" intent rather than silently downgrading to API.
+	getUsageSnapshot: () => null,
+	fileExists: (p) => {
+		try {
+			return fs.existsSync(p);
+		} catch {
+			return false;
+		}
+	},
+	// The CLI can't probe SSH remotes for maestro-p, so stay optimistic (undefined),
+	// matching the desktop cold-cache behavior. An absent remote maestro-p exits
+	// 127 on that turn; the user fixes it by installing maestro-p on the remote.
+	getRemoteMaestroPAvailable: () => undefined,
+	selectMode: defaultSelectMode,
+	logger: {
+		warn: (message, context, meta) =>
+			console.error(`[${context ?? 'ClaudeSpawn'}] ${message}`, meta ?? ''),
+		debug: () => {},
+	},
+};
 
 async function maybeWrapSpawnWithSsh(
 	config: SshSpawnWrapConfig,
@@ -337,7 +404,8 @@ async function spawnClaudeAgent(
 	agentSessionId?: string,
 	readOnlyMode?: boolean,
 	sshRemoteConfig?: AgentSshRemoteConfig,
-	overrides: SpawnOverrides = {}
+	overrides: SpawnOverrides = {},
+	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition('claude-code');
@@ -399,6 +467,44 @@ async function spawnClaudeAgent(
 	);
 
 	const claudeCommand = getAgentCommand('claude-code');
+	const sshEnabled = !!sshRemoteConfig?.enabled;
+	const agentCustomPath = getAgentCustomPath('claude-code');
+
+	// Resolve the per-agent Claude token source through the SAME shared decision
+	// core the desktop uses, so CLI Auto Run / batch / `send` honor API vs TUI vs
+	// Dynamic identically.
+	//
+	// Default is API (`claude --print`): an UNCONFIGURED agent must NOT be flipped
+	// to maestro-p. That's doubly important for SSH here - the CLI can't probe the
+	// remote, and maestro-p may not be installed there, so an optimistic TUI
+	// default would try to exec a missing binary and fail the turn. We therefore
+	// do NOT pass the `{ sshEnabled }` default-flip option (which the desktop uses
+	// only because it has a live remote maestro-p probe as a safety net). Only an
+	// EXPLICIT TUI/Dynamic selection routes through maestro-p.
+	const tokenMode = getClaudeTokenMode({
+		enableMaestroP: tokenSource.enableMaestroP,
+		maestroPMode: tokenSource.maestroPMode,
+	});
+	const spawnDecision = resolveClaudeSpawnModeCore(
+		{
+			agent: def
+				? {
+						id: def.id,
+						interactiveCommand: def.interactiveCommand,
+						interactiveModeArgs: def.interactiveModeArgs,
+						defaultEnvVars: def.defaultEnvVars,
+					}
+				: null,
+			tokenMode,
+			sshEnabled,
+			command: claudeCommand,
+			sessionCustomPath: agentCustomPath,
+			sessionCustomEnvVars: userCustomEnvVars,
+			maestroPPath: tokenSource.maestroPPath,
+			now: new Date(),
+		},
+		cliSpawnCoreDeps
+	);
 
 	// SSH-wrap if a remote is configured; otherwise append prompt locally.
 	// Claude uses '-- <prompt>' positional form — the default in wrapSpawnWithSsh.
@@ -409,14 +515,25 @@ async function spawnClaudeAgent(
 	let sshStdinScript: string | undefined;
 
 	if (sshRemoteConfig?.enabled) {
+		// Remote interactive (TUI): run maestro-p on the remote host instead of
+		// `claude`, prepend its interactive flags, and point MAESTRO_CLAUDE_BIN at
+		// the remote claude when a custom path is set. Mirrors the desktop SSH
+		// remote-interactive path. API / Dynamic-over-SSH leave the command on
+		// `claude` (the resolver already collapses Dynamic→API for SSH).
+		const remoteInteractive = buildRemoteInteractiveSpawn({
+			decision: spawnDecision,
+			interactiveModeArgs: def?.interactiveModeArgs,
+			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+		});
+		const remoteEnv = buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars);
 		const wrapped = await maybeWrapSpawnWithSsh(
 			{
-				command: claudeCommand,
-				args: baseArgs,
+				command: remoteInteractive ? remoteInteractive.command : claudeCommand,
+				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...baseArgs] : baseArgs,
 				cwd,
 				prompt,
-				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
-				agentBinaryName: def?.binaryName,
+				customEnvVars: remoteInteractive ? { ...remoteEnv, ...remoteInteractive.env } : remoteEnv,
+				agentBinaryName: remoteInteractive ? remoteInteractive.command : def?.binaryName,
 			},
 			sshRemoteConfig
 		);
@@ -424,6 +541,24 @@ async function spawnClaudeAgent(
 			return sshUnresolvedFailure(sshRemoteConfig);
 		}
 		({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } = applySshWrapResult(wrapped));
+	} else if (spawnDecision.mode === 'interactive' && spawnDecision.maestroPBinPath) {
+		// Local TUI: wrap the spawn with maestro-p via process.execPath (node),
+		// injecting MAESTRO_CLAUDE_BIN. maestro-p strips the headless-only flags,
+		// drives the real claude TUI on the Max plan, and reads the prompt after
+		// `--`. API / direct-binary decisions leave the local spawn untouched.
+		const applied = applyClaudeSpawnDecision({
+			decision: spawnDecision,
+			interactiveModeArgs: def?.interactiveModeArgs,
+			command: claudeCommand,
+			args: [...baseArgs, '--', prompt],
+			customEnvVars: userCustomEnvVars,
+		});
+		spawnCommand = applied.command;
+		spawnArgs = applied.args;
+		// Merge the maestro-p env (MAESTRO_CLAUDE_BIN, ELECTRON_RUN_AS_NODE, NODE_PATH)
+		// over the already-layered local env so the child resolves correctly.
+		Object.assign(env, applied.customEnvVars);
+		spawnEnv = env;
 	}
 
 	return new Promise((resolve) => {
@@ -919,6 +1054,15 @@ export interface SpawnAgentOptions {
 	 * build this via `prepareMaestroSystemPromptCli()` in `./system-prompt.ts`.
 	 */
 	appendSystemPrompt?: string;
+	/**
+	 * Claude token source (Claude Code only), forwarded so CLI Auto Run / batch /
+	 * `send` honor the SAME per-agent selection the desktop chat does: API
+	 * (`claude --print`), TUI (maestro-p), or Dynamic. Absent collapses to API
+	 * via getClaudeTokenMode. See {@link ClaudeTokenSourceFields}.
+	 */
+	enableMaestroP?: boolean;
+	maestroPMode?: 'interactive' | 'dynamic';
+	maestroPPath?: string;
 }
 
 /**
@@ -940,9 +1084,19 @@ export async function spawnAgent(
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
 	};
+	// Single source of truth for the token-source triple (never a partial forward).
+	const tokenSource = getClaudeTokenSourceFields(options);
 
 	if (toolType === 'claude-code') {
-		return spawnClaudeAgent(cwd, prompt, agentSessionId, readOnly, sshRemoteConfig, overrides);
+		return spawnClaudeAgent(
+			cwd,
+			prompt,
+			agentSessionId,
+			readOnly,
+			sshRemoteConfig,
+			overrides,
+			tokenSource
+		);
 	}
 
 	if (hasCapability(toolType, 'usesJsonLineOutput')) {

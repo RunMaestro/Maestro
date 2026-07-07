@@ -75,12 +75,15 @@ export interface CliSendResult {
  * `process.resourcesPath` is undefined or points at electron's built-in
  * resources) still find the compiled script at `dist/cli/maestro-cli.js`.
  */
-function resolveMaestroCliScriptPath(): string {
+export function resolveMaestroCliScriptPath(): string {
 	const candidates: string[] = [];
 	if (process.resourcesPath) {
 		candidates.push(path.join(process.resourcesPath, 'maestro-cli.js'));
 	}
-	// Compiled dev layout: main/cue/cue-cli-executor.js lives next to cli/.
+	// Dev/preserved-layout: this file compiles to dist/main/cue/cue-cli-executor.js,
+	// while the CLI is built to dist/cli/maestro-cli.js - two levels up, then `cli`.
+	candidates.push(path.resolve(__dirname, '..', '..', 'cli', 'maestro-cli.js'));
+	// Legacy single-level fallback (kept for any flattened/bundled layout).
 	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
 
 	for (const candidate of candidates) {

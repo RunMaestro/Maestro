@@ -80,6 +80,7 @@ export interface AppUtilityModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -129,6 +130,8 @@ export interface AppUtilityModalsProps {
 	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab: boolean;
 	onToggleRemoteControl: () => Promise<void>;
 	autoRunSelectedDocument: string | null;
@@ -167,6 +170,8 @@ export interface AppUtilityModalsProps {
 
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 
 	// LightboxModal
@@ -336,6 +341,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setLogViewerOpen,
 	setProcessMonitorOpen,
 	setUsageDashboardOpen,
+	setAgentRunDashboardOpen,
 	setActiveRightTab,
 	setAgentSessionsOpen,
 	setMemoryViewerOpen,
@@ -378,6 +384,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickCreateWorktree,
 	onOpenCreatePR,
 	onSummarizeAndContinue,
+	onRunPromptMacro,
 	canSummarizeActiveTab,
 	onToggleRemoteControl,
 	autoRunSelectedDocument,
@@ -410,6 +417,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenDirectorNotes,
 	// Maestro Cue
 	onOpenMaestroCue,
+	// Pianola
+	onOpenPianola,
 	onConfigureCue,
 	// LightboxModal
 	lightboxImage,
@@ -537,6 +546,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
 					setUsageDashboardOpen={setUsageDashboardOpen}
+					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
@@ -579,6 +589,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onQuickCreateWorktree={onQuickCreateWorktree}
 					onOpenCreatePR={onOpenCreatePR}
 					onSummarizeAndContinue={onSummarizeAndContinue}
+					onRunPromptMacro={onRunPromptMacro}
 					canSummarizeActiveTab={canSummarizeActiveTab}
 					onToggleRemoteControl={onToggleRemoteControl}
 					autoRunSelectedDocument={autoRunSelectedDocument}
@@ -605,6 +616,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
+					onOpenPianola={onOpenPianola}
 					onConfigureCue={onConfigureCue}
 					onOpenQueueBrowser={onOpenQueueBrowser}
 					onNewTab={onQuickActionsNewTab}

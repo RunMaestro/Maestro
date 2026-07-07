@@ -92,12 +92,19 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the web-desktop bridge fan-out so we can assert push events reach web
+// clients through safeSend, independently of the Electron renderer's liveness.
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: vi.fn(),
+}));
+
 // Import mocked modules for test setup
 import * as groupChatStorage from '../../../../main/group-chat/group-chat-storage';
 import * as groupChatLog from '../../../../main/group-chat/group-chat-log';
 import * as groupChatModerator from '../../../../main/group-chat/group-chat-moderator';
 import * as groupChatAgent from '../../../../main/group-chat/group-chat-agent';
 import * as groupChatRouter from '../../../../main/group-chat/group-chat-router';
+import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 describe('groupChat IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -1247,6 +1254,21 @@ describe('groupChat IPC handlers', () => {
 			);
 		});
 
+		it('emitMessage should fan out to web-desktop bridge clients', () => {
+			const mockMessage: GroupChatMessage = {
+				timestamp: '2024-01-01T00:00:00.000Z',
+				from: 'user',
+				content: 'Test message',
+			};
+
+			groupChatEmitters.emitMessage!('gc-emit', mockMessage);
+
+			expect(broadcastBridgeEvent).toHaveBeenCalledWith('groupChat:message', [
+				'gc-emit',
+				mockMessage,
+			]);
+		});
+
 		it('emitStateChange should send to main window', () => {
 			groupChatEmitters.emitStateChange!('gc-emit', 'moderator-thinking');
 
@@ -1257,7 +1279,7 @@ describe('groupChat IPC handlers', () => {
 			);
 		});
 
-		it('emitters should not send when window is destroyed', () => {
+		it('emitters should not send to a destroyed window but still reach the bridge', () => {
 			vi.mocked(mockMainWindow.isDestroyed).mockReturnValue(true);
 
 			groupChatEmitters.emitMessage!('gc-destroyed', {
@@ -1266,7 +1288,13 @@ describe('groupChat IPC handlers', () => {
 				content: 'Test',
 			});
 
+			// The Electron renderer is gone, so no direct send...
 			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			// ...but web-desktop clients still receive the event via the bridge.
+			expect(broadcastBridgeEvent).toHaveBeenCalledWith(
+				'groupChat:message',
+				expect.arrayContaining(['gc-destroyed'])
+			);
 		});
 
 		it('emitters should handle null main window', () => {

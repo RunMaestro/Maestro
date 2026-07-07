@@ -43,6 +43,7 @@
 				"group": "General Usage",
 				"pages": [
 					"general-usage",
+					"multi-window",
 					"keyboard-shortcuts",
 					"slash-commands",
 					"prompt-customization",
@@ -52,6 +53,7 @@
 					"document-graph",
 					"git-worktrees",
 					"group-chat",
+					"cross-agent-mentions",
 					"image-annotator",
 					"remote-control",
 					"ssh-remote-execution",

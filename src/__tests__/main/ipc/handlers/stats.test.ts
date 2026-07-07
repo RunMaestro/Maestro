@@ -53,6 +53,15 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the web-desktop bridge fanout. stats:updated now routes through
+// safeSend, which always broadcasts to bridge clients regardless of the
+// desktop renderer's liveness. Mocking it lets us assert web clients receive
+// the event even when the Electron window is null or destroyed.
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: vi.fn(),
+}));
+import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
+
 describe('stats IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockStatsDB: Partial<StatsDB>;
@@ -102,6 +111,8 @@ describe('stats IPC handlers', () => {
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
 			getSessionLifecycleEvents: vi.fn().mockReturnValue([]),
+			incrementShortcutUsage: vi.fn().mockReturnValue('2026-06-21'),
+			isReady: vi.fn().mockReturnValue(true),
 		};
 
 		vi.mocked(statsDbModule.getStatsDB).mockReturnValue(mockStatsDB as unknown as StatsDB);
@@ -208,6 +219,8 @@ describe('stats IPC handlers', () => {
 				expect(mockEnqueueQueryEvent).toHaveBeenCalledWith(mockStatsDB.database, queryEvent);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
+				// The same event fans out to web-desktop bridge clients.
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
 			});
 
 			it('should not broadcast when main window is null', async () => {
@@ -250,6 +263,46 @@ describe('stats IPC handlers', () => {
 
 				expect(mockEnqueueQueryEvent).toHaveBeenCalled();
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('web-desktop bridge fanout', () => {
+			it('should still reach bridge clients when the main window is null', async () => {
+				const nullWindowGetMainWindow = () => null;
+				handlers.clear();
+				vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+					handlers.set(channel, handler);
+				});
+				registerStatsHandlers({ getMainWindow: nullWindowGetMainWindow });
+
+				const handler = handlers.get('stats:record-query');
+				await handler!({} as any, {
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					source: 'user' as const,
+					startTime: Date.now(),
+					duration: 5000,
+				});
+
+				// Desktop renderer skipped (no window), but web clients still get it.
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
+			});
+
+			it('should still reach bridge clients when the main window is destroyed', async () => {
+				mockMainWindow.isDestroyed.mockReturnValue(true);
+
+				const handler = handlers.get('stats:record-query');
+				await handler!({} as any, {
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					source: 'user' as const,
+					startTime: Date.now(),
+					duration: 5000,
+				});
+
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
 			});
 		});
 
@@ -321,6 +374,34 @@ describe('stats IPC handlers', () => {
 				expect(mockStatsDB.insertAutoRunTask).toHaveBeenCalledWith(task);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		describe('stats:record-shortcut-usage', () => {
+			it('records usage and broadcasts when the stats DB is ready', async () => {
+				const handler = handlers.get('stats:record-shortcut-usage');
+				const firedAt = Date.UTC(2026, 5, 21, 12, 0, 0);
+
+				const result = await handler!({} as any, firedAt);
+
+				expect(result).toBe('2026-06-21');
+				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenCalledWith(firedAt);
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+			});
+
+			// MAESTRO-SP: a shortcut can fire before the stats DB finishes
+			// initializing. The handler must skip silently rather than throw
+			// "Database not initialized" (which would otherwise propagate across
+			// the IPC bridge into the renderer and Sentry).
+			it('skips silently without throwing when the stats DB is not yet ready', async () => {
+				vi.mocked(mockStatsDB.isReady!).mockReturnValue(false);
+				const handler = handlers.get('stats:record-shortcut-usage');
+
+				const result = await handler!({} as any, Date.now());
+
+				expect(result).toBeNull();
+				expect(mockStatsDB.incrementShortcutUsage).not.toHaveBeenCalled();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
 		});
 	});

@@ -15,7 +15,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.2** | Released June 27, 2026
+**Latest: v0.17.3** | Released July 4, 2026
 
 # Major 0.17.x Additions
 
@@ -27,36 +27,23 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🧑‍✈️ GitHub Copilot-CLI joins Maestro as a first-class agent with end-to-end integration for both local and remote (over SSH) execution.
 
-🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. That means you can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, manage groups, agents, tabs, and themes, and much more, instead of clicking through menus yourself.
+🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. You can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, and manage groups, agents, tabs, and themes, instead of clicking through menus yourself.
 
-## 0.17.2 Modifications
+## 0.17.3 Highlights
 
-🔑 New Claude Code agents now default to the API token source, and every existing agent has been reverted to it. The Max-plan TUI path stays available but is opt-in per agent.
+⌨️ Typing in the AI and terminal composer no longer lags, and the transcript no longer reflows on every keystroke, so the app stays smooth under heavy load.
 
-🪄 The New Agent Wizard now exposes the same Interactive / API / Dynamic Claude Token Source selector as the Edit Agent modal, so wizard-created agents inherit your pick instead of silently falling through to API billing.
+🔁 Maestro now automatically retries a prompt when an agent hits a recoverable error such as an overloaded API, a rate limit, or exhausted quota, showing an inline outage card with a live countdown instead of dropping the run.
 
-🧠 Plan-mode turns under the Interactive token source no longer stall and get killed at the timeout. Maestro now finalizes the turn and keeps the captured plan when the model exits plan mode. (#1117)
+🎨 Agent replies now render rich markdown, including GitHub-style `[!NOTE]`/`[!WARNING]` callouts, LaTeX math, and sanitized inline SVG diagrams, so answers can be formatted and illustrated instead of landing as plain text.
 
-💬 Group Chat participants can now run their own Auto Run playbooks and documents headlessly through `maestro-cli`, with a new `run-doc` command, `--agent` lookup by name, and a `--max-wait` that matches the moderator's window so long-running turns aren't cut short.
+🖼️ Pasted screenshots now live in a content-addressed store outside the main sessions file, so a workspace full of images no longer bloats that file or freezes the UI.
 
-🪄 Saving a Cue pipeline after only moving nodes around no longer re-runs the pipeline. Layout-only saves are now detected and skipped.
-
-🔁 A Cue pipeline set to `max_concurrent` greater than 1 no longer overlaps a run with itself, so a slow heartbeat tick can't stack duplicate runs of the same pipeline.
-
-📊 `.mmd` and `.mermaid` files render as themeable, sanitized diagrams in the file preview by default, with Cmd+E to drop into source editing.
-
-🔍 File preview search gains a three-way Text / Regex / Line toggle, with friendly errors on bad patterns and jump-to-line support across every preview tier.
-
-🖼️ Images from SSH-remote agents now render inline in the AI terminal, and a stray cache-key prefix that was corrupting remote file reads is fixed.
-
-🔐 Tab auto-naming now inherits the same provider auth as the chat, so it no longer fails with "Not logged in" when the chat itself is signed in.
-
-🍎 "Restart to Update" on macOS no longer hangs or trips the crash reporter while quitting to apply the update.
-
-🛡️ Bumped dompurify, markdown-it, and js-yaml to clear three moderate security advisories in the markdown, YAML, and AI-output rendering path.
+⭐ Maestro now keeps its own copy of every starred conversation's transcript, so a starred session survives even after the provider rotates or deletes its file and still resumes natively on restore.
 
 ### Previous Releases in this Series
 
+- **v0.17.2** (June 27, 2026) - Maestro Cue
 - **v0.17.1** (June 20, 2026) - Maestro Cue
 - **v0.17.0** (June 15, 2026) - Maestro Cue
 

@@ -23,6 +23,8 @@ import {
 	__resetLastOpenSettingsTabForTests,
 } from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	Theme,
@@ -388,10 +390,46 @@ const createDefaultProps = (overrides = {}) => ({
 	...overrides,
 });
 
+/**
+ * Open a marketplace tile's detail pane by clicking its card. Per-feature
+ * config now lives inside the tile detail (a Settings sub-tab), not a separate
+ * accordion list. Assumes the Plugins tab is already active.
+ */
+const openExtensionDetail = (extensionId: string): void => {
+	const card = document.querySelector(`[data-extension-id="${extensionId}"]`);
+	expect(card).toBeInTheDocument();
+	fireEvent.click(card as HTMLElement);
+};
+
+/** Select a detail-pane sub-tab (Settings or Permissions). */
+const selectSubTab = (which: 'settings' | 'permissions'): void => {
+	fireEvent.click(screen.getByTestId(`extension-subtab-${which}`));
+};
+// useViewportBreakpoint reads window.innerWidth synchronously during render, so
+// setting it before render is enough to drive the xs (< 640px) layout branch.
+function setViewportWidth(width: number): void {
+	Object.defineProperty(window, 'innerWidth', {
+		writable: true,
+		configurable: true,
+		value: width,
+	});
+}
+
 describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		__resetLastOpenSettingsTabForTests();
+		useModalStore.getState().closeAll();
+		useSettingsStore.setState({
+			encoreFeatures: {
+				directorNotes: false,
+				usageStats: true,
+				symphony: true,
+				maestroCue: false,
+				pianola: false,
+				plugins: false,
+			},
+		});
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -472,7 +510,7 @@ describe('SettingsModal', () => {
 			expect(screen.getByTitle('Themes')).toBeInTheDocument();
 			expect(screen.getByTitle('Notifications')).toBeInTheDocument();
 			expect(screen.getByTitle('AI Commands')).toBeInTheDocument();
-			expect(screen.getByTitle('Encore Features')).toBeInTheDocument();
+			expect(screen.getByTitle('Plugins')).toBeInTheDocument();
 		});
 
 		it('should default to general tab', async () => {
@@ -649,8 +687,8 @@ describe('SettingsModal', () => {
 
 	describe('keyboard tab navigation', () => {
 		// Sidebar is alphabetized by label, so the order under no LLM flag is:
-		// About, AI Commands, Display, Encore Features, Environment, General,
-		// Maestro Prompts, Notifications, Shortcuts, SSH Hosts, Themes.
+		// About, AI Commands, Display, Environment, General, Maestro Prompts,
+		// Notifications, Plugins, Shortcuts, SSH Hosts, Themes.
 		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
 
@@ -682,14 +720,14 @@ describe('SettingsModal', () => {
 			// Start on shortcuts tab
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Notifications
+			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Plugins
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Operating System Notifications')).toBeInTheDocument();
+			expect(screen.getByTitle('Plugins')).toHaveClass('font-bold');
 		});
 
 		it('should wrap around when navigating past last tab (Themes)', async () => {
@@ -1403,9 +1441,14 @@ describe('SettingsModal', () => {
 			});
 
 			fireEvent.click(screen.getByRole('button', { name: 'Test Notification' }));
+			// The Test button routes through showOsNotification(), which on the
+			// Electron desktop path forwards to the notification bridge with the
+			// (title, body, sessionId, tabId) signature.
 			expect(window.maestro.notification.show).toHaveBeenCalledWith(
 				'Maestro',
-				'Test notification - notifications are working!'
+				'Test notification - notifications are working!',
+				undefined,
+				undefined
 			);
 		});
 
@@ -2181,424 +2224,454 @@ describe('SettingsModal', () => {
 		});
 	});
 
-	describe('Encore Features settings tab', () => {
-		it('should render Encore Features tab button', async () => {
+	describe('Plugins settings tab', () => {
+		it('should render Plugins tab button', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByTitle('Encore Features')).toBeInTheDocument();
+			expect(screen.getByTitle('Plugins')).toBeInTheDocument();
 		});
 
-		it('should switch to Encore Features tab when clicked', async () => {
+		it('should switch to Plugins tab when clicked', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const tab = screen.getByTitle('Encore Features');
+			const tab = screen.getByTitle('Plugins');
 			fireEvent.click(tab);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			// The marketplace's own header is the single voice of the tab; the
+			// separate "Feature settings" accordion list is gone.
+			expect(screen.getByText('Plugins', { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.queryByText('Feature settings')).not.toBeInTheDocument();
 		});
 
-		it('should show description text for Encore Features', async () => {
+		it('should show description text for the Plugins tab', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle('Encore Features'));
+			fireEvent.click(screen.getByTitle('Plugins'));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(
-				screen.getByText(/Optional features that extend Maestro's capabilities/)
-			).toBeInTheDocument();
-			expect(
-				screen.getByText(/Contributors building new features should consider gating them here/)
+				screen.getByText(/Built-in Encore features and community plugins/)
 			).toBeInTheDocument();
 		});
 
-		it("should show Director's Notes feature toggle defaulting to off", async () => {
+		it('should open Pianola modal from enabled Pianola extension details', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: true,
+					plugins: false,
+				},
+			});
+
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle('Encore Features'));
+			fireEvent.click(screen.getByTitle('Plugins'));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Director's Notes section is visible but DN settings are hidden
-			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+			const pianolaCard = document.querySelector('[data-extension-id="pianola"]');
+			expect(pianolaCard).toBeInTheDocument();
+			fireEvent.click(pianolaCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('extension-open-pianola'));
+
+			expect(useModalStore.getState().isOpen('pianolaModal')).toBe(true);
+		});
+
+		it('should render enabled plugin settings and write only the plugin namespace', async () => {
+			const pluginId = 'com.example.settings';
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: false,
+					plugins: true,
+				},
+			});
+			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				plugins: [
+					{
+						id: pluginId,
+						manifest: {
+							id: pluginId,
+							name: 'Settings Plugin',
+							version: '0.1.0',
+							tier: 1,
+							maestro: { minHostApi: '1.7.0' },
+							entry: 'dist/entry.js',
+							permissions: [],
+						},
+						source: '/plugins/settings',
+						loadStatus: 'ok',
+						enabled: true,
+						errors: [],
+						signature: { status: 'trusted' },
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				themes: [],
+				prompts: [],
+				settings: [
+					{
+						id: `${pluginId}:poll`,
+						localId: 'poll',
+						pluginId,
+						key: 'poll',
+						type: 'boolean',
+						default: false,
+						description: 'Poll automatically',
+					},
+				],
+				commandMacros: [],
+				cueTriggers: [],
+				commands: [],
+				panels: [],
+				agents: [],
+				tools: [],
+				keybindings: [],
+				uiItems: [],
+				errorsByPlugin: {},
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Plugins'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const pluginCard = document.querySelector(`[data-extension-id="${pluginId}"]`);
+			expect(pluginCard).toBeInTheDocument();
+			fireEvent.click(pluginCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('extension-configure'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Poll automatically')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('extension-setting-input'));
+
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(`plugins.${pluginId}.poll`, true);
+		});
+
+		it('should hide plugin settings for disabled plugins', async () => {
+			const pluginId = 'com.example.disabled-settings';
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: false,
+					plugins: true,
+				},
+			});
+			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				plugins: [
+					{
+						id: pluginId,
+						manifest: {
+							id: pluginId,
+							name: 'Disabled Settings Plugin',
+							version: '0.1.0',
+							tier: 1,
+							maestro: { minHostApi: '1.7.0' },
+							entry: 'dist/entry.js',
+							permissions: [],
+						},
+						source: '/plugins/disabled-settings',
+						loadStatus: 'ok',
+						enabled: false,
+						errors: [],
+						signature: { status: 'trusted' },
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				themes: [],
+				prompts: [],
+				settings: [
+					{
+						id: `${pluginId}:poll`,
+						localId: 'poll',
+						pluginId,
+						key: 'poll',
+						type: 'boolean',
+						default: false,
+						description: 'Poll automatically',
+					},
+				],
+				commandMacros: [],
+				cueTriggers: [],
+				commands: [],
+				panels: [],
+				agents: [],
+				tools: [],
+				keybindings: [],
+				uiItems: [],
+				errorsByPlugin: {},
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Plugins'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const pluginCard = document.querySelector(`[data-extension-id="${pluginId}"]`);
+			expect(pluginCard).toBeInTheDocument();
+			fireEvent.click(pluginCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.queryByTestId('extension-configure')).not.toBeInTheDocument();
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+				`plugins.${pluginId}.poll`,
+				expect.anything()
+			);
+		});
+
+		it("Director's Notes tile: Settings sub-tab shows the disabled hint when off", async () => {
+			// Store default has directorNotes disabled.
+			render(<SettingsModal {...createDefaultProps()} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByTitle('Plugins'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			openExtensionDetail('directorNotes');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Configurable tile opens on Settings; disabled → hint, not config.
+			expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
+				'Enable this plugin to configure it.'
+			);
 			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
 		});
 
-		it("should call setEncoreFeatures when Director's Notes toggle is clicked", async () => {
-			mockSetEncoreFeatures.mockClear();
-
+		it('Usage & Stats tile: Settings shows lookback config; Permissions reveals caps + services', async () => {
+			// Store default has usageStats enabled.
 			render(<SettingsModal {...createDefaultProps()} />);
-
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByTitle('Plugins'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
+			openExtensionDetail('usageStats');
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Click the Director's Notes feature section to toggle
-			const dnSection = screen.getByText("Director's Notes").closest('button');
-			expect(dnSection).toBeInTheDocument();
-			fireEvent.click(dnSection!);
+			// Settings sub-tab (default) renders the Usage & Stats config body.
+			const panel = screen.getByTestId('extension-settings-panel');
+			expect(panel).toBeInTheDocument();
+			expect(within(panel).getByText('Default lookback window')).toBeInTheDocument();
+			expect(within(panel).getByLabelText('Select default lookback window')).toBeInTheDocument();
 
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: true,
-				usageStats: true,
-				symphony: true,
-			});
-		});
-
-		it('should call setEncoreFeatures with false when toggling DN off', async () => {
-			mockSetEncoreFeatures.mockClear();
-			mockUseSettingsOverrides = {
-				encoreFeatures: { directorNotes: true, usageStats: true, symphony: true },
-			};
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			const dnSection = screen.getByText("Director's Notes").closest('button');
-			expect(dnSection).toBeInTheDocument();
-			fireEvent.click(dnSection!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: false,
-				usageStats: true,
-				symphony: true,
-			});
-		});
-
-		it('should show Usage & Stats feature toggle defaulting to on', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
-			// Settings should be visible when enabled (default on)
+			// The capability disclosure + supervised service live behind Permissions.
+			expect(screen.queryByTestId('extension-background-service')).not.toBeInTheDocument();
+			selectSubTab('permissions');
+			expect(screen.getAllByTestId('extension-permission').length).toBeGreaterThan(0);
+			expect(screen.getByTestId('extension-background-service').getAttribute('data-service')).toBe(
+				'stats.sampler'
+			);
+			// Back to Settings restores the config body.
+			selectSubTab('settings');
 			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
 		});
 
-		it('should call setEncoreFeatures when Usage & Stats toggle is clicked off', async () => {
-			mockSetEncoreFeatures.mockClear();
-
+		it('Maestro Symphony tile: Settings shows Registry Sources when enabled', async () => {
+			// Store default has symphony enabled.
 			render(<SettingsModal {...createDefaultProps()} />);
-
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByTitle('Plugins'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
+			openExtensionDetail('symphony');
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const usSection = screen.getByText('Usage & Stats').closest('button');
-			expect(usSection).toBeInTheDocument();
-			fireEvent.click(usSection!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: false,
-				usageStats: false,
-				symphony: true,
-			});
+			const panel = screen.getByTestId('extension-settings-panel');
+			expect(within(panel).getByText('Registry Sources')).toBeInTheDocument();
 		});
 
-		it('should show Maestro Symphony feature toggle defaulting to on', async () => {
+		it('Maestro Symphony tile: Settings shows the disabled hint when off', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: false,
+					maestroCue: false,
+					pianola: false,
+					plugins: false,
+				},
+			});
 			render(<SettingsModal {...createDefaultProps()} />);
-
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByTitle('Plugins'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
+			openExtensionDetail('symphony');
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
-			// Settings should be visible when enabled (default on)
-			expect(screen.getByText('Registry Sources')).toBeInTheDocument();
-		});
-
-		it('should call setEncoreFeatures when Symphony toggle is clicked off', async () => {
-			mockSetEncoreFeatures.mockClear();
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
-			expect(symphonySection).toBeInTheDocument();
-			fireEvent.click(symphonySection!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: false,
-				usageStats: true,
-				symphony: false,
-			});
-		});
-
-		it('should call setEncoreFeatures when Symphony toggle is clicked on', async () => {
-			mockSetEncoreFeatures.mockClear();
-			mockUseSettingsOverrides = {
-				encoreFeatures: { directorNotes: false, usageStats: true, symphony: false },
-			};
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
-			expect(symphonySection).toBeInTheDocument();
-			fireEvent.click(symphonySection!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: false,
-				usageStats: true,
-				symphony: true,
-			});
-		});
-
-		it('should hide Symphony registry settings when symphony is disabled', async () => {
-			mockUseSettingsOverrides = {
-				encoreFeatures: { directorNotes: false, usageStats: true, symphony: false },
-			};
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle('Encore Features'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(screen.getByTestId('extension-settings-disabled-hint')).toBeInTheDocument();
 			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
 
 		describe("with Director's Notes enabled", () => {
 			beforeEach(() => {
+				// Both sources must agree: the store drives the tile's enabled
+				// state (so the config body renders), the useSettings mock drives
+				// the detection hook (so the provider dropdown populates).
 				mockUseSettingsOverrides = {
 					encoreFeatures: { directorNotes: true, usageStats: true, symphony: true },
 				};
+				useSettingsStore.setState({
+					encoreFeatures: {
+						directorNotes: true,
+						usageStats: true,
+						symphony: true,
+						maestroCue: false,
+						pianola: false,
+						plugins: false,
+					},
+				});
 			});
 
-			it('should render provider dropdown with detected available agents', async () => {
+			it('renders the DN config body (provider dropdown + lookback slider) in the Settings sub-tab', async () => {
 				render(<SettingsModal {...createDefaultProps()} />);
-
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(50);
 				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
+				fireEvent.click(screen.getByTitle('Plugins'));
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(100);
 				});
 
-				expect(screen.getByText('Synopsis Provider')).toBeInTheDocument();
-
-				// With the default mock, only claude-code is available and supported
-				const select = screen.getByLabelText('Select synopsis provider agent');
-				expect(select).toBeInTheDocument();
-
-				const options = select.querySelectorAll('option');
-				expect(options.length).toBeGreaterThanOrEqual(1);
-				expect(options[0]).toHaveValue('claude-code');
-				expect(options[0]).toHaveTextContent('Claude Code');
-			});
-
-			it('should render Customize button for provider configuration', async () => {
-				render(<SettingsModal {...createDefaultProps()} />);
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
+				openExtensionDetail('directorNotes');
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(100);
 				});
 
-				const customizeButton = screen.getByTitle('Customize provider settings');
-				expect(customizeButton).toBeInTheDocument();
-				expect(customizeButton).toHaveTextContent('Customize');
-			});
-
-			it('should render default lookback period slider with range 1-90', async () => {
-				render(<SettingsModal {...createDefaultProps()} />);
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				expect(screen.getByText(/Default Lookback Period: 7 days/)).toBeInTheDocument();
-
-				const slider = screen.getByRole('slider');
-				expect(slider).toBeInTheDocument();
+				const panel = screen.getByTestId('extension-settings-panel');
+				expect(within(panel).getByText('Synopsis Provider')).toBeInTheDocument();
+				// detect() returns claude-code + codex; both supported → 2 options.
+				const select = within(panel).getByLabelText('Select synopsis provider agent');
+				expect(select.querySelectorAll('option')).toHaveLength(2);
+				// Lookback slider present with the persisted value.
+				const slider = within(panel).getByRole('slider');
 				expect(slider).toHaveAttribute('min', '1');
 				expect(slider).toHaveAttribute('max', '90');
 				expect(slider).toHaveValue('7');
 			});
 
-			it('should show DN description text when enabled', async () => {
-				render(<SettingsModal {...createDefaultProps()} />);
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				expect(
-					screen.getByText(/Unified history view and AI-generated synopsis across all sessions/)
-				).toBeInTheDocument();
-				expect(
-					screen.getByText(/AI agent used to generate synopsis summaries/)
-				).toBeInTheDocument();
-				expect(screen.getByText(/How far back to look when generating notes/)).toBeInTheDocument();
-			});
-
-			it('should call setDirectorNotesSettings when provider is changed', async () => {
+			it('persists provider + lookback changes end-to-end via setDirectorNotesSettings', async () => {
 				mockSetDirectorNotesSettings.mockClear();
-
 				render(<SettingsModal {...createDefaultProps()} />);
-
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(50);
 				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
+				fireEvent.click(screen.getByTitle('Plugins'));
 				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
+					await vi.advanceTimersByTimeAsync(100);
 				});
 
-				const select = screen.getByDisplayValue('Claude Code');
-				fireEvent.change(select, { target: { value: 'codex' } });
-
-				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
-					provider: 'codex',
-					defaultLookbackDays: 7,
+				openExtensionDetail('directorNotes');
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(100);
 				});
-			});
 
-			it('should call setDirectorNotesSettings when lookback slider is changed', async () => {
+				const panel = screen.getByTestId('extension-settings-panel');
+				fireEvent.change(within(panel).getByLabelText('Select synopsis provider agent'), {
+					target: { value: 'codex' },
+				});
+				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
+					expect.objectContaining({ provider: 'codex' })
+				);
+
 				mockSetDirectorNotesSettings.mockClear();
-
-				render(<SettingsModal {...createDefaultProps()} />);
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				const slider = screen.getByRole('slider');
-				fireEvent.change(slider, { target: { value: '30' } });
-
-				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
-					provider: 'claude-code',
-					defaultLookbackDays: 30,
-				});
-			});
-
-			it('should render lookback scale markers', async () => {
-				render(<SettingsModal {...createDefaultProps()} />);
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				fireEvent.click(screen.getByTitle('Encore Features'));
-
-				await act(async () => {
-					await vi.advanceTimersByTimeAsync(50);
-				});
-
-				expect(screen.getByText('1 day')).toBeInTheDocument();
-				// "90 days" appears in both the scale marker <span> and a <select> <option>
-				expect(screen.getAllByText('90 days').length).toBeGreaterThanOrEqual(1);
+				fireEvent.change(within(panel).getByRole('slider'), { target: { value: '30' } });
+				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
+					expect.objectContaining({ defaultLookbackDays: 30 })
+				);
 			});
 		});
 	});
@@ -2742,6 +2815,95 @@ describe('SettingsModal', () => {
 			const headerTexts = groupHeaders.map((h) => h.textContent);
 			expect(headerTexts).toContain('Display');
 			expect(headerTexts).toContain('SSH Hosts');
+		});
+	});
+
+	describe('small-viewport layout', () => {
+		afterEach(() => {
+			// Restore the jsdom default so leaked phone widths don't affect other suites.
+			setViewportWidth(1024);
+		});
+
+		it('clamps the modal height so it fits small viewports', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Height clamping is now owned by the resizable-modal system (inline
+			// style, not a static Tailwind class) - it always caps at 90vh rather
+			// than switching between a fixed 900px and a viewport-relative class.
+			const container = screen
+				.getByRole('dialog')
+				.querySelector('[data-modal-resize-key="settings"]');
+			expect(container).toHaveStyle({ maxHeight: '90vh' });
+			expect(container?.className).not.toContain('h-[900px]');
+		});
+
+		it('renders the vertical 248px sidebar at desktop widths', async () => {
+			setViewportWidth(1280);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.className).toContain('w-[248px]');
+			expect(nav.className).not.toContain('overflow-x-auto');
+		});
+
+		it('collapses the sidebar into a horizontal tab strip on xs phones', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Same nav landmark, but now a horizontally scrollable strip above content.
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.className).toContain('overflow-x-auto');
+			expect(nav.className).not.toContain('w-[248px]');
+
+			// The body wrapper stacks (flex-col) so the strip sits above the content.
+			expect(nav.closest('div.flex')?.className).toContain('flex-col');
+		});
+
+		it('keeps tab switching working from the horizontal strip', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Every section is still reachable from the strip.
+			expect(screen.getByTitle('Shortcuts')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+		});
+
+		it('keeps settings search working on xs phones', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'shell' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Search hides the strip+content wrapper just like the sidebar layout.
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.closest('div.flex')?.className).toContain('hidden');
 		});
 	});
 });

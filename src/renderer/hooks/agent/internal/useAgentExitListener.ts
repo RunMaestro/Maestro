@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { clearRetryIfSettled } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -44,6 +45,7 @@ import {
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -67,6 +69,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 	const debounceTimersRef = useRef<
 		Map<string, { timer: ReturnType<typeof setTimeout>; data: SynopsisData; anyWork: boolean }>
 	>(new Map());
+	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -134,6 +137,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		};
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
+			// Window scoping: only the window that owns the agent runs exit side
+			// effects (synopsis spawn, git refresh, history entry, queue dequeue).
+			// Events are broadcast to every window, so a non-owning window must bail
+			// here or those one-shot effects would fire once per open window.
+			if (!ownedGate.current?.(sessionId)) return;
 			if (sessionId.includes('-terminal-')) return;
 
 			logger.info('[onExit] Process exit event received:', undefined, {
@@ -338,9 +346,9 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customContextWindow: currentSession.customContextWindow,
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
-								enableMaestroP: currentSession.enableMaestroP,
-								maestroPMode: currentSession.maestroPMode,
-								maestroPPath: currentSession.maestroPPath,
+								// Shared extractor guarantees the SAME complete triple - no
+								// partial/drifting forward possible.
+								...getClaudeTokenSourceFields(currentSession),
 							},
 						};
 					}
@@ -852,5 +860,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		deps.processQueuedItemRef,
 		deps.rightPanelRef,
 		deps.spawnBackgroundSynopsisRef,
+		ownedGate,
 	]);
 }

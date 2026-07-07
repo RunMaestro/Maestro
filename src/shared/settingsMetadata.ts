@@ -1025,13 +1025,49 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
 		type: 'object',
-		default: { directorNotes: false, usageStats: true, symphony: true, maestroCue: false },
+		default: {
+			directorNotes: false,
+			usageStats: true,
+			symphony: true,
+			maestroCue: false,
+			pianola: false,
+			plugins: false,
+			coworking: false,
+		},
 		category: 'advanced',
 	},
 	directorNotesSettings: {
 		description: "Director's Notes settings: provider, lookback window, default reading mode.",
 		type: 'object',
 		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
+		category: 'advanced',
+	},
+	coworkingBrowserInteraction: {
+		description:
+			'Agent ids (ToolType values) for which Coworking browser interaction tools are allowed. Empty array means all off.',
+		type: 'array',
+		default: [],
+		category: 'advanced',
+	},
+	coworkingBrowserInteractionConfirm: {
+		description:
+			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous" (confirm navigate and eval).',
+		type: 'object',
+		default: {},
+		category: 'advanced',
+	},
+	coworkingBackgroundBrowsers: {
+		description:
+			'Opt-in: keep hidden background <webview>s alive so a Coworking agent can read and drive its own browser tabs while you are focused on a different agent. Each is a full renderer process.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	coworkingBackgroundBrowsersLimit: {
+		description:
+			'Maximum number of background Coworking webviews kept alive at once (LRU-evicted, clamped 1-10).',
+		type: 'number',
+		default: 2,
 		category: 'advanced',
 	},
 

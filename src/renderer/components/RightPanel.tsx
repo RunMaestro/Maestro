@@ -36,6 +36,7 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
@@ -132,6 +133,12 @@ export const RightPanel = memo(
 		// === State from stores (direct subscriptions — no prop drilling) ===
 		const session = useSessionStore(selectActiveSession);
 		const setSessions = useSessionStore((s) => s.setSessions);
+		// Multi-window scoping: only surface an agent this window owns. If the active
+		// agent lives in (or has moved to) another window, render nothing - the same
+		// clean empty state as having no active agent - rather than a stale
+		// Files/History/Auto Run view. Outside a WindowProvider (single-window /
+		// isolation tests) this is always true, so behaviour is unchanged.
+		const ownsActiveSession = useWindowOwnsSession(session?.id);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 		const activeRightTab = useUIStore((s) => s.activeRightTab);
@@ -384,7 +391,7 @@ export const RightPanel = memo(
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
 
-		if (!session) return null;
+		if (!session || !ownsActiveSession) return null;
 
 		// Shared props for AutoRun and AutoRunExpandedModal to avoid duplication
 		const autoRunSharedProps = {
@@ -460,8 +467,8 @@ export const RightPanel = memo(
 				{/* Resize Handle */}
 				{rightPanelOpen && (
 					<div
-						className="absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
-						onMouseDown={onRightPanelResizeStart}
+						className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
+						onPointerDown={onRightPanelResizeStart}
 					/>
 				)}
 

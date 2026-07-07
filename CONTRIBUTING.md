@@ -102,11 +102,11 @@ maestro/
 npm run dev            # Start dev server with hot reload (isolated data directory)
 npm run dev:prod-data  # Start dev server using production data (requires closing production app)
 npm run dev:demo       # Start in demo mode (fresh settings, isolated data)
-npm run dev:web        # Start web interface dev server
-npm run build          # Full production build (main + renderer + web + CLI)
+npm run dev:web-desktop # Start browser (web-desktop) build dev server
+npm run build          # Full production build (main + renderer + web-desktop + CLI)
 npm run build:main     # Build main process only
 npm run build:renderer # Build renderer only
-npm run build:web      # Build web interface only
+npm run build:web-desktop # Build browser (web-desktop) bundle only
 npm run build:cli      # Build CLI tool only
 npm start              # Start built application
 npm run clean          # Clean build artifacts
@@ -170,7 +170,7 @@ VITE_PORT=17175 npm run dev
 
 This allows you to develop and test different branches simultaneously without port conflicts.
 
-**Note:** The web interface dev server (`npm run dev:web`) uses a separate port (default 5174) and can be configured with `VITE_WEB_PORT` if needed.
+**Note:** The browser (web-desktop) dev server (`npm run dev:web-desktop`) runs on its own fixed port (5176).
 
 ## Testing
 

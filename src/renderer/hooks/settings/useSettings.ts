@@ -13,6 +13,7 @@
 import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
+import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type {
 	LLMProvider,
 	ThemeId,
@@ -377,6 +378,16 @@ export interface UseSettingsReturn {
 	// Symphony registry URLs (additional user-configured registries)
 	symphonyRegistryUrls: string[];
 	setSymphonyRegistryUrls: (value: string[]) => void;
+
+	// Coworking browser interaction (agent ids allowed to use browser tools)
+	coworkingBrowserInteraction: string[];
+	setCoworkingBrowserInteraction: (value: string[]) => void;
+	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	coworkingBackgroundBrowsers: boolean;
+	setCoworkingBackgroundBrowsers: (value: boolean) => void;
+	coworkingBackgroundBrowsersLimit: number;
+	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 
 	// Forced Parallel Execution
 	forcedParallelExecution: boolean;

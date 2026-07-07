@@ -30,6 +30,7 @@ import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
 
 // Type for tunnel manager instance
@@ -736,6 +737,7 @@ const LOGGER_FORWARD_FLUSH_SIZE = 100;
  * out to per-entry consumers so the public API stays single-entry.
  */
 export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | null): void {
+	const safeSend = createSafeSend(getMainWindow);
 	let buffer: unknown[] = [];
 	let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -749,19 +751,9 @@ export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | 
 		const batch = buffer;
 		buffer = [];
 
-		const mainWindow = getMainWindow();
-		try {
-			if (
-				mainWindow &&
-				!mainWindow.isDestroyed() &&
-				mainWindow.webContents &&
-				!mainWindow.webContents.isDestroyed()
-			) {
-				mainWindow.webContents.send('logger:newLogBatch', batch);
-			}
-		} catch {
-			// Silently ignore - renderer not available
-		}
+		// safeSend handles null/destroyed windows and fans the batch out to
+		// web-desktop bridge clients so remote log viewers stay in sync.
+		safeSend('logger:newLogBatch', batch);
 	};
 
 	logger.on('newLog', (entry) => {

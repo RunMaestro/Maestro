@@ -21,7 +21,11 @@ export default defineConfig(({ mode }) => ({
 	plugins: [react()],
 
 	root: path.join(__dirname, 'src/web-desktop'),
-	publicDir: false,
+	// Copy the PWA assets (manifest.json, service worker, icons/) from the shared
+	// public dir into the bundle output so the Fastify server can serve them
+	// alongside the app. This is the only surviving consumer of src/web/public
+	// after the legacy mobile bundle was retired.
+	publicDir: path.join(__dirname, 'src/web/public'),
 	base: './',
 
 	define: {

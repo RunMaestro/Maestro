@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Session, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
+import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -28,9 +28,16 @@ import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
 import type { TabCompletionSuggestion } from './useTabCompletion';
-import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
+import { useAtMentionCompletion } from './useAtMentionCompletion';
+import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { useCrossAgentDispatch } from '../agent/useCrossAgentDispatch';
+import {
+	resolveMentionedTargetSessionIds,
+	buildKnownMentionNameSet,
+} from './useAgentMentionCompletion';
+import { messageStartsWithAgentMention } from '../../../shared/crossAgentContext';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
 	FILE_TREE_SINGLE_MIME,
@@ -41,6 +48,11 @@ function isImagePath(path: string): boolean {
 	const ext = path.toLowerCase().split('.').pop();
 	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
 }
+
+// Stable empty references so the gated sessions/groups selectors return the same
+// value on every render while the `@` picker is closed - no re-render churn.
+const EMPTY_SESSIONS: Session[] = [];
+const EMPTY_GROUPS: Group[] = [];
 
 /**
  * Convert an absolute filesystem path into the form used inside an `@` mention:
@@ -146,8 +158,10 @@ export interface UseInputHandlersReturn {
 	handleDrop: (e: React.DragEvent) => void;
 	/** Tab completion suggestions for terminal mode */
 	tabCompletionSuggestions: TabCompletionSuggestion[];
-	/** @ mention suggestions for AI mode */
-	atMentionSuggestions: AtMentionSuggestion[];
+	/** Unified `@` picker rows for the active category (AI mode) */
+	atMentionItems: MentionPickerItem[];
+	/** Per-category totals for the picker's category bar */
+	atMentionCounts: Record<MentionCategory, number>;
 	/** Sync file tree highlight to match tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 }
@@ -213,8 +227,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		tabCompletionFilter,
 		atMentionOpen,
 		atMentionFilter,
+		atMentionCategory,
 		setSlashCommandOpen,
 	} = useInputContext();
+
+	// All agents + groups feed the Agents scope of the unified `@` picker. Gate
+	// the subscription on atMentionOpen so streaming flushes from any agent don't
+	// recompute mention suggestions while the picker is closed (mirrors the
+	// fileSuggestions gate below). Stable empty refs avoid re-render churn.
+	const sessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
+	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
 
 	// --- Derived values ---
 	const activeTab = activeSession ? getActiveTab(activeSession) : null;
@@ -433,7 +455,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	]);
 
 	const debouncedAtMentionFilter = useDebouncedValue(atMentionOpen ? atMentionFilter : '', 100);
-	const atMentionSuggestions = useMemo(() => {
+	// File/directory suggestions (raw) - only computed while the picker is open in
+	// AI mode. These feed the Files/Directories scopes of the unified picker.
+	const fileSuggestions = useMemo(() => {
 		if (!atMentionOpen || !activeSessionId || activeSessionInputMode !== 'ai') {
 			return [];
 		}
@@ -445,6 +469,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		debouncedAtMentionFilter,
 		getAtMentionSuggestions,
 	]);
+
+	// Unified picker: composes file/dir suggestions with agents/groups into one
+	// ranked, category-aware list. Single source of truth for the dropdown.
+	const { items: atMentionItems, counts: atMentionCounts } = useMentionPicker({
+		filter: debouncedAtMentionFilter,
+		category: atMentionCategory,
+		sessions,
+		groups,
+		currentSessionId: activeSessionId,
+		fileSuggestions,
+	});
 
 	// Sync file tree selection to match tab completion suggestion
 	const syncFileTreeToTabCompletion = useCallback(
@@ -469,6 +504,53 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
+
+	// Cross-agent @mention dispatch (Phase 03). Mounted here (a singleton hook)
+	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
+	// reuses the same agent/group resolution the `@` picker uses, so a typed
+	// `@name` dispatches identically to one chosen from the popover.
+	const { sendCrossAgentRequest } = useCrossAgentDispatch();
+	// Returns `true` when the source agent's own send should be SUPPRESSED - i.e.
+	// the message is addressed at the mentioned agent(s), so only they answer.
+	// That is the case when the message leads with an `@agent` mention and at
+	// least one target resolves. A trailing mention (`hey @Backend, thoughts?`)
+	// or a leading `@file` mention returns false, so the source agent answers too.
+	const handleCrossAgentMentions = useCallback(
+		(message: string, sourceSession: Session, sourceTabId: string): boolean => {
+			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
+			const targetSessionIds = resolveMentionedTargetSessionIds(
+				message,
+				allSessions,
+				allGroups,
+				sourceSession.id
+			).filter((id) => id !== sourceSession.id); // Self-mention guard (defend at dispatch).
+			if (targetSessionIds.length === 0) return false;
+
+			// Roster for the leading-mention check below, so a message that leads with
+			// a file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
+			// send just like a bare `@Codex` does.
+			const knownMentionNames = buildKnownMentionNameSet(allSessions, allGroups, sourceSession.id);
+
+			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
+			const sourceLogs = sourceTab?.logs ?? [];
+			for (const targetSessionId of targetSessionIds) {
+				sendCrossAgentRequest({
+					sourceSessionId: sourceSession.id,
+					sourceAgentName: sourceSession.name,
+					sourceTabId,
+					targetSessionId,
+					userPrompt: message,
+					sourceLogs,
+					// The source agent's working directory: the consulted agent is told it
+					// may READ files here to answer (see cross-agent-router prompt).
+					sourceCwd: sourceSession.cwd,
+				});
+			}
+
+			return messageStartsWithAgentMention(message, knownMentionNames);
+		},
+		[sendCrossAgentRequest]
+	);
 
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
 		activeSession,
@@ -496,6 +578,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		onCrossAgentMentions: handleCrossAgentMentions,
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
@@ -514,7 +597,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		getInputValue,
 		setInputValue,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
 		allSlashCommands,
 		syncFileTreeToTabCompletion,
 		processInput,
@@ -826,7 +909,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		handlePaste,
 		handleDrop,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
 		syncFileTreeToTabCompletion,
 	};
 }

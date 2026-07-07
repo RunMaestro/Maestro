@@ -10,7 +10,7 @@
  */
 
 import { BrowserWindow } from 'electron';
-import { isWebContentsAvailable } from '../utils/safe-send';
+import { createSafeSend, isWebContentsAvailable } from '../utils/safe-send';
 import { logger } from '../utils/logger';
 
 export type CueNotifyClickAction =
@@ -35,30 +35,36 @@ export interface CueNotifyToastParams {
 /**
  * Send a Cue-originated toast notification to the renderer.
  *
- * Returns `true` when the IPC send succeeded, `false` when the renderer isn't
- * available (window destroyed, webContents gone, headless boot). Failure is
- * logged but not thrown — toasts are advisory, not load-bearing.
+ * Routes through `safeSend`, so the toast always fans out to web-desktop bridge
+ * clients (when the Encore Feature is on and clients are connected) in addition
+ * to the Electron renderer whenever the desktop window is alive. Web/mobile
+ * users therefore see Cue notify toasts even when the desktop window is closed,
+ * destroyed, or mid-launch.
+ *
+ * Returns `true` when the desktop renderer was reachable, `false` when it wasn't
+ * (window destroyed, webContents gone, headless boot) or when the send threw.
+ * The bridge fan-out is fire-and-forget with no delivery signal, so a `false`
+ * return does not mean web clients missed the toast. Failure is logged but not
+ * thrown; toasts are advisory, not load-bearing.
  */
 export function emitCueNotifyToast(
 	mainWindow: BrowserWindow | null,
 	params: CueNotifyToastParams
 ): boolean {
-	if (!isWebContentsAvailable(mainWindow)) {
-		logger.warn('mainWindow unavailable for Cue notify toast emit', 'Cue');
-		return false;
-	}
-
 	const clickAction: CueNotifyClickAction = params.clickAction ?? {
 		kind: 'jump-session',
 		sessionId: params.agentId,
 	};
 
-	// `isWebContentsAvailable` above is a check, not a guarantee: a dispose /
-	// shutdown race can still make `send()` throw synchronously. Guard it so we
-	// honor the documented "logged but not thrown" contract and keep
-	// `executeCueNotify()`'s never-throws behavior intact.
+	const safeSend = createSafeSend(() => mainWindow);
+	const desktopReachable = isWebContentsAvailable(mainWindow);
+
+	// safeSend swallows the renderer dispose / shutdown race internally, but wrap
+	// it anyway so any unexpected throw still honors the documented "logged but
+	// not thrown" contract and keeps `executeCueNotify()`'s never-throws behavior
+	// intact.
 	try {
-		mainWindow.webContents.send('remote:notifyToast', {
+		safeSend('remote:notifyToast', {
 			title: params.title,
 			message: params.message,
 			color: 'theme' as const,
@@ -71,5 +77,5 @@ export function emitCueNotifyToast(
 		return false;
 	}
 
-	return true;
+	return desktopReachable;
 }

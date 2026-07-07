@@ -83,7 +83,7 @@ export interface FilePreviewTabHandlersReturn {
 }
 
 export interface BrowserTabHandlersReturn {
-	handleNewBrowserTab: () => void;
+	handleNewBrowserTab: (options?: { ephemeral?: boolean }) => void;
 	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 	handleSelectBrowserTab: (tabId: string) => void;
 	handleCloseBrowserTab: (tabId: string) => void;

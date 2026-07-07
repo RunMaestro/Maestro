@@ -1,4 +1,5 @@
-import type { AITab, Theme, UnifiedTab } from '../../types';
+import type { AITab, TabGroup, Theme, UnifiedTab } from '../../types';
+import type { ReactNode } from 'react';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface TabBarProps {
@@ -13,7 +14,7 @@ export interface TabBarProps {
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */
 	onNewTerminalTab?: () => void;
 	onRequestRename?: (tabId: string) => void;
@@ -94,10 +95,41 @@ export interface TabBarProps {
 	/** Handler to send the rendered text of a browser tab to another agent */
 	onSendBrowserContentToAgent?: (tabId: string) => void;
 
+	// === Tab Tiling (split panes) ===
+	/** Tiled tab groups for this session, rendered as single chips in the strip */
+	tabGroups?: TabGroup[];
+	/**
+	 * Ids of groups that have at least one unread member (precomputed from the full
+	 * session). Under the unread filter a group chip is shown iff its id is in this
+	 * set - it inherits the unread state of the members it collapsed. Undefined
+	 * outside the unread filter (all groups shown).
+	 */
+	unreadGroupIds?: Set<string>;
+	/** Currently active tab group id (null when a standalone tab is active) */
+	activeGroupId?: string | null;
+	/** Handler to activate a tab group (shows its tiled layout in the panel) */
+	onGroupSelect?: (groupId: string) => void;
+	/**
+	 * Rename a tab group. `name` is the raw user input; the handler trims it and
+	 * falls back to the group's auto-generated name when empty. Persisted upstream.
+	 */
+	onGroupRename?: (groupId: string, name: string) => void;
+	/**
+	 * Break a tab group apart: split it back into individual standalone tabs. The
+	 * chip gates this behind a confirmation dialog before invoking the handler.
+	 */
+	onGroupBreakApart?: (groupId: string) => void;
+
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 
 	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
 	sshRemote?: boolean;
+
+	// === Optional pinned slot (used by Pianola's manager surface) ===
+	/** Pinned content rendered inside the sticky-left group, before the tab
+	 * strip — stays visible while tabs overflow/scroll (e.g. Pianola's
+	 * Dashboard view button). */
+	leadingSlot?: ReactNode;
 }

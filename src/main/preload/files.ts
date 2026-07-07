@@ -62,6 +62,8 @@ export interface HistoryEntry {
 	elapsedTimeMs?: number;
 	validated?: boolean;
 	hostname?: string;
+	/** Cross-agent attribution: the agent that consulted this one via `@mention`. */
+	sourceAgentName?: string;
 	/** Claude-only, per-turn: `interactive` = maestro-p TUI, `api` = `claude --print`. */
 	tokenSource?: 'interactive' | 'api';
 	/** Claude-only, per-turn: `auto` = user/usage selected, `limit` = forced API fallback. */

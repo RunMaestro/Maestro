@@ -6,6 +6,7 @@ import type { ToastWidth } from '../../shared/toastWidth';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
+import { showOsNotification } from '../stores/notificationStore';
 
 interface NotificationsPanelProps {
 	osNotificationsEnabled: boolean;
@@ -120,10 +121,7 @@ export function NotificationsPanel({
 				/>
 				<button
 					onClick={() =>
-						window.maestro.notification.show(
-							'Maestro',
-							'Test notification - notifications are working!'
-						)
+						showOsNotification('Maestro', 'Test notification - notifications are working!')
 					}
 					className="mt-2 px-3 py-1.5 rounded text-xs font-medium transition-all"
 					style={{

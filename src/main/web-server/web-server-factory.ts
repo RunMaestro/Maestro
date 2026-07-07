@@ -350,6 +350,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					sessionId: tabId,
 					agentId: s.id,
 					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+					projectPath: typeof s.cwd === 'string' ? s.cwd : undefined,
 					messages,
 				};
 			}

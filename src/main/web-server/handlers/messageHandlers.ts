@@ -121,6 +121,11 @@ const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
  */
 const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
 import { AGENT_IDS } from '../../../shared/agentIds';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../../plugins/plugin-manager-singleton';
+import { evaluatePluginDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -793,6 +798,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_desktop_sessions':
 				this.handleListDesktopSessions(client, message);
+				break;
+
+			case 'plugins_list_tools':
+				this.handlePluginsListTools(client, message);
+				break;
+
+			case 'plugins_call_tool':
+				void this.handlePluginsCallTool(client, message);
 				break;
 
 			case 'get_session_history':
@@ -5029,6 +5042,101 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle plugins_list_tools — project the registered plugin `tools`
+	 * contributions into MCP tool defs for the `maestro-cli mcp serve` bridge.
+	 * Returns an MCP-safe `name` (namespaced id, `/`->`__`) plus the real
+	 * `toolId` so the bridge can reverse-map on call. Empty when the plugins flag
+	 * is off or no manager is wired.
+	 */
+	private handlePluginsListTools(client: WebClient, message: WebClientMessage): void {
+		const manager = getActivePluginManager();
+		let tools: Array<{
+			name: string;
+			toolId: string;
+			description: string;
+			inputSchema: Record<string, unknown>;
+		}> = [];
+		if (manager && isPluginsFeatureEnabled()) {
+			try {
+				tools = manager.getContributions().tools.map((t) => ({
+					name: t.id.replace(/\//g, '__').replace(/[^a-zA-Z0-9_-]/g, '_'),
+					toolId: t.id,
+					description: t.description,
+					inputSchema:
+						t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+							? t.inputSchema
+							: { type: 'object' },
+				}));
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				logger.warn(`[Web] plugins_list_tools failed: ${reason}`, LOG_CONTEXT);
+			}
+		}
+		this.send(client, {
+			type: 'plugins_list_tools_result',
+			success: true,
+			tools,
+			requestId: message.requestId,
+		});
+	}
+
+	/**
+	 * Handle plugins_call_tool — risk-gate a model-initiated plugin tool call,
+	 * then invoke it via the broker. The toolId MUST be a declared `tools`
+	 * contribution (never an arbitrary command handler), and risk is rated on the
+	 * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
+	 * and NEVER executed. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
+	 */
+	private async handlePluginsCallTool(client: WebClient, message: WebClientMessage): Promise<void> {
+		const respond = (extra: Record<string, unknown>): void =>
+			this.send(client, {
+				type: 'plugins_call_tool_result',
+				requestId: message.requestId,
+				...extra,
+			});
+		const toolId = typeof message.toolId === 'string' ? message.toolId : '';
+		if (!toolId) {
+			respond({ ok: false, error: 'Missing toolId' });
+			return;
+		}
+		const manager = getActivePluginManager();
+		if (!manager || !isPluginsFeatureEnabled()) {
+			respond({ ok: false, error: 'PluginsDisabled' });
+			return;
+		}
+		const declaredTool = manager.getContributions().tools.find((t) => t.id === toolId);
+		if (!declaredTool) {
+			// Only DECLARED `tools` are model-callable; never let a tools/call name
+			// resolve to an arbitrary command handler in the sandbox's shared map.
+			respond({ ok: false, error: `Unknown tool: ${toolId}` });
+			return;
+		}
+		const args = 'args' in message ? message.args : undefined;
+		let argText = '';
+		try {
+			argText = JSON.stringify(args ?? {});
+		} catch {
+			argText = '';
+		}
+		// Rate risk on the declared tool's human name + description + the model's
+		// args: catches a destructive tool by identity AND destructive args, without
+		// the slug noise of the raw toolId. Follow-up: per-tool risk metadata + a
+		// user-approval path for HIGH instead of a hard block.
+		const riskText = `${declaredTool.name} ${declaredTool.description} ${argText}`;
+		const verdict = evaluatePluginDispatch(riskText);
+		if (!verdict.eligible) {
+			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
+			return;
+		}
+		try {
+			const result = await manager.invokeTool(toolId, args);
+			respond({ ok: true, result });
+		} catch (error) {
+			respond({ ok: false, error: error instanceof Error ? error.message : String(error) });
+		}
+	}
+
+	/**
 	 * Handle get_session_history message — return the conversation log for a
 	 * tab, optionally filtered by `sinceMs` (poll cursor) and/or `tail` (cap).
 	 * Errors are returned in the same response type rather than as a generic
@@ -5086,6 +5194,7 @@ export class WebSocketMessageHandler {
 			sessionId: result.sessionId,
 			agentId: result.agentId,
 			agentSessionId: result.agentSessionId,
+			projectPath: result.projectPath,
 			messages: result.messages,
 			requestId: message.requestId,
 		});

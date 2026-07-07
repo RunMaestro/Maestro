@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
+import { isCoarsePointer } from './utils/touch';
 // SettingsModal is now lazy-loaded inside AppStandaloneModals
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
@@ -52,6 +53,8 @@ import {
 	useDebouncedPersistence,
 	// Session management
 	useActivityTracker,
+	useWindowScopedActiveSession,
+	useWindowState,
 	useHandsOnTimeTracker,
 	useNavigationHistory,
 	useSessionNavigation,
@@ -63,6 +66,7 @@ import {
 	useKeyboardShortcutHelpers,
 	useKeyboardNavigation,
 	useMainKeyboardHandler,
+	useTilingShortcuts,
 	useTextEditorUndo,
 	// Agent
 	useAgentSessionManagement,
@@ -82,6 +86,8 @@ import {
 	useMobileLandscape,
 	useAppRemoteEventListeners,
 	useViewportBreakpoint,
+	useKeyboardVisibility,
+	useSwipeGestures,
 	// UI
 	useThemeStyles,
 	useAppHandlers,
@@ -153,8 +159,9 @@ import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
+import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { useGroupChatStore } from './stores/groupChatStore';
+import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
@@ -167,12 +174,15 @@ import {
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
+import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
 import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
+import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
+import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -181,6 +191,9 @@ import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
 import { THEMES } from './constants/themes';
+import { usePluginContributions } from './hooks/usePluginContributions';
+import { resolvePluginTheme } from './utils/pluginThemes';
+import { PluginPanelSlot } from './components/plugins/PluginPanelSlot';
 import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
@@ -205,6 +218,7 @@ import {
 	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
+import { buildThinkingItems } from './utils/thinkingItems';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -261,6 +275,7 @@ function MaestroConsoleInner() {
 		setProcessMonitorOpen,
 		// Usage Dashboard
 		setUsageDashboardOpen,
+		setAgentRunDashboardOpen,
 		// pendingKeyboardMasteryLevel — now self-sourced in AppOverlays (Tier 1A)
 		// Playground Panel — playgroundOpen now self-sourced in AppStandaloneModals
 		setPlaygroundOpen,
@@ -350,6 +365,8 @@ function MaestroConsoleInner() {
 		setDirectorNotesOpen,
 		// Maestro Cue Modal — cueModalOpen now self-sourced in AppStandaloneModals
 		setCueModalOpen,
+		// Pianola Modal — pianolaModalOpen now self-sourced in AppStandaloneModals
+		setPianolaModalOpen,
 		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
 	} = useModalActions();
@@ -361,6 +378,13 @@ function MaestroConsoleInner() {
 	const { isNarrow: isNarrowViewport, isMdDown: isMdDownViewport } = useViewportBreakpoint();
 	// Auto-collapse / mutual-exclusion effects live further down, after
 	// leftSidebarOpen / rightPanelOpen are pulled from the UI store.
+
+	// --- VIRTUAL KEYBOARD (lift the bottom input above the on-screen keyboard) ---
+	// Only the web-desktop bundle runs on phones/tablets with a virtual keyboard;
+	// the Electron desktop app never sees a keyboard offset (Visual Viewport stays
+	// full height), so `--keyboard-offset` resolves to 0px there and is a no-op.
+	const { keyboardOffset, isKeyboardVisible } = useKeyboardVisibility();
+	const keyboardShellOffset = isWebDesktop() && isKeyboardVisible ? keyboardOffset : 0;
 
 	// --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
 	const { pushNavigation, navigateBack, navigateForward } = useNavigationHistory();
@@ -489,8 +513,12 @@ function MaestroConsoleInner() {
 		}
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
+	useEffect(() => {
+		if (!encoreFeatures.pianola) setPianolaModalOpen(false);
+	}, [encoreFeatures.pianola, setPianolaModalOpen]);
+
 	// --- KEYBOARD SHORTCUT HELPERS ---
-	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
+	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
 		shortcuts,
 		tabShortcuts,
 	});
@@ -648,6 +676,32 @@ function MaestroConsoleInner() {
 		setSidebarExtraSelection,
 	} = useUIStore.getState();
 
+	// --- EDGE-SWIPE DRAWERS (phones on the web-desktop bundle) ---
+	// Gated on coarse pointer so a narrow *desktop* browser window (mouse) never
+	// gets invisible edge zones that would swallow clicks in the outer 24px. The
+	// opener zones are thin fixed strips at the screen edges (see JSX), so drawer
+	// gestures can only START at the edge - horizontal scrolling inside the
+	// terminal, tab bar, or tables is untouched. Closing swipes ride the mobile
+	// backdrop, which only exists while a drawer is open.
+	const drawerSwipeEnabled = isNarrowViewport && isWebDesktop() && isCoarsePointer();
+	const leftEdgeSwipe = useSwipeGestures({
+		onSwipeRight: () => setLeftSidebarOpen(true),
+		enabled: drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen,
+	});
+	const rightEdgeSwipe = useSwipeGestures({
+		onSwipeLeft: () => setRightPanelOpen(true),
+		enabled: drawerSwipeEnabled && !rightPanelOpen && !leftSidebarOpen,
+	});
+	// Backdrop closer: the left drawer closes by pushing it back left, the right
+	// drawer by pushing it back right. Only one drawer is open at a time (mutual
+	// exclusion above), and the setters are idempotent, so unconditional calls
+	// are safe.
+	const drawerCloseSwipe = useSwipeGestures({
+		onSwipeLeft: () => setLeftSidebarOpen(false),
+		onSwipeRight: () => setRightPanelOpen(false),
+		enabled: drawerSwipeEnabled && (leftSidebarOpen || rightPanelOpen),
+	});
+
 	const {
 		setSelectedFileIndex: _setSelectedFileIndex,
 		setFileTreeFilter: _setFileTreeFilter,
@@ -669,6 +723,13 @@ function MaestroConsoleInner() {
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
+	const groupChatInitiatorWindowId = useGroupChatStore((s) => s.initiatorWindowId);
+
+	// Multi-window: which window initiated the active group chat. The panel renders
+	// only there (gated below via isGroupChatVisibleInWindow). Optional context, so
+	// the single-window app / web / isolation tests fall back to "show here".
+	const windowCtx = useWindowContextOptional();
+	const currentWindowId = windowCtx?.windowId ?? null;
 
 	// Stable actions from groupChatStore (non-reactive)
 	const {
@@ -677,7 +738,26 @@ function MaestroConsoleInner() {
 		setGroupChatReadOnlyMode,
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
+		setInitiatorWindowId,
 	} = useGroupChatStore.getState();
+
+	// Multi-window: stamp the initiating window on this window's group-chat store
+	// when a chat opens, and clear it on close. Because each window has its own
+	// store, the only window that sets activeGroupChatId is the one the user
+	// opened the chat in, so initiatorWindowId records that window. The render
+	// gate below then shows the panel only there, even though every window holds
+	// the same groupChats list and a participant agent may live in another window.
+	useEffect(() => {
+		if (!activeGroupChatId) {
+			if (groupChatInitiatorWindowId !== null) setInitiatorWindowId(null);
+			return;
+		}
+		// Wait for window identity to hydrate (null windowId on the primary window
+		// pre-hydrate); the gate treats a null initiatorWindowId as "show here".
+		if (currentWindowId && groupChatInitiatorWindowId === null) {
+			setInitiatorWindowId(currentWindowId);
+		}
+	}, [activeGroupChatId, currentWindowId, groupChatInitiatorWindowId, setInitiatorWindowId]);
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
 	const {
@@ -718,6 +798,8 @@ function MaestroConsoleInner() {
 		setAtMentionStartIndex,
 		selectedAtMentionIndex,
 		setSelectedAtMentionIndex,
+		atMentionCategory,
+		setAtMentionCategory,
 		commandHistoryOpen,
 		setCommandHistoryOpen,
 		commandHistoryFilter,
@@ -784,6 +866,7 @@ function MaestroConsoleInner() {
 		openWizard: () => openWizardModal(),
 		openSettings: () => setSettingsModalOpen(true),
 	};
+	usePluginCommandBridge();
 
 	// Note: Standing ovation and keyboard mastery startup checks are now in useModalHandlers
 
@@ -860,6 +943,11 @@ function MaestroConsoleInner() {
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
 	useCueAutoDiscovery(sessions, encoreFeatures);
+
+	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
+	// Ensures the single pinned Pianola agent exists once sessions are loaded and
+	// the pianola flag is on. Does not steal focus from the active agent.
+	usePianolaAgent(encoreFeatures);
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
@@ -1147,6 +1235,10 @@ function MaestroConsoleInner() {
 		onOpenFileTab: handleOpenFileTab,
 	});
 
+	// Active plugin contributions (themes/prompts/macros). Empty when the plugins
+	// Encore flag is off, so this is inert by default.
+	const pluginContributions = usePluginContributions();
+
 	// Use custom colors when custom theme is selected, otherwise use the standard theme
 	const theme = useMemo(() => {
 		if (activeThemeId === 'custom') {
@@ -1155,8 +1247,14 @@ function MaestroConsoleInner() {
 				colors: customThemeColors,
 			};
 		}
-		return THEMES[activeThemeId];
-	}, [activeThemeId, customThemeColors]);
+		const builtIn = THEMES[activeThemeId];
+		if (builtIn) return builtIn;
+		// A plugin-contributed theme may be active (its id is outside the built-in
+		// union). Resolve it from contributions; fall back to dracula so the app
+		// never renders with an undefined theme if the plugin was removed.
+		const pluginTheme = pluginContributions.themes.find((t) => t.id === activeThemeId);
+		return pluginTheme ? resolvePluginTheme(pluginTheme) : THEMES.dracula;
+	}, [activeThemeId, customThemeColors, pluginContributions.themes]);
 
 	// Ref for theme (for use in memoized callbacks that need current theme without re-creating)
 	const themeRef = useRef(theme);
@@ -1398,32 +1496,18 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
-	// Flat list of (session, tab) pairs — one entry per busy tab across all sessions.
+	// Flat list of (session, tab) pairs — one entry per busy tab across the agents this window owns.
 	// This allows the ThinkingStatusPill to show all active work, even when multiple tabs
 	// within the same agent are busy in parallel.
-	const thinkingItems: ThinkingItem[] = useMemo(() => {
-		const items: ThinkingItem[] = [];
-		for (const session of sessions) {
-			if (session.state === 'busy' && session.busySource === 'ai') {
-				const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
-				if (busyTabs && busyTabs.length > 0) {
-					for (const tab of busyTabs) {
-						items.push({ session, tab });
-					}
-				} else if (!session.orphanedThinkingTabs?.length) {
-					// Legacy: session is busy but no individual tab-level tracking
-					items.push({ session, tab: null });
-				}
-			}
-			// Closed-but-still-thinking tabs: keep showing them on the pill until
-			// the agent process actually exits. The exit/error listeners remove
-			// entries from orphanedThinkingTabs when the underlying process is gone.
-			for (const orphan of session.orphanedThinkingTabs ?? []) {
-				items.push({ session, tab: orphan });
-			}
-		}
-		return items;
-	}, [sessions]);
+	// Multi-window: gate on WindowContext.ownsSession so a window's pill never surfaces an agent
+	// (or its AutoRun) owned by another window - every renderer holds ALL agents because the main
+	// process broadcasts every agent's state to every window. Outside a WindowProvider (web /
+	// isolation tests) ownsSession is undefined, so buildThinkingItems includes every session.
+	const ownsSession = windowCtx?.ownsSession;
+	const thinkingItems: ThinkingItem[] = useMemo(
+		() => buildThinkingItems(sessions, ownsSession),
+		[sessions, ownsSession]
+	);
 
 	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 
@@ -1670,7 +1754,8 @@ function MaestroConsoleInner() {
 		handlePaste,
 		handleDrop,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
 	} = useInputHandlers({
 		inputRef,
 		terminalOutputRef,
@@ -1735,6 +1820,16 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
+	// Run a plugin command macro: send its templated prompt to the active agent
+	// through the same input path as a typed message. Empty/whitespace prompts are
+	// ignored by processInput's own emptiness check.
+	const handleRunPromptMacro = useCallback(
+		(prompt: string) => {
+			processInput(prompt);
+		},
+		[processInput]
+	);
+
 	// Build (tab→busy summary) lookup used by the Force Send button to decide
 	// visibility and to populate the confirmation modal's "other tabs working"
 	// list. Computed from the current session's tab states at call time.
@@ -1782,6 +1877,15 @@ function MaestroConsoleInner() {
 
 	// Initialize activity tracker for per-session time tracking
 	useActivityTracker(activeSessionId, setSessions);
+
+	// Multi-window: keep this window's active agent to one it owns, so a restored
+	// window never shows the false "No agents" empty state while it holds agents.
+	useWindowScopedActiveSession();
+
+	// Multi-window: hydrate this window's left/right panel-collapse state from its
+	// persisted per-window record on mount, and persist changes back (debounced),
+	// so each window's collapsed panels survive an app restart.
+	useWindowState();
 
 	// Initialize global hands-on time tracker (persists to settings)
 	// Tracks total time user spends actively using Maestro (5-minute idle timeout)
@@ -1888,6 +1992,7 @@ function MaestroConsoleInner() {
 	// --- MAIN KEYBOARD HANDLER ---
 	// Extracted hook for main keyboard event listener (empty deps, uses ref pattern)
 	const { keyboardHandlerRef, showSessionJumpNumbers } = useMainKeyboardHandler();
+	usePluginKeybindings();
 
 	// Cmd+Z / Cmd+Shift+Z fallback for text inputs (Edit menu omits the undo
 	// role so the image annotator can claim Cmd+Z; this restores native
@@ -1937,6 +2042,10 @@ function MaestroConsoleInner() {
 	const { starredItems, activateStarredItem } = useStarredItems({
 		onJumpToStarredSession: handleJumpToStarredSession,
 		showConfirmation,
+		// Multi-window: scope the Starred section to agents this window owns (same
+		// ownsSession the thinking pill / cycling use). Undefined outside a
+		// WindowProvider, so single-window/web behaviour is unchanged.
+		ownsSession,
 	});
 
 	// cycleSession — provided by useCycleSession hook
@@ -1946,7 +2055,16 @@ function MaestroConsoleInner() {
 		starredItems,
 		activateStarredItem,
 		navIndexMap,
+		// Multi-window: scope Cmd+[/] cycling to agents THIS window owns. Reuses the
+		// same ownsSession predicate the thinking pill uses (line ~1422); undefined
+		// outside a WindowProvider, so single-window/web cycling is unchanged.
+		ownsSession,
 	});
+
+	// Tab tiling (split panes): Ctrl+Cmd pane focus / split / close / zoom /
+	// rebalance handlers. All act only on the active window's active tab group and
+	// no-op when nothing is tiled. Dispatched by the main keyboard handler.
+	const tilingShortcuts = useTilingShortcuts(activeSession);
 
 	// --- KEYBOARD NAVIGATION ---
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Placed after
@@ -2409,6 +2527,8 @@ function MaestroConsoleInner() {
 		setFileTreeFilterOpen,
 		isShortcut,
 		isTabShortcut,
+		isPaneShortcut,
+		tilingShortcuts,
 		handleNavBack,
 		handleNavForward,
 		toggleUnreadFilter,
@@ -2560,11 +2680,13 @@ function MaestroConsoleInner() {
 		selectedTabCompletionIndex,
 		tabCompletionFilter,
 
-		// @ mention completion state
+		// @ mention completion state (unified picker: files + dirs + agents + groups)
 		atMentionOpen,
 		atMentionFilter,
 		atMentionStartIndex,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
+		atMentionCategory,
 		selectedAtMentionIndex,
 
 		// Batch run state (convert null to undefined for component props)
@@ -2623,6 +2745,7 @@ function MaestroConsoleInner() {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 		setGitLogOpen,
 
 		// Refs
@@ -2903,12 +3026,18 @@ function MaestroConsoleInner() {
 						? 'pt-0'
 						: 'pt-10'
 				}`}
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-					fontFamily: fontFamily,
-					fontSize: `${fontSize}px`,
-				}}
+				style={
+					{
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+						fontFamily: fontFamily,
+						fontSize: `${fontSize}px`,
+						// Consumed by the web-desktop `.maestro-app-shell` bottom-padding
+						// rule to lift the AI input above the virtual keyboard. 0px on
+						// desktop / when the Visual Viewport API is unavailable.
+						'--keyboard-offset': `${keyboardShellOffset}px`,
+					} as React.CSSProperties
+				}
 			>
 				{/* External file drops are handled per-region, not globally: the main
 				    panel and group chat attach to the chat (see useChatFileDropZone),
@@ -2999,6 +3128,7 @@ function MaestroConsoleInner() {
 					onNavigateToSession={handleProcessMonitorNavigateToSession}
 					onNavigateToGroupChat={handleProcessMonitorNavigateToGroupChat}
 					onCloseUsageDashboard={() => setUsageDashboardOpen(false)}
+					onCloseAgentRunDashboard={() => setAgentRunDashboardOpen(false)}
 					defaultStatsTimeRange={defaultStatsTimeRange}
 					colorBlindMode={colorBlindMode}
 					// AppConfirmModals props
@@ -3079,6 +3209,7 @@ function MaestroConsoleInner() {
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
 					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
+					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
@@ -3118,6 +3249,7 @@ function MaestroConsoleInner() {
 					onQuickCreateWorktree={handleQuickCreateWorktree}
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
+					onRunPromptMacro={handleRunPromptMacro}
 					canSummarizeActiveTab={
 						activeSession
 							? canSummarize(
@@ -3179,6 +3311,7 @@ function MaestroConsoleInner() {
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+					onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
@@ -3379,7 +3512,14 @@ function MaestroConsoleInner() {
 					</ErrorBoundary>
 				)}
 
-				{/* --- MOBILE BACKDROP (taps anywhere outside a drawer to close it) --- */}
+				{/* --- PLUGIN LEFT DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot
+					theme={theme}
+					placement="left"
+					className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
+				/>
+
+				{/* --- MOBILE BACKDROP (tap or swipe-to-close outside a drawer) --- */}
 				{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
 					<div
 						className="maestro-mobile-backdrop"
@@ -3387,8 +3527,29 @@ function MaestroConsoleInner() {
 							setLeftSidebarOpen(false);
 							setRightPanelOpen(false);
 						}}
+						{...drawerCloseSwipe.handlers}
 						aria-hidden
 					/>
+				)}
+
+				{/* --- EDGE-SWIPE OPENER ZONES (phones only) --- thin fixed strips at
+				    the screen edges so a rightward swipe from the left edge opens the
+				    Left Bar drawer and a leftward swipe from the right edge opens the
+				    Right Panel drawer. Only rendered while no drawer is open, so they
+				    never overlap the backdrop. */}
+				{drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen && (
+					<>
+						<div
+							className="maestro-edge-swipe-zone maestro-edge-swipe-zone--left"
+							{...leftEdgeSwipe.handlers}
+							aria-hidden
+						/>
+						<div
+							className="maestro-edge-swipe-zone maestro-edge-swipe-zone--right"
+							{...rightEdgeSwipe.handlers}
+							aria-hidden
+						/>
+					</>
 				)}
 
 				{/* Sidebar-show opener is now rendered inline inside the
@@ -3422,8 +3583,10 @@ function MaestroConsoleInner() {
 				)}
 
 				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
+				{/* Multi-window: render only in the window that initiated the chat. */}
 				{!logViewerOpen &&
 					activeGroupChatId &&
+					isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
 					groupChats.find((c) => c.id === activeGroupChatId) && (
 						<>
 							<div
@@ -3554,12 +3717,22 @@ function MaestroConsoleInner() {
 					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
+				{/* --- PLUGIN MAIN DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot
+					theme={theme}
+					placement="main"
+					className="flex flex-col flex-1 min-w-0 overflow-hidden"
+				/>
+
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
 				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
 					<ErrorBoundary>
 						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
 					</ErrorBoundary>
 				)}
+
+				{/* --- PLUGIN RIGHT DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot theme={theme} placement="right" />
 
 				{/* NOTE: Settings, Wizard, Tour, and flash notifications are now rendered via AppStandaloneModals */}
 
@@ -3596,6 +3769,10 @@ function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
  * MaestroConsole - Main application component with context providers
  *
  * Wraps MaestroConsoleInner with context providers for centralized state management.
+ * WindowProvider - per-window identity (windowId/isMainWindow) and the agents
+ *   scoped to this window. Outermost so every descendant can read its window
+ *   identity; additive, so the primary window behaves exactly as before when
+ *   only one window exists.
  * InputProvider - centralized input state management
  * InlineWizardProvider - inline /wizard command state management
  */
@@ -3618,12 +3795,14 @@ export default function MaestroConsole() {
 	}
 
 	return (
-		<InlineWizardProvider>
-			<InputProvider>
-				<GitStatusProviderFromStore>
-					<MaestroConsoleInner />
-				</GitStatusProviderFromStore>
-			</InputProvider>
-		</InlineWizardProvider>
+		<WindowProvider>
+			<InlineWizardProvider>
+				<InputProvider>
+					<GitStatusProviderFromStore>
+						<MaestroConsoleInner />
+					</GitStatusProviderFromStore>
+				</InputProvider>
+			</InlineWizardProvider>
+		</WindowProvider>
 	);
 }

@@ -2,10 +2,13 @@ import { startTransition, useCallback } from 'react';
 import type React from 'react';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT, resizeTextareaToContent } from '../utils/textareaSizing';
 import { getAtMentionTrigger, shouldOpenSlashCommand } from '../utils/inputTriggers';
+import type { MentionCategory } from '../../../hooks/input/useMentionPicker';
 
 interface UseInputAreaTextChangeArgs {
 	isTerminalMode: boolean;
 	slashCommandOpen: boolean;
+	/** Current picker open state - used to detect the closed->open transition. */
+	atMentionOpen?: boolean;
 	/**
 	 * Set true here (and cleared in the resize rAF) so useInputAreaAutosize skips
 	 * its own synchronous resize for this keystroke - the rAF below owns it. See
@@ -19,11 +22,13 @@ interface UseInputAreaTextChangeArgs {
 	setAtMentionFilter?: (filter: string) => void;
 	setAtMentionStartIndex?: (index: number) => void;
 	setSelectedAtMentionIndex?: (index: number) => void;
+	setAtMentionCategory?: (category: MentionCategory) => void;
 }
 
 export function useInputAreaTextChange({
 	isTerminalMode,
 	slashCommandOpen,
+	atMentionOpen,
 	keystrokeResizeScheduledRef,
 	setInputValue,
 	setSlashCommandOpen,
@@ -32,6 +37,7 @@ export function useInputAreaTextChange({
 	setAtMentionFilter,
 	setAtMentionStartIndex,
 	setSelectedAtMentionIndex,
+	setAtMentionCategory,
 }: UseInputAreaTextChangeArgs): (e: React.ChangeEvent<HTMLTextAreaElement>) => void {
 	return useCallback(
 		(e) => {
@@ -59,6 +65,12 @@ export function useInputAreaTextChange({
 				) {
 					const trigger = getAtMentionTrigger(value, cursorPosition);
 					if (trigger) {
+						// Only reset the category on the closed->open transition so
+						// typing a filter inside (say) the Agents scope doesn't snap
+						// back to 'all' on every keystroke.
+						if (!atMentionOpen) {
+							setAtMentionCategory?.('all');
+						}
 						setAtMentionOpen(true);
 						setAtMentionFilter(trigger.filter);
 						setAtMentionStartIndex(trigger.startIndex);
@@ -82,6 +94,8 @@ export function useInputAreaTextChange({
 		},
 		[
 			isTerminalMode,
+			atMentionOpen,
+			setAtMentionCategory,
 			keystrokeResizeScheduledRef,
 			setAtMentionFilter,
 			setAtMentionOpen,

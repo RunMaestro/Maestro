@@ -39,6 +39,7 @@ import {
 	type CachedGraphBucket,
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate, LOCAL_HOST_AGG_KEY } from '../../utils/history-bucket-builder';
+import type { PluginEvent } from '../../../shared/plugins/events';
 
 const LOG_CONTEXT = '[History]';
 
@@ -148,6 +149,15 @@ export interface HistoryHandlerDependencies {
 	 * (typically via SSH) can see it.
 	 */
 	getSessionById?: (id: string) => Record<string, unknown> | undefined;
+	/**
+	 * Optional sink for the metadata-only `history.entryAdded` plugin event
+	 * (ids/classification only — never `summary`/`fullResponse`). Wired to
+	 * `pluginEventBus.emit` in index.ts; undefined in tests / when the plugin
+	 * subsystem is absent, in which case the emit is simply skipped. Delivery
+	 * is re-authorized per plugin against live grants (`events:subscribe` +
+	 * `history:read`) by the bus itself.
+	 */
+	emitPluginEvent?: (event: PluginEvent) => void;
 }
 
 // Helper to create handler options with consistent context
@@ -541,6 +551,22 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 
 				// Broadcast to renderer for real-time Director's Notes streaming
 				deps.safeSend('history:entryAdded', entry, sessionId);
+
+				// Surface a metadata-only history.entryAdded to subscribed plugins.
+				// ids/classification ONLY per events.ts — never summary/fullResponse
+				// or any other free-form content. The bus re-authorizes each delivery
+				// against live grants (events:subscribe + history:read).
+				deps.emitPluginEvent?.({
+					topic: 'history.entryAdded',
+					at: new Date().toISOString(),
+					payload: {
+						entryId: entry.id,
+						...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+						...(entry.projectPath ? { projectPath: entry.projectPath } : {}),
+						kind: entry.type,
+						createdAt: entry.timestamp,
+					},
+				});
 
 				return true;
 			}

@@ -13,6 +13,7 @@ import path from 'path';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createSafeSend } from '../../utils/safe-send';
 import {
 	generateDebugPackage,
 	previewDebugPackage,
@@ -72,6 +73,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		groupsStore,
 		bootstrapStore,
 	} = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// Generate debug package with user-selected save location
 	ipcMain.handle(
@@ -267,16 +269,10 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				throw new Error('No main window available');
 			}
 
-			// Best-effort progress ping; a closed/destroyed window must never throw
-			// out of the capture flow.
+			// Best-effort progress ping; safeSend swallows closed/destroyed
+			// windows and also fans out to web-desktop bridge clients.
 			const sendProgress = (payload: Record<string, unknown>) => {
-				try {
-					if (!mainWindow.isDestroyed()) {
-						mainWindow.webContents.send('debug:profilingProgress', payload);
-					}
-				} catch {
-					// window gone mid-capture; ignore
-				}
+				safeSend('debug:profilingProgress', payload);
 			};
 
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

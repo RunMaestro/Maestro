@@ -79,16 +79,13 @@ export interface MainPanelProps {
 	tabCompletionSuggestions?: import('../../hooks').TabCompletionSuggestion[];
 	selectedTabCompletionIndex?: number;
 	tabCompletionFilter?: import('../../hooks').TabCompletionFilter;
-	// @ mention completion props (AI mode)
+	// @ mention completion props (AI mode) - unified picker (files/dirs/agents/groups)
 	atMentionOpen?: boolean;
 	atMentionFilter?: string;
 	atMentionStartIndex?: number;
-	atMentionSuggestions?: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems?: import('../../hooks/input/useMentionPicker').MentionPickerItem[];
+	atMentionCounts?: Record<import('../../hooks/input/useMentionPicker').MentionCategory, number>;
+	atMentionCategory?: import('../../hooks/input/useMentionPicker').MentionCategory;
 	selectedAtMentionIndex?: number;
 
 	// Setters
@@ -126,6 +123,9 @@ export interface MainPanelProps {
 	setAtMentionFilter?: (filter: string) => void;
 	setAtMentionStartIndex?: (index: number) => void;
 	setSelectedAtMentionIndex?: (index: number) => void;
+	setAtMentionCategory?: (
+		category: import('../../hooks/input/useMentionPicker').MentionCategory
+	) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
@@ -194,7 +194,7 @@ export interface MainPanelProps {
 	onFileTabSelect?: (tabId: string) => void;
 	onFileTabClose?: (tabId: string) => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onBrowserTabSelect?: (tabId: string) => void;
 	onBrowserTabClose?: (tabId: string) => void;
 	onBrowserTabRename?: (tabId: string) => void;

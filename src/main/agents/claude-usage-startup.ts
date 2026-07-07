@@ -44,6 +44,7 @@ import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
 import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
+import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
 import { resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
 
@@ -179,25 +180,11 @@ export function getMaestroPBinPath(): string | null {
 	return null;
 }
 
-/**
- * Return true when `binaryPath` looks like a maestro-p binary (by basename).
- *
- * Recognises the bundled `maestro-p.js` script, a packaged `maestro-p`
- * executable, and the Windows `.exe` variant. Used by the spawner to detect
- * power-user setups where the user wired the Claude Code agent's `Path` field
- * directly at maestro-p (bypassing the Adaptive Mode toggle) — the resolved
- * mode should still surface as `interactive` so the TUI/API pill reflects
- * reality.
- */
-export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
-	if (!binaryPath) return false;
-	// Split on both `/` and `\` so a Windows-style path resolves correctly
-	// when this code runs on POSIX (path.basename on POSIX doesn't treat `\`
-	// as a separator, which would otherwise leave the whole `C:\…` string as
-	// the "basename" and miss the match).
-	const base = (binaryPath.split(/[\\/]/).pop() ?? '').toLowerCase();
-	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
-}
+// Canonical `isMaestroPBinaryPath` now lives in the bundle-safe spawn core so
+// the desktop and the CLI share one basename check. Re-exported here (it is
+// imported at the top) so this module's existing importers keep resolving it
+// from the same place.
+export { isMaestroPBinaryPath };
 
 /**
  * Read the agent-level customEnvVars for `claude-code` from the agent configs

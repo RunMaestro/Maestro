@@ -4,7 +4,7 @@
  * with the local git hash. Works on Windows, macOS, and Linux.
  *
  * Usage: node scripts/set-version.mjs <command> [args...]
- * Example: node scripts/set-version.mjs npm run build
+ * Example: bun scripts/set-version.mjs bun run build
  */
 
 import { execFileSync, spawn } from 'child_process';

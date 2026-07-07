@@ -31,6 +31,11 @@ import {
 	type WebClientMessage,
 	type MessageHandlerCallbacks,
 } from '../../../../main/web-server/handlers/messageHandlers';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../../../../main/plugins/plugin-manager-singleton';
+import type { PluginManager } from '../../../../main/plugins/plugin-manager';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -40,6 +45,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 		warn: vi.fn(),
 		error: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	getActivePluginManager: vi.fn(),
+	isPluginsFeatureEnabled: vi.fn(),
 }));
 
 /**
@@ -2854,5 +2864,106 @@ describe('WebSocketMessageHandler', () => {
 			expect(payload.type).toBe('error');
 			expect(payload.message).toContain('branchName');
 		});
+	});
+});
+
+describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const invokeTool = vi.fn();
+	const tool = {
+		id: 'acme/dostuff',
+		localId: 'dostuff',
+		pluginId: 'acme',
+		name: 'Do Stuff',
+		description: 'does stuff',
+		inputSchema: { type: 'object' },
+	};
+	const fakeManager = {
+		getContributions: () => ({ tools: [tool] }),
+		invokeTool,
+	} as unknown as PluginManager;
+
+	function lastResult(): Record<string, unknown> {
+		const calls = (client.socket.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+		return JSON.parse(calls[calls.length - 1][0] as string) as Record<string, unknown>;
+	}
+
+	beforeEach(() => {
+		handler = new WebSocketMessageHandler();
+		handler.setCallbacks(createMockCallbacks());
+		client = createMockClient();
+		invokeTool.mockReset();
+		vi.mocked(getActivePluginManager).mockReturnValue(fakeManager);
+		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(true);
+	});
+
+	it('lists declared tools with an MCP-safe name + the real toolId', () => {
+		handler.handleMessage(client, { type: 'plugins_list_tools' });
+		const res = lastResult();
+		expect(res.type).toBe('plugins_list_tools_result');
+		expect(res.tools).toEqual([
+			{
+				name: 'acme__dostuff',
+				toolId: 'acme/dostuff',
+				description: 'does stuff',
+				inputSchema: { type: 'object' },
+			},
+		]);
+	});
+
+	it('lists no tools when the plugins flag is off', () => {
+		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+		handler.handleMessage(client, { type: 'plugins_list_tools' });
+		expect(lastResult().tools).toEqual([]);
+	});
+
+	it('rejects an unknown toolId and never invokes', async () => {
+		handler.handleMessage(client, { type: 'plugins_call_tool', toolId: 'acme/ghost', args: {} });
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		const res = lastResult();
+		expect(res.ok).toBe(false);
+		expect(String(res.error)).toContain('Unknown tool');
+		expect(invokeTool).not.toHaveBeenCalled();
+	});
+
+	it('rejects a call when the plugins flag is off', async () => {
+		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+		handler.handleMessage(client, {
+			type: 'plugins_call_tool',
+			toolId: 'acme/dostuff',
+			args: {},
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult().error).toBe('PluginsDisabled');
+		expect(invokeTool).not.toHaveBeenCalled();
+	});
+
+	it('blocks a high-risk call (destructive args) and never invokes', async () => {
+		handler.handleMessage(client, {
+			type: 'plugins_call_tool',
+			toolId: 'acme/dostuff',
+			args: { cmd: 'delete the production database and drop all tables' },
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		const res = lastResult();
+		expect(res.ok).toBe(false);
+		expect(res.blocked).toBe(true);
+		expect(invokeTool).not.toHaveBeenCalled();
+	});
+
+	it('invokes a low-risk call and returns the result', async () => {
+		invokeTool.mockResolvedValue({ done: true });
+		handler.handleMessage(client, {
+			type: 'plugins_call_tool',
+			toolId: 'acme/dostuff',
+			args: { value: 1 },
+		});
+		await vi.waitFor(() => expect(invokeTool).toHaveBeenCalled());
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		const res = lastResult();
+		expect(res.ok).toBe(true);
+		expect(res.result).toEqual({ done: true });
+		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 });
 	});
 });

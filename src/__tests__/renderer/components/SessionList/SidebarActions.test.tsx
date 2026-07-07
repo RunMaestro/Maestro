@@ -14,6 +14,7 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 	return {
 		theme: mockTheme,
 		leftSidebarOpen: true,
+		sidebarWidth: 320,
 		hasNoSessions: false,
 		shortcuts: defaultShortcuts,
 		showUnreadAgentsOnly: false,
@@ -24,7 +25,7 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 	};
 }
 
-// SidebarActions calls cycleLeftSidebar via useUIStore.getState() rather than
+// SidebarActions calls setLeftSidebarOpen via useUIStore.getState() rather than
 // taking the setter as a prop, so reset the store between tests.
 beforeEach(() => {
 	useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
@@ -71,14 +72,13 @@ describe('SidebarActions', () => {
 		expect(openFeedback).toHaveBeenCalledOnce();
 	});
 
-	it('cycles open → collapsed strip on collapse-button click', () => {
+	it('collapses the sidebar on collapse-button click', () => {
 		useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
 		render(<SidebarActions {...createProps({ leftSidebarOpen: true })} />);
 
-		const collapseBtn = screen.getByTitle(/Collapse to status strip/);
+		const collapseBtn = screen.getByTitle(/Collapse Sidebar/);
 		fireEvent.click(collapseBtn);
 		expect(useUIStore.getState().leftSidebarOpen).toBe(false);
-		expect(useUIStore.getState().leftSidebarHidden).toBe(false);
 	});
 
 	it('prevents collapse when no sessions and sidebar is open', () => {
@@ -91,13 +91,13 @@ describe('SidebarActions', () => {
 		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 	});
 
-	it('cycles collapsed strip → hidden on next click', () => {
+	it('expands the sidebar on expand-button click', () => {
 		useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
 		render(<SidebarActions {...createProps({ hasNoSessions: true, leftSidebarOpen: false })} />);
 
-		const hideBtn = screen.getByTitle(/Hide sidebar/);
-		fireEvent.click(hideBtn);
-		expect(useUIStore.getState().leftSidebarHidden).toBe(true);
+		const expandBtn = screen.getByTitle(/Expand Sidebar/);
+		fireEvent.click(expandBtn);
+		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 	});
 
 	it('renders unread agents filter button', () => {

@@ -84,6 +84,7 @@ describe('persistence IPC handlers', () => {
 		broadcastSessionRemoved: ReturnType<typeof vi.fn>;
 	};
 	let getWebServerFn: () => WebServer | null;
+	let mockSafeSend: PersistenceHandlerDependencies['safeSend'];
 
 	beforeEach(() => {
 		// Clear mocks
@@ -118,6 +119,7 @@ describe('persistence IPC handlers', () => {
 		};
 
 		getWebServerFn = () => mockWebServer as unknown as WebServer;
+		mockSafeSend = vi.fn<PersistenceHandlerDependencies['safeSend']>();
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -131,6 +133,7 @@ describe('persistence IPC handlers', () => {
 			sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 			groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 			getWebServer: getWebServerFn,
+			safeSend: mockSafeSend,
 		};
 		registerPersistenceHandlers(deps);
 	});
@@ -310,6 +313,33 @@ describe('persistence IPC handlers', () => {
 			expect(mockWebServer.broadcastThemeChange).not.toHaveBeenCalled();
 		});
 
+		it('should cascade every settings change to all windows (settings are global)', async () => {
+			const handler = handlers.get('settings:set');
+
+			// A UI-driven theme switch must reach every window, not just the sender.
+			await handler!({} as any, 'activeThemeId', 'light');
+			expect(mockSafeSend).toHaveBeenCalledWith('settings:externalChange');
+
+			// Not theme-specific: any setting cascades so all windows stay in unison.
+			vi.mocked(mockSafeSend).mockClear();
+			await handler!({} as any, 'fontSize', 16);
+			expect(mockSafeSend).toHaveBeenCalledWith('settings:externalChange');
+		});
+
+		it('should not cascade when the settings write fails', async () => {
+			mockSettingsStore.set.mockImplementationOnce(() => {
+				const err = new Error('disk full') as NodeJS.ErrnoException;
+				err.code = 'ENOSPC';
+				throw err;
+			});
+
+			const handler = handlers.get('settings:set');
+			const result = await handler!({} as any, 'activeThemeId', 'light');
+
+			expect(result).toBe(false);
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		});
+
 		it('should broadcast bionify reading mode changes to connected web clients', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(2);
 
@@ -391,6 +421,7 @@ describe('persistence IPC handlers', () => {
 				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 				getWebServer: () => null,
+				safeSend: mockSafeSend,
 			};
 			registerPersistenceHandlers(deps);
 

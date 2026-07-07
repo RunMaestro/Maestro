@@ -44,11 +44,27 @@ vi.mock('../../../main/cue/cue-github-poller', () => ({
 	createCueGitHubPoller: (...args: unknown[]) => mockCreateCueGitHubPoller(args[0]),
 }));
 
-// Mock the task scanner
+// Mock the task scanner. `scanTaskFilesNow` is mocked so manual task.pending
+// triggers can be exercised without touching the filesystem; the real
+// `buildTaskPendingPayload` is reused so the asserted payload shape is genuine.
 const mockCreateCueTaskScanner = vi.fn<(config: unknown) => () => void>();
-vi.mock('../../../main/cue/cue-task-scanner', () => ({
-	createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
-}));
+const mockScanTaskFilesNow = vi.fn<
+	(
+		projectRoot: string,
+		watchGlob: string
+	) => import('../../../main/cue/cue-task-scanner').ScannedTaskFile[]
+>(() => []);
+vi.mock('../../../main/cue/cue-task-scanner', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/cue/cue-task-scanner')>(
+		'../../../main/cue/cue-task-scanner'
+	);
+	return {
+		createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
+		scanTaskFilesNow: (projectRoot: string, watchGlob: string) =>
+			mockScanTaskFilesNow(projectRoot, watchGlob),
+		buildTaskPendingPayload: actual.buildTaskPendingPayload,
+	};
+});
 
 // Mock the database
 const mockInitCueDb = vi.fn();
@@ -3409,6 +3425,88 @@ describe('CueEngine', () => {
 		});
 	});
 
+	describe('triggerSubscription enriches task.pending payload (issue #1151)', () => {
+		it('scans the watched file and populates task variables on manual trigger', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'research queue',
+						event: 'task.pending',
+						watch: 'research.md',
+						enabled: true,
+						prompt: 'Process {{CUE_TASK_LIST}}',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			mockScanTaskFilesNow.mockReturnValue([
+				{
+					relPath: 'research.md',
+					absPath: '/projects/test/research.md',
+					content: '- [ ] write the report\n',
+					tasks: [{ line: 1, text: 'write the report' }],
+				},
+			]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('research queue');
+			expect(result).toBe(true);
+
+			// Scanned against the owning session's project root + the sub's glob.
+			expect(mockScanTaskFilesNow).toHaveBeenCalledWith('/projects/test', 'research.md');
+
+			// The dispatched event now carries the real task payload, so the
+			// {{CUE_TASK_*}} variables resolve instead of rendering empty.
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+							taskCount: 1,
+							taskList: 'L1: write the report',
+							filename: 'research.md',
+							path: '/projects/test/research.md',
+						}),
+					}),
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('leaves the payload unenriched when no watched file has pending tasks', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'research queue',
+						event: 'task.pending',
+						watch: 'research.md',
+						enabled: true,
+						prompt: 'Process tasks',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			mockScanTaskFilesNow.mockReturnValue([]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.triggerSubscription('research queue');
+
+			const callArgs = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(callArgs.event.payload).toMatchObject({ manual: true });
+			expect(callArgs.event.payload).not.toHaveProperty('taskCount');
+
+			engine.stop();
+		});
+	});
+
 	describe('triggerSubscription fires sibling branch group', () => {
 		// Regression guard for the per-branch fan-out shape (two parallel
 		// subs sharing one trigger). A natural scheduled tick fires every
@@ -3663,6 +3761,94 @@ describe('CueEngine', () => {
 				.sort();
 			expect(names).toEqual(['morning-1', 'morning-2']);
 			expect(names).not.toContain('evening');
+
+			engine.stop();
+		});
+	});
+	describe('plugin event emission', () => {
+		const heartbeatConfig = () =>
+			createMockConfig({
+				subscriptions: [
+					{
+						name: 'periodic',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'Run check',
+						interval_minutes: 5,
+					},
+				],
+			});
+
+		it('emits cue.runStarted then cue.runFinished for a completed run', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(createMockDeps({ emitPluginEvent }));
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const topics = emitPluginEvent.mock.calls.map((c) => c[0].topic);
+			expect(topics).toContain('cue.runStarted');
+			expect(topics).toContain('cue.runFinished');
+
+			const started = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runStarted')![0];
+			expect(started.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+			});
+			expect(started.payload).toHaveProperty('runId');
+
+			const finished = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runFinished')![0];
+			expect(finished.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+				status: 'completed',
+			});
+
+			engine.stop();
+		});
+
+		it('emits cue.runFinished with status "stopped" when a run is manually stopped', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(
+				createMockDeps({
+					emitPluginEvent,
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+				})
+			);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const activeRun = engine.getActiveRuns()[0];
+			expect(activeRun).toBeDefined();
+			engine.stopRun(activeRun.runId);
+
+			const finished = emitPluginEvent.mock.calls
+				.map((c) => c[0])
+				.filter((e) => e.topic === 'cue.runFinished');
+			expect(finished).toHaveLength(1);
+			expect(finished[0].payload).toMatchObject({ runId: activeRun.runId, status: 'stopped' });
+
+			engine.stop();
+		});
+
+		it('does not let a throwing plugin bus break the run lifecycle', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent = vi.fn(() => {
+				throw new Error('plugin bus down');
+			});
+			const deps = createMockDeps({ emitPluginEvent });
+			const engine = new CueEngine(deps);
+
+			expect(() => engine.start()).not.toThrow();
+			await vi.advanceTimersByTimeAsync(10);
+
+			// The run still reached a natural completion despite the throwing sink.
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			expect(engine.getActivityLog()).toHaveLength(1);
+			expect(engine.getActivityLog()[0].status).toBe('completed');
 
 			engine.stop();
 		});

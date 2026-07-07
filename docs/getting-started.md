@@ -12,7 +12,7 @@ Follow the [Installation](./installation) instructions for your platform, then l
 
 ## 2. Create an agent
 
-Maestro supports **Claude Code**, **Codex** (OpenAI), **OpenCode**, and **Factory Droid** as providers. Make sure at least one is installed and authenticated.
+Maestro supports **Claude Code**, **Codex** (OpenAI), and **OpenCode**, plus **Factory Droid**, **Copilot-CLI**, **Hermes**, **Pi**, **Qwen3 Coder**, and **Oh My Pi** in beta. Make sure at least one is installed and authenticated.
 
 <Note>
 Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly. The only difference is batch mode execution - Maestro sends a prompt and receives a response rather than running an interactive session.

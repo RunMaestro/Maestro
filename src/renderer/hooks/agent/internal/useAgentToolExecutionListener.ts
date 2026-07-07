@@ -19,9 +19,11 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
 export function useAgentToolExecutionListener(): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
@@ -36,6 +38,8 @@ export function useAgentToolExecutionListener(): void {
 					toolCallId?: string;
 				}
 			) => {
+				// Window scoping: ignore agents this window doesn't own (broadcast events).
+				if (!ownedGate.current?.(sessionId)) return;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (!aiTabMatch) return;
 
@@ -131,5 +135,5 @@ export function useAgentToolExecutionListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, []);
+	}, [ownedGate]);
 }

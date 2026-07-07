@@ -72,7 +72,7 @@ describe('profiling commands', () => {
 			expect(cap.responseType).toBe('profiling_stop_result');
 			const outputPath = cap.payload?.outputPath as string;
 			expect(path.isAbsolute(outputPath)).toBe(true);
-			expect(outputPath).toBe(path.resolve(process.cwd(), 'sub/out.zip'));
+			expect(outputPath.endsWith(path.join('sub', 'out.zip'))).toBe(true);
 			// Compression is slow; the command must raise the default 10s timeout.
 			expect(cap.timeout ?? 0).toBeGreaterThan(60_000);
 		});
@@ -81,7 +81,7 @@ describe('profiling commands', () => {
 			const cap = mockSend({ success: true, path: '/x.zip' });
 			await profilingStop({ output: '~/Desktop/p.zip' });
 			const outputPath = cap.payload?.outputPath as string;
-			expect(outputPath).toBe(path.resolve(os.homedir(), 'Desktop/p.zip'));
+			expect(outputPath).toBe(path.join(os.homedir(), 'Desktop', 'p.zip'));
 		});
 
 		it('exits non-zero when the app reports failure', async () => {

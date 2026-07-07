@@ -224,6 +224,8 @@ When making changes that involve any of the above areas, verify:
 - [ ] No hardcoded path separators (`/` or `\`)
 - [ ] Shell commands use platform-appropriate lookup (`which`/`where`)
 - [ ] Agent-specific code handles all supported agents, not just Claude
+- [ ] Path assertions in tests use the `path`/`os` API (`path.isAbsolute`, `path.join`, `path.resolve`, `os.homedir`, `os.tmpdir`), never literal `/`, `\`, or `process.env.HOME`
+- [ ] Both CI matrix legs (`test (ubuntu-latest)` and `test (windows-latest)`) are green before merge; a local single-OS run is not sufficient
 
 ---
 

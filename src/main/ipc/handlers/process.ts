@@ -6,6 +6,12 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
+import { resolveMaestroCliScriptPath } from '../../cue/cue-cli-executor';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../../plugins/plugin-manager-singleton';
+import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../../shared/plugins/mcp-agent-config';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import { stripThinkingFromTranscript } from '../../agents/claude-transcript-sanitizer';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
@@ -493,6 +499,100 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					);
 				}
 
+				// Pianola manager agent: expose the bundled maestro-cli to the agent's
+				// Bash (via MAESTRO_CLI_JS) so it can orchestrate other agents - list,
+				// create, dispatch, watch, and set rules - without any PATH assumptions,
+				// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
+				// Injected into effectiveCustomEnvVars so it flows through both the local
+				// and SSH env-merge paths below.
+				const isPianolaSession = (
+					deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
+				).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+				if (isPianolaSession) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
+						MAESTRO_AGENT_ID: baseSessionId,
+					};
+				}
+
+				// MCP plugin-tool bridge: when the plugins feature is on, this agent
+				// supports a verified ephemeral MCP config, and at least one plugin tool
+				// is registered, point the agent at `maestro-cli mcp serve` so its model
+				// can call plugin tools (each call risk-gated in the app). Local spawns
+				// only - the bridge reaches the app over a localhost WebSocket + discovery
+				// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
+				// intentionally skipped to avoid breaking their startup with a wrong shape.
+				const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
+				if (
+					mcpCap?.verified &&
+					isPluginsFeatureEnabled() &&
+					!config.sessionSshRemoteConfig?.enabled &&
+					// Skip the electron-as-node interactive path (claude maestro-p): there
+					// argv[0] is a script path, so prepending global flags ahead of it would
+					// make Node reject the launch. API-mode/codex spawn the agent binary
+					// directly, where leading flags are valid.
+					effectiveCommand !== process.execPath
+				) {
+					const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
+					if (mcpTools.length > 0) {
+						const mcpSpec = {
+							command: process.execPath,
+							args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
+							env: {
+								ELECTRON_RUN_AS_NODE: '1',
+								// The agent's MCP client forwards only a sanitized env subset to
+								// the spawned bridge; forward the data-dir overrides the app
+								// itself honors so the bridge resolves the SAME discovery file
+								// (else custom-data-dir / dev installs silently connect nowhere
+								// and advertise zero tools).
+								...(process.env.MAESTRO_USER_DATA
+									? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+									: {}),
+								...(process.env.XDG_CONFIG_HOME
+									? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+									: {}),
+							},
+						};
+						// Cheap pure pre-build to learn whether this strategy needs temp
+						// files; only then allocate a unique per-spawn dir (so concurrent
+						// spawns never share/clobber a config) and rebuild with real paths.
+						let mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
+							tmpDir: os.tmpdir(),
+							join: path.join,
+						});
+						if (mcpInjection.files.length > 0) {
+							const mcpTmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'maestro-mcp-'));
+							mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
+								tmpDir: mcpTmpDir,
+								join: path.join,
+							});
+							for (const file of mcpInjection.files) {
+								await fsp.writeFile(file.path, file.content, 'utf-8');
+							}
+							setTimeout(() => {
+								fsp.rm(mcpTmpDir, { recursive: true, force: true }).catch((err: unknown) => {
+									if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+										captureException(err instanceof Error ? err : new Error(String(err)), {
+											context: 'mcp config temp dir cleanup',
+											dir: mcpTmpDir,
+										});
+									}
+								});
+							}, 30_000);
+						}
+						finalArgs = [...mcpInjection.globalArgs, ...finalArgs];
+						effectiveCustomEnvVars = {
+							...(effectiveCustomEnvVars || {}),
+							...mcpInjection.env,
+						};
+						logger.debug(
+							`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} tools)`,
+							LOG_CONTEXT
+						);
+					}
+				}
+
 				// ========================================================================
 				// System prompt delivery: use --append-system-prompt for supported agents,
 				// otherwise embed in the user prompt as fallback.
@@ -870,13 +970,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					}
 
 					// Mirror to the renderer so the popover updates without a refetch.
-					const mainWindow = getMainWindow();
-					if (mainWindow && isWebContentsAvailable(mainWindow)) {
-						mainWindow.webContents.send('process:claude-mode-resolved', config.sessionId, {
-							mode: claudeResolvedMode,
-							reason: claudeResolvedReason,
-							configDirKey: resolvedConfigDirKey,
-						});
+					const claudeModePayload = {
+						mode: claudeResolvedMode,
+						reason: claudeResolvedReason,
+						configDirKey: resolvedConfigDirKey,
+					};
+					if (safeSend) {
+						safeSend('process:claude-mode-resolved', config.sessionId, claudeModePayload);
+					} else {
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send(
+								'process:claude-mode-resolved',
+								config.sessionId,
+								claudeModePayload
+							);
+						}
 					}
 				}
 
@@ -1284,16 +1393,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Emit SSH remote status event for renderer to update session state
 				// This is emitted for all spawns (sshRemote will be null for local execution)
-				const mainWindow = getMainWindow();
-				if (isWebContentsAvailable(mainWindow)) {
-					const sshRemoteInfo = sshRemoteUsed
-						? {
-								id: sshRemoteUsed.id,
-								name: sshRemoteUsed.name,
-								host: sshRemoteUsed.host,
-							}
-						: null;
-					mainWindow.webContents.send('process:ssh-remote', config.sessionId, sshRemoteInfo);
+				const sshRemoteInfo = sshRemoteUsed
+					? {
+							id: sshRemoteUsed.id,
+							name: sshRemoteUsed.name,
+							host: sshRemoteUsed.host,
+						}
+					: null;
+				if (safeSend) {
+					safeSend('process:ssh-remote', config.sessionId, sshRemoteInfo);
+				} else {
+					const mainWindow = getMainWindow();
+					if (isWebContentsAvailable(mainWindow)) {
+						mainWindow.webContents.send('process:ssh-remote', config.sessionId, sshRemoteInfo);
+					}
 				}
 
 				// Return spawn result with SSH remote info if used

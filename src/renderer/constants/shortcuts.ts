@@ -11,8 +11,8 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Toggle Right Panel',
 		keys: ['Alt', 'Meta', 'ArrowRight'],
 	},
-	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['] },
-	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'] },
+	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['], windowScoped: true },
+	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'], windowScoped: true },
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
@@ -25,8 +25,18 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Meta', 'Shift', 'm'],
 	},
 	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
-	quickAction: { id: 'quickAction', label: 'Quick Actions', keys: ['Meta', 'k'] },
-	agentSwitcher: { id: 'agentSwitcher', label: 'Switch Agent', keys: ['Meta', 'o'] },
+	quickAction: {
+		id: 'quickAction',
+		label: 'Quick Actions',
+		keys: ['Meta', 'k'],
+		windowScoped: true,
+	},
+	agentSwitcher: {
+		id: 'agentSwitcher',
+		label: 'Switch Agent',
+		keys: ['Meta', 'o'],
+		windowScoped: true,
+	},
 	help: { id: 'help', label: 'Show Shortcuts', keys: ['Meta', '/'] },
 	settings: { id: 'settings', label: 'Open Settings', keys: ['Meta', ','] },
 	agentSettings: { id: 'agentSettings', label: 'Open Agent Settings', keys: ['Alt', 'Meta', ','] },
@@ -138,6 +148,83 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'editClipboardImage',
 		label: 'Edit Image from Clipboard',
 		keys: ['Alt', 'Meta', 'e'],
+	},
+
+	// Tab tiling (split panes) - the whole family lives on Ctrl+Cmd, the one
+	// modifier combo unused by every other shortcut (Alt+Cmd+Arrow* is already the
+	// sidebar/panel toggles). All are window-scoped: they act only on the active
+	// window's active tab group. Matched by isPaneShortcut (which requires BOTH
+	// Ctrl and Cmd), not the general isShortcut, so they never collide with the
+	// plain-Cmd equivalents (Cmd+W close tab, Cmd+= font size, etc.).
+	paneFocusLeft: {
+		id: 'paneFocusLeft',
+		label: 'Focus Pane Left',
+		keys: ['Control', 'Meta', 'ArrowLeft'],
+		windowScoped: true,
+	},
+	paneFocusRight: {
+		id: 'paneFocusRight',
+		label: 'Focus Pane Right',
+		keys: ['Control', 'Meta', 'ArrowRight'],
+		windowScoped: true,
+	},
+	paneFocusUp: {
+		id: 'paneFocusUp',
+		label: 'Focus Pane Up',
+		keys: ['Control', 'Meta', 'ArrowUp'],
+		windowScoped: true,
+	},
+	paneFocusDown: {
+		id: 'paneFocusDown',
+		label: 'Focus Pane Down',
+		keys: ['Control', 'Meta', 'ArrowDown'],
+		windowScoped: true,
+	},
+	paneSplitRow: {
+		id: 'paneSplitRow',
+		label: 'Split Pane (Side by Side)',
+		keys: ['Control', 'Meta', 'd'],
+		windowScoped: true,
+	},
+	paneSplitColumn: {
+		id: 'paneSplitColumn',
+		label: 'Split Pane (Stacked)',
+		keys: ['Control', 'Meta', 'Shift', 'd'],
+		windowScoped: true,
+	},
+	paneClose: {
+		id: 'paneClose',
+		label: 'Close Focused Pane',
+		keys: ['Control', 'Meta', 'w'],
+		windowScoped: true,
+	},
+	paneZoom: {
+		id: 'paneZoom',
+		label: 'Maximize / Restore Pane',
+		keys: ['Control', 'Meta', 'z'],
+		windowScoped: true,
+	},
+	paneRebalance: {
+		id: 'paneRebalance',
+		label: 'Rebalance Panes',
+		keys: ['Control', 'Meta', '='],
+		windowScoped: true,
+	},
+	// Cycle focus through the active group's panes in document order (prev/next with
+	// wrap). Unlike the rest of the family these live on Alt+[ / Alt+] (matched by the
+	// general isShortcut via its Alt+bracket e.code fallback, not isPaneShortcut) to
+	// mirror the plain Cmd+[ / Cmd+] "cycle agent" and Cmd+Shift+[ / ] "cycle tab" pair.
+	paneCyclePrev: {
+		id: 'paneCyclePrev',
+		label: 'Focus Previous Pane',
+		keys: ['Alt', '['],
+		windowScoped: true,
+	},
+	paneCycleNext: {
+		id: 'paneCycleNext',
+		label: 'Focus Next Pane',
+		keys: ['Alt', ']'],
+		windowScoped: true,
 	},
 };
 

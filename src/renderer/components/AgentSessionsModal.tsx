@@ -12,6 +12,7 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
+import { EscCloseHint } from './ui/EscCloseHint';
 import type { Theme, Session } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { useListNavigation } from '../hooks';
@@ -524,12 +525,7 @@ export function AgentSessionsModal({
 								onChange={(e) => setSearch(e.target.value)}
 								onKeyDown={handleKeyDown}
 							/>
-							<div
-								className="px-2 py-0.5 rounded text-xs font-bold"
-								style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-							>
-								ESC
-							</div>
+							<EscCloseHint theme={theme} onClose={onClose} />
 						</>
 					)}
 				</div>

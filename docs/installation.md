@@ -21,6 +21,10 @@ Download the latest release for your platform from the [Releases](https://github
   - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant (fully integrated)
   - [Factory Droid](https://docs.factory.ai/cli) - Factory's AI coding assistant (fully integrated)
   - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
+  - [Hermes](https://hermes-agent.nousresearch.com/) - Nous Research's AI coding agent (beta integration)
+  - [Pi](https://pi.dev/) - A customizable AI agent harness (beta integration)
+  - [Qwen3 Coder](https://github.com/QwenLM/qwen-code) - Alibaba's Qwen Code agent, a Gemini CLI fork (beta integration)
+  - [Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) - Multi-model coding agent (beta integration, `omp` CLI)
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) - Planned support
 - Git (optional, for git-aware features)
 

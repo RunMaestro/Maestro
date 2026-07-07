@@ -1131,7 +1131,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
 		id: 'encore-usage-stats',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: 'Usage & Stats',
 		description:
 			'Track queries, Auto Run sessions, coding activity, and view the Usage Dashboard with a configurable lookback window',
@@ -1154,7 +1154,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
 		id: 'encore-symphony',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: 'Maestro Symphony',
 		description:
 			'Contribute to open source projects through curated repositories and playbook registries',
@@ -1174,7 +1174,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
 		id: 'encore-cue',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: 'Maestro Cue',
 		description:
 			'Event-driven automation (Beta) — trigger agent prompts on timers, file changes, agent completions, GitHub PRs/issues, and pending tasks',
@@ -1199,9 +1199,51 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
-		id: 'encore-director-notes',
+		id: 'encore-coworking',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
+		label: 'Coworking',
+		description:
+			'Beta - let agents read terminal scrollback on demand. Installs a per-agent MCP server (Claude Code, Codex, OpenCode, Factory Droid) and adds a `term:N` pill to terminal tabs.',
+		keywords: [
+			'coworking',
+			'mcp',
+			'terminal',
+			'scrollback',
+			'agent',
+			'tools',
+			'claude code',
+			'codex',
+			'opencode',
+			'factory droid',
+			'beta',
+			'install',
+			'server',
+		],
+	},
+	{
+		id: 'coworking-background-browsers',
+		tab: 'encore',
+		tabLabel: 'Encore Features',
+		label: 'Coworking background browsing',
+		description:
+			'Let agents read and drive their own browser tabs while you are focused on a different agent. Keeps hidden webviews alive off-screen, LRU-capped (1-10).',
+		keywords: [
+			'coworking',
+			'background',
+			'browser',
+			'browsing',
+			'webview',
+			'hidden',
+			'cross-session',
+			'lru',
+			'limit',
+		],
+	},
+	{
+		id: 'encore-director-notes',
+		tab: 'encore',
+		tabLabel: 'Plugins',
 		label: "Director's Notes",
 		description: 'Unified history view and AI-generated synopsis across all sessions (Beta)',
 		keywords: [
@@ -1221,7 +1263,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
 		id: 'encore-director-notes-default-mode',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: "Director's Notes Default Reading Mode",
 		description:
 			'Whether the AI Overview opens in Rich (widget dashboard) or Plain (markdown) mode',
@@ -1236,6 +1278,49 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'dashboard',
 			'widgets',
 			'markdown',
+		],
+	},
+	{
+		id: 'encore-pianola',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Pianola',
+		description:
+			'Autonomous manager agent (Beta). Watches your agents, auto-answers low-risk prompts from your rules, and escalates uncertain or high-risk ones. Can send messages to agents on your behalf',
+		keywords: [
+			'pianola',
+			'autonomous',
+			'manager',
+			'agent',
+			'watch',
+			'auto-answer',
+			'auto answer',
+			'escalate',
+			'rules',
+			'supervise',
+			'orchestrate',
+			'beta',
+		],
+	},
+	{
+		id: 'encore-plugins',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Plugins',
+		description:
+			'Community plugin subsystem (Alpha) — discover, enable, disable, install, and uninstall plugins. Foundation only: plugins are listed and managed but do not execute code yet',
+		keywords: [
+			'plugin',
+			'plugins',
+			'extension',
+			'extend',
+			'addon',
+			'add-on',
+			'community',
+			'marketplace',
+			'install',
+			'uninstall',
+			'alpha',
 		],
 	},
 ];

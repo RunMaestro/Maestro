@@ -23,11 +23,13 @@ import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
 export function useAgentThinkingListener(): void {
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
+	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -35,6 +37,8 @@ export function useAgentThinkingListener(): void {
 
 		const unsubscribe = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
+				// Window scoping: ignore agents this window doesn't own (broadcast events).
+				if (!ownedGate.current?.(sessionId)) return;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (!aiTabMatch) return;
 
@@ -155,5 +159,5 @@ export function useAgentThinkingListener(): void {
 			}
 			thinkingChunkBuffer.clear();
 		};
-	}, []);
+	}, [ownedGate]);
 }

@@ -12,13 +12,14 @@ describe('QuickActionsSearchBar', () => {
 				theme={mockTheme}
 				mode="main"
 				activeSession={createMockSession({ name: 'Atlas' })}
-				renamingSession={false}
+				renaming={false}
 				search=""
 				setSearch={setSearch}
 				renameValue=""
 				setRenameValue={vi.fn()}
 				inputRef={{ current: null }}
 				onKeyDown={vi.fn()}
+				onClose={vi.fn()}
 			/>
 		);
 
@@ -35,13 +36,14 @@ describe('QuickActionsSearchBar', () => {
 				theme={mockTheme}
 				mode="agents"
 				activeSession={createMockSession({ name: 'Atlas' })}
-				renamingSession={false}
+				renaming={false}
 				search=""
 				setSearch={vi.fn()}
 				renameValue=""
 				setRenameValue={vi.fn()}
 				inputRef={{ current: null }}
 				onKeyDown={vi.fn()}
+				onClose={vi.fn()}
 			/>
 		);
 
@@ -52,13 +54,14 @@ describe('QuickActionsSearchBar', () => {
 				theme={mockTheme}
 				mode="move-to-group"
 				activeSession={createMockSession({ name: 'Atlas' })}
-				renamingSession={false}
+				renaming={false}
 				search=""
 				setSearch={vi.fn()}
 				renameValue=""
 				setRenameValue={vi.fn()}
 				inputRef={{ current: null }}
 				onKeyDown={vi.fn()}
+				onClose={vi.fn()}
 			/>
 		);
 		expect(screen.getByPlaceholderText('Move Atlas to...')).toBeInTheDocument();
@@ -68,13 +71,14 @@ describe('QuickActionsSearchBar', () => {
 				theme={mockTheme}
 				mode="main"
 				activeSession={createMockSession({ name: 'Atlas' })}
-				renamingSession={true}
+				renaming={true}
 				search=""
 				setSearch={vi.fn()}
 				renameValue="Atlas"
 				setRenameValue={vi.fn()}
 				inputRef={{ current: null }}
 				onKeyDown={vi.fn()}
+				onClose={vi.fn()}
 			/>
 		);
 		expect(screen.getByPlaceholderText('Enter new name...')).toHaveValue('Atlas');

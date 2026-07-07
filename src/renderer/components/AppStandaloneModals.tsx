@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
@@ -8,6 +8,8 @@ import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
+import { usePluginContributions } from '../hooks/usePluginContributions';
+import { mergePluginThemes } from '../utils/pluginThemes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
@@ -60,6 +62,9 @@ const DirectorNotesModal = lazy(() =>
 const CueModal = lazy(() => import('./CueModal').then((m) => ({ default: m.CueModal })));
 const CueYamlEditor = lazy(() =>
 	import('./CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
+);
+const PianolaModal = lazy(() =>
+	import('./PianolaModal').then((m) => ({ default: m.PianolaModal }))
 );
 
 /**
@@ -241,6 +246,8 @@ function AppStandaloneModalsInner({
 		setDirectorNotesOpen,
 		cueModalOpen,
 		setCueModalOpen,
+		pianolaModalOpen,
+		setPianolaModalOpen,
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
@@ -266,6 +273,15 @@ function AppStandaloneModalsInner({
 
 	// Self-source active session
 	const activeSession = useActiveSession();
+
+	// Merge plugin-contributed themes into the picker list through the shared
+	// contribution registry (built-in always wins an id collision). Identical to
+	// THEMES when the plugins Encore flag is off (no contributions).
+	const pluginContributions = usePluginContributions();
+	const mergedThemes = useMemo(
+		() => mergePluginThemes(THEMES, pluginContributions.themes),
+		[pluginContributions.themes]
+	);
 
 	return (
 		<>
@@ -393,6 +409,13 @@ function AppStandaloneModalsInner({
 						onClose={() => setCueModalOpen(false)}
 						cueShortcutKeys={shortcuts.maestroCue?.keys}
 					/>
+				</Suspense>
+			)}
+
+			{/* --- PIANOLA MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.pianola && pianolaModalOpen && (
+				<Suspense fallback={null}>
+					<PianolaModal theme={theme} onClose={() => setPianolaModalOpen(false)} />
 				</Suspense>
 			)}
 
@@ -579,7 +602,7 @@ function AppStandaloneModalsInner({
 						isOpen={settingsModalOpen}
 						onClose={onCloseSettings}
 						theme={theme}
-						themes={THEMES}
+						themes={mergedThemes}
 						initialTab={settingsTab}
 						initialSelectedPromptId={settingsPromptId}
 						hasNoAgents={hasNoAgents}

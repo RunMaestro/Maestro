@@ -235,6 +235,37 @@ export interface LogEntry {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
 		};
+		// Provenance for a cross-agent (@mention) response entry: this AI entry
+		// was produced by a DIFFERENT agent that the user consulted via `@target`.
+		// Phase 03 stamps it; Phase 04 renders the attribution pill from it.
+		crossAgent?: {
+			/** Correlates with the CrossAgentRequest that produced this entry. */
+			requestId: string;
+			/** The consulted agent's (target) session id. */
+			fromSessionId: string;
+			/**
+			 * The consult tab on the target agent that holds the persisted copy of
+			 * this exchange. The jump arrow deep-links to it so it lands on the actual
+			 * conversation, not a blank agent. Absent on older entries.
+			 */
+			fromTabId?: string;
+			/** The consulted agent's display name. */
+			fromAgentName: string;
+			/** The consulted agent's tool type (for the provider icon). */
+			fromToolType: ToolType;
+			/**
+			 * True while chunks are still streaming in (Phase 03 sets `!done`);
+			 * flips to false on the terminal chunk. Phase 04's pill shows a
+			 * spinner and pulses the bubble border while this is true.
+			 */
+			streaming?: boolean;
+			/**
+			 * Set on the terminal failure chunk (Phase 05). When present the
+			 * consulted agent could not respond; the bubble renders a red-tinted
+			 * error variant instead of the normal accent wash.
+			 */
+			error?: string;
+		};
 	};
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream
 	// pipeline from `claude --print`; 'text-stream' marks entries captured during
@@ -504,6 +535,20 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	/**
+	 * When set, this tab holds the persisted transcript of a cross-agent consult:
+	 * another agent (`sourceSessionId` + `sourceTabId`) @mentioned this agent and
+	 * the answer was written here. It is the continuity key - a later mention from
+	 * the SAME source tab reuses this tab (and resumes its `agentSessionId`), while
+	 * a mention from a fresh source tab creates a new consult tab. Absent on normal
+	 * user-driven tabs.
+	 */
+	consultOrigin?: {
+		/** The calling agent (session) that consulted this agent. */
+		sourceSessionId: string;
+		/** The AI tab within the calling agent the mention was typed in. */
+		sourceTabId: string;
+	};
 }
 
 // A single "thinking item" — one busy tab within a session.
@@ -588,6 +633,10 @@ export interface TerminalTab {
 	exitCode?: number; // Exit code when state === 'exited'
 	scrollTop?: number; // Saved scroll position (restored on tab re-focus)
 	searchQuery?: string; // Preserved search query for the xterm.js search addon
+	// Stable, monotonic, per-session readable id used by the coworking MCP server
+	// (e.g. shown as "term:3"). Assigned on add, never reused on close. Undefined
+	// for tabs that predate the coworking feature; treated as "no pill, no MCP exposure."
+	coworkingId?: number;
 	// Command to run automatically each time the PTY is spawned for this tab
 	// (e.g. on app restart). Empty/undefined disables the feature.
 	startupCommand?: string;
@@ -613,6 +662,13 @@ export interface BrowserTab {
 	canGoForward: boolean; // Navigation state for toolbar forward button
 	isLoading: boolean; // Current loading state for toolbar and restore UX
 	favicon?: string | null; // Optional site icon URL/data for tab chrome
+	// When true, this tab is hidden from coworking agents: excluded from the
+	// registry so list_browsers / read_browser / interaction never see it. Persisted.
+	hiddenFromAgent?: boolean;
+	// When true, this is an incognito tab: it uses an in-memory (non-persist:)
+	// partition and is dropped from persisted session state, so it never
+	// survives an app restart.
+	ephemeral?: boolean;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }
@@ -620,8 +676,14 @@ export interface BrowserTab {
 /**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
+ *
+ * The `'group'` kind lets a tiled TabGroup appear as a single entry in the tab
+ * strip. Unlike the other kinds (which point at a tab in aiTabs/filePreviewTabs/
+ * terminalTabs/browserTabs), a group ref's `id` points at a TabGroup in
+ * `Session.tabGroups`; the group's own layout still references the underlying
+ * tabs by leaf. See PanelLayoutNode below.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -632,7 +694,61 @@ export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
 	| { type: 'file'; id: string; data: FilePreviewTab }
 	| { type: 'terminal'; id: string; data: TerminalTab }
-	| { type: 'browser'; id: string; data: BrowserTab };
+	| { type: 'browser'; id: string; data: BrowserTab }
+	| { type: 'group'; id: string; data: TabGroup };
+
+/**
+ * A node in a recursive split-pane layout tree (tmux-style tiling).
+ *
+ * A leaf does NOT own tab data - it references an existing tab by
+ * `{ type, id }` (a UnifiedTabRef). The actual tab lives in its current
+ * `aiTabs`/`filePreviewTabs`/`terminalTabs`/`browserTabs` array, so tiling a
+ * tab never copies or moves its state; the layout only describes where the
+ * tab renders. A split arranges its children horizontally (`row`) or
+ * vertically (`column`), with `sizes` holding one fractional weight per child
+ * (weights sum to 1).
+ */
+export type PanelLayoutNode =
+	| { kind: 'leaf'; id: string; tab: UnifiedTabRef }
+	| {
+			kind: 'split';
+			id: string;
+			direction: 'row' | 'column';
+			children: PanelLayoutNode[];
+			sizes: number[];
+	  };
+
+/**
+ * A tiled pane's content-box rectangle relative to the main-panel container,
+ * published by TiledLayout so keep-alive terminal/browser overlays can be
+ * repositioned onto each pane (they live at the panel level and can't render
+ * inline). See MainPanelContent / TiledLayout (Phase 04 tab tiling).
+ */
+export interface PaneRect {
+	top: number;
+	left: number;
+	width: number;
+	height: number;
+}
+
+/** Pane rects keyed by `tabRefKey` (e.g. `terminal:<id>` / `browser:<id>`). */
+export type PaneRects = Map<string, PaneRect>;
+
+/**
+ * A tiled group of tabs shown as one entry in the tab strip.
+ *
+ * `layout` is the recursive split tree whose leaves reference existing tabs
+ * (see PanelLayoutNode - leaves never own tab data). `focusedPaneId` is the id
+ * of the leaf node that currently has focus within the group (null when none).
+ * Groups live on `Session.tabGroups` and are strictly intra-session.
+ */
+export interface TabGroup {
+	id: string;
+	name: string;
+	layout: PanelLayoutNode;
+	focusedPaneId: string | null;
+	createdAt: number;
+}
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
@@ -747,6 +863,10 @@ export interface Session {
 	agentCommands?: { command: string; description: string; prompt?: string }[];
 	// Bookmark flag - bookmarked sessions appear in a dedicated section at the top
 	bookmarked?: boolean;
+	// Pianola flag - the single pinned autonomous-manager agent. Rendered at the
+	// very top of the Left Bar, cannot be deleted/renamed/moved/bookmarked, and is
+	// excluded from the normal session categories. Gated by the `pianola` Encore flag.
+	isPianola?: boolean;
 	// Pending AI command that will trigger a synopsis on completion (e.g., '/commit')
 	pendingAICommandForSynopsis?: string;
 	// Custom batch runner prompt (persisted per session)
@@ -792,12 +912,24 @@ export interface Session {
 	terminalTabs: TerminalTab[];
 	// Currently active terminal tab ID (null if an AI or file tab is active)
 	activeTerminalTabId: string | null;
+	// Monotonic counter for TerminalTab.coworkingId (used by the coworking MCP server).
+	// Increments on add, never decrements - readable ids never repeat within a session.
+	nextCoworkingId?: number;
 
 	// Unified tab ordering - determines visual order of all tabs (AI, file, browser, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
 	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
+
+	// Tab tiling (split panes) - each TabGroup renders several existing tabs side
+	// by side inside one tab-strip chip. Groups reference tabs by leaf, so the
+	// underlying tab data still lives in aiTabs/filePreviewTabs/etc.
+	tabGroups: TabGroup[];
+	// Currently active tab group id, or null when a standalone (non-tiled) tab is
+	// active. When set to an existing group, the main panel renders that group's
+	// tiled layout instead of the single-view content.
+	activeGroupId: string | null;
 
 	// Saved scroll position for terminal/shell output view
 	terminalScrollTop?: number;
@@ -1082,6 +1214,12 @@ export interface EncoreFeatureFlags {
 	usageStats: boolean;
 	symphony: boolean;
 	maestroCue: boolean;
+	pianola: boolean;
+	plugins: boolean;
+	// Coworking - agents can read terminal scrollback via per-agent MCP server.
+	// Off by default. Optional so existing literals (older test fixtures, persisted
+	// settings without the key) continue to type-check.
+	coworking?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

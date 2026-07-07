@@ -107,11 +107,12 @@ describe('AgentSelectionScreen utils', () => {
 	});
 
 	it('computes grid movement boundaries and last-row centering classes', () => {
+		// Grid is GRID_COLS (4) wide: ArrowDown moves +4, ArrowUp moves -4.
 		expect(getNextAgentTileIndex(0, 'ArrowLeft')).toBe(0);
 		expect(getNextAgentTileIndex(0, 'ArrowRight')).toBe(1);
-		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(3);
+		expect(getNextAgentTileIndex(0, 'ArrowDown')).toBe(4);
 		expect(getNextAgentTileIndex(4, 'ArrowDown')).toBe(4);
-		expect(getNextAgentTileIndex(4, 'ArrowUp')).toBe(1);
+		expect(getNextAgentTileIndex(4, 'ArrowUp')).toBe(0);
 		expect(getAgentTileColSpanClass(0)).toBe('col-span-2');
 		expect(getAgentTileColSpanClass(LAST_ROW_START_INDEX)).toContain(LAST_ROW_COL_START_CLASS);
 	});

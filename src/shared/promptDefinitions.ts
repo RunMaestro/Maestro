@@ -127,6 +127,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Maestro system context prompt',
 		category: 'system',
 	},
+	// Pianola (autonomous manager agent)
+	{
+		id: 'pianola-system',
+		filename: 'pianola-system.md',
+		description: 'Pianola manager agent system prompt (appended for the pinned Pianola agent)',
+		category: 'pianola',
+	},
 	// Group Chat
 	{
 		id: 'group-chat-moderator-system',
@@ -289,6 +296,8 @@ export const PROMPT_IDS = {
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
+	// Pianola
+	PIANOLA_SYSTEM: 'pianola-system',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',
@@ -314,6 +323,7 @@ export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
  */
 export const QUICK_ACTION_PROMPTS: { id: PromptId; label: string }[] = [
 	{ id: 'maestro-system-prompt', label: 'Maestro System Prompt' },
+	{ id: 'pianola-system', label: 'Pianola Manager System Prompt' },
 	{ id: 'autorun-default', label: 'Auto Run Default' },
 	{ id: 'commit-command', label: 'Commit Command' },
 	{ id: 'group-chat-moderator-system', label: 'Group Chat Moderator' },

@@ -61,16 +61,30 @@ import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphon
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
+import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
+import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
+import { registerCoworkingHandlers } from './coworking';
+import { registerBrowserSessionHandlers } from './browser-session';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerAgentRunHandlers } from './agent-run';
+import {
+	registerWindowsHandlers,
+	wireWindowRegistryBroadcast,
+	wireEmptySecondaryWindowAutoClose,
+	WindowsHandlerDependencies,
+} from './windows';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
+import type { WindowRegistry } from '../../window-registry';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
@@ -91,6 +105,7 @@ export { registerSystemHandlers, setupLoggerEventForwarding };
 export { registerClaudeHandlers };
 export { registerAgentSessionsHandlers };
 export { registerGroupChatHandlers };
+export { registerCrossAgentHandlers };
 export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
@@ -125,11 +140,22 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerPianolaHandlers };
+export type { PianolaHandlerDependencies };
+export { registerPluginsHandlers };
+export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
+export { registerCoworkingHandlers };
+export { registerBrowserSessionHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerAgentRunHandlers };
+export { registerWindowsHandlers };
+export { wireWindowRegistryBroadcast };
+export { wireEmptySecondaryWindowAutoClose };
+export type { WindowsHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -171,6 +197,11 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Multi-window dependencies. Optional during the phased rollout - the
+	// registry and window manager are wired in main/index.ts at app-ready (a
+	// later phase). Until then the windows:* handlers report "not initialized".
+	getWindowRegistry?: () => WindowRegistry | null;
+	getWindowManager?: () => WindowManager | null;
 }
 
 /**
@@ -185,11 +216,12 @@ export interface HandlerDependencies {
 export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
 	registerHistoryHandlers({
-		safeSend: createSafeSend(deps.getMainWindow),
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
 		getSessionById: (id: string) => {
@@ -210,7 +242,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
-		safeSend: createSafeSend(deps.getMainWindow),
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 		sessionsStore: deps.sessionsStore,
 	});
 	registerPersistenceHandlers({
@@ -218,6 +250,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,
@@ -292,8 +325,13 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
-	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	// Register notification handlers (OS notifications and TTS). The window
+	// registry getter lets a notification click focus the window that owns the
+	// completing agent rather than always the primary window (multi-window).
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		getWindowRegistry: deps.getWindowRegistry,
+	});
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,
@@ -315,6 +353,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	// Register Feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
@@ -328,6 +367,23 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register AgentRun control-plane handlers (neutral run/campaign ledger)
+	registerAgentRunHandlers({
+		getProcessManager: deps.getProcessManager,
+		settingsStore: deps.settingsStore,
+	});
+	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
+	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	// Register Browser Session handlers (clear per-partition browsing data)
+	registerBrowserSessionHandlers();
+	// Register multi-window handlers (windows:* channel surface). The registry
+	// and window manager are injected in main/index.ts at app-ready; default to
+	// null getters so the handlers compile and report "not initialized" until
+	// that wiring lands.
+	registerWindowsHandlers({
+		getWindowRegistry: deps.getWindowRegistry ?? (() => null),
+		getWindowManager: deps.getWindowManager ?? (() => null),
+	});
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

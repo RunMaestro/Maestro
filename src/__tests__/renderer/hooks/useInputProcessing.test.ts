@@ -1850,4 +1850,107 @@ describe('useInputProcessing', () => {
 			expect(updated.aiTabs[0].agentError).toBeUndefined();
 		});
 	});
+
+	// Cross-agent @mention dispatch. `onCrossAgentMentions` fires the consult and
+	// returns whether the SOURCE agent's own send should be suppressed (true when
+	// the message leads with an `@agent` mention, so only the consulted agent(s)
+	// answer). When suppressed the hook records the user's bubble but must not
+	// dispatch/spawn locally; otherwise the normal send proceeds unchanged.
+	describe('cross-agent @mention dispatch', () => {
+		it('suppresses the local send when the mention handler returns true', async () => {
+			const onCrossAgentMentions = vi.fn().mockReturnValue(true);
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@Backend does this look right?',
+				onCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// The consult fired with the message, source session, and its active tab.
+			expect(onCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onCrossAgentMentions).toHaveBeenCalledWith(
+				'@Backend does this look right?',
+				session,
+				session.activeTabId
+			);
+
+			// Local dispatch is suppressed: no spawn/write to the source agent.
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.write).not.toHaveBeenCalled();
+
+			// The user's bubble is still recorded (anchor for the streamed replies).
+			expect(mockSetSessions).toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			const logs = updated.aiTabs[0].logs;
+			const lastEntry = logs[logs.length - 1];
+			expect(lastEntry.source).toBe('user');
+			expect(lastEntry.text).toBe('@Backend does this look right?');
+			// And appended to command history for arrow-up recall.
+			expect(updated.aiCommandHistory).toContain('@Backend does this look right?');
+
+			// The bubble is mirrored to other windows.
+			expect(window.maestro.process.broadcastUserInput).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: session.id,
+					inputMode: 'ai',
+					entry: expect.objectContaining({ text: '@Backend does this look right?' }),
+				})
+			);
+
+			// The composer is cleared.
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('proceeds with the local send when the mention handler returns false', async () => {
+			// A trailing mention (`... to @Backend?`) does not suppress: the source
+			// agent answers too, so the normal spawn path must run.
+			const onCrossAgentMentions = vi.fn().mockReturnValue(false);
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: 'does this look right to @Backend?',
+				onCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onCrossAgentMentions).toHaveBeenCalledTimes(1);
+			// Not suppressed: the message dispatches to the source agent as usual.
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+
+		it('does not fire the consult on an override send (queued replay / force-send)', async () => {
+			// Cross-agent dispatch is gated on a real input-box submit
+			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
+			const onCrossAgentMentions = vi.fn().mockReturnValue(true);
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				onCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('@Backend replayed message');
+			});
+
+			expect(onCrossAgentMentions).not.toHaveBeenCalled();
+			// The override message dispatches normally (not suppressed).
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+	});
 });

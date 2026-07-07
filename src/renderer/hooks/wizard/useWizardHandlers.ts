@@ -1292,6 +1292,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
+				tabGroups: [],
+				activeGroupId: null,
 				autoRunFolderPath,
 				autoRunSelectedFile,
 				customPath,

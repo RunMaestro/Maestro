@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	getClaudeTokenMode,
 	toClaudeTokenModeSource,
+	getClaudeTokenSourceFields,
 	type ClaudeTokenMode,
 } from '../../shared/claudeTokenMode';
 
@@ -133,5 +134,64 @@ describe('round-trip', () => {
 		for (const mode of modes) {
 			expect(getClaudeTokenMode(toClaudeTokenModeSource(mode))).toBe(mode);
 		}
+	});
+});
+
+describe('getClaudeTokenSourceFields', () => {
+	// This extractor is the single source of truth every spawn surface that
+	// can't hydrate from the persisted session (tab naming, background synopsis)
+	// forwards. The contract: it always carries the COMPLETE triple so a Claude
+	// turn resolves the same provider the chat would - a partial forward is the
+	// bug class that silently downgrades Dynamic to TUI.
+	const KEYS = ['enableMaestroP', 'maestroPMode', 'maestroPPath'] as const;
+
+	it('carries all three fields verbatim for every mode', () => {
+		expect(
+			getClaudeTokenSourceFields({
+				enableMaestroP: true,
+				maestroPMode: 'dynamic',
+				maestroPPath: '/opt/maestro-p',
+			})
+		).toEqual({ enableMaestroP: true, maestroPMode: 'dynamic', maestroPPath: '/opt/maestro-p' });
+
+		expect(
+			getClaudeTokenSourceFields({ enableMaestroP: true, maestroPMode: 'interactive' })
+		).toEqual({ enableMaestroP: true, maestroPMode: 'interactive', maestroPPath: undefined });
+
+		expect(getClaudeTokenSourceFields({ enableMaestroP: false })).toEqual({
+			enableMaestroP: false,
+			maestroPMode: undefined,
+			maestroPPath: undefined,
+		});
+	});
+
+	it('preserves an explicit API opt-out (false must NOT collapse to undefined)', () => {
+		// An explicit `false` is "user picked API". If a forward dropped it to
+		// undefined, an SSH agent would revert to the interactive default.
+		const out = getClaudeTokenSourceFields({ enableMaestroP: false });
+		expect(out.enableMaestroP).toBe(false);
+	});
+
+	it('returns the full key set (never a partial) for null/undefined/empty input', () => {
+		for (const src of [null, undefined, {}]) {
+			const out = getClaudeTokenSourceFields(src);
+			expect(Object.keys(out).sort()).toEqual([...KEYS].sort());
+			expect(out).toEqual({
+				enableMaestroP: undefined,
+				maestroPMode: undefined,
+				maestroPPath: undefined,
+			});
+		}
+	});
+
+	it('ignores unrelated fields on the source object', () => {
+		const out = getClaudeTokenSourceFields({
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			// @ts-expect-error - extra session fields must not leak through
+			customModel: 'opus',
+			cwd: '/tmp',
+		});
+		expect(Object.keys(out).sort()).toEqual([...KEYS].sort());
 	});
 });

@@ -137,10 +137,12 @@ describe('HistoryPanel', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 
-		// Persisted filter selection (historyPanel.filters) lives in real
-		// localStorage - clear it so one test's filter toggle can't leak into
-		// the next test's initial render. Optional chaining: some jsdom
-		// environments stub localStorage without a working clear().
+		// Clear persisted history filters (localStorage) between tests. Filter
+		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without this, a test
+		// that deselects a type leaks the restrictive filter into every later
+		// test, hiding their entries and failing all entry-render assertions.
+		// Optional chaining: some jsdom environments stub localStorage without
+		// a working clear().
 		localStorage.clear?.();
 
 		// Reset uiStore state used by HistoryPanel

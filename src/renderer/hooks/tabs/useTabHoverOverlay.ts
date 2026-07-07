@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import { useClickOutside } from '../ui/useClickOutside';
 
 export interface OverlayPosition {
 	top: number;
@@ -28,6 +29,12 @@ export interface UseTabHoverOverlayReturn {
 	positionReady: boolean;
 	/** Combined ref callback — sets internal tabRef and calls parent registerRef */
 	setTabRef: (el: HTMLDivElement | null) => void;
+	/**
+	 * Open the overlay immediately (no hover delay), anchored to the tab.
+	 * Used by the touch path (tap an already-active tab) so tab actions are
+	 * reachable without a hover. Respects the same `shouldOpen` guard as hover.
+	 */
+	openOverlay: () => void;
 	handleMouseEnter: () => void;
 	handleMouseLeave: () => void;
 	/** onMouseEnter for the portal overlay div */
@@ -72,6 +79,47 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		};
 	}, []);
 
+	// Dismiss the hover overlay the instant any native drag begins. A tab drag
+	// (to tile or detach) never emits a mouseleave while it's in flight, so the
+	// 400ms-delayed overlay would otherwise stay open for the whole gesture. Worse,
+	// its z-[100] portal sits above the panel's z-30 tiling drop zones: releasing
+	// over the still-open menu lands the drop on a target that never preventDefaults
+	// dragover, so the browser cancels it and no tile commits. Closing on dragstart
+	// clears the menu and its pending open timer for every tab type at once.
+	useEffect(() => {
+		const dismissOnDragStart = () => {
+			if (hoverTimeoutRef.current) {
+				clearTimeout(hoverTimeoutRef.current);
+				hoverTimeoutRef.current = null;
+			}
+			isOverOverlayRef.current = false;
+			setOverlayOpen(false);
+			setIsHovered(false);
+		};
+		window.addEventListener('dragstart', dismissOnDragStart);
+		return () => window.removeEventListener('dragstart', dismissOnDragStart);
+	}, []);
+
+	// Position the overlay against the tab and open it now. Shared by the hover
+	// timeout (below) and the touch tap path (openOverlay).
+	const positionAndOpen = useCallback(() => {
+		if (tabRef.current) {
+			const rect = tabRef.current.getBoundingClientRect();
+			setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
+		}
+		setOverlayOpen(true);
+	}, []);
+
+	const openOverlay = useCallback(() => {
+		if (options?.shouldOpen && !options.shouldOpen()) return;
+		// Cancel any pending hover open/close timer so it doesn't fight the tap.
+		if (hoverTimeoutRef.current) {
+			clearTimeout(hoverTimeoutRef.current);
+			hoverTimeoutRef.current = null;
+		}
+		positionAndOpen();
+	}, [options?.shouldOpen, positionAndOpen]);
+
 	const handleMouseEnter = useCallback(() => {
 		setIsHovered(true);
 		if (options?.shouldOpen && !options.shouldOpen()) return;
@@ -81,13 +129,9 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 			hoverTimeoutRef.current = null;
 		}
 		hoverTimeoutRef.current = setTimeout(() => {
-			if (tabRef.current) {
-				const rect = tabRef.current.getBoundingClientRect();
-				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
-			}
-			setOverlayOpen(true);
+			positionAndOpen();
 		}, 400);
-	}, [options?.shouldOpen]);
+	}, [options?.shouldOpen, positionAndOpen]);
 
 	const handleMouseLeave = useCallback(() => {
 		setIsHovered(false);
@@ -115,6 +159,21 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		setOverlayOpen(false);
 		setIsHovered(false);
 	}, []);
+
+	// Close the overlay on a click/tap outside the tab and the overlay. Hover
+	// dismissal relies on mouseleave, but touch has no leave event, so an outside
+	// tap (which fires an emulated mousedown) is the dismiss path there. Excludes
+	// both refs so clicking an action inside the overlay does not close it early;
+	// `delay` avoids the opening tap immediately closing it.
+	useClickOutside(
+		[tabRef, overlayRef],
+		() => {
+			setOverlayOpen(false);
+			setIsHovered(false);
+		},
+		overlayOpen,
+		{ delay: true }
+	);
 
 	// Reset positionReady when overlay closes
 	useEffect(() => {
@@ -158,6 +217,7 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		}, []),
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,

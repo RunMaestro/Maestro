@@ -20,6 +20,7 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { EscCloseHint } from './ui/EscCloseHint';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -602,9 +603,13 @@ export function TabSwitcherModal({
 	});
 
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100">
+		<div
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
+			onClick={onClose}
+		>
 			<div
 				ref={resizableModal.modalRef}
+				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Tab Switcher"
@@ -652,12 +657,7 @@ export function TabSwitcherModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<div
-							className="px-2 py-0.5 rounded text-xs font-bold"
-							style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-						>
-							ESC
-						</div>
+						<EscCloseHint theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

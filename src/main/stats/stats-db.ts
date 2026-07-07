@@ -65,7 +65,12 @@ import {
 	getShortcutUsageTotal,
 	clearShortcutUsageCache,
 } from './shortcut-usage';
-import type { ShortcutUsageDay } from '../../shared/stats-types';
+import {
+	recordWindowOpened,
+	getMultiWindowUsage,
+	clearMultiWindowUsageCache,
+} from './multi-window-usage';
+import type { ShortcutUsageDay, MultiWindowUsage } from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
 
 /**
@@ -166,6 +171,7 @@ export class StatsDB {
 			clearSessionLifecycleCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
+			clearMultiWindowUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -815,6 +821,18 @@ export class StatsDB {
 
 	getShortcutUsageTotal(range: StatsTimeRange): number {
 		return getShortcutUsageTotal(this.database, range);
+	}
+
+	// ============================================================================
+	// Multi-Window Usage (delegated)
+	// ============================================================================
+
+	recordWindowOpened(openedAt: number, concurrentWindowCount: number): string {
+		return recordWindowOpened(this.database, openedAt, concurrentWindowCount);
+	}
+
+	getMultiWindowUsage(range: StatsTimeRange): MultiWindowUsage {
+		return getMultiWindowUsage(this.database, range);
 	}
 
 	// ============================================================================

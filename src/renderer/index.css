@@ -1180,6 +1180,103 @@ svg.wand-profiling-active path:nth-child(8) {
    ========================================== */
 
 /* ==========================================
+   Status Pill Container Queries
+   ==========================================
+   Progressive disclosure for the status pills docked above the input area
+   (ThinkingStatusPill, AutoRunPill). On narrow widths (phone viewports in the
+   web-desktop build, or a very narrow desktop window) the pill's fixed
+   segments can exceed the row and push the Stop button off-screen. Drop
+   non-essential segments in order so the pill stays on ONE line and Stop is
+   always reachable:
+     1. Claude session ID / tab name link (still in the tooltip)
+     2. Tokens / "Thinking..." segment (the pulsing dot already conveys busy)
+     3. label words ("Elapsed:", "Tasks:", "Goal:", iteration counter)
+   Each segment carries its own leading divider, so hiding one never leaves a
+   double divider behind. */
+.status-pill-container {
+	container-type: inline-size;
+	container-name: statuspill;
+}
+
+@container statuspill (max-width: 480px) {
+	.pill-seg-claude-id {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 400px) {
+	.pill-seg-tokens {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 340px) {
+	.pill-label {
+		display: none;
+	}
+}
+
+/* ==========================================
+   End Status Pill Container Queries
+   ========================================== */
+
+/* ==========================================
+   File Explorer Stats Bar Container Queries
+   ==========================================
+   The stats bar at the bottom of the Files panel ("3,356 files, 398 folders /
+   Size: 111 MB") must never wrap to a second line. When the panel is narrow
+   (phone drawer, or a slim desktop Right Bar) swap the label words for icons:
+   the numbers keep their meaning via the leading FileText/Folder/HardDrive
+   icon and each segment's title tooltip. */
+.file-stats-container {
+	container-type: inline-size;
+	container-name: filestats;
+}
+
+/* Icons are hidden while the text labels fit */
+.file-stats-icon {
+	display: none;
+}
+
+@container filestats (max-width: 340px) {
+	.file-stats-label {
+		display: none;
+	}
+	.file-stats-icon {
+		display: inline-block;
+	}
+}
+
+/* ==========================================
+   History Detail Modal - phone layout
+   ==========================================
+   At the xs breakpoint the centered dialog is too cramped: consume the whole
+   viewport instead (no border/rounding, full dvh so the virtual keyboard and
+   browser chrome are respected), tighten footer padding, and collapse the
+   Delete/Prev/Next button labels to their icons so every control stays
+   on-screen. data-bp is set by useViewportBreakpoint on <html>. */
+:root[data-bp='xs'] .history-detail-modal {
+	/* !important: the modal is resizable and sets width/height/max-width/
+	   max-height inline (higher specificity than any class selector), which
+	   would otherwise silently defeat this phone breakpoint override. */
+	width: 100vw !important;
+	max-width: 100vw !important;
+	height: 100dvh !important;
+	max-height: 100dvh !important;
+	border-radius: 0;
+	border-width: 0;
+}
+
+:root[data-bp='xs'] .history-detail-modal .hdm-footer {
+	padding-left: 0.75rem;
+	padding-right: 0.75rem;
+}
+
+:root[data-bp='xs'] .history-detail-modal .hdm-btn-label {
+	display: none;
+}
+
+/* ==========================================
    Sidebar Parent-Child Tree Connectors
    ==========================================
    Visually links a parent agent in the sidebar to its expanded worktree
@@ -1387,6 +1484,19 @@ svg.wand-profiling-active path:nth-child(8) {
 	box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
 }
 
+/*
+ * Left sidebar collapsed strip on phones (web-desktop only): the 64px
+ * status-dot strip would permanently eat a sixth of a 390px viewport, so hide
+ * it entirely at xs. The hamburger in MainPanelHeader still reopens the sidebar
+ * (it flips data-collapsed to 'false', which floats the drawer via the rule
+ * above). Scoped to web-desktop so a narrow Electron desktop window keeps its
+ * strip; scoped to xs so the sm breakpoint keeps the inline strip too.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='true'][data-hidden='false'] {
+	display: none !important;
+}
+
 :root[data-bp='xs'] [data-panel='right'],
 :root[data-bp='sm'] [data-panel='right'] {
 	position: fixed !important;
@@ -1417,11 +1527,189 @@ svg.wand-profiling-active path:nth-child(8) {
 	animation: maestro-fade-in 150ms ease;
 }
 
+/*
+ * Edge-swipe opener zones. Thin (24px) invisible strips pinned to the left and
+ * right screen edges that host the drawer-opening swipe handlers (App.tsx). They
+ * only exist while no drawer is open. `touch-action: pan-y` lets vertical page
+ * scrolling that starts in the strip still happen natively while horizontal
+ * swipes are handled (and preventDefault'd) by useSwipeGestures. Sitting only at
+ * the edges is what keeps center-content horizontal scrolling (terminal, tab
+ * bar, tables) free of drawer gestures.
+ *
+ * They start below the 4rem header (`top: 4rem`) rather than the very top so the
+ * strip never overlaps the header hamburger / panel toggle - at xs/sm the header
+ * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
+ * full-height strip (which paints above the z-20 header) would swallow their
+ * taps. Edge swipes start in the body, which is the whole point.
+ */
+.maestro-edge-swipe-zone {
+	position: fixed;
+	top: 4rem;
+	bottom: 0;
+	width: 24px;
+	z-index: 35;
+	touch-action: pan-y;
+}
+.maestro-edge-swipe-zone--left {
+	left: 0;
+}
+.maestro-edge-swipe-zone--right {
+	right: 0;
+}
+
 @keyframes maestro-fade-in {
 	from {
 		opacity: 0;
 	}
 	to {
 		opacity: 1;
+	}
+}
+
+/*
+ * ============================================================================
+ * Web-desktop mobile groundwork
+ * ============================================================================
+ * Touch/PWA hardening ported from the legacy mobile app (src/web/index.css
+ * ~lines 147-260). Every rule below is scoped under
+ * html[data-runtime='web-desktop'] (the attribute set by
+ * src/web-desktop/bootstrap.ts) so the native Electron desktop app - which
+ * loads this same stylesheet but never sets data-runtime - is unaffected.
+ * Additive only; no existing rule is modified.
+ */
+
+/*
+ * Kill the iOS Safari 300ms double-tap zoom on tappable surfaces. Harmless on
+ * desktop browsers (no double-tap gesture there).
+ */
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] button,
+html[data-runtime='web-desktop'] a {
+	touch-action: manipulation;
+}
+
+/*
+ * Prevent accidental browser pull-to-refresh / overscroll chaining on the
+ * scroll root. `contain` stops the gesture at the app boundary without
+ * disabling normal scrolling inside it.
+ */
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	overscroll-behavior-y: contain;
+}
+
+/*
+ * Lift the app shell above the on-screen keyboard. App.tsx sets
+ * `--keyboard-offset` (from useKeyboardVisibility, Visual Viewport API) to the
+ * pixel height the virtual keyboard eats. Because the shell is box-sizing:
+ * border-box with height:100dvh, adding that to the bottom padding shrinks the
+ * content box so the flex column re-lays with the AI input and send controls
+ * sitting just above the keyboard. Defaults to 0px (no keyboard visible, or the
+ * Visual Viewport API is unavailable), so this is inert until a keyboard
+ * appears. Scoped to web-desktop so the native Electron app keeps its plain
+ * safe-area padding.
+ */
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+
+/*
+ * Smooth momentum scrolling on scrollable containers (Tailwind overflow
+ * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
+ * silently ignored everywhere else.
+ */
+html[data-runtime='web-desktop'] .overflow-auto,
+html[data-runtime='web-desktop'] .overflow-y-auto,
+html[data-runtime='web-desktop'] .overflow-scroll,
+html[data-runtime='web-desktop'] .overflow-y-scroll {
+	-webkit-overflow-scrolling: touch;
+}
+
+/*
+ * iOS rubber-band fix. `@supports (-webkit-touch-callout: none)` matches iOS
+ * Safari only (desktop Safari and other browsers do not support the property),
+ * so this never fires on a laptop web-desktop client. Pin the body so the page
+ * itself cannot rubber-band, and hand scrolling to the app shell as the scroll
+ * container. Mirrors src/web/index.css ~lines 194-208.
+ */
+@supports (-webkit-touch-callout: none) {
+	html[data-runtime='web-desktop'] body {
+		position: fixed;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+	}
+
+	html[data-runtime='web-desktop'] .maestro-app-shell {
+		overflow: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+}
+
+/*
+ * Prevent iOS Safari auto-zoom on input focus at phone breakpoints. iOS zooms
+ * the page whenever a focused form control has font-size < 16px; the renderer's
+ * inputs are text-sm (14px). Force 16px only at xs/sm inside web-desktop so the
+ * zoom never triggers, without touching the components' Tailwind classes or the
+ * native desktop app. `!important` guarantees the 16px floor regardless of
+ * utility-class specificity; line-height keeps the taller text readable.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] textarea,
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='xs'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='xs'] select,
+html[data-runtime='web-desktop'][data-bp='sm'] textarea,
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='sm'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='sm'] select {
+	font-size: 16px !important;
+	line-height: 1.4;
+}
+
+/*
+ * Reveal hover-only row actions on coarse (touch) pointers.
+ *
+ * ~17 components hide their row / header controls behind Tailwind's
+ * `opacity-0 group-hover:opacity-100` pattern. There is no hover on touch, so
+ * those controls (delete, copy, worktree, etc.) are invisible and unreachable
+ * on a phone. Tailwind emits the variant name verbatim in the class attribute,
+ * so an attribute-contains selector matches every one of them at once.
+ *
+ * This is a DELIBERATE blanket rule: rather than touch 17 files, force the
+ * revealed state whenever the primary pointer is coarse. It is gated on
+ * `(pointer: coarse)` (not the web-desktop runtime) so a touchscreen laptop
+ * running the native app benefits too, while mouse users are unaffected.
+ * `!important` guarantees the reveal regardless of utility-class source order.
+ * A component that later wants a bespoke touch affordance can override this
+ * with a more specific rule.
+ */
+@media (pointer: coarse) {
+	[class*='group-hover:opacity-100'] {
+		opacity: 1 !important;
+	}
+}
+
+/*
+ * Panel resize handles (left sidebar, right panel, group-chat panel).
+ *
+ * `touch-action: none` tells the browser NOT to treat a drag on the handle as a
+ * scroll / pan, so the pointer-events drag in useResizablePanel gets the whole
+ * gesture on touch. On coarse pointers the visible handle (a thin ~12px line)
+ * is too small to grab with a finger, so a transparent ::before extends the hit
+ * area outward on both sides without changing the handle's appearance.
+ */
+.resize-handle {
+	touch-action: none;
+}
+@media (pointer: coarse) {
+	.resize-handle::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -10px;
+		right: -10px;
 	}
 }

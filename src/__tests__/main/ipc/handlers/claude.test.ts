@@ -41,6 +41,15 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the web-desktop bridge fanout. Stats updates now route through
+// safeSend, which always broadcasts to bridge clients even when the desktop
+// window is unavailable. Mocking it lets us assert web clients receive the
+// event without a live Electron renderer.
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: vi.fn(),
+}));
+import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
+
 // Mock fs/promises
 vi.mock('fs/promises', () => ({
 	default: {
@@ -223,6 +232,59 @@ describe('Claude IPC handlers', () => {
 
 			// Verify total count matches - ensures no handlers are added without updating this test
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('web-desktop bridge fanout', () => {
+		it('should route claude:projectStatsUpdate to bridge clients even with no desktop window', async () => {
+			// mockGetMainWindow returns null in this suite, so only the bridge
+			// path can deliver the progressive stats update. Before the safeSend
+			// migration a null window starved web-desktop clients entirely.
+			const fs = await import('fs/promises');
+			const { loadStatsCache } = await import('../../../../main/utils/statsCache');
+
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(['sess1.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.default.readdir>
+			>);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 100,
+				mtimeMs: 1000,
+				mtime: new Date('2024-01-15T10:00:00Z'),
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			// A cached, unchanged session keeps the reparse list empty so the
+			// handler emits a single immediate progressive update from cache.
+			vi.mocked(loadStatsCache).mockResolvedValue({
+				version: 1,
+				sessions: {
+					sess1: {
+						messages: 5,
+						inputTokens: 100,
+						outputTokens: 100,
+						costUsd: 0.1,
+						sizeBytes: 100,
+						tokens: 200,
+						oldestTimestamp: '2024-01-01T00:00:00Z',
+						fileMtimeMs: 1000,
+						archived: false,
+					},
+				},
+				totals: {
+					totalSessions: 1,
+					totalMessages: 5,
+					totalCostUsd: 0.1,
+					totalSizeBytes: 100,
+					totalTokens: 200,
+					oldestTimestamp: '2024-01-01T00:00:00Z',
+				},
+				lastUpdated: 0,
+			} as never);
+
+			const handler = handlers.get('claude:getProjectStats');
+			await handler!({} as any, '/test/project');
+
+			const channels = vi.mocked(broadcastBridgeEvent).mock.calls.map((c) => c[0]);
+			expect(channels).toContain('claude:projectStatsUpdate');
 		});
 	});
 

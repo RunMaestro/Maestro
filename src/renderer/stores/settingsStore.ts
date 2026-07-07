@@ -15,6 +15,7 @@
  */
 
 import { create } from 'zustand';
+import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
 	LLMProvider,
@@ -214,6 +215,8 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	usageStats: true,
 	symphony: true,
 	maestroCue: false,
+	pianola: false,
+	plugins: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
@@ -411,6 +414,10 @@ export interface SettingsStoreState {
 	userMessageAlignment: 'left' | 'right';
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
+	coworkingBrowserInteraction: string[];
+	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	coworkingBackgroundBrowsers: boolean;
+	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
 	wakatimeEnabled: boolean;
@@ -558,6 +565,10 @@ export interface SettingsStoreActions {
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
+	setCoworkingBrowserInteraction: (value: string[]) => void;
+	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	setCoworkingBackgroundBrowsers: (value: boolean) => void;
+	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
 	setWakatimeEnabled: (value: boolean) => void;
@@ -783,6 +794,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		userMessageAlignment: 'right',
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
+		coworkingBrowserInteraction: [],
+		coworkingBrowserInteractionConfirm: {},
+		coworkingBackgroundBrowsers: false,
+		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
@@ -1433,6 +1448,26 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setSymphonyRegistryUrls: (value) => {
 			set({ symphonyRegistryUrls: value });
 			window.maestro.settings.set('symphonyRegistryUrls', value);
+		},
+
+		setCoworkingBrowserInteraction: (value) => {
+			set({ coworkingBrowserInteraction: value });
+			window.maestro.settings.set('coworkingBrowserInteraction', value);
+		},
+
+		setCoworkingBrowserInteractionConfirm: (value) => {
+			set({ coworkingBrowserInteractionConfirm: value });
+			window.maestro.settings.set('coworkingBrowserInteractionConfirm', value);
+		},
+
+		setCoworkingBackgroundBrowsers: (value) => {
+			set({ coworkingBackgroundBrowsers: value });
+			window.maestro.settings.set('coworkingBackgroundBrowsers', value);
+		},
+		setCoworkingBackgroundBrowsersLimit: (value) => {
+			const clamped = Math.min(10, Math.max(1, Math.floor(value) || 1));
+			set({ coworkingBackgroundBrowsersLimit: clamped });
+			window.maestro.settings.set('coworkingBackgroundBrowsersLimit', clamped);
 		},
 
 		setDirectorNotesSettings: (value) => {
@@ -2791,6 +2826,38 @@ export async function loadAllSettings(): Promise<void> {
 			patch.symphonyRegistryUrls = (allSettings['symphonyRegistryUrls'] as unknown[])
 				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
 				.map((v) => v.trim());
+		}
+
+		// Coworking browser interaction (agent ids allowed to use browser tools)
+		if (Array.isArray(allSettings['coworkingBrowserInteraction'])) {
+			patch.coworkingBrowserInteraction = (allSettings['coworkingBrowserInteraction'] as unknown[])
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim());
+		}
+
+		// Coworking browser interaction per-call confirm policy (per agent id).
+		const rawConfirm = allSettings['coworkingBrowserInteractionConfirm'];
+		if (rawConfirm && typeof rawConfirm === 'object' && !Array.isArray(rawConfirm)) {
+			const out: Record<string, BrowserConfirmPolicy> = {};
+			for (const [agentId, policy] of Object.entries(rawConfirm)) {
+				if (policy === 'off' || policy === 'dangerous' || policy === 'all') {
+					out[agentId] = policy;
+				}
+			}
+			patch.coworkingBrowserInteractionConfirm = out;
+		}
+
+		if (typeof allSettings['coworkingBackgroundBrowsers'] === 'boolean') {
+			patch.coworkingBackgroundBrowsers = allSettings['coworkingBackgroundBrowsers'];
+		}
+		if (
+			typeof allSettings['coworkingBackgroundBrowsersLimit'] === 'number' &&
+			Number.isFinite(allSettings['coworkingBackgroundBrowsersLimit'])
+		) {
+			patch.coworkingBackgroundBrowsersLimit = Math.min(
+				10,
+				Math.max(1, Math.floor(allSettings['coworkingBackgroundBrowsersLimit']) || 1)
+			);
 		}
 
 		// Director's Notes settings (merge with defaults to preserve new fields)

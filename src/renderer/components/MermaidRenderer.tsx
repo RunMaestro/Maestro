@@ -399,10 +399,14 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 	// We depend on isLoading to ensure we re-run once the container div is actually rendered
 	useLayoutEffect(() => {
 		if (containerRef.current && svgContent) {
-			// Parse sanitized SVG and append to container
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(svgContent, 'image/svg+xml');
-			const svgElement = doc.documentElement;
+			// Parse the sanitized SVG as HTML rather than image/svg+xml. Mermaid's
+			// output targets the browser's lenient HTML parser: some diagrams (e.g.
+			// C4) emit <image xlink:href> without declaring the xmlns:xlink
+			// namespace on the root <svg>, which a strict XML parse rejects,
+			// leaving the diagram blank. The DOMPurify pass above is the security
+			// boundary; parsing here only needs to reconstruct the DOM.
+			const doc = new DOMParser().parseFromString(svgContent, 'text/html');
+			const svgElement = doc.body.querySelector('svg');
 
 			// Clear existing content
 			while (containerRef.current.firstChild) {
@@ -410,7 +414,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 			}
 
 			// Append new SVG
-			if (svgElement && svgElement.tagName === 'svg') {
+			if (svgElement) {
 				containerRef.current.appendChild(document.importNode(svgElement, true));
 			}
 		}

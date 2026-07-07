@@ -2,31 +2,35 @@ import type React from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Theme } from '../../../types';
 import type { QuickActionMode } from '../types';
+import { EscCloseHint } from '../../ui/EscCloseHint';
 
 interface QuickActionsSearchBarProps {
 	theme: Theme;
 	mode: QuickActionMode;
 	activeSession: Session | undefined;
-	renamingSession: boolean;
+	/** True while an inline rename (session or window) is active - shows the rename input. */
+	renaming: boolean;
 	search: string;
 	setSearch: (value: string) => void;
 	renameValue: string;
 	setRenameValue: (value: string) => void;
 	inputRef: React.Ref<HTMLInputElement>;
 	onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+	onClose: () => void;
 }
 
 export function QuickActionsSearchBar({
 	theme,
 	mode,
 	activeSession,
-	renamingSession,
+	renaming,
 	search,
 	setSearch,
 	renameValue,
 	setRenameValue,
 	inputRef,
 	onKeyDown,
+	onClose,
 }: QuickActionsSearchBarProps) {
 	return (
 		<div
@@ -34,7 +38,7 @@ export function QuickActionsSearchBar({
 			style={{ borderColor: theme.colors.border }}
 		>
 			<Search className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-			{renamingSession ? (
+			{renaming ? (
 				<input
 					ref={inputRef}
 					className="flex-1 bg-transparent outline-none text-lg"
@@ -62,12 +66,7 @@ export function QuickActionsSearchBar({
 					onKeyDown={onKeyDown}
 				/>
 			)}
-			<div
-				className="px-2 py-0.5 rounded text-xs font-bold"
-				style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-			>
-				ESC
-			</div>
+			<EscCloseHint theme={theme} onClose={onClose} />
 		</div>
 	);
 }

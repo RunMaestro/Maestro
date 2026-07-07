@@ -100,11 +100,11 @@ Shape rules:
 This synopsis renders in Maestro's full markdown surface, not a plain terminal. You have real visual tools available - reach for them when they communicate better than prose, but never for decoration. Default to prose and bullets; add a visual only when it earns its place.
 
 - **Markdown tables** - use for anything naturally tabular: per-agent activity counts, failure tallies, before/after comparisons, status matrices. A table beats a long nested list when every row shares the same columns.
-- **Mermaid diagrams** - a ` ```mermaid ` fenced block renders as a live diagram. Use for workflows, dependency chains, state transitions, or timelines that are clearer as a picture than a paragraph. Flowchart, sequence, state, and gantt all render.
+- **Mermaid diagrams** - a ` ```mermaid ` fenced block renders as a live diagram. Use for workflows, dependency chains, state transitions, or timelines that are clearer as a picture than a paragraph. The full type range renders - pick the shape that fits: `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram`, `journey`, `gantt`, `pie`, `quadrantChart`, `requirementDiagram`, `gitGraph`, `C4Context`, `mindmap`, `timeline`, `sankey-beta`, `xychart-beta`, `block-beta`, `packet-beta`, `kanban`, `architecture-beta`.
 - **LaTeX math (KaTeX)** - display math via `$$ ... $$` on its own line; inline math via `\( ... \)`. Do NOT use single `$...$` (it renders literally, so `$5` stays `$5`). Use only when a real formula or metric expression is the point (throughput, ratios, percentages as expressions).
 - **GitHub alert callouts** - a blockquote whose first line is `> [!NOTE]` (or `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) renders as a colored callout. Use sparingly to flag a genuine blocker, risk, or standout win - not for every bullet.
 - **Links** - link to files, PRs, or issues when a concrete reference helps the reader jump to the source.
-- **Inline SVG** - a raw `<svg>...</svg>` block renders inline (sanitized). Reserve it for a small custom visual that Mermaid and tables genuinely cannot express; prefer the higher-level tools first.
+- **Inline SVG** - a raw `<svg>...</svg>` block renders inline (sanitized). Reserve it for a small custom visual that Mermaid and tables genuinely cannot express; prefer the higher-level tools first. Keep the whole thing contiguous: **no blank lines between `<svg>` and `</svg>`**, or the parser closes the HTML block at the first empty line and the SVG breaks (part renders incomplete, the rest shows as a code block).
 
 Restraint is the rule: a synopsis that is mostly clean prose with one well-chosen table or diagram reads far better than one crowded with visuals.
 

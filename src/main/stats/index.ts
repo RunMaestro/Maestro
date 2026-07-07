@@ -35,6 +35,12 @@ export { StatsDB } from './stats-db';
 // ============ Singleton & Lifecycle ============
 export { getStatsDB, initializeStatsDB, closeStatsDB } from './singleton';
 
+// ============ Multi-Window Telemetry ============
+export {
+	wireMultiWindowTelemetry,
+	type MultiWindowTelemetryDependencies,
+} from './multi-window-telemetry';
+
 // ============ Performance Metrics API ============
 export {
 	setPerformanceLoggingEnabled,

@@ -37,7 +37,7 @@ export function AgentGrid({
 			<p className="text-sm" style={{ color: theme.colors.textDim }}>
 				Select the provider that will power your agent.
 			</p>
-			<div className="grid grid-cols-6 gap-4 max-w-3xl">
+			<div className="grid grid-cols-8 gap-4 max-w-5xl">
 				{tiles.map((tile, index) => {
 					const isDetected = isAgentAvailable(detectedAgents, tile.id);
 					return (

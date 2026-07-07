@@ -15,6 +15,7 @@ import {
 	Bookmark,
 	Brain,
 	Menu,
+	Command,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
@@ -24,6 +25,9 @@ import { GitStatusWidget } from '../GitStatusWidget';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
+import { getModalActions } from '../../stores/modalStore';
+import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
@@ -35,6 +39,7 @@ import {
 	useResolvedClaudeConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -101,6 +106,14 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
+	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
+	const { isXs, isNarrow } = useViewportBreakpoint();
+	// On web-desktop phones the collapsed 64px strip is hidden entirely (see
+	// index.css), so the collapsed sidebar has no visible affordance to reopen
+	// it. Surface the inline hamburger in that case too - not just when the
+	// sidebar is fully hidden. On the Electron desktop app isWebDesktop() is
+	// false, so this reduces to the original leftSidebarHidden-only behavior.
+	const showSidebarOpener = leftSidebarHidden || (isWebDesktop() && isXs && !leftSidebarOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
 	// Code session — the source account is always derivable from session env
@@ -129,10 +142,12 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			data-tour="header-controls"
 		>
 			<div className="flex items-center gap-4 min-w-0 overflow-hidden">
-				{/* Inline hamburger — appears only when the left sidebar is fully
-				    hidden. Renders INSIDE the header row so it shifts content
-				    rightward instead of floating over the session name. */}
-				{leftSidebarHidden && (
+				{/* Inline hamburger - appears when the left sidebar is fully hidden,
+				    or (on web-desktop phones) when it is collapsed, since the 64px
+				    collapsed strip is hidden there. Renders INSIDE the header row
+				    so it shifts content rightward instead of floating over the
+				    session name. */}
+				{showSidebarOpener && (
 					<button
 						type="button"
 						onClick={() => {
@@ -161,7 +176,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						/>
 					)}
 					<div
-						className="relative shrink-0"
+						className="relative shrink-0 flex items-center gap-2"
 						onMouseEnter={
 							activeSession.isGitRepo ? gitTooltip.triggerHandlers.onMouseEnter : undefined
 						}
@@ -169,7 +184,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						onFocus={activeSession.isGitRepo ? gitTooltip.triggerHandlers.onMouseEnter : undefined}
 						onBlur={gitTooltip.triggerHandlers.onMouseLeave}
 					>
-						{/* SSH Host Pill - show SSH remote name when running remotely (replaces GIT/LOCAL badge) */}
+						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
+						    GIT/LOCAL badge). For git repos the branch name is rendered in a separate
+						    badge just after this pill (see below) so SSH/container agents still surface
+						    the branch the same way local agents do. */}
 						{activeSession.sessionSshRemoteConfig?.enabled && sshRemoteName ? (
 							<button
 								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] outline-none ${
@@ -216,6 +234,29 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								)}
 							</button>
 						)}
+						{/* Branch badge for SSH/container git agents. The SSH host pill above
+						    replaces the GIT/branch badge, so without this remote agents lose the
+						    branch name that local agents show. Render it alongside the host pill,
+						    styled like the local git badge, reusing the same git-log click. */}
+						{activeSession.sessionSshRemoteConfig?.enabled &&
+							sshRemoteName &&
+							activeSession.isGitRepo && (
+								<button
+									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer outline-none"
+									title={gitInfo?.branch || undefined}
+									onClick={(e) => {
+										e.stopPropagation();
+										refreshGitStatus(); // Refresh git info immediately on click
+										setGitLogOpen?.(true);
+									}}
+								>
+									<GitBranch className="w-3 h-3 shrink-0" />
+									{/* Hide branch name text at narrow widths via CSS container query */}
+									<span className="header-git-branch-text truncate">
+										{gitInfo?.branch || 'GIT'}
+									</span>
+								</button>
+							)}
 						{activeSession.isGitRepo && gitTooltip.isOpen && gitInfo && (
 							<>
 								{/* Invisible bridge to prevent hover gap */}
@@ -778,6 +819,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						</div>
 					)}
 
+				<PluginUiItemsSlot surface="toolbar" />
+
 				{/* Memory Viewer Button - only show if agent maintains per-project memory */}
 				{hasCapability('supportsProjectMemory') && (
 					<button
@@ -802,6 +845,20 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						data-tour="agent-sessions-button"
 					>
 						<List className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+					</button>
+				)}
+
+				{/* Quick Actions / command palette opener. Cmd+K is keyboard-only, so
+				    surface a tap target on narrow (phone / small tablet) viewports where
+				    there is no keyboard. Hidden on wide layouts, where Cmd+K suffices. */}
+				{isNarrow && (
+					<button
+						onClick={() => getModalActions().setQuickActionOpen(true)}
+						className="p-2 rounded hover:bg-white/5"
+						aria-label="Quick Actions"
+						title={`Quick Actions (${formatShortcutKeys(shortcuts.quickAction.keys)})`}
+					>
+						<Command className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</button>
 				)}
 

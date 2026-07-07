@@ -71,6 +71,14 @@ export interface UseStarredItemsDeps {
 	) => Promise<boolean>;
 	/** Confirmation dialog used to offer removing an aged-out star. */
 	showConfirmation?: (message: string, onConfirm: () => void | Promise<void>) => void;
+	/**
+	 * Multi-window: restrict the Starred section to agents THIS window owns, keyed
+	 * on each item's `parentSessionId` (the owning agent). So each window's Starred
+	 * list - and the Cmd+[/] cycling that shares this list - reflects only the
+	 * agents visible in it. Omitted / returns true outside a WindowProvider
+	 * (single-window app, web, isolation tests), leaving the list unscoped.
+	 */
+	ownsSession?: (sessionId: string) => boolean;
 }
 
 export interface UseStarredItemsReturn {
@@ -85,7 +93,7 @@ export interface UseStarredItemsReturn {
 // ============================================================================
 
 export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsReturn {
-	const { onJumpToStarredSession, showConfirmation } = deps;
+	const { onJumpToStarredSession, showConfirmation, ownsSession } = deps;
 
 	const sessions = useSessionStore((s) => s.sessions);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
@@ -180,9 +188,13 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 				sessionName: closed.sessionName,
 			});
 		}
-		items.sort((a, b) => a.displayName.localeCompare(b.displayName));
-		return items;
-	}, [showStarredSessionsSection, sessions, starredNamedSessions]);
+		// Multi-window: keep only starred rows whose owning agent (parentSessionId)
+		// belongs to this window. `ownsSession` is null-safe true outside a
+		// WindowProvider, so the single-window list is unchanged.
+		const scoped = ownsSession ? items.filter((i) => ownsSession(i.parentSessionId)) : items;
+		scoped.sort((a, b) => a.displayName.localeCompare(b.displayName));
+		return scoped;
+	}, [showStarredSessionsSection, sessions, starredNamedSessions, ownsSession]);
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {

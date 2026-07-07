@@ -7,8 +7,16 @@ import {
 } from '../../../../renderer/components/MainPanel/BrowserTabView';
 import type { BrowserTab, Theme } from '../../../../renderer/types';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPersistence';
+import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+
+// Default to desktop (Electron) behavior; individual tests flip this to true to
+// exercise the web-desktop browser bundle branch.
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+	isElectronDesktop: vi.fn(() => true),
+}));
 
 const mockTab: BrowserTab = {
 	id: 'browser-1',
@@ -38,11 +46,13 @@ type MockWebview = HTMLElement & {
 	executeJavaScript: ReturnType<typeof vi.fn>;
 	findInPage?: ReturnType<typeof vi.fn>;
 	stopFindInPage?: ReturnType<typeof vi.fn>;
+	reload?: ReturnType<typeof vi.fn>;
 };
 
 describe('BrowserTabView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		vi.stubGlobal('ResizeObserver', MockResizeObserver);
 	});
 
@@ -149,11 +159,15 @@ describe('BrowserTabView', () => {
 		});
 
 		await waitFor(() => {
+			// While a navigation is in flight the URL and loading flag update, but the
+			// last known page title is intentionally preserved (mockTab.title === 'Example')
+			// rather than clobbered with the bare URL host. Without this, a cold reload of a
+			// grouped browser pane would blank the tab label until page-title-updated re-fires.
 			expect(onUpdateTab).toHaveBeenCalledWith(
 				'browser-1',
 				expect.objectContaining({
 					url: 'https://example.com/start',
-					title: 'example.com',
+					title: 'Example',
 					isLoading: true,
 					favicon: null,
 				})
@@ -162,7 +176,7 @@ describe('BrowserTabView', () => {
 				'browser-1',
 				expect.objectContaining({
 					url: 'https://redirected.example.com/docs',
-					title: 'redirected.example.com',
+					title: 'Example',
 					isLoading: true,
 					favicon: null,
 				})
@@ -580,6 +594,67 @@ describe('BrowserTabView', () => {
 		});
 	});
 
+	describe('imperative handle: read waits for the page to finish loading', () => {
+		it('does not sample the DOM until isLoading() flips false, then resolves with the page text', async () => {
+			vi.useFakeTimers();
+			try {
+				const ref = React.createRef<BrowserTabViewHandle>();
+				render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				const webview = getWebview();
+				// The guest reports it is still loading; the read must wait it out.
+				let loading = true;
+				webview.canGoBack = vi.fn(() => false);
+				webview.canGoForward = vi.fn(() => false);
+				webview.getURL = vi.fn(() => mockTab.url);
+				webview.getTitle = vi.fn(() => mockTab.title ?? '');
+				webview.isLoading = vi.fn(() => loading);
+				webview.getWebContentsId = vi.fn(() => 1);
+				webview.executeJavaScript = vi.fn().mockResolvedValue('PAGE-TEXT-SENTINEL');
+				// The exact expression the extractor injects for 'text' format. The
+				// component ALSO calls executeJavaScript on dom-ready to install a
+				// scroll listener, so match this specific probe rather than call count.
+				const EXTRACT_TEXT_EXPR = '(document.body && document.body.innerText) || ""';
+
+				// dom-ready sets isDomReadyRef so the ONLY remaining gate is isLoading.
+				await act(async () => {
+					webview.dispatchEvent(new Event('dom-ready'));
+				});
+
+				// Kick off the read; capture its resolution without awaiting so we can
+				// assert it stays pending while the page is still loading.
+				let resolved: string | undefined;
+				const read = ref.current!.extract('text').then((v) => {
+					resolved = v;
+				});
+
+				// Advance past the 150ms lead delay and several 50ms not-loading polls
+				// while isLoading() is still true. The DOM sample (executeJavaScript)
+				// must NOT fire and the read must NOT resolve.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(webview.isLoading).toHaveBeenCalled();
+				expect(webview.executeJavaScript).not.toHaveBeenCalledWith(EXTRACT_TEXT_EXPR);
+				expect(resolved).toBeUndefined();
+
+				// The guest finishes loading.
+				loading = false;
+
+				// Advance through the remaining poll, the 300ms post-load settle, and
+				// the second not-loading check. Now the extraction runs and resolves.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+				await read;
+				expect(webview.executeJavaScript).toHaveBeenCalledWith(EXTRACT_TEXT_EXPR);
+				expect(resolved).toBe('PAGE-TEXT-SENTINEL');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
 	describe('find in page (Cmd+F)', () => {
 		it('mounts the find bar, runs findInPage on query, and stops on Escape', async () => {
 			const ref = React.createRef<BrowserTabViewHandle>();
@@ -740,6 +815,382 @@ describe('BrowserTabView', () => {
 				webview.dispatchEvent(fresh);
 			});
 			expect(bar.textContent).toContain('1/3');
+		});
+	});
+
+	describe('clear browsing data + incognito badge', () => {
+		interface BrowserSessionApi {
+			clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
+		}
+		// The global window.maestro test mock does not carry browserSession; these
+		// tests install/remove it per-case through a mutable view.
+		const maestroMutable = window.maestro as unknown as { browserSession?: BrowserSessionApi };
+
+		afterEach(() => {
+			delete maestroMutable.browserSession;
+		});
+
+		it('shows the incognito badge only for ephemeral tabs', () => {
+			const { rerender } = render(
+				<BrowserTabView
+					tab={{ ...mockTab, ephemeral: true }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+			expect(screen.getByTestId('browser-tab-incognito-badge')).toBeInTheDocument();
+			rerender(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			expect(screen.queryByTestId('browser-tab-incognito-badge')).toBeNull();
+		});
+
+		it('clears browsing data only on the armed second click, then reloads', async () => {
+			const clearSessionData = vi.fn(async () => ({ ok: true }));
+			maestroMutable.browserSession = { clearSessionData };
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const webview = getWebview();
+			const reload = vi.fn();
+			webview.reload = reload;
+
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			// First click only arms: nothing destructive may happen yet.
+			fireEvent.click(button);
+			expect(clearSessionData).not.toHaveBeenCalled();
+			expect(button).toHaveAttribute('aria-pressed', 'true');
+
+			// Second click clears THIS tab's partition and reloads on success.
+			fireEvent.click(button);
+			await waitFor(() => {
+				expect(clearSessionData).toHaveBeenCalledWith('persist:maestro-browser-session-session-1');
+			});
+			await waitFor(() => expect(reload).toHaveBeenCalled());
+			expect(button).toHaveAttribute('aria-pressed', 'false');
+		});
+
+		it('disarms after 4s so a late second click re-arms instead of clearing', () => {
+			vi.useFakeTimers();
+			try {
+				const clearSessionData = vi.fn(async () => ({ ok: true }));
+				maestroMutable.browserSession = { clearSessionData };
+				render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+				const button = screen.getByTestId('browser-tab-clear-session-data');
+
+				fireEvent.click(button);
+				expect(button).toHaveAttribute('aria-pressed', 'true');
+				act(() => {
+					vi.advanceTimersByTime(4001);
+				});
+				expect(button).toHaveAttribute('aria-pressed', 'false');
+
+				// The stale confirm click must arm again, not clear.
+				fireEvent.click(button);
+				expect(clearSessionData).not.toHaveBeenCalled();
+				expect(button).toHaveAttribute('aria-pressed', 'true');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('surfaces a clear failure inline and does not reload', async () => {
+			const clearSessionData = vi.fn(async () => ({ ok: false, error: 'nope' }));
+			maestroMutable.browserSession = { clearSessionData };
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const webview = getWebview();
+			const reload = vi.fn();
+			webview.reload = reload;
+
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			fireEvent.click(button);
+			fireEvent.click(button);
+
+			const alert = await screen.findByRole('alert');
+			expect(alert.textContent).toContain('Could not clear browsing data');
+			expect(alert.textContent).toContain('nope');
+			expect(reload).not.toHaveBeenCalled();
+		});
+
+		it('degrades to an inline error when the preload lacks browserSession', async () => {
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			fireEvent.click(button);
+			fireEvent.click(button);
+
+			const alert = await screen.findByRole('alert');
+			expect(alert.textContent).toMatch(/not supported by this build/);
+		});
+
+		it('disarms the clear-session confirm when switched to a different tab.id', () => {
+			const clearSessionData = vi.fn(async () => ({ ok: true }));
+			maestroMutable.browserSession = { clearSessionData };
+			const tabB: BrowserTab = {
+				...mockTab,
+				id: 'browser-2',
+				partition: 'persist:maestro-browser-session-session-2',
+			};
+			const { rerender } = render(
+				<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />
+			);
+
+			// Arm the two-step confirm on tab A.
+			const armed = screen.getByTestId('browser-tab-clear-session-data');
+			fireEvent.click(armed);
+			expect(armed).toHaveAttribute('aria-pressed', 'true');
+
+			// The component instance is reused across tab switches, so switching the
+			// tab.id must disarm - otherwise a single stale click would wipe tab B's
+			// data with no guard.
+			rerender(<BrowserTabView tab={tabB} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const afterSwitch = screen.getByTestId('browser-tab-clear-session-data');
+			expect(afterSwitch).toHaveAttribute('aria-pressed', 'false');
+
+			// The first click after the switch only re-arms; it must NOT clear (and
+			// certainly not clear tab B's partition off a carried-over arm).
+			fireEvent.click(afterSwitch);
+			expect(clearSessionData).not.toHaveBeenCalled();
+			expect(afterSwitch).toHaveAttribute('aria-pressed', 'true');
+		});
+	});
+
+	describe('web-desktop placeholder', () => {
+		it('renders a link-out placeholder instead of the inert webview', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			// The Electron <webview> is inert in a real browser and must not render.
+			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeNull();
+
+			const placeholder = screen.getByTestId('browser-tab-web-placeholder');
+			expect(placeholder).toHaveTextContent('Browser tabs are available in the desktop app');
+
+			const link = screen.getByRole('link', { name: 'https://example.com' });
+			expect(link).toHaveAttribute('href', 'https://example.com');
+			expect(link).toHaveAttribute('target', '_blank');
+			expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+		});
+
+		it('does not render an anchor for a non-http (e.g. javascript:) URL', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+
+			render(
+				<BrowserTabView
+					// eslint-disable-next-line no-script-url
+					tab={{ ...mockTab, url: 'javascript:alert(1)' }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+
+			// The placeholder still renders, but the dangerous scheme must not become
+			// a clickable href (XSS-on-click guard).
+			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
+			expect(screen.queryByRole('link')).toBeNull();
+		});
+
+		it('omits the clickable link for a blank browser tab', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+
+			render(
+				<BrowserTabView
+					tab={{ ...mockTab, url: DEFAULT_BROWSER_TAB_URL }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
+			expect(screen.queryByRole('link')).toBeNull();
+		});
+
+		it('still renders the webview on desktop (non-web)', () => {
+			// isWebDesktop defaults to false via beforeEach.
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeTruthy();
+			expect(screen.queryByTestId('browser-tab-web-placeholder')).toBeNull();
+		});
+	});
+
+	describe('imperative handle: capturePage (covered capture)', () => {
+		// The stub frame the guest's capturePage resolves to. Its length must clear
+		// the >=64-char "real frame" gate the component uses to decide a retry.
+		interface CapturedImage {
+			toDataURL: () => string;
+		}
+
+		// jsdom renders <webview> as an unknown element with no capturePage; the
+		// component invokes webview.capturePage(), so each test attaches a stub.
+		interface CaptureWebview extends HTMLElement {
+			capturePage: () => Promise<CapturedImage>;
+		}
+
+		const FULL_DATA_URL = `data:image/png;base64,${'A'.repeat(80)}`;
+
+		function getHost(): HTMLElement {
+			return screen.getByTestId('browser-tab-host');
+		}
+
+		function getCaptureWebview(host: HTMLElement): CaptureWebview {
+			// Well-known-element downcast of the raw jsdom node (augmented with the
+			// Electron capturePage the component calls), not an inline read-through.
+			return host.querySelector('webview') as CaptureWebview;
+		}
+
+		// The cover is the opaque <div> the component appends with the max int32
+		// z-index; finding it proves the overlay was installed, not just any child.
+		function findCover(host: HTMLElement): HTMLDivElement | null {
+			for (const child of Array.from(host.children)) {
+				if (child instanceof HTMLDivElement && child.style.zIndex === '2147483647') {
+					return child;
+				}
+			}
+			return null;
+		}
+
+		it('flips a hidden tab visible behind an opaque cover for the capture, then restores', async () => {
+			vi.useFakeTimers();
+			try {
+				const ref = React.createRef<BrowserTabViewHandle>();
+				render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				const host = getHost();
+				// Kept-alive-but-hidden mount: host is visibility:hidden, the exact
+				// state that makes Electron capturePage throw unless the tab is forced
+				// to paint. Confirm the precondition the covered-capture path keys on.
+				host.style.visibility = 'hidden';
+				expect(getComputedStyle(host).visibility).toBe('hidden');
+
+				let visibilityAtCapture: string | undefined;
+				let coverPresentAtCapture = false;
+				const wv = getCaptureWebview(host);
+				const capturePage = vi.fn(async (): Promise<CapturedImage> => {
+					// Record the observable DOM state at the instant the frame is taken.
+					visibilityAtCapture = host.style.visibility;
+					coverPresentAtCapture = findCover(host) !== null;
+					return { toDataURL: () => FULL_DATA_URL };
+				});
+				wv.capturePage = capturePage;
+
+				const pending = ref.current!.capturePage();
+				// Drain the 180ms compositor-settle delay before the capture fires.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(180);
+				});
+				const dataUrl = await pending;
+
+				// Core contract: at capture time the guest was painting (visible) AND
+				// screened by the opaque cover so the user never saw the flash.
+				expect(capturePage).toHaveBeenCalledTimes(1);
+				expect(visibilityAtCapture).toBe('visible');
+				expect(coverPresentAtCapture).toBe(true);
+				expect(dataUrl).toBe(FULL_DATA_URL);
+				expect(dataUrl.length).toBeGreaterThanOrEqual(64);
+
+				// Cleanup contract: the cover is gone and the host is hidden again.
+				expect(findCover(host)).toBeNull();
+				expect(host.style.visibility).toBe('hidden');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('captures a visible tab directly without a cover or a forced visibility flip', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const host = getHost();
+			// Default host is visible: no cover, no flip, no settle delay.
+			expect(getComputedStyle(host).visibility).not.toBe('hidden');
+
+			let visibilityAtCapture: string | undefined;
+			let coverPresentAtCapture = false;
+			const wv = getCaptureWebview(host);
+			const capturePage = vi.fn(async (): Promise<CapturedImage> => {
+				visibilityAtCapture = host.style.visibility;
+				coverPresentAtCapture = findCover(host) !== null;
+				return { toDataURL: () => FULL_DATA_URL };
+			});
+			wv.capturePage = capturePage;
+
+			const dataUrl = await ref.current!.capturePage();
+
+			expect(capturePage).toHaveBeenCalledTimes(1);
+			// No cover was ever appended and the inline visibility was never forced.
+			expect(coverPresentAtCapture).toBe(false);
+			expect(visibilityAtCapture).toBe('');
+			expect(findCover(host)).toBeNull();
+			expect(host.style.visibility).toBe('');
+			expect(dataUrl).toBe(FULL_DATA_URL);
+		});
+
+		it('retries the capture once when the first hidden-tab frame comes back empty', async () => {
+			vi.useFakeTimers();
+			try {
+				const ref = React.createRef<BrowserTabViewHandle>();
+				render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				const host = getHost();
+				host.style.visibility = 'hidden';
+
+				const wv = getCaptureWebview(host);
+				// First frame is too short (compositor not ready yet); the retry after
+				// the extra settle delay returns the real one.
+				const capturePage = vi.fn(async (): Promise<CapturedImage> => {
+					const attempt = capturePage.mock.calls.length;
+					return { toDataURL: () => (attempt === 1 ? 'data:,' : FULL_DATA_URL) };
+				});
+				wv.capturePage = capturePage;
+
+				const pending = ref.current!.capturePage();
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(180); // first attempt
+					await vi.advanceTimersByTimeAsync(160); // retry after the short frame
+				});
+				const dataUrl = await pending;
+
+				expect(capturePage).toHaveBeenCalledTimes(2);
+				expect(dataUrl).toBe(FULL_DATA_URL);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('removes the cover and restores visibility even when the capture throws', async () => {
+			vi.useFakeTimers();
+			try {
+				const ref = React.createRef<BrowserTabViewHandle>();
+				render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+				const host = getHost();
+				host.style.visibility = 'hidden';
+
+				const wv = getCaptureWebview(host);
+				const captureError = new Error('UnknownVizError');
+				const capturePage = vi.fn(async (): Promise<CapturedImage> => {
+					throw captureError;
+				});
+				wv.capturePage = capturePage;
+
+				const pending = ref.current!.capturePage();
+				// Attach the rejection handler synchronously so the throw is observed,
+				// not reported as an unhandled rejection.
+				const settled = pending.then(
+					() => ({ ok: true as const }),
+					(err: unknown) => ({ ok: false as const, err })
+				);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(180);
+				});
+				const outcome = await settled;
+
+				// The failure propagates to the caller...
+				expect(outcome.ok).toBe(false);
+				expect(capturePage).toHaveBeenCalledTimes(1);
+				// ...and the finally still tore down the cover and restored the host.
+				expect(findCover(host)).toBeNull();
+				expect(host.style.visibility).toBe('hidden');
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 });

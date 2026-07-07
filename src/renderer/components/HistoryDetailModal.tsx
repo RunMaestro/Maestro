@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	X,
 	Bot,
@@ -202,18 +203,24 @@ export function HistoryDetailModal({
 		minSize: { width: 640, height: 420 },
 	});
 
-	return (
+	// Body portal: this modal mounts inside the right-panel drawer, which is
+	// CSS-transformed on narrow viewports. A transformed ancestor becomes the
+	// containing block for position:fixed, so without the portal the overlay
+	// (and the xs full-screen layout from index.css) gets trapped inside the
+	// ~320px drawer instead of covering the screen.
+	return createPortal(
 		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
 			{/* Backdrop */}
 			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-			{/* Modal */}
+			{/* Modal. `history-detail-modal` lets index.css expand it to full-screen at the
+			    xs breakpoint (phones) where the centered dialog is too cramped. */}
 			<div
 				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-label="History Detail"
-				className="relative overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
+				className="history-detail-modal relative overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
@@ -603,9 +610,10 @@ export function HistoryDetailModal({
 					)}
 				</div>
 
-				{/* Footer */}
+				{/* Footer. `hdm-footer` tightens padding at the xs breakpoint and the
+				    `hdm-btn-label` words collapse to icons so all controls stay on-screen. */}
 				<div
-					className="flex items-center justify-between px-6 py-4 border-t shrink-0"
+					className="hdm-footer flex items-center justify-between gap-2 px-6 py-4 border-t shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
 					{/* Delete button - only shown when onDelete handler is provided */}
@@ -621,7 +629,7 @@ export function HistoryDetailModal({
 							title="Delete this history entry"
 						>
 							<Trash2 className="w-4 h-4" />
-							Delete
+							<span className="hdm-btn-label">Delete</span>
 						</button>
 					) : (
 						<div />
@@ -644,7 +652,7 @@ export function HistoryDetailModal({
 								title={hasPrev ? 'Previous entry (←)' : 'No previous entry'}
 							>
 								<ChevronLeft className="w-4 h-4" />
-								Prev
+								<span className="hdm-btn-label">Prev</span>
 							</button>
 							<button
 								onClick={goToNext}
@@ -659,7 +667,7 @@ export function HistoryDetailModal({
 								}}
 								title={hasNext ? 'Next entry (→)' : 'No next entry'}
 							>
-								Next
+								<span className="hdm-btn-label">Next</span>
 								<ChevronRight className="w-4 h-4" />
 							</button>
 						</div>
@@ -768,6 +776,7 @@ export function HistoryDetailModal({
 					</div>
 				</div>
 			)}
-		</div>
+		</div>,
+		document.body
 	);
 }

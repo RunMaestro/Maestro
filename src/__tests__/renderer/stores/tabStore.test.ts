@@ -638,6 +638,37 @@ describe('tabStore', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.filePreviewTabs[0].htmlRenderMode).toBeUndefined();
 		});
+
+		it('should set file tab edit mode to an explicit value', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1', editMode: false });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			// Unlike toggleFileTabEditMode, this sets the value directly - repeated
+			// calls with the same value are idempotent (tiled panes rely on this).
+			useTabStore.getState().setFileTabEditMode('file-1', true);
+			let session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(true);
+
+			useTabStore.getState().setFileTabEditMode('file-1', true);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(true);
+
+			useTabStore.getState().setFileTabEditMode('file-1', false);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(false);
+		});
+
+		it('setFileTabEditMode is a no-op for non-existent file tab', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1', editMode: false });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			useTabStore.getState().setFileTabEditMode('non-existent', true);
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].editMode).toBe(false);
+		});
 	});
 
 	// ========================================================================

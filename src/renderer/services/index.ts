@@ -33,3 +33,7 @@ export type { SummarizationConfig } from './contextSummarizer';
 // Wizard intent parser service
 export { parseWizardIntent, suggestsIterateIntent, suggestsNewIntent } from './wizardIntentParser';
 export type { WizardIntentResult } from './wizardIntentParser';
+
+// AgentRun control-plane service
+export { agentRunService } from './agentRun';
+export type { AgentRunListOptions, CampaignListOptions } from './agentRun';

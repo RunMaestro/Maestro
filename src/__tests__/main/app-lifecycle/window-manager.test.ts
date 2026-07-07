@@ -8,7 +8,10 @@
  * - DevTools and auto-updater initialization based on environment
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+// Type-only import (erased at runtime, so it does not interfere with the
+// per-test `vi.resetModules()` + dynamic `import()` pattern used below).
+import type { WindowManagerDependencies } from '../../../main/app-lifecycle/window-manager';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
@@ -24,6 +27,33 @@ const mockGuestWebContents = {
 	executeJavaScript: vi.fn().mockResolvedValue(undefined),
 	paste: vi.fn(),
 };
+
+// Per-partition panel session double for the plugin render-host branch.
+// fromPartition returns ONE object per partition string (Electron semantics),
+// so the will-attach hardening and the did-attach branch see the same session.
+interface MockPanelSession {
+	protocol: { handle: Mock };
+	webRequest: { onBeforeRequest: Mock };
+	setPermissionRequestHandler: Mock;
+	setPermissionCheckHandler: Mock;
+}
+const mockPanelSessions = new Map<string, MockPanelSession>();
+function makePanelSession(): MockPanelSession {
+	return {
+		protocol: { handle: vi.fn() },
+		webRequest: { onBeforeRequest: vi.fn() },
+		setPermissionRequestHandler: vi.fn(),
+		setPermissionCheckHandler: vi.fn(),
+	};
+}
+const mockFromPartition = vi.fn((partition: string) => {
+	let ses = mockPanelSessions.get(partition);
+	if (!ses) {
+		ses = makePanelSession();
+		mockPanelSessions.set(partition, ses);
+	}
+	return ses;
+});
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
@@ -78,6 +108,45 @@ class MockBrowserWindow {
 // Mock ipcMain
 const mockHandle = vi.fn();
 
+// Mutable, faithful mock of Electron's `screen`. Tests mutate `mockScreen.displays`
+// to simulate display-configuration changes (e.g. a removed monitor) and the
+// matcher mirrors Electron's behavior: getDisplayMatching returns the display
+// the rect most overlaps, falling back to the first (primary) display.
+type MockWorkAreaRect = { x: number; y: number; width: number; height: number };
+const { mockScreen } = vi.hoisted(() => {
+	const DEFAULT_DISPLAY = { workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
+	const state: { displays: Array<{ workArea: MockWorkAreaRect }> } = {
+		displays: [DEFAULT_DISPLAY],
+	};
+	const intersectionArea = (a: MockWorkAreaRect, b: MockWorkAreaRect): number => {
+		const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+		const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+		return ix * iy;
+	};
+	return {
+		mockScreen: {
+			state,
+			reset: () => {
+				state.displays = [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }];
+			},
+			getAllDisplays: () => state.displays,
+			getPrimaryDisplay: () => state.displays[0],
+			getDisplayMatching: (rect: MockWorkAreaRect) => {
+				let best = state.displays[0];
+				let bestArea = -1;
+				for (const display of state.displays) {
+					const area = intersectionArea(rect, display.workArea);
+					if (area > bestArea) {
+						bestArea = area;
+						best = display;
+					}
+				}
+				return best;
+			},
+		},
+	};
+});
+
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
@@ -87,7 +156,12 @@ vi.mock('electron', () => ({
 		buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
 	},
 	screen: {
-		getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+		getAllDisplays: () => mockScreen.getAllDisplays(),
+		getPrimaryDisplay: () => mockScreen.getPrimaryDisplay(),
+		getDisplayMatching: (rect: MockWorkAreaRect) => mockScreen.getDisplayMatching(rect),
+	},
+	session: {
+		fromPartition: (partition: string) => mockFromPartition(partition),
 	},
 }));
 
@@ -143,6 +217,10 @@ describe('app-lifecycle/window-manager', () => {
 		lastBrowserWindowOptions = null;
 		webContentsEventHandlers.clear();
 		guestWebContentsEventHandlers.clear();
+		// Fresh per-partition sessions so the render-host module's WeakSet marker
+		// never bleeds between tests (a reused object would skip re-hardening).
+		mockPanelSessions.clear();
+		mockScreen.reset();
 
 		mockWindowStateStore = {
 			store: {
@@ -257,9 +335,42 @@ describe('app-lifecycle/window-manager', () => {
 			expect(lastBrowserWindowOptions?.y).toBe(50);
 		});
 
-		it('drops off-screen saved coordinates so the window spawns centered', async () => {
+		it('restores the primary from passed bounds + sessionIds (multi-window restore)', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const { WindowRegistry } = await import('../../../main/window-registry');
+			const registry = new WindowRegistry();
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				windowRegistry: registry,
+			});
+
+			// The saved primary's bounds win over the legacy store (50,50), and its
+			// agents are registered so the renderer can scope its tab strips.
+			windowManager.createWindow({
+				sessionIds: ['agent-a', 'agent-b'],
+				bounds: { x: 300, y: 400, width: 1280, height: 720 },
+			});
+
+			expect(lastBrowserWindowOptions?.x).toBe(300);
+			expect(lastBrowserWindowOptions?.y).toBe(400);
+			const primary = registry.getPrimary();
+			expect(primary?.isMain).toBe(true);
+			expect(primary?.sessionIds).toEqual(['agent-a', 'agent-b']);
+		});
+
+		it('repositions off-screen saved coordinates onto the primary display', async () => {
 			// -32000,-32000 is what Windows reports for a minimized window. If it
-			// ever lands in the store it must not be restored verbatim.
+			// ever lands in the store it must not be restored verbatim - the window
+			// is brought back centered on the primary display instead.
 			mockWindowStateStore.store = {
 				x: -32000,
 				y: -32000,
@@ -285,8 +396,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(lastBrowserWindowOptions?.x).toBeUndefined();
-			expect(lastBrowserWindowOptions?.y).toBeUndefined();
+			// Centered on the primary 1920x1080 work area for a 1000x600 window.
+			expect(lastBrowserWindowOptions?.x).toBe(460);
+			expect(lastBrowserWindowOptions?.y).toBe(240);
 		});
 
 		it('does not persist bounds while the window is minimized', async () => {
@@ -358,6 +470,71 @@ describe('app-lifecycle/window-manager', () => {
 			expect(webPreferences.preload).toBeUndefined();
 			expect(webPreferences.nodeIntegration).toBe(false);
 			expect(mockLogger.warn).toHaveBeenCalled();
+		});
+
+		it('gates webview attachment on the two minted browser-tab partition schemes', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+			expect(handler).toBeTruthy();
+
+			const cases: Array<{ name: string; partition: string; allowed: boolean }> = [
+				{
+					name: 'persistent browser-tab partition',
+					partition: 'persist:maestro-browser-session-sess-1',
+					allowed: true,
+				},
+				{
+					name: 'ephemeral (incognito) partition',
+					partition: 'maestro-ephemeral-sess-1-a1b2c3d4',
+					allowed: true,
+				},
+				{ name: 'foreign persist partition', partition: 'persist:evil', allowed: false },
+				{ name: 'ephemeral-lookalike prefix', partition: 'maestro-evil-sess-1', allowed: false },
+				{
+					// Correct `maestro-ephemeral-` prefix but missing the `-<random8>`
+					// suffix: the old startsWith gate allowed this, the full regex must
+					// now reject it so an attacker cannot attach with a lookalike prefix.
+					name: 'ephemeral prefix without the random-8 suffix',
+					partition: 'maestro-ephemeral-x',
+					allowed: false,
+				},
+				{
+					name: 'default session (empty partition)',
+					partition: '',
+					allowed: false,
+				},
+			];
+
+			for (const c of cases) {
+				const preventDefault = vi.fn();
+				handler?.(
+					{ preventDefault },
+					{ partition: c.partition },
+					{
+						src: 'https://example.com/',
+					}
+				);
+				if (c.allowed) {
+					expect(preventDefault, c.name).not.toHaveBeenCalled();
+				} else {
+					expect(preventDefault, c.name).toHaveBeenCalled();
+				}
+			}
 		});
 
 		it('hardens attached browser-tab guests with popup and navigation restrictions', async () => {
@@ -446,6 +623,141 @@ describe('app-lifecycle/window-manager', () => {
 
 			const handler = mockGuestWebContents.setWindowOpenHandler.mock.calls[0][0];
 			expect(handler({ url: 'https://popup.example.com' })).toEqual({ action: 'deny' });
+		});
+		it('attaches a plugin panel webview on its own partition with forced broker-only prefs', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/dist/main/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+			const preventDefault = vi.fn();
+			const webPreferences: Record<string, unknown> = {
+				partition: 'plugin:acme.tools',
+				preload: '/tmp/renderer-supplied.js',
+				nodeIntegration: true,
+			};
+
+			handler?.({ preventDefault } as any, webPreferences, {
+				src: 'plugin-panel://panel/acme.tools%2Fboard',
+			} as any);
+
+			expect(preventDefault).not.toHaveBeenCalled();
+			// Renderer-supplied prefs are overridden: broker-only preload, no Node,
+			// isolation + sandbox on.
+			expect(String(webPreferences.preload)).toMatch(/plugin-panel-preload\.js$/);
+			expect(webPreferences.nodeIntegration).toBe(false);
+			expect(webPreferences.contextIsolation).toBe(true);
+			expect(webPreferences.sandbox).toBe(true);
+
+			// The per-plugin session got its protocol + egress + permission lockdown.
+			const ses = mockPanelSessions.get('plugin:acme.tools');
+			expect(ses).toBeDefined();
+			expect(ses!.protocol.handle).toHaveBeenCalledWith('plugin-panel', expect.any(Function));
+			expect(ses!.webRequest.onBeforeRequest).toHaveBeenCalled();
+			expect(ses!.setPermissionRequestHandler).toHaveBeenCalled();
+			expect(ses!.setPermissionCheckHandler).toHaveBeenCalled();
+		});
+
+		it('blocks a plugin panel attachment whose document belongs to ANOTHER plugin', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/dist/main/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+
+			// Cross-plugin document reuse.
+			const crossPlugin = vi.fn();
+			handler?.({ preventDefault: crossPlugin } as any, { partition: 'plugin:acme.tools' }, {
+				src: 'plugin-panel://panel/evil.corp%2Fboard',
+			} as any);
+			expect(crossPlugin).toHaveBeenCalled();
+
+			// Arbitrary URL on a panel partition.
+			const arbitraryUrl = vi.fn();
+			handler?.({ preventDefault: arbitraryUrl } as any, { partition: 'plugin:acme.tools' }, {
+				src: 'https://evil.example/',
+			} as any);
+			expect(arbitraryUrl).toHaveBeenCalled();
+			expect(mockLogger.warn).toHaveBeenCalled();
+		});
+
+		it('locks down an attached plugin panel guest and skips ALL browser-tab conveniences', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/dist/main/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+			windowManager.createWindow();
+
+			// Attach the partition first so the session is marked as panel-owned.
+			const willAttach = webContentsEventHandlers.get('will-attach-webview');
+			willAttach?.({ preventDefault: vi.fn() } as any, { partition: 'plugin:acme.tools' }, {
+				src: 'plugin-panel://panel/acme.tools%2Fboard',
+			} as any);
+
+			const panelGuest = {
+				...mockGuestWebContents,
+				session: mockPanelSessions.get('plugin:acme.tools'),
+				setWindowOpenHandler: vi.fn(),
+				on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+					guestWebContentsEventHandlers.set(event, handler);
+				}),
+				executeJavaScript: vi.fn(),
+			};
+
+			const didAttach = webContentsEventHandlers.get('did-attach-webview');
+			didAttach?.({} as any, panelGuest as any);
+
+			// Panel lockdown: popups denied, every navigation prevented.
+			const openHandler = panelGuest.setWindowOpenHandler.mock.calls[0][0];
+			expect(openHandler({ url: 'https://popup.example/' })).toEqual({ action: 'deny' });
+
+			const navigate = guestWebContentsEventHandlers.get('will-navigate');
+			const navEvent = { preventDefault: vi.fn() };
+			navigate?.(navEvent as any, 'plugin-panel://panel/acme.tools%2Fboard');
+			expect(navEvent.preventDefault).toHaveBeenCalled();
+
+			// None of the browser-tab machinery may touch plugin content: no
+			// shortcut forwarding, no JS injection, no dom-ready hook.
+			expect(guestWebContentsEventHandlers.has('before-input-event')).toBe(false);
+			expect(guestWebContentsEventHandlers.has('dom-ready')).toBe(false);
+			expect(panelGuest.executeJavaScript).not.toHaveBeenCalled();
+			// will-redirect IS registered, but as the panel deny-all, which blocks
+			// even URLs the browser-tab allowlist would pass.
+			const redirect = guestWebContentsEventHandlers.get('will-redirect');
+			const redirectEvent = { preventDefault: vi.fn() };
+			redirect?.(redirectEvent as any, 'https://allowed-for-browser-tabs.example/');
+			expect(redirectEvent.preventDefault).toHaveBeenCalled();
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
@@ -1485,6 +1797,414 @@ describe('app-lifecycle/window-manager', () => {
 						expect.objectContaining({ level: 'fatal' })
 					)
 				);
+			});
+		});
+	});
+
+	// Registry-backed creation (multi-window). The primary registers as isMain
+	// and keeps its bare renderer URL ("exactly as before"); secondary windows
+	// self-identify via a ?windowId= query and are tracked in the registry.
+	describe('registry-backed creation', () => {
+		type Deps = WindowManagerDependencies;
+
+		function makeRegistry() {
+			return {
+				create: vi.fn(),
+				remove: vi.fn(),
+				get: vi.fn(),
+				getAll: vi.fn(() => []),
+				getPrimary: vi.fn(),
+				reclaimSessionsToPrimary: vi.fn(),
+			};
+		}
+
+		/** A fake primary window whose webContents records `remote:notifyToast` sends. */
+		function makePrimaryWithSend() {
+			const send = vi.fn();
+			const browserWindow = {
+				isDestroyed: () => false,
+				webContents: { isDestroyed: () => false, send },
+			};
+			return { send, browserWindow };
+		}
+
+		async function makeManager(overrides: Partial<Deps> = {}) {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			return createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Deps['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				...overrides,
+			});
+		}
+
+		/** The most recently registered 'closed' handler on the created window. */
+		function lastClosedHandler(): (() => void) | undefined {
+			return mockWindowInstance.on.mock.calls
+				.filter((call: unknown[]) => call[0] === 'closed')
+				.at(-1)?.[1] as (() => void) | undefined;
+		}
+
+		it('exposes createSecondaryWindow on the window manager', async () => {
+			const windowManager = await makeManager();
+			expect(typeof windowManager.createSecondaryWindow).toBe('function');
+		});
+
+		it('registers the primary window as isMain when a registry is provided', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createWindow();
+
+			expect(registry.create).toHaveBeenCalledTimes(1);
+			expect(registry.create).toHaveBeenCalledWith(
+				expect.objectContaining({ isMain: true, sessionIds: [] })
+			);
+		});
+
+		it('keeps the primary renderer URL free of a windowId query (exactly as before)', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createWindow();
+
+			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith('app://app/index.html');
+		});
+
+		it('works without a registry (primary is simply not tracked)', async () => {
+			const windowManager = await makeManager();
+			expect(() => windowManager.createWindow()).not.toThrow();
+		});
+
+		it('appends ?windowId= to a secondary renderer URL and registers it (isMain:false)', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1', 'agent-2']);
+
+			const loadedUrl = mockWindowInstance.loadURL.mock.calls.at(-1)?.[0] as string;
+			expect(loadedUrl).toMatch(/^app:\/\/app\/index\.html\?windowId=.+/);
+
+			expect(registry.create).toHaveBeenCalledTimes(1);
+			const createArg = registry.create.mock.calls[0][0] as {
+				windowId: string;
+				isMain: boolean;
+				sessionIds: string[];
+			};
+			expect(createArg).toMatchObject({ isMain: false, sessionIds: ['agent-1', 'agent-2'] });
+			// The id in the URL is exactly the id tracked in the registry.
+			expect(loadedUrl).toContain(`windowId=${createArg.windowId}`);
+		});
+
+		it('off-screen guards a secondary window the same as the primary', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			// -32000 is the Windows minimized-window sentinel; it must be repositioned
+			// so the secondary window can never spawn off every visible display.
+			windowManager.createSecondaryWindow(['agent-1'], { x: -32000, y: -32000 });
+
+			// Centered on the primary 1920x1080 work area for the default 1400x900 size.
+			expect(lastBrowserWindowOptions?.x).toBe(260);
+			expect(lastBrowserWindowOptions?.y).toBe(90);
+		});
+
+		it('restores a secondary window onto its still-connected secondary display', async () => {
+			// End-to-end "remember which display": a window saved on a still-present
+			// second monitor must spawn back on that monitor (coords kept), not be
+			// yanked to the primary. Two side-by-side 1920x1080 displays.
+			mockScreen.state.displays = [
+				{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+			];
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1'], {
+				x: 2000,
+				y: 100,
+				width: 800,
+				height: 600,
+			});
+
+			expect(lastBrowserWindowOptions?.x).toBe(2000);
+			expect(lastBrowserWindowOptions?.y).toBe(100);
+		});
+
+		it('falls back the primary window to the primary display when its saved monitor is gone', async () => {
+			// The primary restore path (createWindow with saved bounds, used by
+			// restoreWindows) must honor the same off-screen guard: a monitor that has
+			// since been unplugged repositions the window onto the primary display.
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			// Only the primary display exists (beforeEach reset); these bounds name a
+			// now-removed monitor to the right.
+			windowManager.createWindow({ bounds: { x: 2000, y: 100, width: 800, height: 600 } });
+
+			// Centered on the primary 1920x1080 work area for an 800x600 window.
+			expect(lastBrowserWindowOptions?.x).toBe(560);
+			expect(lastBrowserWindowOptions?.y).toBe(240);
+		});
+
+		it('allows reloading a secondary window to its own windowId URL, blocks others', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			const loadedUrl = mockWindowInstance.loadURL.mock.calls.at(-1)?.[0] as string;
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			// The window's own entry URL (with ?windowId=) is allowed so a
+			// programmatic reload to the same URL is not blocked.
+			const allowed = { preventDefault: vi.fn() };
+			navigateHandler(allowed, loadedUrl);
+			expect(allowed.preventDefault).not.toHaveBeenCalled();
+
+			// The bare entry URL (a different document for this window) is blocked.
+			const blocked = { preventDefault: vi.fn() };
+			navigateHandler(blocked, 'app://app/index.html');
+			expect(blocked.preventDefault).toHaveBeenCalled();
+		});
+
+		it('removes a secondary window from the registry when it closes', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			const createArg = registry.create.mock.calls[0][0] as { windowId: string };
+
+			const closedHandler = lastClosedHandler();
+			expect(closedHandler).toBeDefined();
+			closedHandler!();
+
+			expect(registry.remove).toHaveBeenCalledWith(createArg.windowId);
+		});
+
+		it('skips secondary-window registry cleanup on close while the app is quitting', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+				getIsQuitting: () => true,
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			lastClosedHandler()?.();
+
+			expect(registry.remove).not.toHaveBeenCalled();
+			// No ownership reclaim either - the registry dies with the process.
+			expect(registry.reclaimSessionsToPrimary).not.toHaveBeenCalled();
+		});
+
+		it('reclaims a closing secondary window agents into the primary BEFORE removing it', async () => {
+			const registry = makeRegistry();
+			registry.reclaimSessionsToPrimary.mockReturnValue({
+				movedSessionIds: ['agent-1'],
+				primaryWindowId: 'main',
+			});
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			const createArg = registry.create.mock.calls[0][0] as { windowId: string };
+
+			lastClosedHandler()?.();
+
+			// Reclaim runs against the still-registered window, THEN it is removed -
+			// so no agent is ever orphaned.
+			expect(registry.reclaimSessionsToPrimary).toHaveBeenCalledWith(createArg.windowId);
+			expect(registry.remove).toHaveBeenCalledWith(createArg.windowId);
+			const reclaimOrder = registry.reclaimSessionsToPrimary.mock.invocationCallOrder[0];
+			const removeOrder = registry.remove.mock.invocationCallOrder[0];
+			expect(reclaimOrder).toBeLessThan(removeOrder);
+		});
+
+		it('toasts the primary window when a closing secondary window had agents reclaimed', async () => {
+			const registry = makeRegistry();
+			const primary = makePrimaryWithSend();
+			registry.reclaimSessionsToPrimary.mockReturnValue({
+				movedSessionIds: ['agent-1', 'agent-2'],
+				primaryWindowId: 'main',
+			});
+			registry.getPrimary.mockReturnValue(primary as never);
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1', 'agent-2']);
+			lastClosedHandler()?.();
+
+			expect(primary.send).toHaveBeenCalledWith(
+				'remote:notifyToast',
+				expect.objectContaining({ message: '2 agents moved to main window' })
+			);
+		});
+
+		it('uses the singular noun when exactly one agent is reclaimed', async () => {
+			const registry = makeRegistry();
+			const primary = makePrimaryWithSend();
+			registry.reclaimSessionsToPrimary.mockReturnValue({
+				movedSessionIds: ['agent-1'],
+				primaryWindowId: 'main',
+			});
+			registry.getPrimary.mockReturnValue(primary as never);
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			lastClosedHandler()?.();
+
+			expect(primary.send).toHaveBeenCalledWith(
+				'remote:notifyToast',
+				expect.objectContaining({ message: '1 agent moved to main window' })
+			);
+		});
+
+		it('does not toast when the closing secondary window owned no agents', async () => {
+			const registry = makeRegistry();
+			const primary = makePrimaryWithSend();
+			registry.reclaimSessionsToPrimary.mockReturnValue({
+				movedSessionIds: [],
+				primaryWindowId: 'main',
+			});
+			registry.getPrimary.mockReturnValue(primary as never);
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow([]);
+			lastClosedHandler()?.();
+
+			// The window is still removed, but there is nothing to announce.
+			expect(registry.remove).toHaveBeenCalled();
+			expect(primary.send).not.toHaveBeenCalled();
+		});
+
+		it('does not initialize the auto-updater for secondary windows', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+
+			expect(mockInitAutoUpdater).not.toHaveBeenCalled();
+		});
+	});
+
+	// Display-configuration handling: saved bounds are validated against the
+	// current displays (via screen.getDisplayMatching) and an off-screen window
+	// (removed monitor / minimized sentinel) is repositioned onto the primary.
+	describe('resolveVisibleWindowPosition', () => {
+		it('returns undefined x/y when no position was saved (Electron places it)', async () => {
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			expect(resolveVisibleWindowPosition({ width: 800, height: 600 })).toEqual({});
+		});
+
+		it('keeps on-screen saved coordinates as-is', async () => {
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			expect(resolveVisibleWindowPosition({ x: 100, y: 100, width: 800, height: 600 })).toEqual({
+				x: 100,
+				y: 100,
+			});
+		});
+
+		it('keeps coordinates on a secondary monitor that is still connected', async () => {
+			// Two side-by-side 1920x1080 monitors; the window lives on the right one.
+			mockScreen.state.displays = [
+				{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+			];
+
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			expect(resolveVisibleWindowPosition({ x: 2000, y: 100, width: 800, height: 600 })).toEqual({
+				x: 2000,
+				y: 100,
+			});
+		});
+
+		it('keeps coordinates on a monitor positioned to the left of primary (negative origin)', async () => {
+			// A monitor placed to the LEFT of the primary has a negative origin, so a
+			// window living on it is saved with negative x. This is the common
+			// real-world layout the positive-x case above does not exercise.
+			mockScreen.state.displays = [
+				{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ workArea: { x: -1920, y: 0, width: 1920, height: 1080 } },
+			];
+
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			expect(resolveVisibleWindowPosition({ x: -1800, y: 100, width: 800, height: 600 })).toEqual({
+				x: -1800,
+				y: 100,
+			});
+		});
+
+		it('repositions onto the primary display when the saved monitor was removed', async () => {
+			// Only the primary remains; the window was saved on a now-unplugged
+			// monitor to the right (x:2000), so getDisplayMatching falls back to the
+			// primary and the reachability check fails.
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			// Centered on the primary 1920x1080 work area for an 800x600 window.
+			expect(resolveVisibleWindowPosition({ x: 2000, y: 100, width: 800, height: 600 })).toEqual({
+				x: 560,
+				y: 240,
+			});
+		});
+
+		it('repositions the Windows minimized sentinel (-32000) onto the primary', async () => {
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			expect(
+				resolveVisibleWindowPosition({ x: -32000, y: -32000, width: 1000, height: 600 })
+			).toEqual({ x: 460, y: 240 });
+		});
+
+		it('repositions a window whose title bar sits below the work area bottom margin', async () => {
+			const { resolveVisibleWindowPosition } =
+				await import('../../../main/app-lifecycle/window-manager');
+
+			// y:1050 puts the title bar (≈1066) past the 1000px reachable limit on a
+			// 1080-tall work area, so the title bar can't be grabbed - reposition it.
+			expect(resolveVisibleWindowPosition({ x: 100, y: 1050, width: 800, height: 600 })).toEqual({
+				x: 560,
+				y: 240,
 			});
 		});
 	});

@@ -28,6 +28,7 @@ import type {
 } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { useBracketTabCycle } from '../hooks/utils/useBracketTabCycle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
@@ -119,6 +120,10 @@ function formatLastModified(timestamp: number): string {
 		return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 }
+
+// The two top-level Auto Run kinds, in the order shown in the tab toggle.
+// Cmd+Shift+[ / Cmd+Shift+] cycle between them (see useBracketTabCycle below).
+const AUTO_RUN_MODES: readonly ('spec' | 'goal')[] = ['spec', 'goal'];
 
 export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const {
@@ -634,6 +639,16 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		} else {
 			handleCloseWithConfirmation();
 		}
+	});
+
+	// Cmd+Shift+[ / Cmd+Shift+] cycle between the Spec-Driven and Goal-Driven
+	// tabs. Suppressed while a nested overlay is up (help, prompt composer, or a
+	// playbook save/delete dialog) so the shortcut doesn't shift the tab behind them.
+	useBracketTabCycle<'spec' | 'goal'>({
+		enabled: !showHelp && !promptComposerOpen && !showSavePlaybookModal && !showDeleteConfirmModal,
+		values: AUTO_RUN_MODES,
+		active: autoRunMode,
+		onChange: setAutoRunMode,
 	});
 
 	// Focus textarea on mount

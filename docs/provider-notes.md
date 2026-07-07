@@ -1,6 +1,6 @@
 ---
 title: Provider Notes
-description: Feature differences between Claude Code, Codex (OpenAI), and OpenCode providers.
+description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
 icon: puzzle
 ---
 
@@ -103,3 +103,105 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 **Notes**:
 
 - OpenCode uses the `run` subcommand which auto-approves all permissions (similar to Codex's YOLO mode). Maestro enables this via the `OPENCODE_CONFIG_CONTENT` environment variable.
+
+## Factory Droid
+
+| Feature            | Support                       |
+| ------------------ | ----------------------------- |
+| Image attachments  | ✅ New and resumed sessions   |
+| Session resume     | ✅ `-s, --session-id` flag    |
+| Read-only mode     | ✅ Default mode (no `--auto`) |
+| Slash commands     | ❌ Not supported              |
+| Cost tracking      | ❌ Token counts only          |
+| Model selection    | ✅ `-m, --model` flag         |
+| Context operations | ✅ Merge and transfer         |
+| Thinking display   | ✅ Emits thinking content     |
+
+**Notes**:
+
+- Maestro drives Factory Droid through its `droid exec` batch subcommand with `-o stream-json` output. Read-only agents run in the default mode with no auto-approval flags.
+
+## Copilot-CLI
+
+| Feature            | Support                         |
+| ------------------ | ------------------------------- |
+| Image attachments  | ✅ `@file` / `@image` mentions  |
+| Session resume     | ✅ `--continue` / `--resume`    |
+| Read-only mode     | ✅ CLI tool permission rules    |
+| Slash commands     | ⚠️ Interactive mode only        |
+| Cost tracking      | ❌ Per-model token counts only  |
+| Model selection    | ✅ `--model` flag (multi-model) |
+| Context operations | ✅ Merge and transfer           |
+| Thinking display   | ✅ `assistant.reasoning` events |
+
+**Notes**:
+
+- Copilot-CLI is multi-model via [models.dev](https://models.dev). Maestro maps image uploads to temporary-file `@image` mentions in the prompt, which also works on resumed sessions.
+
+## Hermes
+
+| Feature            | Support               |
+| ------------------ | --------------------- |
+| Image attachments  | ✅ `--image` flag     |
+| Session resume     | ❌ Not supported      |
+| Read-only mode     | ❌ Not supported      |
+| Slash commands     | ❌ Not supported      |
+| Cost tracking      | ❌ Not supported      |
+| Model selection    | ✅ `-m` flag          |
+| Context operations | ✅ Merge and transfer |
+| Thinking display   | ❌ Not supported      |
+
+**Notes**:
+
+- Hermes is [Nous Research's](https://hermes-agent.nousresearch.com/) coding agent. Set a documented model override (for example `anthropic/claude-sonnet-4-20250514`) under **Settings → Providers → Hermes**, or leave it blank for the CLI default.
+
+## Pi
+
+| Feature            | Support                        |
+| ------------------ | ------------------------------ |
+| Image attachments  | ✅ `@path` mentions            |
+| Session resume     | ✅ `--session` flag            |
+| Read-only mode     | ✅ `--tools read,grep,find,ls` |
+| Slash commands     | ❌ Not supported               |
+| Cost tracking      | ✅ Supported                   |
+| Model selection    | ✅ `--model` flag              |
+| Context operations | ✅ Merge and transfer          |
+| Thinking display   | ✅ Streaming text chunks       |
+
+**Notes**:
+
+- [Pi](https://pi.dev/) is a customizable agent harness. Maestro uses its JSON output mode and enforces read-only agents by restricting the tool set to read-only tools.
+
+## Qwen3 Coder
+
+| Feature            | Support                   |
+| ------------------ | ------------------------- |
+| Image attachments  | ❌ Not wired              |
+| Session resume     | ✅ `--resume` flag        |
+| Read-only mode     | ⚠️ Prompt-only (via `-y`) |
+| Slash commands     | ❌ Not supported          |
+| Cost tracking      | ❌ Not supported          |
+| Model selection    | ✅ `-m` flag              |
+| Context operations | ✅ Merge and transfer     |
+| Thinking display   | ✅ Supported              |
+
+**Notes**:
+
+- [Qwen3 Coder](https://github.com/QwenLM/qwen-code) is Alibaba's Qwen Code agent, a Gemini CLI fork. It is multi-provider, so any model id works (for example `qwen3-coder-plus` or an OpenAI-compatible id); leave the model blank for the account default.
+
+## Oh My Pi
+
+| Feature            | Support                     |
+| ------------------ | --------------------------- |
+| Image attachments  | ✅ Supported                |
+| Session resume     | ✅ Supported                |
+| Read-only mode     | ✅ `--tools read,grep,glob` |
+| Slash commands     | ❌ Not supported            |
+| Cost tracking      | ✅ Supported                |
+| Model selection    | ✅ Supported                |
+| Context operations | ✅ Merge and transfer       |
+| Thinking display   | ✅ Supported                |
+
+**Notes**:
+
+- [Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) is a multi-model coding agent, invoked via the `omp` CLI.

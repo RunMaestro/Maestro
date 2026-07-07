@@ -20,8 +20,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
-import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
+import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 
@@ -400,20 +401,33 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				isGeneratingName: false,
 			}));
 
-			// Terminal tabs don't persist across app restart unless they carry a
-			// startup command - those are intentionally durable so their command
-			// re-runs on relaunch. Drop the rest, then reset PTY runtime state.
+			// Terminal tabs don't persist across app restart UNLESS they either carry a
+			// startup command (intentionally durable so their command re-runs on relaunch)
+			// OR are tiled into a group. A grouped terminal is part of a layout the user
+			// deliberately built, so we honor that arrangement across restarts - the tile
+			// comes back with a fresh shell (scrollback isn't persisted). Keeping the tab
+			// also stops normalizeTabGroups from pruning its now-dangling leaf and
+			// dissolving the group. Collect the group-tiled terminal ids first.
+			const groupedTerminalIds = new Set<string>();
+			for (const g of correctedSession.tabGroups ?? []) {
+				for (const ref of collectLeafTabRefs(g.layout)) {
+					if (ref.type === 'terminal') groupedTerminalIds.add(ref.id);
+				}
+			}
 			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => (tab.startupCommand ?? '').trim() !== '')
+				.filter((tab) => (tab.startupCommand ?? '').trim() !== '' || groupedTerminalIds.has(tab.id))
 				.map((tab) => ({
 					...tab,
 					pid: 0,
 					state: 'idle' as const,
 					exitCode: undefined,
 				}));
-			const resetBrowserTabs = (correctedSession.browserTabs || []).map((tab) =>
-				rehydrateBrowserTab(tab, correctedSession.id)
-			);
+			// Ephemeral (incognito) tabs are never persisted, but drop any that leak
+			// through anyway (older snapshots): their in-memory partition did not
+			// survive the restart, so rehydrating them would produce a blank tab.
+			const resetBrowserTabs = (correctedSession.browserTabs || [])
+				.filter((tab) => !isEphemeralBrowserTab(tab))
+				.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
 			const validAiTabIds = new Set(resetAiTabs.map((tab) => tab.id));
 			const validBrowserTabIds = new Set(resetBrowserTabs.map((tab) => tab.id));
 			const validTerminalTabIds = new Set(resetTerminalTabs.map((tab) => tab.id));
@@ -473,7 +487,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				correctedSession.agentErrorPaused === true &&
 				isLimitError(correctedSession.agentError);
 
-			return {
+			// Harden tab groups against dangling layout leaves before the session
+			// lands in the store: prune leaves whose tab no longer exists, collapse
+			// resulting single-child splits, dissolve sub-two-pane groups (promoting
+			// survivors), and clear a stale activeGroupId. A session with no groups
+			// round-trips untouched.
+			return normalizeTabGroups({
 				...restoredSession,
 				aiPid: 0,
 				terminalPid: 0,
@@ -501,7 +520,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				agentErrorPaused: isLimitPause ? true : false,
 				closedTabHistory: [],
 				unifiedTabOrder: repairedUnifiedTabOrder,
-			};
+			});
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {

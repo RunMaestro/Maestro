@@ -163,6 +163,25 @@ import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
+import type { PianolaRule } from '../shared/pianola/types';
+import type {
+	PianolaDecisionRecord,
+	RulesLoadResult,
+	PianolaSupervisedTarget,
+	PianolaSuggestionsFile,
+} from '../shared/pianola/storage';
+import type { PianolaSupervisorSnapshot } from '../main/ipc/handlers/pianola';
+import type {
+	PluginListSnapshot,
+	PluginGrantsSnapshot,
+	PluginActivityMap,
+} from '../main/ipc/handlers/plugins';
+import type { InstallResult as PluginInstallResult } from '../main/plugins/plugin-manager';
+import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
+import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
+import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
+import type { AgentRunApi } from '../main/preload/agentRun';
+import type { BrowserOp } from '../shared/coworkingBrowser';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1902,6 +1921,7 @@ interface MaestroAPI {
 				elapsedTimeMs?: number;
 				validated?: boolean;
 				hostname?: string;
+				sourceAgentName?: string;
 			},
 			sharedContext?: { sshRemoteId: string; remoteCwd: string }
 		) => Promise<boolean>;
@@ -2400,6 +2420,17 @@ interface MaestroAPI {
 			}>
 		>;
 		onActivityChange: (handler: () => void) => () => void;
+	};
+	// Cross-Agent Dispatch API (@mentions)
+	crossAgent: {
+		/** Dispatch a cross-agent request; response streams back via onChunk. */
+		send: (
+			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
+		) => Promise<{ requestId: string }>;
+		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
+		onChunk: (
+			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
+		) => () => void;
 	};
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
@@ -3677,6 +3708,52 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Pianola API (autonomous manager: rules + decision log)
+	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
+	pianola: {
+		getRules: () => Promise<RulesLoadResult>;
+		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
+		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		applySuggestion: (payload: {
+			rule?: PianolaRule;
+			profile?: { text: string; projectPath?: string };
+		}) => Promise<{ rules: PianolaRule[] }>;
+		supervisor: {
+			list: () => Promise<PianolaSupervisorSnapshot>;
+			add: (target: Partial<PianolaSupervisedTarget>) => Promise<PianolaSupervisorSnapshot>;
+			setEnabled: (id: string, enabled: boolean) => Promise<PianolaSupervisorSnapshot>;
+			remove: (id: string) => Promise<PianolaSupervisorSnapshot>;
+		};
+	};
+
+	// AgentRun API (neutral run/campaign ledger)
+	agentRun: AgentRunApi;
+
+	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
+	plugins: {
+		list: () => Promise<PluginListSnapshot>;
+		setEnabled: (id: string, enabled: boolean) => Promise<PluginListSnapshot>;
+		setFirstPartyEnabled: (
+			flag: FirstPartyEncoreFlag,
+			enabled: boolean
+		) => Promise<FirstPartyBridgeState>;
+		install: (sourceDir: string) => Promise<PluginInstallResult>;
+		update: (sourceDir: string) => Promise<PluginListSnapshot>;
+		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
+		contributions: () => Promise<PluginContributions>;
+		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		requestConsent: (id: string) => Promise<{ opened: boolean }>;
+		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
+		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
+		getActivity: () => Promise<PluginActivityMap>;
+		onChanged: (callback: () => void) => () => void;
+		onRunUiCommand: (
+			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
+		) => () => void;
+	};
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
@@ -3767,6 +3844,157 @@ interface MaestroAPI {
 			projectPath: string,
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
+	};
+
+	// Coworking API (per-agent MCP installer + terminal registry sync)
+	coworking: {
+		getInstallStatus: () => Promise<
+			Array<{ agentId: string; configPath: string; installed: boolean }>
+		>;
+		install: (agentId: string) => Promise<void>;
+		uninstall: (agentId: string) => Promise<void>;
+		installAll: () => Promise<Array<{ agentId: string; ok: boolean; error?: string }>>;
+		syncSessionTerminals: (
+			sessionId: string,
+			records: Array<{
+				id: string;
+				cwd: string;
+				title: string;
+				tabUuid: string;
+				sessionId: string;
+			}>
+		) => Promise<void>;
+		removeSession: (sessionId: string) => Promise<void>;
+		onRequestBuffer: (
+			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendBufferResponse: (responseChannel: string, content: string, ok?: boolean) => void;
+		syncSessionBrowsers: (
+			sessionId: string,
+			inputs: Array<{
+				tabUuid: string;
+				url: string;
+				title: string;
+				favicon?: string;
+				canGoBack: boolean;
+				canGoForward: boolean;
+				isLoading: boolean;
+				hiddenFromAgent?: boolean;
+			}>,
+			interactionEnabled: boolean,
+			agentType?: string,
+			confirmPolicy?: 'off' | 'dangerous' | 'all'
+		) => Promise<void>;
+		onRequestBrowserOp: (
+			callback: (
+				tabUuid: string,
+				sessionId: string,
+				op: BrowserOp,
+				responseChannel: string,
+				needsConfirm?: boolean
+			) => void
+		) => () => void;
+		sendBrowserOpResponse: (
+			responseChannel: string,
+			result: {
+				content?: string;
+				dataUrl?: string;
+				url?: string;
+				title?: string;
+				ok: boolean;
+			}
+		) => void;
+	};
+
+	// Browser Session API (clear per-partition browsing data of embedded browser tabs)
+	browserSession: {
+		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
+	};
+	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
+	windows: {
+		create: (
+			sessionIds?: string[],
+			bounds?: Partial<{
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>
+		) => Promise<{
+			id: string;
+			isMain: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+			name?: string;
+		} | null>;
+		close: (windowId: string) => Promise<{ closed: boolean; error?: string }>;
+		list: () => Promise<
+			Array<{
+				id: string;
+				isMain: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				name?: string;
+			}>
+		>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (
+			sessionId: string,
+			fromWindowId: string,
+			toWindowId: string
+		) => Promise<{ moved: boolean; error?: string }>;
+		focusWindow: (windowId: string) => Promise<{ focused: boolean; error?: string }>;
+		getState: () => Promise<{
+			id: string;
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+			isMaximized: boolean;
+			isFullScreen: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+			leftPanelCollapsed: boolean;
+			rightPanelCollapsed: boolean;
+			name?: string;
+		} | null>;
+		// Claim a freshly-created agent for THIS window before its process starts,
+		// so it never momentarily surfaces in the primary's catch-all (spawn flicker).
+		registerSession: (sessionId: string) => Promise<{ registered: boolean }>;
+		// Persist the calling window's panel-collapse UI state (per-window).
+		setPanelState: (panel: {
+			leftPanelCollapsed?: boolean;
+			rightPanelCollapsed?: boolean;
+		}) => Promise<void>;
+		// Set (or clear, via empty string) a window's user-assigned name; persists.
+		setName: (windowId: string, name: string) => Promise<{ renamed: boolean }>;
+		getBounds: (
+			windowId?: string
+		) => Promise<{ x: number; y: number; width: number; height: number } | null>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;
+		// Subscribe to session-ownership move broadcasts; returns an unsubscribe fn.
+		onSessionMoved: (
+			callback: (payload: {
+				type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
+				windowId?: string;
+				sessionId?: string;
+				fromWindowId?: string;
+				toWindowId?: string;
+			}) => void
+		) => () => void;
+		// Toggle a target window's tab-bar drop-zone highlight during tab drag-out.
+		highlightDropZone: (windowId: string, active: boolean) => Promise<void>;
+		// Subscribe to drop-zone highlight pushes for THIS window; returns unsubscribe.
+		onHighlightDropZone: (
+			callback: (payload: { windowId: string; active: boolean }) => void
+		) => () => void;
 	};
 	/**
 	 * Session Images API. Pasted transcript images are stored content-addressed

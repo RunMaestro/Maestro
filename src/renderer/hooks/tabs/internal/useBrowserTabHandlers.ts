@@ -12,7 +12,7 @@ import { createBrowserTab, normalizeBrowserTabUpdates } from './browserTabHelper
 import type { BrowserTabHandlersReturn } from './types';
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
-	const handleNewBrowserTab = useCallback(() => {
+	const handleNewBrowserTab = useCallback((options?: { ephemeral?: boolean }) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
 		setSessions((prev: Session[]) =>
@@ -22,6 +22,7 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 				const newBrowserTab = createBrowserTab(s.id, homeUrl, {
 					title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
 					isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
+					ephemeral: options?.ephemeral,
 				});
 
 				return {
@@ -31,6 +32,9 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// A newly-created standalone browser tab takes over the panel, so it
+					// must leave any active tiled group (mirrors handleSelectBrowserTab).
+					activeGroupId: null,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
@@ -59,6 +63,9 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// A programmatically-opened standalone browser tab takes over the
+					// panel, so it must leave any active tiled group.
+					activeGroupId: null,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
@@ -81,6 +88,8 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeTerminalTabId: null,
 					inputMode: 'ai',
 					unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder || [], 'browser', tabId),
+					// Selecting a standalone browser tab leaves any active tiled group.
+					activeGroupId: null,
 				};
 			})
 		);

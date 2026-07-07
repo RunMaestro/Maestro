@@ -5,6 +5,7 @@ import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
+import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -13,6 +14,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { gitService } from '../../services/git';
 import { useGitDetail } from '../../contexts/GitStatusContext';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { useListNavigation } from '../../hooks';
@@ -41,7 +43,10 @@ import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
+import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPaletteCommands';
+import { mergePluginContributions } from '../../utils/pluginContributionMerge';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
+import { buildRegistryCommands } from './commands/registryCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
 	buildSessionJumpCommands,
@@ -49,6 +54,8 @@ import {
 } from './commands/sessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
+import { buildWindowCommands } from './commands/windowCommands';
+import { buildWindowMoveTargets } from '../../utils/windowTargets';
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -120,6 +127,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
+		onRunPromptMacro,
 		canSummarizeActiveTab,
 		autoRunSelectedDocument,
 		autoRunCompletedTaskCount,
@@ -149,6 +157,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenSymphony,
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
+		onOpenPianola,
+		setAgentRunDashboardOpen,
 		onConfigureCue,
 		onOpenQueueBrowser,
 		onNewTab,
@@ -165,8 +175,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// reverted or committed since the last poll).
 	const { refreshGitStatus } = useGitDetail();
 
+	// Multi-window: resolve an agent's owning window so palette agent-switching
+	// matches the Left Bar - picking an agent owned by another window focuses that
+	// window instead of yanking it over. Null outside a WindowProvider (single
+	// window / web / tests), where every jump switches locally as before.
+	const windowCtx = useWindowContextOptional();
+	const getSessionWindow = windowCtx?.getSessionWindow;
+
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
+	// Plugin command macros (empty when the plugins Encore flag is off).
+	const pluginContributions = usePluginContributions();
 	// Sourced from the modal store directly to skip the 3-layer prop chain.
 	const openModal = useModalStore((s) => s.openModal);
 	const closeModal = useModalStore((s) => s.closeModal);
@@ -201,6 +220,27 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
 	const [renamingSession, setRenamingSession] = useState(false);
 	const [renameValue, setRenameValue] = useState('');
+	// Inline "rename this window" flow (secondary windows only). Independent of the
+	// session-rename state above; when active, the search bar becomes a rename input
+	// and the command list is hidden, mirroring the session-rename affordance.
+	const [renamingWindow, setRenamingWindow] = useState(false);
+	const [windowRenameValue, setWindowRenameValue] = useState('');
+
+	// This window's identity for the rename-this-window command. Only a SECONDARY
+	// window (Cmd+K outside the main window) can rename itself; the primary keeps
+	// its stable "Main Window" label. `currentWindowName` seeds the rename input.
+	const currentWindowId = windowCtx?.windowId ?? null;
+	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
+	const currentWindowName = windowCtx?.windows.find((w) => w.id === currentWindowId)?.name;
+	const beginRenameCurrentWindow = useCallback(() => {
+		setWindowRenameValue(currentWindowName ?? '');
+		setRenamingWindow(true);
+	}, [currentWindowName]);
+	const commitRenameCurrentWindow = useCallback(() => {
+		if (currentWindowId) void windowCtx?.renameWindow(currentWindowId, windowRenameValue.trim());
+		setRenamingWindow(false);
+		setQuickActionOpen(false);
+	}, [currentWindowId, windowCtx, windowRenameValue, setQuickActionOpen]);
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	// Re-render once a second while the agent jumper has running agents so the
 	// elapsed-time labels tick in place. We only run the interval when needed.
@@ -286,20 +326,24 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
 	const activeTabType = activeTabInfo.activeTabType;
 
-	// Register layer on mount - escape behavior depends on current mode.
+	// Dismissal shared by the Escape layer handler and the touch X button in
+	// the search bar (EscCloseHint), so both paths behave identically.
 	// Only fall back to the main menu if the user actually came from there;
 	// when the modal was opened directly into move-to-group via a hotkey,
-	// escape should dismiss it entirely rather than reveal the cmd+k menu.
-	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', () => {
+	// dismissing should close it entirely rather than reveal the cmd+k menu.
+	const handleDismiss = useCallback(() => {
 		if (mode === 'move-to-group' && initialMode === 'main') {
 			setMode('main');
 			// Note: Selection will be reset by the search/mode change useEffect
 		} else {
 			setQuickActionOpen(false);
 		}
-	});
+	}, [mode, initialMode, setQuickActionOpen]);
 
-	useFocusAfterRender(inputRef, true, 50);
+	// Register layer on mount - escape behavior depends on current mode.
+	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', handleDismiss);
+
+	useFocusAfterRender(inputRef, true, 0);
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
@@ -372,6 +416,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		setActiveSessionId,
 		revealJumpTarget,
+		getSessionWindow,
 	});
 
 	const groupChatActions = buildGroupChatJumpCommands({
@@ -383,6 +428,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mainActions: QuickAction[] = [
 		...sessionActions,
 		...groupChatActions,
+		// Shared command registry (the SAME entries plugins reach via ui.runCommand):
+		...buildRegistryCommands(),
 		...buildNavigationCommands({
 			activeSession,
 			activeSessionId,
@@ -450,6 +497,18 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				});
 			},
 		}).filter((action) => action.id !== 'kill'),
+		...buildWindowCommands({
+			activeSession,
+			windowTargets:
+				windowCtx && activeSession
+					? buildWindowMoveTargets(windowCtx.windows, activeSession.id)
+					: [],
+			moveToNewWindow: (id) => windowCtx?.moveSessionToNewWindow(id),
+			moveToWindow: (id, targetWindowId) => windowCtx?.moveSessionToWindow(id, targetWindowId),
+			setQuickActionOpen,
+			canRenameCurrentWindow: isSecondaryWindow,
+			beginRenameCurrentWindow,
+		}),
 		...buildAgentPanelCommands({
 			activeSession,
 			groups,
@@ -522,6 +581,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setMemoryViewerOpen,
 			setFuzzyFileSearchOpen,
 			setUsageDashboardOpen,
+			setAgentRunDashboardOpen,
 			onSummarizeAndContinue,
 			onOpenMergeSession,
 			onOpenSendToAgent,
@@ -530,6 +590,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenSymphony,
 			onOpenDirectorNotes,
 			onOpenMaestroCue,
+			onOpenPianola,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
 			onOpenCurrentFileInGraph,
@@ -677,6 +738,32 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 	];
 
+	// Surface plugin-contributed palette entries (tier-0 macros + tier-1
+	// commands) and merge them against the built-in actions under the shared
+	// contribution contract: a built-in always wins a colliding id, and earlier
+	// plugins win a later duplicate. Provenance ("from <plugin>") rides in each
+	// entry's subtext. Empty when the plugins Encore flag is off.
+	const pluginPaletteActions = buildPluginCommandPaletteCommands({
+		commands: pluginContributions.commands,
+		macros: pluginContributions.commandMacros,
+		uiItems: pluginContributions.uiItems,
+		onRunPromptMacro,
+		invokeCommand: (commandId) => window.maestro.plugins.invokeCommand(commandId),
+		onCommandResult: ({ dispatched, title }) =>
+			notifyToast({
+				color: dispatched ? 'green' : 'orange',
+				title: 'Plugins',
+				message: dispatched ? `Ran "${title}"` : `"${title}" is not running`,
+			}),
+		onCommandError: ({ error }) =>
+			notifyToast({ color: 'red', title: 'Plugins', message: `Command failed: ${String(error)}` }),
+		setQuickActionOpen,
+	});
+	const mainActionsWithPlugins = mergePluginContributions(
+		mainActions,
+		pluginPaletteActions
+	).items.map((entry) => entry.item);
+
 	const groupActions = buildMoveToGroupCommands({
 		initialMode,
 		groups,
@@ -691,9 +778,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		activeBatchSessionIds,
 		setActiveSessionId,
 		revealJumpTarget,
+		getSessionWindow,
 	});
 
-	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
+	const actions =
+		mode === 'agents' ? agentActions : mode === 'main' ? mainActionsWithPlugins : groupActions;
 
 	const filtered = filterAndSortQuickActions(actions, search, mode);
 
@@ -711,8 +800,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			const selectedAction = filteredRef.current[index];
 			if (!selectedAction) return;
 
-			// Don't close modal if action switches modes
-			const switchesModes = selectedAction.id === 'moveToGroup' || selectedAction.id === 'back';
+			// Don't close modal if action switches modes or opens the inline window
+			// rename (which keeps the palette open with a rename input).
+			const switchesModes =
+				selectedAction.id === 'moveToGroup' ||
+				selectedAction.id === 'back' ||
+				selectedAction.id === 'rename-current-window';
 			selectedAction.action();
 			if (!renamingSession && (mode === 'main' || mode === 'agents') && !switchesModes) {
 				setQuickActionOpen(false);
@@ -732,7 +825,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onSelect: handleSelectByIndex,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
-		enabled: !renamingSession, // Disable navigation when renaming
+		enabled: !renamingSession && !renamingWindow, // Disable navigation while renaming
 	});
 	resetSelectionToFirstRef.current = () => setSelectedIndex(0);
 
@@ -770,6 +863,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			return;
 		}
 
+		// Inline window rename: Enter commits (persists + closes), Escape returns to
+		// the command list. Handled here so neither the list nav nor the modal's
+		// Escape-to-close fires while the input is focused.
+		if (renamingWindow) {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				commitRenameCurrentWindow();
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				setRenamingWindow(false);
+			}
+			return;
+		}
+
 		// Delegate to list navigation hook
 		listHandleKeyDown(e);
 
@@ -791,7 +898,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			onMouseDown={(e) => {
 				// Dismiss when clicking outside the modal content (backdrop only).
-				if (e.target === e.currentTarget && !renamingSession) {
+				if (e.target === e.currentTarget && !renamingSession && !renamingWindow) {
 					setQuickActionOpen(false);
 				}
 			}}
@@ -819,15 +926,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					theme={theme}
 					mode={mode}
 					activeSession={activeSession}
-					renamingSession={renamingSession}
+					renaming={renamingSession || renamingWindow}
 					search={search}
 					setSearch={setSearch}
-					renameValue={renameValue}
-					setRenameValue={setRenameValue}
+					renameValue={renamingWindow ? windowRenameValue : renameValue}
+					setRenameValue={renamingWindow ? setWindowRenameValue : setRenameValue}
 					inputRef={inputRef}
 					onKeyDown={handleKeyDown}
+					onClose={handleDismiss}
 				/>
-				{!renamingSession && (
+				{!renamingSession && !renamingWindow && (
 					<QuickActionsList
 						filtered={filtered}
 						selectedIndex={selectedIndex}
@@ -839,7 +947,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						selectedItemRef={selectedItemRef}
 						onScroll={handleScroll}
 						onActionClick={(action) => {
-							const switchesModes = action.id === 'moveToGroup' || action.id === 'back';
+							const switchesModes =
+								action.id === 'moveToGroup' ||
+								action.id === 'back' ||
+								action.id === 'rename-current-window';
 							action.action();
 							if ((mode === 'main' || mode === 'agents') && !switchesModes)
 								setQuickActionOpen(false);

@@ -77,6 +77,33 @@ import { setTheme } from './commands/set-theme';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
+import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import { pianolaLearn } from './commands/pianola-learn';
+import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
+import {
+	pianolaPlanSet,
+	pianolaPlanList,
+	pianolaPlanShow,
+	pianolaOrchestrate,
+} from './commands/pianola-orchestrate';
+import {
+	pianolaSuperviseWatch,
+	pianolaSuperviseOrchestrate,
+	pianolaSuperviseList,
+	pianolaSuperviseRemove,
+	pianolaSuperviseSetEnabled,
+} from './commands/pianola-supervise';
+import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	agentRunAppendEvent,
+	agentRunList,
+	agentRunRecord,
+	agentRunShow,
+	campaignList,
+	campaignRecord,
+	campaignShow,
+} from './commands/agent-run';
+import { mcpServe } from './commands/mcp';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -101,6 +128,64 @@ program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
 	setVerbosity({ quiet: Boolean(opts.quiet), verbose: Boolean(opts.verbose) });
 });
+// AgentRun and campaign commands — neutral ledger/read-model spine for external
+// agent work. Pianola remains the authoritative orchestrator; these commands
+// record and inspect runs/campaigns without replacing `pianola plan`.
+const agentRun = program.command('agent-run').description('Record and inspect agent runs');
+
+agentRun
+	.command('record')
+	.description('Record or update an agent run from a JSON file')
+	.requiredOption('--file <json>', 'Agent run JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunRecord);
+
+agentRun
+	.command('append-event <run-id>')
+	.description('Append an event to an agent run')
+	.requiredOption('--type <type>', 'Event type')
+	.option('--status <status>', 'Update the run status with this event')
+	.option('--message <text>', 'Human-readable event message')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunAppendEvent(runId, options));
+
+agentRun
+	.command('list')
+	.description('List recent agent runs')
+	.option('--status <status>', 'Filter by run status')
+	.option('--campaign <id>', 'Filter by campaign id')
+	.option('--limit <n>', 'Maximum number of runs to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunList);
+
+agentRun
+	.command('show <run-id>')
+	.description('Show an agent run and its events')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunShow(runId, options));
+
+const campaign = program.command('campaign').description('Record and inspect agent campaigns');
+
+campaign
+	.command('record')
+	.description('Record or update a campaign from a JSON file')
+	.requiredOption('--file <json>', 'Campaign JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignRecord);
+
+campaign
+	.command('list')
+	.description('List campaigns')
+	.option('--status <status>', 'Filter by campaign status')
+	.option('--limit <n>', 'Maximum number of campaigns to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignList);
+
+campaign
+	.command('show <id>')
+	.description('Show a campaign')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((campaignId, options) => campaignShow(campaignId, options));
 
 // List commands
 const list = program.command('list').description('List resources');
@@ -900,7 +985,9 @@ encore
 
 encore
 	.command('enable <feature>')
-	.description('Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)')
+	.description(
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
@@ -909,6 +996,171 @@ encore
 	.description('Disable an Encore feature')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
+
+// Pianola - the autonomous manager agent (Encore-gated, off by default).
+const pianola = program
+	.command('pianola')
+	.description('Pianola manager agent: watch tabs, auto-answer or escalate per your rules');
+
+pianola
+	.command('watch <tab-id>')
+	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--dry-run', 'Classify and record decisions but never send a message')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
+	.action((tabId, options) => pianolaWatch(tabId, options));
+
+pianola
+	.command('rules')
+	.description('List the configured Pianola rules')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaRules(options));
+
+pianola
+	.command('add-rule')
+	.description(
+		'Add a Pianola rule (how the manager agent turns a conversation into a durable rule)'
+	)
+	.option('--scope <scope>', 'global | project | tab (default global)')
+	.option('--scope-id <id>', 'Project path (scope project) or tab id (scope tab)')
+	.option('--action <action>', 'auto_answer | escalate | ignore (required)')
+	.option('--answer <text>', 'Reply text (required for auto_answer)')
+	.option('--max-risk <risk>', 'Only fire when risk is at most: low | medium | high')
+	.option('--kinds <list>', 'Comma list of signal kinds: question,blocked,none')
+	.option('--topic-includes <list>', 'Comma list of case-insensitive topic substrings')
+	.option('--priority <n>', 'Lower runs first (default 100)')
+	.option('--description <text>', 'Human-readable description')
+	.option('--disabled', 'Create the rule disabled')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaAddRule(options));
+
+pianola
+	.command('learn')
+	.description(
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+	)
+	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
+	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
+	.option(
+		'--project <substr>',
+		'Only keep decisions from sessions whose path contains this substring'
+	)
+	.option('--exclude <substr>', 'Drop decisions from sessions whose path contains this substring')
+	.option(
+		'--max-pairs <n>',
+		'Max decision pairs to print inline when --out is not used (default 200)'
+	)
+	.option('--out <file>', 'Write the full corpus JSON to a file instead of stdout')
+	.option('--json', 'Compact JSON output (for scripting)')
+	.action((options) => pianolaLearn(options));
+
+pianola
+	.command('profile')
+	.description('Read a learned decision profile (per-project with --project, else global)')
+	.option('--project <path>', 'Project path to read the profile for (falls back to global)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaProfile(options));
+
+pianola
+	.command('set-profile')
+	.description('Save a learned decision profile from --file or stdin (per-project or global)')
+	.option('--project <path>', 'Project path this profile is for (omit for the global profile)')
+	.option('--file <path>', 'Read the profile markdown from this file (else reads stdin)')
+	.option('--pair-count <n>', 'How many decision pairs this profile was synthesized from')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSetProfile(options));
+
+pianola
+	.command('log')
+	.description('Show recent Pianola decisions from the audit log')
+	.option('--limit <n>', 'Maximum number of records to show (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaLog(options));
+
+// Pianola plan - author and inspect task DAGs the orchestrator runs.
+const pianolaPlan = pianola
+	.command('plan')
+	.description('Author and inspect Pianola task plans (DAGs)');
+
+pianolaPlan
+	.command('set')
+	.description('Save a plan from --file or piped stdin (validated before write)')
+	.option('--file <path>', 'Read the plan JSON from this file (else reads stdin)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanSet(options));
+
+pianolaPlan
+	.command('list')
+	.description('List saved plans with a progress summary')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanList(options));
+
+pianolaPlan
+	.command('show <planId>')
+	.description('Show one plan: its tasks, statuses, and dependencies')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaPlanShow(planId, options));
+
+pianola
+	.command('orchestrate <planId>')
+	.description('Run a saved plan to completion, dispatching tasks as their dependencies finish')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaOrchestrate(planId, options));
+
+// Pianola supervise - register background targets the desktop keeps alive
+// (restart on crash, relaunch on app start, visible health). These write the
+// shared supervisor store; the running app reconciles within ~1s.
+const pianolaSupervise = pianola
+	.command('supervise')
+	.description(
+		'Register desktop-supervised watchers and orchestrations (survive crashes/restarts)'
+	);
+
+pianolaSupervise
+	.command('watch <tabId>')
+	.description('Register a supervised tab watcher the desktop keeps alive')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
+
+pianolaSupervise
+	.command('orchestrate <planId>')
+	.description('Register a supervised plan orchestration the desktop keeps alive')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaSuperviseOrchestrate(planId, options));
+
+pianolaSupervise
+	.command('list')
+	.description('List registered supervised targets')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSuperviseList(options));
+
+pianolaSupervise
+	.command('remove <id>')
+	.description('Unregister a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseRemove(id, options));
+
+pianolaSupervise
+	.command('enable <id>')
+	.description('Enable a supervised target by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, true, options));
+
+pianolaSupervise
+	.command('disable <id>')
+	.description('Disable a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, false, options));
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`
@@ -1038,6 +1290,67 @@ program
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+// Plugin authoring commands - scaffold, validate, sign, and package a Maestro
+// plugin from the command line. The manifest/signature contracts are the shared
+// pure modules the host loads against, so what validates and signs here is what
+// the desktop app verifies at install time.
+const plugin = program
+	.command('plugin')
+	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('init [dir]')
+	.description('Scaffold a new plugin in <dir> (defaults to the current directory)')
+	.option('--tier <0|1|2>', 'Plugin trust/capability tier (default 1)')
+	.option('--id <id>', 'Plugin id (defaults to a slug of the directory name)')
+	.option('--name <name>', 'Human-readable plugin name (defaults to the id)')
+	.option('--force', 'Scaffold into a non-empty directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginInit(dir, options));
+
+plugin
+	.command('validate [dir]')
+	.description('Validate <dir>/plugin.json and, when present, its signature.json')
+	.option(
+		'--trusted-key <keys>',
+		'Comma-separated base64 public keys to treat as trusted when resolving signature status'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginValidate(dir, options));
+
+plugin
+	.command('sign <dir>')
+	.description('Sign <dir> with ed25519 and write signature.json')
+	.option('--key <path>', 'Private key to sign with (PEM, or base64-encoded PKCS8 DER)')
+	.option('--gen-key', 'Generate a fresh ed25519 keypair (requires --key-out)')
+	.option('--key-out <path>', 'Where to write the generated private key (with --gen-key)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginSign(dir, options));
+
+plugin
+	.command('pack <dir>')
+	.description('Package <dir> into a distributable archive (excludes node_modules/.git/keys)')
+	.option('--out <file>', 'Output archive path (default <id>-<version>.tgz)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginPack(dir, options));
+
+// MCP bridge command - an MCP stdio server that exposes the running app's
+// registered plugin tools to an agent's model. Agents spawn this via their
+// per-invocation MCP config (see src/shared/plugins/mcp-agent-config.ts); it
+// bridges tools/list + tools/call to the desktop over the CLI WebSocket, each
+// call risk-gated before the broker invokes the plugin handler.
+const mcp = program
+	.command('mcp')
+	.description('Model Context Protocol bridge for Maestro plugin tools');
+
+mcp
+	.command('serve')
+	.description(
+		'Run an MCP stdio server exposing registered plugin tools (spawned by an agent via its MCP config)'
+	)
+	.option('--tab <id>', 'Originating desktop tab id (diagnostics only)')
+	.action((options) => mcpServe(options));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

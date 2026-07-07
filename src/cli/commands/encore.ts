@@ -13,6 +13,7 @@ const FEATURES: Record<string, string> = {
 	usageStats: 'Usage Dashboard',
 	symphony: 'Symphony (Group Chat)',
 	maestroCue: 'Maestro Cue',
+	pianola: 'Pianola (Manager Agent)',
 };
 
 const ALIASES: Record<string, string> = {
@@ -28,6 +29,11 @@ const ALIASES: Record<string, string> = {
 	groupchat: 'symphony',
 	cue: 'maestroCue',
 	maestrocue: 'maestroCue',
+	'auto-pilot': 'pianola',
+	autopilot: 'pianola',
+	pilot: 'pianola',
+	manager: 'pianola',
+	'manager-agent': 'pianola',
 };
 
 interface EncoreOptions {

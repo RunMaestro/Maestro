@@ -56,6 +56,12 @@ class BridgeClient {
 	private listeners = new Map<string, Set<Listener>>();
 	private nextRequestId = 1;
 	private queue: string[] = [];
+	// True once any connection has been established. A LATER successful open is
+	// a RE-connect: every push event during the gap is gone for good (the
+	// bridge has no replay), so the renderer's in-memory state - transcripts,
+	// busy pills, tabs - is stale beyond repair. Mobile Safari makes this the
+	// common case: it suspends the socket on every app switch / screen lock.
+	private hadOpenConnection = false;
 
 	constructor(config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
@@ -75,6 +81,14 @@ class BridgeClient {
 			return;
 		}
 		this.ws.addEventListener('open', () => {
+			if (this.hadOpenConnection) {
+				// Reconnected after a drop: resync by reloading the page. The app
+				// re-bootstraps from the desktop's live store, which is the only
+				// source of truth for whatever happened while we were away.
+				window.location.reload();
+				return;
+			}
+			this.hadOpenConnection = true;
 			this.resolveReady();
 			for (const frame of this.queue.splice(0)) this.ws?.send(frame);
 		});
@@ -249,11 +263,29 @@ export const shell = {
 	},
 };
 
+// Browser zoom. In Electron, webFrame scales the WebFrame's contents; here we
+// emulate it by scaling the whole document via the CSS `zoom` property, which
+// Chromium (the web-desktop target) honors. The factor <-> level relation
+// mirrors Electron's: each level step is 20% larger/smaller, so
+// factor = 1.2 ** level and level = log(factor) / log(1.2).
+let zoomFactor = 1;
+
+function applyZoomFactor(factor: number): void {
+	zoomFactor = factor;
+	if (typeof document !== 'undefined') {
+		document.documentElement.style.zoom = String(factor);
+	}
+}
+
 export const webFrame = {
-	setZoomFactor: () => {},
-	getZoomFactor: () => 1,
-	setZoomLevel: () => {},
-	getZoomLevel: () => 0,
+	setZoomFactor: (factor: number): void => {
+		applyZoomFactor(factor);
+	},
+	getZoomFactor: (): number => zoomFactor,
+	setZoomLevel: (level: number): void => {
+		applyZoomFactor(1.2 ** level);
+	},
+	getZoomLevel: (): number => Math.log(zoomFactor) / Math.log(1.2),
 };
 
 export const webUtils = {

@@ -134,15 +134,12 @@ const directorNotesSettings: DirectorNotesSettings = {
 };
 
 describe('EncoreTab section components', () => {
-	it('wires the Usage & Stats feature card and lookback selector', () => {
-		const onToggle = vi.fn();
+	it('renders the Usage & Stats lookback selector and persists changes', () => {
 		const setDefaultStatsTimeRange = vi.fn();
 
 		const { rerender } = render(
 			<UsageStatsSection
 				theme={mockTheme}
-				enabled={false}
-				onToggle={onToggle}
 				defaultStatsTimeRange="week"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
 				wakatimeEnabled={false}
@@ -154,17 +151,21 @@ describe('EncoreTab section components', () => {
 			/>
 		);
 
-		const featureButton = screen.getByText('Usage & Stats').closest('button')!;
-		expect(featureButton).toHaveAttribute('aria-pressed', 'false');
-		fireEvent.click(featureButton);
-		expect(onToggle).toHaveBeenCalledTimes(1);
-		expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+		// Chromeless body: no card header/state pill/Manage — the detail pane
+		// owns those. The config controls render directly.
+		expect(document.querySelector('[data-setting-id="encore-usage-stats"]')).toBeInTheDocument();
+		expect(screen.queryByTestId('encore-feature-header')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('encore-feature-manage')).not.toBeInTheDocument();
+		expect(screen.getByText('Default lookback window')).toBeInTheDocument();
+
+		const select = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
+		expect(select.value).toBe('week');
+		fireEvent.change(select, { target: { value: 'quarter' } });
+		expect(setDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
 
 		rerender(
 			<UsageStatsSection
 				theme={mockTheme}
-				enabled
-				onToggle={onToggle}
 				defaultStatsTimeRange="month"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
 				wakatimeEnabled={false}
@@ -175,14 +176,9 @@ describe('EncoreTab section components', () => {
 				wakatimeState={wakatimeState()}
 			/>
 		);
-
-		const enabledFeatureButton = screen.getByText('Usage & Stats').closest('button')!;
-		expect(enabledFeatureButton).toHaveAttribute('aria-pressed', 'true');
-
-		const select = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
-		expect(select.value).toBe('month');
-		fireEvent.change(select, { target: { value: 'quarter' } });
-		expect(setDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
+		expect(
+			(screen.getByLabelText('Select default lookback window') as HTMLSelectElement).value
+		).toBe('month');
 	});
 
 	it('wires WakaTime controls, validation indicators, and clear action', () => {
@@ -232,13 +228,14 @@ describe('EncoreTab section components', () => {
 		render(
 			<SymphonyRegistrySection
 				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
 				symphonyRegistryUrls={['https://custom.example/registry.json']}
 				registryState={state}
 			/>
 		);
 
+		// Chromeless body: config controls render directly, no accordion header.
+		expect(document.querySelector('[data-setting-id="encore-symphony"]')).toBeInTheDocument();
+		expect(screen.queryByTestId('encore-feature-header')).not.toBeInTheDocument();
 		expect(screen.getByText('Registry Sources')).toBeInTheDocument();
 		expect(screen.getByText('default')).toBeInTheDocument();
 		expect(screen.getByText('https://custom.example/registry.json')).toBeInTheDocument();
@@ -258,10 +255,9 @@ describe('EncoreTab section components', () => {
 	it('wires Cue loading, save status, and setting inputs', () => {
 		const state = cueState({ cueSettingsSaveState: 'no-targets' });
 
-		const { rerender } = render(
-			<CueSettingsSection theme={mockTheme} enabled onToggle={vi.fn()} cueState={state} />
-		);
+		const { rerender } = render(<CueSettingsSection theme={mockTheme} cueState={state} />);
 
+		expect(document.querySelector('[data-setting-id="encore-cue"]')).toBeInTheDocument();
 		expect(screen.getByText('Global Cue Settings')).toBeInTheDocument();
 		expect(screen.getByText(/No cue.yaml yet/)).toBeInTheDocument();
 
@@ -280,12 +276,7 @@ describe('EncoreTab section components', () => {
 		expect(state.handleQueueSizeBlur).toHaveBeenCalledTimes(1);
 
 		rerender(
-			<CueSettingsSection
-				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
-				cueState={cueState({ cueSettingsLoaded: false })}
-			/>
+			<CueSettingsSection theme={mockTheme} cueState={cueState({ cueSettingsLoaded: false })} />
 		);
 		expect(screen.getByText(/Loading settings/)).toBeInTheDocument();
 	});
@@ -297,13 +288,14 @@ describe('EncoreTab section components', () => {
 		render(
 			<DirectorNotesSection
 				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={setDirectorNotesSettings}
 				directorNotesAgentState={state}
 			/>
 		);
+
+		expect(document.querySelector('[data-setting-id="encore-director-notes"]')).toBeInTheDocument();
+		expect(screen.queryByTestId('encore-feature-header')).not.toBeInTheDocument();
 
 		const select = screen.getByLabelText('Select synopsis provider agent');
 		expect(within(select).getAllByRole('option')).toHaveLength(2);
@@ -325,15 +317,13 @@ describe('EncoreTab section components', () => {
 		const { rerender } = render(
 			<DirectorNotesSection
 				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={directorState({
 					agentConfiguration: {
 						...directorState().agentConfiguration,
 						isDetecting: true,
-					} as any,
+					},
 				})}
 			/>
 		);
@@ -343,8 +333,6 @@ describe('EncoreTab section components', () => {
 		rerender(
 			<DirectorNotesSection
 				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={directorState({ availableTiles: [] })}
@@ -358,8 +346,6 @@ describe('EncoreTab section components', () => {
 		rerender(
 			<DirectorNotesSection
 				theme={mockTheme}
-				enabled
-				onToggle={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={expanded}
@@ -369,5 +355,28 @@ describe('EncoreTab section components', () => {
 		expect(screen.getByText('Claude Code Configuration')).toBeInTheDocument();
 		expect(screen.getByText('Customized')).toBeInTheDocument();
 		expect(screen.getByTestId('agent-config-agent-id')).toHaveTextContent('claude-code');
+	});
+
+	it('renders the Director Notes default reading-mode toggle and persists changes', () => {
+		const setDirectorNotesSettings = vi.fn();
+
+		render(
+			<DirectorNotesSection
+				theme={mockTheme}
+				directorNotesSettings={directorNotesSettings}
+				setDirectorNotesSettings={setDirectorNotesSettings}
+				directorNotesAgentState={directorState()}
+			/>
+		);
+
+		// Defaults to 'rich' when defaultMode is unset.
+		const richButton = screen.getByRole('button', { name: 'rich', pressed: true });
+		expect(richButton).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'plain' }));
+		expect(setDirectorNotesSettings).toHaveBeenCalledWith({
+			provider: 'claude-code',
+			defaultLookbackDays: 7,
+			defaultMode: 'plain',
+		});
 	});
 });

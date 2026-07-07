@@ -75,6 +75,23 @@ describe('encore commands', () => {
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(true);
 	});
 
+	it('lists pianola, defaulting off when unset', () => {
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(parsed.features).toHaveProperty('pianola');
+		expect(parsed.features.pianola).toBe(false);
+	});
+
+	it('resolves pianola aliases (e.g. "auto-pilot" / "manager" -> pianola)', async () => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('auto-pilot', true, {});
+		expect((getPayload().value as Record<string, boolean>).pianola).toBe(true);
+
+		const getPayload2 = mockSend({ success: true });
+		await encoreSet('manager', true, {});
+		expect((getPayload2().value as Record<string, boolean>).pianola).toBe(true);
+	});
+
 	it('rejects an unknown feature without connecting', async () => {
 		await expect(encoreSet('telepathy', true, {})).rejects.toThrow('__exit__');
 		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Unknown Encore feature'));

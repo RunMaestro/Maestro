@@ -26,6 +26,9 @@ const jsdomOnlyTs = [
 	'src/__tests__/web/**/*.{test,spec}.ts',
 	'src/renderer/**/*.{test,spec}.ts',
 	'src/__tests__/main/stats/integration.test.ts',
+	// The web-desktop electron shim constructs a BridgeClient and reads
+	// `window`/`document` at module load, so its suites need a DOM.
+	'src/__tests__/web-desktop/**/*.{test,spec}.ts',
 ];
 
 export default defineConfig({

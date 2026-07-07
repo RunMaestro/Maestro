@@ -26,6 +26,7 @@ import { remarkAlert } from './remarkAlert';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
+import { remarkMentionChips } from '../../utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../shared/remarkPromoteDisplayMath';
 
 /** Prebuilt file-tree lookup indices (caller memoizes; we do not rebuild here). */
@@ -55,6 +56,11 @@ export interface BuildMarkdownPluginsOptions {
 	alerts?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
+	/**
+	 * Chip-render `@file` / `@agent` mentions (chat surfaces, Encore-gated).
+	 * Runs BEFORE remarkFileLinks so it claims `@`-prefixed paths first.
+	 */
+	mentionChips?: boolean;
 	/** Extra remark plugins appended after the standard stack (e.g. FilePreview's remarkHighlight). */
 	extraRemarkPlugins?: PluggableList;
 	/** Extra rehype plugins appended after the standard stack (e.g. rehype-slug). */
@@ -88,6 +94,7 @@ export function buildMarkdownPlugins(
 		allowRawHtml = false,
 		alerts = true,
 		fileLinks,
+		mentionChips = false,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	} = options;
@@ -118,6 +125,12 @@ export function buildMarkdownPlugins(
 	if (chatMath) {
 		remarkPlugins.push([remarkMath, { singleDollarTextMath: false }]);
 		remarkPlugins.push(remarkPromoteDisplayMath);
+	}
+
+	// Mention chips run BEFORE file links so a `@src/main.ts` becomes a single
+	// file chip instead of `@` + a bare file link.
+	if (mentionChips) {
+		remarkPlugins.push(remarkMentionChips);
 	}
 
 	if (shouldAddFileLinks(fileLinks)) {

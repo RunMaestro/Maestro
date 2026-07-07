@@ -682,6 +682,72 @@ describe('history IPC handlers', () => {
 
 			expect(sharedHistoryModule.writeEntryLocal).not.toHaveBeenCalled();
 		});
+
+		describe('history.entryAdded plugin event (FC4)', () => {
+			/** Register with an emit spy and return the freshly registered add handler. */
+			function registerWithPluginEmit(): {
+				emitPluginEvent: ReturnType<typeof vi.fn>;
+				addHandler: Function;
+			} {
+				const emitPluginEvent = vi.fn();
+				registerHistoryHandlers({ safeSend: mockSafeSend, emitPluginEvent });
+				const addCalls = vi
+					.mocked(ipcMain.handle)
+					.mock.calls.filter(([channel]) => channel === 'history:add');
+				const addHandler = addCalls[addCalls.length - 1][1];
+				return { emitPluginEvent, addHandler };
+			}
+
+			it('emits ids/classification only at the ingestion point — never summary/fullResponse', async () => {
+				const { emitPluginEvent, addHandler } = registerWithPluginEmit();
+				const entry = createMockEntry({
+					id: 'entry-42',
+					type: 'USER',
+					sessionId: 'session-1',
+					projectPath: '/test/project',
+					summary: 'SECRET user prompt text',
+					fullResponse: 'SECRET agent output body',
+				});
+
+				await addHandler({}, entry);
+
+				expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+				const event = emitPluginEvent.mock.calls[0][0];
+				expect(event.topic).toBe('history.entryAdded');
+				expect(typeof event.at).toBe('string');
+				expect(event.payload).toEqual({
+					entryId: 'entry-42',
+					sessionId: 'session-1',
+					projectPath: '/test/project',
+					kind: 'USER',
+					createdAt: entry.timestamp,
+				});
+				expect(JSON.stringify(event.payload)).not.toContain('SECRET');
+			});
+
+			it('omits sessionId when the entry has none (orphaned entries)', async () => {
+				const { emitPluginEvent, addHandler } = registerWithPluginEmit();
+				const entry = createMockEntry({ id: 'entry-9', sessionId: undefined });
+
+				await addHandler({}, entry);
+
+				const event = emitPluginEvent.mock.calls[0][0];
+				expect(event.payload).not.toHaveProperty('sessionId');
+				expect(event.payload.entryId).toBe('entry-9');
+			});
+
+			it('still adds the entry and notifies the renderer when no emitter is wired', async () => {
+				// The default beforeEach registration passes no emitPluginEvent.
+				const handler = handlers.get('history:add');
+				const entry = createMockEntry({ sessionId: 'session-1' });
+
+				const result = await handler!({}, entry);
+
+				expect(result).toBe(true);
+				expect(mockHistoryManager.addEntry).toHaveBeenCalled();
+				expect(mockSafeSend).toHaveBeenCalledWith('history:entryAdded', entry, 'session-1');
+			});
+		});
 	});
 
 	describe('history:clear', () => {

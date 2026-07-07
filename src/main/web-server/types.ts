@@ -544,6 +544,8 @@ export interface SessionHistoryResult {
 	sessionId: string;
 	agentId: string;
 	agentSessionId: string | null;
+	/** Agent working directory, when known. Used for project-scoped automation. */
+	projectPath?: string;
 	messages: SessionHistoryMessage[];
 }
 

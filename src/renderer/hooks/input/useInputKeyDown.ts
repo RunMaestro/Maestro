@@ -11,7 +11,11 @@
 
 import { useCallback } from 'react';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
-import type { AtMentionSuggestion } from '../input/useAtMentionCompletion';
+import {
+	MENTION_CATEGORY_CYCLE,
+	buildMentionAccept,
+	type MentionPickerItem,
+} from '../input/useMentionPicker';
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -32,8 +36,8 @@ export interface InputKeyDownDeps {
 	setInputValue: (value: string | ((prev: string) => string)) => void;
 	/** Memoized tab completion suggestions (already filtered) */
 	tabCompletionSuggestions: TabCompletionSuggestion[];
-	/** Memoized @ mention suggestions */
-	atMentionSuggestions: AtMentionSuggestion[];
+	/** Unified `@` picker rows for the active category (files/dirs/agents/groups) */
+	atMentionItems: MentionPickerItem[];
 	/** Memoized slash commands list */
 	allSlashCommands: Array<{
 		command: string;
@@ -70,7 +74,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		getInputValue,
 		setInputValue,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
 		allSlashCommands,
 		syncFileTreeToTabCompletion,
 		processInput,
@@ -99,6 +103,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		setAtMentionStartIndex,
 		selectedAtMentionIndex,
 		setSelectedAtMentionIndex,
+		atMentionCategory,
+		setAtMentionCategory,
 		commandHistoryOpen,
 		setCommandHistoryOpen,
 		setCommandHistoryFilter,
@@ -179,25 +185,55 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				}
 			}
 
-			// Handle @ mention completion dropdown (AI mode only)
+			// Handle unified @ mention picker (AI mode only)
 			if (atMentionOpen && activeSession?.inputMode === 'ai') {
-				if (e.key === 'ArrowDown') {
+				// Left/Right cycle the category filter and MUST NOT move the caret.
+				if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
 					e.preventDefault();
-					setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionSuggestions.length - 1));
+					const cycle = MENTION_CATEGORY_CYCLE;
+					const currentIdx = cycle.indexOf(atMentionCategory);
+					const delta = e.key === 'ArrowRight' ? 1 : -1;
+					const nextIdx = (currentIdx + delta + cycle.length) % cycle.length;
+					setAtMentionCategory(cycle[nextIdx]);
+					setSelectedAtMentionIndex(0);
+					return;
+				} else if (e.key === 'ArrowDown') {
+					e.preventDefault();
+					if (atMentionItems.length > 0) {
+						setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionItems.length - 1));
+					}
 					return;
 				} else if (e.key === 'ArrowUp') {
 					e.preventDefault();
-					setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
+					if (atMentionItems.length > 0) {
+						setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
+					}
 					return;
 				} else if (e.key === 'Tab' || e.key === 'Enter') {
 					e.preventDefault();
-					const selected = atMentionSuggestions[selectedAtMentionIndex];
+					const selected = atMentionItems[selectedAtMentionIndex];
 					if (selected) {
-						const beforeAt = inputValue.substring(0, atMentionStartIndex);
-						const afterFilter = inputValue.substring(
-							atMentionStartIndex + 1 + atMentionFilter.length
+						const accept = buildMentionAccept(
+							inputValue,
+							atMentionStartIndex,
+							atMentionFilter,
+							selected
 						);
-						setInputValue(beforeAt + '@' + selected.value + ' ' + afterFilter);
+						setInputValue(accept.value);
+						// Land the caret right after the inserted token (past its
+						// trailing space) so typing continues seamlessly. Deferred a
+						// frame so it runs after the controlled value commits.
+						requestAnimationFrame(() => {
+							const el = inputRef.current;
+							if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+						});
+						if (accept.keepOpen) {
+							// Directory drill-in: keep the picker open and re-filter
+							// inside the chosen folder (category preserved).
+							setAtMentionFilter(accept.nextFilter);
+							setSelectedAtMentionIndex(0);
+							return;
+						}
 					}
 					setAtMentionOpen(false);
 					setAtMentionFilter('');
@@ -347,7 +383,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			getInputValue,
 			setInputValue,
 			tabCompletionSuggestions,
-			atMentionSuggestions,
+			atMentionItems,
 			allSlashCommands,
 			syncFileTreeToTabCompletion,
 			processInput,
@@ -363,6 +399,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			atMentionFilter,
 			atMentionStartIndex,
 			selectedAtMentionIndex,
+			atMentionCategory,
 			slashCommandOpen,
 			selectedSlashCommandIndex,
 			// InputContext setters
@@ -375,6 +412,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
+			setAtMentionCategory,
 			setCommandHistoryOpen,
 			setCommandHistoryFilter,
 			setCommandHistorySelectedIndex,

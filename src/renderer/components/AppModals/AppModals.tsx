@@ -74,6 +74,7 @@ export interface AppModalsProps {
 	onNavigateToSession: (sessionId: string, tabId?: string, processType?: string) => void;
 	onNavigateToGroupChat: (groupChatId: string) => void;
 	onCloseUsageDashboard: () => void;
+	onCloseAgentRunDashboard: () => void;
 	/** Default time range for the Usage Dashboard from settings */
 	defaultStatsTimeRange?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	/** Enable colorblind-friendly colors for dashboard charts */
@@ -203,6 +204,7 @@ export interface AppModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -250,6 +252,8 @@ export interface AppModalsProps {
 	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab: boolean;
 	onToggleRemoteControl: () => Promise<void>;
 	autoRunSelectedDocument: string | null;
@@ -311,6 +315,8 @@ export interface AppModalsProps {
 	onOpenDirectorNotes?: () => void;
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
@@ -477,6 +483,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		updateCheckModalOpen,
 		processMonitorOpen,
 		usageDashboardOpen,
+		agentRunDashboardOpen,
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
@@ -512,6 +519,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			updateCheckModalOpen: s.modals.get('updateCheck')?.open ?? false,
 			processMonitorOpen: s.modals.get('processMonitor')?.open ?? false,
 			usageDashboardOpen: s.modals.get('usageDashboard')?.open ?? false,
+			agentRunDashboardOpen: s.modals.get('agentRunDashboard')?.open ?? false,
 			confirmModalOpen: s.modals.get('confirm')?.open ?? false,
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
@@ -606,6 +614,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onNavigateToSession,
 		onNavigateToGroupChat,
 		onCloseUsageDashboard,
+		onCloseAgentRunDashboard,
 		defaultStatsTimeRange,
 		colorBlindMode,
 		// Confirm modals
@@ -686,6 +695,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		setAgentRunDashboardOpen,
 		setActiveRightTab,
 		setAgentSessionsOpen,
 		setMemoryViewerOpen,
@@ -726,6 +736,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
+		onRunPromptMacro,
 		canSummarizeActiveTab,
 		onToggleRemoteControl,
 		autoRunSelectedDocument,
@@ -781,6 +792,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenDirectorNotes,
 		// Maestro Cue
 		onOpenMaestroCue,
+		// Pianola
+		onOpenPianola,
 		onConfigureCue,
 		onCloseTabSwitcher,
 		onTabSelect,
@@ -905,6 +918,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseUsageDashboard={onCloseUsageDashboard}
 				defaultStatsTimeRange={defaultStatsTimeRange}
 				colorBlindMode={colorBlindMode}
+				agentRunDashboardOpen={agentRunDashboardOpen}
+				onCloseAgentRunDashboard={onCloseAgentRunDashboard}
 			/>
 
 			{/* Confirmation Modals */}
@@ -1040,6 +1055,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setLogViewerOpen={setLogViewerOpen}
 				setProcessMonitorOpen={setProcessMonitorOpen}
 				setUsageDashboardOpen={setUsageDashboardOpen}
+				setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 				setActiveRightTab={setActiveRightTab}
 				setAgentSessionsOpen={setAgentSessionsOpen}
 				setMemoryViewerOpen={setMemoryViewerOpen}
@@ -1081,6 +1097,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickCreateWorktree={onQuickCreateWorktree}
 				onOpenCreatePR={onOpenCreatePR}
 				onSummarizeAndContinue={onSummarizeAndContinue}
+				onRunPromptMacro={onRunPromptMacro}
 				canSummarizeActiveTab={canSummarizeActiveTab}
 				onToggleRemoteControl={onToggleRemoteControl}
 				autoRunSelectedDocument={autoRunSelectedDocument}
@@ -1106,6 +1123,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
+				onOpenPianola={onOpenPianola}
 				onConfigureCue={onConfigureCue}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}

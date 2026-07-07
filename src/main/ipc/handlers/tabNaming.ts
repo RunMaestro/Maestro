@@ -29,6 +29,7 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
@@ -217,19 +218,41 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					let claudeSpawnDecision: ClaudeSpawnDecision | null = null;
 					if (agent.id === 'claude-code') {
 						const sshEnabled = !!config.sessionSshRemoteConfig?.enabled;
+						const sshRemoteId = config.sessionSshRemoteConfig?.remoteId ?? undefined;
+
+						// Mirror the chat spawn (process.ts) EXACTLY so the naming turn spends
+						// the same provider the chat would. Over SSH that means probing whether
+						// the remote actually has maestro-p on its PATH: without this, the
+						// unconfigured-SSH default and the TUI->API backstop resolve blind, so
+						// the naming spawn could drive the remote TUI while the chat correctly
+						// fell back to API (or vice-versa) - the token-source mismatch we must
+						// never produce. Local (non-SSH) spawns skip the probe entirely.
+						let sshMaestroPAvailable: boolean | undefined;
+						if (sshEnabled && sshRemoteId) {
+							const sshRemote = getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+								sessionSshConfig: config.sessionSshRemoteConfig,
+							}).config;
+							if (sshRemote) {
+								sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
+							}
+						}
+
 						const tokenMode = getClaudeTokenMode(
 							{
 								enableMaestroP: config.enableMaestroP,
 								maestroPMode: config.maestroPMode,
 							},
-							// Match the agent's own spawn: an unconfigured SSH agent defaults
-							// to the remote TUI rather than per-token API credit.
-							{ sshEnabled }
+							// Match the agent's own spawn: an unconfigured SSH agent defaults to
+							// the remote TUI, unless the probe shows the remote can't run it.
+							{ sshEnabled, sshMaestroPAvailable }
 						);
 						claudeSpawnDecision = resolveClaudeSpawnMode({
 							agent,
 							tokenMode,
 							sshEnabled,
+							// Lets the resolver fall a remote TUI spawn back to API when the
+							// remote has no maestro-p on its PATH (avoids exit 127) - same as chat.
+							sshRemoteId,
 							command,
 							sessionCustomEnvVars: customEnvVars,
 							maestroPPath: config.maestroPPath,
@@ -509,6 +532,29 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 }
 
 /**
+ * Structural noise that must never survive into a tab name.
+ *
+ * Two real-world leaks this guards against:
+ *   1. Tool-call scaffolding. When the naming spawn drives the maestro-p TUI
+ *      (Claude token mode = TUI/dynamic), the `--tools ""` guard is stripped
+ *      along with the other headless-only flags, so the model runs a real
+ *      agentic turn and its raw terminal transcript leaks function-call markup
+ *      like `<invoke name="...">` / `</parameter>` / `</invoke>`. That output
+ *      isn't stream-json, so extractAgentResponseText() can't lift a clean
+ *      result and we fall back to scraping the raw TUI buffer.
+ *   2. Empty-turn placeholders. The TUI renders `(no content)` / `(no output)`
+ *      for a turn with no text block.
+ *
+ * Both are short and word-like, so they sail past the length/keyword filters
+ * and end up as the tab name (observed: "</parameter> </invoke> (no content)").
+ * Any angle bracket is disqualifying - a 2-4 word tab name never contains one -
+ * which catches every tool-call tag variant, not just the ones seen so far.
+ * Rejecting a noisy candidate returns null; the send-side trigger retries
+ * naming on the next message, so the tab self-heals instead of sticking garbage.
+ */
+const STRUCTURAL_NOISE_RE = /[<>]|\((?:no\s+content|no\s+output|empty)\)/i;
+
+/**
  * Result from extractTabName with diagnostic info for logging.
  */
 interface TabNameExtractionResult {
@@ -614,7 +660,8 @@ function extractTabName(output: string): TabNameExtractionResult {
 			!trimmed.toLowerCase().includes('example') &&
 			!trimmed.toLowerCase().includes('message:') &&
 			!trimmed.toLowerCase().includes('rules:') &&
-			!trimmed.startsWith('"') // Skip example inputs in quotes
+			!trimmed.startsWith('"') && // Skip example inputs in quotes
+			!STRUCTURAL_NOISE_RE.test(trimmed) // Skip leaked tool-call markup / TUI placeholders
 		);
 	});
 
@@ -642,6 +689,14 @@ function extractTabName(output: string): TabNameExtractionResult {
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {
 		return { name: null, reason: `too_short (length: ${tabName.length}, value: "${tabName}")` };
+	}
+
+	// Final guard: reject anything that still carries tool-call markup or a TUI
+	// empty-turn placeholder after cleanup (belt-and-suspenders for the line
+	// filter above). Better to return null and retry naming next send than to
+	// stick garbage like "</parameter> </invoke> (no content)" on the tab.
+	if (STRUCTURAL_NOISE_RE.test(tabName)) {
+		return { name: null, reason: `structural_noise (value: "${tabName}")` };
 	}
 
 	return { name: tabName, reason: 'ok' };

@@ -5,7 +5,7 @@
  * Fetches the current BMAD workflow catalog and prompt sources from GitHub,
  * then regenerates the bundled Maestro prompt files and command catalog.
  *
- * Usage: npm run refresh-bmad
+ * Usage: bun run refresh-bmad
  */
 
 import fs from 'fs';

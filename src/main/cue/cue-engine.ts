@@ -39,6 +39,7 @@ import {
 	type CueSubscription,
 } from './cue-types';
 import { getCueRunLiveOutput } from './cue-executor';
+import { scanTaskFilesNow, buildTaskPendingPayload } from './cue-task-scanner';
 import { createCueActivityLog } from './cue-activity-log';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
@@ -69,6 +70,7 @@ import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
 import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
+import type { PluginEvent } from '../../shared/plugins/events';
 import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
@@ -142,6 +144,16 @@ export interface CueEngineDeps {
 	 * store; tests typically pass `() => true` or omit (defaults to off).
 	 */
 	getUsageStatsEnabled?: () => boolean;
+	/**
+	 * Optional metadata-only hook fired once per subscription dispatch with the
+	 * source event TYPE only. Threaded to the dispatch service to surface
+	 * `cue.fired` to subscribed plugins; never carries prompt text.
+	 */
+	onTriggerFired?: (eventType: string) => void;
+	/** Optional metadata-only plugin event sink. Threaded to surface Cue run
+	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
+	 * carries ids/status only, never prompt text or output. */
+	emitPluginEvent?: (event: PluginEvent) => void;
 }
 
 export class CueEngine {
@@ -218,8 +230,26 @@ export class CueEngine {
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
+			onRunStarted: (info) =>
+				this.safeEmitPluginEvent({
+					topic: 'cue.runStarted',
+					at: new Date().toISOString(),
+					payload: info,
+				}),
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				this.safeEmitPluginEvent({
+					topic: 'cue.runFinished',
+					at: new Date().toISOString(),
+					payload: {
+						runId: result.runId,
+						sessionId: result.sessionId,
+						subscriptionName: result.subscriptionName,
+						status: result.status,
+						pipelineName: result.pipelineName,
+						durationMs: result.durationMs,
+					},
+				});
 				// `time.once` subscriptions are one-shot: rewrite cue.yaml to drop
 				// the sub on terminal status. `stopped` (manual abort) routes
 				// through `onRunStopped` instead and never self-destructs — the
@@ -287,6 +317,18 @@ export class CueEngine {
 			},
 			onRunStopped: (result) => {
 				this.pushActivityLog(result);
+				this.safeEmitPluginEvent({
+					topic: 'cue.runFinished',
+					at: new Date().toISOString(),
+					payload: {
+						runId: result.runId,
+						sessionId: result.sessionId,
+						subscriptionName: result.subscriptionName,
+						status: result.status,
+						pipelineName: result.pipelineName,
+						durationMs: result.durationMs,
+					},
+				});
 			},
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
@@ -363,6 +405,7 @@ export class CueEngine {
 				);
 			},
 			onLog: meteredOnLog,
+			onTriggerFired: deps.onTriggerFired,
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,
@@ -1168,8 +1211,20 @@ export class CueEngine {
 
 		let totalDispatched = 0;
 		for (const { ownerSessionId, state, sub } of toDispatch) {
+			// task.pending template variables ({{CUE_TASK_LIST}}, {{CUE_TASK_COUNT}},
+			// ...) are populated purely from the event payload. The polling scanner
+			// fills it in; a manual trigger does not, so without this enrichment the
+			// agent receives an empty task list and reports "nothing to do" even when
+			// the watched file has open tasks (issue #1151). Scan the watched file(s)
+			// now so Run Now / `maestro-cli cue trigger` behaves like the auto scan.
+			const taskPayload =
+				sub.event === 'task.pending' && sub.watch
+					? this.buildManualTaskPendingPayload(ownerSessionId, sub.watch)
+					: {};
+
 			const event = createCueEvent(sub.event, sub.name, {
 				manual: true,
+				...taskPayload,
 				...(sourceAgentId ? { sourceAgentId } : {}),
 				...(promptOverride ? { cliPrompt: promptOverride } : {}),
 			});
@@ -1190,6 +1245,35 @@ export class CueEngine {
 			if (dispatched > 0) totalDispatched++;
 		}
 		return totalDispatched > 0;
+	}
+
+	/**
+	 * Scan a task.pending subscription's watched files at manual-trigger time and
+	 * return the task payload for the first file that has pending tasks.
+	 *
+	 * Returns an empty object when nothing is watched, the project root is
+	 * unknown, or no file currently has open tasks (the agent then legitimately
+	 * reports "nothing to do"). Anchors on the first matching file, which covers
+	 * the dominant single-file `watch` case; the polling scanner fires one event
+	 * per file, whereas a manual trigger is a single dispatch.
+	 */
+	private buildManualTaskPendingPayload(
+		sessionId: string,
+		watchGlob: string
+	): Record<string, unknown> {
+		const projectRoot = this.deps.getSessions().find((s) => s.id === sessionId)?.projectRoot;
+		if (!projectRoot) return {};
+
+		try {
+			const scanned = scanTaskFilesNow(projectRoot, watchGlob);
+			if (scanned.length === 0) return {};
+			const first = scanned[0];
+			return buildTaskPendingPayload(first.absPath, first.relPath, first.content, first.tasks);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.deps.onLog('error', `[CUE] Manual task scan failed for "${watchGlob}": ${message}`);
+			return {};
+		}
 	}
 
 	/** Clears queued events for a session */
@@ -1217,6 +1301,20 @@ export class CueEngine {
 
 	private pushActivityLog(result: CueRunResult): void {
 		this.activityLog.push(result);
+	}
+
+	/**
+	 * Best-effort plugin event sink. The Cue run lifecycle (start/finish) must
+	 * never be broken by a throwing plugin bus: `onRunStarted` fires before the
+	 * run manager's try/finally, so an exception here would strand the run
+	 * outside cleanup. Emit failures are isolated and reported, never rethrown.
+	 */
+	private safeEmitPluginEvent(event: PluginEvent): void {
+		try {
+			this.deps.emitPluginEvent?.(event);
+		} catch (err) {
+			void captureException(err, { operation: 'cue:pluginEvent', topic: event.topic });
+		}
 	}
 
 	/**

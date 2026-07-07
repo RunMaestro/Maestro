@@ -34,7 +34,12 @@ import { gitService } from '../../../services/git';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
 import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
 import { estimateTokenCount } from '../../../../shared/formatters';
+import { usePluginContributions } from '../../../hooks/usePluginContributions';
 import './MaestroPromptsTab.css';
+
+// Category key for plugin-contributed prompts. They are read-only (a plugin owns
+// their content), shown for reference/insertion, never edited via this tab.
+const PLUGIN_PROMPT_CATEGORY = 'plugin';
 
 interface CorePrompt {
 	id: string;
@@ -60,6 +65,7 @@ const CATEGORY_INFO: Record<string, { label: string }> = {
 	'group-chat': { label: 'Group Chat' },
 	includes: { label: 'Includes' },
 	'inline-wizard': { label: 'Inline Wizard' },
+	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
 	wizard: { label: 'Wizard' },
 };
@@ -82,6 +88,8 @@ const CATEGORY_HELP: Record<string, string> = {
 		'Reusable blocks referenced from other prompts. Two directives consume them: {{INCLUDE:name}} fully inlines the content at assembly time (use for foundational rules every agent must have); {{REF:name}} expands to a one-line pointer that tells the agent to fetch it on demand via `maestro-cli prompts get <name>` (use for heavy reference material only some sessions need). Keeps shared content (history format, Auto Run spec, CLI reference, Cue model, file-access rules) in one place so every agent that needs it gets the same wording.',
 	system:
 		"System-level prompts — the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+	[PLUGIN_PROMPT_CATEGORY]:
+		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
 };
 
 // Group template variables by prefix for the help panel
@@ -302,6 +310,33 @@ export function MaestroPromptsTab({
 		initialRecalledPromptIdRef.current = lastSelectedPromptId ?? null;
 	}
 
+	// Plugin-contributed prompts (read-only). Empty when the plugins Encore flag
+	// is off. Shaped like CorePrompt so they slot into the same list/editor, but
+	// flagged via pluginPromptIds so save/reset/editing stay disabled for them.
+	const pluginContributions = usePluginContributions();
+	const pluginPromptItems = useMemo<CorePrompt[]>(
+		() =>
+			pluginContributions.prompts.map((p) => ({
+				id: p.id,
+				filename: '',
+				description: p.description ?? `Plugin prompt from ${p.pluginId}`,
+				category: PLUGIN_PROMPT_CATEGORY,
+				content: p.content,
+				isModified: false,
+				hasDefaultDrifted: false,
+			})),
+		[pluginContributions.prompts]
+	);
+	const pluginPromptIds = useMemo(
+		() => new Set(pluginPromptItems.map((p) => p.id)),
+		[pluginPromptItems]
+	);
+	const allPrompts = useMemo(
+		() => [...prompts, ...pluginPromptItems],
+		[prompts, pluginPromptItems]
+	);
+	const isSelectedPluginPrompt = selectedPrompt ? pluginPromptIds.has(selectedPrompt.id) : false;
+
 	const autocomplete = useTemplateAutocomplete({
 		textareaRef: textareaRef as React.RefObject<HTMLTextAreaElement>,
 		value: editedContent,
@@ -478,7 +513,7 @@ export function MaestroPromptsTab({
 
 	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component).
 	const items = useMemo<DualPaneFileEditorItem[]>(() => {
-		return [...prompts]
+		return [...allPrompts]
 			.sort((a, b) => a.id.localeCompare(b.id))
 			.map((p) => ({
 				id: p.id,
@@ -488,7 +523,7 @@ export function MaestroPromptsTab({
 				isModified: p.isModified,
 				hasDefaultDrifted: p.hasDefaultDrifted,
 			}));
-	}, [prompts]);
+	}, [allPrompts]);
 
 	const editorTokenCount = useMemo(
 		() => (selectedPrompt ? estimateTokenCount(editedContent) : undefined),
@@ -497,7 +532,7 @@ export function MaestroPromptsTab({
 
 	const handleSelectPrompt = useCallback(
 		(id: string) => {
-			const prompt = prompts.find((p) => p.id === id);
+			const prompt = allPrompts.find((p) => p.id === id);
 			if (!prompt) return;
 			if (hasUnsavedChanges) {
 				const discard = window.confirm('You have unsaved changes. Discard them?');
@@ -509,7 +544,7 @@ export function MaestroPromptsTab({
 			setSuccessMessage(null);
 			setLastSelectedPromptId(id);
 		},
-		[prompts, hasUnsavedChanges, setLastSelectedPromptId]
+		[allPrompts, hasUnsavedChanges, setLastSelectedPromptId]
 	);
 
 	const toggleCategory = useCallback((category: string) => {
@@ -649,22 +684,24 @@ export function MaestroPromptsTab({
 					<GitCompare className="w-3.5 h-3.5" />
 				</button>
 			)}
-			<button
-				className="expand-toggle-button"
-				onClick={handleTogglePreview}
-				disabled={isBuildingPreview}
-				title={
-					isPreviewMode
-						? 'Exit preview (show editable source)'
-						: 'Preview with template variables resolved'
-				}
-				style={{
-					color: isPreviewMode ? theme.colors.accent : theme.colors.textDim,
-					borderColor: isPreviewMode ? theme.colors.accent : theme.colors.border,
-				}}
-			>
-				{isPreviewMode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-			</button>
+			{!isSelectedPluginPrompt && (
+				<button
+					className="expand-toggle-button"
+					onClick={handleTogglePreview}
+					disabled={isBuildingPreview}
+					title={
+						isPreviewMode
+							? 'Exit preview (show editable source)'
+							: 'Preview with template variables resolved'
+					}
+					style={{
+						color: isPreviewMode ? theme.colors.accent : theme.colors.textDim,
+						borderColor: isPreviewMode ? theme.colors.accent : theme.colors.border,
+					}}
+				>
+					{isPreviewMode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+				</button>
+			)}
 			<button
 				className="expand-toggle-button"
 				onClick={() => setIsEditorExpanded((prev) => !prev)}
@@ -693,6 +730,24 @@ export function MaestroPromptsTab({
 					spellCheck={false}
 					style={{
 						borderColor: theme.colors.warning,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				/>
+			);
+		}
+		// Plugin prompts are read-only: render their content in a non-editable
+		// textarea with no autocomplete, so a plugin's prompt can be read/copied
+		// but never edited or saved through this tab.
+		if (isSelectedPluginPrompt) {
+			return (
+				<textarea
+					className="dual-pane-textarea dual-pane-textarea-preview"
+					value={editedContent}
+					readOnly
+					spellCheck={false}
+					style={{
+						borderColor: theme.colors.border,
 						backgroundColor: theme.colors.bgMain,
 						color: theme.colors.textMain,
 					}}
@@ -736,7 +791,7 @@ export function MaestroPromptsTab({
 				/>
 			</>
 		);
-	}, [isPreviewMode, previewContent, editedContent, autocomplete, theme]);
+	}, [isPreviewMode, previewContent, editedContent, autocomplete, theme, isSelectedPluginPrompt]);
 
 	const header =
 		!isEditorExpanded && !showHelp ? (
@@ -790,7 +845,7 @@ export function MaestroPromptsTab({
 				primaryAction={{
 					label: isSaving ? 'Saving...' : 'Save',
 					loading: isSaving,
-					disabled: !hasUnsavedChanges,
+					disabled: !hasUnsavedChanges || isSelectedPluginPrompt,
 					onClick: handleSave,
 				}}
 				secondaryAction={{

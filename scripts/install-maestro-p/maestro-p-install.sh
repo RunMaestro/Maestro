@@ -9,9 +9,9 @@
 #   curl -fsSL https://runmaestro.ai/install/maestro-p.sh | sh
 #
 # What it does (system-wide install, accessible to all users):
-#   1. Verifies Node.js >= 20 and the `claude` CLI are present.
+#   1. Verifies Node.js >= 20, Bun, and the `claude` CLI are present.
 #   2. Downloads maestro-p.js + a pinned package.json into /usr/local/lib/maestro-p.
-#   3. Runs `npm install` there so npm fetches the correct node-pty prebuild
+#   3. Runs `bun install` there so Bun fetches the correct node-pty prebuild
 #      for this OS/arch (no C++ toolchain needed).
 #   4. Installs a `maestro-p` shim into /usr/local/bin.
 #   5. Marks everything world-readable/executable so any user can run it.
@@ -79,17 +79,18 @@ if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ]; then
 fi
 ok "Node.js $(node -v)"
 
-if ! command -v npm >/dev/null 2>&1; then
-	die "npm is not installed (it ships with Node.js). Reinstall Node >= ${MIN_NODE_MAJOR}."
+if ! command -v bun >/dev/null 2>&1; then
+	die "Bun is not installed. Install Bun (https://bun.sh) and re-run."
 fi
+ok "Bun $(bun --version)"
 
 # ---- prerequisite: claude (warn-only) ------------------------------------
 if command -v claude >/dev/null 2>&1; then
 	ok "claude $(claude --version 2>/dev/null | head -n1)"
 else
 	warn "The 'claude' CLI was not found on PATH."
-	warn "maestro-p drives Claude Code, so install + log in to it before use:"
-	warn "    npm install -g @anthropic-ai/claude-code   # then run: claude  (and sign in)"
+	warn "maestro-p drives Claude Code, so install + log in to it before use."
+	warn "See official Claude Code install docs, then run: claude"
 fi
 
 # ---- download tool -------------------------------------------------------
@@ -104,8 +105,8 @@ download() { # download <url> <dest>
 }
 
 # ---- stage in a user-writable temp dir -----------------------------------
-# All network + npm work happens here as the current (non-root) user, so
-# node-pty's install scripts never run under sudo. The finished tree is then
+# All network + Bun package work happens here as the current (non-root) user,
+# so node-pty's install scripts never run under sudo. The finished tree is then
 # atomically moved into the system location with elevated permissions.
 STAGE="$(mktemp -d 2>/dev/null || mktemp -d -t maestro-p)"
 cleanup() { rm -rf "$STAGE" 2>/dev/null || true; }
@@ -123,9 +124,9 @@ info "Downloading package.json"
 download "$BASE_URL/maestro-p.package.json" "$STAGE/package.json"
 ok "package.json"
 
-info "Fetching node-pty prebuild via npm (no compiler needed)"
-( cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --silent ) \
-	|| die "npm install failed while staging."
+info "Fetching node-pty prebuild via Bun (no compiler needed)"
+( cd "$STAGE" && bun install --production --no-progress ) \
+	|| die "bun install failed while staging."
 node -e "require('$STAGE/node_modules/node-pty')" \
 	|| die "node-pty failed to load after install."
 ok "node-pty ready"

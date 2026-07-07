@@ -147,6 +147,14 @@ When two toggleable states of the same modal need independent footprints (e.g. P
 3. `closeTopLayer` checks `onBeforeClose` for dirty modals, then calls the top layer's `onEscape` handler from the handler ref map.
 4. The handler ref map (`handlerRefs`) is updated via `updateLayerHandler` without re-sorting the stack - this is a performance optimization.
 
+### Dismissal Affordance in Search Headers (`EscCloseHint`)
+
+Modals with a search header (Tab Switcher, Quick Actions, Agent Sessions) show a keycap-style "ESC" hint next to the input. Do NOT hand-roll that badge - use `<EscCloseHint theme={theme} onClose={...} />` from `src/renderer/components/ui/EscCloseHint.tsx`. On fine pointers it renders the passive ESC hint; on coarse pointers (touch, where no Escape key exists) it renders a real X button wired to `onClose`, so the modal stays closable on phones/tablets.
+
+### Fixed-Position UI Inside the Mobile Drawers (portal or it's trapped)
+
+On narrow viewports the Left Bar and Right Bar float as CSS-transformed drawers (`index.css`, `[data-panel='left'|'right']`). A transformed ancestor becomes the containing block for `position: fixed`, so any full-screen overlay rendered inside them (modals, sheets) gets trapped to the ~320px drawer box instead of covering the viewport. Render such overlays through `createPortal(..., document.body)` - see `HistoryDetailModal.tsx` and `SessionList/HamburgerDropdown.tsx` (which also swaps the anchored dropdown for a full-screen sheet at the xs breakpoint). If the overlay must survive outside-click closers keyed on a container ref, mark it (e.g. `data-hamburger-sheet`) and have the closer ignore clicks inside the marker.
+
 ### Querying the Stack
 
 Components that need to know whether modals are open (for example, to suppress global shortcuts) use `LayerStackAPI`:
@@ -705,9 +713,11 @@ Presets:
 
 - **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
   Director's Notes, Document Graph). Shiki code fences with copy button + language
-  picker, file links via `remarkFileLinks`, right-click link/file context menus,
-  IPC-loaded local images, chat line breaks + KaTeX math, Bionify, raw-HTML +
-  DOMPurify. `MarkdownRenderer` is a thin wrapper around `<Markdown preset="chat">`.
+  picker, file links via `remarkFileLinks`, right-click link/file/SVG context
+  menus (inline `<svg>` diagrams get a Copy Image / Save Image menu via
+  `SvgContextMenu` + `utils/svgExport.ts`), IPC-loaded local images, chat line
+  breaks + KaTeX math, Bionify, raw-HTML + DOMPurify. `MarkdownRenderer` is a thin
+  wrapper around `<Markdown preset="chat">`.
 - **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
   (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
   `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
@@ -802,6 +812,95 @@ The two rules work together: rem keeps the minimum sized correctly across font s
 Existing canonical sites already follow this - see `SessionContextMenu.tsx`, `NodeContextMenu.tsx` (`DocumentGraph/`), `PipelineContextMenu.tsx` (`CuePipelineEditor/`), `FileContextMenu.tsx`, `LinkContextMenu.tsx`, `TerminalSelectionContextMenu.tsx`, `TabBar/AITabOverlayMenu.tsx`, `TabBar/FileTab.tsx`, `TabBar/TerminalTabItem.tsx`, `TabBar/BrowserTabItem.tsx`, `TemplateAutocompleteDropdown.tsx`. When adding a new menu/popover, match this convention so it grows with the user's font size.
 
 This rule applies to **content containers** sized to wrap text. It does NOT apply to layout primitives where px is intentional (icon dimensions, fixed-pixel borders, scrollbar widths, viewport-relative positioning).
+
+---
+
+## Touch Gestures (`useLongPress`)
+
+The desktop renderer also runs on phones (web-desktop build), where several interactions are right-click-only or hover-only and thus unreachable. `useLongPress` (`src/renderer/hooks/utils/useLongPress.ts`) is the canonical way to expose a right-click affordance (context menu, tab action overlay) to touch users. Do NOT hand-roll a `setTimeout` + `touchmove` gesture; reuse this hook.
+
+It differentiates tap, scroll, and long-press:
+
+- A ~500ms press without moving past a 10px threshold fires `onLongPress(rect)` with the element's bounding rect (so callers can anchor a menu at the touch position) and a `success` haptic.
+- A `touchmove` past the threshold cancels the long-press (scroll-aware): the menu does NOT pop while the user is scrolling a list.
+- A short press fires the optional `onTap` with a `tap` haptic.
+- `handleContextMenu` triggers the same `onLongPress` immediately on desktop right-click, so mouse behavior is preserved when you wire both.
+
+```tsx
+const { elementRef, handlers, handleContextMenu } = useLongPress({
+	onLongPress: (rect) => openMenuAt(rect.left, rect.bottom),
+});
+
+<div
+	ref={elementRef as React.RefObject<HTMLDivElement>}
+	{...handlers}
+	onContextMenu={handleContextMenu} // keep existing right-click behavior
+/>;
+```
+
+Gate any touch-only wiring behind `isCoarsePointer()` from `src/renderer/utils/touch.ts` when you must not change mouse/keyboard behavior.
+
+---
+
+## Virtual Keyboard Offset (`useKeyboardVisibility`)
+
+On phones the on-screen keyboard covers the bottom of the layout viewport, hiding the AI input and send controls. `useKeyboardVisibility` (`src/renderer/hooks/utils/useKeyboardVisibility.ts`) is the canonical detector - do NOT re-derive `window.visualViewport` math or listen for `focusin`/`resize` yourself. It is pure Visual Viewport API with zero app coupling, so it is a no-op on the Electron desktop app and anywhere the API is unavailable (both return `{ keyboardOffset: 0, isKeyboardVisible: false }`).
+
+- Compares `window.innerHeight` to `visualViewport.height` (minus `offsetTop`); a shrink past a 50px threshold reads as a keyboard and reports the eaten pixel height as `keyboardOffset`.
+- Recomputes on the viewport's `resize` (and, while the keyboard is up, `scroll`) events; cleans up its listeners on unmount.
+
+The app shell in `App.tsx` publishes the offset as a CSS custom property, and `.maestro-app-shell` consumes it as bottom padding (scoped to `html[data-runtime='web-desktop']`, so the native app is untouched):
+
+```tsx
+const { keyboardOffset, isKeyboardVisible } = useKeyboardVisibility();
+const keyboardShellOffset = isWebDesktop() && isKeyboardVisible ? keyboardOffset : 0;
+
+<div className="maestro-app-shell" style={{ '--keyboard-offset': `${keyboardShellOffset}px` } as React.CSSProperties}>
+```
+
+```css
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+```
+
+Because the shell is `box-sizing: border-box` at `height: 100dvh`, the added bottom padding shrinks the content box and the flex column re-lays with the input sitting just above the keyboard. Gate the applied offset behind `isWebDesktop()` (from `src/renderer/utils/runtimeContext.ts`) so it stays a no-op on the Electron desktop app.
+
+---
+
+## Voice Input (`useVoiceInput`)
+
+`useVoiceInput` (`src/renderer/hooks/utils/useVoiceInput.ts`) is the canonical speech-to-text hook for the AI input on touch devices. Do NOT re-instantiate `SpeechRecognition` or hand-roll vendor-prefix detection - it wraps the Web Speech API (with the `webkitSpeechRecognition` fallback), carries its own typings, and reuses `triggerHaptic`/`HAPTIC_PATTERNS` from `src/renderer/utils/touch.ts`.
+
+- Call it where the live draft lives (`InputArea`), passing `currentValue` (the draft), `onTranscriptionChange` (the draft setter), and an optional `focusRef` (the textarea, refocused when dictation ends). Streaming interim results call `onTranscriptionChange` so the draft updates live; the final transcript is appended to the value captured when listening began.
+- `voiceSupported` (support detection), `isListening`, and `toggleVoiceInput` drive the UI. `toggleVoiceInput`'s identity changes with the draft, so wrap it in a ref-backed stable callback before handing it to a memoized child (e.g. `ToolbarControls`) - otherwise the child re-renders on every keystroke.
+
+The mic toggle lives in `ToolbarControls` and renders only when `voiceSupported && isCoarsePointer()` (touch), so desktop mouse/keyboard users never see it. It sits in the always-visible left action group (not the collapsing overflow toggle group), because a voice affordance buried behind the `...` menu on the phones it targets defeats the purpose.
+
+```tsx
+const voice = useVoiceInput({
+	currentValue: inputValue,
+	onTranscriptionChange: setInputValue,
+	focusRef: inputRef,
+	disabled: isTerminalMode,
+});
+const voiceToggleRef = useRef(voice.toggleVoiceInput);
+voiceToggleRef.current = voice.toggleVoiceInput;
+const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+```
+
+---
+
+## Swipe Gestures (`useSwipeGestures`)
+
+`useSwipeGestures` (`src/renderer/hooks/utils/useSwipeGestures.ts`) is the canonical multi-directional swipe detector (distance/velocity thresholds, direction locking, optional offset tracking). It returns touch handlers to spread on a target element. Do NOT hand-roll `touchstart`/`touchmove` math - reuse this hook.
+
+Key caveat: `handleTouchMove` calls `e.preventDefault()` once it locks to a horizontal swipe, so it suppresses native horizontal scroll on whatever element it's attached to. Attach it only to elements where that's intended - screen-edge drawer zones or a modal backdrop - never a scrollable content region (terminal, tab bar, tables).
+
+App.tsx uses it for edge-swipe drawers on phones, gated on `isNarrowViewport && isWebDesktop() && isCoarsePointer()`:
+
+- Two thin (24px) fixed edge strips (`.maestro-edge-swipe-zone`, `touch-action: pan-y`) host the openers - a rightward swipe from the left edge opens the Left Bar (`setLeftSidebarOpen(true)`), a leftward swipe from the right edge opens the Right Panel. Because gestures can only START in the edge strips, center-content horizontal scrolling is never intercepted.
+- The mobile backdrop (only present while a drawer is open) hosts the closer - swipe left to close the left drawer, swipe right to close the right.
 
 ---
 

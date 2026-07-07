@@ -14,6 +14,15 @@ import type {
 	BrowserTab,
 } from '../../../../renderer/types';
 
+// The renderer sentry module only exports these two helpers, so a full mock is
+// safe and avoids pulling @sentry/electron/renderer into jsdom. Lets us assert
+// what does / doesn't reach Sentry on a failed flush (MAESTRO-QF).
+const { captureExceptionMock } = vi.hoisted(() => ({ captureExceptionMock: vi.fn() }));
+vi.mock('../../../../renderer/utils/sentry', () => ({
+	captureException: captureExceptionMock,
+	captureMessage: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -325,6 +334,43 @@ describe('useDebouncedPersistence', () => {
 					{ type: 'ai', id: 'default-tab' },
 					{ type: 'browser', id: 'browser-1' },
 				]);
+			});
+
+			it('drops ephemeral (incognito) tabs from persistence and nulls a stale active id', () => {
+				const keeper = makeBrowserTab({
+					id: 'browser-keep',
+					partition: 'persist:maestro-browser-session-session-eph',
+				});
+				// Ephemeral is recognized by flag OR partition prefix; cover both.
+				const flagged: BrowserTab = {
+					...makeBrowserTab({ id: 'browser-flagged' }),
+					ephemeral: true,
+				};
+				const prefixOnly = makeBrowserTab({
+					id: 'browser-prefix',
+					partition: 'maestro-ephemeral-session-eph-a1b2c3d4',
+				});
+				const session = makeSession({
+					id: 'session-eph',
+					browserTabs: [keeper, flagged, prefixOnly],
+					activeBrowserTabId: 'browser-flagged',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				// Only the normal tab reaches disk; both incognito markers are dropped.
+				expect(persisted[0].browserTabs.map((tab) => tab.id)).toEqual(['browser-keep']);
+				// The active pointer referenced a dropped incognito tab: nulled, so a
+				// restart cannot resurrect a tab whose in-memory partition is gone.
+				expect(persisted[0].activeBrowserTabId).toBeNull();
 			});
 
 			it('repairs unsafe persisted browser partitions and stale active browser ids', () => {
@@ -2375,6 +2421,44 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('failed-flush Sentry reporting (MAESTRO-QF)', () => {
+		it('does not report a recoverable disk error to Sentry', async () => {
+			// `setAll` returning false is the main process deliberately signalling a
+			// recoverable disk error (e.g. transient ENOSPC). persistInternal throws
+			// only to preserve `isPending` for retry — it's an expected user-env
+			// condition, not a Maestro bug, so it must stay out of Sentry.
+			vi.mocked(window.maestro.sessions.setAll).mockResolvedValueOnce(false);
+			const session = makeSession({ id: 'session-qf' });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			await act(async () => {
+				result.current.flushNow([session]);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalled();
+			expect(captureExceptionMock).not.toHaveBeenCalled();
+		});
+
+		it('reports a genuine flush failure to Sentry', async () => {
+			vi.mocked(window.maestro.sessions.setAll).mockRejectedValueOnce(new Error('boom'));
+			const session = makeSession({ id: 'session-qf-2' });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			await act(async () => {
+				result.current.flushNow([session]);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+			const reported = captureExceptionMock.mock.calls[0][0] as Error;
+			expect(reported).toBeInstanceOf(Error);
+			expect(reported.message).toBe('boom');
 		});
 	});
 });

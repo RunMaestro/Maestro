@@ -23,6 +23,15 @@ import {
 	triggerCustomNotification,
 } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
+import { showOsNotification } from '../../../renderer/stores/notificationStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
+
+// runtimeContext is mocked so tests can flip between the Electron desktop path
+// (default false) and the web-desktop browser path.
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+	isElectronDesktop: vi.fn(() => true),
+}));
 
 // ============================================================================
 // Mocks
@@ -31,6 +40,7 @@ import type { Toast } from '../../../renderer/stores/notificationStore';
 const mockSpeak = vi.fn().mockResolvedValue(undefined);
 const mockShow = vi.fn().mockResolvedValue(undefined);
 const mockLoggerToast = vi.fn();
+const mockIsWebDesktop = vi.mocked(isWebDesktop);
 
 beforeEach(() => {
 	// Reset store
@@ -55,6 +65,8 @@ beforeEach(() => {
 	};
 
 	vi.clearAllMocks();
+	// Default every test to the Electron desktop path unless it opts into web-desktop.
+	mockIsWebDesktop.mockReturnValue(false);
 	vi.useFakeTimers();
 });
 
@@ -546,6 +558,115 @@ describe('notificationStore', () => {
 					message: 'First sentence. Second sentence.',
 				});
 				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.', undefined, undefined);
+			});
+		});
+
+		describe('web-desktop OS notifications', () => {
+			let notificationCtor: ReturnType<typeof vi.fn>;
+			let requestPermission: ReturnType<typeof vi.fn>;
+
+			// Install a fake Web Notifications API on both the global scope (the
+			// store references bare `Notification`) and the mock window (the store's
+			// `'Notification' in window` support check).
+			function installNotificationApi(
+				permission: NotificationPermission,
+				requestResult: NotificationPermission = 'granted'
+			) {
+				notificationCtor = vi.fn();
+				requestPermission = vi.fn().mockResolvedValue(requestResult);
+				class MockNotification {
+					onclick: (() => void) | null = null;
+					static permission: NotificationPermission = permission;
+					static requestPermission = requestPermission;
+					constructor(title: string, options?: NotificationOptions) {
+						notificationCtor(title, options);
+					}
+				}
+				(globalThis as any).Notification = MockNotification;
+				(globalThis as any).window.Notification = MockNotification;
+			}
+
+			// Let a suspended `await Notification.requestPermission()` continuation run.
+			async function flushMicrotasks() {
+				await Promise.resolve();
+				await Promise.resolve();
+			}
+
+			beforeEach(() => {
+				mockIsWebDesktop.mockReturnValue(true);
+			});
+
+			afterEach(() => {
+				delete (globalThis as any).Notification;
+				if ((globalThis as any).window) {
+					delete (globalThis as any).window.Notification;
+				}
+			});
+
+			it('shows a browser notification instead of the host bridge when granted', () => {
+				installNotificationApi('granted');
+				showOsNotification('Title', 'Body');
+				expect(notificationCtor).toHaveBeenCalledWith('Title', { body: 'Body' });
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('falls back to an in-app toast when permission is denied', () => {
+				installNotificationApi('denied');
+				const before = useNotificationStore.getState().toasts.length;
+				showOsNotification('Title', 'Body');
+				const toasts = useNotificationStore.getState().toasts;
+				expect(toasts).toHaveLength(before + 1);
+				expect(toasts[toasts.length - 1].message).toBe('Body');
+				expect(notificationCtor).not.toHaveBeenCalled();
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('does not add a fallback toast when fallbackToast is false', () => {
+				installNotificationApi('denied');
+				const before = useNotificationStore.getState().toasts.length;
+				showOsNotification('Title', 'Body', undefined, undefined, { fallbackToast: false });
+				expect(useNotificationStore.getState().toasts).toHaveLength(before);
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('falls back to a toast when the Notification API is unavailable', () => {
+				// No installNotificationApi(): the mock window has no Notification.
+				const before = useNotificationStore.getState().toasts.length;
+				showOsNotification('Title', 'Body');
+				expect(useNotificationStore.getState().toasts).toHaveLength(before + 1);
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('requests permission lazily when default, then shows on grant', async () => {
+				installNotificationApi('default', 'granted');
+				showOsNotification('Title', 'Body');
+				expect(requestPermission).toHaveBeenCalledTimes(1);
+				await flushMicrotasks();
+				expect(notificationCtor).toHaveBeenCalledWith('Title', { body: 'Body' });
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('never routes through the host bridge (show) in web-desktop', async () => {
+				installNotificationApi('default', 'denied');
+				showOsNotification('Title', 'Body');
+				await flushMicrotasks();
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('notifyToast uses the browser notification when granted', () => {
+				installNotificationApi('granted');
+				notifyToast({ type: 'success', title: 'Done', message: 'Task complete.' });
+				expect(notificationCtor).toHaveBeenCalledWith('Done', { body: 'Task complete.' });
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('notifyToast keeps a single toast (no duplicate) when denied', () => {
+				installNotificationApi('denied');
+				notifyToast({ type: 'success', title: 'Done', message: 'Task complete.' });
+				// Just the one visible toast — the failed web notification must not
+				// spawn a second fallback toast.
+				expect(useNotificationStore.getState().toasts).toHaveLength(1);
+				expect(mockShow).not.toHaveBeenCalled();
 			});
 		});
 

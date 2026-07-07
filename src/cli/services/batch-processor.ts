@@ -10,6 +10,7 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
+import { captureCliRun } from './agent-run-capture';
 import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
@@ -22,29 +23,12 @@ import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { getCliPrompt } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
+import { detectHaltMarker } from '../../shared/autorun/haltMarker';
 
-/**
- * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
- *
- * Agents write this marker into the current Auto Run document to abort the
- * entire playbook (skipping all remaining tasks in the current document and
- * all subsequent documents). The optional reason after the colon is surfaced
- * in the History panel and JSONL `halt` event.
- *
- * Accepts:
- *   <!-- maestro:halt -->
- *   <!-- maestro:halt: brief reason here -->
- *
- * Match is case-insensitive on the keyword to tolerate agent variations,
- * but the literal token `maestro:halt` is required to keep false positives
- * effectively zero.
- */
-export function detectHaltMarker(content: string): { halted: boolean; reason?: string } {
-	const match = content.match(/<!--\s*maestro:halt\s*(?::\s*([^>]*?))?\s*-->/i);
-	if (!match) return { halted: false };
-	const reason = match[1]?.trim();
-	return { halted: true, reason: reason || undefined };
-}
+// `detectHaltMarker` is re-exported so existing CLI consumers and tests that
+// reference it via this module keep resolving. The canonical implementation now
+// lives in `shared/autorun/haltMarker` so the desktop renderer can share it.
+export { detectHaltMarker };
 
 /**
  * Process a playbook and yield JSONL events
@@ -483,14 +467,29 @@ export async function* runPlaybook(
 					// Run task. Synopsis spawn below intentionally omits this
 					// — it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
-					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-						customModel: session.customModel,
-						customEffort: session.customEffort,
-						customArgs: session.customArgs,
-						customEnvVars: session.customEnvVars,
-						sshRemoteConfig: session.sessionSshRemoteConfig,
-						appendSystemPrompt: playbookSystemPrompt,
-					});
+					const result = await captureCliRun(
+						{
+							sessionId: session.id,
+							toolType: session.toolType,
+							cwd: session.cwd,
+							prompt: finalPrompt,
+							source: 'cli:autorun',
+						},
+						() =>
+							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								customEnvVars: session.customEnvVars,
+								sshRemoteConfig: session.sessionSshRemoteConfig,
+								appendSystemPrompt: playbookSystemPrompt,
+								// Honor the agent's Claude token source for Auto Run task turns.
+								enableMaestroP: session.enableMaestroP,
+								maestroPMode: session.maestroPMode,
+								maestroPPath: session.maestroPPath,
+							}),
+						(r) => (r.success ? 0 : 1)
+					);
 
 					const elapsedMs = Date.now() - taskStartTime;
 
@@ -524,18 +523,32 @@ export async function* runPlaybook(
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
 						// Request synopsis from the agent
-						const synopsisResult = await spawnAgent(
-							session.toolType,
-							session.cwd,
-							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-							result.agentSessionId,
+						const synopsisResult = await captureCliRun(
 							{
-								customModel: session.customModel,
-								customEffort: session.customEffort,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								sshRemoteConfig: session.sessionSshRemoteConfig,
-							}
+								sessionId: result.agentSessionId ?? session.id,
+								toolType: session.toolType,
+								cwd: session.cwd,
+								source: 'cli:autorun-synopsis',
+							},
+							async () =>
+								spawnAgent(
+									session.toolType,
+									session.cwd,
+									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
+									result.agentSessionId,
+									{
+										customModel: session.customModel,
+										customEffort: session.customEffort,
+										customArgs: session.customArgs,
+										customEnvVars: session.customEnvVars,
+										sshRemoteConfig: session.sessionSshRemoteConfig,
+										// Honor the token source for the Auto Run synopsis turn too.
+										enableMaestroP: session.enableMaestroP,
+										maestroPMode: session.maestroPMode,
+										maestroPPath: session.maestroPPath,
+									}
+								),
+							(r) => (r.success ? 0 : 1)
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {

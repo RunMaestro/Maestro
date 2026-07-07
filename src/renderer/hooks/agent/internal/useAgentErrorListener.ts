@@ -33,6 +33,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
@@ -47,12 +48,16 @@ export interface UseAgentErrorListenerDeps {
 }
 
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
 		const unsubscribe = window.maestro.process.onAgentError((sessionId: string, error) => {
+			// Window scoping: only the owning window handles the error (and pauses
+			// its batch). Events are broadcast to all windows.
+			if (!ownedGate.current?.(sessionId)) return;
 			const agentError: AgentError = {
 				type: error.type as AgentError['type'],
 				message: error.message,
@@ -427,5 +432,6 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		deps.addHistoryEntryRef,
 		deps.getBatchStateRef,
 		deps.pauseBatchOnErrorRef,
+		ownedGate,
 	]);
 }

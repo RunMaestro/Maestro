@@ -46,6 +46,64 @@ describe('useFilePreviewTabHandlers', () => {
 		expect(session.unifiedTabOrder.map((ref) => ref.type)).toEqual(['ai', 'file']);
 	});
 
+	// Opening a file must take over the panel; a stale activeGroupId would keep the
+	// tiled group winning the render precedence so the file never shows / gets focus.
+	it('leaves an active tiled group when opening a new file tab (double-click default)', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/b.ts', name: 'b.ts', content: 'b' });
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe(getSession().filePreviewTabs[0].id);
+	});
+
+	it('leaves an active tiled group when re-opening an existing file tab by path', () => {
+		const existing = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({ filePreviewTabs: [existing], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a2' });
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe('file-1');
+	});
+
+	it('leaves an active tiled group when replacing the current file tab in place', () => {
+		const existing = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({
+			filePreviewTabs: [existing],
+			activeFileTabId: 'file-1',
+			activeGroupId: 'group-1',
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab(
+				{ path: '/repo/c.ts', name: 'c.ts', content: 'c' },
+				{ openInNewTab: false }
+			);
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+	});
+
+	it('leaves an active tiled group when creating a new untitled file tab', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeGroupId: 'group-1' });
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleNewFileTab();
+		});
+
+		expect(getSession().activeGroupId).toBeNull();
+		expect(getSession().activeFileTabId).toBe(getSession().filePreviewTabs[0].id);
+	});
+
 	it('clears the active browser tab when opening a new file tab', () => {
 		setupSession({
 			browserTabs: [createMockBrowserTab({ id: 'browser-1' })],
