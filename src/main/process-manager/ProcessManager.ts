@@ -12,9 +12,11 @@ import type {
 } from './types';
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
+import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
+import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -44,14 +46,31 @@ export class ProcessManager extends EventEmitter {
 	private bufferManager: DataBufferManager;
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
+	private opencodeServerSpawner: OpencodeServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
-	constructor() {
+	constructor(
+		/**
+		 * Live read of the `encoreFeatures.opencodeServer` gate. Defaults to off so
+		 * tests and any caller that builds ProcessManager without the wiring never
+		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
+		 * takes effect without an app restart.
+		 */
+		private readonly isOpencodeServerEnabled: () => boolean = () => false
+	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
+		// The OpenCode SDK path falls back to the CLI spawner when the shared
+		// server can't start, so local OpenCode never regresses to "broken".
+		this.opencodeServerSpawner = new OpencodeServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.childProcessSpawner.spawn(config)
+		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 	}
@@ -73,6 +92,19 @@ export class ProcessManager extends EventEmitter {
 				existingPid: existing.pid,
 			});
 			this.kill(config.sessionId);
+		}
+
+		// Decide the OpenCode SDK-serve path on the RAW config, before any coworking
+		// env injection. The serve transport uses a single, process-wide `opencode
+		// serve` keyed by an env fingerprint (OpencodeServerManager.buildServerKey);
+		// injecting the per-session MAESTRO_COWORKING_SESSION_ID here would fingerprint
+		// into a distinct server per session, fragmenting the shared server. Coworking
+		// over the serve transport needs a per-request mechanism (tracked follow-up),
+		// so we skip injection on this path. The coworking bridge fails closed for the
+		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
+		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
+		if (this.shouldUseOpencodeServer(config)) {
+			return this.opencodeServerSpawner.spawn(config);
 		}
 
 		// Inject the *owning Maestro session id* into the agent CLI's env so the
@@ -128,6 +160,29 @@ export class ProcessManager extends EventEmitter {
 	private shouldUsePty(config: ProcessConfig): boolean {
 		const { toolType, requiresPty, prompt } = config;
 		return (toolType === 'terminal' || requiresPty === true) && !prompt;
+	}
+
+	/**
+	 * Route local, interactive OpenCode prompt turns through the SDK server path,
+	 * gated behind the default-off `encoreFeatures.opencodeServer` plugin.
+	 *
+	 * Excluded (stay on the CLI path):
+	 * - SSH-remote sessions (the SDK server spawn is local-only; deferred).
+	 * - Image prompts (handled by the CLI's file-based `-f` args; the SDK path is
+	 *   text-only for now and falls back anyway).
+	 * - Non-prompt spawns (the SDK path is prompt-driven).
+	 */
+	private shouldUseOpencodeServer(config: ProcessConfig): boolean {
+		return (
+			// Default-off plugin gate (encoreFeatures.opencodeServer). While it is
+			// off, OpenCode stays on the CLI path — which keeps the Coworking MCP
+			// working, since the serve transport can't inject per-session env.
+			this.isOpencodeServerEnabled() &&
+			config.toolType === 'opencode' &&
+			!!config.prompt &&
+			!config.sshRemoteId &&
+			!(config.images && config.images.length > 0)
+		);
 	}
 
 	/**
@@ -199,7 +254,11 @@ export class ProcessManager extends EventEmitter {
 		if (!process) return false;
 
 		try {
-			if (process.isTerminal && process.ptyProcess) {
+			if (process.sdkController) {
+				// Server-backed (OpenCode SDK) process: abort the in-flight turn.
+				process.sdkController.interrupt();
+				return true;
+			} else if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.write('\x03');
 				return true;
 			} else if (process.childProcess) {
@@ -290,7 +349,12 @@ export class ProcessManager extends EventEmitter {
 			}
 			this.bufferManager.flushDataBuffer(sessionId);
 
-			if (proc.isTerminal && proc.ptyProcess) {
+			if (proc.sdkController) {
+				// Server-backed (OpenCode SDK) process: no OS child to signal. Abort
+				// the turn and tear down the SSE subscription; the stream ending emits
+				// the exit event. Fall through to the map deletion below.
+				proc.sdkController.kill();
+			} else if (proc.isTerminal && proc.ptyProcess) {
 				if (isWindows() && proc.pid) {
 					// On Windows, node-pty's kill() only terminates the direct ConPTY
 					// child (the shell), not grandchild processes it spawned (e.g., dev
@@ -413,6 +477,8 @@ export class ProcessManager extends EventEmitter {
 			// on POSIX this has no effect (SIGTERM is already non-blocking).
 			this.kill(sessionId, { sync: true, shutdown });
 		}
+		// Tear down the shared OpenCode server(s) that back the SDK path.
+		opencodeServerManager.shutdown();
 	}
 
 	/**

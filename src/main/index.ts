@@ -860,7 +860,12 @@ app
 
 		// Initialize core services
 		logger.info('Initializing core services', 'Startup');
-		processManager = new ProcessManager();
+		// Gate the OpenCode SDK-serve path behind the default-off
+		// `encoreFeatures.opencodeServer` plugin. Read live on every spawn so the
+		// Extensions toggle takes effect without an app restart.
+		processManager = new ProcessManager(
+			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
+		);
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 

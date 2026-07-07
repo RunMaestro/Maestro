@@ -293,6 +293,7 @@
 		"@fastify/static": "^7.0.4",
 		"@fastify/websocket": "^9.0.0",
 		"@lezer/highlight": "^1.2.3",
+		"@opencode-ai/sdk": "^1.17.13",
 		"@sentry/electron": "^7.13.0",
 		"@tanstack/react-virtual": "^3.13.13",
 		"@types/d3-force": "^3.0.10",

@@ -10,6 +10,12 @@
 		"ignoreDeprecations": "6.0",
 		"outDir": "dist",
 		"rootDir": "src",
+		// @opencode-ai/sdk is ESM-only and exposes its types solely via the package
+		// "exports" map, which classic ("node"/node10) moduleResolution cannot read.
+		// Point tsc directly at the bundled declarations until the TODO above lands.
+		"paths": {
+			"@opencode-ai/sdk": ["./node_modules/@opencode-ai/sdk/dist/index.d.ts"]
+		},
 		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,

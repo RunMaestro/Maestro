@@ -1,7 +1,20 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
+import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+
+/**
+ * Kill/interrupt handle for server-backed processes that have no OS child
+ * (currently the OpenCode SDK path). ProcessManager routes kill()/interrupt()
+ * here when `ManagedProcess.sdkController` is set.
+ */
+export interface SdkProcessController {
+	/** Abort the in-flight turn; the session/stream stays alive. */
+	interrupt: () => void;
+	/** Hard stop: abort the turn and tear down the event subscription. */
+	kill: () => void;
+}
 
 /**
  * Configuration for spawning a new process
@@ -119,6 +132,14 @@ export interface ManagedProcess {
 	 *  Inherited system env is NOT included — this is the actionable set shown in the
 	 *  Process Details modal. */
 	maestroEnvVars?: Record<string, string>;
+	/** Kill/interrupt handle for server-backed processes (OpenCode SDK path). When
+	 *  set, this process has no `ptyProcess`/`childProcess`; ProcessManager routes
+	 *  lifecycle calls through here instead of OS signals. */
+	sdkController?: SdkProcessController;
+	/** OpenCode server session id for the SDK path (used to abort the turn). */
+	opencodeSessionId?: string;
+	/** OpenCode SDK client bound to the shared server, for abort calls. */
+	opencodeClient?: OpencodeClient;
 }
 
 export interface UsageTotals {
