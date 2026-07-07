@@ -595,8 +595,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('settings');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
-				// Open agent settings for the current session
-				if (ctx.activeSession) {
+				// In group chat, open the moderator's settings for the active chat.
+				// Otherwise open agent settings for the current session.
+				if (ctx.activeGroupChatId) {
+					e.preventDefault();
+					useModalStore.getState().openModal('editGroupChat', {
+						groupChatId: ctx.activeGroupChatId,
+					});
+					trackShortcut('agentSettings');
+				} else if (ctx.activeSession) {
 					ctx.setEditAgentSession(ctx.activeSession);
 					trackShortcut('agentSettings');
 				}

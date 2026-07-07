@@ -7,3 +7,4 @@
 
 export { createMockAITab, createMockFileTab } from './mockTab';
 export { createMockSession } from './mockSession';
+export { installLocalStorageMock } from './mockLocalStorage';

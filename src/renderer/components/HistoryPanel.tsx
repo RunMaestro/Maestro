@@ -26,6 +26,7 @@ import {
 	estimateHistoryRowHeight,
 	LOOKBACK_OPTIONS,
 	HISTORY_PANEL_FILTERS_KEY,
+	historyPanelFilterKeyForAgent,
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
@@ -96,9 +97,21 @@ export const HistoryPanel = React.memo(
 			? ['USER', 'AUTO', 'CUE']
 			: ['USER', 'AUTO'];
 
+		// History source-type filters (USER/AUTO/CUE) are persisted per-agent so
+		// each agent keeps its own selection across switches and app restarts.
+		// The legacy global key is passed as a fallback so an existing selection
+		// carries over the first time an agent is resolved.
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(() =>
-			resolveInitialHistoryFilters(HISTORY_PANEL_FILTERS_KEY, maestroCueEnabled)
+			resolveInitialHistoryFilters(
+				historyPanelFilterKeyForAgent(session.id),
+				maestroCueEnabled,
+				HISTORY_PANEL_FILTERS_KEY
+			)
 		);
+		// Tracks which agent `activeFilters` currently belongs to, so switching
+		// agents reloads that agent's stored selection (and the mount run is
+		// skipped, since useState already initialized from the right key).
+		const activeFiltersAgentIdRef = useRef(session.id);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
 		// Source/host filter — null means "All Sources". When set, both the
@@ -313,9 +326,31 @@ export const HistoryPanel = React.memo(
 			});
 		}, [maestroCueEnabled]);
 
-		// Persist the selection so it survives view switches and app restart.
+		// Reload the persisted selection when switching agents. Guarded on the
+		// agent id so a Cue feature toggle (handled by the effect above) doesn't
+		// trigger a reload that would clobber the in-memory selection.
 		useEffect(() => {
-			savePersistedHistoryFilters(HISTORY_PANEL_FILTERS_KEY, activeFilters);
+			if (activeFiltersAgentIdRef.current === session.id) return;
+			activeFiltersAgentIdRef.current = session.id;
+			setActiveFilters(
+				resolveInitialHistoryFilters(
+					historyPanelFilterKeyForAgent(session.id),
+					maestroCueEnabled,
+					HISTORY_PANEL_FILTERS_KEY
+				)
+			);
+		}, [session.id, maestroCueEnabled]);
+
+		// Persist the selection per-agent so it survives view switches and app
+		// restart. Keyed off the ref (not session.id) so it writes under the
+		// agent `activeFilters` actually belongs to: on an agent switch the
+		// reload effect above updates the ref and reloads before this fires,
+		// so we never write the previous agent's selection under the new key.
+		useEffect(() => {
+			savePersistedHistoryFilters(
+				historyPanelFilterKeyForAgent(activeFiltersAgentIdRef.current),
+				activeFilters
+			);
 		}, [activeFilters]);
 
 		// Toggle a filter

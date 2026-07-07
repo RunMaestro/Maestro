@@ -16,7 +16,7 @@ export const CUE_PATTERNS: CuePattern[] = [
 		yaml: `subscriptions:
   - name: "Initialize Workspace"
     event: app.startup
-    prompt: prompts/workspace-init.md
+    prompt_file: prompts/workspace-init.md
     enabled: true
 `,
 	},
@@ -30,7 +30,7 @@ export const CUE_PATTERNS: CuePattern[] = [
   - name: "Heartbeat Task"
     event: time.heartbeat
     interval_minutes: 60
-    prompt: prompts/scheduled-task.md
+    prompt_file: prompts/scheduled-task.md
     enabled: true
 `,
 	},
@@ -51,7 +51,7 @@ export const CUE_PATTERNS: CuePattern[] = [
       - wed
       - thu
       - fri
-    prompt: prompts/standup.md
+    prompt_file: prompts/standup.md
     enabled: true
 `,
 	},
@@ -65,7 +65,7 @@ export const CUE_PATTERNS: CuePattern[] = [
   - name: "File Enrichment"
     event: file.changed
     watch: "src/**/*"
-    prompt: prompts/enrich.md
+    prompt_file: prompts/enrich.md
     enabled: true
 `,
 	},
@@ -74,12 +74,12 @@ export const CUE_PATTERNS: CuePattern[] = [
 		name: 'Reactive',
 		description: 'Trigger on agent completion',
 		explanation:
-			'Fires when a specific agent session finishes its work. Use to chain agents — e.g. run tests after code generation, or deploy after tests pass. Set source_session to the name of the agent you want to react to.',
+			'Fires when a specific agent session finishes its work. Use to chain agents - e.g. run tests after code generation, or deploy after tests pass. Set source_session to the name of the agent you want to react to.',
 		yaml: `subscriptions:
   - name: "React to Completion"
     event: agent.completed
     source_session: "trigger-session"
-    prompt: prompts/react.md
+    prompt_file: prompts/react.md
     enabled: true
 `,
 	},
@@ -94,7 +94,7 @@ subscriptions:
   - name: "Fan-out Research"
     event: time.heartbeat
     interval_minutes: 1440  # Daily
-    prompt: prompts/research-question.md
+    prompt_file: prompts/research-question.md
     fan_out:
       - "researcher-1"
       - "researcher-2"
@@ -107,7 +107,7 @@ subscriptions:
       - "researcher-1"
       - "researcher-2"
       - "researcher-3"
-    prompt: prompts/synthesize.md
+    prompt_file: prompts/synthesize.md
     enabled: true
 `,
 	},
@@ -116,13 +116,13 @@ subscriptions:
 		name: 'Sequential Chain',
 		description: 'Agent A \u2192 Agent B \u2192 Agent C pipeline',
 		explanation:
-			'Creates a multi-step pipeline where each agent triggers the next via agent.completed events. The first session starts on a timer; subsequent sessions each listen for the previous one to finish. Each session needs its own cue.yaml — commented sections show what goes where.',
+			'Creates a multi-step pipeline where each agent triggers the next via agent.completed events. The first session starts on a timer; subsequent sessions each listen for the previous one to finish. Each session needs its own cue.yaml - commented sections show what goes where.',
 		yaml: `# Session A config:
 subscriptions:
   - name: "Step 1"
     event: time.heartbeat
     interval_minutes: 120
-    prompt: prompts/step-1.md
+    prompt_file: prompts/step-1.md
     enabled: true
 
 # Session B config (separate .maestro/cue.yaml):
@@ -130,14 +130,14 @@ subscriptions:
 #   - name: "Step 2"
 #     event: agent.completed
 #     source_session: "session-a"
-#     prompt: prompts/step-2.md
+#     prompt_file: prompts/step-2.md
 
 # Session C config (separate .maestro/cue.yaml):
 # subscriptions:
 #   - name: "Step 3"
 #     event: agent.completed
 #     source_session: "session-b"
-#     prompt: prompts/step-3.md
+#     prompt_file: prompts/step-3.md
 `,
 	},
 	{
@@ -151,7 +151,7 @@ subscriptions:
   - name: "Start Debate"
     event: time.heartbeat
     interval_minutes: 1440
-    prompt: prompts/debate-topic.md
+    prompt_file: prompts/debate-topic.md
     fan_out:
       - "debater-pro"
       - "debater-con"
@@ -162,7 +162,7 @@ subscriptions:
     source_session:
       - "debater-pro"
       - "debater-con"
-    prompt: prompts/debate-synthesis.md
+    prompt_file: prompts/debate-synthesis.md
     enabled: true
 `,
 	},
@@ -175,11 +175,11 @@ subscriptions:
 		yaml: `subscriptions:
   - name: "Review New PRs"
     event: github.pull_request
-    # repo: "owner/repo"  # optional — auto-detected from git remote
+    # repo: "owner/repo"  # optional - auto-detected from git remote
     poll_minutes: 5
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, reviews)
     # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
-    prompt: prompts/pr-review.md
+    prompt_file: prompts/pr-review.md
     filter:
       author: "!dependabot[bot]"
       draft: false
@@ -195,11 +195,11 @@ subscriptions:
 		yaml: `subscriptions:
   - name: "Triage New Issues"
     event: github.issue
-    # repo: "owner/repo"  # optional — auto-detected from git remote
+    # repo: "owner/repo"  # optional - auto-detected from git remote
     poll_minutes: 10
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, labels)
     # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
-    prompt: prompts/issue-triage.md
+    prompt_file: prompts/issue-triage.md
     enabled: true
 `,
 	},
@@ -214,15 +214,15 @@ subscriptions:
     event: task.pending
     watch: "tasks/**/*.md"
     poll_minutes: 1
-    prompt: prompts/process-task.md
+    prompt_file: prompts/process-task.md
     enabled: true
 
 # Template variables available in your prompt:
-#   {{CUE_TASK_FILE}}      — Full path to the file with pending tasks
-#   {{CUE_TASK_FILE_NAME}} — File name (e.g., "sprint-tasks.md")
-#   {{CUE_TASK_COUNT}}     — Number of unchecked tasks found
-#   {{CUE_TASK_LIST}}      — Formatted list of pending tasks with line numbers
-#   {{CUE_TASK_CONTENT}}   — Full file content (truncated to 10K chars)
+#   {{CUE_TASK_FILE}}      - Full path to the file with pending tasks
+#   {{CUE_TASK_FILE_NAME}} - File name (e.g., "sprint-tasks.md")
+#   {{CUE_TASK_COUNT}}     - Number of unchecked tasks found
+#   {{CUE_TASK_LIST}}      - Formatted list of pending tasks with line numbers
+#   {{CUE_TASK_CONTENT}}   - Full file content (truncated to 10K chars)
 `,
 	},
 	{
@@ -242,7 +242,7 @@ subscriptions:
 #   maestro-cli cue trigger deploy --prompt "Deploy to staging only"
 #
 # Template variables available in your prompt:
-#   {{CUE_CLI_PROMPT}} — The prompt text passed via --prompt flag (empty if not provided)
+#   {{CUE_CLI_PROMPT}} - The prompt text passed via --prompt flag (empty if not provided)
 `,
 	},
 ];

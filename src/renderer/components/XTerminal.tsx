@@ -17,6 +17,7 @@ import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
+import { readLogicalLine } from '../utils/terminalBuffer';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -467,6 +468,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			cursorStyle: 'block',
 			scrollback: 10000,
 			allowProposedApi: true,
+			// Escape hatch for selecting text over a TUI that has mouse tracking on
+			// (Claude Code's login screen, etc). Without this, xterm hands drags to the
+			// app and there is NO way to drag-select on macOS. With it, Option+drag
+			// (macOS) / Shift+drag (win/linux) force a local selection so copy works
+			// regardless of what's running. Matches iTerm2 / Terminal.app muscle memory.
+			macOptionClickForcesSelection: true,
 			fontFamily,
 			fontSize,
 			theme: mapThemeToXterm(theme),
@@ -623,9 +630,29 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			fitAddon.fit();
 		}
 
+		// Read the full logical line under a viewport Y coordinate straight from the
+		// buffer. This is the escape hatch for copying when a TUI has mouse tracking
+		// on (Claude Code, tmux, vim, ...): xterm hands drags to the app so there is
+		// no selection to copy, but the buffer contents are always readable. Rebuilds
+		// wrapped lines into one string so e.g. a URL that soft-wraps across three
+		// visual rows comes out whole.
+		const getLogicalLineAt = (clientY: number): string => {
+			const buf = term.buffer.active;
+			const rect = containerRef.current?.getBoundingClientRect();
+			if (!rect || term.rows <= 0) return '';
+			const rowHeight = rect.height / term.rows;
+			if (rowHeight <= 0) return '';
+			const row = Math.max(
+				0,
+				Math.min(term.rows - 1, Math.floor((clientY - rect.top) / rowHeight))
+			);
+			return readLogicalLine(buf, buf.viewportY + row);
+		};
+
 		// Right-click context menu: prefer the link menu when a URL is hovered;
-		// otherwise show the selection menu when text is highlighted. If neither
-		// applies, let the default context menu show.
+		// otherwise open the selection menu on the highlighted text, or - when
+		// nothing is highlighted (e.g. mouse-mode TUI ate the drag) - fall back to
+		// the logical line under the cursor so copy always has something to grab.
 		const termElement = containerRef.current;
 		const handleContextMenu = (e: MouseEvent) => {
 			const url = hoveredLinkRef.current;
@@ -637,11 +664,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			}
 			const hasHandler = !!(onCopySelectionRef.current || onSendSelectionToAgentRef.current);
 			if (!hasHandler) return;
-			const selection = term.getSelection();
-			if (selection) {
+			const text = term.getSelection() || getLogicalLineAt(e.clientY);
+			if (text) {
 				e.preventDefault();
 				e.stopPropagation();
-				setSelectionMenu({ x: e.clientX, y: e.clientY, selection });
+				setSelectionMenu({ x: e.clientX, y: e.clientY, selection: text });
 			}
 		};
 		termElement.addEventListener('contextmenu', handleContextMenu);

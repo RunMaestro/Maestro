@@ -3427,4 +3427,75 @@ describe('useMainKeyboardHandler', () => {
 			expect(document.activeElement).not.toBe(searchInput);
 		});
 	});
+
+	describe('agentSettings shortcut (Cmd+Opt+,)', () => {
+		it('opens the moderator settings modal when a group chat is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const openModalSpy = vi
+				.spyOn(useModalStore.getState(), 'openModal')
+				.mockImplementation(() => {});
+			const mockSetEditAgentSession = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentSettings',
+				activeGroupChatId: 'group-1',
+				activeSession: { id: 'session-1', name: 'Test' },
+				setEditAgentSession: mockSetEditAgentSession,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: ',',
+				metaKey: true,
+				altKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(openModalSpy).toHaveBeenCalledWith('editGroupChat', { groupChatId: 'group-1' });
+			expect(mockSetEditAgentSession).not.toHaveBeenCalled();
+			expect(preventDefaultSpy).toHaveBeenCalled();
+
+			openModalSpy.mockRestore();
+		});
+
+		it('opens agent settings for the active session when no group chat is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const openModalSpy = vi
+				.spyOn(useModalStore.getState(), 'openModal')
+				.mockImplementation(() => {});
+			const mockSetEditAgentSession = vi.fn();
+			const activeSession = { id: 'session-1', name: 'Test' };
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentSettings',
+				activeGroupChatId: null,
+				activeSession,
+				setEditAgentSession: mockSetEditAgentSession,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: ',',
+						metaKey: true,
+						altKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetEditAgentSession).toHaveBeenCalledWith(activeSession);
+			expect(openModalSpy).not.toHaveBeenCalledWith('editGroupChat', expect.anything());
+
+			openModalSpy.mockRestore();
+		});
+	});
 });

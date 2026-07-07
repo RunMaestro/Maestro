@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 	mockSpawn: vi.fn(),
 	mockIsCloudflaredInstalled: vi.fn(),
 	mockGetCloudflaredPath: vi.fn(),
+	mockGetExpandedEnv: vi.fn(),
 	mockLoggerInfo: vi.fn(),
 	mockLoggerError: vi.fn(),
 }));
@@ -49,6 +50,7 @@ vi.mock('../../main/utils/logger', () => ({
 vi.mock('../../main/utils/cliDetection', () => ({
 	isCloudflaredInstalled: mocks.mockIsCloudflaredInstalled,
 	getCloudflaredPath: mocks.mockGetCloudflaredPath,
+	getExpandedEnv: mocks.mockGetExpandedEnv,
 }));
 
 // Helper to create a mock ChildProcess
@@ -76,11 +78,17 @@ describe('TunnelManager', () => {
 		// Reset module to get fresh TunnelManager instance
 		vi.resetModules();
 
+		// Fake ONLY setTimeout/clearTimeout so we can control the supervisor's
+		// backoff restart timers deterministically. Leave setImmediate real so the
+		// existing `await new Promise(r => setImmediate(r))` waits still resolve.
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
 		// Default mock setup
 		mockProcess = createMockProcess();
 		mocks.mockSpawn.mockReturnValue(mockProcess);
 		mocks.mockIsCloudflaredInstalled.mockResolvedValue(true);
 		mocks.mockGetCloudflaredPath.mockReturnValue('/usr/local/bin/cloudflared');
+		mocks.mockGetExpandedEnv.mockReturnValue({ PATH: '/usr/bin' });
 
 		// Import fresh module
 		const module = await import('../../main/tunnel-manager');
@@ -88,6 +96,10 @@ describe('TunnelManager', () => {
 	});
 
 	afterEach(() => {
+		// Cancel any pending supervised restart timers so they can't spawn into a
+		// later test, then restore real timers.
+		vi.clearAllTimers();
+		vi.useRealTimers();
 		vi.clearAllMocks();
 	});
 
@@ -210,12 +222,16 @@ describe('TunnelManager', () => {
 			mocks.mockGetCloudflaredPath.mockReturnValue('/custom/path/cloudflared');
 
 			// Start and let the async cloudflared check complete
-			const promise = tunnelManager.start(3000);
+			void tunnelManager.start(3000);
 
 			// Give time for the async isCloudflaredInstalled to resolve
 			await new Promise((resolve) => setImmediate(resolve));
 
-			expect(mocks.mockSpawn).toHaveBeenCalledWith('/custom/path/cloudflared', expect.any(Array));
+			expect(mocks.mockSpawn).toHaveBeenCalledWith(
+				'/custom/path/cloudflared',
+				expect.any(Array),
+				expect.objectContaining({ env: expect.anything() })
+			);
 
 			// Clean up by emitting exit (don't wait for it)
 			mockProcess.emit('exit', 0);
@@ -227,7 +243,11 @@ describe('TunnelManager', () => {
 			tunnelManager.start(3000);
 			await new Promise((resolve) => setImmediate(resolve));
 
-			expect(mocks.mockSpawn).toHaveBeenCalledWith('cloudflared', expect.any(Array));
+			expect(mocks.mockSpawn).toHaveBeenCalledWith(
+				'cloudflared',
+				expect.any(Array),
+				expect.objectContaining({ env: expect.anything() })
+			);
 
 			mockProcess.emit('exit', 0);
 		});
@@ -238,7 +258,8 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['tunnel'])
+				expect.arrayContaining(['tunnel']),
+				expect.objectContaining({ env: expect.anything() })
 			);
 
 			mockProcess.emit('exit', 0);
@@ -250,7 +271,8 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['--url'])
+				expect.arrayContaining(['--url']),
+				expect.objectContaining({ env: expect.anything() })
 			);
 
 			mockProcess.emit('exit', 0);
@@ -262,7 +284,8 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['http://localhost:8080'])
+				expect.arrayContaining(['http://localhost:8080']),
+				expect.objectContaining({ env: expect.anything() })
 			);
 
 			mockProcess.emit('exit', 0);
@@ -274,7 +297,8 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['--protocol', 'http2'])
+				expect.arrayContaining(['--protocol', 'http2']),
+				expect.objectContaining({ env: expect.anything() })
 			);
 
 			mockProcess.emit('exit', 0);
@@ -298,7 +322,8 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['http://localhost:9000'])
+				expect.arrayContaining(['http://localhost:9000']),
+				expect.objectContaining({ env: expect.anything() })
 			);
 
 			mockProcess.emit('exit', 0);
@@ -353,7 +378,7 @@ describe('TunnelManager', () => {
 			expect('error' in status).toBe(true);
 		});
 
-		it('preserves an error after unexpected exit post-connect', async () => {
+		it('clears the stale URL and records an error after unexpected exit post-connect', async () => {
 			const startPromise = tunnelManager.start(3000);
 			await new Promise((resolve) => setImmediate(resolve));
 
@@ -364,8 +389,58 @@ describe('TunnelManager', () => {
 
 			const status = tunnelManager.getStatus();
 			expect(status.isRunning).toBe(false);
-			expect(status.url).toBe('https://abc.trycloudflare.com');
+			// The ephemeral hostname's DNS record is gone the moment cloudflared
+			// dies, so the supervisor drops the stale URL rather than showing a
+			// dead link.
+			expect(status.url).toBeNull();
 			expect(status.error).toContain('cloudflared exited unexpectedly');
+		});
+	});
+
+	// =============================================================================
+	// SUPERVISION / AUTO-RESTART TESTS
+	// =============================================================================
+
+	describe('supervision', () => {
+		it('auto-restarts after an unexpected exit while supervising', async () => {
+			const startPromise = tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+			mockProcess.stderr.emit('data', Buffer.from('https://abc.trycloudflare.com'));
+			await startPromise;
+
+			expect(mocks.mockSpawn).toHaveBeenCalledTimes(1);
+
+			// Tunnel drops unexpectedly (network flap / sleep-wake).
+			mockProcess.emit('exit', 1);
+			expect(tunnelManager.getStatus().url).toBeNull();
+
+			// The first backoff is INITIAL_BACKOFF_MS (1000ms); advancing past it
+			// respawns cloudflared automatically.
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(mocks.mockSpawn).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not auto-restart after a user-initiated stop()', async () => {
+			const startPromise = tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+			mockProcess.stderr.emit('data', Buffer.from('https://abc.trycloudflare.com'));
+			await startPromise;
+			expect(mocks.mockSpawn).toHaveBeenCalledTimes(1);
+
+			// stop() cancels supervision; the ensuing exit must be treated as
+			// intentional (no restart scheduled).
+			const stopPromise = tunnelManager.stop();
+			mockProcess.emit('exit', 0);
+			await stopPromise;
+
+			// Even after any backoff window elapses, no new spawn occurs.
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(mocks.mockSpawn).toHaveBeenCalledTimes(1);
+
+			const status = tunnelManager.getStatus();
+			expect(status.isRunning).toBe(false);
+			expect(status.url).toBeNull();
+			expect(status.error).toBeNull();
 		});
 	});
 });

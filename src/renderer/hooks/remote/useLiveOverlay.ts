@@ -130,7 +130,10 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 	// 500ms and the user thinks their click didn't register — then double-taps,
 	// which kills the in-flight cloudflared and starts a fresh one.
 	useEffect(() => {
-		if (!isLiveMode || (tunnelStatus !== 'starting' && tunnelStatus !== 'connected')) {
+		if (
+			!isLiveMode ||
+			(tunnelStatus !== 'starting' && tunnelStatus !== 'connected' && tunnelStatus !== 'error')
+		) {
 			return;
 		}
 
@@ -160,8 +163,10 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 					return;
 				}
 
-				// tunnelStatus === 'connected' here: the tunnel was up and is
-				// now gone — reflect that.
+				// tunnelStatus is 'connected' or 'error' here. If the main-process
+				// supervisor has since restored the tunnel, the isRunning check
+				// above already flipped us back to 'connected'. Otherwise reflect
+				// that it's still down (the supervisor may be mid-backoff).
 				if (status.error) {
 					setTunnelStatus('error');
 					setTunnelError(status.error);
@@ -193,6 +198,40 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		};
 	}, [isLiveMode, tunnelStatus]);
 
+	// Restart the tunnel by tearing down any existing (or half-dead) cloudflared
+	// process and starting fresh. Used both when the underlying web server changes
+	// (e.g. port change) and to recover from an 'error' state. Runs from either
+	// 'connected' or 'error' - the latter is the recovery path when a supervised
+	// tunnel gave up or the user wants to force a reconnect.
+	const restartTunnel = useCallback(async () => {
+		if (tunnelStatus !== 'connected' && tunnelStatus !== 'error') return;
+
+		setTunnelStatus('starting');
+		setTunnelError(null);
+
+		try {
+			await window.maestro.tunnel.stop();
+		} catch (error) {
+			logger.error('[restartTunnel] Failed to stop tunnel:', undefined, error);
+		}
+
+		try {
+			const result = await window.maestro.tunnel.start();
+			if (result.success && result.url) {
+				setTunnelStatus('connected');
+				setTunnelUrl(result.url);
+				setActiveUrlTab('remote'); // Land on the remote tab with the fresh URL
+			} else {
+				setTunnelStatus('error');
+				setTunnelError(result.error || 'Failed to restart tunnel');
+			}
+		} catch (error) {
+			logger.error('[restartTunnel] Failed to restart tunnel:', undefined, error);
+			setTunnelStatus('error');
+			setTunnelError(error instanceof Error ? error.message : 'Failed to restart tunnel');
+		}
+	}, [tunnelStatus]);
+
 	// Handle tunnel toggle (start/stop remote access)
 	const handleTunnelToggle = useCallback(async () => {
 		if (tunnelStatus === 'connected') {
@@ -207,6 +246,11 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 			setTunnelUrl(null);
 			setTunnelError(null);
 			setActiveUrlTab('local'); // Switch back to local tab
+		} else if (tunnelStatus === 'error') {
+			// Recover from a dead/errored tunnel: tear down and start fresh. Without
+			// this branch the toggle was a no-op in 'error', leaving no way to
+			// revive a tunnel that Cloudflare had dropped.
+			await restartTunnel();
 		} else if (tunnelStatus === 'off') {
 			// Turn on tunnel
 			setTunnelStatus('starting');
@@ -228,36 +272,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 				setTunnelError(error instanceof Error ? error.message : 'Failed to start tunnel');
 			}
 		}
-	}, [tunnelStatus]);
-
-	// Restart the tunnel when the underlying web server changes (e.g. port change)
-	const restartTunnel = useCallback(async () => {
-		if (tunnelStatus !== 'connected') return;
-
-		setTunnelStatus('starting');
-		setTunnelError(null);
-
-		try {
-			await window.maestro.tunnel.stop();
-		} catch (error) {
-			logger.error('[restartTunnel] Failed to stop tunnel:', undefined, error);
-		}
-
-		try {
-			const result = await window.maestro.tunnel.start();
-			if (result.success && result.url) {
-				setTunnelStatus('connected');
-				setTunnelUrl(result.url);
-			} else {
-				setTunnelStatus('error');
-				setTunnelError(result.error || 'Failed to restart tunnel');
-			}
-		} catch (error) {
-			logger.error('[restartTunnel] Failed to restart tunnel:', undefined, error);
-			setTunnelStatus('error');
-			setTunnelError(error instanceof Error ? error.message : 'Failed to restart tunnel');
-		}
-	}, [tunnelStatus]);
+	}, [tunnelStatus, restartTunnel]);
 
 	return {
 		// Overlay state
