@@ -17,6 +17,7 @@ import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
+import { expandTilde } from '../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
@@ -57,6 +58,22 @@ export class ProcessManager extends EventEmitter {
 	 * to prevent orphaned PTY/child processes that are no longer tracked.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		// Expand a leading `~` in the working directory before spawning. node-pty
+		// and child_process hand `cwd` straight to the OS, which - unlike a shell -
+		// does not expand `~`. A session whose cwd is persisted as `~/project` (or
+		// bare `~`) would otherwise make the child's chdir() fail, leaving the shell
+		// in an invalid/unreadable directory. On macOS that surfaces on every shell
+		// startup as `Error: The current working directory must be readable to
+		// <user> to run brew`. The spawned process is always local (even the SSH
+		// client runs locally, with the remote `cd` injected into its args), so a
+		// literal `~` cwd is never intentional here. See issue #1173.
+		if (config.cwd) {
+			const expandedCwd = expandTilde(config.cwd);
+			if (expandedCwd !== config.cwd) {
+				config = { ...config, cwd: expandedCwd };
+			}
+		}
+
 		// Kill any existing process for this sessionId to prevent orphans.
 		// This guards against double-spawn race conditions where a second spawn
 		// overwrites the map entry and the first process becomes untracked.
