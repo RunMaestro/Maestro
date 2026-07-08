@@ -62,10 +62,8 @@ export function attachWindowCrashHandlers(mainWindow: BrowserWindow): void {
 				reason: details.reason,
 				exitCode: details.exitCode,
 			});
-		}
 
-		// Auto-reload unless the process was intentionally killed
-		if (details.reason !== 'killed' && details.reason !== 'clean-exit') {
+			// Auto-reload unless the process was intentionally killed
 			logger.info('Attempting to reload renderer after crash', 'Window');
 			setTimeout(() => {
 				if (!mainWindow.isDestroyed()) {
@@ -129,7 +127,7 @@ export function attachWindowCrashHandlers(mainWindow: BrowserWindow): void {
 	// Forward renderer console errors to main process logger and Sentry
 	// This catches errors that happen before or outside React's error boundary
 	mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-		// Level 2 = error (0=verbose, 1=info, 2=warning, 3=error)
+		// Level 3 = error (0=verbose, 1=info, 2=warning, 3=error)
 		if (level === 3) {
 			logger.error(`Renderer console error: ${message}`, 'Window', {
 				line,
