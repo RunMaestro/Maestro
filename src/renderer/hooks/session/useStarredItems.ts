@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import {
@@ -198,6 +199,13 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {
+			// Dismiss any active group chat first. App gates the group chat view on a
+			// truthy activeGroupChatId and renders it on top of the session view, so
+			// setting activeSessionId alone leaves the group chat covering everything
+			// and the click appears to do nothing. Agent-row clicks clear it via a
+			// wrapper (SessionList); mirror that here so both the open (early-return)
+			// and closed paths navigate out of group chat. See issue #1175.
+			useGroupChatStore.getState().setActiveGroupChatId(null);
 			useSessionStore.getState().setActiveSessionId(item.parentSessionId);
 			if (item.kind === 'open') {
 				updateSessionWith(item.parentSessionId, (s) => ({
