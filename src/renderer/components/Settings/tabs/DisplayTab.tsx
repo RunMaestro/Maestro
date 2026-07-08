@@ -186,8 +186,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			setSystemFonts(detected);
 
 			const savedCustomFonts = (await window.maestro.settings.get('customFonts')) as
-				| string[]
-				| undefined;
+				string[] | undefined;
 			if (savedCustomFonts && Array.isArray(savedCustomFonts)) {
 				setCustomFonts(savedCustomFonts);
 			}
@@ -691,7 +690,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						</button>
 					</div>
 
-					{/* Show Cue indicator — hidden entirely when the Cue Encore Feature is off */}
+					{/* Show Cue indicator - hidden entirely when the Cue Encore Feature is off */}
 					{maestroCueEnabled && (
 						<div
 							className="flex items-center justify-between pt-3 border-t"
@@ -1122,9 +1121,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Treat {isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 as the last tab
 							</p>
 							<p className="text-xs opacity-50 mt-0.5">
-								Maestro-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–9 jump to tabs 1–9, and{' '}
+								Maestro-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1-9 jump to tabs 1-9, and{' '}
 								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 jumps to the last tab. Disable to use
-								browser-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–8 jump to tabs 1–8, and{' '}
+								browser-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1-8 jump to tabs 1-8, and{' '}
 								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+9 jumps to the last tab.
 							</p>
 						</div>
@@ -1231,6 +1230,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								step={50}
 								value={documentGraphMaxNodes}
 								onChange={(e) => setDocumentGraphMaxNodes(Number(e.target.value))}
+								aria-label="Maximum nodes to display"
 								className="flex-1 h-2 rounded-lg appearance-none cursor-pointer"
 								style={{
 									background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${((documentGraphMaxNodes - 50) / 950) * 100}%, ${theme.colors.bgActivity} ${((documentGraphMaxNodes - 50) / 950) * 100}%, ${theme.colors.bgActivity} 100%)`,
@@ -1348,6 +1348,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								max={100}
 								step={5}
 								value={contextManagementSettings.contextWarningYellowThreshold}
+								aria-label="Yellow warning threshold"
 								onChange={(e) => {
 									const newYellow = Number(e.target.value);
 									// Validation: ensure yellow < red by at least 10%
@@ -1396,6 +1397,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								max={100}
 								step={5}
 								value={contextManagementSettings.contextWarningRedThreshold}
+								aria-label="Red warning threshold"
 								onChange={(e) => {
 									const newRed = Number(e.target.value);
 									// Validation: ensure red > yellow by at least 10%
@@ -1611,7 +1613,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			{/* File Indexing — groups ignore patterns + file panel limits */}
+			{/* File Indexing - groups ignore patterns + file panel limits */}
 			<div data-setting-id="display-file-indexing">
 				<SettingsSectionHeading icon={FolderSearch}>File Indexing</SettingsSectionHeading>
 				<div className="space-y-3">

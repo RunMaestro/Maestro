@@ -1,5 +1,5 @@
 /**
- * useModalHandlers — Extracted from App.tsx (Phase 2C)
+ * useModalHandlers - Extracted from App.tsx (Phase 2C)
  *
  * Handles all modal open/close lifecycle callbacks, agent error recovery,
  * lightbox navigation, celebration modals, leaderboard, quit confirmation,
@@ -44,7 +44,7 @@ import { useGitDetail } from '../../contexts/GitStatusContext';
 export interface ModalHandlersReturn {
 	// Derived state
 	errorSession: Session | null;
-	/** The error to display — live session error or historical from chat log */
+	/** The error to display - live session error or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	/**
@@ -255,7 +255,7 @@ export function useModalHandlers(
 
 	const handleCloseDeleteAgentModal = useCallback(() => {
 		// setDeleteAgentSession(null) calls closeModal('deleteAgent') which clears both
-		// the open state and the session data — no separate setDeleteAgentModalOpen needed.
+		// the open state and the session data - no separate setDeleteAgentModalOpen needed.
 		getModalActions().setDeleteAgentSession(null);
 	}, []);
 
@@ -266,7 +266,7 @@ export function useModalHandlers(
 
 	const handleCloseEditAgentModal = useCallback(() => {
 		// setEditAgentSession(null) calls closeModal('editAgent') which clears both
-		// the open state and the session data — no separate setEditAgentModalOpen needed.
+		// the open state and the session data - no separate setEditAgentModalOpen needed.
 		getModalActions().setEditAgentSession(null);
 	}, []);
 
@@ -532,7 +532,7 @@ export function useModalHandlers(
 		// Pick the initial tab based on whether *any* Cue config already exists:
 		// returning users land on the Dashboard, first-time users land in the
 		// Pipeline Editor where they can build their first pipeline. Falls back
-		// to 'pipeline' if the status query fails — first-run is the safer
+		// to 'pipeline' if the status query fails - first-run is the safer
 		// landing for a user who has nothing configured yet.
 		let initialTab: 'dashboard' | 'pipeline' = 'pipeline';
 		try {
@@ -561,7 +561,7 @@ export function useModalHandlers(
 		(image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') => {
 			const { activeGroupChatId } = useGroupChatStore.getState();
 			const actions = getModalActions();
-			// setLightboxImage opens the modal — must be called first so that
+			// setLightboxImage opens the modal - must be called first so that
 			// subsequent updateModalData calls (isGroupChat, allowDelete) find an active modal.
 			actions.setLightboxImage(image);
 			actions.setLightboxIsGroupChat(activeGroupChatId !== null);
@@ -769,6 +769,7 @@ export function useModalHandlers(
 	useEffect(() => {
 		if (!logViewerOpen) {
 			setTimeout(() => {
+				if (typeof document === 'undefined') return;
 				if (inputRef.current) {
 					inputRef.current.focus();
 				} else if (terminalOutputRef.current) {
@@ -961,7 +962,7 @@ export function useModalHandlers(
 			getModalActions().setGitDiffPreview(diff.diff);
 		} else {
 			notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-			// Polling cache said there were changes but `git diff` is empty —
+			// Polling cache said there were changes but `git diff` is empty  -
 			// repo state changed since the last poll. Re-sync so the widget
 			// stops advertising stale stats.
 			void refreshGitStatus();

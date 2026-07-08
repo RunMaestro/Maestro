@@ -583,8 +583,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			(agentSessionId: string) => {
 				if (!onResumeSession) return;
 				const entry = entries.find((e) => e.agentSessionId === agentSessionId) as
-					| UnifiedHistoryEntry
-					| undefined;
+					UnifiedHistoryEntry | undefined;
 				if (entry) {
 					onResumeSession(entry.sourceSessionId, agentSessionId);
 				}

@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import type { BatchRunState } from '../../../types';
-import { useBatchStore, selectHasAnyActiveBatch } from '../../../stores/batchStore';
+import {
+	useBatchStore,
+	selectHasAnyActiveBatch,
+	selectStoppingBatchSessionIds,
+} from '../../../stores/batchStore';
 import { DEFAULT_BATCH_STATE } from '../batchReducer';
 
 export interface UseBatchSelectorsReturn {
@@ -20,7 +24,7 @@ export interface UseBatchSelectorsReturn {
  * need React to trigger re-renders when state changes. The ref is used
  * internally for synchronous access in debounced callbacks.
  *
- * Array selectors use `useMemo` to avoid infinite re-renders — Zustand's
+ * Array selectors use `useMemo` to avoid infinite re-renders - Zustand's
  * `Object.is` comparison treats freshly-derived arrays as changed and
  * would otherwise produce a render loop.
  */
@@ -45,10 +49,7 @@ export function useBatchSelectors(): UseBatchSelectorsReturn {
 	);
 
 	const stoppingBatchSessionIds = useMemo(
-		() =>
-			Object.entries(batchRunStates)
-				.filter(([, state]) => state.isRunning && state.isStopping)
-				.map(([sessionId]) => sessionId),
+		() => selectStoppingBatchSessionIds({ batchRunStates }),
 		[batchRunStates]
 	);
 

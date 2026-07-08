@@ -86,12 +86,11 @@ program
 	.allowUnknownOption(true)
 	.allowExcessArguments(true);
 
-// Commander handles --help/--version (prints and exits 0). For everything
-// else it returns and falls through to our own parseArgs walker — commander's
-// option schema doesn't know about claude's flag surface, so we re-parse.
-program.parse(process.argv);
+function isCliEntrypoint(): boolean {
+	return typeof require !== 'undefined' && require.main === module;
+}
 
-function resolveConfigDir(): string {
+export function resolveConfigDir(): string {
 	const envDir = process.env.CLAUDE_CONFIG_DIR;
 	if (envDir && envDir.length > 0) return envDir;
 	return path.join(os.homedir(), '.claude');
@@ -101,12 +100,12 @@ function resolveConfigDir(): string {
  * True when `p` points at maestro-p itself (by basename), so we never try to
  * drive maestro-p as if it were the claude TUI.
  */
-function isMaestroPSelfPath(p: string): boolean {
+export function isMaestroPSelfPath(p: string): boolean {
 	const base = p.replace(/\\/g, '/').split('/').pop() || p;
 	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
 }
 
-function resolveBinPath(): string {
+export function resolveBinPath(): string {
 	const envBin = process.env.MAESTRO_CLAUDE_BIN;
 	// Self-reference guard: when an agent's configured binary IS maestro-p (the
 	// supported "maestro-p Path" way to force the TUI), the desktop can pass that
@@ -146,7 +145,7 @@ const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
  * session that persists its own JSONL transcript. See
  * {@link CLAUDE_SESSION_IDENTITY_ENV_VARS} for the why.
  */
-function sanitizeChildEnv(): NodeJS.ProcessEnv {
+export function sanitizeChildEnv(): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
 		delete env[key];
@@ -154,18 +153,18 @@ function sanitizeChildEnv(): NodeJS.ProcessEnv {
 	return env;
 }
 
-function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
+export function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
 	return new Promise<void>((resolve) => emitter.once(event, () => resolve()));
 }
 
-interface AggregateUsage {
+export interface AggregateUsage {
 	input_tokens: number;
 	output_tokens: number;
 	cache_creation_input_tokens: number;
 	cache_read_input_tokens: number;
 }
 
-function emptyUsage(): AggregateUsage {
+export function emptyUsage(): AggregateUsage {
 	return {
 		input_tokens: 0,
 		output_tokens: 0,
@@ -174,7 +173,7 @@ function emptyUsage(): AggregateUsage {
 	};
 }
 
-function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
+export function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
 	if (!msgUsage || typeof msgUsage !== 'object') return;
 	const u = msgUsage as Record<string, unknown>;
 	if (typeof u.input_tokens === 'number') agg.input_tokens += u.input_tokens;
@@ -191,7 +190,7 @@ function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
 // their content array carries at least one tool_result block. Plain `text`
 // user entries are the prompt echo claude writes immediately after we send
 // stdin — drop those.
-function hasToolResultBlock(message: unknown): boolean {
+export function hasToolResultBlock(message: unknown): boolean {
 	if (!message || typeof message !== 'object') return false;
 	const content = (message as { content?: unknown }).content;
 	if (!Array.isArray(content)) return false;
@@ -200,7 +199,7 @@ function hasToolResultBlock(message: unknown): boolean {
 	);
 }
 
-function collectAssistantText(message: unknown): string {
+export function collectAssistantText(message: unknown): string {
 	if (!message || typeof message !== 'object') return '';
 	const content = (message as { content?: unknown }).content;
 	if (!Array.isArray(content)) return '';
@@ -218,7 +217,7 @@ function collectAssistantText(message: unknown): string {
 	return out;
 }
 
-async function runMode(args: ParsedArgs): Promise<never> {
+export async function runMode(args: ParsedArgs): Promise<never> {
 	if (!args.prompt || args.prompt.length === 0) {
 		process.stderr.write(
 			'maestro-p: no prompt provided. Use a positional argument, -p/--prompt, or pipe a prompt on stdin.\n'
@@ -662,7 +661,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	return new Promise<never>(() => undefined);
 }
 
-async function statusMode(args: ParsedArgs): Promise<never> {
+export async function statusMode(args: ParsedArgs): Promise<void> {
 	const cwd = process.cwd();
 	const configDir = resolveConfigDir();
 	const binPath = resolveBinPath();
@@ -747,15 +746,17 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		emitter.emitStatus(parsed);
 		await driver.quit();
 		process.exit(0);
+		return;
 	}
 
 	process.stderr.write('maestro-p: failed to parse /usage output\n');
 	await driver.quit();
 	process.exit(1);
+	return;
 }
 
-async function main(): Promise<void> {
-	const args = parseArgs(process.argv.slice(2));
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+	const args = parseArgs(argv);
 	if (args.mode === 'status') {
 		await statusMode(args);
 		return;
@@ -763,22 +764,34 @@ async function main(): Promise<void> {
 	await runMode(args);
 }
 
-// A dead stdout/stderr reader (the desktop interrupted the turn, closed the tab,
-// or killed us) surfaces as an async EPIPE on the stream. With no listener Node
-// promotes it to an uncaught exception - and because maestro-p runs under
-// ELECTRON_RUN_AS_NODE that pops Electron's GUI "A JavaScript error occurred in
-// the main process" dialog. There's nothing left to write to, so exit quietly.
-for (const stream of [process.stdout, process.stderr]) {
-	stream.on('error', (err: NodeJS.ErrnoException) => {
-		if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') {
-			process.exit(0);
-		}
-		throw err;
-	});
+export function installProcessStreamErrorHandlers(
+	streams: NodeJS.WritableStream[] = [process.stdout, process.stderr]
+): void {
+	// A dead stdout/stderr reader (the desktop interrupted the turn, closed the tab,
+	// or killed us) surfaces as an async EPIPE on the stream. With no listener Node
+	// promotes it to an uncaught exception - and because maestro-p runs under
+	// ELECTRON_RUN_AS_NODE that pops Electron's GUI "A JavaScript error occurred in
+	// the main process" dialog. There's nothing left to write to, so exit quietly.
+	for (const stream of streams) {
+		stream.on('error', (err: NodeJS.ErrnoException) => {
+			if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') {
+				process.exit(0);
+				return;
+			}
+			throw err;
+		});
+	}
 }
 
-main().catch((err) => {
-	const message = err instanceof Error ? err.message : String(err);
-	process.stderr.write(`maestro-p: ${message}\n`);
-	process.exit(1);
-});
+if (isCliEntrypoint()) {
+	// Commander handles --help/--version (prints and exits 0). For everything
+	// else it returns and falls through to our own parseArgs walker — commander's
+	// option schema doesn't know about claude's flag surface, so we re-parse.
+	program.parse(process.argv);
+	installProcessStreamErrorHandlers();
+	main().catch((err) => {
+		const message = err instanceof Error ? err.message : String(err);
+		process.stderr.write(`maestro-p: ${message}\n`);
+		process.exit(1);
+	});
+}

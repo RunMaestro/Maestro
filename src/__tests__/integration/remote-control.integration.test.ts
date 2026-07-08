@@ -225,7 +225,10 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 			expect(desktopCallback).toHaveBeenCalledWith(
 				'session-1',
 				'Hello from the web interface!',
-				'ai'
+				'ai',
+				undefined,
+				false,
+				undefined
 			);
 
 			// Verify web received confirmation
@@ -276,7 +279,14 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 
 			const response = await responsePromise;
 
-			expect(desktopCallback).toHaveBeenCalledWith('session-1', 'ls -la', 'terminal');
+			expect(desktopCallback).toHaveBeenCalledWith(
+				'session-1',
+				'ls -la',
+				'terminal',
+				undefined,
+				false,
+				undefined
+			);
 			expect(response.success).toBe(true);
 
 			client.close();
@@ -484,7 +494,9 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 	describe('Web → Desktop: Mode Switching', () => {
 		it('should notify desktop when web switches to terminal mode', async () => {
 			const desktopCallback = vi.fn().mockResolvedValue(true);
+			const spawnTerminalCallback = vi.fn().mockResolvedValue({ success: true, pid: 1234 });
 			server.setSwitchModeCallback(desktopCallback);
+			server.setSpawnTerminalForWebCallback(spawnTerminalCallback);
 
 			const client = await createWebClient();
 			await waitForConnection(client);
@@ -500,6 +512,7 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 			const response = await responsePromise;
 
 			expect(desktopCallback).toHaveBeenCalledWith('session-1', 'terminal');
+			expect(spawnTerminalCallback).toHaveBeenCalledWith('session-1', { cwd: '/test/project' });
 			expect(response.success).toBe(true);
 
 			client.close();

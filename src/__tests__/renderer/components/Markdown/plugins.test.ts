@@ -60,8 +60,7 @@ describe('buildMarkdownPlugins', () => {
 		expect(fns).toContain(remarkPromoteDisplayMath);
 		// remark-math configured with singleDollarTextMath: false
 		const mathEntry = remark.find((e) => Array.isArray(e) && e[0] === remarkMath) as
-			| [unknown, Record<string, unknown>]
-			| undefined;
+			[unknown, Record<string, unknown>] | undefined;
 		expect(mathEntry?.[1]).toEqual({ singleDollarTextMath: false });
 		// promote runs AFTER remark-math (order matters)
 		expect(fns.indexOf(remarkPromoteDisplayMath)).toBeGreaterThan(fns.indexOf(remarkMath));

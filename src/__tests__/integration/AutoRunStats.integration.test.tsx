@@ -1,0 +1,783 @@
+/**
+ * Tests for AutoRunStats component
+ *
+ * Verifies:
+ * - Renders all six metric cards correctly
+ * - Displays formatted values (numbers, durations, percentages)
+ * - Shows mini bar chart for tasks over time
+ * - Handles loading, error, and empty states
+ * - Applies theme colors properly
+ * - Calculates derived metrics correctly (avg tasks/session, success rate)
+ * - Tooltip shows on hover
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import React from 'react';
+import { AutoRunStats } from '../../renderer/components/UsageDashboard/AutoRunStats';
+import { THEMES } from '../../shared/themes';
+
+// Test theme
+const theme = THEMES['dracula'];
+
+// Mock Auto Run sessions data
+const mockSessions = [
+	{
+		id: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		documentPath: '/project/TASKS.md',
+		startTime: Date.now() - 3600000, // 1 hour ago
+		duration: 1800000, // 30 minutes
+		tasksTotal: 5,
+		tasksCompleted: 4,
+		projectPath: '/project',
+	},
+	{
+		id: 'session-2',
+		sessionId: 'maestro-2',
+		agentType: 'claude-code',
+		documentPath: '/project/TASKS.md',
+		startTime: Date.now() - 7200000, // 2 hours ago
+		duration: 2400000, // 40 minutes
+		tasksTotal: 3,
+		tasksCompleted: 3,
+		projectPath: '/project',
+	},
+];
+
+// Mock tasks data
+const mockTasksSession1 = [
+	{
+		id: 'task-1',
+		autoRunSessionId: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		taskIndex: 0,
+		taskContent: 'Task 1',
+		startTime: Date.now() - 3600000,
+		duration: 300000, // 5 minutes
+		success: true,
+	},
+	{
+		id: 'task-2',
+		autoRunSessionId: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		taskIndex: 1,
+		taskContent: 'Task 2',
+		startTime: Date.now() - 3300000,
+		duration: 450000, // 7.5 minutes
+		success: true,
+	},
+	{
+		id: 'task-3',
+		autoRunSessionId: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		taskIndex: 2,
+		taskContent: 'Task 3',
+		startTime: Date.now() - 2850000,
+		duration: 200000,
+		success: true,
+	},
+	{
+		id: 'task-4',
+		autoRunSessionId: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		taskIndex: 3,
+		taskContent: 'Task 4',
+		startTime: Date.now() - 2650000,
+		duration: 350000,
+		success: true,
+	},
+	{
+		id: 'task-5',
+		autoRunSessionId: 'session-1',
+		sessionId: 'maestro-1',
+		agentType: 'claude-code',
+		taskIndex: 4,
+		taskContent: 'Task 5 - failed',
+		startTime: Date.now() - 2300000,
+		duration: 180000,
+		success: false,
+	},
+];
+
+const mockTasksSession2 = [
+	{
+		id: 'task-6',
+		autoRunSessionId: 'session-2',
+		sessionId: 'maestro-2',
+		agentType: 'claude-code',
+		taskIndex: 0,
+		taskContent: 'Task 1',
+		startTime: Date.now() - 7200000,
+		duration: 600000, // 10 minutes
+		success: true,
+	},
+	{
+		id: 'task-7',
+		autoRunSessionId: 'session-2',
+		sessionId: 'maestro-2',
+		agentType: 'claude-code',
+		taskIndex: 1,
+		taskContent: 'Task 2',
+		startTime: Date.now() - 6600000,
+		duration: 480000,
+		success: true,
+	},
+	{
+		id: 'task-8',
+		autoRunSessionId: 'session-2',
+		sessionId: 'maestro-2',
+		agentType: 'claude-code',
+		taskIndex: 2,
+		taskContent: 'Task 3',
+		startTime: Date.now() - 6120000,
+		duration: 420000,
+		success: true,
+	},
+];
+
+// Combined tasks for mocking
+const allTasks = [...mockTasksSession1, ...mockTasksSession2];
+
+// Mock window.maestro.stats API
+const mockStatsApi = {
+	getAutoRunSessions: vi.fn(),
+	getAutoRunTasks: vi.fn(),
+	onStatsUpdate: vi.fn(() => () => {}), // Returns unsubscribe function
+};
+
+beforeEach(() => {
+	// Setup mock API
+	(window as any).maestro = {
+		stats: mockStatsApi,
+	};
+
+	// Reset all mocks
+	vi.clearAllMocks();
+
+	// Default successful responses
+	mockStatsApi.getAutoRunSessions.mockResolvedValue(mockSessions);
+	mockStatsApi.getAutoRunTasks.mockImplementation((sessionId: string) => {
+		if (sessionId === 'session-1') return Promise.resolve(mockTasksSession1);
+		if (sessionId === 'session-2') return Promise.resolve(mockTasksSession2);
+		return Promise.resolve([]);
+	});
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
+describe('AutoRunStats', () => {
+	describe('Rendering', () => {
+		it('renders the auto run stats container after loading', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
+			});
+		});
+
+		it('renders all six metric cards', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const cards = screen.getAllByTestId('autorun-metric-card');
+				expect(cards).toHaveLength(6);
+			});
+		});
+
+		it('renders Total Sessions metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Total Sessions')).toBeInTheDocument();
+				expect(screen.getByText('2')).toBeInTheDocument();
+			});
+		});
+
+		it('renders Tasks Done metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Tasks Done')).toBeInTheDocument();
+				// 7 successful tasks out of 8 total
+				expect(screen.getByText('7')).toBeInTheDocument();
+				expect(screen.getByText('of 8 attempted')).toBeInTheDocument();
+			});
+		});
+
+		it('renders Avg Tasks/Session metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Avg Tasks/Session')).toBeInTheDocument();
+				// 7 successful tasks / 2 sessions = 3.5
+				expect(screen.getByText('3.5')).toBeInTheDocument();
+			});
+		});
+
+		it('renders Success Rate metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Success Rate')).toBeInTheDocument();
+				// 7 out of 8 = 87.5%, rounded to 88%
+				expect(screen.getByText('88%')).toBeInTheDocument();
+			});
+		});
+
+		it('renders Avg Session duration metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Avg Session')).toBeInTheDocument();
+				// Average of 30m and 40m = 35m
+				expect(screen.getByText('35m 0s')).toBeInTheDocument();
+			});
+		});
+
+		it('renders Avg Task duration metric', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Avg Task')).toBeInTheDocument();
+			});
+		});
+
+		it('renders tasks chart section', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-tasks-chart')).toBeInTheDocument();
+				expect(screen.getByText('Tasks Completed Over Time')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Loading State', () => {
+		it('shows loading state initially', async () => {
+			// Make API slow
+			mockStatsApi.getAutoRunSessions.mockImplementation(
+				() => new Promise((resolve) => setTimeout(() => resolve(mockSessions), 1000))
+			);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			expect(screen.getByTestId('autorun-stats-loading')).toBeInTheDocument();
+			expect(screen.getByText('Loading Auto Run stats...')).toBeInTheDocument();
+		});
+	});
+
+	describe('Error State', () => {
+		it('shows error state when fetch fails', async () => {
+			mockStatsApi.getAutoRunSessions.mockRejectedValue(new Error('API Error'));
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats-error')).toBeInTheDocument();
+				expect(screen.getByText('Failed to load Auto Run stats')).toBeInTheDocument();
+			});
+		});
+
+		it('uses a fallback error message for non-Error fetch failures', async () => {
+			mockStatsApi.getAutoRunSessions.mockRejectedValue('offline');
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats-error')).toBeInTheDocument();
+				expect(screen.getByText('Failed to load Auto Run stats')).toBeInTheDocument();
+			});
+		});
+
+		it('shows retry button on error', async () => {
+			mockStatsApi.getAutoRunSessions.mockRejectedValue(new Error('API Error'));
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Retry')).toBeInTheDocument();
+			});
+		});
+
+		it('retries fetch when retry button clicked', async () => {
+			mockStatsApi.getAutoRunSessions
+				.mockRejectedValueOnce(new Error('API Error'))
+				.mockResolvedValueOnce(mockSessions);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Retry')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Retry'));
+			});
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Empty State', () => {
+		it('shows empty state when no sessions exist', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats-empty')).toBeInTheDocument();
+				expect(screen.getByText('No Auto Run data yet')).toBeInTheDocument();
+				expect(screen.getByText('Run some batch tasks to see your stats!')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Missing Task Counts', () => {
+		it('treats missing task counts as zero without hiding the session metrics', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{
+					id: 'session-missing-counts',
+					sessionId: 'maestro-missing-counts',
+					agentType: 'claude-code',
+					startTime: new Date('2025-01-01T12:00:00').getTime(),
+					duration: 60000,
+				},
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
+				expect(screen.getByLabelText('Total Sessions: 1')).toBeInTheDocument();
+				expect(screen.getByLabelText('Tasks Done: 0, of 0 attempted')).toBeInTheDocument();
+				expect(screen.getByText('No task data available')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Number Formatting', () => {
+		it('formats thousands with K suffix', async () => {
+			// Create many sessions
+			const manySessions = Array.from({ length: 1500 }, (_, i) => ({
+				...mockSessions[0],
+				id: `session-${i}`,
+				duration: 60000,
+			}));
+			mockStatsApi.getAutoRunSessions.mockResolvedValue(manySessions);
+			mockStatsApi.getAutoRunTasks.mockResolvedValue([]);
+
+			render(<AutoRunStats timeRange="all" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('1.5K')).toBeInTheDocument();
+			});
+		});
+
+		it('formats millions with M suffix', async () => {
+			const largeSession = {
+				...mockSessions[0],
+				tasksCompleted: 1_250_000,
+				tasksTotal: 1_500_000,
+				duration: 60000,
+			};
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([largeSession]);
+
+			render(<AutoRunStats timeRange="all" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('1.3M')).toBeInTheDocument();
+				expect(screen.getByText('of 1.5M attempted')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Duration Formatting', () => {
+		it('formats hours and minutes correctly', async () => {
+			const longSession = [
+				{
+					...mockSessions[0],
+					duration: 7200000, // 2 hours
+				},
+			];
+			mockStatsApi.getAutoRunSessions.mockResolvedValue(longSession);
+			mockStatsApi.getAutoRunTasks.mockResolvedValue([]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('2h 0m')).toBeInTheDocument();
+			});
+		});
+
+		it('formats seconds only correctly', async () => {
+			// Session with 90s duration and 2 tasks completed → avg task = 45s, avg session = 1m 30s
+			const shortSession = [
+				{
+					...mockSessions[0],
+					duration: 90000,
+					tasksCompleted: 2,
+					tasksTotal: 2,
+				},
+			];
+			mockStatsApi.getAutoRunSessions.mockResolvedValue(shortSession);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				// Avg task should be 45s (90s / 2 tasks)
+				expect(screen.getByText('45s')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Success Rate Calculation', () => {
+		it('calculates 100% success rate correctly', async () => {
+			const successfulTasks = mockTasksSession2; // All 3 successful
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([mockSessions[1]]);
+			mockStatsApi.getAutoRunTasks.mockResolvedValue(successfulTasks);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('100%')).toBeInTheDocument();
+			});
+		});
+
+		it('calculates 0% success rate correctly', async () => {
+			// Session with 0 tasks completed out of 5 → 0% success rate
+			const failedSession = [
+				{
+					...mockSessions[0],
+					tasksCompleted: 0,
+					tasksTotal: 5,
+				},
+			];
+			mockStatsApi.getAutoRunSessions.mockResolvedValue(failedSession);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('0%')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Tasks Chart', () => {
+		it('renders task bars for each day', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const chart = screen.getByTestId('autorun-tasks-chart');
+				// Should have bars (might be combined into same day depending on test timing)
+				expect(chart.querySelectorAll('[data-testid^="task-bar-"]').length).toBeGreaterThan(0);
+			});
+		});
+
+		it('shows empty chart message when no tasks completed', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{
+					...mockSessions[0],
+					tasksTotal: 0,
+					tasksCompleted: 0,
+				},
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('No task data available')).toBeInTheDocument();
+			});
+		});
+
+		it('orders task bars chronologically by local session date', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{
+					...mockSessions[0],
+					id: 'later',
+					startTime: new Date('2025-01-03T12:00:00').getTime(),
+					tasksTotal: 3,
+					tasksCompleted: 2,
+				},
+				{
+					...mockSessions[1],
+					id: 'earlier',
+					startTime: new Date('2025-01-01T12:00:00').getTime(),
+					tasksTotal: 1,
+					tasksCompleted: 1,
+				},
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const bars = screen.getAllByRole('listitem').map((bar) => bar.getAttribute('data-testid'));
+				expect(bars).toEqual(['task-bar-2025-01-01', 'task-bar-2025-01-03']);
+			});
+		});
+
+		it('renders first and last axis labels without a middle label for two dates', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{
+					...mockSessions[0],
+					id: 'first',
+					startTime: new Date('2025-01-01T12:00:00').getTime(),
+					tasksTotal: 1,
+					tasksCompleted: 1,
+				},
+				{
+					...mockSessions[1],
+					id: 'last',
+					startTime: new Date('2025-01-03T12:00:00').getTime(),
+					tasksTotal: 2,
+					tasksCompleted: 2,
+				},
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Jan 1')).toBeInTheDocument();
+				expect(screen.getByText('Jan 3')).toBeInTheDocument();
+				expect(screen.queryByText('Jan 2')).not.toBeInTheDocument();
+			});
+		});
+
+		it('renders a middle axis label when there are more than two dates', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{
+					...mockSessions[0],
+					id: 'first',
+					startTime: new Date('2025-01-01T12:00:00').getTime(),
+					tasksTotal: 1,
+					tasksCompleted: 1,
+				},
+				{
+					...mockSessions[0],
+					id: 'middle',
+					startTime: new Date('2025-01-02T12:00:00').getTime(),
+					tasksTotal: 2,
+					tasksCompleted: 1,
+				},
+				{
+					...mockSessions[1],
+					id: 'last',
+					startTime: new Date('2025-01-03T12:00:00').getTime(),
+					tasksTotal: 3,
+					tasksCompleted: 2,
+				},
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Jan 1')).toBeInTheDocument();
+				expect(screen.getByText('Jan 2')).toBeInTheDocument();
+				expect(screen.getByText('Jan 3')).toBeInTheDocument();
+			});
+		});
+
+		it('shows and hides task bar tooltip with hover and keyboard controls', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			const [bar] = await screen.findAllByRole('listitem');
+			Object.defineProperty(bar, 'getBoundingClientRect', {
+				value: () => ({
+					left: 100,
+					top: 200,
+					width: 40,
+					height: 80,
+					right: 140,
+					bottom: 280,
+					x: 100,
+					y: 200,
+					toJSON: () => ({}),
+				}),
+			});
+
+			fireEvent.mouseEnter(bar);
+			expect(screen.getByTestId('task-bar-tooltip')).toBeInTheDocument();
+
+			fireEvent.keyDown(bar, { key: 'Enter' });
+			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
+
+			fireEvent.mouseEnter(bar);
+			expect(screen.getByTestId('task-bar-tooltip')).toBeInTheDocument();
+
+			fireEvent.keyDown(bar, { key: 'Escape' });
+			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
+		});
+
+		it('handles keyboard selection before a bar has been hovered', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			const [bar] = await screen.findAllByRole('listitem');
+
+			fireEvent.keyDown(bar, { key: 'Enter' });
+			fireEvent.keyDown(bar, { key: 'Enter' });
+
+			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Theme Support', () => {
+		it('applies theme background color to metric cards', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const cards = screen.getAllByTestId('autorun-metric-card');
+				cards.forEach((card) => {
+					expect(card).toHaveStyle({
+						backgroundColor: theme.colors.bgMain,
+					});
+				});
+			});
+		});
+
+		it('works with light theme', async () => {
+			const lightTheme = THEMES['github-light'];
+			render(<AutoRunStats timeRange="week" theme={lightTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
+				expect(screen.getByText('Total Sessions')).toBeInTheDocument();
+			});
+		});
+
+		it('works with different dark themes', async () => {
+			const nordTheme = THEMES['nord'];
+			render(<AutoRunStats timeRange="week" theme={nordTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
+				const cards = screen.getAllByTestId('autorun-metric-card');
+				cards.forEach((card) => {
+					expect(card).toHaveStyle({
+						backgroundColor: nordTheme.colors.bgMain,
+					});
+				});
+			});
+		});
+	});
+
+	describe('Icons', () => {
+		it('renders SVG icons for each metric', async () => {
+			const { container } = render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const metrics = screen.getByTestId('autorun-metrics');
+				const svgElements = metrics.querySelectorAll('svg');
+				expect(svgElements.length).toBe(6);
+			});
+		});
+	});
+
+	describe('Grid Layout', () => {
+		it('uses 6-column grid layout for metrics by default', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				const container = screen.getByTestId('autorun-metrics');
+				expect(container).toHaveClass('grid');
+				expect(container).toHaveStyle({
+					gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+				});
+			});
+		});
+
+		it('supports responsive column configuration', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} columns={3} />);
+
+			await waitFor(() => {
+				const container = screen.getByTestId('autorun-metrics');
+				expect(container).toHaveStyle({
+					gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+				});
+			});
+		});
+
+		it('supports 2-column layout for narrow screens', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} columns={2} />);
+
+			await waitFor(() => {
+				const container = screen.getByTestId('autorun-metrics');
+				expect(container).toHaveStyle({
+					gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+				});
+			});
+		});
+	});
+
+	describe('Real-time Updates', () => {
+		it('subscribes to stats updates', async () => {
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockStatsApi.onStatsUpdate).toHaveBeenCalled();
+			});
+		});
+
+		it('unsubscribes on unmount', async () => {
+			const unsubscribe = vi.fn();
+			mockStatsApi.onStatsUpdate.mockReturnValue(unsubscribe);
+
+			const { unmount } = render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockStatsApi.onStatsUpdate).toHaveBeenCalled();
+			});
+
+			unmount();
+
+			expect(unsubscribe).toHaveBeenCalled();
+		});
+
+		it('refetches sessions when stats update callback fires', async () => {
+			let statsUpdateCallback: (() => void) | undefined;
+			mockStatsApi.onStatsUpdate.mockImplementation((callback: () => void) => {
+				statsUpdateCallback = callback;
+				return vi.fn();
+			});
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledTimes(1);
+				expect(statsUpdateCallback).toBeDefined();
+			});
+
+			await act(async () => {
+				statsUpdateCallback?.();
+			});
+
+			await waitFor(() => {
+				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledTimes(2);
+			});
+		});
+	});
+
+	describe('Time Range Changes', () => {
+		it('refetches data when time range changes', async () => {
+			const { rerender } = render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledWith('week');
+			});
+
+			rerender(<AutoRunStats timeRange="month" theme={theme} />);
+
+			await waitFor(() => {
+				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledWith('month');
+			});
+		});
+	});
+});

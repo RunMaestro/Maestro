@@ -462,9 +462,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
-					if (isReadOnlyMode) return false; // Only applies to write commands
-					if (activeSession.state !== 'busy') return false; // Nothing to bypass
-
 					// Check all busy tabs are in read-only mode. Include orphaned
 					// (closed-but-still-thinking) tabs: they keep writing in the background
 					// and hold the single-writer slot just like a visible busy tab. Omitting

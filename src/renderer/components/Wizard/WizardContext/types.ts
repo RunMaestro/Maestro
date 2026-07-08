@@ -2,11 +2,7 @@ import type { ReactNode } from 'react';
 import type { ToolType, AgentConfig } from '../../../types';
 
 export type WizardStep =
-	| 'agent-selection'
-	| 'directory-selection'
-	| 'conversation'
-	| 'preparing-plan'
-	| 'phase-review';
+	'agent-selection' | 'directory-selection' | 'conversation' | 'preparing-plan' | 'phase-review';
 
 export type WizardAutoRunMode = 'none' | 'first' | 'all';
 

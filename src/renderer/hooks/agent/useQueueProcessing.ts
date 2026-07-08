@@ -1,5 +1,5 @@
 /**
- * useQueueProcessing — extracted from App.tsx
+ * useQueueProcessing - extracted from App.tsx
  *
  * Handles execution queue processing:
  *   - Delegates queued item execution to agentStore
@@ -82,6 +82,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	const processQueuedItemRef = useRef<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
+	const skipRuntimeRecoveryOnceRef = useRef<Set<string>>(new Set());
 
 	// Process a queued item - delegates to agentStore action
 	const processQueuedItem = useCallback(
@@ -103,7 +104,10 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Dequeue the first item from a session and dispatch it for processing.
 	// Shared by startup recovery and runtime queue recovery.
 	const dispatchQueuedItem = useCallback(
-		(session: { id: string; executionQueue: QueuedItem[] }) => {
+		(
+			session: { id: string; executionQueue: QueuedItem[] },
+			options?: { skipNextRuntimeRecoveryOnFailure?: boolean }
+		) => {
 			// Skip paused items: dispatch the first runnable one. If all items are
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
@@ -157,8 +161,11 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			);
 
 			// Process the item
-			processQueuedItem(session.id, firstItem).catch((err) => {
+			return processQueuedItem(session.id, firstItem).catch((err) => {
 				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
+				if (options?.skipNextRuntimeRecoveryOnFailure) {
+					skipRuntimeRecoveryOnceRef.current.add(session.id);
+				}
 				// Reset session busy state and re-queue the failed item so it isn't lost
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -206,7 +213,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 
 			// Delay to ensure all refs and handlers are set up
 			const startupTimerId = setTimeout(() => {
-				sessionsWithQueuedItems.forEach((session) => {
+				const startupDispatches = sessionsWithQueuedItems.map((session) => {
 					logger.info(
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
 						undefined,
@@ -216,13 +223,15 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 							queueLength: session.executionQueue.length,
 						}
 					);
-					dispatchQueuedItem(session);
+					return dispatchQueuedItem(session, { skipNextRuntimeRecoveryOnFailure: true });
 				});
-				startupRecoveryComplete.current = true;
+				Promise.all(startupDispatches).finally(() => {
+					startupRecoveryComplete.current = true;
+				});
 			}, 500);
 			return () => clearTimeout(startupTimerId);
 		} else {
-			// No startup items to process — runtime recovery can start immediately
+			// No startup items to process - runtime recovery can start immediately
 			startupRecoveryComplete.current = true;
 		}
 	}, [sessionsLoaded, sessions, dispatchQueuedItem]);
@@ -236,8 +245,9 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 
 		for (const session of sessions) {
 			if (session.state === 'idle' && hasRunnableQueueItem(session.executionQueue ?? [])) {
+				if (skipRuntimeRecoveryOnceRef.current.delete(session.id)) continue;
 				console.log(
-					`[QueueProcessing] Runtime recovery — dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
+					`[QueueProcessing] Runtime recovery - dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
 				);
 				dispatchQueuedItem(session);
 			}

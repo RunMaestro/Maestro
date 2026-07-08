@@ -156,7 +156,7 @@ function extractTextFromContent(content: CodexMessageContent[] | undefined): str
 /**
  * Check if text is a system/environment context message that should be skipped for preview
  */
-function isSystemContextMessage(text: string): boolean {
+export function isSystemContextMessage(text: string): boolean {
 	if (!text) return false;
 	const trimmed = text.trim();
 	// Skip messages that start with environment/system context XML tags

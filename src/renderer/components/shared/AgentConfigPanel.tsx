@@ -155,7 +155,7 @@ function ModelTextInput({
 						onBlur={() => {
 							// Delay to allow click on dropdown item
 							setTimeout(() => {
-								// If a dropdown item was clicked, skip blur logic — the click handler already committed the value
+								// If a dropdown item was clicked, skip blur logic - the click handler already committed the value
 								if (selectionMadeRef.current) {
 									selectionMadeRef.current = false;
 									return;
@@ -305,7 +305,7 @@ export interface AgentConfigPanelProps {
 	agentConfig: Record<string, any>;
 	onConfigChange: (key: string, value: any) => void;
 	/** Called when a config field blurs. For text fields, `committedValue` is the value that was just saved. */
-	onConfigBlur: (key: string, committedValue: any) => void | Promise<void>;
+	onConfigBlur?: (key: string, committedValue: any) => void | Promise<void>;
 	// Model selection (if supported)
 	availableModels?: string[];
 	loadingModels?: boolean;
@@ -393,6 +393,9 @@ export function AgentConfigPanel({
 	claudeInteractive,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
+		if (!onConfigBlur) {
+			return;
+		}
 		const maybePromise = onConfigBlur(key, committedValue);
 		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
 			void (maybePromise as Promise<void>).catch((error: unknown) => {

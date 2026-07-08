@@ -66,13 +66,13 @@ export async function loadSettingsStorePrompts(force = false): Promise<void> {
 	const commitCmd = currentCommands.find((c) => c.id === 'commit');
 	if (commitCmd && commitCmd.prompt !== cachedCommitCommandPrompt) {
 		if (commitCmd.prompt && !force) {
-			// User has a non-empty custom prompt from AI Commands (old way) — migrate it
+			// User has a non-empty custom prompt from AI Commands (old way) - migrate it
 			const saveResult = await window.maestro.prompts.save('commit-command', commitCmd.prompt);
 			if (saveResult.success) {
 				cachedCommitCommandPrompt = commitCmd.prompt;
 			}
 		} else {
-			// First load (empty) or refresh — update store with loaded prompt
+			// First load (empty) or refresh - update store with loaded prompt
 			useSettingsStore.setState({
 				customAICommands: currentCommands.map((c) =>
 					c.id === 'commit' ? { ...c, prompt: cachedCommitCommandPrompt } : c
@@ -138,7 +138,7 @@ export const FILE_EXPLORER_MAX_ENTRIES_CAP = 1_000_000;
 export const DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION = 0.1;
 /** Minimum allowed SSH cap fraction (5%). */
 export const SSH_REDUCE_ENTRY_CAP_MIN_FRACTION = 0.05;
-/** Maximum allowed SSH cap fraction (100% — no reduction). */
+/** Maximum allowed SSH cap fraction (100% - no reduction). */
 export const SSH_REDUCE_ENTRY_CAP_MAX_FRACTION = 1.0;
 /** Slider step for the SSH cap fraction (5 percentage points). */
 export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
@@ -207,7 +207,7 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averageTasksPerPhase: 0,
 };
 
-const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
+export const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	directorNotes: false,
 	usageStats: true,
 	symphony: true,
@@ -1092,21 +1092,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 		setPersistentWebLink: async (value) => {
 			const requestSeq = ++persistentWebLinkRequestSeq;
-			// Optimistic update — immediately reflect user intent in UI
+			// Optimistic update - immediately reflect user intent in UI
 			set({ persistentWebLink: value });
 			if (value) {
 				try {
 					// persistCurrentToken writes both webAuthToken and persistentWebLink
-					// on the main side — the factory ignores webAuthToken unless
+					// on the main side - the factory ignores webAuthToken unless
 					// persistentWebLink is also true, so partial writes are safe
 					const result = await window.maestro.live.persistCurrentToken();
 					if (requestSeq !== persistentWebLinkRequestSeq) {
 						// Stale: another call was made while this IPC was in-flight.
-						// The IPC handler already wrote the token and flag in main —
+						// The IPC handler already wrote the token and flag in main  -
 						// only clear them if the user's latest intent was to disable.
 						// Note: the superseding disable call may have already issued its
 						// own clearPersistentToken, making this a redundant but harmless
-						// second call — the handler is idempotent.
+						// second call - the handler is idempotent.
 						if (!get().persistentWebLink) {
 							try {
 								await window.maestro.live.clearPersistentToken();
@@ -1138,7 +1138,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					const result = await window.maestro.live.clearPersistentToken();
 					if (requestSeq !== persistentWebLinkRequestSeq) {
 						// Stale: user re-enabled while this clear was in-flight.
-						// The enable path will handle persisting — nothing to undo here.
+						// The enable path will handle persisting - nothing to undo here.
 						return;
 					}
 					if (!result.success) {
@@ -1152,11 +1152,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					}
 				} catch (error) {
 					if (requestSeq === persistentWebLinkRequestSeq) {
-						// Clear failed — rollback Zustand to match main-side state
+						// Clear failed - rollback Zustand to match main-side state
 						set({ persistentWebLink: true });
 						logger.error('[Settings] Failed to clear persistent web link:', undefined, error);
 					}
-					// else: stale — a newer call is in charge, nothing to do
+					// else: stale - a newer call is in charge, nothing to do
 				}
 			}
 		},
@@ -2379,8 +2379,7 @@ export async function loadAllSettings(): Promise<void> {
 		} else {
 			// One-time migration: copy from globalStats.totalActiveTimeMs if it exists and is > 0
 			const legacyGlobalStats = allSettings['globalStats'] as
-				| { totalActiveTimeMs?: number }
-				| undefined;
+				{ totalActiveTimeMs?: number } | undefined;
 			if (legacyGlobalStats?.totalActiveTimeMs && legacyGlobalStats.totalActiveTimeMs > 0) {
 				patch.totalActiveTimeMs = legacyGlobalStats.totalActiveTimeMs;
 				window.maestro.settings.set('totalActiveTimeMs', legacyGlobalStats.totalActiveTimeMs);
@@ -2561,12 +2560,7 @@ export async function loadAllSettings(): Promise<void> {
 			const validTimeRanges = ['day', 'week', 'month', 'quarter', 'year', 'all'];
 			if (validTimeRanges.includes(allSettings['defaultStatsTimeRange'] as string)) {
 				patch.defaultStatsTimeRange = allSettings['defaultStatsTimeRange'] as
-					| 'day'
-					| 'week'
-					| 'month'
-					| 'quarter'
-					| 'year'
-					| 'all';
+					'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 			}
 		}
 
@@ -2896,6 +2890,7 @@ export function getSettingsActions() {
 		setCustomThemeColors: state.setCustomThemeColors,
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
 		setEnterToSendAI: state.setEnterToSendAI,
+		setEnterToSendAIExpanded: state.setEnterToSendAIExpanded,
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
 		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
@@ -2959,6 +2954,10 @@ export function getSettingsActions() {
 		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
+		setShowStarredInUnreadFilter: state.setShowStarredInUnreadFilter,
+		setShowFilePreviewsInUnreadFilter: state.setShowFilePreviewsInUnreadFilter,
+		setUseCmd0AsLastTab: state.setUseCmd0AsLastTab,
+		setShowBrowserTabDomain: state.setShowBrowserTabDomain,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
@@ -2970,8 +2969,17 @@ export function getSettingsActions() {
 		setDisableConfetti: state.setDisableConfetti,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
 		setLocalHonorGitignore: state.setLocalHonorGitignore,
+		setFileExplorerMaxDepth: state.setFileExplorerMaxDepth,
+		setFileExplorerMaxEntries: state.setFileExplorerMaxEntries,
+		setSshReduceEntryCapEnabled: state.setSshReduceEntryCapEnabled,
+		setSshReduceEntryCapFraction: state.setSshReduceEntryCapFraction,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
+		setUseSystemBrowser: state.setUseSystemBrowser,
+		setBrowserHomeUrl: state.setBrowserHomeUrl,
+		setHtmlDoubleClickOpensInBrowser: state.setHtmlDoubleClickOpensInBrowser,
+		setBrowserTabKeepAlive: state.setBrowserTabKeepAlive,
+		setBrowserTabKeepAliveLimit: state.setBrowserTabKeepAliveLimit,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
 		setNewTabPlacement: state.setNewTabPlacement,
 		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,
@@ -2979,7 +2987,9 @@ export function getSettingsActions() {
 		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
+		setUserMessageAlignment: state.setUserMessageAlignment,
 		setEncoreFeatures: state.setEncoreFeatures,
+		setSymphonyRegistryUrls: state.setSymphonyRegistryUrls,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
@@ -2999,6 +3009,8 @@ export function getSettingsActions() {
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
 		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setShowGroupLabelInBookmarks: state.setShowGroupLabelInBookmarks,
+		setShowFullGroupLabelInBookmarks: state.setShowFullGroupLabelInBookmarks,
 		setFileEditWordWrap: state.setFileEditWordWrap,
 		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
@@ -3007,6 +3019,9 @@ export function getSettingsActions() {
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
+		setSpeckitEnabled: state.setSpeckitEnabled,
+		setOpenspecEnabled: state.setOpenspecEnabled,
+		setBmadEnabled: state.setBmadEnabled,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
 		setAnnotatorPenColor: state.setAnnotatorPenColor,
 		setAnnotatorPenSize: state.setAnnotatorPenSize,
@@ -3015,5 +3030,9 @@ export function getSettingsActions() {
 		setAnnotatorStreamline: state.setAnnotatorStreamline,
 		setAnnotatorTaperStart: state.setAnnotatorTaperStart,
 		setAnnotatorTaperEnd: state.setAnnotatorTaperEnd,
+		setAnnotatorTextColor: state.setAnnotatorTextColor,
+		setAnnotatorTextSize: state.setAnnotatorTextSize,
+		setAnnotatorTextFont: state.setAnnotatorTextFont,
+		setAnnotatorTextBgColor: state.setAnnotatorTextBgColor,
 	};
 }

@@ -40,6 +40,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError(message));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const agent = getSessionById(agentId)!;
@@ -54,6 +55,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError(message));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const detection = await detectAgent(agent.toolType);
@@ -66,6 +68,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError(message));
 			}
 			process.exit(1);
+			return;
 		}
 
 		// Check if agent is busy (either from desktop or another CLI instance)
@@ -84,6 +87,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 					console.error(formatError(message));
 				}
 				process.exit(1);
+				return;
 			}
 		}
 
@@ -96,6 +100,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				console.error(formatError('Agent does not have an Auto Run folder configured'));
 			}
 			process.exit(1);
+			return;
 		}
 
 		// Show startup info in human-readable mode
@@ -138,5 +143,6 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			console.error(formatError(`Failed to run playbook: ${message}`));
 		}
 		process.exit(1);
+		return;
 	}
 }

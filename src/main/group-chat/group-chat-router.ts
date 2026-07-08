@@ -205,9 +205,9 @@ export function setModeratorResponseTimeout(groupChatId: string): void {
 	const handle = setTimeout(() => {
 		moderatorTimeouts.delete(groupChatId);
 		console.warn(
-			`[GroupChat:Debug] Moderator timed out after ${MODERATOR_RESPONSE_TIMEOUT_MS / 1000}s for ${groupChatId} — force-resetting to idle`
+			`[GroupChat:Debug] Moderator timed out after ${MODERATOR_RESPONSE_TIMEOUT_MS / 1000}s for ${groupChatId} - force-resetting to idle`
 		);
-		logger.warn('[GroupChat] Moderator timed out — resetting to idle', LOG_CONTEXT, {
+		logger.warn('[GroupChat] Moderator timed out - resetting to idle', LOG_CONTEXT, {
 			groupChatId,
 			timeoutMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 		});
@@ -262,7 +262,7 @@ function setParticipantResponseTimeout(
 		if (!pending?.has(participantName)) return; // Already responded
 
 		console.warn(
-			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s — force-completing`
+			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s - force-completing`
 		);
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
@@ -279,11 +279,11 @@ function setParticipantResponseTimeout(
 				await appendToLog(
 					chat.logPath,
 					participantName,
-					`[Timed out — no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
+					`[Timed out - no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
 				);
 			}
 		} catch (err) {
-			// Non-critical — synthesize anyway, but log and report so we can diagnose
+			// Non-critical - synthesize anyway, but log and report so we can diagnose
 			logger.error('Failed to log timeout response', LOG_CONTEXT, {
 				groupChatId,
 				participantName,
@@ -297,7 +297,7 @@ function setParticipantResponseTimeout(
 		}
 
 		// Reset participant state and force-complete the batch so the AUTO badge
-		// and progress bar clear immediately — the batch loop may still be awaiting
+		// and progress bar clear immediately - the batch loop may still be awaiting
 		// a process exit that will never come.
 		groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
 		// Only emit batch-complete for participants triggered via !autorun, not normal @mentions
@@ -356,10 +356,14 @@ export function getGroupChatReadOnlyState(groupChatId: string): boolean {
 	return groupChatReadOnlyState.get(groupChatId) ?? false;
 }
 
+export function getPendingParticipants(groupChatId: string): Set<string> {
+	return pendingParticipantResponses.get(groupChatId) ?? new Set<string>();
+}
+
 /**
  * Sets the read-only state for a group chat.
  */
-function setGroupChatReadOnlyState(groupChatId: string, readOnly: boolean): void {
+export function setGroupChatReadOnlyState(groupChatId: string, readOnly: boolean): void {
 	groupChatReadOnlyState.set(groupChatId, readOnly);
 }
 
@@ -830,7 +834,7 @@ ${historyContext}
 ${message}${imageContext}
 
 ## Execution Mode:
-${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspect, analyze, and plan — no file changes allowed.' : 'Participants have FULL READ-WRITE access and can create, modify, and delete files. You are in read-only/plan mode yourself, so delegate all file changes to participants. When the user asks for implementation, specs, or file creation, delegate those tasks to the appropriate participants — they can execute.'}`;
+${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspect, analyze, and plan - no file changes allowed.' : 'Participants have FULL READ-WRITE access and can create, modify, and delete files. You are in read-only/plan mode yourself, so delegate all file changes to participants. When the user asks for implementation, specs, or file creation, delegate those tasks to the appropriate participants - they can execute.'}`;
 
 			// Get the base args from the agent configuration
 			const args = [...agent.args];
@@ -973,7 +977,7 @@ export async function routeModeratorResponse(
 		// Benign race: the group chat was deleted while a moderator process was still
 		// running. The exit handler routes here on process exit; nothing left to do.
 		logger.info(
-			`[GroupChat] Skipping moderator routing — chat ${groupChatId} no longer exists`,
+			`[GroupChat] Skipping moderator routing - chat ${groupChatId} no longer exists`,
 			'GroupChatRouter'
 		);
 		return;
@@ -1167,13 +1171,13 @@ export async function routeModeratorResponse(
 				continue;
 			}
 
-			// Emit event to renderer — the renderer will call startBatchRun via useBatchProcessor.
+			// Emit event to renderer - the renderer will call startBatchRun via useBatchProcessor.
 			// When the batch completes, the renderer calls groupChat:reportAutoRunComplete which
 			// invokes routeAgentResponse to trigger the synthesis round.
 			groupChatEmitters.emitParticipantState?.(groupChatId, participant.name, 'working');
 			// Register in the global pending map BEFORE emitting the trigger event to the renderer.
 			// The renderer's batch processor could complete and call reportAutoRunComplete
-			// before the post-loop registration — this prevents that race.
+			// before the post-loop registration - this prevents that race.
 			participantsToRespond.add(participant.name);
 			pendingParticipantResponses.set(groupChatId, participantsToRespond);
 			setParticipantResponseTimeout(
@@ -1192,7 +1196,7 @@ export async function routeModeratorResponse(
 				groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
 				logger.debug(`[GroupChat:Debug] Emitted state change: agent-working`);
 			}
-			// Now emit the trigger — renderer will start the batch run
+			// Now emit the trigger - renderer will start the batch run
 			groupChatEmitters.emitAutoRunTriggered?.(groupChatId, participant.name, targetFilename);
 			logger.debug(
 				`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
@@ -1270,7 +1274,7 @@ export async function routeModeratorResponse(
 
 			// When the agent's prior session is being resumed (e.g. Copilot's
 			// `--resume=<id>`), it already has the full identity/role preamble
-			// from the first turn — re-sending it on every moderator turn just
+			// from the first turn - re-sending it on every moderator turn just
 			// burns tokens and confuses the model. Use the slim continuation
 			// template in that case; full template only on the first turn or
 			// when the agent doesn't support resume.
@@ -1366,7 +1370,7 @@ export async function routeModeratorResponse(
 				// Register this participant in the global pending map IMMEDIATELY after spawn.
 				// This prevents a race condition where the process exits before the post-loop
 				// registration (the exit listener would call markParticipantResponded which checks
-				// this map — if the participant isn't registered yet, synthesis never triggers).
+				// this map - if the participant isn't registered yet, synthesis never triggers).
 				participantsToRespond.add(participantName);
 				pendingParticipantResponses.set(groupChatId, participantsToRespond);
 				setParticipantResponseTimeout(
@@ -1886,7 +1890,7 @@ export async function respawnParticipantWithRecovery(
 	// Emit participant state change to show this participant is working
 	groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'working');
 
-	// Spawn the recovery process — with SSH wrapping if configured
+	// Spawn the recovery process - with SSH wrapping if configured
 	logger.debug(`[GroupChat:Debug] Recovery spawn command: ${agent.path || agent.command}`);
 	logger.debug(`[GroupChat:Debug] Recovery spawn args count: ${configResolution.args.length}`);
 

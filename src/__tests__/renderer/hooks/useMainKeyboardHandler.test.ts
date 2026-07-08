@@ -2873,6 +2873,49 @@ describe('useMainKeyboardHandler', () => {
 	});
 
 	describe('terminal focus recovery forwards lost terminal keys', () => {
+		it.each([
+			{ key: 'a', expected: 'a', label: 'printable characters' },
+			{ key: 'Enter', expected: '\r', label: 'Enter' },
+			{ key: 'Backspace', expected: '\x7f', label: 'Backspace' },
+			{ key: 'Escape', expected: '\x1b', label: 'Escape' },
+			{ key: 'Tab', expected: '\t', label: 'Tab' },
+			{ key: 'c', ctrlKey: true, expected: '\x03', label: 'Ctrl+C' },
+		])('should refocus and forward lost terminal $label', ({ key, ctrlKey, expected }) => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockFocusActiveTerminal = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { focusActiveTerminal: mockFocusActiveTerminal } },
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key,
+				ctrlKey: ctrlKey ?? false,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(mockFocusActiveTerminal).toHaveBeenCalledTimes(1);
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect((window as any).maestro.process.write).toHaveBeenCalledWith(
+				'test-session-terminal-term-1',
+				expected
+			);
+		});
+
 		it('should refocus and consume ArrowUp without synthesizing PTY sequences', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 			const mockFocusActiveTerminal = vi.fn();
@@ -3496,6 +3539,501 @@ describe('useMainKeyboardHandler', () => {
 			expect(openModalSpy).not.toHaveBeenCalledWith('editGroupChat', expect.anything());
 
 			openModalSpy.mockRestore();
+		});
+	});
+
+	describe('remaining shortcut branch coverage', () => {
+		const dispatchKeyDown = (init: KeyboardEventInit = {}) => {
+			const event = new KeyboardEvent('keydown', {
+				key: 'x',
+				code: 'KeyX',
+				bubbles: true,
+				cancelable: true,
+				...init,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			return { event, preventDefaultSpy };
+		};
+
+		const aiSession = {
+			id: 'session-1',
+			inputMode: 'ai',
+			activeTabId: 'tab-2',
+			aiTabs: [
+				{ id: 'tab-1', title: 'One', logs: [], readOnlyMode: false, saveToHistory: true },
+				{ id: 'tab-2', title: 'Two', logs: [], readOnlyMode: false, saveToHistory: true },
+				{ id: 'tab-3', title: 'Three', logs: [], readOnlyMode: false, saveToHistory: true },
+			],
+		};
+
+		const createTabContext = (actionId: string, overrides: Record<string, unknown> = {}) =>
+			createMockContext({
+				activeSessionId: 'session-1',
+				activeSession: aiSession,
+				isTabShortcut: (_e: KeyboardEvent, id: string) => id === actionId,
+				...overrides,
+			});
+
+		it('blocks app shortcuts when true modals or overlays disallow them', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const setShortcutsHelpOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'help',
+				setShortcutsHelpOpen,
+			});
+			dispatchKeyDown();
+			expect(setShortcutsHelpOpen).not.toHaveBeenCalled();
+
+			rerender();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => false,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'help',
+				setShortcutsHelpOpen,
+			});
+			dispatchKeyDown();
+			expect(setShortcutsHelpOpen).not.toHaveBeenCalled();
+		});
+
+		it('stops after tab navigation and escape handlers consume the event', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const setShortcutsHelpOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				handleTabNavigation: vi.fn().mockReturnValue(true),
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'help',
+				setShortcutsHelpOpen,
+			});
+			dispatchKeyDown({ key: 'Tab' });
+			expect(setShortcutsHelpOpen).not.toHaveBeenCalled();
+
+			rerender();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				handleEscapeInMain: vi.fn().mockReturnValue(true),
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'help',
+				setShortcutsHelpOpen,
+			});
+			dispatchKeyDown({ key: 'Escape' });
+			expect(setShortcutsHelpOpen).not.toHaveBeenCalled();
+		});
+
+		it('reports keyboard mastery level-ups after tracked shortcuts', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const setShortcutsHelpOpen = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: 2 });
+			const onKeyboardMasteryLevelUp = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'help',
+				setShortcutsHelpOpen,
+				recordShortcutUsage,
+				onKeyboardMasteryLevelUp,
+			});
+
+			dispatchKeyDown();
+
+			expect(setShortcutsHelpOpen).toHaveBeenCalledWith(true);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('help');
+			expect(onKeyboardMasteryLevelUp).toHaveBeenCalledWith(2);
+		});
+
+		it('handles additional general app shortcuts', () => {
+			const cases = [
+				{
+					actionId: 'toggleRightPanel',
+					overrides: { setRightPanelOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) => expect(ctx.setRightPanelOpen).toHaveBeenCalled(),
+				},
+				{
+					actionId: 'newGroupChat',
+					overrides: { setShowNewGroupChatModal: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setShowNewGroupChatModal).toHaveBeenCalledWith(true),
+				},
+				{
+					actionId: 'killInstance',
+					overrides: {
+						activeGroupChatId: 'group-1',
+						deleteGroupChatWithConfirmation: vi.fn(),
+					},
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.deleteGroupChatWithConfirmation).toHaveBeenCalledWith('group-1'),
+				},
+				{
+					actionId: 'killInstance',
+					overrides: { activeSessionId: 'session-1', deleteSession: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.deleteSession).toHaveBeenCalledWith('session-1'),
+				},
+				{
+					actionId: 'settings',
+					overrides: { setSettingsModalOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setSettingsModalOpen).toHaveBeenCalledWith(true),
+				},
+				{
+					actionId: 'agentSettings',
+					overrides: { activeSession: aiSession, setEditAgentSession: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setEditAgentSession).toHaveBeenCalledWith(aiSession),
+				},
+				{
+					actionId: 'focusActiveTab',
+					overrides: { mainPanelRef: { current: { focusActiveTab: vi.fn() } } },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.mainPanelRef.current.focusActiveTab).toHaveBeenCalled(),
+				},
+				{
+					actionId: 'nextUnreadTab',
+					overrides: { goToNextUnreadTab: vi.fn() },
+					assert: (ctx: Record<string, any>) => expect(ctx.goToNextUnreadTab).toHaveBeenCalled(),
+				},
+				{
+					actionId: 'filterUnreadAgents',
+					overrides: { toggleShowUnreadAgentsOnly: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.toggleShowUnreadAgentsOnly).toHaveBeenCalled(),
+				},
+				{
+					actionId: 'processMonitor',
+					overrides: { setProcessMonitorOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setProcessMonitorOpen).toHaveBeenCalledWith(true),
+				},
+				{
+					actionId: 'usageDashboard',
+					overrides: { encoreFeatures: { usageStats: true }, setUsageDashboardOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setUsageDashboardOpen).toHaveBeenCalledWith(true),
+				},
+				{
+					actionId: 'directorNotes',
+					overrides: { encoreFeatures: { directorNotes: true }, setDirectorNotesOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setDirectorNotesOpen).toHaveBeenCalledWith(true),
+				},
+				{
+					actionId: 'openCue',
+					overrides: { encoreFeatures: { maestroCue: true }, setCueModalOpen: vi.fn() },
+					assert: (ctx: Record<string, any>) =>
+						expect(ctx.setCueModalOpen).toHaveBeenCalledWith(true),
+				},
+			];
+
+			for (const testCase of cases) {
+				const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+				const ctx = createMockContext({
+					...testCase.overrides,
+					isShortcut: (_e: KeyboardEvent, id: string) => id === testCase.actionId,
+				});
+
+				result.current.keyboardHandlerRef.current = ctx;
+				dispatchKeyDown();
+
+				testCase.assert(ctx as Record<string, any>);
+				unmount();
+			}
+		});
+
+		it('routes file and history focus shortcuts for group chat right tabs', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const setRightPanelOpen = vi.fn();
+			const setGroupChatRightTab = vi.fn();
+			const setActiveFocus = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: 'group-1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'goToFiles',
+				setRightPanelOpen,
+				setGroupChatRightTab,
+				setActiveFocus,
+			});
+			dispatchKeyDown();
+			expect(setGroupChatRightTab).toHaveBeenCalledWith('participants');
+
+			rerender();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: 'group-1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'goToHistory',
+				setRightPanelOpen,
+				setGroupChatRightTab,
+				setActiveFocus,
+			});
+			dispatchKeyDown();
+			expect(setGroupChatRightTab).toHaveBeenCalledWith('history');
+			expect(setRightPanelOpen).toHaveBeenCalledWith(true);
+			expect(setActiveFocus).toHaveBeenCalledWith('right');
+		});
+
+		it('forwards macOS Ctrl-letter events back to the active terminal', () => {
+			const platformDescriptor =
+				Object.getOwnPropertyDescriptor(navigator, 'platform') ??
+				Object.getOwnPropertyDescriptor(Navigator.prototype, 'platform');
+			Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+
+			try {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+				const focusActiveTerminal = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createMockContext({
+					hasOpenLayers: () => true,
+					activeSessionId: 'session-1',
+					activeSession: {
+						id: 'session-1',
+						inputMode: 'terminal',
+						activeTerminalTabId: 'terminal-1',
+					},
+					mainPanelRef: { current: { focusActiveTerminal } },
+				});
+
+				const { preventDefaultSpy } = dispatchKeyDown({ key: 'c', ctrlKey: true });
+
+				expect(focusActiveTerminal).toHaveBeenCalled();
+				expect(preventDefaultSpy).toHaveBeenCalled();
+				expect((window as any).maestro.process.write).toHaveBeenCalledWith(
+					'session-1-terminal-terminal-1',
+					'\x03'
+				);
+			} finally {
+				if (platformDescriptor) {
+					Object.defineProperty(navigator, 'platform', platformDescriptor);
+				}
+			}
+		});
+
+		it('creates file and browser tabs through tab shortcuts', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const handleNewFileTab = vi.fn();
+			const handleNewBrowserTab = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTabContext('newFileTab', {
+				handleNewFileTab,
+				handleNewBrowserTab,
+			});
+			dispatchKeyDown();
+			expect(handleNewFileTab).toHaveBeenCalled();
+
+			rerender();
+			result.current.keyboardHandlerRef.current = createTabContext('newBrowserTab', {
+				handleNewFileTab,
+				handleNewBrowserTab,
+			});
+			dispatchKeyDown();
+			expect(handleNewBrowserTab).toHaveBeenCalled();
+		});
+
+		it('reloads active browser tabs before AI read-only toggling', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const reloadBrowserTab = vi.fn();
+			const setSessions = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTabContext('toggleReadOnlyMode', {
+				activeSession: { ...aiSession, activeBrowserTabId: 'browser-1' },
+				mainPanelRef: { current: { reloadBrowserTab } },
+				setSessions,
+			});
+
+			dispatchKeyDown();
+
+			expect(reloadBrowserTab).toHaveBeenCalled();
+			expect(setSessions).not.toHaveBeenCalled();
+		});
+
+		it('confirms wizard and draft AI tab closes', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const performTabClose = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTabContext('closeTab', {
+				handleCloseCurrentTab: vi.fn().mockReturnValue({
+					type: 'ai',
+					tabId: 'wizard-tab',
+					isWizardTab: true,
+					hasWizardUserInteraction: false,
+				}),
+				performTabClose,
+			});
+			dispatchKeyDown();
+			expect(performTabClose).toHaveBeenCalledWith('wizard-tab');
+
+			performTabClose.mockClear();
+			rerender();
+			result.current.keyboardHandlerRef.current = createTabContext('closeTab', {
+				handleCloseCurrentTab: vi.fn().mockReturnValue({
+					type: 'ai',
+					tabId: 'draft-tab',
+					hasDraft: true,
+				}),
+				performTabClose,
+			});
+			dispatchKeyDown();
+			const confirmData = useModalStore.getState().getData('confirm');
+			expect(confirmData?.message).toContain('unsent draft');
+			confirmData?.onConfirm?.();
+			expect(performTabClose).toHaveBeenCalledWith('draft-tab');
+		});
+
+		it('runs bulk close tab shortcuts when enough AI tabs exist', () => {
+			const cases = [
+				{ actionId: 'closeAllTabs', handler: 'handleCloseAllTabs' },
+				{ actionId: 'closeOtherTabs', handler: 'handleCloseOtherTabs' },
+				{ actionId: 'closeTabsLeft', handler: 'handleCloseTabsLeft' },
+				{ actionId: 'closeTabsRight', handler: 'handleCloseTabsRight' },
+			] as const;
+
+			for (const testCase of cases) {
+				const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+				const handlers = {
+					handleCloseAllTabs: vi.fn(),
+					handleCloseOtherTabs: vi.fn(),
+					handleCloseTabsLeft: vi.fn(),
+					handleCloseTabsRight: vi.fn(),
+				};
+
+				result.current.keyboardHandlerRef.current = createTabContext(testCase.actionId, handlers);
+				dispatchKeyDown();
+
+				expect(handlers[testCase.handler]).toHaveBeenCalled();
+				unmount();
+			}
+		});
+
+		it('renames terminal, browser, and AI tabs from the active tab context', () => {
+			const cases = [
+				{
+					session: {
+						...aiSession,
+						inputMode: 'terminal',
+						activeTerminalTabId: 'terminal-1',
+						terminalTabs: [{ id: 'terminal-1', name: 'Shell' }],
+					},
+					expectedId: 'terminal-1',
+					expectedName: 'Shell',
+				},
+				{
+					session: {
+						...aiSession,
+						activeBrowserTabId: 'browser-1',
+						browserTabs: [{ id: 'browser-1', customTitle: 'Docs' }],
+					},
+					expectedId: 'browser-1',
+					expectedName: 'Docs',
+				},
+				{
+					session: aiSession,
+					getActiveTab: vi.fn().mockReturnValue({ id: 'tab-2', name: 'Chat' }),
+					expectedId: 'tab-2',
+					expectedName: 'Chat',
+				},
+			];
+
+			for (const testCase of cases) {
+				const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+				const setRenameTabId = vi.fn();
+				const setRenameTabInitialName = vi.fn();
+				const setRenameTabModalOpen = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createTabContext('renameTab', {
+					activeSession: testCase.session,
+					getActiveTab: testCase.getActiveTab ?? vi.fn(),
+					setRenameTabId,
+					setRenameTabInitialName,
+					setRenameTabModalOpen,
+				});
+
+				dispatchKeyDown({ metaKey: true });
+
+				expect(setRenameTabId).toHaveBeenCalledWith(testCase.expectedId);
+				expect(setRenameTabInitialName).toHaveBeenCalledWith(testCase.expectedName);
+				expect(setRenameTabModalOpen).toHaveBeenCalledWith(true);
+				unmount();
+			}
+		});
+
+		it('toggles AI tab metadata for read-only, history, and thinking modes', () => {
+			const { result, rerender } = renderHook(() => useMainKeyboardHandler());
+			const setSessions = vi.fn((updater: (sessions: any[]) => any[]) => updater([aiSession]));
+
+			result.current.keyboardHandlerRef.current = createTabContext('toggleReadOnlyMode', {
+				setSessions,
+			});
+			dispatchKeyDown();
+			expect(setSessions.mock.results.at(-1)?.value[0].aiTabs[1].readOnlyMode).toBe(true);
+
+			rerender();
+			setSessions.mockImplementation((updater: (sessions: any[]) => any[]) => updater([aiSession]));
+			result.current.keyboardHandlerRef.current = createTabContext('toggleSaveToHistory', {
+				setSessions,
+			});
+			dispatchKeyDown();
+			expect(setSessions.mock.results.at(-1)?.value[0].aiTabs[1].saveToHistory).toBe(false);
+
+			rerender();
+			const thinkingSession = {
+				...aiSession,
+				aiTabs: aiSession.aiTabs.map((tab) =>
+					tab.id === 'tab-2'
+						? {
+								...tab,
+								showThinking: 'sticky',
+								logs: [
+									{ id: 'log-1', source: 'assistant' },
+									{ id: 'log-2', source: 'thinking' },
+									{ id: 'log-3', source: 'tool' },
+								],
+							}
+						: tab
+				),
+			};
+			setSessions.mockImplementation((updater: (sessions: any[]) => any[]) =>
+				updater([thinkingSession])
+			);
+			result.current.keyboardHandlerRef.current = createTabContext('toggleShowThinking', {
+				activeSession: thinkingSession,
+				setSessions,
+			});
+			dispatchKeyDown();
+			const updatedTab = setSessions.mock.results.at(-1)?.value[0].aiTabs[1];
+			expect(updatedTab.showThinking).toBe('off');
+			expect(updatedTab.logs).toEqual([{ id: 'log-1', source: 'assistant' }]);
+		});
+
+		it('toggles wizard thinking visibility without changing the normal AI mode', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const wizardSession = {
+				...aiSession,
+				aiTabs: aiSession.aiTabs.map((tab) =>
+					tab.id === 'tab-2'
+						? {
+								...tab,
+								wizardState: {
+									isActive: true,
+									showWizardThinking: false,
+									thinkingContent: 'hidden',
+								},
+							}
+						: tab
+				),
+			};
+			const setSessions = vi.fn((updater: (sessions: any[]) => any[]) => updater([wizardSession]));
+
+			result.current.keyboardHandlerRef.current = createTabContext('toggleShowThinking', {
+				activeSession: wizardSession,
+				setSessions,
+			});
+
+			dispatchKeyDown();
+
+			const updatedWizard = setSessions.mock.results.at(-1)?.value[0].aiTabs[1].wizardState;
+			expect(updatedWizard.showWizardThinking).toBe(true);
+			expect(updatedWizard.thinkingContent).toBe('');
 		});
 	});
 });

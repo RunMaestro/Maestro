@@ -6,6 +6,8 @@
  * due to React Flow's internal state management and hooks.
  */
 
+import React from 'react';
+import { fireEvent, render, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock ReactFlow before importing the component
@@ -69,19 +71,258 @@ vi.mock('../../../../renderer/components/DocumentGraph/graphDataBuilder', () => 
 		backlinksLoading: true,
 		startBacklinkScan: vi.fn().mockReturnValue(() => {}),
 	}),
+	invalidateCacheForFiles: vi.fn(),
 	isDocumentNode: (data: any) => data?.nodeType === 'document',
 	isExternalLinkNode: (data: any) => data?.nodeType === 'external',
 }));
 
+vi.mock('../../../../renderer/components/DocumentGraph/MindMap', async (importOriginal) => {
+	const actual = await importOriginal<any>();
+
+	const MockMindMap = (props: any) => {
+		const firstDocument = props.nodes.find((node: any) => node.nodeType === 'document');
+		const externalNode = props.nodes.find((node: any) => node.nodeType === 'external');
+		const contextEvent = () =>
+			new MouseEvent('contextmenu', {
+				bubbles: true,
+				cancelable: true,
+				clientX: 24,
+				clientY: 36,
+			});
+		return (
+			<div
+				data-testid="mind-map"
+				data-center={props.centerFilePath}
+				data-node-count={props.nodes.length}
+				data-layout={props.layoutType}
+				data-spacing={props.spacingScale}
+				data-show-external={String(props.showExternalLinks)}
+			>
+				<button onClick={() => props.onNodeSelect(firstDocument)}>Select first document</button>
+				<button onClick={() => props.onNodeSelect(externalNode)}>Select external node</button>
+				<button onClick={() => props.onNodePreview(firstDocument)}>Preview first document</button>
+				<button
+					onClick={() =>
+						props.onNodePreview({
+							...firstDocument,
+							filePath: '/repo/docs/absolute.md',
+						})
+					}
+				>
+					Preview absolute document
+				</button>
+				<button onClick={() => props.onOpenFile(firstDocument.filePath)}>
+					Open first document
+				</button>
+				<button onClick={() => props.onNodeContextMenu(firstDocument, contextEvent())}>
+					Open document context menu
+				</button>
+				{externalNode && (
+					<button onClick={() => props.onNodeContextMenu(externalNode, contextEvent())}>
+						Open external context menu
+					</button>
+				)}
+				<button
+					onClick={() => props.onNodeDoubleClick({ ...firstDocument, filePath: 'docs/guide.md' })}
+				>
+					Recenter guide
+				</button>
+				<button
+					onClick={() =>
+						props.onNodePositionChange?.(firstDocument.id, {
+							x: 123,
+							y: 456,
+						})
+					}
+				>
+					Move first document
+				</button>
+			</div>
+		);
+	};
+
+	return {
+		...actual,
+		MindMap: MockMindMap,
+	};
+});
+
+vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
+	MarkdownRenderer: ({
+		content,
+		onFileClick,
+	}: {
+		content: string;
+		onFileClick?: (path: string) => void;
+	}) => (
+		<div data-testid="markdown-renderer">
+			{content}
+			<button onClick={() => onFileClick?.('docs/guide.md')}>Open wiki guide</button>
+		</div>
+	),
+}));
+
 // Now import the component after mocks are set up
+import {
+	buildGraphData,
+	invalidateCacheForFiles,
+} from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 import {
 	DocumentGraphView,
 	type DocumentGraphViewProps,
 } from '../../../../renderer/components/DocumentGraph/DocumentGraphView';
 
+const testTheme = {
+	id: 'test',
+	name: 'Test',
+	mode: 'dark' as const,
+	colors: {
+		bgMain: '#000000',
+		bgSidebar: '#111111',
+		bgActivity: '#222222',
+		border: '#333333',
+		textMain: '#ffffff',
+		textDim: '#888888',
+		accent: '#0066ff',
+		accentDim: '#003388',
+		accentText: '#00ffff',
+		accentForeground: '#ffffff',
+		success: '#00ff00',
+		warning: '#ffff00',
+		error: '#ff0000',
+	},
+};
+
+let filesChangedHandler: ((data: any) => void) | null = null;
+
+function makeGraphData(overrides: Record<string, any> = {}) {
+	const documentNode = {
+		id: 'doc:README.md',
+		type: 'documentNode' as const,
+		data: {
+			nodeType: 'document' as const,
+			title: 'Readme',
+			filePath: 'README.md',
+			description: 'Project overview',
+			contentPreview: 'Project overview',
+			lineCount: 12,
+			wordCount: 45,
+			size: '2KB',
+			brokenLinks: [],
+			isLargeFile: false,
+		},
+	};
+	const guideNode = {
+		id: 'doc:docs/guide.md',
+		type: 'documentNode' as const,
+		data: {
+			nodeType: 'document' as const,
+			title: 'Guide',
+			filePath: 'docs/guide.md',
+			contentPreview: 'Guide content',
+			lineCount: 8,
+			wordCount: 30,
+			size: '1KB',
+			brokenLinks: [],
+			isLargeFile: false,
+		},
+	};
+	const externalNode = {
+		id: 'external:example.com',
+		type: 'externalLinkNode' as const,
+		data: {
+			nodeType: 'external' as const,
+			domain: 'example.com',
+			linkCount: 1,
+			urls: ['https://example.com'],
+		},
+	};
+
+	return {
+		nodes: [documentNode, guideNode],
+		edges: [
+			{ id: 'edge-1', source: documentNode.id, target: guideNode.id, type: 'default' as const },
+		],
+		totalDocuments: 3,
+		loadedDocuments: 2,
+		hasMore: true,
+		cachedExternalData: {
+			externalNodes: [externalNode],
+			externalEdges: [
+				{
+					id: 'external-edge-1',
+					source: documentNode.id,
+					target: externalNode.id,
+					type: 'external' as const,
+				},
+			],
+			domainCount: 1,
+			totalLinkCount: 1,
+		},
+		internalLinkCount: 1,
+		backlinksLoading: false,
+		allMarkdownFiles: ['README.md', 'docs/guide.md', 'docs/notes.md'],
+		startBacklinkScan: vi.fn().mockReturnValue(vi.fn()),
+		...overrides,
+	};
+}
+
+function renderOpenGraph(props: Partial<DocumentGraphViewProps> = {}) {
+	return render(
+		<DocumentGraphView
+			isOpen={true}
+			onClose={vi.fn()}
+			theme={testTheme}
+			rootPath="/repo"
+			focusFilePath="README.md"
+			{...props}
+		/>
+	);
+}
+
 describe('DocumentGraphView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		filesChangedHandler = null;
+		vi.mocked(buildGraphData).mockResolvedValue(makeGraphData() as any);
+		vi.mocked(invalidateCacheForFiles).mockReturnValue(undefined);
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				observe() {}
+				unobserve() {}
+				disconnect() {}
+			}
+		);
+		vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+			callback(0);
+			return 1;
+		});
+		const maestroMock = {
+			documentGraph: {
+				watchFolder: vi.fn().mockResolvedValue(undefined),
+				unwatchFolder: vi.fn().mockResolvedValue(undefined),
+				onFilesChanged: vi.fn((handler: (data: any) => void) => {
+					filesChangedHandler = handler;
+					return vi.fn();
+				}),
+			},
+			fs: {
+				stat: vi.fn().mockResolvedValue({
+					createdAt: '2026-01-02T00:00:00.000Z',
+					modifiedAt: '2026-01-03T00:00:00.000Z',
+				}),
+				readFile: vi.fn().mockResolvedValue('- [x] Done\n- [ ] Next\n# Preview'),
+			},
+		};
+		if ((window as any).maestro) {
+			Object.assign((window as any).maestro, maestroMock);
+		} else {
+			Object.defineProperty(window, 'maestro', {
+				configurable: true,
+				value: maestroMock,
+			});
+		}
 	});
 
 	describe('Module Exports', () => {
@@ -138,6 +379,373 @@ describe('DocumentGraphView', () => {
 
 			// When isOpen is false, the component should not render any modal content
 			expect(container.innerHTML).toBe('');
+		});
+	});
+
+	describe('Rendered Graph Behavior', () => {
+		it('loads graph data, starts watching the root, and renders the mind map', async () => {
+			renderOpenGraph();
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			expect(buildGraphData).toHaveBeenCalledWith(
+				expect.objectContaining({
+					rootPath: '/repo',
+					focusFile: 'README.md',
+					maxDepth: 2,
+					maxNodes: 200,
+					onProgress: expect.any(Function),
+					onPartialUpdate: expect.any(Function),
+				})
+			);
+			expect(window.maestro.documentGraph.watchFolder).toHaveBeenCalledWith('/repo');
+			expect(window.maestro.documentGraph.onFilesChanged).toHaveBeenCalled();
+			expect(screen.getByTestId('mind-map').getAttribute('data-node-count')).toBe('2');
+			expect(screen.getByText('2 of 3 documents')).toBeTruthy();
+		});
+
+		it('updates external-link, layout, depth, preview, and spacing controls', async () => {
+			const onExternalLinksChange = vi.fn();
+			const onLayoutTypeChange = vi.fn();
+			const onNeighborDepthChange = vi.fn();
+			const onPreviewCharLimitChange = vi.fn();
+
+			renderOpenGraph({
+				onExternalLinksChange,
+				onLayoutTypeChange,
+				onNeighborDepthChange,
+				onPreviewCharLimitChange,
+			});
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('External'));
+			expect(onExternalLinksChange).toHaveBeenCalledWith(true);
+			await waitFor(() =>
+				expect(screen.getByTestId('mind-map').getAttribute('data-show-external')).toBe('true')
+			);
+
+			fireEvent.click(screen.getByTitle('Layout: Hierarchical'));
+			fireEvent.click(screen.getByText('Radial'));
+			expect(onLayoutTypeChange).toHaveBeenCalledWith('radial');
+			await waitFor(() =>
+				expect(screen.getByTestId('mind-map').getAttribute('data-layout')).toBe('radial')
+			);
+
+			fireEvent.click(screen.getByTitle('Showing 2 levels of neighbors'));
+			fireEvent.change(screen.getByRole('slider'), { target: { value: '3' } });
+			expect(onNeighborDepthChange).toHaveBeenCalledWith(3);
+			expect(screen.getByText('Depth: 3')).toBeTruthy();
+
+			fireEvent.click(screen.getByTitle('Preview text limit: 100 characters'));
+			fireEvent.change(screen.getAllByRole('slider')[0], { target: { value: '200' } });
+			expect(onPreviewCharLimitChange).toHaveBeenCalledWith(200);
+			expect(screen.getByText('Preview: 200')).toBeTruthy();
+
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: '=' });
+			expect(screen.getByTestId('mind-map').getAttribute('data-spacing')).toBe('1.1');
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: '-' });
+			expect(screen.getByTestId('mind-map').getAttribute('data-spacing')).toBe('1');
+		});
+
+		it('selects nodes, loads stats and task counts, previews markdown, and opens files', async () => {
+			const onDocumentOpen = vi.fn();
+			renderOpenGraph({ onDocumentOpen });
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			fireEvent.click(screen.getByText('Select first document'));
+
+			expect(await screen.findByText('README')).toBeTruthy();
+			await waitFor(() =>
+				expect(screen.getByTitle('Markdown tasks').textContent).toContain('1 of 2 tasks')
+			);
+			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/repo/README.md', undefined);
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/repo/README.md', undefined);
+
+			fireEvent.click(screen.getByText('Preview first document'));
+			expect(await screen.findByTestId('markdown-renderer')).toHaveTextContent('# Preview');
+
+			fireEvent.click(screen.getByText('Open first document'));
+			expect(onDocumentOpen).toHaveBeenCalledWith('README.md');
+		});
+
+		it('loads additional documents and can reset user-position overrides', async () => {
+			vi.mocked(buildGraphData)
+				.mockResolvedValueOnce(makeGraphData() as any)
+				.mockResolvedValueOnce(
+					makeGraphData({
+						loadedDocuments: 3,
+						hasMore: false,
+					}) as any
+				);
+
+			renderOpenGraph();
+
+			expect(await screen.findByText('Load more (1 remaining)')).toBeTruthy();
+			fireEvent.click(screen.getByText('Load more (1 remaining)'));
+			await waitFor(() => expect(buildGraphData).toHaveBeenCalledTimes(2));
+			expect(buildGraphData).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					maxNodes: 225,
+					focusFile: 'README.md',
+				})
+			);
+
+			fireEvent.click(screen.getByText('Move first document'));
+			expect(screen.getByText('Reset Layout')).toBeTruthy();
+			fireEvent.click(screen.getByText('Reset Layout'));
+			await waitFor(() => expect(screen.queryByText('Reset Layout')).toBeNull());
+		});
+
+		it('renders empty and error states, and retries failed loads', async () => {
+			vi.mocked(buildGraphData).mockResolvedValueOnce(
+				makeGraphData({
+					nodes: [],
+					edges: [],
+					totalDocuments: 0,
+					loadedDocuments: 0,
+					hasMore: false,
+					cachedExternalData: {
+						externalNodes: [],
+						externalEdges: [],
+						domainCount: 0,
+						totalLinkCount: 0,
+					},
+					internalLinkCount: 0,
+					allMarkdownFiles: [],
+				}) as any
+			);
+
+			const { unmount } = renderOpenGraph();
+			expect(await screen.findByText('No markdown files found')).toBeTruthy();
+			unmount();
+
+			vi.mocked(buildGraphData)
+				.mockRejectedValueOnce(new Error('scan failed'))
+				.mockResolvedValueOnce(makeGraphData() as any);
+
+			renderOpenGraph();
+			expect(await screen.findByText('Failed to load document graph')).toBeTruthy();
+			expect(screen.getByText('scan failed')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Retry'));
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			expect(buildGraphData).toHaveBeenCalledTimes(3);
+		});
+
+		it('invalidates changed files and debounces rebuilds from watcher events', async () => {
+			renderOpenGraph();
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			expect(filesChangedHandler).toBeTruthy();
+
+			vi.useFakeTimers();
+			act(() => {
+				filesChangedHandler?.({
+					rootPath: '/repo',
+					changes: [{ filePath: '/repo/README.md' }],
+				});
+			});
+
+			expect(invalidateCacheForFiles).toHaveBeenCalledWith(['/repo/README.md']);
+			await act(async () => {
+				vi.advanceTimersByTime(350);
+				await Promise.resolve();
+			});
+			expect(buildGraphData).toHaveBeenCalledTimes(2);
+			vi.useRealTimers();
+		});
+
+		it('renders live build progress while graph data is pending', async () => {
+			let resolveGraph: ((value: any) => void) | null = null;
+			vi.mocked(buildGraphData).mockImplementationOnce((options: any) => {
+				options.onProgress({
+					phase: 'parsing',
+					current: 2,
+					total: 4,
+					currentFile: 'docs/current.md',
+					internalLinksFound: 5,
+					externalLinksFound: 1,
+				});
+				return new Promise((resolve) => {
+					resolveGraph = resolve;
+				});
+			});
+
+			renderOpenGraph();
+
+			expect(await screen.findByText('Parsing documents... 2 of 4')).toBeTruthy();
+			expect(screen.getByText('docs/current.md')).toBeTruthy();
+			expect(screen.getByText(/5 internal/)).toBeTruthy();
+			expect(screen.getByText(/1 external links/)).toBeTruthy();
+
+			await act(async () => {
+				resolveGraph?.(makeGraphData());
+				await Promise.resolve();
+			});
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+		});
+
+		it('applies backlink updates and clears backlink progress on completion', async () => {
+			let backlinkUpdate: ((data: any) => void) | null = null;
+			let backlinkComplete: (() => void) | null = null;
+			const abortBacklinkScan = vi.fn();
+			vi.mocked(buildGraphData).mockResolvedValueOnce(
+				makeGraphData({
+					startBacklinkScan: (onUpdate: (data: any) => void, onComplete: () => void) => {
+						backlinkUpdate = onUpdate;
+						backlinkComplete = onComplete;
+						return abortBacklinkScan;
+					},
+				}) as any
+			);
+
+			renderOpenGraph();
+
+			expect(await screen.findByTestId('mind-map')).toHaveAttribute('data-node-count', '2');
+			expect(screen.getByText(/Scanning backlinks/)).toBeTruthy();
+
+			act(() => {
+				backlinkUpdate?.({
+					filesScanned: 1,
+					totalFiles: 3,
+					newNodes: [
+						{
+							id: 'doc:docs/backlink.md',
+							data: {
+								nodeType: 'document',
+								title: 'Backlink',
+								filePath: 'docs/backlink.md',
+								contentPreview: 'Backlink content',
+								lineCount: 4,
+								wordCount: 12,
+								size: '1KB',
+								brokenLinks: [],
+								isLargeFile: false,
+							},
+						},
+					],
+					newEdges: [
+						{
+							source: 'doc:README.md',
+							target: 'doc:docs/backlink.md',
+							type: 'default',
+						},
+					],
+				});
+			});
+
+			await waitFor(() =>
+				expect(screen.getByTestId('mind-map')).toHaveAttribute('data-node-count', '3')
+			);
+			expect(screen.getByText(/Scanning backlinks \(1\/3\)/)).toBeTruthy();
+
+			act(() => {
+				backlinkComplete?.();
+			});
+
+			await waitFor(() => expect(screen.queryByText(/Scanning backlinks/)).toBeNull());
+			expect(abortBacklinkScan).not.toHaveBeenCalled();
+		});
+
+		it('handles preview absolute paths, wiki-link history navigation, and preview open action', async () => {
+			const onDocumentOpen = vi.fn();
+			const readFile = vi.fn((path: string) => {
+				if (path.endsWith('absolute.md')) return Promise.resolve('# Absolute');
+				if (path.endsWith('guide.md')) return Promise.resolve('# Guide');
+				return Promise.resolve('# Readme');
+			});
+			(window.maestro.fs.readFile as any) = readFile;
+
+			renderOpenGraph({ onDocumentOpen });
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			fireEvent.click(screen.getByText('Preview absolute document'));
+
+			expect(await screen.findByTestId('markdown-renderer')).toHaveTextContent('# Absolute');
+			expect(readFile).toHaveBeenCalledWith('/repo/docs/absolute.md', undefined);
+			expect(screen.getByText('absolute.md')).toBeTruthy();
+			expect(screen.getByText('docs/absolute.md')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Open wiki guide'));
+			await waitFor(() => expect(readFile).toHaveBeenCalledWith('/repo/docs/guide.md', undefined));
+			expect(await screen.findByTestId('markdown-renderer')).toHaveTextContent('# Guide');
+
+			fireEvent.click(screen.getByLabelText('Go back'));
+			expect(await screen.findByTestId('markdown-renderer')).toHaveTextContent('# Absolute');
+
+			fireEvent.click(screen.getByLabelText('Go forward'));
+			expect(await screen.findByTestId('markdown-renderer')).toHaveTextContent('# Guide');
+
+			fireEvent.click(screen.getByTitle('Open in file preview'));
+			expect(onDocumentOpen).toHaveBeenCalledWith('docs/guide.md');
+		});
+
+		it('covers search focus, escape clearing, and center-node reselection', async () => {
+			renderOpenGraph();
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			const dialog = screen.getByRole('dialog');
+			const searchInput = screen.getByLabelText('Search documents in graph') as HTMLInputElement;
+
+			fireEvent.keyDown(dialog, { key: 'f', ctrlKey: true });
+			expect(document.activeElement).toBe(searchInput);
+
+			fireEvent.change(searchInput, { target: { value: 'guide' } });
+			expect(screen.getByText((_, node) => node?.textContent === '1 of 2 matching')).toBeTruthy();
+
+			fireEvent.keyDown(searchInput, { key: 'Escape' });
+			expect(searchInput.value).toBe('');
+
+			fireEvent.keyDown(searchInput, { key: 'Escape' });
+			expect(await screen.findByTitle('Markdown tasks')).toBeTruthy();
+			expect(screen.getByTitle('Created date')).toBeTruthy();
+		});
+
+		it('handles document and external context menu actions', async () => {
+			const onDocumentOpen = vi.fn();
+			const onExternalLinkOpen = vi.fn();
+
+			renderOpenGraph({
+				defaultNeighborDepth: 0,
+				onDocumentOpen,
+				onExternalLinkOpen,
+			});
+
+			expect(await screen.findByTestId('mind-map')).toBeTruthy();
+			expect(screen.getByText('Depth: All')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Open document context menu'));
+			fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+			expect(screen.getByText('Depth: 2')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Open document context menu'));
+			fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+			expect(onDocumentOpen).toHaveBeenCalledWith('README.md');
+
+			fireEvent.click(screen.getByText('External'));
+			await waitFor(() =>
+				expect(screen.getByTestId('mind-map')).toHaveAttribute('data-show-external', 'true')
+			);
+
+			fireEvent.click(screen.getByText('Select external node'));
+			expect(screen.getByText('External: example.com')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Open external context menu'));
+			fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+			expect(onExternalLinkOpen).toHaveBeenCalledWith('https://example.com');
+		});
+
+		it('keeps the graph usable when loading more documents fails', async () => {
+			vi.mocked(buildGraphData)
+				.mockResolvedValueOnce(makeGraphData() as any)
+				.mockRejectedValueOnce(new Error('more failed'));
+
+			renderOpenGraph();
+
+			expect(await screen.findByText('Load more (1 remaining)')).toBeTruthy();
+			fireEvent.click(screen.getByText('Load more (1 remaining)'));
+			await waitFor(() => expect(buildGraphData).toHaveBeenCalledTimes(2));
+			await waitFor(() => expect(screen.getByText('Load more (1 remaining)')).toBeTruthy());
 		});
 	});
 

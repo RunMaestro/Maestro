@@ -12,6 +12,27 @@ import { isLinux } from '../../shared/platformDetection';
 
 let wslDetectionCache: boolean | null = null;
 
+interface WslDetectorDeps {
+	isLinux: () => boolean;
+	existsSync: typeof fs.existsSync;
+	readFileSync: typeof fs.readFileSync;
+	logger: Pick<typeof logger, 'debug' | 'warn'>;
+}
+
+const defaultDeps: WslDetectorDeps = {
+	isLinux,
+	existsSync: fs.existsSync,
+	readFileSync: fs.readFileSync,
+	logger,
+};
+
+let deps = defaultDeps;
+
+export function _resetWslDetectorForTesting(overrides?: Partial<WslDetectorDeps>): void {
+	wslDetectionCache = null;
+	deps = { ...defaultDeps, ...overrides };
+}
+
 /**
  * Detect if the current environment is WSL (Windows Subsystem for Linux).
  * Result is cached after first call.
@@ -21,14 +42,14 @@ export function isWsl(): boolean {
 		return wslDetectionCache;
 	}
 
-	if (!isLinux()) {
+	if (!deps.isLinux()) {
 		wslDetectionCache = false;
 		return false;
 	}
 
 	try {
-		if (fs.existsSync('/proc/version')) {
-			const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+		if (deps.existsSync('/proc/version')) {
+			const version = deps.readFileSync('/proc/version', 'utf8').toLowerCase();
 			wslDetectionCache = version.includes('microsoft') || version.includes('wsl');
 			return wslDetectionCache;
 		}
@@ -44,8 +65,17 @@ export function isWsl(): boolean {
  * Check if a path is on a Windows-mounted filesystem in WSL.
  * Windows mounts are typically at /mnt/c, /mnt/d, etc.
  */
-function isWindowsMountPath(filepath: string): boolean {
+export function isWindowsMountPath(filepath: string): boolean {
 	return /^\/mnt\/[a-zA-Z](\/|$)/.test(filepath);
+}
+
+export function getWslWarningMessage(): string {
+	return (
+		'[WSL] Running from Windows-mounted path in WSL2. Socket binding failures, ' +
+		'Electron sandbox crashes, npm install issues, and git corruption can occur. ' +
+		'Move the project to the Linux filesystem, for example: mv /mnt/c/projects/maestro ~/maestro. ' +
+		'See docs.runmaestro.ai/installation for setup guidance.'
+	);
 }
 
 /**
@@ -61,16 +91,10 @@ export function checkWslEnvironment(cwd: string): boolean {
 	}
 
 	if (isWindowsMountPath(cwd)) {
-		logger.warn(
-			'[WSL] Running from Windows mount path - this may cause socket binding failures, ' +
-				'Electron sandbox crashes, npm install issues, and git corruption. ' +
-				'Consider moving your project to the Linux filesystem (e.g., ~/projects/maestro).',
-			'WSLDetector',
-			{ cwd }
-		);
+		deps.logger.warn(getWslWarningMessage(), 'WSLDetector', { cwd });
 		return true;
 	}
 
-	logger.debug('[WSL] Running from Linux filesystem - OK', 'WSLDetector', { cwd });
+	deps.logger.debug('[WSL] Running from Linux filesystem - OK', 'WSLDetector', { cwd });
 	return false;
 }

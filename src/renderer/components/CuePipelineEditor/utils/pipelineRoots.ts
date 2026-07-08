@@ -93,8 +93,7 @@ export function resolveNodeWriteRoot(
  * sessions purely by name.
  */
 export type PipelineOwnerCwdsResult =
-	| { ok: true; cwds: Set<string> }
-	| { ok: false; reason: 'no-bindings' | 'unresolved' };
+	{ ok: true; cwds: Set<string> } | { ok: false; reason: 'no-bindings' | 'unresolved' };
 
 export function resolvePipelineOwnerCwds(
 	pipeline: Pick<CuePipeline, 'nodes'>,

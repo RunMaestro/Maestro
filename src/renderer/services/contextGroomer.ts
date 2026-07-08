@@ -16,6 +16,7 @@ import type { ToolType } from '../../shared/types';
 import { getAgentDisplayName as getDisplayName } from '../../shared/agentMetadata';
 import type { ContextSource, MergeRequest, GroomingProgress } from '../types/contextMerge';
 import type { LogEntry } from '../types';
+import defaultContextTransferPrompt from '../../prompts/context-transfer.md?raw';
 import {
 	formatLogsForGrooming,
 	parseGroomedOutput,
@@ -54,7 +55,7 @@ function getContextGroomingPrompt(): string {
 
 function getContextTransferPrompt(): string {
 	if (!contextGroomerPromptsLoaded || cachedContextTransferPrompt === null) {
-		return '';
+		return defaultContextTransferPrompt;
 	}
 	return cachedContextTransferPrompt;
 }

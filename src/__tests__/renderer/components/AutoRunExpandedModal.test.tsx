@@ -210,14 +210,12 @@ describe('AutoRunExpandedModal', () => {
 			expect(screen.getByTestId('eye-icon')).toBeInTheDocument();
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// This test is skipped until the feature is re-enabled
-		it.skip('should render image upload button', () => {
+		it('should keep image upload button hidden while the toolbar action is disabled', () => {
 			const props = createDefaultProps();
-			renderWithProvider(<AutoRunExpandedModal {...props} />);
+			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			expect(screen.getByTitle(/add image/i)).toBeInTheDocument();
-			expect(screen.getByTestId('image-icon')).toBeInTheDocument();
+			expect(screen.queryByTitle(/add image/i)).not.toBeInTheDocument();
+			expect(container.querySelector('input[type="file"]')).toBeInTheDocument();
 		});
 
 		it('should render Run button when not running batch', () => {
@@ -398,16 +396,13 @@ describe('AutoRunExpandedModal', () => {
 			expect(editButton).toHaveClass('opacity-50', 'cursor-not-allowed');
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// This test is skipped until the feature is re-enabled
-		it.skip('should disable image upload button when locked', () => {
+		it('should not show image upload button when locked', () => {
 			const props = createDefaultProps({
 				batchRunState: { isRunning: true, isStopping: false } as BatchRunState,
 			});
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const imageButton = screen.getByTitle(/editing disabled while auto run active/i);
-			expect(imageButton).toBeDisabled();
+			expect(screen.queryByTitle(/add image/i)).not.toBeInTheDocument();
 		});
 
 		it('should show Preview as selected when locked', () => {
@@ -727,43 +722,6 @@ describe('AutoRunExpandedModal', () => {
 
 			const modal = container.querySelector('.rounded-xl.border.shadow-2xl');
 			expect(modal).toBeInTheDocument();
-		});
-	});
-
-	// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-	// These tests are skipped until the feature is re-enabled
-	describe.skip('Image Upload Button', () => {
-		it('should be enabled in edit mode', () => {
-			const props = createDefaultProps({ mode: 'edit' });
-			renderWithProvider(<AutoRunExpandedModal {...props} />);
-
-			const imageButton = screen.getByTitle(/add image/i);
-			expect(imageButton).not.toBeDisabled();
-		});
-
-		it('should be disabled in preview mode', () => {
-			const props = createDefaultProps({ mode: 'preview' });
-			renderWithProvider(<AutoRunExpandedModal {...props} />);
-
-			const imageButton = screen.getByTitle(/switch to edit mode/i);
-			expect(imageButton).toBeDisabled();
-		});
-
-		it('should have ghosted style in preview mode', () => {
-			const props = createDefaultProps({ mode: 'preview' });
-			renderWithProvider(<AutoRunExpandedModal {...props} />);
-
-			const imageButton = screen.getByTitle(/switch to edit mode/i);
-			expect(imageButton).toHaveClass('opacity-30', 'cursor-not-allowed');
-		});
-
-		it('should have file input for image selection', () => {
-			const props = createDefaultProps();
-			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
-
-			const fileInput = container.querySelector('input[type="file"]');
-			expect(fileInput).toBeInTheDocument();
-			expect(fileInput).toHaveAttribute('accept', 'image/*');
 		});
 	});
 

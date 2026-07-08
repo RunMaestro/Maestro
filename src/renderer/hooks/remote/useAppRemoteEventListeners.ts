@@ -979,8 +979,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// gitService methods route through createIpcMethod with a defaultValue,
 			// so they swallow IPC errors (and report to Sentry) rather than throwing.
 			const sshConfig = config?.sessionSshRemoteConfig as
-				| { enabled?: boolean; remoteId?: string | null }
-				| undefined;
+				{ enabled?: boolean; remoteId?: string | null } | undefined;
 			const isRemoteSession = !!(sshConfig?.enabled && sshConfig.remoteId);
 			let isGitRepo = false;
 			let gitBranches: string[] | undefined;

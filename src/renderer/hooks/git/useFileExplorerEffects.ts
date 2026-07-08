@@ -1,5 +1,5 @@
 /**
- * useFileExplorerEffects — extracted from App.tsx (Phase 2.6)
+ * useFileExplorerEffects - extracted from App.tsx (Phase 2.6)
  *
  * Owns all file-explorer side effects and keyboard navigation:
  *   - Scroll position restore on session switch
@@ -96,8 +96,10 @@ function resolveClickedFilePath(projectRoot: string, fileReference: string): str
 	return joinFilePath(projectRoot, normalizedReference);
 }
 
-function getFilename(filePath: string): string {
-	return filePath.split(/[\\/]/).pop() || filePath;
+function getFilename(filePath: string, fallbackPath?: string): string {
+	const filename = filePath.split(/[\\/]/).pop();
+	if (filename) return filename;
+	return fallbackPath ? stripLineColumnSuffix(fallbackPath.trim()) || filePath : filePath;
 }
 
 // ============================================================================
@@ -149,13 +151,13 @@ export function useFileExplorerEffects(
 	const { hasOpenModal } = useLayerStack();
 
 	// ====================================================================
-	// stableFileTree — prevents FilePreview re-renders during agent activity
+	// stableFileTree - prevents FilePreview re-renders during agent activity
 	// ====================================================================
 
 	const stableFileTree = useMemo(() => activeSession?.fileTree || [], [activeSession?.fileTree]);
 
 	// ====================================================================
-	// handleMainPanelFileClick — open [[wiki]] and path links in markdown
+	// handleMainPanelFileClick - open [[wiki]] and path links in markdown
 	// ====================================================================
 
 	const handleMainPanelFileClick = useCallback(
@@ -163,7 +165,7 @@ export function useFileExplorerEffects(
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (!currentSession) return;
 			const fullPath = resolveClickedFilePath(currentSession.fullPath, relativePath);
-			const filename = getFilename(fullPath);
+			const filename = getFilename(fullPath, relativePath);
 
 			// Get SSH remote ID
 			const sshRemoteId =

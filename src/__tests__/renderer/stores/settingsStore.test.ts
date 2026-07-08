@@ -3,6 +3,8 @@ import {
 	useSettingsStore,
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
+	getSettingsState,
+	getSettingsActions,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -24,6 +26,10 @@ const DEFAULT_KEYBOARD_MASTERY_STATS = JSON.parse(
 );
 const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboardingStats));
 const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
+const DEFAULT_ENCORE_FEATURES = JSON.parse(JSON.stringify(_INITIAL_STATE.encoreFeatures));
+const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.filePreviewToolbarVisibility)
+);
 
 // Inlined badge level calculator matching settingsStore's internal function.
 // Kept local so removing the export from the store doesn't break this test.
@@ -120,6 +126,10 @@ function resetStore() {
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
 		colorBlindMode: false,
+		showStarredInUnreadFilter: false,
+		showFilePreviewsInUnreadFilter: false,
+		useCmd0AsLastTab: true,
+		showBrowserTabDomain: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -129,14 +139,72 @@ function resetStore() {
 		preventSleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
+		localIgnorePatterns: ['.git', 'node_modules', '__pycache__'],
+		localHonorGitignore: true,
+		fileExplorerMaxDepth: 5,
+		fileExplorerMaxEntries: 10000,
+		sshReduceEntryCapEnabled: false,
+		sshReduceEntryCapFraction: 0.1,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
+		useSystemBrowser: false,
+		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+		htmlDoubleClickOpensInBrowser: false,
+		browserTabKeepAlive: 'off',
+		browserTabKeepAliveLimit: 10,
 		automaticTabNamingEnabled: true,
+		newTabPlacement: 'end',
+		newBrowserTabPlacement: 'after-current',
+		newTerminalPlacement: 'after-current',
+		openedFilePlacement: 'after-current',
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
+		userMessageAlignment: 'right',
+		encoreFeatures: DEFAULT_ENCORE_FEATURES,
+		symphonyRegistryUrls: [],
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
+		wakatimeDetailedTracking: false,
+		useNativeTitleBar: false,
+		autoHideMenuBar: false,
+		showAgentName: true,
+		showSessionIdPill: false,
+		showSessionCostPill: true,
+		showWorktreePill: false,
+		showWorktreeBranchName: false,
+		showStarredSessionsSection: true,
+		showLeftPanelGroupMemberCount: false,
+		leftPanelCollapsedPillsPerRow: 20,
+		showLeftPanelLocationPills: true,
+		showLeftPanelGitIndicator: true,
+		showLeftPanelCueIndicator: true,
+		showLeftPanelStartupCommandIndicator: true,
+		showGroupLabelInBookmarks: true,
+		showFullGroupLabelInBookmarks: false,
+		fileEditWordWrap: true,
+		fileEditShowLineNumbers: true,
+		filePreviewToolbarVisibility: DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY,
+		moderatorStandingInstructions: '',
+		autoRunDisabled: false,
+		dotfilesToggleHidden: false,
+		autoRunInactivityTimeoutMin: 240,
+		speckitEnabled: true,
+		openspecEnabled: true,
+		bmadEnabled: true,
+		lastSelectedPromptId: null,
+		spellCheck: false,
+		annotatorPenColor: '#9146FF',
+		annotatorPenSize: 10,
+		annotatorThinning: 0.5,
+		annotatorSmoothing: 0.5,
+		annotatorStreamline: 0.5,
+		annotatorTaperStart: 0,
+		annotatorTaperEnd: 0,
+		annotatorTextColor: '#9146FF',
+		annotatorTextSize: 24,
+		annotatorTextFont: 'sans-serif',
+		annotatorTextBgColor: '',
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 	});
@@ -706,6 +774,95 @@ describe('settingsStore', () => {
 				expect(useSettingsStore.getState().forcedParallelAcknowledged).toBe(false);
 			});
 		});
+
+		describe('newer display, file, browser, and editor settings', () => {
+			const directSetterCases = [
+				['setShowStarredInUnreadFilter', 'showStarredInUnreadFilter', true],
+				['setShowFilePreviewsInUnreadFilter', 'showFilePreviewsInUnreadFilter', true],
+				['setUseCmd0AsLastTab', 'useCmd0AsLastTab', false],
+				['setShowBrowserTabDomain', 'showBrowserTabDomain', false],
+				['setLocalIgnorePatterns', 'localIgnorePatterns', ['dist', '.cache']],
+				['setLocalHonorGitignore', 'localHonorGitignore', false],
+				['setSshReduceEntryCapEnabled', 'sshReduceEntryCapEnabled', true],
+				['setUseSystemBrowser', 'useSystemBrowser', true],
+				['setBrowserHomeUrl', 'browserHomeUrl', 'https://example.test/start'],
+				['setHtmlDoubleClickOpensInBrowser', 'htmlDoubleClickOpensInBrowser', true],
+				['setBrowserTabKeepAlive', 'browserTabKeepAlive', 'recent'],
+				['setNewTabPlacement', 'newTabPlacement', 'after-current'],
+				['setNewBrowserTabPlacement', 'newBrowserTabPlacement', 'end'],
+				['setNewTerminalPlacement', 'newTerminalPlacement', 'end'],
+				['setOpenedFilePlacement', 'openedFilePlacement', 'end'],
+				['setUserMessageAlignment', 'userMessageAlignment', 'left'],
+				[
+					'setEncoreFeatures',
+					'encoreFeatures',
+					{ directorNotes: true, usageStats: false, symphony: false, maestroCue: true },
+				],
+				['setSymphonyRegistryUrls', 'symphonyRegistryUrls', ['https://registry.example.test']],
+				['setWakatimeDetailedTracking', 'wakatimeDetailedTracking', true],
+				['setUseNativeTitleBar', 'useNativeTitleBar', true],
+				['setAutoHideMenuBar', 'autoHideMenuBar', true],
+				['setShowAgentName', 'showAgentName', false],
+				['setShowSessionIdPill', 'showSessionIdPill', true],
+				['setShowSessionCostPill', 'showSessionCostPill', false],
+				['setShowWorktreePill', 'showWorktreePill', true],
+				['setShowWorktreeBranchName', 'showWorktreeBranchName', true],
+				['setShowStarredSessionsSection', 'showStarredSessionsSection', false],
+				['setShowLeftPanelGroupMemberCount', 'showLeftPanelGroupMemberCount', true],
+				['setShowLeftPanelLocationPills', 'showLeftPanelLocationPills', false],
+				['setShowLeftPanelGitIndicator', 'showLeftPanelGitIndicator', false],
+				['setShowLeftPanelCueIndicator', 'showLeftPanelCueIndicator', false],
+				['setShowLeftPanelStartupCommandIndicator', 'showLeftPanelStartupCommandIndicator', false],
+				['setShowGroupLabelInBookmarks', 'showGroupLabelInBookmarks', false],
+				['setShowFullGroupLabelInBookmarks', 'showFullGroupLabelInBookmarks', true],
+				['setFileEditWordWrap', 'fileEditWordWrap', false],
+				['setFileEditShowLineNumbers', 'fileEditShowLineNumbers', false],
+				['setAutoRunDisabled', 'autoRunDisabled', true],
+				['setDotfilesToggleHidden', 'dotfilesToggleHidden', true],
+				['setSpeckitEnabled', 'speckitEnabled', false],
+				['setOpenspecEnabled', 'openspecEnabled', false],
+				['setBmadEnabled', 'bmadEnabled', false],
+				['setLastSelectedPromptId', 'lastSelectedPromptId', 'prompt-123'],
+				['setSpellCheck', 'spellCheck', true],
+				['setAnnotatorPenColor', 'annotatorPenColor', '#ff0055'],
+				['setAnnotatorPenSize', 'annotatorPenSize', 18],
+				['setAnnotatorThinning', 'annotatorThinning', 0.2],
+				['setAnnotatorSmoothing', 'annotatorSmoothing', 0.3],
+				['setAnnotatorStreamline', 'annotatorStreamline', 0.4],
+				['setAnnotatorTaperStart', 'annotatorTaperStart', 12],
+				['setAnnotatorTaperEnd', 'annotatorTaperEnd', 24],
+				['setAnnotatorTextColor', 'annotatorTextColor', '#00aa88'],
+				['setAnnotatorTextSize', 'annotatorTextSize', 32],
+				['setAnnotatorTextFont', 'annotatorTextFont', 'serif'],
+				['setAnnotatorTextBgColor', 'annotatorTextBgColor', '#111111'],
+			] as const;
+
+			it.each(directSetterCases)('%s updates %s and persists', (action, key, value) => {
+				vi.clearAllMocks();
+
+				(useSettingsStore.getState() as any)[action](value);
+
+				expect((useSettingsStore.getState() as any)[key]).toEqual(value);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, value);
+			});
+
+			it('setFilePreviewToolbarButtonVisibility merges one button into existing visibility', () => {
+				useSettingsStore.setState({
+					filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
+				});
+				vi.clearAllMocks();
+
+				useSettingsStore.getState().setFilePreviewToolbarButtonVisibility('wordWrap', false);
+
+				expect(useSettingsStore.getState().filePreviewToolbarVisibility).toEqual(
+					expect.objectContaining({ save: true, wordWrap: false, copyPath: true })
+				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'filePreviewToolbarVisibility',
+					expect.objectContaining({ save: true, wordWrap: false, copyPath: true })
+				);
+			});
+		});
 	});
 
 	// ========================================================================
@@ -785,6 +942,51 @@ describe('settingsStore', () => {
 
 			useSettingsStore.getState().setDocumentGraphPreviewCharLimit(250);
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(250);
+		});
+
+		it('clamps file explorer and keep-alive numeric settings before persisting', () => {
+			const clampedSetterCases = [
+				['setFileExplorerMaxDepth', 'fileExplorerMaxDepth', 0, 1],
+				['setFileExplorerMaxDepth', 'fileExplorerMaxDepth', 25, 20],
+				['setFileExplorerMaxDepth', 'fileExplorerMaxDepth', 7.9, 7],
+				['setFileExplorerMaxEntries', 'fileExplorerMaxEntries', 500, 1000],
+				['setFileExplorerMaxEntries', 'fileExplorerMaxEntries', 1000001, 1000000],
+				['setFileExplorerMaxEntries', 'fileExplorerMaxEntries', 12345.9, 12345],
+				['setSshReduceEntryCapFraction', 'sshReduceEntryCapFraction', 0.02, 0.05],
+				['setSshReduceEntryCapFraction', 'sshReduceEntryCapFraction', 1.2, 1],
+				['setSshReduceEntryCapFraction', 'sshReduceEntryCapFraction', 0.23, 0.25],
+				['setBrowserTabKeepAliveLimit', 'browserTabKeepAliveLimit', 0, 1],
+				['setBrowserTabKeepAliveLimit', 'browserTabKeepAliveLimit', Number.NaN, 1],
+				['setBrowserTabKeepAliveLimit', 'browserTabKeepAliveLimit', 3.9, 3],
+				['setLeftPanelCollapsedPillsPerRow', 'leftPanelCollapsedPillsPerRow', 2, 5],
+				['setLeftPanelCollapsedPillsPerRow', 'leftPanelCollapsedPillsPerRow', 99, 50],
+				['setLeftPanelCollapsedPillsPerRow', 'leftPanelCollapsedPillsPerRow', 12.4, 12],
+				['setAutoRunInactivityTimeoutMin', 'autoRunInactivityTimeoutMin', -5, 0],
+				['setAutoRunInactivityTimeoutMin', 'autoRunInactivityTimeoutMin', 0, 0],
+				['setAutoRunInactivityTimeoutMin', 'autoRunInactivityTimeoutMin', 0.6, 1],
+				['setAutoRunInactivityTimeoutMin', 'autoRunInactivityTimeoutMin', 2000, 1440],
+			] as const;
+
+			for (const [action, key, input, expected] of clampedSetterCases) {
+				vi.clearAllMocks();
+
+				(useSettingsStore.getState() as any)[action](input);
+
+				expect((useSettingsStore.getState() as any)[key]).toBe(expected);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(key, expected);
+			}
+		});
+
+		it('setModeratorStandingInstructions trims to 2000 characters', () => {
+			const longInstructions = 'm'.repeat(2100);
+
+			useSettingsStore.getState().setModeratorStandingInstructions(longInstructions);
+
+			expect(useSettingsStore.getState().moderatorStandingInstructions).toBe('m'.repeat(2000));
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'moderatorStandingInstructions',
+				'm'.repeat(2000)
+			);
 		});
 	});
 
@@ -1154,6 +1356,19 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('onboarding stats actions', () => {
+		it('setOnboardingStats directly replaces stats and persists', () => {
+			const stats = {
+				...DEFAULT_ONBOARDING_STATS,
+				wizardStartCount: 3,
+				totalTasksGenerated: 12,
+			};
+
+			useSettingsStore.getState().setOnboardingStats(stats);
+
+			expect(useSettingsStore.getState().onboardingStats).toEqual(stats);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('onboardingStats', stats);
+		});
+
 		it('recordWizardStart increments count', () => {
 			useSettingsStore.getState().recordWizardStart();
 			expect(useSettingsStore.getState().onboardingStats.wizardStartCount).toBe(1);
@@ -1277,6 +1492,19 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('keyboard mastery actions', () => {
+		it('setKeyboardMasteryStats directly replaces stats and persists', () => {
+			const stats = {
+				...DEFAULT_KEYBOARD_MASTERY_STATS,
+				usedShortcuts: ['toggleSidebar', 'newTab'],
+				currentLevel: 1,
+			};
+
+			useSettingsStore.getState().setKeyboardMasteryStats(stats);
+
+			expect(useSettingsStore.getState().keyboardMasteryStats).toEqual(stats);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMasteryStats', stats);
+		});
+
 		it('recordShortcutUsage adds new shortcut and returns null if no level up', () => {
 			const result = useSettingsStore.getState().recordShortcutUsage('toggleSidebar');
 			expect(result.newLevel).toBeNull();
@@ -2031,6 +2259,52 @@ describe('settingsStore', () => {
 			useSettingsStore.getState().setFontSize(22);
 			expect(useSettingsStore.getState().fontSize).toBe(22);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 22);
+		});
+
+		it('getSettingsState returns the current store state', () => {
+			useSettingsStore.setState({ fontSize: 21 });
+
+			expect(getSettingsState().fontSize).toBe(21);
+		});
+
+		it('getSettingsActions exposes newer settings actions', () => {
+			const actions = getSettingsActions() as any;
+			const actionNames = [
+				'setShowStarredInUnreadFilter',
+				'setShowFilePreviewsInUnreadFilter',
+				'setUseCmd0AsLastTab',
+				'setShowBrowserTabDomain',
+				'setLocalIgnorePatterns',
+				'setLocalHonorGitignore',
+				'setFileExplorerMaxDepth',
+				'setFileExplorerMaxEntries',
+				'setSshReduceEntryCapEnabled',
+				'setSshReduceEntryCapFraction',
+				'setUseSystemBrowser',
+				'setBrowserHomeUrl',
+				'setHtmlDoubleClickOpensInBrowser',
+				'setBrowserTabKeepAlive',
+				'setBrowserTabKeepAliveLimit',
+				'setUserMessageAlignment',
+				'setSymphonyRegistryUrls',
+				'setShowGroupLabelInBookmarks',
+				'setShowFullGroupLabelInBookmarks',
+				'setSpeckitEnabled',
+				'setOpenspecEnabled',
+				'setBmadEnabled',
+				'setAnnotatorTextColor',
+				'setAnnotatorTextSize',
+				'setAnnotatorTextFont',
+				'setAnnotatorTextBgColor',
+			];
+
+			for (const actionName of actionNames) {
+				expect(typeof actions[actionName]).toBe('function');
+			}
+
+			actions.setUseSystemBrowser(true);
+			expect(useSettingsStore.getState().useSystemBrowser).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('useSystemBrowser', true);
 		});
 	});
 });

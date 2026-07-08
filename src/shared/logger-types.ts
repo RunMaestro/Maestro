@@ -40,6 +40,10 @@ export const LOG_LEVEL_PRIORITY: Record<MainLogLevel, number> = {
  */
 export const DEFAULT_MAX_LOGS = 1000;
 
+export function shouldLogLevel(level: MainLogLevel, minimumLevel: BaseLogLevel): boolean {
+	return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[minimumLevel];
+}
+
 /**
  * System log entry interface for main process logging.
  * Note: This is different from session LogEntry used in renderer types.

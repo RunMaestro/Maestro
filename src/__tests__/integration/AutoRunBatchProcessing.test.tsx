@@ -29,6 +29,12 @@ const renderWithProvider = (ui: React.ReactElement) => {
 	};
 };
 
+const getByNormalizedSpanText = (expected: string) =>
+	screen.getByText((_content, element) => {
+		if (!element || element.tagName !== 'SPAN') return false;
+		return element.textContent?.replace(/\s+/g, ' ').trim() === expected;
+	});
+
 // Mock external dependencies
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -51,7 +57,7 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
-vi.mock('../../renderer/components/AutoRunnerHelpModal', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunnerHelpModal', () => ({
 	AutoRunnerHelpModal: ({ onClose }: { onClose: () => void }) => (
 		<div data-testid="help-modal">
 			<button onClick={onClose}>Close</button>
@@ -65,7 +71,7 @@ vi.mock('../../renderer/components/MermaidRenderer', () => ({
 	),
 }));
 
-vi.mock('../../renderer/components/AutoRunDocumentSelector', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunDocumentSelector', () => ({
 	AutoRunDocumentSelector: ({
 		documents,
 		selectedDocument,
@@ -308,16 +314,13 @@ describe('AutoRun + Batch Processing Integration', () => {
 			expect(textarea).toHaveAttribute('readonly');
 		});
 
-		it('shows preview-selected styling during batch run', () => {
+		it('shows preview content during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState, mode: 'preview' });
 			renderWithProvider(<AutoRun {...props} />);
 
-			// Preview button should be styled as selected when locked (has font-semibold class)
-			const previewButton = screen.getByRole('button', { name: /preview/i });
-			// font-semibold in Tailwind applies font-weight: 600, but toHaveStyle doesn't work well with Tailwind
-			// Instead, check the class is applied
-			expect(previewButton).toHaveClass('font-semibold');
+			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Task 1');
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 		});
 	});
 
@@ -401,7 +404,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			rerender(<AutoRun {...props} batchRunState={batchRunStateStopped} />);
 
 			// Edit button should be enabled - use title to get specific Edit button
-			const editButton = screen.getByTitle('Edit document');
+			const editButton = screen.getByTitle('Switch to edit');
 			expect(editButton).not.toBeDisabled();
 		});
 	});
@@ -416,7 +419,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
 			// Verify initial task count (3 tasks, 0 completed)
-			expect(screen.getByText(/0 of 3 tasks completed/i)).toBeInTheDocument();
+			expect(getByNormalizedSpanText('0 of 3 tasks completed')).toBeInTheDocument();
 
 			// Simulate task completion - content updated externally
 			const updatedContent = `- [x] Task 1
@@ -426,7 +429,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 
 			// Task count should update
 			await waitFor(() => {
-				expect(screen.getByText(/1 of 3 tasks completed/i)).toBeInTheDocument();
+				expect(getByNormalizedSpanText('1 of 3 tasks completed')).toBeInTheDocument();
 			});
 		});
 
@@ -441,7 +444,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			});
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByText(/2 of 3 tasks completed/i)).toBeInTheDocument();
+			expect(getByNormalizedSpanText('2 of 3 tasks completed')).toBeInTheDocument();
 		});
 
 		it('shows success styling when all tasks are completed', async () => {
@@ -453,11 +456,13 @@ describe('AutoRun + Batch Processing Integration', () => {
 - [x] Task 3`,
 				mode: 'preview',
 			});
-			const { container } = renderWithProvider(<AutoRun {...props} />);
+			renderWithProvider(<AutoRun {...props} />);
 
-			// Find the task count element and verify it has success color
-			const taskCountElement = screen.getByText(/3 of 3 tasks completed/i);
-			expect(taskCountElement).toHaveStyle({ color: createMockTheme().colors.success });
+			// The completed-count number uses success color when all tasks are complete.
+			const taskCountElement = getByNormalizedSpanText('3 of 3 tasks completed');
+			expect(taskCountElement.querySelector('span')).toHaveStyle({
+				color: createMockTheme().colors.success,
+			});
 		});
 
 		it('reflects content version changes by syncing with external updates', async () => {
@@ -474,7 +479,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			rerender(<AutoRun {...props} content="- [x] Initial task" contentVersion={1} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/1 of 1 task completed/i)).toBeInTheDocument();
+				expect(getByNormalizedSpanText('1 of 1 task completed')).toBeInTheDocument();
 			});
 		});
 
@@ -548,22 +553,22 @@ describe('AutoRun + Batch Processing Integration', () => {
 			expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
 		});
 
-		it('Run button is disabled when agent is busy', () => {
+		it('Run configuration stays available when agent is busy', () => {
 			const props = createDefaultProps({ sessionState: 'busy' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
 			// Use title to get specific Run button (avoids matching "Auto Run" in other text)
-			const runButton = screen.getByTitle(/Cannot run while agent is thinking/i);
-			expect(runButton).toBeDisabled();
+			const runButton = screen.getByTitle(/launching is paused until it finishes/i);
+			expect(runButton).not.toBeDisabled();
 		});
 
-		it('Run button is disabled when agent is connecting', () => {
+		it('Run configuration stays available when agent is connecting', () => {
 			const props = createDefaultProps({ sessionState: 'connecting' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
 			// Use title to get specific Run button (avoids matching "Auto Run" in other text)
-			const runButton = screen.getByTitle(/Cannot run while agent is thinking/i);
-			expect(runButton).toBeDisabled();
+			const runButton = screen.getByTitle(/launching is paused until it finishes/i);
+			expect(runButton).not.toBeDisabled();
 		});
 
 		it('shows Stop button even when viewing an unlocked document while Auto Run is active', () => {
@@ -606,32 +611,34 @@ describe('AutoRun + Batch Processing Integration', () => {
 		});
 	});
 
-	describe('Image Upload Disabled During Batch Run', () => {
-		it('disables image upload button during batch run', () => {
+	describe('Image Upload Control Visibility', () => {
+		it('keeps image upload button hidden during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
-			renderWithProvider(<AutoRun {...props} />);
+			const { container } = renderWithProvider(<AutoRun {...props} />);
 
-			// Image button should be disabled/ghosted
-			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
-			expect(imageButton).toBeDisabled();
+			expect(
+				screen.queryByTitle(/add image|switch to edit mode to add images/i)
+			).not.toBeInTheDocument();
+			expect(container.querySelector('input[type="file"]')).toHaveClass('hidden');
 		});
 
-		it('enables image upload button when batch run ends', () => {
+		it('keeps image upload button hidden when batch run ends', () => {
 			const props = createDefaultProps();
-			renderWithProvider(<AutoRun {...props} />);
+			const { container } = renderWithProvider(<AutoRun {...props} />);
 
-			const imageButton = screen.getByTitle(/Add image \(or paste from clipboard\)/i);
-			expect(imageButton).not.toBeDisabled();
+			expect(
+				screen.queryByTitle(/add image|switch to edit mode to add images/i)
+			).not.toBeInTheDocument();
+			expect(container.querySelector('input[type="file"]')).toHaveClass('hidden');
 		});
 
-		it('shows correct tooltip for image button during batch run', () => {
+		it('does not show the removed image-button tooltip during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
-			expect(imageButton).toBeInTheDocument();
+			expect(screen.queryByTitle(/Switch to Edit mode to add images/i)).not.toBeInTheDocument();
 		});
 	});
 
@@ -780,13 +787,13 @@ describe('AutoRun + Batch Processing Integration', () => {
 			expect(onOpenBatchRunner).toHaveBeenCalledTimes(1);
 		});
 
-		it('shows tooltip explaining why Run is disabled when agent is busy', () => {
+		it('shows tooltip explaining busy state while keeping Run configuration available', () => {
 			const props = createDefaultProps({ sessionState: 'busy' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
 			// Use title to get specific Run button (avoids matching "Auto Run" in other text)
-			const runButton = screen.getByTitle('Cannot run while agent is thinking');
-			expect(runButton).toBeDisabled();
+			const runButton = screen.getByTitle(/launching is paused until it finishes/i);
+			expect(runButton).not.toBeDisabled();
 		});
 	});
 

@@ -718,8 +718,7 @@ export function LogViewer({
 										{(() => {
 											if (log.level !== 'toast') return null;
 											const data = log.data as
-												| { project?: string; sessionId?: string; tabId?: string }
-												| undefined;
+												{ project?: string; sessionId?: string; tabId?: string } | undefined;
 											const project = data?.project;
 											if (!project) return null;
 											const canNavigate = onSessionClick && data?.sessionId;

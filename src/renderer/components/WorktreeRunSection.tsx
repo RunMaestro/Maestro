@@ -199,7 +199,7 @@ export function WorktreeRunSection({
 			setSelectedValue('');
 			onWorktreeTargetChange(null);
 		} else {
-			// Turning on — always default to "Create New Worktree"
+			// Turning on - always default to "Create New Worktree"
 			setSelectedValue('__create_new__');
 			onWorktreeTargetChange({
 				mode: 'create-new',
@@ -247,7 +247,7 @@ export function WorktreeRunSection({
 
 	return (
 		<div className="mb-6">
-			{/* Section header — matches "DOCUMENTS TO RUN" / "AGENT PROMPT" style */}
+			{/* Section header - matches "DOCUMENTS TO RUN" / "AGENT PROMPT" style */}
 			<div className="flex items-center justify-between mb-3">
 				<label className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 					Run in Worktree
@@ -331,7 +331,7 @@ export function WorktreeRunSection({
 										const isBusy = s.state === 'busy' || s.state === 'connecting';
 										return (
 											<option key={s.id} value={s.id} disabled={isBusy}>
-												{s.name} ({s.worktreeBranch || 'unknown branch'}){isBusy ? ' — busy' : ''}
+												{s.name} ({s.worktreeBranch || 'unknown branch'}){isBusy ? ' - busy' : ''}
 											</option>
 										);
 									})}
@@ -349,7 +349,7 @@ export function WorktreeRunSection({
 							)}
 							{hasNoWorktrees && (
 								<option disabled value="">
-									No worktrees found — create one below
+									No worktrees found - create one below
 								</option>
 							)}
 							<option value="__create_new__">Create New Worktree</option>
@@ -369,7 +369,7 @@ export function WorktreeRunSection({
 									}}
 								/>
 								<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
-									{selectedOpenAgent.name} —{' '}
+									{selectedOpenAgent.name} -{' '}
 									{selectedOpenAgent.state === 'idle'
 										? 'ready'
 										: selectedOpenAgent.state === 'busy'

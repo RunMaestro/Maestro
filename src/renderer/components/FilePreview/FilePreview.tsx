@@ -95,7 +95,7 @@ import { logger } from '../../utils/logger';
 const MarkdownPreviewFast = lazy(() => import('./markdownFast'));
 
 // Lazy-loaded Fast tier preview for plain text and code files. Same lazy
-// strategy as the markdown Fast tier — small text files don't pay for
+// strategy as the markdown Fast tier - small text files don't pay for
 // TanStack Virtual + Shiki until a large file triggers the Fast tier.
 const TextPreviewFast = lazy(() => import('./textFast'));
 
@@ -193,7 +193,7 @@ export const FilePreview = React.memo(
 		const containerRef = useRef<HTMLDivElement>(null);
 		// Imperative handle for the CodeMirror-based markdown/text edit editor.
 		// Replaces the raw <textarea> ref the previous implementation passed
-		// around — see ./markdownEditor for the surface this exposes.
+		// around - see ./markdownEditor for the surface this exposes.
 		const editorRef = useRef<MarkdownEditorHandle>(null);
 		const markdownContainerRef = useRef<HTMLDivElement>(null);
 		const layerIdRef = useRef<string>();
@@ -294,7 +294,7 @@ export const FilePreview = React.memo(
 		useEffect(() => {
 			if (!pendingScrollToLine || !file) return;
 			// The editor only exists in edit mode. If we're still in preview,
-			// flip to edit first — the next render lands back here with the
+			// flip to edit first - the next render lands back here with the
 			// editor mounted and the handle available.
 			if (!markdownEditMode) {
 				setMarkdownEditMode(true);
@@ -348,7 +348,7 @@ export const FilePreview = React.memo(
 		}, [file?.content]);
 
 		// Choose preview tier based on file size + line shape. Applies to all
-		// text-like content (markdown, plain text, source code) — binary and
+		// text-like content (markdown, plain text, source code) - binary and
 		// image files always stay in Rich. Tier is memoized on path so
 		// switching tabs and coming back doesn't re-decide.
 		//
@@ -386,7 +386,7 @@ export const FilePreview = React.memo(
 		// Tier-aware search adapter, memoized so its identity only changes when
 		// the routing actually flips. useFilePreviewSearch lists searchAdapter
 		// in its effect dependency array, so an unstable identity would re-run
-		// the effect on every render — refs are stable so they don't belong in
+		// the effect on every render - refs are stable so they don't belong in
 		// the deps even though the callbacks close over them.
 		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
 		//   Fast text/code → textFast handle (page-virtualized hit map)
@@ -819,7 +819,7 @@ export const FilePreview = React.memo(
 
 		// Capture-phase scroll listener keeps the top-line refs fresh. Stored in a
 		// ref so the listener (attached once) always runs against current state.
-		const captureTopLineRef = useRef<() => void>(() => {});
+		const captureTopLineRef = useRef<(() => void) | null>(null);
 		captureTopLineRef.current = () => {
 			if (markdownEditMode) {
 				const line = editorRef.current?.getTopLine();
@@ -838,7 +838,7 @@ export const FilePreview = React.memo(
 				if (raf != null) return;
 				raf = requestAnimationFrame(() => {
 					raf = null;
-					captureTopLineRef.current();
+					captureTopLineRef.current?.();
 				});
 			};
 			// Capture phase so scrolls from the nested tier scrollers (CodeMirror,
@@ -907,7 +907,7 @@ export const FilePreview = React.memo(
 						lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
 					}
 				} catch {
-					// Non-critical — worst case the banner appears briefly
+					// Non-critical - worst case the banner appears briefly
 				}
 				notifyCenterFlash({ message: 'File Saved', color: 'theme' });
 			} catch (err) {
@@ -1254,12 +1254,11 @@ export const FilePreview = React.memo(
 			const shortcut = shortcuts[shortcutId];
 			if (!shortcut) return false;
 
-			const hasModifier = (key: string) => {
-				if (key === 'Meta') return e.metaKey;
-				if (key === 'Ctrl') return e.ctrlKey;
-				if (key === 'Alt') return e.altKey;
-				if (key === 'Shift') return e.shiftKey;
-				return false;
+			const modifierState: Record<string, boolean> = {
+				Meta: e.metaKey,
+				Ctrl: e.ctrlKey,
+				Alt: e.altKey,
+				Shift: e.shiftKey,
 			};
 
 			const modifiers = shortcut.keys.filter((k: string) =>
@@ -1269,7 +1268,7 @@ export const FilePreview = React.memo(
 				(k: string) => !['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
 			);
 
-			const modifiersMatch = modifiers.every((m: string) => hasModifier(m));
+			const modifiersMatch = modifiers.every((m: string) => modifierState[m]);
 			const keyMatches = mainKey?.toLowerCase() === e.key.toLowerCase();
 
 			return modifiersMatch && keyMatches;
@@ -1308,7 +1307,7 @@ export const FilePreview = React.memo(
 				// All three tiers (Rich / Fast / Giant) now share the same search
 				// bar. Giant tier exposes findInContent/scrollToMatch through its
 				// adapter so the count + navigation flow through the same UI.
-				// Cmd+Shift+F is goToFiles — let it bubble to the global handler.
+				// Cmd+Shift+F is goToFiles - let it bubble to the global handler.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
 			} else if (
@@ -1317,7 +1316,7 @@ export const FilePreview = React.memo(
 				isEditableText &&
 				(markdownEditMode || hasChanges)
 			) {
-				// Cmd+S to save — works in edit mode, and also in preview when there
+				// Cmd+S to save - works in edit mode, and also in preview when there
 				// are still unsaved edits from a prior edit session.
 				e.preventDefault();
 				e.stopPropagation();
@@ -1536,7 +1535,7 @@ export const FilePreview = React.memo(
 						<RefreshCw className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
 							{hasChanges
-								? 'File changed on disk. You have unsaved edits — reloading will discard them.'
+								? 'File changed on disk. You have unsaved edits - reloading will discard them.'
 								: 'File changed on disk.'}
 						</span>
 						<div className="flex items-center gap-2 shrink-0">
@@ -1695,7 +1694,7 @@ export const FilePreview = React.memo(
 										}}
 										placeholder={
 											searchMode === 'jq'
-												? 'jq filter — .field, select(.x == "y"), keys, contains("...")'
+												? 'jq filter - .field, select(.x == "y"), keys, contains("...")'
 												: searchKind === 'line'
 													? 'Go to line number…'
 													: searchKind === 'regex'
@@ -1913,8 +1912,7 @@ export const FilePreview = React.memo(
 						</div>
 					) : isEditableText && markdownEditMode ? (
 						// Edit mode - CodeMirror 6 editor for any text file.
-						// Key on file path so switching files remounts the editor —
-						// keeps each file's undo history isolated (the previous
+						// Key on file path so switching files remounts the editor - // keeps each file's undo history isolated (the previous
 						// textarea-based implementation got that "for free" since
 						// changing value reset the input).
 						<MarkdownEditor
@@ -1937,7 +1935,7 @@ export const FilePreview = React.memo(
 							onKeyDown={(e) => {
 								// CodeMirror's defaultKeymap already binds Cmd/Ctrl+ArrowUp/Down
 								// to doc start/end, PageUp/PageDown for paging, and the usual
-								// selection / word-jump shortcuts — no need to reimplement them
+								// selection / word-jump shortcuts - no need to reimplement them
 								// against a textarea ref. We only intercept the app-level
 								// shortcuts (save, exit edit mode, toggle preview/edit).
 								//
@@ -1967,7 +1965,7 @@ export const FilePreview = React.memo(
 						/>
 					) : isHtml && htmlRenderMode && !markdownEditMode ? (
 						// Rendered HTML preview. Feeds file.content into an iframe via
-						// srcDoc so local and SSH-remote files work the same way — the
+						// srcDoc so local and SSH-remote files work the same way - the
 						// bytes are already in memory. Sandbox lets scripts/popups/forms
 						// run but withholds same-origin so the page cannot reach the host
 						// renderer.

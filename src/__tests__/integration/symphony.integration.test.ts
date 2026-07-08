@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { ipcMain, BrowserWindow, App } from 'electron';
+import * as fsSync from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -66,6 +67,10 @@ vi.mock('../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+vi.mock('../../main/utils/cliDetection', () => ({
+	resolveGhPath: vi.fn(async () => 'gh'),
 }));
 
 // Mock global fetch for GitHub API calls (external service)
@@ -180,6 +185,15 @@ async function invokeHandler(
 	return await handler({}, ...args);
 }
 
+function getSymphonyWeekKey(date: Date): string {
+	const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+	const dayNum = d.getUTCDay() || 7;
+	d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+	const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+	const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+	return `${d.getUTCFullYear()}-W${weekNo}`;
+}
+
 // ============================================================================
 // Integration Test Suite
 // ============================================================================
@@ -220,13 +234,25 @@ describe('Symphony Integration Tests', () => {
 		mockMainWindow = {
 			isDestroyed: vi.fn().mockReturnValue(false),
 			webContents: {
+				isDestroyed: vi.fn().mockReturnValue(false),
 				send: vi.fn(),
 			},
 		} as unknown as BrowserWindow;
 
 		// Setup mock sessions store (returns empty by default - no sessions)
 		const mockSessionsStore = {
-			get: vi.fn().mockReturnValue([]),
+			get: vi.fn((key: string, fallback: unknown[] = []) => {
+				if (key !== 'sessions') {
+					return fallback;
+				}
+				try {
+					const statePath = path.join(testTempDir, 'symphony', 'symphony-state.json');
+					const state = JSON.parse(fsSync.readFileSync(statePath, 'utf-8')) as SymphonyState;
+					return state.active.map((contribution) => ({ id: contribution.sessionId }));
+				} catch {
+					return [];
+				}
+			}),
 			set: vi.fn(),
 		};
 
@@ -235,6 +261,10 @@ describe('Symphony Integration Tests', () => {
 			app: mockApp,
 			getMainWindow: () => mockMainWindow,
 			sessionsStore: mockSessionsStore as any,
+			settingsStore: {
+				get: vi.fn().mockReturnValue([]),
+				set: vi.fn(),
+			} as any,
 		};
 
 		// Default fetch mock (successful responses)
@@ -266,6 +296,21 @@ describe('Symphony Integration Tests', () => {
 			if (cmd === 'gh' && args?.[0] === 'auth' && args?.[1] === 'status') {
 				return { stdout: 'Logged in to github.com', stderr: '', exitCode: 0 };
 			}
+			// gh api user - authenticated user owns the default test repo
+			if (cmd === 'gh' && args?.[0] === 'api' && args?.[1] === 'user') {
+				return { stdout: 'test-owner\n', stderr: '', exitCode: 0 };
+			}
+			// gh api repo permissions - default tests assume direct push access
+			if (
+				cmd === 'gh' &&
+				args?.[0] === 'api' &&
+				typeof args[1] === 'string' &&
+				args[1].startsWith('repos/') &&
+				args?.[2] === '--jq' &&
+				args?.[3] === '.permissions.push'
+			) {
+				return { stdout: 'true\n', stderr: '', exitCode: 0 };
+			}
 			// git clone
 			if (cmd === 'git' && args?.[0] === 'clone') {
 				return { stdout: '', stderr: '', exitCode: 0 };
@@ -285,6 +330,10 @@ describe('Symphony Integration Tests', () => {
 			// git rev-parse (get branch name)
 			if (cmd === 'git' && args?.[0] === 'rev-parse') {
 				return { stdout: 'symphony/issue-1-test', stderr: '', exitCode: 0 };
+			}
+			// git commit
+			if (cmd === 'git' && args?.[0] === 'commit') {
+				return { stdout: '', stderr: '', exitCode: 0 };
 			}
 			// git push
 			if (cmd === 'git' && args?.[0] === 'push') {
@@ -398,7 +447,7 @@ describe('Symphony Integration Tests', () => {
 				documentPaths: [{ name: 'task.md', path: 'docs/task.md', isExternal: false }],
 			})) as { success: boolean; branchName?: string; error?: string };
 
-			expect(startResult.success).toBe(true);
+			expect(startResult.success, startResult.error).toBe(true);
 			expect(startResult.branchName).toMatch(/^symphony\/issue-1-/);
 
 			// 2. Register the active contribution (simulating App.tsx behavior)
@@ -1644,9 +1693,8 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				state: SymphonyState;
 			};
 
-			// Set last contribution to December 31, 2024
-			const dec31 = new Date('2024-12-31T23:59:59Z');
-			state.state.stats.lastContributionDate = dec31.toDateString();
+			// Set last contribution to the previous ISO week before January 1, 2025.
+			state.state.stats.lastContributionDate = getSymphonyWeekKey(new Date('2024-12-25T12:00:00Z'));
 			state.state.stats.currentStreak = 5;
 			state.state.stats.longestStreak = 5;
 			state.state.stats.totalContributions = 5;
@@ -1762,9 +1810,9 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				state: SymphonyState;
 			};
 
-			// Last contribution was "today" according to local time
+			// Last contribution was in the current Symphony week.
 			const today = new Date();
-			state.state.stats.lastContributionDate = today.toDateString();
+			state.state.stats.lastContributionDate = getSymphonyWeekKey(today);
 			state.state.stats.currentStreak = 3;
 			state.state.stats.longestStreak = 10;
 
@@ -1818,7 +1866,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				draftPrUrl: 'https://github.com/owner/tz-repo/pull/99',
 			});
 
-			// Complete on the same day - streak should stay the same (not increment)
+			// Complete in the same week - streak should stay the same.
 			await invokeHandler(handlers, 'symphony:complete', {
 				contributionId: 'tz_contrib',
 				stats: {
@@ -1835,9 +1883,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				state: SymphonyState;
 			};
 
-			// Same day contribution should increment streak (behavior: today or yesterday counts)
-			// The implementation checks: if lastDate === yesterday || lastDate === today, increment
-			expect(finalState.state.stats.currentStreak).toBe(4);
+			expect(finalState.state.stats.currentStreak).toBe(3);
 			// Longest streak should not change since current < longest
 			expect(finalState.state.stats.longestStreak).toBe(10);
 		});
@@ -2042,10 +2088,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 
 			// Mock fetch to return 404 for document URL
 			mockFetch.mockImplementation(async (url: string) => {
-				if (
-					url.includes('objects.githubusercontent.com') ||
-					url.includes('github.com/user-attachments')
-				) {
+				if (url.includes('github.com/user-attachments')) {
 					// External document returns 404
 					return { ok: false, status: 404, statusText: 'Not Found' };
 				}
@@ -2063,7 +2106,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				documentPaths: [
 					{
 						name: 'missing-doc.md',
-						path: 'https://objects.githubusercontent.com/missing-file-12345',
+						path: 'https://github.com/user-attachments/assets/missing-file-12345',
 						isExternal: true,
 					},
 				],
@@ -2093,7 +2136,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 
 			let redirectCount = 0;
 			mockFetch.mockImplementation(async (url: string) => {
-				if (url.includes('objects.githubusercontent.com') && redirectCount === 0) {
+				if (url.includes('github.com/user-attachments') && redirectCount === 0) {
 					redirectCount++;
 					// Simulate redirect by returning actual content (fetch follows redirects automatically)
 					return {
@@ -2114,7 +2157,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				documentPaths: [
 					{
 						name: 'redirected-doc.md',
-						path: 'https://objects.githubusercontent.com/redirecting-url',
+						path: 'https://github.com/user-attachments/assets/redirecting-url',
 						isExternal: true,
 					},
 				],
@@ -2273,7 +2316,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 			const largeBuffer = Buffer.alloc(5 * 1024 * 1024, 'x');
 
 			mockFetch.mockImplementation(async (url: string) => {
-				if (url.includes('objects.githubusercontent.com')) {
+				if (url.includes('github.com/user-attachments')) {
 					return {
 						ok: true,
 						arrayBuffer: async () => largeBuffer.buffer,
@@ -2292,7 +2335,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				documentPaths: [
 					{
 						name: 'large-attachment.md',
-						path: 'https://objects.githubusercontent.com/large-file-attachment',
+						path: 'https://github.com/user-attachments/assets/large-file-attachment',
 						isExternal: true,
 					},
 				],

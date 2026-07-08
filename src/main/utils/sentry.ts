@@ -12,13 +12,7 @@ export type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info'
 
 /** Breadcrumb categories for tracking user actions before crashes */
 export type BreadcrumbCategory =
-	| 'session'
-	| 'agent'
-	| 'navigation'
-	| 'ui'
-	| 'ipc'
-	| 'memory'
-	| 'file';
+	'session' | 'agent' | 'navigation' | 'ui' | 'ipc' | 'memory' | 'file';
 
 /** Sentry module type for crash reporting */
 interface SentryModule {
@@ -183,4 +177,14 @@ export function startMemoryMonitoring(thresholdMB: number = 500, intervalMs: num
 		`Memory monitoring started (threshold: ${thresholdMB}MB, interval: ${intervalMs}ms)`,
 		'Memory'
 	);
+}
+
+export function stopMemoryMonitoring(): void {
+	if (!memoryMonitorInterval) {
+		return;
+	}
+
+	clearInterval(memoryMonitorInterval);
+	memoryMonitorInterval = null;
+	logger.info('Memory monitoring stopped', 'Memory');
 }

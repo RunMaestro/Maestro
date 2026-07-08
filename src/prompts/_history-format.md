@@ -7,9 +7,7 @@ Your session history is stored at `{{AGENT_HISTORY_PATH}}` as a JSON file with t
 	"version": 1,
 	"sessionId": "<provider session id>",
 	"projectPath": "<absolute path>",
-	"entries": [
-		/* HistoryEntry[], newest entries appended last; not pre-sorted */
-	]
+	"entries": [/* HistoryEntry[], newest entries appended last; not pre-sorted */]
 }
 ```
 

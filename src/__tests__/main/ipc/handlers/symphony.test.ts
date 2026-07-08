@@ -34,6 +34,7 @@ vi.mock('fs/promises', () => ({
 		mkdir: vi.fn(),
 		rm: vi.fn(),
 		access: vi.fn(),
+		rename: vi.fn(),
 	},
 }));
 
@@ -47,7 +48,7 @@ vi.mock('../../../../main/utils/symphony-fork', () => ({
 	ensureForkSetup: vi.fn(),
 }));
 
-// Mock cliDetection — resolveGhPath returns 'gh' so existing assertions still match
+// Mock cliDetection - resolveGhPath returns 'gh' so existing assertions still match
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 }));
@@ -123,6 +124,7 @@ describe('Symphony IPC handlers', () => {
 		// Default mock for fs operations
 		vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
 
 		// Default: no fork needed (user has push access)
 		vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false });
@@ -1137,6 +1139,79 @@ describe('Symphony IPC handlers', () => {
 			);
 		});
 
+		it('should enrich active repositories with fresh star counts', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+			const freshRegistry = {
+				schemaVersion: '1.0',
+				lastUpdated: '2026-06-19T00:00:00.000Z',
+				repositories: [
+					{ slug: 'owner/repo', isActive: true },
+					{ slug: 'owner/missing', isActive: true },
+					{ slug: 'owner/inactive', isActive: false },
+				],
+			};
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(freshRegistry),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ stargazers_count: 42 }),
+				})
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+				});
+
+			const handler = handlers.get('symphony:getRegistry');
+			const result = await handler!({} as any, false);
+
+			expect(result.fromCache).toBe(false);
+			expect(result.registry.repositories).toEqual([
+				expect.objectContaining({ slug: 'owner/repo', stars: 42 }),
+				expect.objectContaining({ slug: 'owner/missing', stars: 0 }),
+				expect.objectContaining({ slug: 'owner/inactive', stars: undefined }),
+			]);
+			expect(mockFetch).toHaveBeenCalledTimes(3);
+			expect(mockFetch.mock.calls[1][0]).toContain('/repos/owner/repo');
+			expect(mockFetch.mock.calls[2][0]).toContain('/repos/owner/missing');
+		});
+
+		it('should enrich cached registry data with cached star counts', async () => {
+			const cacheData = {
+				registry: {
+					data: {
+						repositories: [
+							{ slug: 'owner/repo', isActive: true },
+							{ slug: 'owner/other', isActive: true },
+						],
+					},
+					fetchedAt: Date.now() - 1000,
+				},
+				issues: {},
+				stars: {
+					data: {
+						'owner/repo': 17,
+						'owner/other': 23,
+					},
+					fetchedAt: Date.now() - 1000,
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
+
+			const handler = handlers.get('symphony:getRegistry');
+			const result = await handler!({} as any, false);
+
+			expect(result.fromCache).toBe(true);
+			expect(result.registry.repositories).toEqual([
+				expect.objectContaining({ slug: 'owner/repo', stars: 17 }),
+				expect.objectContaining({ slug: 'owner/other', stars: 23 }),
+			]);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
 		it('should handle network errors gracefully', async () => {
 			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
 
@@ -1259,6 +1334,120 @@ describe('Symphony IPC handlers', () => {
 			// The IPC handler wrapper catches errors and returns success: false
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('403');
+		});
+	});
+
+	describe('symphony:getIssueCounts cache operations', () => {
+		it('should return cached issue counts when the requested slug set matches', async () => {
+			const cacheData = {
+				issues: {},
+				issueCounts: {
+					data: {
+						'owner/repo': 3,
+						'owner/other': 1,
+					},
+					fetchedAt: Date.now() - 1000,
+					repoSlugs: ['owner/other', 'owner/repo'],
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, ['owner/repo', 'owner/other'], false);
+
+			expect(result.fromCache).toBe(true);
+			expect(result.counts).toEqual(cacheData.issueCounts.data);
+			expect(result.cacheAge).toBeGreaterThanOrEqual(0);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it('should fetch issue counts through the paginated GitHub Search API', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							total_count: 102,
+							items: [
+								...Array.from({ length: 99 }, () => ({
+									repository_url: 'https://api.github.com/repos/owner/repo',
+								})),
+								{ repository_url: 'https://api.github.com/repos/owner/other' },
+							],
+						}),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							total_count: 102,
+							items: [
+								{ repository_url: 'https://api.github.com/repos/owner/repo' },
+								{ repository_url: 'https://api.github.com/repos/unknown/repo' },
+							],
+						}),
+				});
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, ['owner/repo', 'owner/other'], false);
+
+			expect(result.fromCache).toBe(false);
+			expect(result.counts).toEqual({
+				'owner/repo': 100,
+				'owner/other': 1,
+			});
+			expect(mockFetch).toHaveBeenCalledTimes(2);
+			expect(mockFetch.mock.calls[0][0]).toContain('/search/issues?');
+			expect(mockFetch.mock.calls[0][0]).toContain('page=1');
+			expect(mockFetch.mock.calls[1][0]).toContain('page=2');
+			expect(fs.writeFile).toHaveBeenCalled();
+			const writeCall = vi.mocked(fs.writeFile).mock.calls.at(-1)!;
+			const writtenData = JSON.parse(writeCall[1] as string);
+			expect(writtenData.issueCounts).toEqual(
+				expect.objectContaining({
+					data: result.counts,
+					repoSlugs: ['owner/other', 'owner/repo'],
+				})
+			);
+		});
+
+		it('should fetch empty issue counts without calling GitHub', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, [], false);
+
+			expect(result.fromCache).toBe(false);
+			expect(result.counts).toEqual({});
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(fs.writeFile).toHaveBeenCalled();
+		});
+
+		it('should fall back to expired cached issue counts on Search API failure', async () => {
+			const cacheData = {
+				issues: {},
+				issueCounts: {
+					data: {
+						'owner/repo': 8,
+					},
+					fetchedAt: Date.now() - 30 * 60 * 1000,
+					repoSlugs: ['owner/repo'],
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 500,
+			});
+
+			const handler = handlers.get('symphony:getIssueCounts');
+			const result = await handler!({} as any, ['owner/repo'], false);
+
+			expect(result.fromCache).toBe(true);
+			expect(result.counts).toEqual(cacheData.issueCounts.data);
+			expect(result.cacheAge).toBeGreaterThan(0);
 		});
 	});
 
@@ -3703,6 +3892,156 @@ describe('Symphony IPC handlers', () => {
 
 				// totalMerged should be incremented
 				expect(writtenState.stats.totalMerged).toBe(4);
+			});
+
+			it('should discover manually created pull requests by active contribution branch', async () => {
+				const state = {
+					active: [
+						{
+							id: 'active_manual_pr',
+							repoSlug: 'owner/repo',
+							repoName: 'repo',
+							issueNumber: 42,
+							issueTitle: 'Manual PR',
+							localPath: '/tmp/repo',
+							branchName: 'symphony/issue-42-abc',
+							startedAt: '2024-01-01T00:00:00Z',
+							status: 'running',
+							isFork: true,
+							forkSlug: 'forkOwner/repo',
+							upstreamSlug: 'owner/repo',
+							progress: {
+								totalDocuments: 1,
+								completedDocuments: 1,
+								totalTasks: 1,
+								completedTasks: 1,
+							},
+							tokenUsage: { inputTokens: 100, outputTokens: 50, estimatedCost: 0.01 },
+							timeSpent: 1000,
+							sessionId: 'session-123',
+							agentType: 'claude-code',
+						},
+					],
+					history: [],
+					stats: { totalMerged: 0 },
+				};
+				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+					if (String(filePath).includes('state.json')) {
+						return JSON.stringify(state);
+					}
+					throw new Error('ENOENT');
+				});
+
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									number: 777,
+									html_url: 'https://github.com/owner/repo/pull/777',
+									state: 'open',
+								},
+							]),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve({ state: 'open', merged: false, merged_at: null }),
+					});
+
+				const handler = getCheckPRStatusesHandler();
+				const result = await handler!({} as any);
+
+				expect(result.checked).toBe(1);
+				expect(mockFetch.mock.calls[0][0]).toContain('/repos/owner/repo/pulls?head=');
+				expect(mockFetch.mock.calls[0][0]).toContain('forkOwner%3Asymphony%2Fissue-42-abc');
+				expect(mockFetch.mock.calls[1][0]).toContain('/repos/owner/repo/pulls/777');
+				const writeCall = vi
+					.mocked(fs.writeFile)
+					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
+				expect(writeCall).toBeDefined();
+				const writtenState = JSON.parse(writeCall![1] as string);
+				expect(writtenState.active[0].draftPrNumber).toBe(777);
+				expect(writtenState.active[0].draftPrUrl).toBe('https://github.com/owner/repo/pull/777');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('symphony:updated');
+			});
+
+			it('should leave active contribution PR info unset when branch discovery fails', async () => {
+				const state = {
+					active: [
+						{
+							id: 'active_no_pr',
+							repoSlug: 'owner/repo',
+							repoName: 'repo',
+							issueNumber: 42,
+							issueTitle: 'No PR',
+							branchName: 'symphony/issue-42-abc',
+							status: 'running',
+						},
+					],
+					history: [],
+					stats: { totalMerged: 0 },
+				};
+				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+					if (String(filePath).includes('state.json')) {
+						return JSON.stringify(state);
+					}
+					throw new Error('ENOENT');
+				});
+				mockFetch.mockResolvedValue({
+					ok: false,
+					status: 500,
+				});
+
+				const handler = getCheckPRStatusesHandler();
+				const result = await handler!({} as any);
+
+				expect(result.checked).toBe(0);
+				expect(mockFetch).toHaveBeenCalledTimes(1);
+				const writeCall = vi
+					.mocked(fs.writeFile)
+					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
+				expect(writeCall).toBeDefined();
+				const writtenState = JSON.parse(writeCall![1] as string);
+				expect(writtenState.active[0].draftPrNumber).toBeUndefined();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith('symphony:updated');
+			});
+
+			it('should ignore branch discovery exceptions and keep checking statuses', async () => {
+				const state = {
+					active: [
+						{
+							id: 'active_error_pr',
+							repoSlug: 'owner/repo',
+							repoName: 'repo',
+							issueNumber: 42,
+							issueTitle: 'Discovery Error',
+							branchName: 'symphony/issue-42-abc',
+							status: 'running',
+						},
+					],
+					history: [],
+					stats: { totalMerged: 0 },
+				};
+				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+					if (String(filePath).includes('state.json')) {
+						return JSON.stringify(state);
+					}
+					throw new Error('ENOENT');
+				});
+				mockFetch.mockRejectedValue(new Error('network down'));
+
+				const handler = getCheckPRStatusesHandler();
+				const result = await handler!({} as any);
+
+				expect(result).toEqual({
+					success: true,
+					checked: 0,
+					merged: 0,
+					closed: 0,
+					errors: [],
+				});
+				expect(fs.writeFile).toHaveBeenCalled();
 			});
 
 			it('should broadcast update when changes occur', async () => {

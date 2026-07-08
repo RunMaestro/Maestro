@@ -13,7 +13,7 @@
 
 import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
-import type { DurationPercentiles } from '../../../shared/percentiles';
+import { emptyPercentiles, type DurationPercentiles } from '../../../shared/percentiles';
 import { formatDurationHuman } from '../../../shared/formatters';
 
 interface PercentileColumn {
@@ -33,7 +33,7 @@ const PCT_COLUMNS: PercentileColumn[] = [
 
 interface BreakdownRow {
 	label: string;
-	distribution: DurationPercentiles;
+	distribution?: DurationPercentiles | null;
 }
 
 interface PercentilesCardProps {
@@ -56,16 +56,22 @@ export const PercentilesCard = memo(function PercentilesCard({
 	format = formatDurationHuman,
 	unitLabel = 'runs',
 }: PercentilesCardProps) {
+	const normalizedDistribution = useMemo(() => normalizeDistribution(distribution), [distribution]);
+
 	// Only show groups that actually have samples, biggest first.
 	const visibleBreakdown = useMemo(
 		() =>
 			(breakdown ?? [])
+				.map((row) => ({
+					...row,
+					distribution: normalizeDistribution(row.distribution),
+				}))
 				.filter((row) => row.distribution.count > 0)
 				.sort((a, b) => b.distribution.count - a.distribution.count),
 		[breakdown]
 	);
 
-	const hasData = distribution.count > 0;
+	const hasData = normalizedDistribution.count > 0;
 
 	return (
 		<div
@@ -79,7 +85,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 				</h3>
 				<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
 					{hasData
-						? `across ${distribution.count.toLocaleString()} ${unitLabel}`
+						? `across ${normalizedDistribution.count.toLocaleString()} ${unitLabel}`
 						: `no ${unitLabel} in range`}
 				</span>
 			</div>
@@ -91,7 +97,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 							<PercentileCell
 								key={col.key}
 								label={col.label}
-								value={format(distribution[col.key])}
+								value={format(normalizedDistribution[col.key])}
 								theme={theme}
 								emphasize={col.key === 'p99'}
 							/>
@@ -162,6 +168,14 @@ export const PercentilesCard = memo(function PercentilesCard({
 		</div>
 	);
 });
+
+function normalizeDistribution(distribution?: DurationPercentiles | null): DurationPercentiles {
+	return {
+		...emptyPercentiles(),
+		...(distribution ?? {}),
+		count: distribution?.count ?? 0,
+	};
+}
 
 interface PercentileCellProps {
 	label: string;

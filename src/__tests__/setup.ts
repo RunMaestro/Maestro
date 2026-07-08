@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { vi, beforeEach } from 'vitest';
 import React from 'react';
 
 // Create a mock icon component factory
@@ -136,6 +136,36 @@ if (typeof window !== 'undefined') {
 	});
 }
 
+// jsdom's window.localStorage exists but has no working Storage methods by
+// default in this environment, so components that read/write it (panel-width
+// persistence, etc.) throw "getItem is not a function". Back it with a plain
+// in-memory Map so those reads/writes behave like a real Storage.
+if (typeof window !== 'undefined') {
+	const store = new Map<string, string>();
+	Object.defineProperty(window, 'localStorage', {
+		writable: true,
+		value: {
+			getItem: vi.fn((key: string) => store.get(key) ?? null),
+			setItem: vi.fn((key: string, value: string) => {
+				store.set(key, String(value));
+			}),
+			removeItem: vi.fn((key: string) => {
+				store.delete(key);
+			}),
+			clear: vi.fn(() => store.clear()),
+			key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+			get length() {
+				return store.size;
+			},
+		},
+	});
+	// Reset between tests so a write in one test can't leak into the next -
+	// real browser storage is per-origin, not per-test-run.
+	beforeEach(() => {
+		store.clear();
+	});
+}
+
 // Mock ResizeObserver using a proper class-like constructor
 // Simulates a 1000px width by default which ensures all responsive UI elements are visible
 class MockResizeObserver {
@@ -235,6 +265,16 @@ const mockMaestro = {
 		isTerminalBusy: vi.fn().mockResolvedValue(false),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+		onRemoteOpenFileTab: vi.fn().mockReturnValue(() => {}),
+		onRemoteNewAITabWithPrompt: vi.fn().mockReturnValue(() => {}),
+		onRemoteRefreshFileTree: vi.fn().mockReturnValue(() => {}),
+		onRemoteNotifyToast: vi.fn().mockReturnValue(() => {}),
+		onRemoteNotifyCenterFlash: vi.fn().mockReturnValue(() => {}),
+		onRemoteOpenBrowserTab: vi.fn().mockReturnValue(() => {}),
+		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteOpenTerminalTab: vi.fn().mockReturnValue(() => {}),
+		sendRemoteOpenTerminalTabResponse: vi.fn(),
+		sendRemoteNewAITabWithPromptResponse: vi.fn(),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
@@ -267,6 +307,8 @@ const mockMaestro = {
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
 		scanWorktreeDirectory: vi.fn().mockResolvedValue({ gitSubdirs: [] }),
+		onWorktreeDiscovered: vi.fn().mockReturnValue(() => {}),
+		onWorktreeRemoved: vi.fn().mockReturnValue(() => {}),
 		info: vi.fn().mockResolvedValue({
 			branch: 'main',
 			remote: '',
@@ -403,6 +445,7 @@ const mockMaestro = {
 		getSessionOrigins: vi.fn().mockResolvedValue({}),
 		getOrigins: vi.fn().mockResolvedValue({}),
 		setSessionName: vi.fn().mockResolvedValue(undefined),
+		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
@@ -583,6 +626,7 @@ const mockMaestro = {
 	},
 	app: {
 		onQuitConfirmationRequest: vi.fn().mockReturnValue(() => {}),
+		onDeepLink: vi.fn().mockReturnValue(() => {}),
 		confirmQuit: vi.fn(),
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
@@ -607,6 +651,7 @@ const mockMaestro = {
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
 		setActive: vi.fn().mockResolvedValue(undefined),
+		removeSession: vi.fn().mockResolvedValue(undefined),
 		stopRun: vi.fn().mockResolvedValue(false),
 		stopAll: vi.fn().mockResolvedValue(undefined),
 		refreshSession: vi.fn().mockResolvedValue(undefined),
@@ -628,6 +673,76 @@ const mockMaestro = {
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };
+
+const remoteBridgeListenerNames = [
+	'onRemoteAbortAutoRunError',
+	'onRemoteCloseTab',
+	'onRemoteCommand',
+	'onRemoteConfigureAutoRun',
+	'onRemoteCreateGist',
+	'onRemoteCreateGroup',
+	'onRemoteCreatePlaybook',
+	'onRemoteCreateSession',
+	'onRemoteCreateWorktreeSession',
+	'onRemoteDeleteGroup',
+	'onRemoteDeletePlaybook',
+	'onRemoteDeleteSession',
+	'onRemoteGetAutoRunDocContent',
+	'onRemoteGetAutoRunDocs',
+	'onRemoteGetGitDiff',
+	'onRemoteGetGitStatus',
+	'onRemoteInterrupt',
+	'onRemoteListPlaybooks',
+	'onRemoteMoveSessionToGroup',
+	'onRemoteNewAITabWithPrompt',
+	'onRemoteNewTab',
+	'onRemoteNotifyCenterFlash',
+	'onRemoteNotifyToast',
+	'onRemoteOpenBrowserTab',
+	'onRemoteOpenFileTab',
+	'onRemoteOpenTerminalTab',
+	'onRemoteRefreshAutoRunDocs',
+	'onRemoteRefreshFileTree',
+	'onRemoteRenameGroup',
+	'onRemoteRenameSession',
+	'onRemoteRenameTab',
+	'onRemoteReorderTab',
+	'onRemoteResetAutoRunDocTasks',
+	'onRemoteResumeAutoRunError',
+	'onRemoteSaveAutoRunDoc',
+	'onRemoteSelectSession',
+	'onRemoteSelectTab',
+	'onRemoteSetAutoRunFolder',
+	'onRemoteSetSetting',
+	'onRemoteSkipAutoRunDocument',
+	'onRemoteStarTab',
+	'onRemoteStopAutoRun',
+	'onRemoteSwitchMode',
+	'onRemoteToggleBookmark',
+	'onRemoteTriggerCueSubscription',
+	'onRemoteUpdatePlaybook',
+	'onRemoteUpdateSessionConfig',
+	'onRemoteUpdateSessionCwd',
+	'onRemoteUpdateSessionSsh',
+] as const;
+
+const remoteBridgeResponseNames = [
+	'sendRemoteCreateGistResponse',
+	'sendRemoteGetGitDiffResponse',
+	'sendRemoteGetGitStatusResponse',
+	'sendRemoteNewAITabWithPromptResponse',
+	'sendRemoteNewTabResponse',
+	'sendRemoteSetSettingResponse',
+	'sendRemoteTriggerCueSubscriptionResponse',
+] as const;
+
+Object.assign(
+	mockMaestro.process,
+	Object.fromEntries(
+		remoteBridgeListenerNames.map((name) => [name, vi.fn().mockReturnValue(() => {})])
+	),
+	Object.fromEntries(remoteBridgeResponseNames.map((name) => [name, vi.fn()]))
+);
 
 // Only mock window.maestro if window exists (jsdom environment)
 if (typeof window !== 'undefined') {

@@ -11,8 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
 let capturedFileChangedCallback:
-	| ((data: { filename: string; eventType: string; folderPath: string }) => void)
-	| null = null;
+	((data: { filename: string; eventType: string; folderPath: string }) => void) | null = null;
 
 // Mock window.maestro
 const mockMaestro = {

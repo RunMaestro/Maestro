@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/helpers/statusInfo — STATUS_COLORS palette + getStatusInfo
+ * Tests for SymphonyModal/helpers/statusInfo - STATUS_COLORS palette + getStatusInfo
  * mapping for every known ContributionStatus.
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -67,5 +67,15 @@ describe('SymphonyModal/helpers/statusInfo', () => {
 				expect(getByTestId(iconTestId)).toBeTruthy();
 			});
 		}
+
+		it('falls back for unknown persisted statuses', () => {
+			const info = getStatusInfo('reviewing');
+			expect(info.label).toBe('reviewing');
+			expect(info.color).toBe(STATUS_COLORS.paused);
+			expect(isValidElement(info.icon)).toBe(true);
+
+			const { getByTestId } = render(<>{info.icon}</>);
+			expect(getByTestId('icon-AlertCircle')).toBeTruthy();
+		});
 	});
 });

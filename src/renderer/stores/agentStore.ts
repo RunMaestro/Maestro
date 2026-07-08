@@ -2,14 +2,14 @@
  * agentStore - Zustand store for agent lifecycle orchestration
  *
  * This store follows the tabStore pattern: it does NOT own session-level agent
- * state (state, busySource, agentError, etc. — those stay in sessionStore).
+ * state (state, busySource, agentError, etc. - those stay in sessionStore).
  * Instead it provides orchestration actions that compose sessionStore mutations
  * with IPC calls for agent lifecycle management.
  *
  * Responsibilities:
- * 1. Agent detection cache — avoid repeated IPC calls for agent configs
- * 2. Error recovery actions — clearError, restart, retry, newSession, authenticate
- * 3. Agent lifecycle actions — kill, interrupt
+ * 1. Agent detection cache - avoid repeated IPC calls for agent configs
+ * 2. Error recovery actions - clearError, restart, retry, newSession, authenticate
+ * 3. Agent lifecycle actions - kill, interrupt
  *
  * Can be used outside React via useAgentStore.getState().
  */
@@ -357,7 +357,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		if (!targetTab) {
 			logger.error(
-				'[processQueuedItem] No target tab found — session has no aiTabs. Aborting spawn.',
+				'[processQueuedItem] No target tab found - session has no aiTabs. Aborting spawn.',
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
@@ -475,7 +475,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						if (/\$ARGUMENTS/g.test(promptWithArgs)) {
 							promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
 						} else {
-							// No $ARGUMENTS placeholder — append trailing text after the prompt
+							// No $ARGUMENTS placeholder - append trailing text after the prompt
 							promptWithArgs = `${promptWithArgs}\n\n${item.commandArgs}`;
 						}
 					} else {
@@ -636,3 +636,53 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 	},
 }));
+
+export const selectAvailableAgents = (state: AgentStore): AgentConfig[] => state.availableAgents;
+
+export const selectAgentsDetected = (state: AgentStore): boolean => state.agentsDetected;
+
+export const getAgentState = (): AgentStoreState => {
+	const { availableAgents, agentsDetected, capabilitySnapshots, capabilitySnapshotsLoaded } =
+		useAgentStore.getState();
+
+	return {
+		availableAgents,
+		agentsDetected,
+		capabilitySnapshots,
+		capabilitySnapshotsLoaded,
+	};
+};
+
+export const getAgentActions = (): AgentStoreActions => {
+	const {
+		refreshAgents,
+		getAgentConfig,
+		loadCapabilitySnapshots,
+		getCapabilitySnapshot,
+		reprobeAgent,
+		clearAgentError,
+		startNewSessionAfterError,
+		retryAfterError,
+		restartAgentAfterError,
+		authenticateAfterError,
+		processQueuedItem,
+		killAgent,
+		interruptAgent,
+	} = useAgentStore.getState();
+
+	return {
+		refreshAgents,
+		getAgentConfig,
+		loadCapabilitySnapshots,
+		getCapabilitySnapshot,
+		reprobeAgent,
+		clearAgentError,
+		startNewSessionAfterError,
+		retryAfterError,
+		restartAgentAfterError,
+		authenticateAfterError,
+		processQueuedItem,
+		killAgent,
+		interruptAgent,
+	};
+};

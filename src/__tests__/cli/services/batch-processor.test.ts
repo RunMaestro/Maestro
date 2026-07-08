@@ -788,13 +788,6 @@ describe('batch-processor', () => {
 			expect(loopCompleteEvents.length).toBe(0);
 		});
 
-		// NOTE: Testing maxLoops limit is skipped because the async generator
-		// requires careful mock coordination to simulate proper task completion
-		// patterns across multiple loop iterations without causing memory issues.
-		it.skip('should respect maxLoops limit', async () => {
-			// Test skipped - requires complex mock state management
-		});
-
 		it('should exit when all non-reset documents have no tasks', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {

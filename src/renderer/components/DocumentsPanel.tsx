@@ -211,12 +211,15 @@ function DocumentSelectorModal({
 			}
 			setRefreshMessage(message);
 			setPrevDocCount(allDocuments.length);
-
-			// Clear message after 3 seconds
-			const timer = setTimeout(() => setRefreshMessage(null), 3000);
-			return () => clearTimeout(timer);
 		}
 	}, [allDocuments.length, prevDocCount, refreshing]);
+
+	useEffect(() => {
+		if (!refreshMessage) return;
+
+		const timer = setTimeout(() => setRefreshMessage(null), 3000);
+		return () => clearTimeout(timer);
+	}, [refreshMessage]);
 
 	// Render a tree node recursively with checkboxes
 	const renderTreeNode = (node: DocTreeNode, depth: number = 0): React.ReactNode => {

@@ -5,7 +5,7 @@
  * Shown at the bottom of the Auto Run tab in the Usage Dashboard.
  *
  * Columns:
- * - Duration (sorted longest → shortest)
+ * - Duration (sorted longest to shortest)
  * - Date (start time)
  * - Agent (agent type display name)
  * - Document (file name from documentPath)
@@ -28,6 +28,7 @@ interface LongestAutoRunsTableProps {
 }
 
 const MAX_ROWS = 25;
+const EMPTY_TABLE_VALUE = '-';
 
 /**
  * Format agent type to display name
@@ -51,18 +52,18 @@ function formatAgentName(agentType: string): string {
  * Extract file name from a document path
  */
 function extractFileName(path?: string): string {
-	if (!path) return '—';
+	if (!path) return EMPTY_TABLE_VALUE;
 	const segments = path.replace(/\\/g, '/').split('/');
-	return segments[segments.length - 1] || '—';
+	return segments[segments.length - 1] || EMPTY_TABLE_VALUE;
 }
 
 /**
  * Extract last path segment from project path
  */
 function extractProjectName(path?: string): string {
-	if (!path) return '—';
+	if (!path) return EMPTY_TABLE_VALUE;
 	const segments = path.replace(/\\/g, '/').split('/').filter(Boolean);
-	return segments[segments.length - 1] || '—';
+	return segments[segments.length - 1] || EMPTY_TABLE_VALUE;
 }
 
 /**
@@ -130,7 +131,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	}
 
 	if (topSessions.length === 0) {
-		return null; // Don't show table if no data — AutoRunStats already shows empty state
+		return null; // No table if no data. AutoRunStats already shows empty state.
 	}
 
 	return (
@@ -179,7 +180,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 							const tasksLabel =
 								session.tasksTotal != null
 									? `${session.tasksCompleted ?? 0} / ${session.tasksTotal}`
-									: '—';
+									: EMPTY_TABLE_VALUE;
 
 							return (
 								<tr

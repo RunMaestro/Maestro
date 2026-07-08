@@ -52,8 +52,7 @@ class MockWebServer {
 		| ((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => Promise<boolean>)
 		| null = null;
 	private switchModeCallback:
-		| ((sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>)
-		| null = null;
+		((sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>) | null = null;
 	private getThemeCallback: (() => Theme | null) | null = null;
 
 	constructor() {

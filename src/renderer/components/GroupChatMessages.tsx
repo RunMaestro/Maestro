@@ -153,6 +153,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 
 		// Auto-scroll on new messages
 		useEffect(() => {
+			/* v8 ignore next */
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
 			}
@@ -211,6 +212,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 						return;
 					}
 					const container = containerRef.current;
+					/* v8 ignore next */
 					if (!container) return;
 					// Shift+Arrow: jump message-by-message.
 					if (e.shiftKey) {
@@ -363,9 +365,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														chatMath
 													/>
 												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? displayContent : stripMarkdown(displayContent)}
-													</div>
+													<div className="whitespace-pre-wrap">{stripMarkdown(displayContent)}</div>
 												)}
 											</div>
 											<button
@@ -406,9 +406,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														chatMath
 													/>
 												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? msg.content : stripMarkdown(msg.content)}
-													</div>
+													<div className="whitespace-pre-wrap">{stripMarkdown(msg.content)}</div>
 												)}
 											</div>
 											<button

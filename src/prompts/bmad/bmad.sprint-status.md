@@ -86,6 +86,7 @@ Run `/bmad:bmm:workflows:sprint-planning` to generate it, then rerun sprint-stat
 
   <check if="any status is unrecognized">
     <output>
+
 ⚠️ **Unknown status detected:**
 {{#each invalid_entries}}
 

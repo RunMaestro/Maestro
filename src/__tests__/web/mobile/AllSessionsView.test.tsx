@@ -99,6 +99,7 @@ describe('AllSessionsView', () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -335,6 +336,336 @@ describe('AllSessionsView', () => {
 					name: /Test Session session, Thinking..., terminal mode, active/i,
 				});
 				expect(sessionCard).toBeInTheDocument();
+			});
+
+			it('opens the context menu from right click and starts renaming', async () => {
+				const onRenameAgent = vi.fn().mockResolvedValue(true);
+				const sessions = [createMockSession({ id: 'session-1', name: 'Rename Me' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onRenameAgent })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Rename Me session/i }), {
+					clientX: -20,
+					clientY: 1000,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }));
+
+				const input = screen.getByDisplayValue('Rename Me');
+				expect(input).toHaveValue('Rename Me');
+
+				fireEvent.change(input, { target: { value: 'Renamed Agent' } });
+				fireEvent.click(input);
+				fireEvent.touchStart(input);
+				fireEvent.keyDown(input, { key: 'Enter' });
+
+				await waitFor(() => {
+					expect(onRenameAgent).toHaveBeenCalledWith('session-1', 'Renamed Agent');
+				});
+			});
+
+			it('uses click selection on non-touch browsers', () => {
+				const onSelectSession = vi.fn();
+				const onClose = vi.fn();
+				const removedDescriptors: Array<{ target: object; descriptor: PropertyDescriptor }> = [];
+				let touchTarget: object | null = window;
+				while (touchTarget) {
+					const descriptor = Object.getOwnPropertyDescriptor(touchTarget, 'ontouchstart');
+					if (descriptor?.configurable) {
+						removedDescriptors.push({ target: touchTarget, descriptor });
+						delete (touchTarget as { ontouchstart?: unknown }).ontouchstart;
+					}
+					touchTarget = Object.getPrototypeOf(touchTarget);
+				}
+				const sessions = [createMockSession({ id: 'session-1', name: 'Desktop Click' })];
+
+				try {
+					expect('ontouchstart' in window).toBe(false);
+					render(
+						<AllSessionsView {...createDefaultProps({ sessions, onSelectSession, onClose })} />
+					);
+					fireEvent.click(screen.getByRole('button', { name: /Desktop Click session/i }));
+
+					expect(mockTriggerHaptic).toHaveBeenCalledWith([10]);
+					expect(onSelectSession).toHaveBeenCalledWith('session-1');
+					expect(onClose).toHaveBeenCalled();
+				} finally {
+					for (const { target, descriptor } of removedDescriptors) {
+						Object.defineProperty(target, 'ontouchstart', descriptor);
+					}
+				}
+			});
+
+			it('ignores plain click selection on touch browsers', () => {
+				const onSelectSession = vi.fn();
+				const sessions = [createMockSession({ id: 'session-1', name: 'Touch Click' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onSelectSession })} />);
+
+				fireEvent.click(screen.getByRole('button', { name: /Touch Click session/i }));
+
+				expect(onSelectSession).not.toHaveBeenCalled();
+			});
+
+			it('cancels rename from Escape and clears invalid rename state', () => {
+				const onRenameAgent = vi.fn().mockResolvedValue(true);
+				const sessions = [createMockSession({ id: 'session-1', name: 'Cancel Rename' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onRenameAgent })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Cancel Rename session/i }), {
+					clientX: 24,
+					clientY: 24,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }));
+
+				const input = screen.getByDisplayValue('Cancel Rename');
+				fireEvent.change(input, { target: { value: '   ' } });
+				fireEvent.keyDown(input, { key: 'Tab' });
+				fireEvent.keyDown(input, { key: 'Enter' });
+				expect(onRenameAgent).not.toHaveBeenCalled();
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Cancel Rename session/i }), {
+					clientX: 24,
+					clientY: 24,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }));
+				fireEvent.keyDown(screen.getByDisplayValue('Cancel Rename'), { key: 'Escape' });
+
+				expect(screen.queryByDisplayValue('Cancel Rename')).not.toBeInTheDocument();
+			});
+
+			it('shows delete confirmation from the context menu and confirms deletion', async () => {
+				const onDeleteAgent = vi.fn().mockResolvedValue(true);
+				const sessions = [createMockSession({ id: 'session-1', name: 'Delete Me' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onDeleteAgent })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Delete Me session/i }), {
+					clientX: 900,
+					clientY: 900,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }));
+
+				expect(
+					screen.getByRole('alertdialog', { name: /Delete agent Delete Me/i })
+				).toBeInTheDocument();
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+				await waitFor(() => {
+					expect(onDeleteAgent).toHaveBeenCalledWith('session-1');
+				});
+			});
+
+			it('cancels delete confirmation from the backdrop and cancel button', () => {
+				const sessions = [createMockSession({ id: 'session-1', name: 'Keep Me' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onDeleteAgent: vi.fn() })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Keep Me session/i }), {
+					clientX: 300,
+					clientY: 300,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }));
+				fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+				expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Keep Me session/i }), {
+					clientX: 300,
+					clientY: 300,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }));
+				fireEvent.click(screen.getByRole('alertdialog').parentElement!);
+
+				expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+			});
+
+			it('leaves delete confirmation open when no delete callback is available', () => {
+				const sessions = [createMockSession({ id: 'session-1', name: 'No Delete Callback' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /No Delete Callback session/i }), {
+					clientX: 300,
+					clientY: 300,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }));
+				fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+				expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+			});
+
+			it('moves a session to a group or back to no group from the context menu', async () => {
+				const onMoveToGroup = vi.fn().mockResolvedValue(true);
+				const sessions = [
+					createMockSession({
+						id: 'session-1',
+						name: 'Move Me',
+						groupId: 'group-1',
+						groupName: 'Existing Group',
+					}),
+				];
+				const groups = [
+					{ id: 'group-1', name: 'Existing Group', emoji: 'E' },
+					{ id: 'group-2', name: 'Target Group', emoji: 'T' },
+				];
+				render(<AllSessionsView {...createDefaultProps({ sessions, groups, onMoveToGroup })} />);
+
+				fireEvent.click(screen.getByRole('button', { name: /Existing Group group/i }));
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Move Me session/i }), {
+					clientX: 120,
+					clientY: 120,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Move to Group/i }));
+
+				expect(
+					screen.getByRole('heading', { name: /Move "Move Me" to Group/i })
+				).toBeInTheDocument();
+				expect(screen.getByText('Current')).toBeInTheDocument();
+
+				fireEvent.click(screen.getByRole('button', { name: /Target Group/i }));
+				await waitFor(() => {
+					expect(onMoveToGroup).toHaveBeenCalledWith('session-1', 'group-2');
+				});
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Move Me session/i }), {
+					clientX: 120,
+					clientY: 120,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Move to Group/i }));
+				fireEvent.click(screen.getByRole('button', { name: 'No Group' }));
+
+				await waitFor(() => {
+					expect(onMoveToGroup).toHaveBeenCalledWith('session-1', null);
+				});
+			});
+
+			it('closes move sheet from the backdrop and tolerates missing move callback', async () => {
+				const sessions = [
+					createMockSession({
+						id: 'session-1',
+						name: 'Move Without Callback',
+						groupId: 'group-1',
+						groupName: 'Existing Group',
+					}),
+				];
+				const groups = [{ id: 'group-1', name: 'Existing Group', emoji: 'E' }];
+				render(<AllSessionsView {...createDefaultProps({ sessions, groups })} />);
+
+				fireEvent.click(screen.getByRole('button', { name: /Existing Group group/i }));
+				fireEvent.contextMenu(
+					screen.getByRole('button', { name: /Move Without Callback session/i }),
+					{ clientX: 120, clientY: 120 }
+				);
+				fireEvent.click(screen.getByRole('menuitem', { name: /Move to Group/i }));
+				fireEvent.click(screen.getByRole('button', { name: 'No Group' }));
+				expect(
+					screen.getByRole('heading', { name: /Move "Move Without Callback" to Group/i })
+				).toBeInTheDocument();
+
+				const overlay = screen.getByRole('heading', {
+					name: /Move "Move Without Callback" to Group/i,
+				}).parentElement!.parentElement!.parentElement!;
+				fireEvent.click(overlay);
+
+				await waitFor(() => {
+					expect(
+						screen.queryByRole('heading', { name: /Move "Move Without Callback" to Group/i })
+					).not.toBeInTheDocument();
+				});
+			});
+
+			it('marks no group as current for ungrouped sessions in the move sheet', () => {
+				const sessions = [createMockSession({ id: 'session-1', name: 'Ungrouped Move' })];
+				const groups = [{ id: 'group-1', name: 'Target Group', emoji: 'T' }];
+				render(
+					<AllSessionsView {...createDefaultProps({ sessions, groups, onMoveToGroup: vi.fn() })} />
+				);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Ungrouped Move session/i }), {
+					clientX: 120,
+					clientY: 120,
+				});
+				fireEvent.click(screen.getByRole('menuitem', { name: /Move to Group/i }));
+
+				expect(screen.getByRole('button', { name: 'No Group' })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Target Group/i })).toBeInTheDocument();
+			});
+
+			it('closes context menu when clicking outside after listener setup', () => {
+				vi.useFakeTimers();
+				const sessions = [createMockSession({ id: 'session-1', name: 'Outside Menu' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Outside Menu session/i }), {
+					clientX: 120,
+					clientY: 120,
+				});
+				expect(screen.getByRole('menu', { name: /Actions for Outside Menu/i })).toBeInTheDocument();
+
+				act(() => {
+					vi.advanceTimersByTime(50);
+				});
+				fireEvent.mouseDown(document.body);
+
+				expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+				vi.useRealTimers();
+			});
+
+			it('keeps context menu open when clicking inside after listener setup', () => {
+				vi.useFakeTimers();
+				const sessions = [createMockSession({ id: 'session-1', name: 'Inside Menu' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+				fireEvent.contextMenu(screen.getByRole('button', { name: /Inside Menu session/i }), {
+					clientX: 120,
+					clientY: 120,
+				});
+				const menu = screen.getByRole('menu', { name: /Actions for Inside Menu/i });
+
+				act(() => {
+					vi.advanceTimersByTime(50);
+				});
+				fireEvent.mouseDown(menu);
+
+				expect(screen.getByRole('menu', { name: /Actions for Inside Menu/i })).toBeInTheDocument();
+				vi.useRealTimers();
+			});
+
+			it('opens the context menu after a long press and ignores the following touch end', () => {
+				vi.useFakeTimers();
+				const onSelectSession = vi.fn();
+				const sessions = [createMockSession({ id: 'session-1', name: 'Long Press Me' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions, onSelectSession })} />);
+
+				const sessionCard = screen.getByRole('button', { name: /Long Press Me session/i });
+				fireEvent.touchStart(sessionCard, { touches: [{ clientX: 48, clientY: 96 }] });
+				act(() => {
+					vi.advanceTimersByTime(500);
+				});
+				fireEvent.touchEnd(sessionCard);
+
+				expect(
+					screen.getByRole('menu', { name: /Actions for Long Press Me/i })
+				).toBeInTheDocument();
+				expect(onSelectSession).not.toHaveBeenCalled();
+				vi.useRealTimers();
+			});
+
+			it('cancels pending long press on move and touch cancel', () => {
+				vi.useFakeTimers();
+				const sessions = [createMockSession({ id: 'session-1', name: 'Cancel Long Press' })];
+				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+				const sessionCard = screen.getByRole('button', { name: /Cancel Long Press session/i });
+				fireEvent.touchStart(sessionCard, { touches: [{ clientX: 10, clientY: 10 }] });
+				fireEvent.touchMove(sessionCard);
+				act(() => {
+					vi.advanceTimersByTime(500);
+				});
+				expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+				fireEvent.touchStart(sessionCard, { touches: [{ clientX: 10, clientY: 10 }] });
+				fireEvent.touchCancel(sessionCard);
+				act(() => {
+					vi.advanceTimersByTime(500);
+				});
+				expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+				vi.useRealTimers();
 			});
 		});
 	});
@@ -1003,6 +1334,16 @@ describe('AllSessionsView', () => {
 
 			expect(screen.getByText('Session 1')).toBeInTheDocument();
 			expect(screen.getByText('Session 2')).toBeInTheDocument();
+		});
+
+		it('opens create agent action from the floating button', () => {
+			const onOpenCreateAgent = vi.fn();
+			render(<AllSessionsView {...createDefaultProps({ onOpenCreateAgent })} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /Create new agent/i }));
+
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([10]);
+			expect(onOpenCreateAgent).toHaveBeenCalled();
 		});
 	});
 });

@@ -16,7 +16,11 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 	};
 });
 
-import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
+import {
+	DEFAULT_IMAGE_ONLY_PROMPT,
+	loadInputProcessingPrompts,
+	useInputProcessing,
+} from '../../../renderer/hooks/input/useInputProcessing';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type {
 	Session,
@@ -171,6 +175,48 @@ describe('useInputProcessing', () => {
 			// Should not call any state setters
 			expect(mockSetSessions).not.toHaveBeenCalled();
 		});
+
+		it('handles forced-parallel input without an active session', async () => {
+			const deps = createDeps({ activeSession: null });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('forced message', { forceParallel: true });
+			});
+
+			expect(mockSetSessions).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('prompt loading', () => {
+		it('loads the image-only prompt and skips reloads once cached', async () => {
+			window.maestro.prompts.get = vi
+				.fn()
+				.mockResolvedValue({ success: true, content: 'Describe the attached image.' });
+
+			await loadInputProcessingPrompts(true);
+
+			expect(window.maestro.prompts.get).toHaveBeenCalledWith('image-only-default');
+			expect(DEFAULT_IMAGE_ONLY_PROMPT).toBe('Describe the attached image.');
+
+			window.maestro.prompts.get = vi
+				.fn()
+				.mockResolvedValue({ success: true, content: 'Should not reload' });
+			await loadInputProcessingPrompts();
+
+			expect(window.maestro.prompts.get).not.toHaveBeenCalled();
+			expect(DEFAULT_IMAGE_ONLY_PROMPT).toBe('Describe the attached image.');
+		});
+
+		it('throws when the image-only prompt cannot be loaded', async () => {
+			window.maestro.prompts.get = vi
+				.fn()
+				.mockResolvedValue({ success: false, error: 'missing prompt' });
+
+			await expect(loadInputProcessingPrompts(true)).rejects.toThrow(
+				'Failed to load image-only-default prompt: missing prompt'
+			);
+		});
 	});
 
 	describe('built-in /history command', () => {
@@ -185,6 +231,28 @@ describe('useInputProcessing', () => {
 			expect(mockOnHistoryCommand).toHaveBeenCalledTimes(1);
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('resets textarea height and logs rejected /history handlers', async () => {
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '120px';
+			const failingHistoryCommand = vi.fn().mockRejectedValue(new Error('history failed'));
+			const deps = createDeps({
+				inputValue: '/history',
+				inputRef: { current: textarea },
+				onHistoryCommand: failingHistoryCommand,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(textarea.style.height).toBe('auto');
+			expect(failingHistoryCommand).toHaveBeenCalledTimes(1);
 		});
 
 		it('does not intercept /history in terminal mode', async () => {
@@ -205,13 +273,77 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('built-in /skills command', () => {
+		it('intercepts /skills for Claude Code sessions', async () => {
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '80px';
+			const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+			const deps = createDeps({
+				inputValue: '/skills',
+				inputRef: { current: textarea },
+				onSkillsCommand,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onSkillsCommand).toHaveBeenCalledTimes(1);
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(textarea.style.height).toBe('auto');
+		});
+
+		it('logs rejected /skills handlers without throwing', async () => {
+			const onSkillsCommand = vi.fn().mockRejectedValue(new Error('skills failed'));
+			const deps = createDeps({
+				inputValue: '/skills',
+				onSkillsCommand,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(onSkillsCommand).toHaveBeenCalledTimes(1);
+		});
+
+		it('passes /skills through for non-Claude agents', async () => {
+			const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+			const session = createMockSession({ toolType: 'terminal' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '/skills',
+				onSkillsCommand,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onSkillsCommand).not.toHaveBeenCalled();
+			expect(mockSetSessions).toHaveBeenCalled();
+		});
+	});
+
 	describe('built-in /wizard command', () => {
 		const mockOnWizardCommand = vi.fn();
 
 		it('intercepts /wizard command and calls handler with empty args', async () => {
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '72px';
 			const deps = createDeps({
 				inputValue: '/wizard',
 				onWizardCommand: mockOnWizardCommand,
+				inputRef: { current: textarea },
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -224,6 +356,7 @@ describe('useInputProcessing', () => {
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
 			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(textarea.style.height).toBe('auto');
 		});
 
 		it('intercepts /wizard with arguments and passes them to handler', async () => {
@@ -316,6 +449,74 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('wizard mode routing', () => {
+		const flushWizardPromises = async () => {
+			await act(async () => {
+				await Promise.resolve();
+			});
+		};
+
+		it('ignores non-wizard slash commands while wizard mode is active', async () => {
+			const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+			const deps = createDeps({
+				inputValue: '/skills',
+				isWizardActive: true,
+				onWizardSendMessage,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onWizardSendMessage).not.toHaveBeenCalled();
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+		});
+
+		it('routes regular messages and images to the active wizard', async () => {
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '88px';
+			const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+			const deps = createDeps({
+				inputValue: 'Continue wizard',
+				stagedImages: ['data:image/png;base64,WIZARD'],
+				inputRef: { current: textarea },
+				isWizardActive: true,
+				onWizardSendMessage,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onWizardSendMessage).toHaveBeenCalledWith('Continue wizard', [
+				'data:image/png;base64,WIZARD',
+			]);
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(mockSetStagedImages).toHaveBeenCalledWith([]);
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(textarea.style.height).toBe('auto');
+		});
+
+		it('logs rejected wizard sends without throwing', async () => {
+			const onWizardSendMessage = vi.fn().mockRejectedValue(new Error('wizard failed'));
+			const deps = createDeps({
+				inputValue: 'Continue wizard',
+				isWizardActive: true,
+				onWizardSendMessage,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushWizardPromises();
+
+			expect(onWizardSendMessage).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('custom AI commands', () => {
 		const customCommands: CustomAICommand[] = [
 			{
@@ -349,6 +550,48 @@ describe('useInputProcessing', () => {
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
 			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			vi.useRealTimers();
+		});
+
+		it('processes discovered agent commands and fetches git branch context', async () => {
+			vi.useFakeTimers();
+			window.maestro.git.status = vi.fn().mockResolvedValue({ stdout: '' });
+			window.maestro.git.branch = vi.fn().mockResolvedValue({ stdout: 'feature/test\n' });
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '64px';
+			const tab = createMockTab({ id: 'agent-command-tab', name: null, agentSessionId: null });
+			const session = createMockSession({
+				isGitRepo: true,
+				aiTabs: [tab],
+				activeTabId: tab.id,
+				agentCommands: [
+					{
+						command: '/agent.test',
+						description: 'Agent test command',
+						prompt: 'Use branch {{gitBranch}}',
+					},
+				],
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '/agent.test now',
+				inputRef: { current: textarea },
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(window.maestro.git.status).toHaveBeenCalledWith('/test/project', undefined);
+			expect(window.maestro.git.branch).toHaveBeenCalledWith('/test/project', undefined);
+			expect(textarea.style.height).toBe('auto');
+			expect(mockProcessQueuedItemRef.current).toHaveBeenCalled();
 			vi.useRealTimers();
 		});
 
@@ -388,6 +631,10 @@ describe('useInputProcessing', () => {
 
 			// Should call processQueuedItem
 			expect(mockProcessQueuedItemRef.current).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = setSessionsCall([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
 
 			vi.useRealTimers();
 		});
@@ -416,6 +663,9 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue.length).toBe(1);
 			expect(updatedSessions[0].executionQueue[0].type).toBe('command');
 			expect(updatedSessions[0].executionQueue[0].command).toBe('/test');
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = setSessionsCall([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
 		});
 
 		describe('forced parallel for slash commands', () => {
@@ -813,6 +1063,211 @@ describe('useInputProcessing', () => {
 	});
 
 	describe('terminal mode behavior', () => {
+		const flushTerminalPromises = async () => {
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		};
+
+		const runTerminalInput = async (session: Session, inputValue: string) => {
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue,
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const setSessionsCall = mockSetSessions.mock.calls[0]?.[0];
+			expect(setSessionsCall).toBeInstanceOf(Function);
+			return setSessionsCall([session])[0] as Session;
+		};
+
+		it.each([
+			{ command: 'cd', currentCwd: '/workspace/current', expectedCwd: '/workspace' },
+			{ command: 'cd ~', currentCwd: '/workspace/current', expectedCwd: '/workspace' },
+			{ command: 'cd ~/logs', currentCwd: '/workspace/current', expectedCwd: '/workspace/logs' },
+			{ command: 'cd /tmp/maestro', currentCwd: '/workspace/current', expectedCwd: '/tmp/maestro' },
+			{ command: 'cd ..', currentCwd: '/workspace/src', expectedCwd: '/workspace' },
+			{
+				command: 'cd ../docs',
+				currentCwd: '/workspace/src/app',
+				expectedCwd: '/workspace/src/docs',
+			},
+			{
+				command: 'cd packages/ui',
+				currentCwd: '/workspace',
+				expectedCwd: '/workspace/packages/ui',
+			},
+			{
+				command: 'cd "dir with spaces"',
+				currentCwd: '/workspace',
+				expectedCwd: '/workspace/dir with spaces',
+			},
+		])(
+			'tracks local terminal $command as $expectedCwd',
+			async ({ command, currentCwd, expectedCwd }) => {
+				const readDir = vi.fn().mockResolvedValue([]);
+				window.maestro.fs.readDir = readDir;
+				window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+				const session = createMockSession({
+					inputMode: 'terminal',
+					cwd: '/workspace',
+					shellCwd: currentCwd,
+				});
+
+				const updatedSession = await runTerminalInput(session, command);
+
+				expect(updatedSession.shellCwd).toBe(expectedCwd);
+				expect(updatedSession.shellCommandHistory).toEqual([command]);
+				expect(updatedSession.shellLogs.at(-1)?.text).toBe(command);
+				if (command === 'cd') {
+					expect(readDir).not.toHaveBeenCalled();
+				} else {
+					expect(readDir).toHaveBeenCalledWith(expectedCwd, undefined);
+				}
+				expect(window.maestro.git.isRepo).toHaveBeenCalledWith(expectedCwd, undefined);
+			}
+		);
+
+		it('keeps the local terminal cwd when cd target verification fails', async () => {
+			window.maestro.fs.readDir = vi.fn().mockRejectedValue(new Error('missing directory'));
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/workspace',
+				shellCwd: '/workspace/current',
+			});
+
+			const updatedSession = await runTerminalInput(session, 'cd missing');
+
+			expect(window.maestro.fs.readDir).toHaveBeenCalledWith(
+				'/workspace/current/missing',
+				undefined
+			);
+			expect(updatedSession.shellCwd).toBe('/workspace/current');
+			expect(updatedSession.shellCommandHistory).toEqual(['cd missing']);
+			expect(window.maestro.git.isRepo).not.toHaveBeenCalled();
+		});
+
+		it('tracks remote terminal cd against the configured working directory', async () => {
+			const readDir = vi.fn().mockResolvedValue([]);
+			window.maestro.fs.readDir = readDir;
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/local/project',
+				remoteCwd: '/srv/app/current',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/srv/app',
+				},
+			});
+
+			const updatedSession = await runTerminalInput(session, 'cd ~/logs');
+
+			expect(readDir).toHaveBeenCalledWith('/srv/app/logs', 'remote-1');
+			expect(updatedSession.remoteCwd).toBe('/srv/app/logs');
+			expect(updatedSession.shellCommandHistory).toEqual(['cd ~/logs']);
+			expect(window.maestro.git.isRepo).toHaveBeenCalledWith('/srv/app/logs', 'remote-1');
+		});
+
+		it('expands remote terminal cd tilde to the configured working directory', async () => {
+			const readDir = vi.fn().mockResolvedValue([]);
+			window.maestro.fs.readDir = readDir;
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/local/project',
+				remoteCwd: '/srv/app/current',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/srv/app',
+				},
+			});
+
+			const updatedSession = await runTerminalInput(session, 'cd ~');
+
+			expect(readDir).toHaveBeenCalledWith('/srv/app', 'remote-1');
+			expect(updatedSession.remoteCwd).toBe('/srv/app');
+		});
+
+		it('applies async git repo status after terminal cwd changes', async () => {
+			window.maestro.fs.readDir = vi.fn().mockResolvedValue([]);
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(true);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/workspace',
+				shellCwd: '/workspace/current',
+				isGitRepo: false,
+			});
+
+			await runTerminalInput(session, 'cd child');
+			await flushTerminalPromises();
+
+			const gitUpdater = mockSetSessions.mock.calls.find(([updater]) => {
+				if (typeof updater !== 'function') return false;
+				const [updated] = updater([session]);
+				return updated.isGitRepo === true;
+			})?.[0];
+			expect(gitUpdater).toBeInstanceOf(Function);
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = gitUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+
+		it('uses spawned sshRemoteId before session config remoteId when tracking remote cd', async () => {
+			const readDir = vi.fn().mockResolvedValue([]);
+			window.maestro.fs.readDir = readDir;
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/local/project',
+				sshRemoteId: 'spawned-remote',
+				remoteCwd: '/srv/app/current',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'configured-remote',
+					workingDirOverride: '/srv/app',
+				},
+			});
+
+			const updatedSession = await runTerminalInput(session, 'cd ../logs');
+
+			expect(readDir).toHaveBeenCalledWith('/srv/app/logs', 'spawned-remote');
+			expect(updatedSession.remoteCwd).toBe('/srv/app/logs');
+			expect(window.maestro.git.isRepo).toHaveBeenCalledWith('/srv/app/logs', 'spawned-remote');
+		});
+
+		it('resets remote terminal cwd to the configured working directory for bare cd', async () => {
+			const readDir = vi.fn().mockResolvedValue([]);
+			window.maestro.fs.readDir = readDir;
+			window.maestro.git.isRepo = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({
+				inputMode: 'terminal',
+				cwd: '/local/project',
+				remoteCwd: '/srv/app/current',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/srv/app',
+				},
+			});
+
+			const updatedSession = await runTerminalInput(session, 'cd');
+
+			expect(readDir).not.toHaveBeenCalled();
+			expect(updatedSession.remoteCwd).toBe('/srv/app');
+			expect(window.maestro.git.isRepo).toHaveBeenCalledWith('/srv/app', 'remote-1');
+		});
+
 		it('does not process custom commands in terminal mode', async () => {
 			const session = createMockSession({ inputMode: 'terminal' });
 			const deps = createDeps({
@@ -832,6 +1287,163 @@ describe('useInputProcessing', () => {
 			// Should not match custom command in terminal mode
 			// Input should be processed as terminal command
 			expect(mockSetSessions).toHaveBeenCalled();
+		});
+
+		it('clears legacy shell logs for terminal clear command', async () => {
+			const session = createMockSession({
+				inputMode: 'terminal',
+				shellLogs: [{ id: 'old-log', timestamp: 1, source: 'stdout', text: 'old output' }],
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'clear',
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const clearUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(clearUpdater).toBeInstanceOf(Function);
+			const [updatedSession] = clearUpdater([session]);
+			expect(updatedSession.shellLogs).toEqual([]);
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.busySource).toBeUndefined();
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = clearUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+
+		it('appends a legacy shell error log when terminal command execution fails', async () => {
+			window.maestro.process.runCommand = vi.fn().mockRejectedValue(new Error('command failed'));
+			const session = createMockSession({
+				inputMode: 'terminal',
+				shellCwd: '/workspace',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'pwd',
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushTerminalPromises();
+
+			expect(window.maestro.process.runCommand).toHaveBeenCalledWith({
+				sessionId: session.id,
+				command: 'pwd',
+				cwd: '/workspace',
+				sessionSshRemoteConfig: undefined,
+			});
+			const updates = mockSetSessions.mock.calls
+				.map(([updater]) =>
+					typeof updater === 'function' ? (updater([session])[0] as Session) : null
+				)
+				.filter((updatedSession): updatedSession is Session => updatedSession !== null);
+			expect(
+				updates.some((updated) =>
+					updated.shellLogs.some((entry) =>
+						entry.text.includes('Error: Failed to run command - command failed')
+					)
+				)
+			).toBe(true);
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = lastUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+	});
+
+	describe('non-batch AI process writes', () => {
+		const flushWritePromises = async () => {
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		};
+
+		it('adds an active-tab error log when process.write fails', async () => {
+			window.maestro.process.write = vi.fn().mockRejectedValue(new Error('write failed'));
+			const activeTab = createMockTab({ id: 'tab-write', logs: [] });
+			const session = createMockSession({
+				toolType: 'terminal',
+				inputMode: 'ai',
+				aiPid: 4321,
+				aiTabs: [activeTab],
+				activeTabId: activeTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'send through stdin',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushWritePromises();
+
+			expect(window.maestro.process.write).toHaveBeenCalledWith(
+				`${session.id}-ai-${activeTab.id}`,
+				'send through stdin'
+			);
+			const updates = mockSetSessions.mock.calls
+				.map(([updater]) =>
+					typeof updater === 'function' ? (updater([session])[0] as Session) : null
+				)
+				.filter((updatedSession): updatedSession is Session => updatedSession !== null);
+			expect(
+				updates.some((updated) =>
+					updated.aiTabs[0].logs.some((entry) =>
+						entry.text.includes('Error: Failed to write to process - write failed')
+					)
+				)
+			).toBe(true);
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = lastUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+
+		it('writes nudge-appended AI input and resets textarea height', async () => {
+			window.maestro.process.write = vi.fn().mockResolvedValue(undefined);
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '96px';
+			const activeTab = createMockTab({ id: 'tab-write-success', logs: [] });
+			const session = createMockSession({
+				toolType: 'terminal',
+				inputMode: 'ai',
+				aiPid: 4321,
+				aiTabs: [activeTab],
+				activeTabId: activeTab.id,
+				nudgeMessage: 'Remember the project constraints.',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'send through stdin',
+				inputRef: { current: textarea },
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.write).toHaveBeenCalledWith(
+				`${session.id}-ai-${activeTab.id}`,
+				'send through stdin\n\n---\n\nRemember the project constraints.'
+			);
+			expect(textarea.style.height).toBe('auto');
 		});
 	});
 
@@ -927,6 +1539,8 @@ describe('useInputProcessing', () => {
 		});
 
 		it('queues write commands when Auto Run is active even if session is idle', async () => {
+			const textarea = document.createElement('textarea');
+			textarea.style.height = '66px';
 			const runningBatchState: BatchRunState = {
 				...defaultBatchState,
 				isRunning: true,
@@ -941,6 +1555,7 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				inputValue: 'regular message',
 				activeBatchRunState: runningBatchState,
+				inputRef: { current: textarea },
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -955,6 +1570,10 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].state).toBe('idle'); // Session stays idle
 			expect(updatedSessions[0].executionQueue.length).toBe(1); // Message is queued
 			expect(updatedSessions[0].executionQueue[0].text).toBe('regular message');
+			expect(textarea.style.height).toBe('auto');
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = setSessionsCall([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
 		});
 	});
 
@@ -1018,6 +1637,69 @@ describe('useInputProcessing', () => {
 
 			// Bypass allowed: the write spawns immediately, nothing queued.
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+
+		it('queues a write message when queued work is not read-only', async () => {
+			const activeTab = createMockTab({ id: 'active-write', state: 'idle', readOnlyMode: false });
+			const readOnlyBusyTab = createMockTab({
+				id: 'readonly-busy',
+				state: 'busy',
+				readOnlyMode: true,
+			});
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [activeTab, readOnlyBusyTab],
+				activeTabId: activeTab.id,
+				executionQueue: [
+					{
+						id: 'queued-write',
+						timestamp: 1,
+						tabId: activeTab.id,
+						type: 'message',
+						text: 'queued write',
+						readOnlyMode: false,
+					},
+				],
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'new write',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const queueUpdater = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = queueUpdater([session]);
+			expect(updatedSession.executionQueue).toHaveLength(2);
+			expect(updatedSession.executionQueue[1].text).toBe('new write');
+		});
+	});
+
+	describe('AI tab guards', () => {
+		it('leaves session unchanged when AI mode has no active tab to receive logs', async () => {
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: '',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'message without tab',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const firstUpdater = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = firstUpdater([session]);
+			expect(updatedSession).toBe(session);
 		});
 	});
 
@@ -1445,6 +2127,178 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('batch agent spawn payloads', () => {
+		const flushBatchPromises = async () => {
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		};
+
+		const applySessionUpdaters = (session: Session) =>
+			mockSetSessions.mock.calls
+				.map(([updater]) =>
+					typeof updater === 'function' ? (updater([session])[0] as Session) : null
+				)
+				.filter((updatedSession): updatedSession is Session => updatedSession !== null);
+
+		it('injects pending merged context and clears it from the active tab', async () => {
+			const tab = createMockTab({
+				agentSessionId: 'existing-agent-session',
+				pendingMergedContext: 'Merged context from another tab',
+			});
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Use this context',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushBatchPromises();
+
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('Merged context from another tab\n\n---\n\nUse this context');
+			const updates = applySessionUpdaters(session);
+			expect(updates.some((updated) => updated.aiTabs[0].pendingMergedContext === undefined)).toBe(
+				true
+			);
+			const pendingContextUpdater = mockSetSessions.mock.calls.find(([updater]) => {
+				if (typeof updater !== 'function') return false;
+				const [updated] = updater([session]);
+				return updated.aiTabs[0].pendingMergedContext === undefined;
+			})?.[0];
+			expect(pendingContextUpdater).toBeInstanceOf(Function);
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = pendingContextUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+
+		it('prefixes the new session message on the first batch-agent send', async () => {
+			const tab = createMockTab({
+				agentSessionId: null,
+			});
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: tab.id,
+				newSessionMessage: 'Start with this project context',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'First request',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushBatchPromises();
+
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('Start with this project context\n\n---\n\nFirst request');
+		});
+
+		it('adds an active-tab error log when batch agent lookup fails', async () => {
+			window.maestro.agents.get = vi.fn().mockResolvedValue(null);
+			const tab = createMockTab({ id: 'tab-spawn-error', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Spawn this',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushBatchPromises();
+
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const [updatedSession] = lastUpdater([session]);
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.aiTabs[0].logs.at(-1)?.text).toContain(
+				'Error: Failed to spawn agent process - claude-code agent not found'
+			);
+
+			const emptyTabsSession = { ...session, aiTabs: [] };
+			const [updatedEmptyTabsSession] = lastUpdater([emptyTabsSession]);
+			expect(updatedEmptyTabsSession.aiTabs).toEqual([]);
+
+			const otherSession = createMockSession({ id: 'other-session' });
+			const [unchangedOtherSession] = lastUpdater([otherSession]);
+			expect(unchangedOtherSession).toBe(otherSession);
+		});
+
+		it('adds an error log when the fresh session is missing before spawn', async () => {
+			const tab = createMockTab({ id: 'tab-missing-session', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [] },
+				inputValue: 'Spawn this',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushBatchPromises();
+
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const [updatedSession] = lastUpdater([session]);
+			expect(updatedSession.aiTabs[0].logs.at(-1)?.text).toContain(
+				'Error: Failed to spawn agent process - Session not found'
+			);
+		});
+
+		it('adds an error log when batch agent has no command configured', async () => {
+			window.maestro.agents.get = vi.fn().mockResolvedValue({
+				id: 'claude-code',
+				command: '',
+				path: '',
+				args: [],
+			});
+			const tab = createMockTab({ id: 'tab-missing-command', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Spawn this',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushBatchPromises();
+
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const [updatedSession] = lastUpdater([session]);
+			expect(updatedSession.aiTabs[0].logs.at(-1)?.text).toContain(
+				'Error: Failed to spawn agent process - claude-code agent has no command configured'
+			);
+		});
+	});
+
 	describe('command history tracking', () => {
 		it('adds slash command to aiCommandHistory', async () => {
 			vi.useFakeTimers();
@@ -1474,6 +2328,18 @@ describe('useInputProcessing', () => {
 
 	describe('automatic tab naming', () => {
 		const mockGenerateTabName = vi.fn();
+		const flushNamingPromises = async () => {
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		};
+
+		const applySessionUpdaters = (session: Session) =>
+			mockSetSessions.mock.calls
+				.map(([updater]) =>
+					typeof updater === 'function' ? (updater([session])[0] as Session) : null
+				)
+				.filter((updatedSession): updatedSession is Session => updatedSession !== null);
 
 		beforeEach(() => {
 			mockGenerateTabName.mockClear();
@@ -1518,6 +2384,13 @@ describe('useInputProcessing', () => {
 				cwd: '/test/project',
 				sessionSshRemoteConfig: undefined,
 			});
+
+			await flushNamingPromises();
+			const updates = applySessionUpdaters(session);
+			expect(updates.some((updated) => updated.aiTabs[0].isGeneratingName === true)).toBe(true);
+			expect(updates.some((updated) => updated.aiTabs[0].name === 'Generated Tab Name')).toBe(true);
+			const otherSessionUpdates = applySessionUpdaters(createMockSession({ id: 'other-session' }));
+			expect(otherSessionUpdates.every((updated) => updated.id === 'other-session')).toBe(true);
 		});
 
 		it('does not trigger tab naming when setting is disabled', async () => {
@@ -1705,11 +2578,74 @@ describe('useInputProcessing', () => {
 
 			// Should have called setSessions to set isGeneratingName: true
 			expect(mockSetSessions).toHaveBeenCalled();
+			const updates = applySessionUpdaters(session);
+			expect(updates.some((updated) => updated.aiTabs[0].isGeneratingName === true)).toBe(true);
 
 			// Resolve the naming promise
 			await act(async () => {
 				resolveNaming!('Generated Name');
 			});
+		});
+
+		it('builds naming prompt from prior user messages and current input', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+				logs: [
+					{ id: 'ai-1', timestamp: 1, source: 'ai', text: 'Assistant output is skipped' },
+					{ id: 'user-empty', timestamp: 2, source: 'user', text: '   ' },
+					{ id: 'user-1', timestamp: 3, source: 'user', text: 'Prior user request' },
+				],
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Current user request',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockGenerateTabName).toHaveBeenCalledWith(
+				expect.objectContaining({
+					userMessage: 'Prior user request\n\nCurrent user request',
+				})
+			);
+		});
+
+		it('caps naming prompt at prior user message limit before adding current input', async () => {
+			const longPriorMessage = 'x'.repeat(2100);
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+				logs: [{ id: 'user-long', timestamp: 1, source: 'user', text: longPriorMessage }],
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Current input should be excluded',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const [{ userMessage }] = mockGenerateTabName.mock.calls[0];
+			expect(userMessage).toHaveLength(2000);
+			expect(userMessage).toBe('x'.repeat(2000));
 		});
 
 		it('uses quick-path naming for GitHub PR URLs without spawning agent', async () => {
@@ -1738,6 +2674,10 @@ describe('useInputProcessing', () => {
 
 			// Should have called setSessions to set the name directly
 			expect(mockSetSessions).toHaveBeenCalled();
+			const updates = applySessionUpdaters(session);
+			expect(updates.some((updated) => updated.aiTabs[0].name === 'PR #380')).toBe(true);
+			const otherSessionUpdates = applySessionUpdaters(createMockSession({ id: 'other-session' }));
+			expect(otherSessionUpdates.every((updated) => updated.id === 'other-session')).toBe(true);
 		});
 
 		it('uses quick-path naming for GitHub issue URLs without spawning agent', async () => {
@@ -1763,6 +2703,81 @@ describe('useInputProcessing', () => {
 
 			// Should NOT call generateTabName (quick-path handles it)
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
+			const updates = applySessionUpdaters(session);
+			expect(updates.some((updated) => updated.aiTabs[0].name === 'Issue #381')).toBe(true);
+			const otherSessionUpdates = applySessionUpdaters(createMockSession({ id: 'other-session' }));
+			expect(otherSessionUpdates.every((updated) => updated.id === 'other-session')).toBe(true);
+		});
+
+		it('does not overwrite a tab that was manually named before generated naming resolves', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const renamedSession = {
+				...session,
+				aiTabs: [{ ...newTab, name: 'Manual Name', isGeneratingName: true }],
+			};
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Generate a name',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushNamingPromises();
+
+			const lastUpdater = mockSetSessions.mock.calls.at(-1)?.[0];
+			expect(lastUpdater).toBeInstanceOf(Function);
+			const [updatedSession] = lastUpdater([renamedSession]);
+			expect(updatedSession.aiTabs[0].name).toBe('Manual Name');
+
+			const missingTabSession = { ...session, aiTabs: [] };
+			const [unchangedSession] = lastUpdater([missingTabSession]);
+			expect(unchangedSession.aiTabs).toEqual([]);
+		});
+
+		it('leaves tab unnamed when generated naming returns null', async () => {
+			mockGenerateTabName.mockResolvedValue(null);
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Generate no name',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await flushNamingPromises();
+
+			const updates = applySessionUpdaters({
+				...session,
+				aiTabs: [{ ...newTab, isGeneratingName: true }],
+			});
+			expect(updates.some((updated) => updated.aiTabs[0].isGeneratingName === false)).toBe(true);
+			expect(updates.every((updated) => updated.aiTabs[0].name !== 'Generated Tab Name')).toBe(
+				true
+			);
+			const otherSessionUpdates = applySessionUpdaters(createMockSession({ id: 'other-session' }));
+			expect(otherSessionUpdates.every((updated) => updated.id === 'other-session')).toBe(true);
 		});
 
 		it('handles tab naming failure gracefully', async () => {
@@ -1791,6 +2806,14 @@ describe('useInputProcessing', () => {
 
 			// Tab naming was attempted
 			expect(mockGenerateTabName).toHaveBeenCalled();
+			await flushNamingPromises();
+			const updates = applySessionUpdaters({
+				...session,
+				aiTabs: [{ ...newTab, isGeneratingName: true }],
+			});
+			expect(updates.some((updated) => updated.aiTabs[0].isGeneratingName === false)).toBe(true);
+			const otherSessionUpdates = applySessionUpdaters(createMockSession({ id: 'other-session' }));
+			expect(otherSessionUpdates.every((updated) => updated.id === 'other-session')).toBe(true);
 		});
 	});
 

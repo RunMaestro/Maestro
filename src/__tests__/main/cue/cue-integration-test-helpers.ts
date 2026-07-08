@@ -21,12 +21,6 @@
  *   sharedDb))` — the lazy `getDb` getter accommodates vi.mock's hoisting,
  *   where the factory runs before any top-level `let sharedDb` has executed.
  *
- * - `canLoadBetterSqlite3()` — probe-instantiates a `:memory:` database so a
- *   `describe.skipIf(!canLoadBetterSqlite3())` block reflects the native
- *   binary's real availability. A plain `require('better-sqlite3')` returns
- *   true even when the prebuilt binary is ABI-mismatched (compiled for
- *   Electron's Node version, not vitest's); probing catches that.
- *
  * - `createOnCueRunSpy(defaultResponse?)` — a lightweight spy for the
  *   engine's `onCueRun` boundary callback, capturing a per-call summary
  *   (runId, sessionId, subscriptionName, prompt, event) so integration tests
@@ -489,31 +483,6 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		safePersistQueuedEvent: (record: InMemoryCueQueueRow) => getDb().safePersistQueuedEvent(record),
 		safeRemoveQueuedEvent: (id: string) => getDb().safeRemoveQueuedEvent(id),
 	};
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// canLoadBetterSqlite3 — lets Phase 15B add an optional smoke test against
-// the real native module when it happens to be available (local dev on the
-// same Node version as Electron). CI without a matching binary just skips.
-// ────────────────────────────────────────────────────────────────────────────
-
-export function canLoadBetterSqlite3(): boolean {
-	// We check this lazily because `import` would fail loudly at module-eval
-	// time if the binary is missing, which defeats the purpose of the
-	// conditional. Also: `require('better-sqlite3')` alone is NOT enough —
-	// the package resolves fine but `new Database()` may still throw
-	// NODE_MODULE_VERSION mismatch when the binary was compiled against
-	// Electron's ABI and we're running under plain Node. Instantiate against
-	// an in-memory DB to catch the real failure mode.
-	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		const Database = require('better-sqlite3');
-		const probe = new Database(':memory:');
-		probe.close();
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────

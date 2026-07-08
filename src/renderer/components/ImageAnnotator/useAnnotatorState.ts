@@ -95,9 +95,7 @@ export interface AnnotatorView {
 const INITIAL_VIEW: AnnotatorView = { x: 0, y: 0, scale: 1 };
 
 type HistoryEntry =
-	| { kind: 'stroke'; id: string }
-	| { kind: 'shape'; id: string }
-	| { kind: 'text'; id: string };
+	{ kind: 'stroke'; id: string } | { kind: 'shape'; id: string } | { kind: 'text'; id: string };
 
 export interface UseAnnotatorStateReturn {
 	strokes: Stroke[];

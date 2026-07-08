@@ -1,3 +1,4 @@
+import { Info, Wand2 } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../../../../../shared/types';
 import type { Theme } from '../../../../../types';
@@ -60,6 +61,31 @@ export function AgentSelectionHeader({
 					sshRemoteConfig={sshRemoteConfig}
 					onSshRemoteChange={onSshRemoteChange}
 				/>
+			</div>
+
+			<div
+				className="flex items-start gap-2.5 px-4 py-3 rounded-lg max-w-lg text-xs"
+				style={{
+					backgroundColor: `${theme.colors.accent}15`,
+					border: `1px solid ${theme.colors.accent}30`,
+				}}
+			>
+				<Info className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: theme.colors.accent }} />
+				<span style={{ color: theme.colors.textDim }}>
+					This wizard captures keyboard input until complete. For a lighter touch, skip this and use{' '}
+					<code
+						className="px-1 py-0.5 rounded text-[11px]"
+						style={{ backgroundColor: theme.colors.border }}
+					>
+						/wizard
+					</code>{' '}
+					or click the{' '}
+					<Wand2
+						className="inline w-3.5 h-3.5 align-text-bottom"
+						style={{ color: theme.colors.accent }}
+					/>{' '}
+					button in the Auto Run panel after creating an agent.
+				</span>
 			</div>
 		</div>
 	);

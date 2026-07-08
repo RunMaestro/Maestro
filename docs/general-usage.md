@@ -101,10 +101,11 @@ Share files directly as GitHub Gists from the File Preview:
 3. Use `Cmd+K` / `Ctrl+K` → "Publish Document as GitHub Gist"
 
 **Visibility options:**
-| Option | Description |
-|--------|-------------|
+
+| Option                       | Description                                                                |
+| ---------------------------- | -------------------------------------------------------------------------- |
 | **Publish Secret** (default) | Creates an unlisted gist - not searchable, only accessible via direct link |
-| **Publish Public** | Creates a public gist - visible on your profile and searchable |
+| **Publish Public**           | Creates a public gist - visible on your profile and searchable             |
 
 The confirmation modal focuses "Publish Secret" by default, so you can press `Enter` to quickly publish. Press `Esc` to cancel.
 
@@ -449,12 +450,13 @@ When you send your first message to a new tab, Maestro automatically generates a
 4. If you've already renamed the tab, automatic naming is skipped
 
 **Examples of generated tab names:**
-| Your message | Generated name |
-|--------------|----------------|
+
+| Your message                                     | Generated name          |
+| ------------------------------------------------ | ----------------------- |
 | "Help me implement user authentication with JWT" | JWT Auth Implementation |
-| "Fix the bug in the checkout flow" | Checkout Bug Fix |
-| "Add dark mode support to the app" | Dark Mode Support |
-| "Refactor the database queries" | Database Query Refactor |
+| "Fix the bug in the checkout flow"               | Checkout Bug Fix        |
+| "Add dark mode support to the app"               | Dark Mode Support       |
+| "Refactor the database queries"                  | Database Query Refactor |
 
 **Configuring automatic tab naming:**
 

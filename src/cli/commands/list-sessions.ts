@@ -128,6 +128,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(`Agent not found: ${agentIdArg}`));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const limit = options.limit ? parseInt(options.limit, 10) : 25;
@@ -141,6 +142,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(msg));
 			}
 			process.exit(1);
+			return;
 		}
 
 		const skip = options.skip ? parseInt(options.skip, 10) : 0;
@@ -154,6 +156,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				console.error(formatError(msg));
 			}
 			process.exit(1);
+			return;
 		}
 
 		// Use disk-based reader for Claude Code, tab-based reader for other agents
@@ -179,6 +182,17 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 					starred: s.starred,
 				})),
 			};
+		} else if (agent.toolType === 'terminal') {
+			const msg = `Agent type "${agent.toolType}" does not have provider sessions.`;
+			if (options.json) {
+				console.log(
+					JSON.stringify({ success: false, error: msg, code: 'AGENT_UNSUPPORTED' }, null, 2)
+				);
+			} else {
+				console.error(formatError(msg));
+			}
+			process.exit(1);
+			return;
 		} else {
 			result = listTabSessions(agentId, { limit, skip, search: options.search });
 		}
@@ -219,5 +233,6 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			console.error(formatError(`Failed to list sessions: ${message}`));
 		}
 		process.exit(1);
+		return;
 	}
 }

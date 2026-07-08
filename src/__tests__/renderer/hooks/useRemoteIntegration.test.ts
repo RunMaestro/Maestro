@@ -30,8 +30,7 @@ describe('useRemoteIntegration', () => {
 	const originalMaestro = { ...window.maestro };
 
 	let onRemoteCommandHandler:
-		| ((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void)
-		| undefined;
+		((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
@@ -39,18 +38,14 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
-		| undefined;
+		((sessionId: string, tabId: string, newName: string) => void) | undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
-		| undefined;
+		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
 	let onRemoteReorderTabHandler:
-		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
-		| undefined;
+		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
-		| ((sessionId: string, prompt: string, responseChannel: string) => void)
-		| undefined;
+		((sessionId: string, prompt: string, responseChannel: string) => void) | undefined;
 	let onRemoteNotifyToastHandler:
 		| ((params: {
 				title: string;
@@ -68,6 +63,7 @@ describe('useRemoteIntegration', () => {
 					| { kind: 'open-url'; url: string };
 		  }) => void)
 		| undefined;
+	const remoteHandlers: Record<string, (...args: any[]) => any> = {};
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -121,71 +117,89 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteNewAITabWithPromptResponse: vi.fn(),
-		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
+		onRemoteOpenFileTab: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.openFileTab = handler;
 			return () => {};
 		}),
-		onRemoteRefreshFileTree: vi.fn().mockImplementation(() => {
+		onRemoteRefreshFileTree: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.refreshFileTree = handler;
 			return () => {};
 		}),
-		onRemoteOpenBrowserTab: vi.fn().mockImplementation(() => {
+		onRemoteOpenBrowserTab: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.openBrowserTab = handler;
 			return () => {};
 		}),
 		sendRemoteOpenBrowserTabResponse: vi.fn(),
-		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
+		onRemoteOpenTerminalTab: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.openTerminalTab = handler;
 			return () => {};
 		}),
 		sendRemoteOpenTerminalTabResponse: vi.fn(),
-		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
+		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.refreshAutoRunDocs = handler;
 			return () => {};
 		}),
-		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
+		onRemoteConfigureAutoRun: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.configureAutoRun = handler;
 			return () => {};
 		}),
-		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
+		onRemoteSetAutoRunFolder: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.setAutoRunFolder = handler;
 			return () => {};
 		}),
 		sendRemoteNewTabResponse: vi.fn(),
 		sendRemoteConfigureAutoRunResponse: vi.fn(),
 		sendRemoteSetAutoRunFolderResponse: vi.fn(),
-		onRemoteGetAutoRunDocs: vi.fn().mockImplementation(() => {
+		onRemoteGetAutoRunDocs: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.getAutoRunDocs = handler;
 			return () => {};
 		}),
-		onRemoteGetAutoRunDocContent: vi.fn().mockImplementation(() => {
+		onRemoteGetAutoRunDocContent: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.getAutoRunDocContent = handler;
 			return () => {};
 		}),
-		onRemoteSaveAutoRunDoc: vi.fn().mockImplementation(() => {
+		onRemoteSaveAutoRunDoc: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.saveAutoRunDoc = handler;
 			return () => {};
 		}),
 		sendRemoteSaveAutoRunDocResponse: vi.fn(),
 		sendRemoteGetAutoRunDocsResponse: vi.fn(),
 		sendRemoteGetAutoRunDocContentResponse: vi.fn(),
-		onRemoteStopAutoRun: vi.fn().mockImplementation(() => {
+		onRemoteStopAutoRun: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.stopAutoRun = handler;
 			return () => {};
 		}),
-		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+		onRemoteSetSetting: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.setSetting = handler;
 			return () => {};
 		}),
 		sendRemoteSetSettingResponse: vi.fn(),
-		onRemoteCreateSession: vi.fn().mockImplementation(() => {
+		onRemoteCreateSession: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.createSession = handler;
 			return () => {};
 		}),
 		sendRemoteCreateSessionResponse: vi.fn(),
-		onRemoteCreateWorktreeSession: vi.fn().mockImplementation(() => {
+		onRemoteCreateWorktreeSession: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.createWorktreeSession = handler;
 			return () => {};
 		}),
 		sendRemoteCreateWorktreeSessionResponse: vi.fn(),
-		onRemoteDeleteSession: vi.fn().mockImplementation(() => {
+		onRemoteDeleteSession: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.deleteSession = handler;
 			return () => {};
 		}),
-		onRemoteRenameSession: vi.fn().mockImplementation(() => {
+		onRemoteRenameSession: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.renameSession = handler;
 			return () => {};
 		}),
 		sendRemoteRenameSessionResponse: vi.fn(),
-		onRemoteUpdateSessionCwd: vi.fn().mockImplementation(() => {
+		onRemoteUpdateSessionCwd: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.updateSessionCwd = handler;
 			return () => {};
 		}),
 		sendRemoteUpdateSessionCwdResponse: vi.fn(),
-		onRemoteUpdateSessionSsh: vi.fn().mockImplementation(() => {
+		onRemoteUpdateSessionSsh: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.updateSessionSsh = handler;
 			return () => {};
 		}),
 		sendRemoteUpdateSessionSshResponse: vi.fn(),
@@ -193,61 +207,91 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteUpdateSessionConfigResponse: vi.fn(),
-		onRemoteCreateGroup: vi.fn().mockImplementation(() => {
+		onRemoteCreateGroup: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.createGroup = handler;
 			return () => {};
 		}),
 		sendRemoteCreateGroupResponse: vi.fn(),
-		onRemoteRenameGroup: vi.fn().mockImplementation(() => {
+		onRemoteRenameGroup: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.renameGroup = handler;
 			return () => {};
 		}),
 		sendRemoteRenameGroupResponse: vi.fn(),
-		onRemoteDeleteGroup: vi.fn().mockImplementation(() => {
+		onRemoteDeleteGroup: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.deleteGroup = handler;
 			return () => {};
 		}),
-		onRemoteMoveSessionToGroup: vi.fn().mockImplementation(() => {
+		onRemoteMoveSessionToGroup: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.moveSessionToGroup = handler;
 			return () => {};
 		}),
 		sendRemoteMoveSessionToGroupResponse: vi.fn(),
-		onRemoteGetGitStatus: vi.fn().mockImplementation(() => {
+		onRemoteGetGitStatus: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.getGitStatus = handler;
 			return () => {};
 		}),
 		sendRemoteGetGitStatusResponse: vi.fn(),
-		onRemoteGetGitDiff: vi.fn().mockImplementation(() => {
+		onRemoteGetGitDiff: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.getGitDiff = handler;
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
-		onRemoteCreateGist: vi.fn().mockImplementation(() => {
+		onRemoteCreateGist: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.createGist = handler;
 			return () => {};
 		}),
 		sendRemoteCreateGistResponse: vi.fn(),
-		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
+		onRemoteTriggerCueSubscription: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.triggerCueSubscription = handler;
 			return () => {};
 		}),
 		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
-		// Auto Run parity additions — playbook CRUD + task reset + error recovery.
-		// Each hook subscribes but the tests here don't drive these handlers;
-		// a no-op unsubscribe keeps useRemoteIntegration setup from throwing.
-		onRemoteResetAutoRunDocTasks: vi.fn().mockImplementation(() => () => {}),
+		onRemoteResetAutoRunDocTasks: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.resetAutoRunDocTasks = handler;
+			return () => {};
+		}),
 		sendRemoteResetAutoRunDocTasksResponse: vi.fn(),
-		onRemoteResumeAutoRunError: vi.fn().mockImplementation(() => () => {}),
+		onRemoteResumeAutoRunError: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.resumeAutoRunError = handler;
+			return () => {};
+		}),
 		sendRemoteResumeAutoRunErrorResponse: vi.fn(),
-		onRemoteSkipAutoRunDocument: vi.fn().mockImplementation(() => () => {}),
+		onRemoteSkipAutoRunDocument: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.skipAutoRunDocument = handler;
+			return () => {};
+		}),
 		sendRemoteSkipAutoRunDocumentResponse: vi.fn(),
-		onRemoteAbortAutoRunError: vi.fn().mockImplementation(() => () => {}),
+		onRemoteAbortAutoRunError: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.abortAutoRunError = handler;
+			return () => {};
+		}),
 		sendRemoteAbortAutoRunErrorResponse: vi.fn(),
-		onRemoteListPlaybooks: vi.fn().mockImplementation(() => () => {}),
+		onRemoteListPlaybooks: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.listPlaybooks = handler;
+			return () => {};
+		}),
 		sendRemoteListPlaybooksResponse: vi.fn(),
-		onRemoteCreatePlaybook: vi.fn().mockImplementation(() => () => {}),
+		onRemoteCreatePlaybook: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.createPlaybook = handler;
+			return () => {};
+		}),
 		sendRemoteCreatePlaybookResponse: vi.fn(),
-		onRemoteUpdatePlaybook: vi.fn().mockImplementation(() => () => {}),
+		onRemoteUpdatePlaybook: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.updatePlaybook = handler;
+			return () => {};
+		}),
 		sendRemoteUpdatePlaybookResponse: vi.fn(),
-		onRemoteDeletePlaybook: vi.fn().mockImplementation(() => () => {}),
+		onRemoteDeletePlaybook: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.deletePlaybook = handler;
+			return () => {};
+		}),
 		sendRemoteDeletePlaybookResponse: vi.fn(),
 		onRemoteNotifyToast: vi.fn().mockImplementation((handler) => {
 			onRemoteNotifyToastHandler = handler;
 			return () => {};
 		}),
-		onRemoteNotifyCenterFlash: vi.fn().mockImplementation(() => {
+		onRemoteNotifyCenterFlash: vi.fn().mockImplementation((handler) => {
+			remoteHandlers.notifyCenterFlash = handler;
 			return () => {};
 		}),
 	};
@@ -284,6 +328,25 @@ describe('useRemoteIntegration', () => {
 		triggerSubscription: vi.fn().mockResolvedValue(true),
 	};
 
+	const mockSettings = {
+		...window.maestro.settings,
+		set: vi.fn().mockResolvedValue(undefined),
+	};
+
+	const mockGit = {
+		...window.maestro.git,
+		status: vi
+			.fn()
+			.mockResolvedValue({ stdout: ' M src/app.ts\nA  src/new.ts\nR  old.ts -> src/renamed.ts\n' }),
+		branch: vi.fn().mockResolvedValue({ stdout: 'feature/test\n' }),
+		info: vi.fn().mockResolvedValue({ ahead: 2, behind: 1 }),
+		diff: vi.fn().mockResolvedValue({
+			stdout:
+				'diff --git a/src/app.ts b/src/app.ts\n+changed\ndiff --git a/src/new.ts b/src/new.ts\n+new\n',
+		}),
+		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example/1' }),
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		onRemoteCommandHandler = undefined;
@@ -299,6 +362,9 @@ describe('useRemoteIntegration', () => {
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
+		for (const key of Object.keys(remoteHandlers)) {
+			delete remoteHandlers[key];
+		}
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
@@ -313,6 +379,8 @@ describe('useRemoteIntegration', () => {
 			agentSessions: mockAgentSessions as typeof window.maestro.agentSessions,
 			history: mockHistory as typeof window.maestro.history,
 			cue: mockCue as typeof window.maestro.cue,
+			settings: mockSettings as typeof window.maestro.settings,
+			git: mockGit as typeof window.maestro.git,
 		};
 	});
 
@@ -1008,6 +1076,469 @@ describe('useRemoteIntegration', () => {
 			// Label wins for display; sessionId still rides along for click-to-jump.
 			expect(toasts[0]?.project).toBe('Twitter Post');
 			expect(toasts[0]?.sessionId).toBe('session-1');
+		});
+	});
+
+	describe('remote event bridge handlers', () => {
+		it('dispatches DOM events with the full remote payload for App-level handlers', () => {
+			const deps = createDeps();
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			const terminalConfig = { cwd: '/repo', shell: '/bin/zsh', name: 'Logs' };
+			const autoRunConfig = { mode: 'plan', prompt: 'Review docs' };
+			const worktreeConfig = { branchName: 'feature/test', cwd: '/repo' };
+			const sshPatch = { enabled: true, host: 'example.test' };
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const cases = [
+				{
+					handler: 'openFileTab',
+					type: 'maestro:openFileTab',
+					invoke: () => remoteHandlers.openFileTab('session-1', '/repo/src/app.ts', true),
+					detail: { sessionId: 'session-1', filePath: '/repo/src/app.ts', switchToAgent: true },
+				},
+				{
+					handler: 'refreshFileTree',
+					type: 'maestro:refreshFileTree',
+					invoke: () => remoteHandlers.refreshFileTree('session-1'),
+					detail: { sessionId: 'session-1' },
+				},
+				{
+					handler: 'openBrowserTab',
+					type: 'maestro:openBrowserTab',
+					invoke: () =>
+						remoteHandlers.openBrowserTab('session-1', 'https://runmaestro.ai', 'chan-browser'),
+					detail: {
+						sessionId: 'session-1',
+						url: 'https://runmaestro.ai',
+						responseChannel: 'chan-browser',
+					},
+				},
+				{
+					handler: 'openTerminalTab',
+					type: 'maestro:openTerminalTab',
+					invoke: () =>
+						remoteHandlers.openTerminalTab('session-1', terminalConfig, 'chan-terminal'),
+					detail: {
+						sessionId: 'session-1',
+						config: terminalConfig,
+						responseChannel: 'chan-terminal',
+					},
+				},
+				{
+					handler: 'refreshAutoRunDocs',
+					type: 'maestro:refreshAutoRunDocs',
+					invoke: () => remoteHandlers.refreshAutoRunDocs('session-1'),
+					detail: { sessionId: 'session-1' },
+				},
+				{
+					handler: 'configureAutoRun',
+					type: 'maestro:configureAutoRun',
+					invoke: () => remoteHandlers.configureAutoRun('session-1', autoRunConfig, 'chan-config'),
+					detail: { sessionId: 'session-1', config: autoRunConfig, responseChannel: 'chan-config' },
+				},
+				{
+					handler: 'createWorktreeSession',
+					type: 'maestro:createWorktreeSession',
+					invoke: () =>
+						remoteHandlers.createWorktreeSession('parent-session', worktreeConfig, 'chan-worktree'),
+					detail: {
+						parentSessionId: 'parent-session',
+						config: worktreeConfig,
+						responseChannel: 'chan-worktree',
+					},
+				},
+				{
+					handler: 'setAutoRunFolder',
+					type: 'maestro:setAutoRunFolder',
+					invoke: () =>
+						remoteHandlers.setAutoRunFolder('session-1', '/repo/.maestro', 'chan-folder'),
+					detail: {
+						sessionId: 'session-1',
+						folderPath: '/repo/.maestro',
+						responseChannel: 'chan-folder',
+					},
+				},
+				{
+					handler: 'getAutoRunDocs',
+					type: 'maestro:getAutoRunDocs',
+					invoke: () => remoteHandlers.getAutoRunDocs('session-1', 'chan-docs'),
+					detail: { sessionId: 'session-1', responseChannel: 'chan-docs' },
+				},
+				{
+					handler: 'getAutoRunDocContent',
+					type: 'maestro:getAutoRunDocContent',
+					invoke: () =>
+						remoteHandlers.getAutoRunDocContent('session-1', 'game-plan.md', 'chan-content'),
+					detail: {
+						sessionId: 'session-1',
+						filename: 'game-plan.md',
+						responseChannel: 'chan-content',
+					},
+				},
+				{
+					handler: 'saveAutoRunDoc',
+					type: 'maestro:saveAutoRunDoc',
+					invoke: () =>
+						remoteHandlers.saveAutoRunDoc('session-1', 'game-plan.md', '# plan', 'chan-save'),
+					detail: {
+						sessionId: 'session-1',
+						filename: 'game-plan.md',
+						content: '# plan',
+						responseChannel: 'chan-save',
+					},
+				},
+				{
+					handler: 'stopAutoRun',
+					type: 'maestro:stopAutoRun',
+					invoke: () => remoteHandlers.stopAutoRun('session-1'),
+					detail: { sessionId: 'session-1' },
+				},
+				{
+					handler: 'resetAutoRunDocTasks',
+					type: 'maestro:resetAutoRunDocTasks',
+					invoke: () =>
+						remoteHandlers.resetAutoRunDocTasks('session-1', 'game-plan.md', 'chan-reset'),
+					detail: {
+						sessionId: 'session-1',
+						filename: 'game-plan.md',
+						responseChannel: 'chan-reset',
+					},
+				},
+				{
+					handler: 'resumeAutoRunError',
+					type: 'maestro:resumeAutoRunError',
+					invoke: () => remoteHandlers.resumeAutoRunError('session-1', 'chan-resume'),
+					detail: { sessionId: 'session-1', responseChannel: 'chan-resume' },
+				},
+				{
+					handler: 'skipAutoRunDocument',
+					type: 'maestro:skipAutoRunDocument',
+					invoke: () => remoteHandlers.skipAutoRunDocument('session-1', 'chan-skip'),
+					detail: { sessionId: 'session-1', responseChannel: 'chan-skip' },
+				},
+				{
+					handler: 'abortAutoRunError',
+					type: 'maestro:abortAutoRunError',
+					invoke: () => remoteHandlers.abortAutoRunError('session-1', 'chan-abort'),
+					detail: { sessionId: 'session-1', responseChannel: 'chan-abort' },
+				},
+				{
+					handler: 'listPlaybooks',
+					type: 'maestro:listPlaybooks',
+					invoke: () => remoteHandlers.listPlaybooks('session-1', 'chan-list'),
+					detail: { sessionId: 'session-1', responseChannel: 'chan-list' },
+				},
+				{
+					handler: 'createPlaybook',
+					type: 'maestro:createPlaybook',
+					invoke: () =>
+						remoteHandlers.createPlaybook('session-1', { name: 'Review' }, 'chan-create-playbook'),
+					detail: {
+						sessionId: 'session-1',
+						playbook: { name: 'Review' },
+						responseChannel: 'chan-create-playbook',
+					},
+				},
+				{
+					handler: 'updatePlaybook',
+					type: 'maestro:updatePlaybook',
+					invoke: () =>
+						remoteHandlers.updatePlaybook(
+							'session-1',
+							'playbook-1',
+							{ name: 'Updated' },
+							'chan-update-playbook'
+						),
+					detail: {
+						sessionId: 'session-1',
+						playbookId: 'playbook-1',
+						updates: { name: 'Updated' },
+						responseChannel: 'chan-update-playbook',
+					},
+				},
+				{
+					handler: 'deletePlaybook',
+					type: 'maestro:deletePlaybook',
+					invoke: () =>
+						remoteHandlers.deletePlaybook('session-1', 'playbook-1', 'chan-delete-playbook'),
+					detail: {
+						sessionId: 'session-1',
+						playbookId: 'playbook-1',
+						responseChannel: 'chan-delete-playbook',
+					},
+				},
+				{
+					handler: 'createSession',
+					type: 'maestro:remoteCreateSession',
+					invoke: () =>
+						remoteHandlers.createSession(
+							'New Agent',
+							'codex',
+							'/repo',
+							'group-1',
+							{ model: 'gpt' },
+							'chan-create'
+						),
+					detail: {
+						name: 'New Agent',
+						toolType: 'codex',
+						cwd: '/repo',
+						groupId: 'group-1',
+						config: { model: 'gpt' },
+						responseChannel: 'chan-create',
+					},
+				},
+				{
+					handler: 'deleteSession',
+					type: 'maestro:remoteDeleteSession',
+					invoke: () => remoteHandlers.deleteSession('session-1'),
+					detail: { sessionId: 'session-1' },
+				},
+				{
+					handler: 'renameSession',
+					type: 'maestro:remoteRenameSession',
+					invoke: () => remoteHandlers.renameSession('session-1', 'Renamed Agent', 'chan-rename'),
+					detail: {
+						sessionId: 'session-1',
+						newName: 'Renamed Agent',
+						responseChannel: 'chan-rename',
+					},
+				},
+				{
+					handler: 'updateSessionCwd',
+					type: 'maestro:remoteUpdateSessionCwd',
+					invoke: () => remoteHandlers.updateSessionCwd('session-1', '/repo/next', 'chan-cwd'),
+					detail: { sessionId: 'session-1', newCwd: '/repo/next', responseChannel: 'chan-cwd' },
+				},
+				{
+					handler: 'updateSessionSsh',
+					type: 'maestro:remoteUpdateSessionSsh',
+					invoke: () => remoteHandlers.updateSessionSsh('session-1', sshPatch, 'chan-ssh'),
+					detail: { sessionId: 'session-1', sshPatch, responseChannel: 'chan-ssh' },
+				},
+				{
+					handler: 'createGroup',
+					type: 'maestro:remoteCreateGroup',
+					invoke: () => remoteHandlers.createGroup('Backend', 'B', 'chan-group-create'),
+					detail: { name: 'Backend', emoji: 'B', responseChannel: 'chan-group-create' },
+				},
+				{
+					handler: 'renameGroup',
+					type: 'maestro:remoteRenameGroup',
+					invoke: () => remoteHandlers.renameGroup('group-1', 'Platform', 'chan-group-rename'),
+					detail: { groupId: 'group-1', name: 'Platform', responseChannel: 'chan-group-rename' },
+				},
+				{
+					handler: 'deleteGroup',
+					type: 'maestro:remoteDeleteGroup',
+					invoke: () => remoteHandlers.deleteGroup('group-1'),
+					detail: { groupId: 'group-1' },
+				},
+				{
+					handler: 'moveSessionToGroup',
+					type: 'maestro:remoteMoveSessionToGroup',
+					invoke: () => remoteHandlers.moveSessionToGroup('session-1', null, 'chan-move'),
+					detail: { sessionId: 'session-1', groupId: null, responseChannel: 'chan-move' },
+				},
+			];
+
+			for (const testCase of cases) {
+				dispatchEventSpy.mockClear();
+				act(() => {
+					testCase.invoke();
+				});
+				expect(remoteHandlers[testCase.handler]).toEqual(expect.any(Function));
+				expect(dispatchEventSpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: testCase.type,
+						detail: testCase.detail,
+					})
+				);
+			}
+
+			dispatchEventSpy.mockRestore();
+		});
+	});
+
+	describe('remote settings and git handlers', () => {
+		it('sets a setting and acknowledges success or failure', async () => {
+			const deps = createDeps();
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.setSetting('theme', 'dark', 'chan-setting-ok');
+			});
+
+			expect(mockSettings.set).toHaveBeenCalledWith('theme', 'dark');
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'chan-setting-ok',
+				true
+			);
+
+			mockSettings.set.mockRejectedValueOnce(new Error('settings unavailable'));
+
+			await act(async () => {
+				await remoteHandlers.setSetting('theme', 'light', 'chan-setting-fail');
+			});
+
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'chan-setting-fail',
+				false
+			);
+		});
+
+		it('returns parsed git status for the requested session cwd', async () => {
+			const session = createMockSession({ id: 'session-1', cwd: '/repo' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.getGitStatus('session-1', 'chan-git-status');
+			});
+
+			expect(mockGit.status).toHaveBeenCalledWith('/repo');
+			expect(mockGit.branch).toHaveBeenCalledWith('/repo');
+			expect(mockGit.info).toHaveBeenCalledWith('/repo');
+			expect(mockProcess.sendRemoteGetGitStatusResponse).toHaveBeenCalledWith('chan-git-status', {
+				branch: 'feature/test',
+				files: [
+					{ path: 'src/app.ts', status: 'M', staged: false },
+					{ path: 'src/new.ts', status: 'A', staged: true },
+					{ path: 'src/renamed.ts', status: 'R', staged: true },
+				],
+				ahead: 2,
+				behind: 1,
+			});
+		});
+
+		it('returns changed files from a git diff and falls back for missing sessions', async () => {
+			const session = createMockSession({ id: 'session-1', cwd: '/repo' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.getGitDiff('session-1', 'src/app.ts', 'chan-git-diff');
+			});
+
+			expect(mockGit.diff).toHaveBeenCalledWith('/repo', 'src/app.ts');
+			expect(mockProcess.sendRemoteGetGitDiffResponse).toHaveBeenCalledWith('chan-git-diff', {
+				diff: expect.stringContaining('diff --git a/src/app.ts b/src/app.ts'),
+				files: ['src/app.ts', 'src/new.ts'],
+			});
+
+			await act(async () => {
+				await remoteHandlers.getGitDiff('missing-session', undefined, 'chan-git-missing');
+			});
+
+			expect(mockProcess.sendRemoteGetGitDiffResponse).toHaveBeenCalledWith('chan-git-missing', {
+				diff: '',
+				files: [],
+			});
+		});
+	});
+
+	describe('remote Cue and gist handlers', () => {
+		it('forwards Cue subscription trigger results to the response channel', async () => {
+			const deps = createDeps();
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.triggerCueSubscription(
+					'Daily Check',
+					'Summarize',
+					'chan-cue',
+					'session-1'
+				);
+			});
+
+			expect(mockCue.triggerSubscription).toHaveBeenCalledWith(
+				'Daily Check',
+				'Summarize',
+				'session-1'
+			);
+			expect(mockProcess.sendRemoteTriggerCueSubscriptionResponse).toHaveBeenCalledWith(
+				'chan-cue',
+				true
+			);
+		});
+
+		it('publishes AI tab transcript content through the gist IPC handler', async () => {
+			const tab = createMockTab({
+				id: 'tab-1',
+				name: 'Planning',
+				logs: [
+					{ id: 'log-1', timestamp: 1, source: 'user', text: 'What should we test?' },
+					{ id: 'log-2', timestamp: 2, source: 'ai', text: 'Cover the remote bridge.' },
+				],
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'My Session!',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.createGist('session-1', 'Remote transcript', false, 'chan-gist');
+			});
+
+			expect(mockGit.createGist).toHaveBeenCalledWith(
+				'My_Session__context.md',
+				expect.stringContaining('# My Session!'),
+				'Remote transcript',
+				false
+			);
+			expect(mockGit.createGist).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.stringContaining('## Tab: Planning'),
+				expect.any(String),
+				expect.any(Boolean)
+			);
+			expect(mockGit.createGist).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.stringContaining('USER:\nWhat should we test?'),
+				expect.any(String),
+				expect.any(Boolean)
+			);
+			expect(mockGit.createGist).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.stringContaining('ASSISTANT:\nCover the remote bridge.'),
+				expect.any(String),
+				expect.any(Boolean)
+			);
+			expect(mockProcess.sendRemoteCreateGistResponse).toHaveBeenCalledWith('chan-gist', {
+				success: true,
+				gistUrl: 'https://gist.example/1',
+			});
+		});
+
+		it('reports a structured gist error when the target session has no transcript', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Empty Session',
+				aiTabs: [createMockTab({ logs: [] })],
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await remoteHandlers.createGist('session-1', 'Empty', true, 'chan-empty-gist');
+			});
+
+			expect(mockGit.createGist).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteCreateGistResponse).toHaveBeenCalledWith('chan-empty-gist', {
+				success: false,
+				error: 'Session has no conversation history to publish',
+			});
 		});
 	});
 

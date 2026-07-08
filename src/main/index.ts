@@ -216,9 +216,14 @@ const IMAGE_SCHEME = 'maestro-image';
 // Capture the production data path before any modification
 // Used for stores that should be shared between dev and prod (e.g., agent configs)
 const productionDataPath = app.getPath('userData');
+const explicitDataPath = process.env.MAESTRO_DATA_DIR?.trim();
 
 // Demo mode: use a separate data directory for fresh demos
-if (DEMO_MODE) {
+if (explicitDataPath) {
+	const resolvedDataPath = path.resolve(explicitDataPath);
+	app.setPath('userData', resolvedDataPath);
+	console.log(`[DATA DIR] Using explicit data directory: ${resolvedDataPath}`);
+} else if (DEMO_MODE) {
 	app.setPath('userData', DEMO_DATA_PATH);
 	console.log(`[DEMO MODE] Using data directory: ${DEMO_DATA_PATH}`);
 }
@@ -226,11 +231,11 @@ if (DEMO_MODE) {
 // Development mode: use a separate data directory to allow running alongside production
 // This prevents database lock conflicts (e.g., Service Worker storage)
 // Set USE_PROD_DATA=1 to use the production data directory instead (requires closing production app)
-if (isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
+if (isDevelopment && !explicitDataPath && !DEMO_MODE && !process.env.USE_PROD_DATA) {
 	const devDataPath = path.join(app.getPath('userData'), '..', 'maestro-dev');
 	app.setPath('userData', devDataPath);
 	console.log(`[DEV MODE] Using data directory: ${devDataPath}`);
-} else if (isDevelopment && process.env.USE_PROD_DATA) {
+} else if (isDevelopment && !explicitDataPath && process.env.USE_PROD_DATA) {
 	console.log(`[DEV MODE] Using production data directory: ${app.getPath('userData')}`);
 }
 

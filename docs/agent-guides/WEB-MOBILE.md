@@ -168,11 +168,7 @@ Manages WebSocket lifecycle:
 
 ```typescript
 type WebSocketState =
-	| 'disconnected'
-	| 'connecting'
-	| 'connected'
-	| 'authenticating'
-	| 'authenticated';
+	'disconnected' | 'connecting' | 'connected' | 'authenticating' | 'authenticated';
 ```
 
 The hook provides connection state, message sending, and event handlers. The primary auth path is the URL token (the `$SECURITY_TOKEN` segment), but the hook also exposes an explicit runtime handshake: `UseWebSocketReturn` includes `authenticate(token: string): void` and an `isAuthenticated: boolean` flag for clients that need to confirm auth state or re-authenticate over an existing connection. Typical usage: connect via URL token and rely on `isAuthenticated` to gate UI.

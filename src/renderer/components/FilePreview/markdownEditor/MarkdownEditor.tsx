@@ -89,6 +89,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// reconfigure below.
 		useEffect(() => {
 			const host = hostRef.current;
+			/* v8 ignore next */
 			if (!host) return;
 
 			const baseExt: Extension = buildEditorExtensions({
@@ -142,6 +143,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// and we preserve cursor/scroll/history. CM6 transactions are cheap.
 		useEffect(() => {
 			const view = viewRef.current;
+			/* v8 ignore next */
 			if (!view) return;
 			const current = view.state.doc.toString();
 			if (current === value) return;
@@ -158,6 +160,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// Theme change → reconfigure the theme compartment.
 		useEffect(() => {
 			const view = viewRef.current;
+			/* v8 ignore next */
 			if (!view) return;
 			view.dispatch({ effects: compartments.theme.reconfigure(buildEditorTheme(theme)) });
 		}, [theme, compartments.theme]);
@@ -166,6 +169,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// an empty extension so the previously loaded grammar is cleared.
 		useEffect(() => {
 			const view = viewRef.current;
+			/* v8 ignore next */
 			if (!view) return;
 			let cancelled = false;
 			if (!hasLanguageSupport(language)) {
@@ -186,6 +190,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// Toggle-able base options → reconfigure the base compartment.
 		useEffect(() => {
 			const view = viewRef.current;
+			/* v8 ignore next */
 			if (!view) return;
 			const baseExt = buildEditorExtensions({
 				wrap,

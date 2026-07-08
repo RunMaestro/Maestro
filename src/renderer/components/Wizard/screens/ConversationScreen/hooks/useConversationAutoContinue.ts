@@ -55,7 +55,10 @@ export function useConversationAutoContinue({
 			!isSendingRef.current &&
 			handleSendMessageRef.current
 		) {
-			handleSendMessageRef.current();
+			const sendTimer = setTimeout(() => {
+				handleSendMessageRef.current?.();
+			}, 0);
+			return () => clearTimeout(sendTimer);
 		}
 	}, [inputValue, isConversationLoading, isSendingRef, handleSendMessageRef]);
 

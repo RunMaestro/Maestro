@@ -135,6 +135,18 @@ export function selectIsAnyMerging(s: OperationStoreState): boolean {
 	return false;
 }
 
+/** True if any long-running operation is currently active. */
+export function selectIsAnyOperationInProgress(s: OperationStoreState): boolean {
+	return (
+		selectIsAnySummarizing(s) ||
+		selectIsAnyMerging(s) ||
+		s.globalMergeInProgress ||
+		s.globalTransferInProgress ||
+		s.transferState === 'grooming' ||
+		s.transferState === 'creating'
+	);
+}
+
 // ============================================================================
 // Initial state
 // ============================================================================
@@ -252,3 +264,28 @@ export const useOperationStore = create<OperationStore>()((set) => ({
 			globalTransferInProgress: false,
 		}),
 }));
+
+/** Read the current operation store state outside React. */
+export function getOperationState(): OperationStore {
+	return useOperationStore.getState();
+}
+
+/** Read stable operation store actions outside React. */
+export function getOperationActions(): OperationStoreActions {
+	const state = useOperationStore.getState();
+	return {
+		setSummarizeTabState: state.setSummarizeTabState,
+		updateSummarizeTabState: state.updateSummarizeTabState,
+		clearSummarizeTabState: state.clearSummarizeTabState,
+		clearAllSummarizeStates: state.clearAllSummarizeStates,
+		setMergeTabState: state.setMergeTabState,
+		updateMergeTabState: state.updateMergeTabState,
+		clearMergeTabState: state.clearMergeTabState,
+		clearAllMergeStates: state.clearAllMergeStates,
+		setGlobalMergeInProgress: state.setGlobalMergeInProgress,
+		setTransferState: state.setTransferState,
+		resetTransferState: state.resetTransferState,
+		setGlobalTransferInProgress: state.setGlobalTransferInProgress,
+		resetAll: state.resetAll,
+	};
+}

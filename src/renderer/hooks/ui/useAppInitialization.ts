@@ -1,5 +1,5 @@
 /**
- * useAppInitialization — extracted from App.tsx (Phase 2G)
+ * useAppInitialization - extracted from App.tsx (Phase 2G)
  *
  * Owns one-time startup effects that run on mount or when settings load.
  * Reads from Zustand stores via selectors for React-driven effects.
@@ -89,6 +89,10 @@ export function useAppInitialization(): AppInitializationReturn {
 	// We wait for settings, sessions, AND the initial file tree load before
 	// dismissing, so the user doesn't see "Loading files..." or an unresponsive UI.
 	useEffect(() => {
+		let firstFrame: number | undefined;
+		let secondFrame: number | undefined;
+		let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
 		if (settingsLoaded && !sessionsLoaded) {
 			window.__updateSplash?.(60, 'Warming up the ensemble...');
 		}
@@ -103,15 +107,24 @@ export function useAppInitialization(): AppInitializationReturn {
 			// Wait for React to render the UI with loaded data before hiding splash.
 			// Double rAF ensures at least one full paint cycle has completed,
 			// then a short delay lets the file tree and heavy components settle.
-			requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
+			firstFrame = requestAnimationFrame(() => {
+				if (typeof window === 'undefined') return;
+				secondFrame = requestAnimationFrame(() => {
+					if (typeof window === 'undefined') return;
 					window.__updateSplash?.(95, 'Maestro takes the podium...');
-					setTimeout(() => {
+					hideTimer = setTimeout(() => {
+						if (typeof window === 'undefined') return;
 						window.__hideSplash?.();
 					}, 150);
 				});
 			});
 		}
+
+		return () => {
+			if (firstFrame !== undefined) cancelAnimationFrame(firstFrame);
+			if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+			if (hideTimer !== undefined) clearTimeout(hideTimer);
+		};
 	}, [settingsLoaded, sessionsLoaded, initialFileTreeReady]);
 
 	// --- GitHub CLI availability check ---

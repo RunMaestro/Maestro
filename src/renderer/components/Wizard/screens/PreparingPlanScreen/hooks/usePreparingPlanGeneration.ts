@@ -152,7 +152,7 @@ export function usePreparingPlanGeneration({
 						directoryPath: state.directoryPath,
 					},
 				});
-				throw error;
+				return;
 			}
 
 			captureMessage('Preparing plan generation failed with a non-Error value', {
@@ -164,7 +164,6 @@ export function usePreparingPlanGeneration({
 					error: String(error),
 				},
 			});
-			throw new Error(errorMessage);
 		}
 	}, [
 		addCreatedFile,

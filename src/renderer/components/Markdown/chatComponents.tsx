@@ -147,8 +147,7 @@ export function createChatMarkdownComponents(
 			// Use LocalImage component to handle file:// URLs via IPC.
 			// Extract width from data-maestro-width attribute if present.
 			const widthStr = (props as Record<string, unknown>)['data-maestro-width'] as
-				| string
-				| undefined;
+				string | undefined;
 			const width = widthStr ? parseInt(widthStr, 10) : undefined;
 
 			return (

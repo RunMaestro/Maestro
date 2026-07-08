@@ -206,7 +206,7 @@ describe('list sessions command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('should list empty sessions for non-Claude agent type', () => {
+	it('should exit with unsupported error for terminal agent type', () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(
 			mockAgent({ id: 'agent-term-1', toolType: 'terminal' })
@@ -223,9 +223,10 @@ describe('list sessions command', () => {
 
 		listSessions('agent-term', {});
 
-		// Non-Claude agents use tab-based listing; no tabs = empty output
-		expect(consoleSpy).toHaveBeenCalled();
-		expect(processExitSpy).not.toHaveBeenCalled();
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Agent type "terminal" does not have provider sessions.')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
 	it('should list empty sessions for non-Claude agent types in JSON mode', () => {

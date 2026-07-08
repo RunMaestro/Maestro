@@ -76,12 +76,7 @@ export type UsageDashboardViewMode =
 	| 'cue'
 	| 'shortcuts';
 export type SettingsTab =
-	| 'general'
-	| 'shortcuts'
-	| 'theme'
-	| 'notifications'
-	| 'aicommands'
-	| 'prompts';
+	'general' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands' | 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';

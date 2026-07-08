@@ -139,6 +139,7 @@ export function AgentErrorModal({
 		() => recoveryActions.find((a) => a.primary) || recoveryActions[0],
 		[recoveryActions]
 	);
+	const primaryActionId = primaryAction?.id;
 
 	// Check if we have JSON details to show
 	const hasJsonDetails = error.parsedJson !== undefined;
@@ -233,10 +234,10 @@ export function AgentErrorModal({
 			{/* Recovery Actions - only show if there are actions */}
 			{recoveryActions.length > 0 && (
 				<div className="mt-6 space-y-2">
-					{recoveryActions.map((action, index) => (
+					{recoveryActions.map((action) => (
 						<button
 							key={action.id}
-							ref={action.primary || (!primaryAction && index === 0) ? primaryButtonRef : undefined}
+							ref={action.id === primaryActionId ? primaryButtonRef : undefined}
 							type="button"
 							onClick={action.onClick}
 							className={`w-full flex items-center gap-3 px-4 py-3 rounded border transition-colors text-left ${

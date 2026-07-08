@@ -64,14 +64,7 @@ import {
 	markTabRunningQueuedItem,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
-import type {
-	Session,
-	AITab,
-	ClosedTab,
-	ClosedTabEntry,
-	FilePreviewTab,
-	QueuedItem,
-} from '../../../renderer/types';
+import type { ClosedTab, QueuedItem } from '../../../renderer/types';
 import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 
@@ -2532,6 +2525,100 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeFileTabId).toBeNull();
 		});
 
+		it('reopens browser tab from unified history with a safe URL and fresh webContents binding', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const closedBrowserTab = createMockBrowserTab({
+				id: 'browser-closed',
+				url: '',
+				title: '',
+				webContentsId: 42,
+			});
+			const closedEntry = {
+				type: 'browser' as const,
+				tab: closedBrowserTab,
+				unifiedIndex: 1,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				browserTabs: [],
+				activeBrowserTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabType).toBe('browser');
+			expect(result!.wasDuplicate).toBe(false);
+			expect(result!.tabId).toBe('mock-generated-id');
+			expect(result!.session.browserTabs).toHaveLength(1);
+			expect(result!.session.browserTabs![0]).toMatchObject({
+				id: 'mock-generated-id',
+				url: 'about:blank',
+				title: 'New Tab',
+				webContentsId: undefined,
+			});
+			expect(result!.session.activeBrowserTabId).toBe('mock-generated-id');
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeTerminalTabId).toBeNull();
+			expect(result!.session.inputMode).toBe('ai');
+			expect(result!.session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'browser', id: 'mock-generated-id' },
+			]);
+			expect(result!.session.unifiedClosedTabHistory).toHaveLength(0);
+		});
+
+		it('reopens terminal tab from unified history as a fresh terminal tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const closedTerminalTab = {
+				id: 'term-closed',
+				name: 'Build Shell',
+				shellType: 'zsh' as const,
+				pid: 123,
+				cwd: '/repo',
+				createdAt: 1,
+				state: 'idle' as const,
+			};
+			const closedEntry = {
+				type: 'terminal' as const,
+				tab: closedTerminalTab,
+				unifiedIndex: 0,
+				closedAt: Date.now(),
+			};
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				terminalTabs: [],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [closedEntry],
+			});
+
+			const result = reopenUnifiedClosedTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabType).toBe('terminal');
+			expect(result!.wasDuplicate).toBe(false);
+			expect(result!.session.terminalTabs).toHaveLength(1);
+			expect(result!.session.terminalTabs![0]).toMatchObject({
+				name: 'Build Shell',
+				shellType: 'zsh',
+				cwd: '/repo',
+				state: 'idle',
+			});
+			expect(result!.session.activeTerminalTabId).toBe(result!.tabId);
+			expect(result!.session.inputMode).toBe('terminal');
+			expect(result!.session.unifiedTabOrder[0]).toEqual({
+				type: 'terminal',
+				id: result!.tabId,
+			});
+			expect(result!.session.unifiedClosedTabHistory).toHaveLength(0);
+		});
+
 		it('switches to existing file tab when duplicate found', () => {
 			const existingFileTab = createMockFileTab({ id: 'file-existing', path: '/test/same.ts' });
 			const closedFileTab = createMockFileTab({ id: 'file-closed', path: '/test/same.ts' });
@@ -4243,6 +4330,89 @@ describe('tabHelpers', () => {
 			expect(result?.session.browserTabs).toHaveLength(0);
 			expect(result?.session.activeBrowserTabId).toBeNull();
 			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		it('falls back from an active browser tab to a previous file tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				filePreviewTabs: [fileTab],
+				browserTabs: [browserTab as any],
+				activeBrowserTabId: 'browser-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: aiTab.id },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = closeBrowserTab(session, 'browser-1');
+
+			expect(result?.session.activeBrowserTabId).toBeNull();
+			expect(result?.session.activeFileTabId).toBe('file-1');
+			expect(result?.session.activeTerminalTabId).toBeNull();
+			expect(result?.session.inputMode).toBe('ai');
+		});
+
+		it('falls back from an active browser tab to a previous browser tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab1 = createMockBrowserTab({ id: 'browser-1' });
+			const browserTab2 = createMockBrowserTab({ id: 'browser-2' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				browserTabs: [browserTab1 as any, browserTab2 as any],
+				activeBrowserTabId: 'browser-2',
+				unifiedTabOrder: [
+					{ type: 'ai', id: aiTab.id },
+					{ type: 'browser', id: 'browser-1' },
+					{ type: 'browser', id: 'browser-2' },
+				],
+			});
+
+			const result = closeBrowserTab(session, 'browser-2');
+
+			expect(result?.session.browserTabs?.map((tab) => tab.id)).toEqual(['browser-1']);
+			expect(result?.session.activeBrowserTabId).toBe('browser-1');
+			expect(result?.session.activeFileTabId).toBeNull();
+			expect(result?.session.activeTerminalTabId).toBeNull();
+			expect(result?.session.inputMode).toBe('ai');
+		});
+
+		it('falls back from an active browser tab to a previous terminal tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const terminalTab = {
+				id: 'term-1',
+				name: null,
+				shellType: 'zsh' as const,
+				pid: 0,
+				cwd: '',
+				createdAt: 0,
+				state: 'idle' as const,
+			};
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				terminalTabs: [terminalTab],
+				browserTabs: [browserTab as any],
+				activeBrowserTabId: 'browser-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: aiTab.id },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = closeBrowserTab(session, 'browser-1');
+
+			expect(result?.session.activeBrowserTabId).toBeNull();
+			expect(result?.session.activeFileTabId).toBeNull();
+			expect(result?.session.activeTerminalTabId).toBe('term-1');
+			expect(result?.session.inputMode).toBe('terminal');
 		});
 
 		it('clears an active browser tab when selecting an AI tab', () => {

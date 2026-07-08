@@ -145,7 +145,8 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 			}
 
 			// Doc: route external links through the caller's callback.
-			if (onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
+			const isExternalHref = /^(?:https?:\/\/|mailto:|file:\/\/)/.test(href);
+			if (onExternalLinkClick && isExternalHref) {
 				onExternalLinkClick(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				return;
 			}
@@ -155,7 +156,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				behavior.relativeAsFile &&
 				onFileClick &&
 				!href.startsWith('mailto:') &&
-				!/^https?:\/\//.test(href)
+				!isExternalHref
 			) {
 				onFileClick(href, { openInNewTab });
 			}

@@ -11,9 +11,120 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+const TINY_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADggGOSHzRgAAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+function getAutoRunImageInput(window: Page) {
+	return window.locator('input[type="file"][accept="image/*"]').last();
+}
+
+async function emitAutoRunFileChanged(
+	electronApp: ElectronApplication,
+	folderPath: string,
+	filename: string
+) {
+	await electronApp.evaluate(
+		({ BrowserWindow }, payload: { folderPath: string; filename: string }) => {
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (!win.isDestroyed()) {
+					win.webContents.send('autorun:fileChanged', {
+						...payload,
+						eventType: 'change',
+					});
+				}
+			}
+		},
+		{ folderPath, filename }
+	);
+}
+
+function createEditingWorkbenchSession(
+	projectDir: string,
+	autoRunFolder: string,
+	selectedFile = 'ImageDoc'
+) {
+	const now = Date.now();
+	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
+	const sessionId = `session-editing-${idSuffix}`;
+	const aiTabId = `ai-tab-editing-${idSuffix}`;
+	const selectedPath = path.join(autoRunFolder, `${selectedFile}.md`);
+
+	return {
+		id: sessionId,
+		name: 'Auto Run Editing E2E',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt: now,
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: null,
+				name: 'Main',
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		autoRunFolderPath: autoRunFolder,
+		autoRunSelectedFile: selectedFile,
+		autoRunContent: fs.readFileSync(selectedPath, 'utf-8'),
+		autoRunContentVersion: 1,
+		autoRunMode: 'preview',
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		autoRunCursorPosition: 0,
+	};
+}
+
+async function launchEditingDocumentWorkbench(
+	projectDir: string,
+	autoRunFolder: string,
+	selectedFile: string,
+	content: string
+) {
+	fs.writeFileSync(path.join(autoRunFolder, `${selectedFile}.md`), content, 'utf-8');
+
+	return helpers.launchAppWithState({
+		homeDir: projectDir,
+		sessions: [createEditingWorkbenchSession(projectDir, autoRunFolder, selectedFile)],
+	});
+}
 
 /**
  * Test suite for Auto Run editing E2E tests
@@ -33,7 +144,7 @@ test.describe('Auto Run Editing', () => {
 	test.beforeEach(async () => {
 		// Create a temporary project directory
 		testProjectDir = path.join(os.tmpdir(), `maestro-test-project-${Date.now()}`);
-		testAutoRunFolder = path.join(testProjectDir, '.maestro/playbooks');
+		testAutoRunFolder = path.join(testProjectDir, 'Auto Run Docs');
 		fs.mkdirSync(testAutoRunFolder, { recursive: true });
 
 		// Create test markdown files
@@ -57,6 +168,28 @@ Some sample content for testing.
 
 		fs.writeFileSync(path.join(testAutoRunFolder, 'Empty Document.md'), '');
 	});
+
+	async function launchImageAttachmentWorkbench() {
+		const selectedFile = 'ImageDoc';
+		const imageFilename = `${selectedFile}-seed.png`;
+		const imagesDir = path.join(testAutoRunFolder, 'images');
+		fs.mkdirSync(imagesDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(testAutoRunFolder, `${selectedFile}.md`),
+			`# Image Attachment Coverage
+
+![Seed attachment](images/${imageFilename})
+
+- [ ] Verify seeded attachment rendering
+`
+		);
+		fs.writeFileSync(path.join(imagesDir, imageFilename), TINY_PNG);
+
+		return helpers.launchAppWithState({
+			homeDir: testProjectDir,
+			sessions: [createEditingWorkbenchSession(testProjectDir, testAutoRunFolder, selectedFile)],
+		});
+	}
 
 	test.afterEach(async () => {
 		// Clean up the temporary directories
@@ -297,56 +430,125 @@ Some sample content for testing.
 	});
 
 	test.describe('Image Paste and Attachment', () => {
-		test.skip('should show image upload button when in edit mode', async ({ window }) => {
-			// Test requires configured Auto Run folder
-			const autoRunTab = window.locator('text=Auto Run');
-			if ((await autoRunTab.count()) > 0) {
-				await autoRunTab.first().click();
+		test('should keep the manual image upload button hidden in edit mode', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
 
-				const editButton = window.locator('button').filter({ hasText: 'Edit' });
-				if ((await editButton.count()) > 0 && (await editButton.isVisible())) {
-					await editButton.first().click();
-
-					// Look for image upload button (has Image icon)
-					const imageButton = window
-						.locator('button[title*="image"]')
-						.or(window.locator('button[title*="Image"]'));
-					await expect(imageButton).toBeVisible();
-				}
+				await expect(launched.window.getByTitle('Add image (or paste from clipboard)')).toHaveCount(
+					0
+				);
+				await expect(getAutoRunImageInput(launched.window)).toBeHidden();
+			} finally {
+				await launched.cleanup();
 			}
 		});
 
-		test.skip('should handle image paste from clipboard', async ({ window }) => {
-			// This test requires clipboard mocking with image data
-			// Skip until clipboard mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock clipboard with image data
-			// 4. Press Cmd+V
-			// 5. Verify image is inserted into content
-			// 6. Verify image file is saved to images/ folder
+		test('should handle image paste from clipboard', async () => {
+			const selectedFile = 'PasteDoc';
+			const launched = await launchEditingDocumentWorkbench(
+				testProjectDir,
+				testAutoRunFolder,
+				selectedFile,
+				'# Paste Image Coverage\n'
+			);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				const editor = launched.window.getByPlaceholder(/Capture notes/);
+				await expect(editor).toBeEditable();
+
+				await editor.evaluate((textarea, pngBase64) => {
+					const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0));
+					const file = new File([bytes], 'pasted.png', { type: 'image/png' });
+					const dataTransfer = new DataTransfer();
+					dataTransfer.items.add(file);
+					(textarea as HTMLTextAreaElement).setSelectionRange(
+						(textarea as HTMLTextAreaElement).value.length,
+						(textarea as HTMLTextAreaElement).value.length
+					);
+					textarea.dispatchEvent(
+						new ClipboardEvent('paste', {
+							clipboardData: dataTransfer,
+							bubbles: true,
+							cancelable: true,
+						})
+					);
+				}, TINY_PNG.toString('base64'));
+
+				await expect.poll(() => fs.existsSync(path.join(testAutoRunFolder, 'images'))).toBe(true);
+				await expect
+					.poll(() => fs.readdirSync(path.join(testAutoRunFolder, 'images')))
+					.toHaveLength(1);
+				await expect(editor).toHaveValue(/!\[PasteDoc-\d+\.png\]\(images\/PasteDoc-\d+\.png\)/);
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should handle image file upload via button', async ({ window }) => {
-			// This test requires file input mocking
-			// Skip until file input mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock file input selection
-			// 4. Click upload button
-			// 5. Verify image is inserted into content
+		test('should handle image file upload through the hidden input', async () => {
+			const selectedFile = 'UploadDoc';
+			const uploadPath = path.join(testProjectDir, 'upload.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			const launched = await launchEditingDocumentWorkbench(
+				testProjectDir,
+				testAutoRunFolder,
+				selectedFile,
+				'# Upload Image Coverage\n'
+			);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect.poll(() => fs.existsSync(path.join(testAutoRunFolder, 'images'))).toBe(true);
+				await expect
+					.poll(() => fs.readdirSync(path.join(testAutoRunFolder, 'images')))
+					.toHaveLength(1);
+				await expect(launched.window.getByPlaceholder(/Capture notes/)).toHaveValue(
+					/!\[UploadDoc-\d+\.png\]\(images\/UploadDoc-\d+\.png\)/
+				);
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should display uploaded images in attachments section', async ({ window }) => {
-			// This test verifies the attachments preview area
-			// Requires an existing image in the Auto Run folder
+		test('should display uploaded images in attachments section', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+
+				await expect(launched.window.getByText('Attached Images (1)')).toBeVisible();
+				await expect(
+					launched.window.getByRole('img', { name: 'images/ImageDoc-seed.png' })
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should open lightbox when clicking image in preview', async ({ window }) => {
-			// This test verifies lightbox functionality
-			// Requires an image to be present in the document
+		test('should open lightbox when clicking image in preview', async () => {
+			const launched = await launchImageAttachmentWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				const previewImage = launched.window.getByRole('img', { name: 'Seed attachment' });
+				await expect(previewImage).toBeVisible();
+				await launched.window.getByTitle('Click to enlarge: ImageDoc-seed.png').click();
+
+				await expect(
+					launched.window.getByRole('img', { name: 'images/ImageDoc-seed.png' })
+				).toBeVisible();
+				await expect(launched.window.getByTitle('Delete image (Delete key)')).toBeVisible();
+				await expect(
+					launched.window.getByTitle('Copy markdown reference (e.g., ![alt](path))')
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -666,10 +868,9 @@ Some sample content for testing.
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
-				// Look for expand button (Maximize2 icon)
-				const expandButton = window
-					.locator('button[title*="Expand"]')
-					.or(window.locator('button[title*="full screen"]'));
+				const expandButton = window.getByRole('button', {
+					name: /expand to full screen/i,
+				});
 				if ((await expandButton.count()) > 0) {
 					await expandButton.first().click();
 					// Modal should open - look for modal container or specific elements
@@ -693,9 +894,9 @@ Some sample content for testing.
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
-				const expandButton = window
-					.locator('button[title*="Expand"]')
-					.or(window.locator('button[title*="full screen"]'));
+				const expandButton = window.getByRole('button', {
+					name: /expand to full screen/i,
+				});
 				if ((await expandButton.count()) > 0) {
 					await expandButton.first().click();
 					// Wait for modal
@@ -714,28 +915,173 @@ Some sample content for testing.
  * These tests verify end-to-end workflows
  */
 test.describe('Auto Run Editing Integration', () => {
-	test.skip('should persist edits across session restarts', async ({ window }) => {
-		// This test requires:
-		// 1. Creating a session with Auto Run
-		// 2. Making edits
-		// 3. Saving
-		// 4. Restarting app
-		// 5. Verifying edits persist
+	let integrationAutoRunFolder: string;
+	let integrationProjectDir: string;
+
+	test.beforeEach(async () => {
+		integrationProjectDir = path.join(os.tmpdir(), `maestro-test-project-${Date.now()}`);
+		integrationAutoRunFolder = path.join(integrationProjectDir, 'Auto Run Docs');
+		fs.mkdirSync(integrationAutoRunFolder, { recursive: true });
 	});
 
-	test.skip('should handle external file changes', async ({ window }) => {
-		// This test requires:
-		// 1. Opening Auto Run with a document
-		// 2. Modifying the file externally
-		// 3. Verifying contentVersion increments
-		// 4. Verifying content updates
+	test.afterEach(async () => {
+		try {
+			fs.rmSync(integrationProjectDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
 	});
 
-	test.skip('should handle concurrent editing from multiple sources', async ({ window }) => {
-		// This test would verify behavior when:
-		// - Main panel and expanded modal both show same document
-		// - External process modifies file
-		// - Both views should update correctly
+	test('should persist edits across session restarts', async () => {
+		const selectedFile = 'PersistenceDoc';
+		const initialContent = `# Persistence Coverage
+
+- [ ] Persist this task
+`;
+		const editedContent = `# Persistence Coverage
+
+Edited content survived relaunch.
+
+- [x] Persist this task
+`;
+		const filePath = path.join(integrationAutoRunFolder, `${selectedFile}.md`);
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+		let relaunched: Awaited<ReturnType<typeof helpers.launchAppFromExistingState>> | undefined;
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const textarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(textarea).toHaveValue(initialContent);
+
+			await textarea.fill(editedContent);
+			await launched.window.getByTitle(/Save changes/).click();
+			await expect.poll(() => fs.readFileSync(filePath, 'utf-8')).toBe(editedContent);
+
+			await launched.electronApp.close();
+			relaunched = await helpers.launchAppFromExistingState({
+				homeDir: launched.homeDir,
+				userDataPath: launched.userDataPath,
+			});
+
+			await helpers.openRightPanelTab(relaunched.window, 'Auto Run');
+			await relaunched.window.getByTitle('Edit document').click();
+			await expect(
+				relaunched.window.locator('[data-tour="autorun-panel"] textarea').first()
+			).toHaveValue(editedContent);
+		} finally {
+			if (relaunched) {
+				await relaunched.cleanup();
+			} else {
+				await launched.cleanup();
+			}
+		}
+	});
+
+	test('should handle external file changes', async () => {
+		const selectedFile = 'ExternalDoc';
+		const initialContent = `# External Coverage
+
+- [ ] Original task
+`;
+		const updatedContent = `# External Coverage
+
+External editor wrote this content.
+
+- [x] Original task
+- [ ] New external task
+`;
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const textarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(textarea).toHaveValue(initialContent);
+
+			fs.writeFileSync(
+				path.join(integrationAutoRunFolder, `${selectedFile}.md`),
+				updatedContent,
+				'utf-8'
+			);
+			await emitAutoRunFileChanged(launched.electronApp, integrationAutoRunFolder, selectedFile);
+
+			await expect(textarea).toHaveValue(updatedContent, { timeout: 10000 });
+			await expect(launched.window.getByText(/1\s+of\s+2\s+tasks/i)).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
+	});
+
+	test('should handle concurrent editing from multiple sources', async () => {
+		const selectedFile = 'ConcurrentDoc';
+		const initialContent = `# Concurrent Coverage
+
+- [ ] Original task
+`;
+		const panelDraft = `# Concurrent Coverage
+
+Panel draft content.
+
+- [ ] Original task
+`;
+		const modalDraft = `# Concurrent Coverage
+
+Expanded modal draft content.
+
+- [ ] Original task
+`;
+		const externalContent = `# Concurrent Coverage
+
+External update replaced the shared draft.
+
+- [x] Original task
+- [ ] External task
+`;
+		const launched = await launchEditingDocumentWorkbench(
+			integrationProjectDir,
+			integrationAutoRunFolder,
+			selectedFile,
+			initialContent
+		);
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await launched.window.getByTitle('Edit document').click();
+			const panelTextarea = launched.window.locator('[data-tour="autorun-panel"] textarea').first();
+			await expect(panelTextarea).toHaveValue(initialContent);
+
+			await panelTextarea.fill(panelDraft);
+			await launched.window.getByTitle(/Expand to full screen/).click();
+
+			const modalTextarea = launched.window.locator('div.fixed.inset-0 textarea').first();
+			await expect(modalTextarea).toHaveValue(panelDraft);
+
+			await modalTextarea.fill(modalDraft);
+			await expect(panelTextarea).toHaveValue(modalDraft);
+
+			fs.writeFileSync(
+				path.join(integrationAutoRunFolder, `${selectedFile}.md`),
+				externalContent,
+				'utf-8'
+			);
+			await emitAutoRunFileChanged(launched.electronApp, integrationAutoRunFolder, selectedFile);
+
+			await expect(modalTextarea).toHaveValue(externalContent, { timeout: 10000 });
+			await expect(panelTextarea).toHaveValue(externalContent);
+		} finally {
+			await launched.cleanup();
+		}
 	});
 });
 

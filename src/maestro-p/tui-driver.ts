@@ -151,13 +151,7 @@ export const READY_MAX_TAPS = 3;
 export const READY_TIMEOUT_MS = 8000;
 
 export type TuiDriverEvent =
-	| 'ready'
-	| 'ready-timeout'
-	| 'limit-hit'
-	| 'line'
-	| 'exit'
-	| 'trust-accepted'
-	| 'bypass-accepted';
+	'ready' | 'ready-timeout' | 'limit-hit' | 'line' | 'exit' | 'trust-accepted' | 'bypass-accepted';
 
 export class TuiDriver extends EventEmitter {
 	private readonly options: TuiDriverOptions;

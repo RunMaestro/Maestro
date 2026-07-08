@@ -227,15 +227,13 @@ export function PromptComposerModal({
 
 		// Agent chat mode: show file suggestions only
 		const fileSuggestions = getFileSuggestions(mentionFilter);
-		return fileSuggestions.map(
-			(s): MentionItem => ({
-				type: 'file',
-				fileType: s.type,
-				displayText: s.displayText,
-				fullPath: s.fullPath,
-				source: s.source,
-			})
-		);
+		return fileSuggestions.map((s): MentionItem => ({
+			type: 'file',
+			fileType: s.type,
+			displayText: s.displayText,
+			fullPath: s.fullPath,
+			source: s.source,
+		}));
 	}, [mentionFilter, getFileSuggestions, hasAgentMentions, agentMentionItems]);
 
 	// Scroll selected mention into view

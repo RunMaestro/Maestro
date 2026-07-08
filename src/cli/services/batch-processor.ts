@@ -125,7 +125,7 @@ export async function* runPlaybook(
 		}
 
 		// Calculate initial total tasks and detect any pre-existing halt markers
-		// in the same pass. We refuse to start if a stale marker is found — the
+		// in the same pass. We refuse to start if a stale marker is found - the
 		// previous run halted intentionally and the user must resolve it before
 		// re-running. Folding both checks into one scan keeps the read count
 		// per-document stable for callers/mocks.
@@ -475,7 +475,7 @@ export async function* runPlaybook(
 					// embedded in turn 1 for agents lacking native support) so
 					// the agent sees the same Maestro context as a desktop Auto
 					// Run task. Synopsis spawn below intentionally omits this
-					// — it's a resume into the same agent that already has the
+					// - it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
 					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 						customModel: session.customModel,
@@ -519,8 +519,11 @@ export async function* runPlaybook(
 					// Generate synopsis
 					let shortSummary = `[${docEntry.filename}] Task completed`;
 					let fullSynopsis = shortSummary;
+					let synopsisUsageStats: UsageStats | undefined;
+					const synopsisSkipped = result.success && !!result.agentSessionId && skipSynopsis;
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
+						const synopsisStartTime = Date.now();
 						// Request synopsis from the agent
 						const synopsisResult = await spawnAgent(
 							session.toolType,
@@ -539,12 +542,42 @@ export async function* runPlaybook(
 								maestroPPath: session.maestroPPath,
 							}
 						);
+						const synopsisElapsedMs = Date.now() - synopsisStartTime;
+						synopsisUsageStats = synopsisResult.usageStats;
 
 						if (synopsisResult.success && synopsisResult.response) {
 							const parsed = parseSynopsis(synopsisResult.response);
 							shortSummary = parsed.shortSummary;
 							fullSynopsis = parsed.fullSynopsis;
 						}
+
+						if (synopsisUsageStats) {
+							loopTotalInputTokens += synopsisUsageStats.inputTokens || 0;
+							loopTotalOutputTokens += synopsisUsageStats.outputTokens || 0;
+							loopTotalCost += synopsisUsageStats.totalCostUsd || 0;
+							totalCost += synopsisUsageStats.totalCostUsd || 0;
+							totalInputTokens += synopsisUsageStats.inputTokens || 0;
+							totalOutputTokens += synopsisUsageStats.outputTokens || 0;
+						}
+
+						if (debug) {
+							const usageSuffix = synopsisUsageStats
+								? ` (${synopsisUsageStats.inputTokens || 0} input tokens)`
+								: '';
+							yield {
+								type: 'debug',
+								timestamp: Date.now(),
+								category: 'synopsis',
+								message: `Synopsis generated in ${formatElapsedTime(synopsisElapsedMs)}${usageSuffix}`,
+							};
+						}
+					} else if (synopsisSkipped && debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'synopsis',
+							message: 'Synopsis skipped (--no-synopsis)',
+						};
 					} else if (!result.success) {
 						shortSummary = `[${docEntry.filename}] Task failed`;
 						fullSynopsis = result.error || shortSummary;
@@ -561,11 +594,35 @@ export async function* runPlaybook(
 						fullResponse: fullSynopsis,
 						elapsedMs,
 						usageStats: result.usageStats,
+						synopsisUsageStats,
+						synopsisSkipped: synopsisSkipped || undefined,
 						agentSessionId: result.agentSessionId,
 					};
 
 					// Add history entry if enabled
 					if (writeHistory) {
+						const historyUsageStats: UsageStats | undefined =
+							result.usageStats || synopsisUsageStats
+								? {
+										inputTokens:
+											(result.usageStats?.inputTokens || 0) +
+											(synopsisUsageStats?.inputTokens || 0),
+										outputTokens:
+											(result.usageStats?.outputTokens || 0) +
+											(synopsisUsageStats?.outputTokens || 0),
+										cacheReadInputTokens:
+											(result.usageStats?.cacheReadInputTokens || 0) +
+											(synopsisUsageStats?.cacheReadInputTokens || 0),
+										cacheCreationInputTokens:
+											(result.usageStats?.cacheCreationInputTokens || 0) +
+											(synopsisUsageStats?.cacheCreationInputTokens || 0),
+										totalCostUsd:
+											(result.usageStats?.totalCostUsd || 0) +
+											(synopsisUsageStats?.totalCostUsd || 0),
+										contextWindow:
+											result.usageStats?.contextWindow || synopsisUsageStats?.contextWindow || 0,
+									}
+								: undefined;
 						const historyEntry: HistoryEntry = {
 							id: generateUUID(),
 							type: 'AUTO',
@@ -576,7 +633,7 @@ export async function* runPlaybook(
 							projectPath: session.cwd,
 							sessionId: session.id,
 							success: result.success,
-							usageStats: result.usageStats,
+							usageStats: historyUsageStats,
 							elapsedTimeMs: elapsedMs,
 						};
 						addHistoryEntry(historyEntry);
@@ -589,7 +646,7 @@ export async function* runPlaybook(
 						}
 					}
 
-					// Halt marker detected — agent has signaled early exit. Stop the
+					// Halt marker detected - agent has signaled early exit. Stop the
 					// entire playbook now: no further tasks in this document, no
 					// further documents, no further loop iterations.
 					if (haltMarker.halted) {

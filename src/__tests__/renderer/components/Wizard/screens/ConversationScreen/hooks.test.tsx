@@ -205,6 +205,7 @@ describe('ConversationScreen hooks', () => {
 			expect(setInputValue).toHaveBeenCalledWith(AUTO_CONTINUE_MESSAGE);
 
 			rerender({ inputValue: AUTO_CONTINUE_MESSAGE });
+			act(() => vi.advanceTimersByTime(0));
 			expect(handleSend).toHaveBeenCalledTimes(1);
 		});
 

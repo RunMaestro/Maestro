@@ -268,8 +268,7 @@ export class CueEngine {
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
 				const forwarded = result.event.payload.forwardedOutputs as
-					| Record<string, string>
-					| undefined;
+					Record<string, string> | undefined;
 				this.notifyAgentCompleted(sessionId, {
 					sessionName: result.sessionName,
 					status: result.status,

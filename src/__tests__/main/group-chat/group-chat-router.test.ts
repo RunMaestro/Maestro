@@ -78,7 +78,15 @@ import {
 	routeAgentResponse,
 	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
+	setModeratorResponseTimeout,
+	clearModeratorResponseTimeout,
+	clearPendingParticipants,
+	clearActiveParticipantTaskSession,
+	markParticipantResponded,
 	setGetSessionsCallback,
+	setGetCustomEnvVarsCallback,
+	setGetAgentConfigCallback,
+	setGetModeratorSettingsCallback,
 	setSshStore,
 	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
@@ -90,6 +98,8 @@ import {
 import {
 	addParticipant,
 	clearAllParticipantSessionsGlobal,
+	setActiveParticipantSession,
+	isParticipantActive,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	createGroupChat,
@@ -155,6 +165,8 @@ describe('group-chat-router', () => {
 		// Clean up any created chats
 		for (const id of createdChats) {
 			try {
+				clearPendingParticipants(id);
+				clearModeratorResponseTimeout(id);
 				await deleteGroupChat(id);
 			} catch {
 				// Ignore errors
@@ -175,7 +187,16 @@ describe('group-chat-router', () => {
 
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.useRealTimers();
+		setGetSessionsCallback(() => []);
+		setGetCustomEnvVarsCallback(() => undefined);
+		setGetAgentConfigCallback(() => undefined);
+		setGetModeratorSettingsCallback(() => ({ conductorProfile: '' }));
 		groupChatEmitters.emitMessage = undefined;
+		groupChatEmitters.emitStateChange = undefined;
+		groupChatEmitters.emitParticipantState = undefined;
+		groupChatEmitters.emitAutoRunBatchComplete = undefined;
+		groupChatEmitters.emitParticipantsChanged = undefined;
 	});
 
 	// Helper to track created chats for cleanup
@@ -967,6 +988,229 @@ describe('group-chat-router', () => {
 
 			expect(mockCaptureException).not.toHaveBeenCalled();
 			expect((await loadGroupChat(chat.id))?.participants).toEqual([]);
+		});
+
+		it('auto-adds user-mentioned sessions with callback config and emits participant changes', async () => {
+			const chat = await createTestChatWithModerator('Auto Add Callback Test');
+			const customEnvCallback = vi.fn().mockReturnValue({ FEATURE_FLAG: 'enabled' });
+			const agentConfigCallback = vi.fn().mockReturnValue({ model: 'test-model' });
+			groupChatEmitters.emitParticipantsChanged = vi.fn();
+			setGetCustomEnvVarsCallback(customEnvCallback);
+			setGetAgentConfigCallback(agentConfigCallback);
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+					customArgs: '--fast',
+					customEnvVars: { SESSION_FLAG: 'true' },
+					customModel: 'session-model',
+				},
+			]);
+
+			await routeUserMessage(
+				chat.id,
+				'@Client can you join this group chat?',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(customEnvCallback).toHaveBeenCalledWith('claude-code');
+			expect(agentConfigCallback).toHaveBeenCalledWith('claude-code');
+			expect(groupChatEmitters.emitParticipantsChanged).toHaveBeenCalledWith(
+				chat.id,
+				expect.arrayContaining([
+					expect.objectContaining({
+						name: 'Client',
+						agentId: 'claude-code',
+					}),
+				])
+			);
+		});
+
+		it('does not auto-add a user-mentioned session that is already a participant', async () => {
+			const chat = await createTestChatWithModerator('Auto Add Existing Participant Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			groupChatEmitters.emitParticipantsChanged = vi.fn();
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeUserMessage(
+				chat.id,
+				'@Client is already in this chat',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(
+				updatedChat?.participants.filter((participant) => participant.name === 'Client')
+			).toHaveLength(1);
+			expect(groupChatEmitters.emitParticipantsChanged).not.toHaveBeenCalled();
+		});
+
+		it('includes conductor profile callback content in moderator prompts', async () => {
+			const chat = await createTestChatWithModerator('Moderator Settings Callback Test');
+			setGetModeratorSettingsCallback(() => ({
+				conductorProfile: 'Use concise synthesis for this group.',
+			}));
+
+			await routeUserMessage(chat.id, 'Summarize the plan', mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: expect.stringContaining('Use concise synthesis for this group.'),
+				})
+			);
+		});
+	});
+
+	// ===========================================================================
+	// Router lifecycle helper cleanup
+	// ===========================================================================
+	describe('timeout and pending participant helpers', () => {
+		it('emits idle state when the moderator response timeout expires', () => {
+			vi.useFakeTimers();
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			groupChatEmitters.emitMessage = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			try {
+				setModeratorResponseTimeout('timeout-chat');
+				vi.runOnlyPendingTimers();
+
+				expect(groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+					'timeout-chat',
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('Moderator did not respond'),
+					})
+				);
+				expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith('timeout-chat', 'idle');
+			} finally {
+				clearModeratorResponseTimeout('timeout-chat');
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('cancels moderator response timeout before it emits', () => {
+			vi.useFakeTimers();
+			groupChatEmitters.emitMessage = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			setModeratorResponseTimeout('cancelled-timeout-chat');
+			clearModeratorResponseTimeout('cancelled-timeout-chat');
+			vi.runOnlyPendingTimers();
+
+			expect(groupChatEmitters.emitMessage).not.toHaveBeenCalled();
+			expect(groupChatEmitters.emitStateChange).not.toHaveBeenCalled();
+		});
+
+		it('tracks pending participants until the last response is marked complete', async () => {
+			const chat = await createTestChatWithModerator('Pending Participant Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Backend', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client and @Backend please review this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(false);
+			expect(markParticipantResponded(chat.id, 'Backend')).toBe(true);
+			expect(markParticipantResponded(chat.id, 'Backend')).toBe(false);
+		});
+
+		it('clearPendingParticipants removes outstanding response bookkeeping', async () => {
+			const chat = await createTestChatWithModerator('Clear Pending Participant Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please review this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			clearPendingParticipants(chat.id);
+
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(false);
+		});
+
+		it('times out a pending participant and starts moderator synthesis', async () => {
+			const chat = await createTestChatWithModerator('Participant Timeout Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			groupChatEmitters.emitMessage = vi.fn();
+			groupChatEmitters.emitParticipantState = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			vi.useFakeTimers();
+			try {
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please review this before synthesis',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				mockProcessManager.spawn.mockClear();
+
+				await vi.runOnlyPendingTimersAsync();
+				vi.useRealTimers();
+
+				expect(groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+					chat.id,
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('@Client did not respond'),
+					})
+				);
+				await vi.waitFor(() =>
+					expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+						chat.id,
+						'Client',
+						'idle'
+					)
+				);
+				await vi.waitFor(() =>
+					expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+						expect.objectContaining({
+							sessionId: expect.stringContaining(`group-chat-${chat.id}-moderator-`),
+							readOnlyMode: true,
+						})
+					)
+				);
+
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some(
+						(message) => message.from === 'Client' && message.content.includes('[Timed out')
+					)
+				).toBe(true);
+			} finally {
+				clearPendingParticipants(chat.id);
+				clearModeratorResponseTimeout(chat.id);
+				warnSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
+		it('clears active participant task sessions through the router helper', () => {
+			setActiveParticipantSession('task-chat', 'Client', 'participant-session-1');
+			expect(isParticipantActive('task-chat', 'Client')).toBe(true);
+
+			clearActiveParticipantTaskSession('task-chat', 'Client');
+
+			expect(isParticipantActive('task-chat', 'Client')).toBe(false);
 		});
 	});
 

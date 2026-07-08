@@ -202,13 +202,14 @@ By default, Maestro only notifies you about stable releases. If you want to try 
 - The Update dialog will show all available pre-release versions
 
 **Pre-release version types:**
-| Suffix | Description |
-|--------|-------------|
-| `-alpha` | Early development, may be unstable |
-| `-beta` | Feature-complete but still testing |
-| `-rc` | Release candidate, nearly ready for stable |
-| `-dev` | Development builds |
-| `-canary` | Cutting-edge nightly builds |
+
+| Suffix    | Description                                |
+| --------- | ------------------------------------------ |
+| `-alpha`  | Early development, may be unstable         |
+| `-beta`   | Feature-complete but still testing         |
+| `-rc`     | Release candidate, nearly ready for stable |
+| `-dev`    | Development builds                         |
+| `-canary` | Cutting-edge nightly builds                |
 
 **Reverting to stable:** Toggle the setting off and download the latest stable release from GitHub. Pre-releases won't auto-downgrade to stable versions.
 

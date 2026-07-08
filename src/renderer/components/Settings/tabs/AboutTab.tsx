@@ -15,6 +15,9 @@ export interface AboutTabProps {
 }
 
 export function AboutTab({ theme }: AboutTabProps) {
+	const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown';
+	const commitHash = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : '';
+
 	return (
 		<div
 			className="flex flex-col items-center justify-center text-center min-h-full"
@@ -35,11 +38,11 @@ export function AboutTab({ theme }: AboutTabProps) {
 
 			{/* Version */}
 			<div className="mt-10 text-3xl font-bold font-mono" style={{ color: theme.colors.textMain }}>
-				v{__APP_VERSION__}
+				v{appVersion}
 			</div>
-			{__COMMIT_HASH__ && (
+			{commitHash && (
 				<div className="mt-1 text-xs font-mono" style={{ color: theme.colors.textDim }}>
-					{__COMMIT_HASH__}
+					{commitHash}
 				</div>
 			)}
 

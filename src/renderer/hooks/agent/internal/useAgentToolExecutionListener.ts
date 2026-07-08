@@ -57,8 +57,7 @@ export function useAgentToolExecutionListener(): void {
 						if (!thinkingLogsRecorded(targetTab.showThinking)) return s;
 
 						const newState = toolEvent.state as
-							| NonNullable<LogEntry['metadata']>['toolState']
-							| undefined;
+							NonNullable<LogEntry['metadata']>['toolState'] | undefined;
 
 						// Tag tool entries with `renderStyle: 'text-stream'` when the
 						// session's resolved Claude mode is interactive so the TUI/API

@@ -4,10 +4,10 @@
  * Tab DATA (aiTabs, filePreviewTabs, unifiedTabOrder, etc.) lives inside Session
  * objects in sessionStore. This store provides:
  *
- * 1. Tab operation actions — wrap tabHelpers.ts pure functions + sessionStore mutations,
+ * 1. Tab operation actions - wrap tabHelpers.ts pure functions + sessionStore mutations,
  *    replacing ~43 callbacks currently threaded through App.tsx props
- * 2. Tab-specific UI state — gist content/URLs (the only tab state still in App.tsx)
- * 3. Selectors — derived tab state (activeTab, activeFileTab, unifiedTabs)
+ * 2. Tab-specific UI state - gist content/URLs (the only tab state still in App.tsx)
+ * 3. Selectors - derived tab state (activeTab, activeFileTab, unifiedTabs)
  *
  * Why tab data stays in sessionStore:
  * - Tab arrays are deeply embedded in the Session type (200+ call sites)
@@ -56,7 +56,7 @@ import {
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore, selectActiveSession } from './sessionStore';
+import { useSessionStore, selectActiveSession, type SessionStore } from './sessionStore';
 import { logger } from '../utils/logger';
 
 /**
@@ -65,12 +65,7 @@ import { logger } from '../utils/logger';
  * covers the X button, middle-click, overlay menu, and close-others/left/right.
  */
 export type TerminalCloseReason =
-	| 'user-action'
-	| 'pty-exit'
-	| 'spawn-failure'
-	| 'close-others'
-	| 'close-left'
-	| 'close-right';
+	'user-action' | 'pty-exit' | 'spawn-failure' | 'close-others' | 'close-left' | 'close-right';
 
 // ============================================================================
 // Store Types
@@ -667,3 +662,69 @@ export const useTabStore = create<TabStore>()((set) => ({
 	clearFileTabPendingScrollToLine: (tabId) =>
 		updateFileTab(tabId, { pendingScrollToLine: undefined }),
 }));
+
+type UnifiedTabSelectorEntry =
+	{ type: 'ai'; id: string; tab: AITab } | { type: 'file'; id: string; tab: FilePreviewTab };
+
+function getActiveSessionFromState(state: SessionStore): Session | undefined {
+	return selectActiveSession(state) ?? undefined;
+}
+
+export const selectActiveTab = (state: SessionStore): AITab | undefined => {
+	const session = getActiveSessionFromState(state);
+	return session?.aiTabs.find((tab) => tab.id === session.activeTabId);
+};
+
+export const selectActiveFileTab = (state: SessionStore): FilePreviewTab | undefined => {
+	const session = getActiveSessionFromState(state);
+	return session?.filePreviewTabs.find((tab) => tab.id === session.activeFileTabId);
+};
+
+export const selectAllTabs = (state: SessionStore): AITab[] =>
+	getActiveSessionFromState(state)?.aiTabs ?? [];
+
+export const selectAllFileTabs = (state: SessionStore): FilePreviewTab[] =>
+	getActiveSessionFromState(state)?.filePreviewTabs ?? [];
+
+export const selectUnifiedTabs = (state: SessionStore): UnifiedTabSelectorEntry[] => {
+	const session = getActiveSessionFromState(state);
+	if (!session) return [];
+
+	return (session.unifiedTabOrder ?? []).flatMap((ref): UnifiedTabSelectorEntry[] => {
+		if (ref.type === 'ai') {
+			const tab = session.aiTabs.find((item) => item.id === ref.id);
+			return tab ? [{ type: 'ai' as const, id: ref.id, tab }] : [];
+		}
+
+		const tab = session.filePreviewTabs.find((item) => item.id === ref.id);
+		return tab ? [{ type: 'file' as const, id: ref.id, tab }] : [];
+	});
+};
+
+export const selectTabById =
+	(tabId: string) =>
+	(state: SessionStore): AITab | undefined =>
+		getActiveSessionFromState(state)?.aiTabs.find((tab) => tab.id === tabId);
+
+export const selectFileTabById =
+	(tabId: string) =>
+	(state: SessionStore): FilePreviewTab | undefined =>
+		getActiveSessionFromState(state)?.filePreviewTabs.find((tab) => tab.id === tabId);
+
+export const selectTabCount = (state: SessionStore): number =>
+	getActiveSessionFromState(state)?.aiTabs.length ?? 0;
+
+export function getTabState(): TabStoreState {
+	const { tabGistContent, fileGistUrls, pendingTerminalBufferSend } = useTabStore.getState();
+	return { tabGistContent, fileGistUrls, pendingTerminalBufferSend };
+}
+
+export function getTabActions(): TabStoreActions {
+	const {
+		tabGistContent: _tabGistContent,
+		fileGistUrls: _fileGistUrls,
+		pendingTerminalBufferSend: _pendingTerminalBufferSend,
+		...actions
+	} = useTabStore.getState();
+	return actions;
+}

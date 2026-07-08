@@ -13,7 +13,7 @@
  * @module useLongPressMenu
  */
 
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 
 /** Default duration in ms to trigger long-press for quick actions menu */
 const DEFAULT_LONG_PRESS_DURATION = 500;
@@ -21,7 +21,9 @@ const DEFAULT_LONG_PRESS_DURATION = 500;
 /**
  * Trigger haptic feedback using the Vibration API
  */
-function triggerHapticFeedback(pattern: 'light' | 'medium' | 'strong' | number = 'medium'): void {
+export function triggerHapticFeedback(
+	pattern: 'light' | 'medium' | 'strong' | number = 'medium'
+): void {
 	if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
 		const duration =
 			pattern === 'light' ? 10 : pattern === 'medium' ? 25 : pattern === 'strong' ? 50 : pattern;
@@ -54,12 +56,20 @@ export interface UseLongPressMenuOptions {
 export interface UseLongPressMenuReturn {
 	/** Ref for the send button element */
 	sendButtonRef: React.RefObject<HTMLButtonElement>;
+	/** Whether the quick-action menu is open */
+	isMenuOpen: boolean;
+	/** Anchor point for the quick-action menu */
+	menuAnchor: { x: number; y: number } | null;
 	/** Handler for touch start event */
 	handleTouchStart: (e: React.TouchEvent<HTMLButtonElement>) => void;
 	/** Handler for touch end event */
 	handleTouchEnd: (e: React.TouchEvent<HTMLButtonElement>) => void;
 	/** Handler for touch move event */
 	handleTouchMove: () => void;
+	/** Handle a quick-action selection */
+	handleQuickAction: (action: 'switch_mode') => void;
+	/** Close the quick-action menu */
+	closeMenu: () => void;
 }
 
 /**
@@ -68,13 +78,17 @@ export interface UseLongPressMenuReturn {
  * On long-press, opens the command palette via the onOpenCommandPalette callback.
  */
 export function useLongPressMenu({
+	inputMode,
 	longPressDuration = DEFAULT_LONG_PRESS_DURATION,
 	disabled = false,
 	value = '',
+	onModeToggle,
 	onOpenCommandPalette,
 }: UseLongPressMenuOptions): UseLongPressMenuReturn {
 	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const sendButtonRef = useRef<HTMLButtonElement>(null);
+	const [isMenuOpen, setIsMenuOpen] = useState(false);
+	const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
 
 	const clearLongPressTimer = useCallback(() => {
 		if (longPressTimerRef.current) {
@@ -86,8 +100,17 @@ export function useLongPressMenu({
 	const handleTouchStart = useCallback(
 		(e: React.TouchEvent<HTMLButtonElement>) => {
 			clearLongPressTimer();
+			if (disabled || !value.trim()) return;
 
 			longPressTimerRef.current = setTimeout(() => {
+				const button = sendButtonRef.current;
+				if (!button) {
+					longPressTimerRef.current = null;
+					return;
+				}
+				const rect = button.getBoundingClientRect();
+				setMenuAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+				setIsMenuOpen(true);
 				triggerHapticFeedback('medium');
 				onOpenCommandPalette?.();
 				longPressTimerRef.current = null;
@@ -113,6 +136,20 @@ export function useLongPressMenu({
 		clearLongPressTimer();
 	}, [clearLongPressTimer]);
 
+	const closeMenu = useCallback(() => {
+		setIsMenuOpen(false);
+		setMenuAnchor(null);
+	}, []);
+
+	const handleQuickAction = useCallback(
+		(action: 'switch_mode') => {
+			if (action !== 'switch_mode') return;
+			onModeToggle?.(inputMode === 'ai' ? 'terminal' : 'ai');
+			closeMenu();
+		},
+		[closeMenu, inputMode, onModeToggle]
+	);
+
 	// Cleanup timers on unmount
 	useEffect(() => {
 		return () => {
@@ -124,9 +161,13 @@ export function useLongPressMenu({
 
 	return {
 		sendButtonRef,
+		isMenuOpen,
+		menuAnchor,
 		handleTouchStart,
 		handleTouchEnd,
 		handleTouchMove,
+		handleQuickAction,
+		closeMenu,
 	};
 }
 

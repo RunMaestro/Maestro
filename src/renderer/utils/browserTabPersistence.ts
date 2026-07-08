@@ -6,8 +6,7 @@ export const DEFAULT_BROWSER_TAB_URL = 'about:blank';
 export const DEFAULT_BROWSER_TAB_TITLE = 'New Tab';
 
 export type BrowserTabNavigationTarget =
-	| { kind: 'url'; url: string }
-	| { kind: 'error'; message: string };
+	{ kind: 'url'; url: string } | { kind: 'error'; message: string };
 
 function sanitizeBrowserPartitionKey(sessionId: string): string {
 	const normalized = sessionId.trim().replace(/[^a-zA-Z0-9_-]+/g, '-');

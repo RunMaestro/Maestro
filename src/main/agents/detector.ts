@@ -62,8 +62,7 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 		}
 		const data = (await response.json()) as Record<string, unknown>;
 		const copilotProvider = data?.['github-copilot'] as
-			| { models?: Record<string, unknown> }
-			| undefined;
+			{ models?: Record<string, unknown> } | undefined;
 		const models = copilotProvider?.models;
 		if (models && typeof models === 'object') {
 			return Object.keys(models).sort();

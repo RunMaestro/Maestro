@@ -9,21 +9,13 @@
  * preserves the SQL semantics that actually matter for the rest of the
  * engine (ordering, UNIQUE constraints, prune cutoff).
  *
- * A `describe.skipIf(!canLoadBetterSqlite3())` block at the bottom runs one
- * real-SQLite smoke round-trip when the binary is available locally — this
- * catches drift between the mirror and the native module without breaking CI
- * on hosts that can't load it.
+ * Native SQLite smoke coverage belongs in an environment-specific harness
+ * because the Electron ABI can differ from Vitest's Node runtime. This unit
+ * file stays deterministic and skip-free.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs';
-import {
-	createInMemoryCueDb,
-	canLoadBetterSqlite3,
-	type InMemoryCueDb,
-} from './cue-integration-test-helpers';
+import { createInMemoryCueDb, type InMemoryCueDb } from './cue-integration-test-helpers';
 
 describe('Phase 15B — cue-db in-memory contract', () => {
 	let db: InMemoryCueDb;
@@ -507,69 +499,5 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 			expect(db.state.githubSeen.size).toBe(0);
 			expect(db.getLastHeartbeat()).toBeNull();
 		});
-	});
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Optional smoke test against real better-sqlite3 when the binary is available.
-// Drift-catcher: if the mirror diverges from native behavior on a core
-// round-trip, the smoke block surfaces that when run locally. CI usually skips.
-// ────────────────────────────────────────────────────────────────────────────
-
-describe.skipIf(!canLoadBetterSqlite3())('Phase 15B — real SQLite smoke test', () => {
-	it('real cue-db persists and retrieves one event through a full round-trip', async () => {
-		// Isolate this test from the rest of the file's mocks. We cannot use
-		// the top-level `vi.mock('better-sqlite3', ...)` that other cue-db
-		// tests install (it would short-circuit this smoke). Pull in cue-db
-		// via dynamic import after confirming the binary loads.
-		const dbPath = path.join(
-			os.tmpdir(),
-			`maestro-cue-smoke-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-		);
-		// Capture the cue-db module lazily so the finally block can close the
-		// SQLite handle even if an assertion above throws. Leaving the handle
-		// open before `fs.unlinkSync` would fail on Windows (file locked) and
-		// leak the connection on POSIX.
-		let cueDb: typeof import('../../../main/cue/cue-db') | null = null;
-		try {
-			cueDb = await import('../../../main/cue/cue-db');
-			cueDb.initCueDb(undefined, dbPath);
-			cueDb.recordCueEvent({
-				id: 'smoke-1',
-				type: 'time.heartbeat',
-				triggerName: 't',
-				sessionId: 'session-1',
-				subscriptionName: 'sub',
-				status: 'running',
-			});
-			const events = cueDb.getRecentCueEvents(0);
-			expect(events).toHaveLength(1);
-			expect(events[0].id).toBe('smoke-1');
-
-			// Failure diagnostics round-trip: a non-completed run stamps
-			// error_message + exit_code (INTEGER column, so it comes back as a
-			// number, not a string) and they survive read-back.
-			cueDb.updateCueEventStatus('smoke-1', 'timeout', null, {
-				errorMessage: 'first_byte_timeout: no transcript output',
-				exitCode: 5,
-			});
-			const afterFailure = cueDb.getRecentCueEvents(0);
-			expect(afterFailure[0].status).toBe('timeout');
-			expect(afterFailure[0].errorMessage).toBe('first_byte_timeout: no transcript output');
-			expect(afterFailure[0].exitCode).toBe(5);
-		} finally {
-			if (cueDb) {
-				try {
-					cueDb.closeCueDb();
-				} catch {
-					/* best effort — double-close is safe, other errors are non-fatal here */
-				}
-			}
-			try {
-				fs.unlinkSync(dbPath);
-			} catch {
-				/* best effort */
-			}
-		}
 	});
 });

@@ -143,6 +143,7 @@ export function IgnorePatternsSection({
 								type="button"
 								role="checkbox"
 								aria-checked={honorGitignore}
+								aria-label="Honor .gitignore"
 								onClick={() => onHonorGitignoreChange(!honorGitignore)}
 								className="w-5 h-5 rounded border flex items-center justify-center transition-colors"
 								style={{
@@ -260,6 +261,7 @@ export function IgnorePatternsSection({
 				<button
 					type="button"
 					onClick={handleResetToDefaults}
+					aria-label={`Reset ${title} to defaults`}
 					className="text-xs hover:underline"
 					style={{ color: theme.colors.textDim }}
 				>

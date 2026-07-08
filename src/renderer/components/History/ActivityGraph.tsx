@@ -26,11 +26,13 @@ export interface ActivityGraphProps {
 	/**
 	 * Time range that `precomputedBuckets` actually spans. When the buckets
 	 * come from the server's all-time aggregate, the renderer's loaded
-	 * `entries` won't contain the earliest entry — so deriving the axis
+	 * `entries` won't contain the earliest entry - so deriving the axis
 	 * range from `entries` would mismatch the buckets. Pass the server's
 	 * earliest/latest here to keep them aligned.
 	 */
 	precomputedRange?: { start: number; end: number };
+	/** Optional snapshot anchor for historical graph renders. Defaults to now. */
+	referenceTime?: number;
 	/** Always show the viewport date label, repositioning near edges instead of hiding */
 	alwaysShowViewportLabel?: boolean;
 	/**
@@ -51,6 +53,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	onLookbackChange,
 	precomputedBuckets,
 	precomputedRange,
+	referenceTime,
 	alwaysShowViewportLabel = false,
 	activeFilters,
 }) => {
@@ -72,10 +75,29 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		[lookbackHours]
 	);
 
+	const currentTime = Date.now();
+
+	const referenceLabel = useMemo(() => {
+		if (referenceTime === undefined) {
+			return null;
+		}
+
+		const diffMs = currentTime - referenceTime;
+		if (diffMs >= 0 && diffMs < 60 * 60 * 1000) {
+			const minutes = Math.max(1, Math.round(diffMs / (60 * 1000)));
+			return `${minutes}m ago`;
+		}
+		if (diffMs >= 0 && diffMs < 24 * 60 * 60 * 1000) {
+			const hours = Math.max(1, Math.round(diffMs / (60 * 60 * 1000)));
+			return `${hours}h ago`;
+		}
+		return new Date(referenceTime).toLocaleDateString([], { month: 'short', day: 'numeric' });
+	}, [currentTime, referenceTime]);
+
 	// Always use current time as the end of the window (graph is static).
 	// When a precomputed range is provided, prefer its `end` so the axis
 	// stays consistent with the server's snapshot.
-	const endTime = precomputedRange?.end ?? Date.now();
+	const endTime = precomputedRange?.end ?? referenceTime ?? currentTime;
 
 	// Calculate time range based on lookback setting
 	const { startTime, msPerBucket, bucketCount } = useMemo(() => {
@@ -104,7 +126,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		}
 	}, [entries, endTime, lookbackHours, lookbackConfig.bucketCount, precomputedRange]);
 
-	// Group entries into buckets — use precomputed data from backend when available
+	// Group entries into buckets - use precomputed data from backend when available
 	const bucketData = useMemo(() => {
 		// Prefer backend-computed buckets (covers all entries, not just first page)
 		const rawBuckets =
@@ -291,7 +313,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			className="flex-1 min-w-0 flex flex-col relative mt-0.5"
 			title={
 				hoveredIndex === null
-					? `${lookbackConfig.label}: ${totalAuto} auto, ${totalUser} user${totalCue > 0 ? `, ${totalCue} cue` : ''} (right-click to change)`
+					? `${lookbackConfig.label}: ${totalAuto} auto, ${totalUser} user${totalCue > 0 ? `, ${totalCue} cue` : ''}${referenceLabel ? `; Viewing: ${referenceLabel}` : ''} (right-click to change)`
 					: undefined
 			}
 			onContextMenu={handleContextMenu}
@@ -357,6 +379,11 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 					<div className="font-bold mb-1" style={{ color: theme.colors.textMain }}>
 						{getTimeRangeLabel(hoveredIndex)}
 					</div>
+					{referenceLabel && (
+						<div className="mb-1" style={{ color: theme.colors.textDim }}>
+							{referenceLabel}
+						</div>
+					)}
 					<div className="flex flex-col gap-0.5">
 						<div className="flex items-center justify-between gap-3">
 							<span style={{ color: autoBarColor }}>Auto</span>
@@ -385,7 +412,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				className="flex items-end gap-px h-6 rounded border px-1 pt-1 relative"
 				style={{ borderColor: theme.colors.border }}
 			>
-				{/* Viewport position indicator — shows where you are in the history */}
+				{/* Viewport position indicator - shows where you are in the history */}
 				{viewportIndicatorPercent !== null && (
 					<div
 						className="absolute top-0 bottom-0 pointer-events-none z-20"

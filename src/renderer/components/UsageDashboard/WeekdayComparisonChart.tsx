@@ -26,6 +26,16 @@ interface WeekdayComparisonChartProps {
 	colorBlindMode?: boolean;
 }
 
+function getCalendarDayOfWeek(dateValue: string): number {
+	const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+	if (dateOnlyMatch) {
+		const [, year, month, day] = dateOnlyMatch;
+		return new Date(Number(year), Number(month) - 1, Number(day)).getDay();
+	}
+
+	return new Date(dateValue).getDay();
+}
+
 export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 	data,
 	theme,
@@ -37,8 +47,7 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 		const weekendStats = { count: 0, duration: 0, days: 0 };
 
 		data.byDay.forEach((day) => {
-			const date = new Date(day.date);
-			const dayOfWeek = date.getDay();
+			const dayOfWeek = getCalendarDayOfWeek(day.date);
 			const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
 			if (isWeekend) {

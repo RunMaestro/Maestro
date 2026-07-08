@@ -65,8 +65,16 @@ describe('field access', () => {
 		expect(jq('.foo', null)).toEqual([null]);
 	});
 
+	it('.field on primitives returns null', () => {
+		expect(jq('.foo', 42)).toEqual([null]);
+	});
+
 	it('quoted field with .["name"]', () => {
 		expect(jq('.["type"]', SAMPLE)).toEqual(['queue-operation']);
+	});
+
+	it('quoted postfix fields with dot syntax', () => {
+		expect(jq('."type"', SAMPLE)).toEqual(['queue-operation']);
 	});
 });
 
@@ -90,6 +98,13 @@ describe('array indexing', () => {
 	it('out of bounds returns null', () => {
 		expect(jq('.[99]', [1, 2, 3])).toEqual([null]);
 	});
+
+	it('string subscripts read object fields and invalid subscripts return null', () => {
+		expect(jq('.["type"]', SAMPLE)).toEqual(['queue-operation']);
+		expect(jq('.[true]', SAMPLE)).toEqual([null]);
+		expect(jq('.[0]', { a: 1 })).toEqual([null]);
+		expect(jq('.["type"]', ['not-object'])).toEqual([null]);
+	});
 });
 
 // ── Iteration ────────────────────────────────────────────────────────────────
@@ -106,6 +121,10 @@ describe('iteration', () => {
 
 	it('.field[] chains field and iteration', () => {
 		expect(jq('.tags[]', SAMPLE)).toEqual(['urgent', 'backend']);
+	});
+
+	it('.[] returns no output for primitives', () => {
+		expect(jq('.[]', 42)).toEqual([]);
 	});
 });
 
@@ -206,6 +225,13 @@ describe('built-in functions', () => {
 		expect(jq('values', { a: 1, b: 2 })).toEqual([[1, 2]]);
 	});
 
+	it('keys and values handle arrays and invalid input', () => {
+		expect(jq('keys', ['a', 'b'])).toEqual([[0, 1]]);
+		expect(jq('values', ['a', 'b'])).toEqual([['a', 'b']]);
+		expect(() => jq('keys', 'nope')).toThrow(/keys requires/);
+		expect(() => jq('values', 'nope')).toThrow(/values requires/);
+	});
+
 	it('length on string', () => {
 		expect(jq('.type | length', SAMPLE)).toEqual([15]);
 	});
@@ -216,6 +242,11 @@ describe('built-in functions', () => {
 
 	it('length on object', () => {
 		expect(jq('length', { a: 1, b: 2 })).toEqual([2]);
+	});
+
+	it('length handles null and rejects unsupported input', () => {
+		expect(jq('length', null)).toEqual([0]);
+		expect(() => jq('length', true)).toThrow(/length requires/);
 	});
 
 	it('type returns type name', () => {
@@ -231,19 +262,36 @@ describe('built-in functions', () => {
 		expect(jq('has("nope")', SAMPLE)).toEqual([false]);
 	});
 
+	it('has supports array indices and unsupported keys', () => {
+		expect(jq('has(1)', ['a', 'b'])).toEqual([true]);
+		expect(jq('has(9)', ['a', 'b'])).toEqual([false]);
+		expect(jq('has(true)', SAMPLE)).toEqual([false]);
+	});
+
 	it('contains checks string containment (case-insensitive)', () => {
 		expect(jq('. | contains("QUEUE")', 'queue-operation')).toEqual([true]);
 		expect(jq('. | contains("nope")', 'queue-operation')).toEqual([false]);
 	});
 
+	it('contains supports arrays and unsupported inputs', () => {
+		expect(jq('contains("UR")', ['urgent', 'backend'])).toEqual([true]);
+		expect(jq('contains("missing")', ['urgent', 'backend'])).toEqual([false]);
+		expect(jq('contains(2)', [1, 2, 3])).toEqual([true]);
+		expect(jq('contains("x")', { a: 'x' })).toEqual([false]);
+	});
+
 	it('startswith / endswith', () => {
 		expect(jq('.type | startswith("queue")', SAMPLE)).toEqual([true]);
 		expect(jq('.type | endswith("tion")', SAMPLE)).toEqual([true]);
+		expect(jq('startswith("q")', 42)).toEqual([false]);
+		expect(jq('endswith("q")', 42)).toEqual([false]);
 	});
 
 	it('test with regex', () => {
 		expect(jq('.type | test("queue.*")', SAMPLE)).toEqual([true]);
 		expect(jq('.type | test("^error")', SAMPLE)).toEqual([false]);
+		expect(jq('test("x")', 42)).toEqual([false]);
+		expect(() => jq('test("[")', 'oops')).toThrow(/Invalid regex/);
 	});
 
 	it('map transforms array elements', () => {
@@ -252,6 +300,8 @@ describe('built-in functions', () => {
 
 	it('sort sorts array', () => {
 		expect(jq('sort', [3, 1, 2])).toEqual([[1, 2, 3]]);
+		expect(jq('sort', ['b', 'a'])).toEqual([['a', 'b']]);
+		expect(() => jq('sort', 'nope')).toThrow(/sort requires/);
 	});
 
 	it('sort_by sorts by key', () => {
@@ -260,10 +310,28 @@ describe('built-in functions', () => {
 
 	it('unique deduplicates', () => {
 		expect(jq('unique', [1, 2, 1, 3, 2])).toEqual([[1, 2, 3]]);
+		expect(() => jq('unique', 'nope')).toThrow(/unique requires/);
+	});
+
+	it('unique_by deduplicates by expression', () => {
+		expect(
+			jq('unique_by(.t)', [
+				{ t: 'a', v: 1 },
+				{ t: 'a', v: 2 },
+				{ t: 'b', v: 3 },
+			])
+		).toEqual([
+			[
+				{ t: 'a', v: 1 },
+				{ t: 'b', v: 3 },
+			],
+		]);
 	});
 
 	it('reverse reverses array', () => {
 		expect(jq('reverse', [1, 2, 3])).toEqual([[3, 2, 1]]);
+		expect(jq('reverse', 'abc')).toEqual(['cba']);
+		expect(() => jq('reverse', 42)).toThrow(/reverse requires/);
 	});
 
 	it('flatten flattens nested arrays', () => {
@@ -273,6 +341,8 @@ describe('built-in functions', () => {
 				[3, [4]],
 			])
 		).toEqual([[1, 2, 3, 4]]);
+		expect(jq('flatten(1)', [[1], [2, [3]]])).toEqual([[1, 2, [3]]]);
+		expect(() => jq('flatten', 'nope')).toThrow(/flatten requires/);
 	});
 
 	it('add sums numbers', () => {
@@ -281,16 +351,35 @@ describe('built-in functions', () => {
 
 	it('add concatenates strings', () => {
 		expect(jq('add', ['a', 'b', 'c'])).toEqual(['abc']);
+		expect(jq('add', [])).toEqual([null]);
+		expect(jq('add', [[1], [2]])).toEqual([[1, 2]]);
+		expect(jq('add', [true, false])).toEqual([null]);
+		expect(() => jq('add', 'nope')).toThrow(/add requires/);
 	});
 
 	it('min / max', () => {
 		expect(jq('min', [3, 1, 2])).toEqual([1]);
 		expect(jq('max', [3, 1, 2])).toEqual([3]);
+		expect(jq('min', [])).toEqual([null]);
+		expect(jq('max', [])).toEqual([null]);
 	});
 
 	it('first / last', () => {
 		expect(jq('first', [10, 20, 30])).toEqual([10]);
 		expect(jq('last', [10, 20, 30])).toEqual([30]);
+		expect(jq('first(.items[] | .name)', SAMPLE)).toEqual(['x']);
+		expect(jq('last(.items[] | .name)', SAMPLE)).toEqual(['z']);
+		expect(jq('first', [])).toEqual([null]);
+		expect(jq('last', [])).toEqual([null]);
+	});
+
+	it('any / all evaluate truthiness and predicates', () => {
+		expect(jq('any', [false, null, true])).toEqual([true]);
+		expect(jq('all', [true, 1, 'x'])).toEqual([true]);
+		expect(jq('any(.val > 15)', SAMPLE.items)).toEqual([true]);
+		expect(jq('all(.val > 0)', SAMPLE.items)).toEqual([true]);
+		expect(jq('any', 'nope')).toEqual([false]);
+		expect(jq('all', 'nope')).toEqual([false]);
 	});
 
 	it('to_entries', () => {
@@ -300,21 +389,52 @@ describe('built-in functions', () => {
 				{ key: 'b', value: 2 },
 			],
 		]);
+		expect(() => jq('to_entries', ['nope'])).toThrow(/to_entries requires/);
+	});
+
+	it('from_entries and with_entries build objects', () => {
+		expect(
+			jq('from_entries', [{ key: 'a', value: 1 }, { nope: true }, { key: 'b', value: 2 }])
+		).toEqual([{ a: 1, b: 2 }]);
+		expect(jq('with_entries(. )', { a: 1 })).toEqual([{ a: 1 }]);
+		expect(() => jq('from_entries', { a: 1 })).toThrow(/from_entries requires/);
+		expect(() => jq('with_entries(.)', ['nope'])).toThrow(/with_entries requires/);
+	});
+
+	it('del removes direct fields and leaves unsupported targets untouched', () => {
+		expect(jq('del(.a)', { a: 1, b: 2 })).toEqual([{ b: 2 }]);
+		expect(jq('del(.[0])', { a: 1 })).toEqual([{ a: 1 }]);
+		expect(jq('del(.a)', ['nope'])).toEqual([['nope']]);
 	});
 
 	it('ascii_downcase / ascii_upcase', () => {
 		expect(jq('ascii_downcase', 'Hello')).toEqual(['hello']);
 		expect(jq('ascii_upcase', 'Hello')).toEqual(['HELLO']);
+		expect(() => jq('ascii_downcase', 42)).toThrow(/ascii_downcase requires/);
+		expect(() => jq('ascii_upcase', 42)).toThrow(/ascii_upcase requires/);
+	});
+
+	it('ltrimstr / rtrimstr trim only matching strings', () => {
+		expect(jq('ltrimstr("pre")', 'prefix')).toEqual(['fix']);
+		expect(jq('ltrimstr("x")', 'prefix')).toEqual(['prefix']);
+		expect(jq('rtrimstr("fix")', 'prefix')).toEqual(['pre']);
+		expect(jq('rtrimstr("z")', 'prefix')).toEqual(['prefix']);
 	});
 
 	it('split / join', () => {
 		expect(jq('split(",")', 'a,b,c')).toEqual([['a', 'b', 'c']]);
 		expect(jq('join("-")', ['a', 'b', 'c'])).toEqual(['a-b-c']);
+		expect(() => jq('split(",")', 42)).toThrow(/split requires/);
+		expect(() => jq('join("-")', 'abc')).toThrow(/join requires/);
 	});
 
 	it('tonumber / tostring', () => {
 		expect(jq('tonumber', '42')).toEqual([42]);
+		expect(jq('tonumber', 42)).toEqual([42]);
+		expect(() => jq('tonumber', 'nope')).toThrow(/Cannot convert/);
+		expect(() => jq('tonumber', null)).toThrow(/tonumber requires/);
 		expect(jq('tostring', 42)).toEqual(['42']);
+		expect(jq('tostring', { a: 1 })).toEqual(['{"a":1}']);
 	});
 
 	it('empty produces no output', () => {
@@ -407,5 +527,11 @@ describe('error handling', () => {
 describe('grouped expressions', () => {
 	it('parentheses group subexpressions', () => {
 		expect(jq('(.type)', SAMPLE)).toEqual(['queue-operation']);
+	});
+
+	it('reports parser position for unexpected characters and missing tokens', () => {
+		expect(() => parseJq('@')).toThrow(/Unexpected character '@'/);
+		expect(() => parseJq('(.type')).toThrow(/Expected RPAREN/);
+		expect(() => parseJq('.type 42')).toThrow(/Unexpected token/);
 	});
 });

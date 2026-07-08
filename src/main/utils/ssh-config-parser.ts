@@ -243,6 +243,17 @@ export function parseConfigContent(content: string, homeDir: string): SshConfigH
 	return hosts;
 }
 
+export function findSshConfigHost(
+	hostName: string,
+	deps?: Partial<SshConfigParserDeps>
+): SshConfigHost | undefined {
+	const result = parseSshConfig(deps);
+	if (!result.success) {
+		return undefined;
+	}
+	return result.hosts.find((host) => host.host.toLowerCase() === hostName.toLowerCase());
+}
+
 /**
  * Get a summary of what an SSH config host provides.
  * Useful for displaying to users what will be auto-filled.

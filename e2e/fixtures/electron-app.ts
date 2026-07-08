@@ -8,6 +8,7 @@
 import {
 	test as base,
 	_electron as electron,
+	expect,
 	type ElectronApplication,
 	type Page,
 } from '@playwright/test';
@@ -21,6 +22,49 @@ interface ElectronTestFixtures {
 	window: Page;
 	appPath: string;
 	testDataDir: string;
+}
+
+interface LaunchAppWithStateOptions {
+	homeDir?: string;
+	sessions: unknown[];
+	groups?: unknown[];
+	groupChats?: SeededGroupChat[];
+	settings?: Record<string, unknown>;
+}
+
+interface LaunchAppFromExistingStateOptions {
+	homeDir: string;
+	userDataPath?: string;
+}
+
+interface LaunchAppWithStateResult {
+	electronApp: ElectronApplication;
+	window: Page;
+	homeDir: string;
+	userDataPath: string;
+	cleanup: () => Promise<void>;
+}
+
+interface SeededGroupChatMessage {
+	timestamp?: string;
+	from: string;
+	content: string;
+	readOnly?: boolean;
+}
+
+interface SeededGroupChat {
+	id: string;
+	name: string;
+	createdAt?: number;
+	updatedAt?: number;
+	moderatorAgentId?: string;
+	moderatorSessionId?: string;
+	moderatorAgentSessionId?: string;
+	moderatorConfig?: unknown;
+	participants?: unknown[];
+	archived?: boolean;
+	messages?: SeededGroupChatMessage[];
+	historyEntries?: unknown[];
 }
 
 /**
@@ -40,6 +84,14 @@ function createTestDataDir(): string {
 	);
 	fs.mkdirSync(testDir, { recursive: true });
 	return testDir;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeGroupChatLogContent(value: string): string {
+	return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
 }
 
 /**
@@ -125,12 +177,173 @@ export const test = base.extend<ElectronTestFixtures>({
 	},
 });
 
-export { expect } from '@playwright/test';
+export { expect };
 
 /**
  * Helper utilities for E2E tests
  */
 export const helpers = {
+	/**
+	 * Launch the app with deterministic persisted state.
+	 */
+	async launchAppWithState({
+		homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-home-')),
+		sessions,
+		groups = [],
+		groupChats = [],
+		settings,
+	}: LaunchAppWithStateOptions): Promise<LaunchAppWithStateResult> {
+		const appPath = getMainPath();
+		const userDataPath = path.join(homeDir, 'user-data');
+		const env = {
+			...process.env,
+			HOME: homeDir,
+			MAESTRO_DATA_DIR: userDataPath,
+			ELECTRON_DISABLE_GPU: '1',
+			NODE_ENV: 'test',
+			MAESTRO_E2E_TEST: 'true',
+		};
+
+		fs.mkdirSync(userDataPath, { recursive: true });
+		fs.writeFileSync(
+			path.join(userDataPath, 'maestro-sessions.json'),
+			JSON.stringify({ sessions }, null, '\t'),
+			'utf-8'
+		);
+		fs.writeFileSync(
+			path.join(userDataPath, 'maestro-groups.json'),
+			JSON.stringify({ groups }, null, '\t'),
+			'utf-8'
+		);
+		if (settings) {
+			fs.writeFileSync(
+				path.join(userDataPath, 'maestro-settings.json'),
+				JSON.stringify(settings, null, '\t'),
+				'utf-8'
+			);
+		}
+		if (groupChats.length > 0) {
+			const groupChatsDir = path.join(userDataPath, 'group-chats');
+			fs.mkdirSync(groupChatsDir, { recursive: true });
+
+			for (const seededChat of groupChats) {
+				const {
+					messages = [],
+					historyEntries = [],
+					participants = [],
+					moderatorAgentId = 'codex',
+					moderatorSessionId = `group-chat-${seededChat.id}-moderator`,
+					createdAt = Date.now(),
+					updatedAt = createdAt,
+					...chatRest
+				} = seededChat;
+				const chatDir = path.join(groupChatsDir, seededChat.id);
+				const imagesDir = path.join(chatDir, 'images');
+				const logPath = path.join(chatDir, 'chat.log');
+
+				fs.mkdirSync(imagesDir, { recursive: true });
+				fs.writeFileSync(
+					path.join(chatDir, 'metadata.json'),
+					JSON.stringify(
+						{
+							...chatRest,
+							id: seededChat.id,
+							name: seededChat.name,
+							createdAt,
+							updatedAt,
+							moderatorAgentId,
+							moderatorSessionId,
+							participants,
+							logPath,
+							imagesDir,
+						},
+						null,
+						2
+					),
+					'utf-8'
+				);
+				fs.writeFileSync(
+					logPath,
+					messages
+						.map((message) => {
+							const timestamp = message.timestamp ?? new Date(createdAt).toISOString();
+							const content = escapeGroupChatLogContent(message.content);
+							return message.readOnly
+								? `${timestamp}|${message.from}|${content}|readOnly\n`
+								: `${timestamp}|${message.from}|${content}\n`;
+						})
+						.join(''),
+					'utf-8'
+				);
+				if (historyEntries.length > 0) {
+					fs.writeFileSync(
+						path.join(chatDir, 'history.jsonl'),
+						historyEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+						'utf-8'
+					);
+				}
+			}
+		}
+
+		const electronApp = await electron.launch({
+			args: [appPath],
+			env,
+			timeout: 30000,
+		});
+		const window = await electronApp.firstWindow();
+		await window.waitForLoadState('domcontentloaded');
+		await window.waitForTimeout(500);
+
+		return {
+			electronApp,
+			window,
+			homeDir,
+			userDataPath,
+			cleanup: async () => {
+				await electronApp.close().catch(() => undefined);
+				fs.rmSync(homeDir, { recursive: true, force: true });
+			},
+		};
+	},
+
+	/**
+	 * Launch the app against an existing deterministic persisted state.
+	 */
+	async launchAppFromExistingState({
+		homeDir,
+		userDataPath = path.join(homeDir, 'user-data'),
+	}: LaunchAppFromExistingStateOptions): Promise<LaunchAppWithStateResult> {
+		const appPath = getMainPath();
+		const env = {
+			...process.env,
+			HOME: homeDir,
+			MAESTRO_DATA_DIR: userDataPath,
+			ELECTRON_DISABLE_GPU: '1',
+			NODE_ENV: 'test',
+			MAESTRO_E2E_TEST: 'true',
+		};
+
+		const electronApp = await electron.launch({
+			args: [appPath],
+			env,
+			timeout: 30000,
+		});
+		const window = await electronApp.firstWindow();
+		await window.waitForLoadState('domcontentloaded');
+		await window.waitForTimeout(500);
+
+		return {
+			electronApp,
+			window,
+			homeDir,
+			userDataPath,
+			cleanup: async () => {
+				await electronApp.close().catch(() => undefined);
+				fs.rmSync(homeDir, { recursive: true, force: true });
+			},
+		};
+	},
+
 	/**
 	 * Wait for the wizard to be visible
 	 */
@@ -146,6 +359,10 @@ export const helpers = {
 	async openWizardViaShortcut(window: Page): Promise<void> {
 		// Cmd+Shift+N opens the wizard
 		await window.keyboard.press('Meta+Shift+N');
+		const startFreshButton = window.getByRole('button', { name: /start fresh/i });
+		if (await startFreshButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+			await startFreshButton.click();
+		}
 		await helpers.waitForWizard(window);
 	},
 
@@ -153,8 +370,9 @@ export const helpers = {
 	 * Select an agent in the wizard
 	 */
 	async selectAgent(window: Page, agentName: string): Promise<void> {
-		// Find and click the agent tile
-		const agentTile = window.locator(`text=${agentName}`).first();
+		const agentTile = window
+			.getByRole('button', { name: new RegExp(`^${escapeRegExp(agentName)}$`) })
+			.or(window.locator(`text=${agentName}`).first());
 		await agentTile.click();
 	},
 
@@ -229,6 +447,15 @@ export const helpers = {
 	},
 
 	/**
+	 * Open a tab in the right panel.
+	 */
+	async openRightPanelTab(window: Page, tabName: 'Files' | 'History' | 'Auto Run'): Promise<void> {
+		const panelId = tabName === 'Auto Run' ? 'autorun' : tabName.toLowerCase();
+		await window.locator(`[data-tour="${panelId}-tab"]`).click();
+		await expect(window.locator(`[data-tour="${panelId}-panel"]`)).toBeVisible();
+	},
+
+	/**
 	 * Create a temporary test directory structure
 	 */
 	createTestDirectory(basePath: string, structure: Record<string, string | null>): void {
@@ -265,9 +492,9 @@ export const helpers = {
 	 * Navigate to the Auto Run tab in the right panel
 	 */
 	async navigateToAutoRunTab(window: Page): Promise<boolean> {
-		const autoRunTab = window.locator('text=Auto Run');
+		const autoRunTab = window.locator('[data-tour="autorun-tab"]');
 		if ((await autoRunTab.count()) > 0) {
-			await autoRunTab.first().click();
+			await helpers.openRightPanelTab(window, 'Auto Run');
 			return true;
 		}
 		return false;
@@ -360,7 +587,7 @@ export const helpers = {
 	 * Create an Auto Run test folder with sample documents
 	 */
 	createAutoRunTestFolder(basePath: string): string {
-		const autoRunFolder = path.join(basePath, '.maestro/playbooks');
+		const autoRunFolder = path.join(basePath, 'Auto Run Docs');
 		fs.mkdirSync(autoRunFolder, { recursive: true });
 
 		// Create sample documents
@@ -496,7 +723,7 @@ More content for the second phase.
 	 * Create an Auto Run test folder with batch processing test documents
 	 */
 	createBatchTestFolder(basePath: string): string {
-		const autoRunFolder = path.join(basePath, '.maestro/playbooks');
+		const autoRunFolder = path.join(basePath, 'Auto Run Docs');
 		fs.mkdirSync(autoRunFolder, { recursive: true });
 
 		// Create documents with varying task counts
@@ -647,8 +874,8 @@ All tasks complete in this document.
 	 * Create test folders for multiple sessions with unique content
 	 */
 	createMultiSessionTestFolders(basePath: string): { session1: string; session2: string } {
-		const session1Path = path.join(basePath, 'session1', '.maestro/playbooks');
-		const session2Path = path.join(basePath, 'session2', '.maestro/playbooks');
+		const session1Path = path.join(basePath, 'session1', 'Auto Run Docs');
+		const session2Path = path.join(basePath, 'session2', 'Auto Run Docs');
 
 		fs.mkdirSync(session1Path, { recursive: true });
 		fs.mkdirSync(session2Path, { recursive: true });

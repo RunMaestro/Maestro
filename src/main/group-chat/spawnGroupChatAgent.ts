@@ -23,6 +23,7 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { getSettingsStore } from '../stores/getters';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -78,6 +79,26 @@ export interface SpawnGroupChatAgentResult {
 	success: boolean;
 }
 
+function getGlobalShellEnvVars(): Record<string, string> | undefined {
+	try {
+		const shellEnvVars = getSettingsStore().get('shellEnvVars', {}) as Record<string, string>;
+		return Object.keys(shellEnvVars).length > 0 ? shellEnvVars : undefined;
+	} catch (error) {
+		if (error instanceof Error && error.message.includes('Stores not initialized')) {
+			return undefined;
+		}
+		throw error;
+	}
+}
+
+function mergeWithGlobalShellEnvVars(
+	globalShellEnvVars: Record<string, string> | undefined,
+	customEnvVars: Record<string, string> | undefined
+): Record<string, string> | undefined {
+	if (!globalShellEnvVars) return customEnvVars;
+	return { ...globalShellEnvVars, ...(customEnvVars ?? {}) };
+}
+
 /**
  * Spawn a Group Chat agent process with SSH + Windows shell handling applied.
  *
@@ -118,6 +139,7 @@ export async function spawnGroupChatAgent(
 	let spawnEnvVars = customEnvVars;
 	let spawnSshStdinScript: string | undefined;
 	let spawnSshRemoteCommand: string | undefined;
+	const globalShellEnvVars = getGlobalShellEnvVars();
 
 	// Over SSH, warm the remote maestro-p probe BEFORE resolving so a remote TUI
 	// selection falls back to API instead of exiting 127 when maestro-p isn't
@@ -199,8 +221,11 @@ export async function spawnGroupChatAgent(
 				cwd,
 				prompt,
 				customEnvVars: remoteInteractive
-					? { ...(customEnvVars ?? {}), ...remoteInteractive.env }
-					: customEnvVars,
+					? mergeWithGlobalShellEnvVars(globalShellEnvVars, {
+							...(customEnvVars ?? {}),
+							...remoteInteractive.env,
+						})
+					: mergeWithGlobalShellEnvVars(globalShellEnvVars, customEnvVars),
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				agentBinaryName: remoteInteractive ? remoteInteractive.command : agent.binaryName,
@@ -246,6 +271,7 @@ export async function spawnGroupChatAgent(
 		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
 		sshStdinScript: spawnSshStdinScript,
 		sshRemoteCommand: spawnSshRemoteCommand,
+		shellEnvVars: globalShellEnvVars,
 	});
 
 	return spawnResult;

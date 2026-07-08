@@ -196,17 +196,17 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
 - name: <unique-within-file>
   event: <any of the 9 event types - see Event Types table>
   enabled: true
-  action: command            # required to become a Command node
-  command:                   # required when action: command
+  action: command # required to become a Command node
+  command: # required when action: command
     # ---- mode: 'shell' ----
     mode: shell
-    shell: 'gh pr list --json number,title'   # required, non-empty string
+    shell: 'gh pr list --json number,title' # required, non-empty string
     # ---- OR mode: 'cli' ----
     mode: cli
     cli:
-      command: send          # required; only 'send' is supported today
-      target: <session-id-or-name>             # required, supports template vars
-      message: '{{CUE_SOURCE_OUTPUT}}'         # optional; default is exactly this
+      command: send # required; only 'send' is supported today
+      target: <session-id-or-name> # required, supports template vars
+      message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```

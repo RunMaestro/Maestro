@@ -107,13 +107,7 @@ interface LeaderboardRegistrationModalProps {
 }
 
 type SubmitState =
-	| 'idle'
-	| 'submitting'
-	| 'success'
-	| 'awaiting_confirmation'
-	| 'polling'
-	| 'error'
-	| 'opted_out';
+	'idle' | 'submitting' | 'success' | 'awaiting_confirmation' | 'polling' | 'error' | 'opted_out';
 
 // Generate a random client token for polling
 function generateClientToken(): string {
@@ -374,6 +368,7 @@ export function LeaderboardRegistrationModal({
 			} else if (result.authTokenRequired) {
 				// Email is confirmed but auth token is missing/invalid - try to recover it automatically
 				let recovered = false;
+				let recoveryError: string | null = null;
 				if (clientToken) {
 					setSubmitState('submitting');
 					setErrorMessage('');
@@ -439,7 +434,7 @@ export function LeaderboardRegistrationModal({
 								setSuccessMessage('Auth token recovered and stats submitted successfully!');
 								recovered = true;
 							} else {
-								setErrorMessage(retryResult.error || 'Submission failed after token recovery');
+								recoveryError = retryResult.error || 'Submission failed after token recovery';
 							}
 						}
 					} catch {
@@ -450,7 +445,7 @@ export function LeaderboardRegistrationModal({
 				if (!recovered) {
 					setSubmitState('error');
 					setShowManualTokenEntry(true);
-					if (!errorMessage) setErrorMessage(AUTH_TOKEN_LOST_MESSAGE);
+					setErrorMessage(recoveryError || AUTH_TOKEN_LOST_MESSAGE);
 				}
 			} else {
 				setSubmitState('error');

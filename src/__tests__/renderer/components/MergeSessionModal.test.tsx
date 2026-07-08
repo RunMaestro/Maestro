@@ -1,17 +1,10 @@
 /**
  * Tests for MergeSessionModal component
  *
- * TODO: These tests need to be updated to match the current implementation.
- * The modal title and UI changed significantly during development.
- * Key changes needed:
- * - Update expected title from "Merge Session Contexts" to dynamic "Merge {tab} Into"
- * - Update tab/button names and accessibility labels
- * - Update search placeholder and view mode names
- *
  * Tests the core behavior of the merge session modal:
  * - Rendering with session list and search
  * - Session/tab selection
- * - View mode switching (Paste ID, Search, Recent)
+ * - View mode switching (Paste ID, Open Tabs)
  * - Keyboard navigation
  * - Fuzzy search filtering
  * - Merge button handlers
@@ -118,7 +111,7 @@ const renderWithLayerStack = (ui: React.ReactElement) => {
 };
 
 // TODO: Skip all tests until they are updated to match current implementation
-describe.skip('MergeSessionModal', () => {
+describe('MergeSessionModal', () => {
 	const mockOnClose = vi.fn();
 	const mockOnMerge = vi.fn().mockResolvedValue({ success: true });
 
@@ -161,10 +154,10 @@ describe.skip('MergeSessionModal', () => {
 			);
 
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
-			expect(screen.getByText('Merge Session Contexts')).toBeInTheDocument();
+			expect(screen.getByText('Merge "Tab tab-1" Into')).toBeInTheDocument();
 		});
 
-		it('renders all three view mode tabs', () => {
+		it('renders view mode tabs', () => {
 			renderWithLayerStack(
 				<MergeSessionModal
 					theme={testTheme}
@@ -178,8 +171,7 @@ describe.skip('MergeSessionModal', () => {
 			);
 
 			expect(screen.getByText('Paste ID')).toBeInTheDocument();
-			expect(screen.getByText('Search Sessions')).toBeInTheDocument();
-			expect(screen.getByText('Recent')).toBeInTheDocument();
+			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
 		});
 
 		it('shows target sessions (excluding source session)', () => {
@@ -201,7 +193,7 @@ describe.skip('MergeSessionModal', () => {
 
 			// Should NOT show source session in the list
 			// (it may appear in the header but not as a selectable target)
-			const sessionList = screen.getByRole('listbox', { name: /available sessions/i });
+			const sessionList = screen.getByRole('listbox', { name: /available sessions and tabs/i });
 			expect(within(sessionList).queryByText('Source Session')).not.toBeInTheDocument();
 		});
 
@@ -239,7 +231,7 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			const searchTab = screen.getByRole('tab', { name: /search sessions/i });
+			const searchTab = screen.getByRole('tab', { name: /open tabs/i });
 			expect(searchTab).toHaveAttribute('aria-selected', 'true');
 		});
 
@@ -260,25 +252,6 @@ describe.skip('MergeSessionModal', () => {
 
 			expect(screen.getByPlaceholderText(/paste session or tab id/i)).toBeInTheDocument();
 		});
-
-		it('switches to recent mode when clicking Recent', () => {
-			renderWithLayerStack(
-				<MergeSessionModal
-					theme={testTheme}
-					isOpen={true}
-					sourceSession={mockSourceSession}
-					sourceTabId="tab-1"
-					allSessions={allSessions}
-					recentSessionIds={[]}
-					onClose={mockOnClose}
-					onMerge={mockOnMerge}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('tab', { name: /recent/i }));
-
-			expect(screen.getByText('No recent sessions')).toBeInTheDocument();
-		});
 	});
 
 	describe('search functionality', () => {
@@ -295,7 +268,9 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			expect(screen.getByPlaceholderText(/search sessions and tabs/i)).toBeInTheDocument();
+			expect(
+				screen.getByPlaceholderText(/search open tabs across all agents/i)
+			).toBeInTheDocument();
 		});
 
 		it('filters sessions based on search query', async () => {
@@ -311,7 +286,7 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			const searchInput = screen.getByPlaceholderText(/search sessions and tabs/i);
+			const searchInput = screen.getByPlaceholderText(/search open tabs across all agents/i);
 			fireEvent.change(searchInput, { target: { value: 'Target 1' } });
 
 			await waitFor(() => {
@@ -333,7 +308,7 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			const searchInput = screen.getByPlaceholderText(/search sessions and tabs/i);
+			const searchInput = screen.getByPlaceholderText(/search open tabs across all agents/i);
 			fireEvent.change(searchInput, { target: { value: 'zzzznonexistent' } });
 
 			await waitFor(() => {
@@ -418,7 +393,7 @@ describe.skip('MergeSessionModal', () => {
 			});
 
 			// Merge button should be enabled after selection
-			const mergeButton = screen.getByRole('button', { name: /merge contexts/i });
+			const mergeButton = screen.getByRole('button', { name: /merge into/i });
 			expect(mergeButton).not.toBeDisabled();
 		});
 
@@ -495,13 +470,13 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			const mergeButton = screen.getByRole('button', { name: /merge contexts/i });
+			const mergeButton = screen.getByRole('button', { name: /merge into/i });
 			expect(mergeButton).toBeDisabled();
 		});
 	});
 
 	describe('merge options', () => {
-		it('renders groom context checkbox (checked by default)', () => {
+		it('renders clean context checkbox (checked by default)', () => {
 			renderWithLayerStack(
 				<MergeSessionModal
 					theme={testTheme}
@@ -514,25 +489,8 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			const groomCheckbox = screen.getByRole('checkbox', { name: /groom context/i });
+			const groomCheckbox = screen.getByRole('checkbox', { name: /clean context/i });
 			expect(groomCheckbox).toBeChecked();
-		});
-
-		it('renders create new session checkbox (unchecked by default)', () => {
-			renderWithLayerStack(
-				<MergeSessionModal
-					theme={testTheme}
-					isOpen={true}
-					sourceSession={mockSourceSession}
-					sourceTabId="tab-1"
-					allSessions={allSessions}
-					onClose={mockOnClose}
-					onMerge={mockOnMerge}
-				/>
-			);
-
-			const createSessionCheckbox = screen.getByRole('checkbox', { name: /create new session/i });
-			expect(createSessionCheckbox).not.toBeChecked();
 		});
 
 		it('updates estimated tokens when groom option is toggled', async () => {
@@ -549,7 +507,7 @@ describe.skip('MergeSessionModal', () => {
 			);
 
 			// Initial state has groom enabled
-			const groomCheckbox = screen.getByRole('checkbox', { name: /groom context/i });
+			const groomCheckbox = screen.getByRole('checkbox', { name: /clean context/i });
 			expect(groomCheckbox).toBeChecked();
 
 			// Toggle off
@@ -578,7 +536,7 @@ describe.skip('MergeSessionModal', () => {
 
 			await waitFor(() => {
 				expect(document.activeElement).toBe(
-					screen.getByPlaceholderText(/search sessions and tabs/i)
+					screen.getByPlaceholderText(/search open tabs across all agents/i)
 				);
 			});
 		});
@@ -621,8 +579,8 @@ describe.skip('MergeSessionModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 
-			// Start in search mode
-			expect(screen.getByRole('tab', { name: /search sessions/i })).toHaveAttribute(
+			// Start in Open Tabs mode
+			expect(screen.getByRole('tab', { name: /open tabs/i })).toHaveAttribute(
 				'aria-selected',
 				'true'
 			);
@@ -630,8 +588,10 @@ describe.skip('MergeSessionModal', () => {
 			// Press Tab to switch modes
 			fireEvent.keyDown(dialog, { key: 'Tab' });
 
-			// Should switch to next mode (Recent)
-			expect(screen.getByRole('tab', { name: /recent/i })).toHaveAttribute('aria-selected', 'true');
+			expect(screen.getByRole('tab', { name: /paste id/i })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
 		});
 
 		it('expands/collapses sessions with arrow keys', () => {
@@ -684,7 +644,7 @@ describe.skip('MergeSessionModal', () => {
 			fireEvent.keyDown(dialog, { key: ' ' });
 
 			// Merge button should now be enabled
-			const mergeButton = screen.getByRole('button', { name: /merge contexts/i });
+			const mergeButton = screen.getByRole('button', { name: /merge into/i });
 			expect(mergeButton).not.toBeDisabled();
 		});
 	});
@@ -739,7 +699,7 @@ describe.skip('MergeSessionModal', () => {
 			);
 
 			expect(screen.getByRole('tablist')).toBeInTheDocument();
-			expect(screen.getAllByRole('tab')).toHaveLength(3);
+			expect(screen.getAllByRole('tab')).toHaveLength(2);
 		});
 
 		it('has semantic buttons for actions', () => {
@@ -756,7 +716,7 @@ describe.skip('MergeSessionModal', () => {
 			);
 
 			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: /merge contexts/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /merge into/i })).toBeInTheDocument();
 		});
 
 		it('has properly labeled form controls', () => {
@@ -772,49 +732,7 @@ describe.skip('MergeSessionModal', () => {
 				/>
 			);
 
-			expect(screen.getByRole('checkbox', { name: /groom context/i })).toBeInTheDocument();
-			expect(screen.getByRole('checkbox', { name: /create new session/i })).toBeInTheDocument();
-		});
-	});
-
-	describe('recent sessions', () => {
-		it('shows recent sessions when recent mode is selected', () => {
-			renderWithLayerStack(
-				<MergeSessionModal
-					theme={testTheme}
-					isOpen={true}
-					sourceSession={mockSourceSession}
-					sourceTabId="tab-1"
-					allSessions={allSessions}
-					recentSessionIds={['target-session-1']}
-					onClose={mockOnClose}
-					onMerge={mockOnMerge}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('tab', { name: /recent/i }));
-
-			// Should show only the recent session
-			expect(screen.getByText('Target Session 1')).toBeInTheDocument();
-		});
-
-		it('shows empty state when no recent sessions', () => {
-			renderWithLayerStack(
-				<MergeSessionModal
-					theme={testTheme}
-					isOpen={true}
-					sourceSession={mockSourceSession}
-					sourceTabId="tab-1"
-					allSessions={allSessions}
-					recentSessionIds={[]}
-					onClose={mockOnClose}
-					onMerge={mockOnMerge}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('tab', { name: /recent/i }));
-
-			expect(screen.getByText('No recent sessions')).toBeInTheDocument();
+			expect(screen.getByRole('checkbox', { name: /clean context/i })).toBeInTheDocument();
 		});
 	});
 

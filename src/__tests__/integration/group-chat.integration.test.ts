@@ -27,6 +27,22 @@ vi.mock('electron', () => ({
 		},
 	},
 }));
+
+vi.mock('../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const prompts: Record<string, string> = {
+			'group-chat-moderator-system':
+				'You are a Group Chat Moderator.\n\n{{CONDUCTOR_PROFILE}}\n\nCoordinate available participants and answer the user.',
+			'group-chat-moderator-synthesis':
+				'Review participant responses and synthesize a concise final answer.',
+			'group-chat-participant-request':
+				'You are {{PARTICIPANT_NAME}} in {{GROUP_CHAT_NAME}}.\n\nGroup chat folder: {{GROUP_CHAT_FOLDER}}\n\n{{HISTORY_CONTEXT}}\n\n{{MESSAGE}}\n\n{{READ_ONLY_INSTRUCTION}}',
+			'group-chat-participant-continuation':
+				'Continue as {{PARTICIPANT_NAME}}.\n\n{{HISTORY_CONTEXT}}\n\n{{MESSAGE}}\n\n{{READ_ONLY_INSTRUCTION}}',
+		};
+		return prompts[id] ?? `mock prompt for ${id}`;
+	}),
+}));
 import { createGroupChat, loadGroupChat } from '../../main/group-chat/group-chat-storage';
 import { readLog } from '../../main/group-chat/group-chat-log';
 import {
@@ -249,11 +265,11 @@ describe('Group Chat Integration Tests', () => {
 	}, 120000);
 
 	/**
-	 * Test 6.3: Agents reference chat log for context
+	 * Test 6.3: Moderator receives participant context
 	 *
-	 * Verifies that agents can reference the shared chat log.
+	 * Verifies that the moderator batch prompt includes participants and the user request.
 	 */
-	it('6.3 agents can reference chat log for context', async () => {
+	it('6.3 moderator receives participant context', async () => {
 		if (shouldSkipIntegrationTests()) {
 			console.log('Skipping: integration tests disabled');
 			return;
@@ -285,13 +301,15 @@ describe('Group Chat Integration Tests', () => {
 			agentDetector
 		);
 
-		// Verify participants have access to log path in their prompts
-		// (sessions only exist after the router spawns them during message routing)
-		const writerSession = Array.from(processManager.spawnedSessions.entries()).find(([k]) =>
-			k.includes('Writer')
+		// User messages spawn the moderator batch process. Participants are spawned
+		// later when the moderator response routes @mentions.
+		const moderatorSession = Array.from(processManager.spawnedSessions.entries()).find(([k]) =>
+			k.includes('moderator')
 		);
-		expect(writerSession).toBeTruthy();
-		expect(writerSession?.[1].prompt).toContain(groupChat.logPath);
+		expect(moderatorSession).toBeTruthy();
+		expect(moderatorSession?.[1].prompt).toContain('@Writer');
+		expect(moderatorSession?.[1].prompt).toContain('@Reviewer');
+		expect(moderatorSession?.[1].prompt).toContain('recursion');
 
 		// Verify message logging
 		const messages = await readLog(groupChat.logPath);
@@ -457,16 +475,15 @@ describe('Group Chat Integration Tests', () => {
 			agentDetector
 		);
 
-		// Verify both participants have sessions
-		const agent1Session = Array.from(processManager.spawnedSessions.keys()).find((k) =>
-			k.includes('Agent1')
-		);
-		const agent2Session = Array.from(processManager.spawnedSessions.keys()).find((k) =>
-			k.includes('Agent2')
+		const moderatorSession = Array.from(processManager.spawnedSessions.entries()).find(([k]) =>
+			k.includes('moderator')
 		);
 
-		expect(agent1Session).toBeTruthy();
-		expect(agent2Session).toBeTruthy();
+		expect(moderatorSession).toBeTruthy();
+		expect(moderatorSession?.[1].prompt).toContain('@Agent1');
+		expect(moderatorSession?.[1].prompt).toContain('@Agent2');
+		expect(moderatorSession?.[1].prompt).toContain('ping');
+		expect(moderatorSession?.[1].prompt).toContain('pong');
 
 		// Clean up
 		await cleanupGroupChat(groupChat.id);

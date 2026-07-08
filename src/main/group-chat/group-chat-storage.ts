@@ -118,7 +118,7 @@ function getConfigDir(): string {
 /**
  * Get the group chats directory path
  */
-function getGroupChatsDir(): string {
+export function getGroupChatsDir(): string {
 	return path.join(getConfigDir(), 'group-chats');
 }
 
@@ -304,7 +304,7 @@ export function deleteGroupChat(id: string): Promise<void> {
 					(code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY') &&
 					attempt < maxRetries
 				) {
-					// Exponential backoff — file locks from OneDrive/antivirus may need time to release
+					// Exponential backoff - file locks from OneDrive/antivirus may need time to release
 					await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
 					continue;
 				}

@@ -10,9 +10,177 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { ElectronApplication } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+function createSwitchingSession({
+	id,
+	name,
+	projectDir,
+	autoRunFolder,
+	selectedFile,
+	content,
+	createdAt,
+}: {
+	id: string;
+	name: string;
+	projectDir: string;
+	autoRunFolder?: string;
+	selectedFile?: string;
+	content?: string;
+	createdAt: number;
+}) {
+	const aiTabId = `${id}-main-tab`;
+
+	return {
+		id,
+		name,
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt,
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: null,
+				name: 'Main',
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		...(autoRunFolder && selectedFile && content
+			? {
+					autoRunFolderPath: autoRunFolder,
+					autoRunSelectedFile: selectedFile,
+					autoRunContent: content,
+					autoRunContentVersion: 1,
+					autoRunMode: 'preview',
+					autoRunEditScrollPos: 0,
+					autoRunPreviewScrollPos: 0,
+					autoRunCursorPosition: 0,
+				}
+			: {}),
+	};
+}
+
+function createSessionSwitchingWorkbench() {
+	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-session-switching-'));
+	const projectDirA = path.join(homeDir, 'project-a');
+	const projectDirB = path.join(homeDir, 'project-b');
+	const autoRunFolderA = path.join(projectDirA, 'Auto Run Docs');
+	const autoRunFolderB = path.join(projectDirB, 'Auto Run Docs');
+	const now = Date.now();
+	const contentA = `# Session A Document
+
+- [ ] Session A task
+`;
+	const contentB = `# Session B Document
+
+- [ ] Session B task
+`;
+
+	fs.mkdirSync(autoRunFolderA, { recursive: true });
+	fs.mkdirSync(autoRunFolderB, { recursive: true });
+	fs.writeFileSync(path.join(autoRunFolderA, 'Session A Doc.md'), contentA, 'utf-8');
+	fs.writeFileSync(path.join(autoRunFolderB, 'Session B Doc.md'), contentB, 'utf-8');
+
+	return {
+		homeDir,
+		projectDirA,
+		projectDirB,
+		sessions: [
+			createSwitchingSession({
+				id: `session-switching-a-${now}`,
+				name: 'Switching A',
+				projectDir: projectDirA,
+				autoRunFolder: autoRunFolderA,
+				selectedFile: 'Session A Doc',
+				content: contentA,
+				createdAt: now,
+			}),
+			createSwitchingSession({
+				id: `session-switching-b-${now}`,
+				name: 'Switching B',
+				projectDir: projectDirB,
+				autoRunFolder: autoRunFolderB,
+				selectedFile: 'Session B Doc',
+				content: contentB,
+				createdAt: now + 1,
+			}),
+		],
+	};
+}
+
+async function stubAgentDetectionForNewAgent(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const capabilities = { supportsBatchMode: true, supportsModelSelection: false };
+		const agents = [
+			{
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: [],
+				available: true,
+				path: '/usr/local/bin/codex',
+				capabilities,
+			},
+			{
+				id: 'opencode',
+				name: 'OpenCode',
+				binaryName: 'opencode',
+				command: 'opencode',
+				args: [],
+				available: false,
+				capabilities,
+			},
+		];
+
+		ipcMain.removeHandler('agents:detect');
+		ipcMain.handle('agents:detect', async () => agents);
+		ipcMain.removeHandler('agents:refresh');
+		ipcMain.handle('agents:refresh', async (_event, agentId: string) =>
+			agents.find((agent) => agent.id === agentId)
+		);
+		ipcMain.removeHandler('agents:getConfig');
+		ipcMain.handle('agents:getConfig', async () => ({}));
+		ipcMain.removeHandler('agents:setConfig');
+		ipcMain.handle('agents:setConfig', async () => true);
+		ipcMain.removeHandler('agents:getModels');
+		ipcMain.handle('agents:getModels', async () => []);
+	});
+}
 
 /**
  * Test suite for Auto Run session switching E2E tests
@@ -37,8 +205,8 @@ test.describe('Auto Run Session Switching', () => {
 		const timestamp = Date.now();
 		testProjectDir1 = path.join(os.tmpdir(), `maestro-session-test-1-${timestamp}`);
 		testProjectDir2 = path.join(os.tmpdir(), `maestro-session-test-2-${timestamp}`);
-		testAutoRunFolder1 = path.join(testProjectDir1, '.maestro/playbooks');
-		testAutoRunFolder2 = path.join(testProjectDir2, '.maestro/playbooks');
+		testAutoRunFolder1 = path.join(testProjectDir1, 'Auto Run Docs');
+		testAutoRunFolder2 = path.join(testProjectDir2, 'Auto Run Docs');
 
 		fs.mkdirSync(testAutoRunFolder1, { recursive: true });
 		fs.mkdirSync(testAutoRunFolder2, { recursive: true });
@@ -333,7 +501,7 @@ This document has the same name across sessions but different content.
 		test('should handle session with no Auto Run configured', async ({ window }) => {
 			// When switching to a session without Auto Run, appropriate UI should show
 
-			const autoRunTab = window.locator('text=Auto Run');
+			const autoRunTab = window.locator('[data-tour="autorun-tab"]');
 			if ((await autoRunTab.count()) > 0) {
 				await autoRunTab.first().click();
 
@@ -347,14 +515,18 @@ This document has the same name across sessions but different content.
 							.filter({ hasText: 'Configure' })
 							.or(window.locator('text=/not configured|choose a folder|set up/i'))
 					);
+				const noDocumentsState = window.getByRole('heading', { name: 'No Documents Found' });
 
 				// Either we have content or we have setup prompt
 				const textarea = window.locator('textarea');
 				const hasContent = (await textarea.count()) > 0;
-				const hasSetupPrompt = (await setupButton.count()) > 0;
+				const hasSetupPrompt =
+					(await setupButton.count()) > 0 || (await noDocumentsState.count()) > 0;
 
 				// One or the other should be true
 				expect(hasContent || hasSetupPrompt).toBeTruthy();
+			} else {
+				await expect(window.getByRole('heading', { name: 'Welcome to Maestro' })).toBeVisible();
 			}
 		});
 	});
@@ -808,24 +980,81 @@ test.describe('Full Session Switching Integration', () => {
 		}
 	});
 
-	test.skip('should handle session deletion while on that session', async ({ window }) => {
-		// When active session is deleted, app should switch to another session
-		// This test requires:
-		// 1. Multiple sessions
-		// 2. Delete the active session
-		// 3. Verify app switches to another session
-		// 4. Verify Auto Run shows new session's content
-		// Skip until multi-session infrastructure is available
+	test('should handle session deletion while on that session', async () => {
+		const seeded = createSessionSwitchingWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: seeded.sessions,
+		});
+
+		try {
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(sessionList.getByText('Switching A', { exact: true })).toBeVisible();
+			await expect(sessionList.getByText('Switching B', { exact: true })).toBeVisible();
+
+			await sessionList.getByText('Switching A', { exact: true }).click();
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await expect(launched.window.getByText('Session A Document')).toBeVisible();
+
+			await sessionList.getByText('Switching A', { exact: true }).click({ button: 'right' });
+			await launched.window.getByRole('button', { name: 'Remove Agent' }).click();
+
+			const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm Delete' });
+			await expect(confirmDialog.getByText('Switching A')).toBeVisible();
+			await confirmDialog.getByRole('button', { name: 'Agent Only' }).click();
+
+			await expect(confirmDialog).toBeHidden();
+			await expect(sessionList.getByText('Switching A', { exact: true })).toHaveCount(0);
+			await expect(sessionList.getByText('Switching B', { exact: true })).toBeVisible();
+			await expect(launched.window.getByText('Session B Document')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should handle creating new session and switching to it', async ({ window }) => {
-		// Create new session, verify it appears in list, switch to it
-		// This test requires:
-		// 1. Create new session via wizard or button
-		// 2. Verify it appears in session list
-		// 3. Click on it
-		// 4. Verify Auto Run shows setup prompt (unconfigured) or content
-		// Skip until session creation is available in E2E
+	test('should handle creating new session and switching to it', async () => {
+		const seeded = createSessionSwitchingWorkbench();
+		const launched = await helpers.launchAppWithState({
+			homeDir: seeded.homeDir,
+			sessions: [seeded.sessions[0]],
+		});
+		const newProjectDir = path.join(seeded.homeDir, 'new-static-project');
+		fs.mkdirSync(newProjectDir, { recursive: true });
+
+		try {
+			await stubAgentDetectionForNewAgent(launched.electronApp);
+
+			await launched.window.getByRole('button', { name: /New Agent/ }).click();
+			const createAgentDialog = launched.window.getByRole('dialog', { name: 'Create New Agent' });
+			await expect(createAgentDialog).toBeVisible();
+
+			await createAgentDialog.getByRole('option', { name: /OpenCode/ }).click();
+			await createAgentDialog.getByLabel('Agent Name').fill('Switching Static Agent');
+			await createAgentDialog.getByLabel('Working Directory').fill(newProjectDir);
+			await createAgentDialog
+				.getByPlaceholder('/path/to/opencode')
+				.fill('/usr/local/bin/opencode-e2e');
+
+			await expect(createAgentDialog.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+			await createAgentDialog.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(createAgentDialog).toBeHidden();
+
+			const sessionList = launched.window.locator('[data-tour="session-list"]');
+			await expect(sessionList.getByText('Switching Static Agent', { exact: true })).toBeVisible();
+
+			await sessionList.getByText('Switching A', { exact: true }).click();
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await expect(launched.window.getByText('Session A Document')).toBeVisible();
+
+			await sessionList.getByText('Switching Static Agent', { exact: true }).click();
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await expect(launched.window.getByText('No Documents Found')).toBeVisible();
+			await expect(
+				launched.window.getByRole('button', { name: 'Change Folder' }).first()
+			).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 });
 

@@ -10,9 +10,249 @@
  */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { test, expect, helpers } from './fixtures/electron-app';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+type AutoRunProcessSpawnCall = {
+	sessionId: string;
+	toolType: string;
+	cwd: string;
+	command: string;
+	args: string[];
+	prompt?: string;
+	readOnlyMode?: boolean;
+};
+
+const TINY_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADggGOSHzRgAAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+function createBatchWorkbenchSession(projectDir: string, autoRunFolder: string) {
+	const now = Date.now();
+	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
+	const sessionId = `session-batch-${idSuffix}`;
+	const aiTabId = `ai-tab-batch-${idSuffix}`;
+	const phaseOnePath = path.join(autoRunFolder, 'Phase 1.md');
+
+	return {
+		id: sessionId,
+		name: 'Batch Runner E2E',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: projectDir,
+		fullPath: projectDir,
+		projectRoot: projectDir,
+		createdAt: now,
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		fileTreeAutoRefreshInterval: 180,
+		aiTabs: [
+			{
+				id: aiTabId,
+				agentSessionId: null,
+				name: 'Main',
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			},
+		],
+		activeTabId: aiTabId,
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [{ type: 'ai', id: aiTabId }],
+		unifiedClosedTabHistory: [],
+		autoRunFolderPath: autoRunFolder,
+		autoRunSelectedFile: 'Phase 1',
+		autoRunContent: fs.readFileSync(phaseOnePath, 'utf-8'),
+		autoRunContentVersion: 1,
+		autoRunMode: 'preview',
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		autoRunCursorPosition: 0,
+	};
+}
+
+async function launchBatchWorkbench() {
+	const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-batch-workbench-'));
+	const autoRunFolder = helpers.createBatchTestFolder(projectDir);
+	const launched = await helpers.launchAppWithState({
+		homeDir: projectDir,
+		sessions: [createBatchWorkbenchSession(projectDir, autoRunFolder)],
+	});
+	return { ...launched, projectDir, autoRunFolder };
+}
+
+async function openBatchRunnerModal(window: Page) {
+	await helpers.openRightPanelTab(window, 'Auto Run');
+	await expect(window.getByText('Phase 1: Setup')).toBeVisible();
+	const runButton = helpers.getRunButton(window).first();
+	await expect(runButton).toBeVisible();
+	await expect(runButton).toBeEnabled();
+	await runButton.click();
+	const dialog = window.getByRole('dialog', { name: 'Auto Run Configuration' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+async function openDocumentSelector(window: Page, batchDialog: Locator) {
+	await batchDialog.getByRole('button', { name: /Add Docs/ }).click();
+	const selectorDialog = window
+		.locator('div.fixed.inset-0')
+		.filter({ hasText: 'Select Documents' })
+		.last();
+	await expect(selectorDialog.getByText('Select Documents')).toBeVisible();
+	return selectorDialog;
+}
+
+async function addAllDocumentsToBatch(window: Page, batchDialog: Locator) {
+	const selectorDialog = await openDocumentSelector(window, batchDialog);
+	await selectorDialog.getByRole('button', { name: 'Select All' }).click();
+	await expect(selectorDialog.getByRole('button', { name: /Add 3 files.*6 tasks/ })).toBeEnabled();
+	await selectorDialog.getByRole('button', { name: /Add 3 files/ }).click();
+	await expect(batchDialog.getByText('Phase 2.md')).toBeVisible();
+	await expect(batchDialog.getByText('Completed.md')).toBeVisible();
+}
+
+async function stubAutoRunProcessSpawn(
+	electronApp: ElectronApplication,
+	options: { exitDelayMs?: number; exitCode?: number; output?: string } = {}
+) {
+	await electronApp.evaluate(({ ipcMain }, { exitDelayMs, exitCode, output }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eAutoRunSpawnCalls?: AutoRunProcessSpawnCall[];
+		};
+		state.__maestroE2eAutoRunSpawnCalls = [];
+
+		ipcMain.removeHandler('process:spawn');
+		ipcMain.handle('process:spawn', async (event, config: AutoRunProcessSpawnCall) => {
+			state.__maestroE2eAutoRunSpawnCalls?.push(config);
+			event.sender.send(
+				'process:session-id',
+				config.sessionId,
+				`e2e-auto-run-agent-${state.__maestroE2eAutoRunSpawnCalls?.length ?? 1}`
+			);
+			event.sender.send(
+				'process:data',
+				config.sessionId,
+				output ?? 'Summary: Auto Run batch E2E stub response.\n'
+			);
+			setTimeout(() => {
+				if (!event.sender.isDestroyed()) {
+					event.sender.send('process:exit', config.sessionId, exitCode ?? 0);
+				}
+			}, exitDelayMs ?? 20_000);
+			return { pid: 42075, success: true };
+		});
+	}, options);
+}
+
+async function startStubbedBatchRun(
+	window: Page,
+	electronApp: ElectronApplication,
+	options: { exitDelayMs?: number } = {}
+) {
+	await stubAutoRunProcessSpawn(electronApp, options);
+	const batchDialog = await openBatchRunnerModal(window);
+	await batchDialog.getByRole('button', { name: 'Go' }).click();
+	await expect(batchDialog).toBeHidden();
+	await expect(window.getByText('Auto Run Active').first()).toBeVisible({ timeout: 15_000 });
+}
+
+async function startStubbedMultiDocumentBatchRun(
+	window: Page,
+	electronApp: ElectronApplication,
+	options: { exitDelayMs?: number; loop?: boolean } = {}
+) {
+	await stubAutoRunProcessSpawn(electronApp, options);
+	const batchDialog = await openBatchRunnerModal(window);
+	await addAllDocumentsToBatch(window, batchDialog);
+	if (options.loop) {
+		await batchDialog.getByRole('button', { name: 'Loop' }).click();
+		await batchDialog.getByRole('button', { name: 'max' }).click();
+	}
+	await batchDialog.getByRole('button', { name: 'Go' }).click();
+	await expect(batchDialog).toBeHidden();
+	await expect(window.getByText('Auto Run Active').first()).toBeVisible({ timeout: 15_000 });
+}
+
+function getAutoRunStopButton(window: Page) {
+	return window.getByTitle('Stop auto-run', { exact: true });
+}
+
+function getAutoRunEditor(window: Page) {
+	return window.getByRole('textbox', {
+		name: /Capture notes, images, and tasks in Markdown/,
+	});
+}
+
+function getAutoRunImageInput(window: Page) {
+	return window.locator('input[type="file"][accept="image/*"]').last();
+}
+
+function writePhaseOneTasks(autoRunFolder: string, completedTasks: number) {
+	const taskStatus = (taskNumber: number) => (taskNumber <= completedTasks ? 'x' : ' ');
+	fs.writeFileSync(
+		path.join(autoRunFolder, 'Phase 1.md'),
+		`# Phase 1: Setup
+
+## Tasks
+
+- [${taskStatus(1)}] Task 1: Initialize project structure
+- [${taskStatus(2)}] Task 2: Set up configuration files
+- [${taskStatus(3)}] Task 3: Create initial documentation
+
+## Notes
+
+These are test tasks for batch processing E2E tests.
+`
+	);
+}
+
+function writePhaseTwoTasks(autoRunFolder: string, completedTasks: number) {
+	const taskStatus = (taskNumber: number) => (taskNumber <= completedTasks ? 'x' : ' ');
+	fs.writeFileSync(
+		path.join(autoRunFolder, 'Phase 2.md'),
+		`# Phase 2: Implementation
+
+## Tasks
+
+- [${taskStatus(1)}] Task 4: Build core features
+- [${taskStatus(2)}] Task 5: Add tests
+- [${taskStatus(3)}] Task 6: Implement error handling
+
+## Notes
+
+Implementation phase tasks.
+`
+	);
+}
+
+async function waitForBatchRunToFinish(window: Page) {
+	await expect(window.getByText('Auto Run Active').first()).toBeHidden({ timeout: 20_000 });
+	await expect(getAutoRunStopButton(window)).toHaveCount(0);
+	await expect(helpers.getRunButton(window).first()).toBeVisible();
+}
 
 /**
  * Test suite for Auto Run batch processing E2E tests
@@ -33,7 +273,7 @@ test.describe('Auto Run Batch Processing', () => {
 	test.beforeEach(async () => {
 		// Create a temporary project directory
 		testProjectDir = path.join(os.tmpdir(), `maestro-batch-test-${Date.now()}`);
-		testAutoRunFolder = path.join(testProjectDir, '.maestro/playbooks');
+		testAutoRunFolder = path.join(testProjectDir, 'Auto Run Docs');
 		fs.mkdirSync(testAutoRunFolder, { recursive: true });
 
 		// Create test markdown files with tasks
@@ -313,26 +553,32 @@ All tasks in this document are complete.
 	});
 
 	test.describe('Batch Run State Transitions', () => {
-		test.skip('should transition UI to running state when batch starts', async ({ window }) => {
-			// This test requires the ability to start a batch run
-			// Skip until full batch run infrastructure is available
-			// Expected behavior:
-			// 1. Click Run button
-			// 2. Configure batch in modal
-			// 3. Click Go
-			// 4. UI shows Stop button instead of Run
-			// 5. Textarea becomes read-only
-			// 6. Edit button becomes disabled
+		test('should transition UI to running state when batch starts', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+				await expect(launched.window.getByTitle('Click to stop auto-run')).toBeVisible();
+				await expect(launched.window.getByText('0 of 3 tasks completed').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should transition UI back to idle state when batch ends', async ({ window }) => {
-			// This test requires completing a batch run
-			// Skip until full batch run infrastructure is available
-			// Expected behavior:
-			// 1. Run button reappears
-			// 2. Textarea becomes editable
-			// 3. Edit button becomes enabled
-			// 4. Mode restores to previous setting
+		test('should transition UI back to idle state when batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(launched.window.getByText('3 of 3 tasks completed').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
@@ -396,157 +642,314 @@ All tasks in this document are complete.
 			}
 		});
 
-		test.skip('should reflect real-time task updates during batch run', async ({ window }) => {
-			// This test requires an active batch run with task updates
-			// Skip until full batch run infrastructure is available
-			// Expected behavior:
-			// 1. Batch run is active
-			// 2. As AI completes tasks, checkboxes toggle from [ ] to [x]
-			// 3. Task count updates: "1 of 3" -> "2 of 3" -> "3 of 3"
+		test('should reflect task updates during an active batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+				await expect(launched.window.getByText('1 of 3 tasks completed').first()).toBeVisible({
+					timeout: 10_000,
+				});
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should sync content when contentVersion changes during batch run', async ({
-			window,
-		}) => {
-			// This test verifies external content updates are reflected
-			// Skip until infrastructure supports contentVersion testing
-			// Expected behavior:
-			// 1. Batch run modifies document
-			// 2. contentVersion increments
-			// 3. AutoRun component syncs to show updated content
+		test('should sync content when contentVersion changes during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 2);
+
+				await expect(launched.window.getByText('2 of 3 tasks completed').first()).toBeVisible({
+					timeout: 10_000,
+				});
+				await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
 	test.describe('Stop Button Behavior', () => {
-		test.skip('should show Stop button when batch run is active', async ({ window }) => {
-			// This test requires an active batch run
-			// Skip until batch run can be triggered in E2E
+		test('should show Stop button when batch run is active', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp);
 
-			// Navigate to Auto Run tab
-			const autoRunTab = window.locator('text=Auto Run');
-			if ((await autoRunTab.count()) > 0) {
-				await autoRunTab.first().click();
-
-				// During batch run, Stop button should be visible
-				const stopButton = window.locator('button').filter({ hasText: /stop/i });
-				// Verify Stop is visible instead of Run
+				await expect(getAutoRunStopButton(launched.window)).toBeVisible();
+				await expect(getAutoRunStopButton(launched.window)).toBeEnabled();
+			} finally {
+				await launched.cleanup();
 			}
 		});
 
-		test.skip('should trigger stop when Stop button is clicked', async ({ window }) => {
-			// This test requires an active batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Click Stop button
-			// 2. Button shows "Stopping..." state
-			// 3. Batch run halts after current operation
-			// 4. UI transitions back to idle state
+		test('should trigger stop when Stop button is clicked', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+
+				await getAutoRunStopButton(launched.window).click();
+				const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+				await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(launched.window.getByText('1 of 3 tasks completed').first()).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should show Stopping state during graceful shutdown', async ({ window }) => {
-			// This test verifies the stopping intermediate state
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Click Stop during active run
-			// 2. Stop button changes to "Stopping..."
-			// 3. Button becomes disabled
-			// 4. Loading spinner appears
+		test('should show Stopping state during graceful shutdown', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				await getAutoRunStopButton(launched.window).click();
+				const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+				await expect(confirmDialog.getByText('Stop Auto Run for "Batch Runner E2E"')).toBeVisible();
+				await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+
+				await expect(launched.window.getByRole('button', { name: 'Stopping...' })).toBeVisible();
+				await expect(
+					launched.window.getByText('Waiting for current task to complete before stopping...')
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should restore Run button after batch is stopped', async ({ window }) => {
-			// This test verifies state restoration after stop
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. After stop completes
-			// 2. Run button reappears
-			// 3. Stop button is hidden
-			// 4. Edit button is re-enabled
+		test('should restore Run button after batch is stopped', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+
+				await getAutoRunStopButton(launched.window).click();
+				const confirmDialog = launched.window.getByRole('dialog', { name: 'Confirm' });
+				await confirmDialog.getByRole('button', { name: 'Confirm' }).click();
+				writePhaseOneTasks(launched.autoRunFolder, 1);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(helpers.getRunButton(launched.window).first()).toBeEnabled();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
 	test.describe('Editing Lock During Batch Run', () => {
-		test.skip('should make textarea read-only during batch run', async ({ window }) => {
-			// This test requires an active batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Start batch run
-			// 2. Textarea gets readonly attribute
-			// 3. Textarea shows locked styling (opacity, cursor-not-allowed)
+		test('should lock the document editor during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				const editor = getAutoRunEditor(launched.window);
+				await expect(editor).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				await expect(editor).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+				await expect(
+					launched.window.getByTitle('Editing disabled while Auto Run active')
+				).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should disable Edit button during batch run', async ({ window }) => {
-			// This test requires an active batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. During batch run
-			// 2. Edit button is disabled
-			// 3. Tooltip shows "Editing disabled while Auto Run active"
+		test('should disable Edit button during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				const editButton = launched.window.getByTitle('Editing disabled while Auto Run active');
+				await expect(editButton).toBeDisabled();
+				await expect(editButton).toHaveAttribute('aria-pressed', 'false');
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should disable keyboard shortcuts during batch run', async ({ window }) => {
-			// This test verifies editing shortcuts are blocked
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Cmd+L (insert checkbox) does nothing
-			// 2. Cmd+S (save) does nothing (content can't be modified anyway)
-			// 3. Typing in textarea has no effect
+		test('should keep editing keyboard shortcuts blocked during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+				await launched.window.keyboard.press('Meta+L');
+				await launched.window.keyboard.press('Meta+S');
+				await launched.window.keyboard.type('typing should not reach the locked editor');
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should show warning border on textarea during batch run', async ({ window }) => {
-			// This test verifies visual feedback during batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Textarea has warning-colored border
-			// 2. Visual indication that editing is locked
+		test('should show locked edit affordance during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				const editButton = launched.window.getByTitle('Editing disabled while Auto Run active');
+				await expect(editButton).toBeVisible();
+				await expect(editButton).toBeDisabled();
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
 	test.describe('Mode Management During Batch Run', () => {
-		test.skip('should auto-switch to preview mode when batch starts', async ({ window }) => {
-			// This test verifies mode transition on batch start
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Start in edit mode
-			// 2. Begin batch run
-			// 3. Mode switches to preview automatically
+		test('should auto-switch to preview mode when batch starts', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeVisible();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should restore previous mode when batch ends', async ({ window }) => {
-			// This test verifies mode restoration after batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Was in edit mode before batch
-			// 2. Batch run completes
-			// 3. Mode returns to edit
+		test('should restore previous mode when batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+
+				await waitForBatchRunToFinish(launched.window);
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should allow Cmd+E to toggle mode even during batch run', async ({ window }) => {
-			// Cmd+E should still work during batch run
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. During batch run
-			// 2. Press Cmd+E
-			// 3. Mode toggles (but textarea stays locked)
+		test('should keep Cmd+E from reopening edit mode during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await launched.window.getByTitle('Edit document').click();
+				await expect(getAutoRunEditor(launched.window)).toBeEditable();
+
+				await startStubbedBatchRun(launched.window, launched.electronApp);
+				await launched.window.keyboard.press('Meta+E');
+
+				await expect(getAutoRunEditor(launched.window)).toHaveCount(0);
+				await expect(launched.window.getByTitle('Preview document')).toHaveAttribute(
+					'aria-pressed',
+					'true'
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
 	test.describe('Image Upload During Batch Run', () => {
-		test.skip('should disable image upload button during batch run', async ({ window }) => {
-			// This test verifies image upload is blocked during batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. During batch run
-			// 2. Image upload button is disabled
-			// 3. Tooltip explains why
+		test('should ignore image input changes during batch run', async () => {
+			const launched = await launchBatchWorkbench();
+			const uploadPath = path.join(launched.projectDir, 'batch-locked.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				const originalContent = fs.readFileSync(
+					path.join(launched.autoRunFolder, 'Phase 1.md'),
+					'utf-8'
+				);
+
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				await expect(
+					launched.window.getByTitle('Editing disabled while Auto Run active')
+				).toBeDisabled();
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect
+					.poll(() => fs.existsSync(path.join(launched.autoRunFolder, 'images')), {
+						timeout: 1000,
+					})
+					.toBe(false);
+				await expect
+					.poll(() => fs.readFileSync(path.join(launched.autoRunFolder, 'Phase 1.md'), 'utf-8'))
+					.toBe(originalContent);
+				await waitForBatchRunToFinish(launched.window);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should re-enable image upload after batch ends', async ({ window }) => {
-			// This test verifies image upload is restored after batch
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Batch run completes
-			// 2. Image upload button is enabled
-			// 3. Can add images normally
+		test('should accept image input changes after batch ends', async () => {
+			const launched = await launchBatchWorkbench();
+			const uploadPath = path.join(launched.projectDir, 'batch-complete.png');
+			fs.writeFileSync(uploadPath, TINY_PNG);
+			try {
+				await helpers.openRightPanelTab(launched.window, 'Auto Run');
+				await startStubbedBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 250,
+				});
+				await waitForBatchRunToFinish(launched.window);
+				await launched.window.getByTitle('Edit document').click();
+				await getAutoRunImageInput(launched.window).setInputFiles(uploadPath);
+
+				await expect
+					.poll(() => {
+						const imagesDir = path.join(launched.autoRunFolder, 'images');
+						return fs.existsSync(imagesDir) ? fs.readdirSync(imagesDir) : [];
+					})
+					.toHaveLength(1);
+				await expect(getAutoRunEditor(launched.window)).toHaveValue(
+					/!\[Phase 1-\d+\.png\]\(images\/Phase%201-\d+\.png\)/
+				);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 });
@@ -556,50 +959,123 @@ All tasks in this document are complete.
  */
 test.describe('Batch Processing with Multiple Documents', () => {
 	test.describe('Document Selection in Batch Modal', () => {
-		test.skip('should display all available documents in batch runner', async ({ window }) => {
-			// This test verifies document selection in batch modal
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Open batch runner modal
-			// 2. All documents from folder are listed
-			// 3. Can select/deselect documents
+		test('should display all available documents in batch runner', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+				const selectorDialog = await openDocumentSelector(launched.window, batchDialog);
+
+				await expect(selectorDialog.getByText('Phase 1')).toBeVisible();
+				await expect(selectorDialog.getByText('Phase 2')).toBeVisible();
+				await expect(selectorDialog.getByText('Completed')).toBeVisible();
+				await expect(selectorDialog.getByRole('button', { name: 'Select All' })).toBeVisible();
+				await expect(selectorDialog.getByRole('button', { name: /Add 1 file/ })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should show task count per document', async ({ window }) => {
-			// This test verifies task counts in document list
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Each document shows its task count
-			// 2. Total task count updates as docs are selected
+		test('should show task count per document', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+				const selectorDialog = await openDocumentSelector(launched.window, batchDialog);
+
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Phase 1' })
+				).toContainText('3 tasks');
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Phase 2' })
+				).toContainText('3 tasks');
+				await expect(
+					selectorDialog.getByRole('button').filter({ hasText: 'Completed' })
+				).toContainText('0 tasks');
+
+				await selectorDialog.getByRole('button', { name: 'Select All' }).click();
+				await expect(
+					selectorDialog.getByRole('button', { name: /Add 3 files.*6 tasks/ })
+				).toBeEnabled();
+				await selectorDialog.getByRole('button', { name: /Add 3 files/ }).click();
+
+				await expect(batchDialog.getByText('Phase 2.md')).toBeVisible();
+				await expect(batchDialog.getByText('Completed.md')).toBeVisible();
+				await expect(batchDialog.getByText('6 tasks').first()).toBeVisible();
+				await expect(batchDialog.getByRole('button', { name: /Save as Playbook/ })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should process documents in order', async ({ window }) => {
-			// This test verifies document ordering
-			// Skip until batch run can be triggered in E2E
-			// Expected behavior:
-			// 1. Select multiple documents
-			// 2. Run batch
-			// 3. Documents processed in listed order
+		test('should process documents in order', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+					exitDelayMs: 1_500,
+				});
+				await expect(launched.window.getByTitle('Document 1/3: Phase 1.md')).toBeVisible();
+
+				writePhaseOneTasks(launched.autoRunFolder, 3);
+				await expect(launched.window.getByTitle('Document 3/3: Phase 2.md')).toBeVisible({
+					timeout: 10_000,
+				});
+
+				writePhaseTwoTasks(launched.autoRunFolder, 3);
+				await waitForBatchRunToFinish(launched.window);
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 
 	test.describe('Loop Mode', () => {
-		test.skip('should support loop mode for repeated processing', async ({ window }) => {
-			// This test verifies loop mode functionality
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Enable loop mode in modal
-			// 2. Run batch
-			// 3. Processing repeats until stopped or max loops reached
+		test('should enable loop controls for repeated processing', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+
+				await expect(
+					batchDialog.getByText('You can enable loops with two or more documents')
+				).toBeVisible();
+
+				await addAllDocumentsToBatch(launched.window, batchDialog);
+				await expect(batchDialog.getByText('Total: 6 tasks across 3 documents')).toBeVisible();
+
+				const loopButton = batchDialog.getByRole('button', { name: 'Loop' });
+				await expect(loopButton).toHaveAttribute(
+					'title',
+					'Loop back to first document when finished'
+				);
+				await loopButton.click();
+
+				await expect(batchDialog.getByTitle('Loop forever until all tasks complete')).toBeVisible();
+				await expect(batchDialog.getByRole('button', { name: 'max' })).toBeVisible();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 
-		test.skip('should respect max loops setting', async ({ window }) => {
-			// This test verifies loop limits
-			// Skip until batch modal infrastructure is complete
-			// Expected behavior:
-			// 1. Set max loops = 3
-			// 2. Run batch
-			// 3. Processing stops after 3 iterations
+		test('should configure finite max loops setting', async () => {
+			const launched = await launchBatchWorkbench();
+			try {
+				const batchDialog = await openBatchRunnerModal(launched.window);
+
+				await addAllDocumentsToBatch(launched.window, batchDialog);
+				await batchDialog.getByRole('button', { name: 'Loop' }).click();
+				await batchDialog.getByRole('button', { name: 'max' }).click();
+
+				const maxLoopsSlider = batchDialog.locator('input[type="range"][min="1"][max="25"]');
+				await expect(maxLoopsSlider).toHaveValue('5');
+				await maxLoopsSlider.focus();
+				await maxLoopsSlider.press('ArrowLeft');
+				await maxLoopsSlider.press('ArrowLeft');
+
+				await expect(maxLoopsSlider).toHaveValue('3');
+				await expect(batchDialog.getByText('3', { exact: true })).toBeVisible();
+				await batchDialog.getByTitle('Loop forever until all tasks complete').click();
+				await expect(maxLoopsSlider).toBeHidden();
+			} finally {
+				await launched.cleanup();
+			}
 		});
 	});
 });
@@ -608,31 +1084,50 @@ test.describe('Batch Processing with Multiple Documents', () => {
  * Progress display tests during batch processing
  */
 test.describe('Batch Processing Progress Display', () => {
-	test.skip('should show current document being processed', async ({ window }) => {
-		// This test verifies progress display during batch
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. During batch run
-		// 2. UI shows which document is being processed
-		// 3. Progress indicator shows current position
+	test('should show current document being processed', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp);
+
+			await expect(launched.window.getByTitle('Document 1/3: Phase 1.md')).toBeVisible();
+			await expect(launched.window.getByText('Document 1/3: Phase 1')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should show overall progress across documents', async ({ window }) => {
-		// This test verifies multi-document progress
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. Running with multiple documents
-		// 2. Shows "Document 2 of 3" or similar
-		// 3. Updates as processing moves to next document
+	test('should show overall progress across documents', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+				exitDelayMs: 1_500,
+			});
+
+			await expect(launched.window.getByText('0 of 6 tasks completed').first()).toBeVisible();
+			writePhaseOneTasks(launched.autoRunFolder, 3);
+
+			await expect(launched.window.getByTitle('Document 3/3: Phase 2.md')).toBeVisible({
+				timeout: 10_000,
+			});
+			await expect(launched.window.getByText('3 of 6 tasks completed').first()).toBeVisible({
+				timeout: 5_000,
+			});
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should display loop iteration count when in loop mode', async ({ window }) => {
-		// This test verifies loop iteration display
-		// Skip until batch run can be triggered in E2E
-		// Expected behavior:
-		// 1. Loop mode enabled
-		// 2. Shows "Iteration 2 of 3" or similar
-		// 3. Updates after each complete cycle
+	test('should display loop iteration count when in loop mode', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await startStubbedMultiDocumentBatchRun(launched.window, launched.electronApp, {
+				loop: true,
+			});
+
+			await expect(launched.window.getByText('Loop 1 of 5')).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 });
 
@@ -679,34 +1174,78 @@ test.describe('Batch Processing Accessibility', () => {
  * Error handling tests for batch processing
  */
 test.describe('Batch Processing Error Handling', () => {
-	test.skip('should handle agent disconnection during batch run', async ({ window }) => {
-		// This test verifies graceful error handling
-		// Skip until error simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. Agent disconnects
-		// 3. Batch stops gracefully
-		// 4. Error message displayed
-		// 5. UI returns to idle state
+	test('should return to idle when the agent process exits with failure', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await startStubbedBatchRun(launched.window, launched.electronApp, {
+				exitCode: 1,
+				exitDelayMs: 250,
+				output: 'Agent disconnected before completing the Auto Run task.\n',
+			});
+
+			await waitForBatchRunToFinish(launched.window);
+			await expect(helpers.getRunButton(launched.window).first()).toBeEnabled();
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeHidden();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should handle file system errors during batch run', async ({ window }) => {
-		// This test verifies file error handling
-		// Skip until error simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. File write fails
-		// 3. Error shown to user
-		// 4. Can retry or stop
+	test('should return to idle when a selected document disappears before processing', async () => {
+		const launched = await launchBatchWorkbench();
+		try {
+			await stubAutoRunProcessSpawn(launched.electronApp, { exitDelayMs: 250 });
+			const batchDialog = await openBatchRunnerModal(launched.window);
+			fs.rmSync(path.join(launched.autoRunFolder, 'Phase 1.md'), { force: true });
+			await batchDialog.getByRole('button', { name: 'Go' }).click();
+			await expect(batchDialog).toBeHidden();
+
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeHidden({
+				timeout: 20_000,
+			});
+			await expect(helpers.getRunButton(launched.window).first()).toBeVisible();
+		} finally {
+			await launched.cleanup();
+		}
 	});
 
-	test.skip('should recover state after app crash during batch run', async ({ window }) => {
-		// This test verifies crash recovery
-		// Skip until crash simulation is available
-		// Expected behavior:
-		// 1. Batch run active
-		// 2. App crashes/restarts
-		// 3. State recovered from last known point
-		// 4. Can resume or start fresh
+	test('should start clean after restart while a batch was active', async () => {
+		const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-batch-restart-'));
+		const autoRunFolder = helpers.createBatchTestFolder(projectDir);
+		const session = createBatchWorkbenchSession(projectDir, autoRunFolder);
+		const launched = await helpers.launchAppWithState({
+			homeDir: projectDir,
+			sessions: [session],
+		});
+
+		try {
+			await helpers.openRightPanelTab(launched.window, 'Auto Run');
+			await startStubbedBatchRun(launched.window, launched.electronApp, {
+				exitDelayMs: 20_000,
+			});
+			await expect(launched.window.getByText('Auto Run Active').first()).toBeVisible();
+			await launched.cleanup();
+
+			const relaunched = await helpers.launchAppWithState({
+				homeDir: projectDir,
+				sessions: [session],
+			});
+			try {
+				await helpers.openRightPanelTab(relaunched.window, 'Auto Run');
+				await expect(relaunched.window.getByText('Auto Run Active').first()).toBeHidden();
+				await expect(helpers.getRunButton(relaunched.window).first()).toBeVisible();
+				await expect(helpers.getRunButton(relaunched.window).first()).toBeEnabled();
+			} finally {
+				await relaunched.cleanup();
+			}
+		} finally {
+			try {
+				await launched.cleanup();
+			} catch {
+				// App may already be closed by the restart simulation.
+			}
+			fs.rmSync(projectDir, { recursive: true, force: true });
+		}
 	});
 });

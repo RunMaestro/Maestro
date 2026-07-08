@@ -65,21 +65,23 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 #### Keyboard Shortcuts for Analytics Features
 
 **Usage Dashboard** (`Opt+Cmd+U` / `Alt+Ctrl+U`):
-| Action | Key |
-|--------|-----|
-| Navigate view tabs | Arrow Left/Right/Up/Down |
-| Move between sections | Tab / Shift+Tab |
-| Jump to first/last section | Home / End |
-| Close dashboard | Escape |
+
+| Action                     | Key                      |
+| -------------------------- | ------------------------ |
+| Navigate view tabs         | Arrow Left/Right/Up/Down |
+| Move between sections      | Tab / Shift+Tab          |
+| Jump to first/last section | Home / End               |
+| Close dashboard            | Escape                   |
 
 **Document Graph** (Command K → "Document Graph"):
-| Action | Key |
-|--------|-----|
-| Navigate to connected node | Arrow Up/Down/Left/Right |
-| Cycle through connections | Tab |
-| Open selected document/link | Enter |
-| Close graph | Escape |
-| Search documents | Focus search input, type query |
+
+| Action                      | Key                            |
+| --------------------------- | ------------------------------ |
+| Navigate to connected node  | Arrow Up/Down/Left/Right       |
+| Cycle through connections   | Tab                            |
+| Open selected document/link | Enter                          |
+| Close graph                 | Escape                         |
+| Search documents            | Focus search input, type query |
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 

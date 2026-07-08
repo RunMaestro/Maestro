@@ -22,7 +22,7 @@ export interface StatusInfo {
 	icon: React.ReactNode;
 }
 
-export function getStatusInfo(status: ContributionStatus): StatusInfo {
+export function getStatusInfo(status: ContributionStatus | string): StatusInfo {
 	const icons: Record<ContributionStatus, React.ReactNode> = {
 		cloning: <Spinner size={12} />,
 		creating_pr: <Spinner size={12} />,
@@ -45,9 +45,17 @@ export function getStatusInfo(status: ContributionStatus): StatusInfo {
 		failed: 'Failed',
 		cancelled: 'Cancelled',
 	};
+	if (!Object.prototype.hasOwnProperty.call(labels, status)) {
+		return {
+			label: status || 'Unknown',
+			color: STATUS_COLORS.paused,
+			icon: <AlertCircle className="w-3 h-3" />,
+		};
+	}
+	const knownStatus = status as ContributionStatus;
 	return {
-		label: labels[status],
-		color: STATUS_COLORS[status],
-		icon: icons[status],
+		label: labels[knownStatus],
+		color: STATUS_COLORS[knownStatus],
+		icon: icons[knownStatus],
 	};
 }

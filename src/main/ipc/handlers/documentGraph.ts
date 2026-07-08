@@ -24,6 +24,10 @@ const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>(
 /** Debounce delay for markdown file changes (ms) */
 const DEBOUNCE_DELAY = 500;
 
+export function getDocumentGraphWatcherCount(): number {
+	return documentGraphWatchers.size;
+}
+
 /**
  * Dependencies required for document graph handler registration
  */
