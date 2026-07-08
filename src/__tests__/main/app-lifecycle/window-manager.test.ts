@@ -2124,14 +2124,14 @@ describe('app-lifecycle/window-manager', () => {
 	describe('resolveVisibleWindowPosition', () => {
 		it('returns undefined x/y when no position was saved (Electron places it)', async () => {
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			expect(resolveVisibleWindowPosition({ width: 800, height: 600 })).toEqual({});
 		});
 
 		it('keeps on-screen saved coordinates as-is', async () => {
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			expect(resolveVisibleWindowPosition({ x: 100, y: 100, width: 800, height: 600 })).toEqual({
 				x: 100,
@@ -2147,7 +2147,7 @@ describe('app-lifecycle/window-manager', () => {
 			];
 
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			expect(resolveVisibleWindowPosition({ x: 2000, y: 100, width: 800, height: 600 })).toEqual({
 				x: 2000,
@@ -2165,7 +2165,7 @@ describe('app-lifecycle/window-manager', () => {
 			];
 
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			expect(resolveVisibleWindowPosition({ x: -1800, y: 100, width: 800, height: 600 })).toEqual({
 				x: -1800,
@@ -2178,7 +2178,7 @@ describe('app-lifecycle/window-manager', () => {
 			// monitor to the right (x:2000), so getDisplayMatching falls back to the
 			// primary and the reachability check fails.
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			// Centered on the primary 1920x1080 work area for an 800x600 window.
 			expect(resolveVisibleWindowPosition({ x: 2000, y: 100, width: 800, height: 600 })).toEqual({
@@ -2189,7 +2189,7 @@ describe('app-lifecycle/window-manager', () => {
 
 		it('repositions the Windows minimized sentinel (-32000) onto the primary', async () => {
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			expect(
 				resolveVisibleWindowPosition({ x: -32000, y: -32000, width: 1000, height: 600 })
@@ -2198,7 +2198,7 @@ describe('app-lifecycle/window-manager', () => {
 
 		it('repositions a window whose title bar sits below the work area bottom margin', async () => {
 			const { resolveVisibleWindowPosition } =
-				await import('../../../main/app-lifecycle/window-manager');
+				await import('../../../main/app-lifecycle/window-position');
 
 			// y:1050 puts the title bar (≈1066) past the 1000px reachable limit on a
 			// 1080-tall work area, so the title bar can't be grabbed - reposition it.
