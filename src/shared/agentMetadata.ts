@@ -26,6 +26,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	pi: 'Pi',
 	'copilot-cli': 'Copilot-CLI',
 	omp: 'Oh My Pi',
+	grok: 'Grok CLI',
 };
 
 /**
@@ -79,6 +80,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'copilot-cli',
 	'qwen3-coder',
 	'omp',
+	'grok',
 ]);
 
 /**

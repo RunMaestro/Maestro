@@ -516,6 +516,64 @@ export class AgentDetector {
 					return models;
 				}
 
+				case 'grok': {
+					// Grok: read ~/.grok/models_cache.json maintained by the Grok CLI.
+					// Unlike Codex's `models` array, Grok's `models` is an object map
+					// keyed by model ID, each entry wrapping an `info` object that
+					// carries a `hidden` flag.
+					try {
+						const cachePath = path.join(os.homedir(), '.grok', 'models_cache.json');
+						const cacheContent = fs.readFileSync(cachePath, 'utf8');
+						const cache = parseJsonWithBom<{
+							models?: Record<string, { info?: { id?: string; hidden?: boolean } }>;
+						}>(cacheContent);
+						if (cache.models && typeof cache.models === 'object') {
+							const models = Object.entries(cache.models)
+								.filter(([, entry]) => entry?.info?.hidden !== true)
+								.map(([id, entry]) => entry?.info?.id || id);
+							if (models.length > 0) {
+								logger.info(
+									`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ models }
+								);
+								return models;
+							}
+						}
+					} catch {
+						logger.debug('Could not read Grok models_cache.json for model discovery', LOG_CONTEXT);
+					}
+
+					// Fallback: parse `grok models` output. Model lines are bulleted, e.g.
+					//   * grok-4.5 (default)
+					//   - grok-composer-2.5-fast
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode === 0) {
+						const models: string[] = [];
+						for (const line of result.stdout.split('\n')) {
+							const match = line.match(/^\s*[*-]\s+(\S+)/);
+							if (match && !models.includes(match[1])) {
+								models.push(match[1]);
+							}
+						}
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`grok models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					} else {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+					}
+					return [];
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);
@@ -681,6 +739,20 @@ export class AgentDetector {
 								'Could not read Codex models_cache.json for config option discovery',
 								LOG_CONTEXT
 							);
+						}
+					}
+					break;
+				}
+
+				case 'grok': {
+					if (optionKey === 'model') {
+						// Reuse model discovery (~/.grok/models_cache.json with a
+						// `grok models` CLI fallback). Empty string = use grok's default
+						// model. When discovery returns nothing (fresh install, CLI
+						// unavailable), fall through to the static options below.
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
 						}
 					}
 					break;

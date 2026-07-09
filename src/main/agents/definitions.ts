@@ -715,6 +715,99 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 		],
 	},
+	{
+		id: 'grok',
+		name: 'Grok CLI',
+		binaryName: 'grok',
+		command: 'grok',
+		args: [], // Base args for interactive mode (default grok TUI)
+		requiresPty: false, // Batch mode (-p/--single) works over plain pipes
+		// Known limitation: like Codex, Maestro drives grok in batch mode only
+		// (-p/--single per turn, --resume to chain turns). There is no interactive
+		// PTY integration - the grok TUI is not wired into Maestro's terminal
+		// (capabilities: requiresPromptToStart: true).
+		//
+		// Grok CLI argument builders (verified against `grok --help` v0.2.93, see
+		// Auto Run Working/grok-help.txt)
+		// Batch mode: grok --cwd <dir> -p "prompt" --output-format streaming-json --always-approve
+		batchModePrefix: [], // No subcommand needed; -p/--single triggers headless mode
+		// YOLO required by Maestro, mirroring Claude Code's --dangerously-skip-permissions.
+		// --always-approve (boolean auto-approve), NOT ['--permission-mode',
+		// 'bypassPermissions'], for two reasons (same pattern as Copilot's --allow-all):
+		// 1. grok's clap hard-errors on a repeated --permission-mode ("cannot be
+		//    used multiple times"), so batchModeArgs carrying the flag would crash
+		//    read-only CLI runs where readOnlyArgs adds --permission-mode plan
+		//    (the CLI spawner keeps non-yolo batch args in read-only mode).
+		// 2. Cue spawns set yoloMode alongside batch mode, and buildAgentArgs'
+		//    flag dedup would collapse a repeated value-flag pair into a stray
+		//    positional ("bypassPermissions") that grok parses as a prompt; a
+		//    boolean flag dedups cleanly.
+		// Keep batchModeArgs === yoloModeArgs so the CLI read-only filter strips it.
+		batchModeArgs: ['--always-approve'],
+		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
+		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
+		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID
+		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
+		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		// No noToolsArgs (tab naming falls back to the same graceful path as
+		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93
+		// (see Auto Run Working/grok-notools-probe.txt): grok has no reliable
+		// "disable ALL tools" switch. `--tools ""` is treated as unset (the
+		// write tool still ran), and `--disallowed-tools` works per-tool but
+		// silently accepts unknown names while the built-in list is
+		// undocumented, ~31 names, and version-dependent - a hard-coded list
+		// would silently rot, and MCP-provided tools are outside its reach.
+		// Do not add noToolsArgs unless grok ships a verified all-off flag.
+		yoloModeArgs: ['--always-approve'],
+		workingDirArgs: (dir: string) => ['--cwd', dir], // Set working directory
+		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: grok -m grok-4.5
+		// Agent-specific configuration options shown in UI
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select',
+				label: 'Model',
+				description:
+					'Model to use (see `grok models`). Leave empty for the default model (grok-4.5).',
+				dynamic: true, // Discovered from ~/.grok/models_cache.json (or `grok models`) at runtime
+				// Static fallback used when ~/.grok/models_cache.json hasn't been
+				// written yet and the CLI is unreachable, so the dropdown still renders.
+				options: ['', 'grok-4.5', 'grok-composer-2.5-fast'],
+				default: '', // Empty = use grok's default model (grok-4.5)
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['-m', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'reasoningEffort',
+				type: 'select',
+				label: 'Reasoning Effort',
+				description:
+					'How much the model should reason before responding. Leave empty for the model default (high).',
+				// Accepted values discovered empirically from grok v0.2.93: a bogus value
+				// errors with "Use none, minimal, low, medium, high, xhigh, max, or a
+				// model menu option id" (see Auto Run Working/grok-discovery.md). Live
+				// runs confirmed all seven work on grok-composer-2.5-fast; grok-4.5
+				// rejects 'none' server-side (HTTP 400 "This model does not support
+				// reasoning_effort value none") but accepts the other six.
+				options: ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+				default: '',
+				argBuilder: (value: string) =>
+					value && value.trim() ? ['--reasoning-effort', value.trim()] : [],
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. 500000 for grok-4.5, 200000 for grok-composer-2.5-fast.',
+				default: 500000, // Matches DEFAULT_CONTEXT_WINDOWS grok entry (grok-4.5)
+			},
+		],
+	},
 ];
 
 /**

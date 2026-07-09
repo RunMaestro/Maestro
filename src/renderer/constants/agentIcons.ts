@@ -47,6 +47,9 @@ export const AGENT_ICONS: Record<string, string> = {
 	// Oh My Pi
 	omp: '🦉',
 
+	// xAI family
+	grok: '✖️',
+
 	// Enterprise
 	'factory-droid': '🏭',
 

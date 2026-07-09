@@ -408,6 +408,43 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // --output-format json produces JSONL
 		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
 	},
+
+	/**
+	 * Grok CLI - xAI's Grok coding agent CLI
+	 *
+	 * Capabilities verified against captured output from grok v0.2.93
+	 * (streaming-json fixtures). See the Phase 01 discovery document
+	 * (Working/grok-discovery.md in the Grok Auto Run folder) for evidence.
+	 * Notable: the streaming-json stdout stream carries NO tool events and
+	 * NO token usage/cost; the session ID arrives only on the final "end" event.
+	 */
+	grok: {
+		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event
+		supportsReadOnlyMode: true, // Verified: --permission-mode plan (grok --help v0.2.93)
+		supportsJsonOutput: true, // Verified: --output-format streaming-json emits one JSON object per line
+		supportsSessionId: true, // Verified: camelCase sessionId (UUIDv7) on the final end event (no init event exists)
+		supportsImageInput: false, // Conservative default: no image flag observed in grok --help
+		supportsImageInputOnResume: false, // Conservative default: follows supportsImageInput
+		supportsSlashCommands: false, // Conservative default: not investigated in headless mode
+		supportsSessionStorage: true, // Verified: GrokSessionStorage reads ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
+		supportsCostTracking: false, // Verified absent: no cost fields anywhere in the stream or on-disk session files
+		supportsUsageStats: false, // Verified absent: no token usage in the streaming-json stream (counts exist only in on-disk signals.json/updates.jsonl)
+		supportsBatchMode: true, // Verified: -p/--single <PROMPT> headless mode
+		requiresPromptToStart: true, // Verified: headless runs require -p <prompt>; no interactive PTY integration
+		supportsStreaming: true, // Verified: token-sized thought/text deltas stream on stdout
+		supportsResultMessages: true, // Verified: distinct final end event with stopReason/sessionId/requestId
+		supportsModelSelection: true, // Verified: -m/--model flag; grok models lists grok-4.5 and grok-composer-2.5-fast
+		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent in grok --help
+		supportsThinkingDisplay: true, // Verified: thought delta events precede text deltas
+		supportsContextMerge: false, // Conservative default: not yet exercised
+		supportsContextExport: true, // Verified: session storage reads full transcripts (chat_history.jsonl), same export path as siblings
+		supportsWizard: false, // Conservative default: wizard structured output not yet exercised
+		supportsGroupChatModeration: false, // Conservative default: moderation flow not yet exercised
+		usesJsonLineOutput: true, // Verified: streaming-json is JSONL (one JSON object per line); also gates CLI batch spawning (spawnJsonLineAgent)
+		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified
+		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
+		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
+	},
 };
 
 /**

@@ -565,7 +565,7 @@ describe('error-patterns', () => {
 			describe('session_not_found patterns', () => {
 				// Real stderr emitted by `codex exec resume <id>` (codex-cli 0.130.0)
 				// when the rollout file backing the thread is missing. Regression
-				// guard for #1042 — must NOT fall through to agent_crashed.
+				// guard for #1042 - must NOT fall through to agent_crashed.
 				it('should match Codex "no rollout found for thread id" resume failure', () => {
 					const stderr =
 						'Error: thread/resume: thread/resume failed: no rollout found for thread id 019e4aa3-5e01-73e1-9f61-d3961386dafd (code -32600)';
@@ -583,6 +583,55 @@ describe('error-patterns', () => {
 				it('should match generic "session not found"', () => {
 					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'session not found');
 					expect(result?.type).toBe('session_not_found');
+				});
+			});
+		});
+
+		describe('Grok-specific patterns', () => {
+			const GROK_ERROR_PATTERNS = getErrorPatterns('grok');
+
+			describe('session_not_found patterns', () => {
+				// Real stderr from `grok -p "hi" --resume <bad-uuid>
+				// --output-format streaming-json` (grok v0.2.93), captured in
+				// Working/grok-error-bad-resume.txt. Stdout carries no JSON error
+				// event for this failure, so the stderr string is the only signal.
+				it('should match the Grok "Failed to restore session" resume failure', () => {
+					const stderr =
+						'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, stderr);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('session_not_found');
+					expect(result?.recoverable).toBe(true);
+				});
+
+				it('should match the standalone "session get failed" cause', () => {
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'session get failed: 404 Not Found'
+					);
+					expect(result?.type).toBe('session_not_found');
+				});
+
+				it('should NOT match the informational "not found locally" restore line', () => {
+					// This line also precedes successful remote restores.
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'Session 019f47fb-2316-7f21-98db-55907d4ddb60 not found locally, restoring from remote...'
+					);
+					expect(result).toBeNull();
+				});
+			});
+
+			describe('agent_crashed patterns', () => {
+				// Real message from `grok -p "hi" -m nonexistent-model-xyz`
+				// (Working/grok-error-bad-model.txt).
+				it('should match the Grok bad-model failure', () => {
+					const message =
+						"Couldn't set model 'nonexistent-model-xyz': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, message);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('agent_crashed');
+					expect(result?.recoverable).toBe(true);
 				});
 			});
 		});

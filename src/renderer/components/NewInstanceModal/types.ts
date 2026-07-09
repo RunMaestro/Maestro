@@ -16,6 +16,7 @@ export const SUPPORTED_AGENTS = [
 	'omp',
 	'hermes',
 	'pi',
+	'grok',
 ];
 
 export interface AgentDebugInfo {

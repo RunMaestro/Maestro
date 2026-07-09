@@ -24,6 +24,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
 	'qwen3-coder': 262144, // Qwen3-Coder native 256K context window
 	omp: 200000, // Oh My Pi (fallback until runtime-specific reporting lands)
+	grok: 500000, // Grok CLI (grok-4.5 default, per ~/.grok/models_cache.json)
 	terminal: 0, // Terminal has no context window
 };
 

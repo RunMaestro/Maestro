@@ -1149,6 +1149,148 @@ const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Grok CLI Error Patterns
+// ============================================================================
+// Grok surfaces runtime failures as `{"type":"error","message":...}` on stdout,
+// duplicates the message on stderr as `Error: <message>`, and exits 1 (verified
+// against grok v0.2.93). Exception: a failed `--resume` emits NOTHING on stdout
+// (no JSON error event) - the failure appears only on stderr, so it is caught
+// via detectErrorFromExit. The bad-model and bad-resume failures were reproduced
+// live (Working/grok-error-bad-model.txt, Working/grok-error-bad-resume.txt);
+// ~/.grok/logs/ surfaced no real auth or rate-limit strings, so those patterns
+// remain conservative and should be tightened when real strings are observed.
+
+const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not authenticated|authentication failed/i,
+			message: 'Not authenticated. Please run "grok login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized|\b401\b/i,
+			message: 'Unauthorized. Please re-authenticate with "grok login".',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*credential|credential.*(invalid|expired)/i,
+			message: 'Invalid or expired credentials. Please run "grok login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /grok\s+login/i,
+			message: 'Login required. Please run "grok login" to authenticate.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit/i,
+			message: 'Rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /too many requests|\b429\b/i,
+			message: 'Too many requests. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context window/i,
+			message: 'Context window exceeded. Please start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /context.*(exceeded|too long)/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum context/i,
+			message: 'Maximum context reached. Start a new session to continue.',
+			recoverable: true,
+		},
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /fetch failed/i,
+			message: 'Network request failed. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network error/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection (failed|refused|reset)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /timed?\s?out/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			// Verified: `grok -p "hi" -m nonexistent-model-xyz` emits
+			// {"type":"error","message":"Couldn't set model '...': Invalid params:
+			// \"unknown model id\". Run 'grok models' to see available models."}
+			pattern: /couldn't set model|unknown model id/i,
+			message:
+				'Invalid model. Run "grok models" to see available models and check the model setting in configuration.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			// Verified: `grok -p "hi" --resume <bad-uuid> --output-format
+			// streaming-json` (grok v0.2.93) prints nothing on stdout and exits 1
+			// with stderr:
+			//   "Session <uuid> not found locally, restoring from remote..."
+			//   "Error: Failed to restore session from remote: fetching session
+			//    record: session get failed: 404 Not Found"
+			// Deliberately NOT matching the bare "Session ... not found locally"
+			// line: it also precedes SUCCESSFUL remote restores, so only the
+			// fatal "Failed to restore session" string identifies a dead session.
+			pattern: /failed to restore session/i,
+			message: 'Session not found. It may have been deleted. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			// The inner cause from the same failure, in case grok surfaces it
+			// standalone in other output modes.
+			pattern: /session get failed/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // Pattern Registry
 // ============================================================================
 
@@ -1161,6 +1303,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['pi', PI_ERROR_PATTERNS],
 	['qwen3-coder', QWEN_ERROR_PATTERNS],
 	['omp', OMP_ERROR_PATTERNS],
+	['grok', GROK_ERROR_PATTERNS],
 ]);
 
 /**
