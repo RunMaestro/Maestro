@@ -1,5 +1,0 @@
-# Internal developer guides (referenced from CLAUDE.md, not part of the public
-# docs navigation in docs.json). They use HTML comments and code-heavy `<...>` /
-# `{...}` examples that are valid Markdown but not valid MDX, so exclude the whole
-# directory from the Mintlify build to keep the deploy green.
-agent-guides/

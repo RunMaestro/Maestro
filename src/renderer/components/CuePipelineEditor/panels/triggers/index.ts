@@ -1,1 +1,0 @@
-export { TriggerConfig } from './TriggerConfig';

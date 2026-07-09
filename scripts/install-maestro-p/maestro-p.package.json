@@ -1,9 +1,0 @@
-{
-	"name": "maestro-p-runtime",
-	"version": "0.0.0",
-	"private": true,
-	"description": "Runtime manifest for the hosted maestro-p installer. The version field is rewritten to match the shipped maestro-p.js at publish time; node-pty is the only runtime dependency and npm resolves its prebuilt binary per OS/arch.",
-	"dependencies": {
-		"node-pty": "1.2.0-beta.12"
-	}
-}

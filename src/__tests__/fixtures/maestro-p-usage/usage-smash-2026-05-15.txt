@@ -1,54 +1,0 @@
-78 ▐▛███▜▌ClaudeCodev2.1.142
-▝▜█████▛▘Opus4.7(1Mcontext)·ClaudeMax
- ▘▘▝▝~/Projects/Maestro-WorkTrees/maestro-p-rc
-
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-❯ Try"howdoesDocumentGraphView.tsxwork?"
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-⏵⏵automodeon (shift+tabtocycle)◉xhigh·/effort
- 
-
-
-❯ /usage                                                                                                                                                                                                ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Settings  Status   Config   Usage   Stats
-
-Session
-
-Totalcost:$0.0000
-Totalduration(API):0s
-Totalduration(wall):0s
-Totalcodechanges:0linesadded,0linesremoved
-Usage:0input,0output,0cacheread,0cachewrite
-
-Loadingusagedata…
-
-Esctocancel
-Current session████████████████████████████▉                     58%usedReses3:50am (America/Chicago)
-
-Currentweek(allmodels)
-█████████                                         18%used
-ResetsMay21at9:59am(America/Chicago)
-
-Currentweek(Sonnetonly)
-                                                  0%used
-
-What'scontributingtoyourlimitsusage?
-Approximate,basedonlocalsessionsonthismachine—doesnotincludeotherdevicesorclaude.ai
-
-[38;2;153;153;153mScanninglocalsessions…
-
-Esctocancel
-Last 24h· these are independent characteristics of your usage, not a breakdown63% of your usagewaswhile4+sessionsraninparallel
-Allsessionsshareonelimit.Ifyoudon'tneedthemallatonce,queueinguses
- itmoreevenly.
-
-33%ofyourusagewasat>150kcontext
-Longersessionsaremoreexpensiveevenwhencached./compactmid-task,/clear
-whenswitchingtonewtasks.
-
-Skills%ofusage
-/electron2%
-/interceptor-browser1%
-
-dtoday·wtoweek
-
-Esctocancel
