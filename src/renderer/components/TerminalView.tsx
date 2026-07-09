@@ -79,6 +79,10 @@ export const TerminalView = memo(
 		const terminalRefs = useRef<Map<string, XTerminalHandle>>(new Map());
 		// Track previous tab states to detect transitions (for exit message)
 		const prevTabStatesRef = useRef<Map<string, TerminalTab['state']>>(new Map());
+		// tabId → the signal that killed the PTY, captured off the exit event. Held in a
+		// ref rather than on the tab so it stays out of the persisted session snapshot;
+		// it is only needed for the keep-or-close decision on the very next render.
+		const exitSignalsRef = useRef<Map<string, number | undefined>>(new Map());
 		// In-flight spawn guard: set of tabIds currently waiting for a PTY PID
 		const spawnInFlightRef = useRef<Set<string>>(new Set());
 		// Track which tabs have already had the loading message written to avoid duplicates
@@ -393,21 +397,35 @@ export const TerminalView = memo(
 
 		// Subscribe to PTY exit events for terminal tabs in this session
 		useEffect(() => {
-			const cleanup = window.maestro.process.onExit((exitSessionId: string, code: number) => {
-				const parsed = parseTerminalSessionId(exitSessionId);
-				if (!parsed || parsed.sessionId !== session.id) return;
-				onTabStateChange(parsed.tabId, 'exited', code);
-			});
+			const cleanup = window.maestro.process.onExit(
+				(exitSessionId: string, code: number, signal?: number) => {
+					const parsed = parseTerminalSessionId(exitSessionId);
+					if (!parsed || parsed.sessionId !== session.id) return;
+					exitSignalsRef.current.set(parsed.tabId, signal);
+					onTabStateChange(parsed.tabId, 'exited', code);
+				}
+			);
 			return cleanup;
 		}, [session.id]);
 
-		// Handle a terminal's PTY exiting. A plain scratch shell is closed (the user
-		// typed `exit` / Ctrl-D, or the shell died - that's disposable). A "persistent"
-		// tab is NOT auto-closed: a tab with a startup command, or any tab under an
-		// SSH/remote session whose transport can drop for reasons unrelated to the user
-		// (sleep, network blip, server timeout). Silently destroying those discards the
-		// user's config and is the root cause of the long-standing "terminal tabs vanish"
-		// reports. Instead we keep them as a restartable exited husk with a visible notice.
+		// Handle a terminal's PTY exiting. A tab is auto-closed ONLY when its shell
+		// exited of its own accord (the user typed `exit` / Ctrl-D) - that's a scratch
+		// shell the user is done with, and closing it is the expected affordance.
+		//
+		// Every other way a PTY can die keeps the tab as a restartable exited husk:
+		//   - the shell was killed by a signal (OOM killer, SIGHUP, SIGTERM from a
+		//     crashing parent) - the user never asked for this and losing the tab
+		//     silently discards their scrollback,
+		//   - the tab carries a startup command (its config is durable), or
+		//   - the tab is under an SSH/remote session whose transport can drop for
+		//     reasons unrelated to the user (sleep, network blip, server timeout).
+		//
+		// Distinguishing the first case is why we need `signal` and not just the exit
+		// code: node-pty reports a signalled death (WIFSIGNALED) as exitCode 0 with a
+		// signal number, which is indistinguishable from a clean `exit` on the code
+		// alone. Conversely we must NOT treat a non-zero code as abnormal - `exit` with
+		// no argument returns the *last command's* status, so `false; exit` legitimately
+		// yields code 1 and should still close the tab.
 		//
 		// pid === 0 means the PTY never spawned, i.e. this 'exited' transition came from
 		// a spawn failure already handled at the spawn site - skip it here to avoid a
@@ -420,7 +438,11 @@ export const TerminalView = memo(
 				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited' && tab.pid !== 0) {
 					const age = Date.now() - tab.createdAt;
 					const tabId = tab.id;
+					const signal = exitSignalsRef.current.get(tabId);
+					exitSignalsRef.current.delete(tabId);
+					const wasKilled = signal != null && signal !== 0;
 					const isPersistent = !!tab.startupCommand || isRemoteSession;
+					const keepTab = isPersistent || wasKilled;
 					// Diagnostic: every PTY exit logs why the tab was kept or closed. This
 					// is the signal for the "terminal tabs vanish" reports - e.g. an SSH
 					// transport dropping logs exitCode here with isRemote:true / kept.
@@ -428,24 +450,27 @@ export const TerminalView = memo(
 						sessionId: session.id,
 						tabId,
 						exitCode: tab.exitCode,
+						signal,
 						ageMs: age,
 						hasStartupCommand: !!tab.startupCommand,
 						isRemote: isRemoteSession,
-						decision: isPersistent ? 'keep-for-restart' : 'close',
+						wasKilled,
+						decision: keepTab ? 'keep-for-restart' : 'close',
 					});
-					if (age < 2000) {
+					if (age < 2000 && !wasKilled) {
 						// Exited almost immediately - surface as a startup failure toast.
 						notifySpawnFailure(
 							`Shell exited immediately${tab.exitCode != null ? ` (exit code: ${tab.exitCode})` : ''}.`
 						);
 					}
-					if (isPersistent) {
+					if (keepTab) {
 						// Keep the tab; show a visible notice instead of a silent dead husk.
+						const reason = wasKilled
+							? `process killed (signal ${signal})`
+							: `process exited${tab.exitCode != null ? ` (code ${tab.exitCode})` : ''}`;
 						terminalRefs.current
 							.get(tabId)
-							?.write(
-								`\r\n\x1b[2m[process exited${tab.exitCode != null ? ` (code ${tab.exitCode})` : ''}] - restart from the tab menu\x1b[0m\r\n`
-							);
+							?.write(`\r\n\x1b[2m[${reason}] - restart from the tab menu\x1b[0m\r\n`);
 					} else {
 						// Close on next tick to avoid mutating state mid-render.
 						setTimeout(() => closeTerminalTab(tabId, 'pty-exit'), 0);

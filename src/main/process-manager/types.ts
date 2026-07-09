@@ -148,7 +148,10 @@ export interface CommandResult {
 export interface ProcessManagerEvents {
 	data: (sessionId: string, data: string) => void;
 	stderr: (sessionId: string, data: string) => void;
-	exit: (sessionId: string, code: number) => void;
+	/** `signal` is set only when the process was terminated by a signal
+	 *  (WIFSIGNALED). node-pty reports those with `code` 0, so the code alone
+	 *  cannot distinguish a clean exit from a kill. */
+	exit: (sessionId: string, code: number, signal?: number) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;

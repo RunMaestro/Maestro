@@ -276,7 +276,8 @@ interface MaestroAPI {
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
-		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
+		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
