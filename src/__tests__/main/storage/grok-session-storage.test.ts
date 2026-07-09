@@ -220,7 +220,7 @@ function mockLocalFs(
 // Tests
 // ============================================================================
 
-describe('GrokSessionStorage — local listing', () => {
+describe('GrokSessionStorage - local listing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -243,7 +243,7 @@ describe('GrokSessionStorage — local listing', () => {
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0].sessionId).toBe(SESSION_ID);
 		expect(sessions[0].projectPath).toBe(PROJECT);
-		// Project filtering happens on folder names — the foreign session's
+		// Project filtering happens on folder names - the foreign session's
 		// files must never be opened.
 		const readPaths = vi.mocked(fs.readFile).mock.calls.map((c) => String(c[0]));
 		expect(readPaths.some((p) => p.includes(encodeURIComponent(OTHER_PROJECT)))).toBe(false);
@@ -394,7 +394,7 @@ describe('GrokSessionStorage — local listing', () => {
 	});
 });
 
-describe('GrokSessionStorage — reading messages', () => {
+describe('GrokSessionStorage - reading messages', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -465,7 +465,7 @@ describe('GrokSessionStorage — reading messages', () => {
 	});
 });
 
-describe('GrokSessionStorage — SSH remote', () => {
+describe('GrokSessionStorage - SSH remote', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -538,7 +538,7 @@ describe('GrokSessionStorage — SSH remote', () => {
 	});
 });
 
-describe('GrokSessionStorage — misc contract', () => {
+describe('GrokSessionStorage - misc contract', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});

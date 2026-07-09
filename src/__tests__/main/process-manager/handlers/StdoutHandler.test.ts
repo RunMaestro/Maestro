@@ -2032,6 +2032,53 @@ describe('StdoutHandler — single JSON parse per line', () => {
 		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
 	});
 
+	it('keeps the agent-specific login guidance when auth expires on an SSH remote', () => {
+		const mockParser = {
+			agentId: 'grok',
+			parseJsonLine: vi.fn(() => null),
+			parseJsonObject: vi.fn(() => null),
+			isResultMessage: vi.fn(() => false),
+			extractSessionId: vi.fn(() => null),
+			extractUsage: vi.fn(() => null),
+			extractSlashCommands: vi.fn(() => null),
+			detectErrorFromLine: vi.fn(() => null),
+			detectErrorFromParsed: vi.fn(() => ({
+				type: 'auth_expired' as const,
+				message: 'Not authenticated. Please run "grok login" to authenticate.',
+				recoverable: true,
+				agentId: 'grok',
+				timestamp: Date.now(),
+				raw: {},
+			})),
+			detectErrorFromExit: vi.fn(() => null),
+		};
+
+		const { handler, sessionId, emitter } = createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'grok',
+			outputParser: mockParser as any,
+			sshRemoteId: 'remote-1',
+			sshRemoteHost: 'build-box',
+		});
+
+		const errorSpy = vi.fn();
+		emitter.on('agent-error', errorSpy);
+
+		handler.handleData(
+			sessionId,
+			JSON.stringify({ type: 'error', message: 'not authenticated' }) + '\n'
+		);
+
+		expect(errorSpy).toHaveBeenCalledTimes(1);
+		const emitted = errorSpy.mock.calls[0][1];
+		// Remote-host context is prepended, but the parser's agent-specific
+		// guidance survives: the old code replaced the whole message with a
+		// hardcoded "claude login" instruction.
+		expect(emitted.message).toContain('remote host "build-box"');
+		expect(emitted.message).toContain('grok login');
+		expect(emitted.message).not.toContain('claude login');
+	});
+
 	describe('SSH error pattern false-positive prevention', () => {
 		it('should NOT check SSH patterns on valid JSON lines (prevents false positives from response text)', () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);

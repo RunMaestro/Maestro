@@ -383,7 +383,11 @@ export class StdoutHandler {
 				}
 
 				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
-					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "claude login" to re-authenticate.`;
+					// Prefix the remote-host context but keep the parser's message:
+					// each agent's error patterns name that agent's own login
+					// command, so replacing the message wholesale would tell
+					// non-Claude users to run the wrong CLI.
+					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate. ${agentError.message}`;
 				}
 
 				this.emitter.emit('agent-error', sessionId, agentError);

@@ -3,8 +3,8 @@
  *
  * Grok stores each session as a directory:
  *   ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
- *     summary.json       — session metadata (id, cwd, title, timestamps, counts)
- *     chat_history.jsonl — the transcript (system/user/assistant/tool_result/reasoning records)
+ *     summary.json       - session metadata (id, cwd, title, timestamps, counts)
+ *     chat_history.jsonl - the transcript (system/user/assistant/tool_result/reasoning records)
  *
  * The first-level folder name is the session's working directory with `/`
  * percent-encoded as `%2F`, so project filtering happens on directory names
@@ -280,7 +280,7 @@ function parseChatHistory(content: string): ParsedGrokChatHistory {
 				};
 				pendingToolCalls.delete(callId);
 			} else if (output.trim()) {
-				// No matching tool call — surface the result as a standalone message.
+				// No matching tool call - surface the result as a standalone message.
 				messages.push({
 					type: 'assistant',
 					role: 'assistant',
@@ -304,7 +304,7 @@ function parseChatHistory(content: string): ParsedGrokChatHistory {
  * Reads session metadata from `~/.grok/sessions/<encoded-cwd>/<sessionId>/summary.json`
  * and conversation history from `chat_history.jsonl`. Supports both local and
  * SSH remote access. The derived `session_search.sqlite` index is intentionally
- * ignored — the transcript files are authoritative.
+ * ignored - the transcript files are authoritative.
  */
 export class GrokSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'grok';
