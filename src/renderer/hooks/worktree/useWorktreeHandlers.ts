@@ -18,8 +18,10 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session } from '../../types';
+import type { PRDetails } from '../../components/CreatePRModal';
+import type { RightPanelHandle } from '../../components/RightPanel';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
-import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
+import { useSessionStore, updateSessionWith, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
@@ -31,6 +33,15 @@ import {
 } from '../../utils/worktreeDedup';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { generateId } from '../../utils/ids';
+
+// ============================================================================
+// Dependencies
+// ============================================================================
+
+export interface UseWorktreeHandlersDeps {
+	rightPanelRef?: React.RefObject<RightPanelHandle | null>;
+}
 
 // ============================================================================
 // Return type
@@ -51,6 +62,7 @@ export interface WorktreeHandlersReturn {
 	handleCloseDeleteWorktreeModal: () => void;
 	handleConfirmDeleteWorktree: () => void;
 	handleConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
+	handlePRCreated: (prDetails: PRDetails) => Promise<void>;
 	refreshWorktreeState: () => Promise<void>;
 }
 
@@ -123,11 +135,14 @@ async function resolveRepoRoot(path: string, sshRemoteId?: string): Promise<stri
 // buildWorktreeSession and BuildWorktreeSessionParams are imported from ../../utils/worktreeSession
 // normalizePath and sessionMatchesWorktreeRoot are imported from ../../utils/worktreeDedup
 
+const EMPTY_RIGHT_PANEL_REF: React.RefObject<RightPanelHandle | null> = { current: null };
+
 // ============================================================================
 // Hook
 // ============================================================================
 
-export function useWorktreeHandlers(): WorktreeHandlersReturn {
+export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): WorktreeHandlersReturn {
+	const { rightPanelRef = EMPTY_RIGHT_PANEL_REF } = deps;
 	// ---------------------------------------------------------------------------
 	// Reactive subscriptions
 	// ---------------------------------------------------------------------------
@@ -585,6 +600,43 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			.getState()
 			.setSessions((prev) => prev.filter((s) => s.id !== deleteWtSession.id));
 	}, []);
+
+	const handlePRCreated = useCallback(
+		async (prDetails: PRDetails) => {
+			const createPRSession = useModalStore.getState().getData('createPR')?.session ?? null;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const session = createPRSession || activeSession;
+			notifyToast({
+				type: 'success',
+				title: 'Pull Request Created',
+				message: prDetails.title,
+				actionUrl: prDetails.url,
+				actionLabel: prDetails.url,
+				sessionId: session?.id,
+			});
+			if (session) {
+				await window.maestro.history.add({
+					id: generateId(),
+					type: 'USER',
+					timestamp: Date.now(),
+					summary: `Created PR: ${prDetails.title}`,
+					fullResponse: [
+						`**Pull Request:** [${prDetails.title}](${prDetails.url})`,
+						`**Branch:** ${prDetails.sourceBranch} → ${prDetails.targetBranch}`,
+						prDetails.description ? `**Description:** ${prDetails.description}` : '',
+					]
+						.filter(Boolean)
+						.join('\n\n'),
+					projectPath: session.projectRoot || session.cwd,
+					sessionId: session.id,
+					sessionName: session.name,
+				});
+				rightPanelRef.current?.refreshHistoryPanel();
+			}
+			getModalActions().setCreatePRSession(null);
+		},
+		[rightPanelRef]
+	);
 
 	// ---------------------------------------------------------------------------
 	// Effects
@@ -1140,6 +1192,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		handleCloseDeleteWorktreeModal,
 		handleConfirmDeleteWorktree,
 		handleConfirmAndDeleteWorktreeOnDisk,
+		handlePRCreated,
 		refreshWorktreeState: scanWorktreeConfigs,
 	};
 }

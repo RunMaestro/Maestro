@@ -43,6 +43,8 @@ export interface UseGroupManagementReturn {
 	finishRenamingGroup: (groupId: string, newName: string) => void;
 	/** Open the create group modal */
 	createNewGroup: () => void;
+	/** Close the create group modal */
+	handleCloseCreateGroupModal: () => void;
 	/** Drop a session on a group */
 	handleDropOnGroup: (groupId: string) => void;
 	/** Drop a session on ungrouped area */
@@ -123,6 +125,10 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 		setCreateGroupModalOpen(true);
 	}, []);
 
+	const handleCloseCreateGroupModal = useCallback(() => {
+		setCreateGroupModalOpen(false);
+	}, []);
+
 	/**
 	 * Drop a session on a group
 	 */
@@ -171,6 +177,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,
+		handleCloseCreateGroupModal,
 		handleDropOnGroup,
 		handleDropOnUngrouped,
 		modalState,

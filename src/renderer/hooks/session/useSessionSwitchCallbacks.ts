@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useMemo } from 'react';
 import type { Session, LogEntry, UsageStats } from '../../types';
+import type { FlatFileItem } from '../../components/FileSearchModal';
+import type { FileNode } from '../../types/fileTree';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
@@ -57,6 +59,8 @@ export interface UseSessionSwitchCallbacksDeps {
 	) => Promise<boolean>;
 	/** Ref to main input textarea (for auto-focus after navigation) */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
+	/** Open a file in the file preview tab (from fuzzy file search) */
+	handleFileClick: (file: FileNode, path: string) => void;
 }
 
 // ============================================================================
@@ -95,6 +99,8 @@ export interface UseSessionSwitchCallbacksReturn {
 	handleUtilityTabSelect: (tabId: string) => void;
 	/** Switch to a file tab from utility modals */
 	handleUtilityFileTabSelect: (tabId: string) => void;
+	/** Preview a file selected from fuzzy file search */
+	handleFileSearchSelect: (file: FlatFileItem) => void;
 }
 
 // ============================================================================
@@ -104,7 +110,7 @@ export interface UseSessionSwitchCallbacksReturn {
 export function useSessionSwitchCallbacks(
 	deps: UseSessionSwitchCallbacksDeps
 ): UseSessionSwitchCallbacksReturn {
-	const { setActiveSessionId, handleResumeSession, inputRef } = deps;
+	const { setActiveSessionId, handleResumeSession, inputRef, handleFileClick } = deps;
 
 	// Self-source stable actions from stores
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
@@ -312,6 +318,15 @@ export function useSessionSwitchCallbacks(
 		[activeSession]
 	);
 
+	const handleFileSearchSelect = useCallback(
+		(file: FlatFileItem) => {
+			if (!file.isFolder) {
+				handleFileClick({ name: file.name, type: 'file' }, file.fullPath);
+			}
+		},
+		[handleFileClick]
+	);
+
 	return {
 		handleProcessMonitorNavigateToSession,
 		handleToastSessionClick,
@@ -319,5 +334,6 @@ export function useSessionSwitchCallbacks(
 		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
+		handleFileSearchSelect,
 	};
 }

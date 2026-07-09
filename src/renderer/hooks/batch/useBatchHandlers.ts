@@ -21,7 +21,7 @@ import type {
 	QueuedItem,
 	AgentError,
 } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
 import { collectActiveOperations } from '../../utils/collectActiveOperations';
@@ -154,6 +154,8 @@ export interface UseBatchHandlersReturn {
 		longestRunMs: number;
 		longestRunTimestamp: number;
 	}) => void;
+	/** Persist a custom batch runner prompt on the active session */
+	handleSaveBatchPrompt: (prompt: string) => void;
 }
 
 // ============================================================================
@@ -842,6 +844,16 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		return unsubscribe;
 	}, []);
 
+	const handleSaveBatchPrompt = useCallback((prompt: string) => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		updateSessionWith(session.id, (s) => ({
+			...s,
+			batchRunnerPrompt: prompt,
+			batchRunnerPromptModifiedAt: Date.now(),
+		}));
+	}, []);
+
 	return {
 		startBatchRun,
 		stopBatchRun,
@@ -860,5 +872,6 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		pauseBatchOnErrorRef,
 		getBatchStateRef,
 		handleSyncAutoRunStats,
+		handleSaveBatchPrompt,
 	};
 }

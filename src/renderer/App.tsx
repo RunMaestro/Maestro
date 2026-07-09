@@ -9,27 +9,16 @@ import React, {
 	type ReactNode,
 } from 'react';
 import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
-import { withMonoFallback } from '../shared/fontStack';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
-// SettingsModal is now lazy-loaded inside AppStandaloneModals
-import { SessionList } from './components/SessionList';
-import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
-import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
+import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
+import { AppShell } from './components/AppShell';
 import { initializeRendererPrompts } from './services/promptInit';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { MainPanel, type MainPanelHandle } from './components/MainPanel';
-// AppOverlays, PlaygroundPanel, DebugPackageModal, WindowsWarningModal,
-// GistPublishModal, MaestroWizard, WizardResumeModal, TourOverlay are now rendered
-// inside AppStandaloneModals
 import { useWizard, type SerializableWizardState, type WizardStep } from './components/Wizard';
-// CONDUCTOR_BADGES moved to useAutoRunAchievements hook
-import { EmptyStateView } from './components/EmptyStateView';
-import { AgentsLoadingView } from './components/AgentsLoadingView';
-// DeleteAgentConfirmModal, MarketplaceModal, SymphonyModal, DocumentGraphView,
-// DirectorNotesModal, CueModal, CueYamlEditor are now lazy-loaded inside AppStandaloneModals
+import type { MainPanelHandle } from './components/MainPanel';
+import type { RightPanelHandle } from './components/RightPanel';
 
 // Lazy-loaded components for performance (rarely-used heavy views)
 const LogViewer = lazy(() =>
@@ -178,9 +167,6 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
-import { ToastContainer } from './components/Toast';
-import { CenterFlash } from './components/CenterFlash';
-import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
@@ -194,8 +180,6 @@ import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem 
 import { THEMES } from './constants/themes';
 import { usePluginContributions } from './hooks/usePluginContributions';
 import { resolvePluginTheme } from './utils/pluginThemes';
-import { PluginPanelSlot } from './components/plugins/PluginPanelSlot';
-import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
@@ -335,7 +319,6 @@ function MaestroConsoleInner() {
 		// Worktree Modals
 		createWorktreeSession,
 		createPRSession,
-		setCreatePRSession,
 		deleteWorktreeSession,
 		// Tab Switcher Modal
 		setTabSwitcherOpen,
@@ -1207,7 +1190,8 @@ function MaestroConsoleInner() {
 		handleConfirmDeleteWorktree,
 		handleConfirmAndDeleteWorktreeOnDisk,
 		refreshWorktreeState,
-	} = useWorktreeHandlers();
+		handlePRCreated,
+	} = useWorktreeHandlers({ rightPanelRef });
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	// NOTE: file-drop attach is now scoped per-region (useChatFileDropZone for the
@@ -1558,10 +1542,12 @@ function MaestroConsoleInner() {
 		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
+		handleFileSearchSelect,
 	} = useSessionSwitchCallbacks({
 		setActiveSessionId,
 		handleResumeSession,
 		inputRef,
+		handleFileClick,
 	});
 
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
@@ -1583,6 +1569,7 @@ function MaestroConsoleInner() {
 		pauseBatchOnErrorRef,
 		getBatchStateRef,
 		handleSyncAutoRunStats,
+		handleSaveBatchPrompt,
 	} = useBatchHandlers({
 		spawnAgentForSession,
 		spawnBackgroundSynopsis,
@@ -2267,6 +2254,7 @@ function MaestroConsoleInner() {
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,
+		handleCloseCreateGroupModal,
 		handleDropOnGroup,
 		handleDropOnUngrouped,
 		modalState: groupModalState,
@@ -2304,70 +2292,6 @@ function MaestroConsoleInner() {
 		setCreateGroupModalOpen,
 	});
 
-	// Group Modal Handlers (stable callbacks for AppGroupModals)
-	const handleCloseCreateGroupModal = useCallback(() => {
-		setCreateGroupModalOpen(false);
-	}, [setCreateGroupModalOpen]);
-
-	const handlePRCreated = useCallback(
-		async (prDetails: PRDetails) => {
-			const session = createPRSession || activeSession;
-			notifyToast({
-				type: 'success',
-				title: 'Pull Request Created',
-				message: prDetails.title,
-				actionUrl: prDetails.url,
-				actionLabel: prDetails.url,
-				sessionId: session?.id,
-			});
-			// Add history entry with PR details
-			if (session) {
-				await window.maestro.history.add({
-					id: generateId(),
-					type: 'USER',
-					timestamp: Date.now(),
-					summary: `Created PR: ${prDetails.title}`,
-					fullResponse: [
-						`**Pull Request:** [${prDetails.title}](${prDetails.url})`,
-						`**Branch:** ${prDetails.sourceBranch} → ${prDetails.targetBranch}`,
-						prDetails.description ? `**Description:** ${prDetails.description}` : '',
-					]
-						.filter(Boolean)
-						.join('\n\n'),
-					projectPath: session.projectRoot || session.cwd,
-					sessionId: session.id,
-					sessionName: session.name,
-				});
-				rightPanelRef.current?.refreshHistoryPanel();
-			}
-			setCreatePRSession(null);
-		},
-		[createPRSession, activeSession]
-	);
-
-	const handleSaveBatchPrompt = useCallback(
-		(prompt: string) => {
-			if (!activeSession) return;
-			// Save the custom prompt and modification timestamp to the session (persisted across restarts)
-			updateSessionWith(activeSession.id, (s) => ({
-				...s,
-				batchRunnerPrompt: prompt,
-				batchRunnerPromptModifiedAt: Date.now(),
-			}));
-		},
-		[activeSession]
-	);
-	// handleUtilityTabSelect, handleUtilityFileTabSelect, handleNamedSessionSelect
-	// - now in useSessionSwitchCallbacks hook
-	const handleFileSearchSelect = useCallback(
-		(file: FlatFileItem) => {
-			// Preview the file directly (handleFileClick expects relative path)
-			if (!file.isFolder) {
-				handleFileClick({ name: file.name, type: 'file' }, file.fullPath);
-			}
-		},
-		[handleFileClick]
-	);
 	// Prompt Composer modal handlers — extracted to usePromptComposerHandlers hook
 	const {
 		handlePromptComposerSubmit,
@@ -3019,93 +2943,197 @@ function MaestroConsoleInner() {
 	// Scoped to the group chat container so only that region reacts.
 	const groupChatDropZone = useChatFileDropZone(theme, handleDrop);
 
+	const handleCloseDrawers = useCallback(() => {
+		setLeftSidebarOpen(false);
+		setRightPanelOpen(false);
+	}, [setLeftSidebarOpen, setRightPanelOpen]);
+
 	return (
-		<>
-			<div
-				className={`flex maestro-app-shell w-full font-mono overflow-hidden transition-colors duration-300 ${
-					isMobileLandscape || useNativeTitleBar || isMdDownViewport || isWebDesktop()
-						? 'pt-0'
-						: 'pt-10'
-				}`}
-				style={
-					{
-						backgroundColor: theme.colors.bgMain,
-						color: theme.colors.textMain,
-						fontFamily: withMonoFallback(fontFamily),
-						fontSize: `${fontSize}px`,
-						// Consumed by the web-desktop `.maestro-app-shell` bottom-padding
-						// rule to lift the AI input above the virtual keyboard. 0px on
-						// desktop / when the Visual Viewport API is unavailable.
-						'--keyboard-offset': `${keyboardShellOffset}px`,
-					} as React.CSSProperties
-				}
-			>
-				{/* External file drops are handled per-region, not globally: the main
-				    panel and group chat attach to the chat (see useChatFileDropZone),
-				    while the Files panel imports into the tree. The left bar and the
-				    History/Auto Run panel intentionally do nothing. */}
-
-				{/* --- DRAGGABLE TITLE BAR --- hidden in mobile landscape, native title bar,
-				    narrow viewport, the legacy web build, OR the web-desktop bundle
-				    (no Electron host = nothing to drag, just visual clutter). */}
-				{!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop() && (
+		<AppShell
+			theme={theme}
+			fontFamily={fontFamily}
+			fontSize={fontSize}
+			keyboardShellOffset={keyboardShellOffset}
+			isMobileLandscape={isMobileLandscape}
+			useNativeTitleBar={useNativeTitleBar}
+			isMdDownViewport={isMdDownViewport}
+			activeGroupChatId={activeGroupChatId}
+			groupChats={groupChats}
+			groups={groups}
+			activeSession={activeSession}
+			sessions={sessions}
+			sessionsLoaded={sessionsLoaded}
+			emptyStateProps={{
+				shortcuts,
+				onNewAgent: addNewSession,
+				onOpenWizard: openWizardModal,
+				onOpenSettings: () => setSettingsModalOpen(true),
+				onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
+				onOpenAbout: () => setAboutModalOpen(true),
+				onCheckForUpdates: () => setUpdateCheckModalOpen(true),
+			}}
+			sessionListProps={sessionListProps}
+			mainPanelRef={mainPanelRef}
+			mainPanelProps={mainPanelProps}
+			rightPanelRef={rightPanelRef}
+			rightPanelProps={rightPanelProps}
+			isNarrowViewport={isNarrowViewport}
+			leftSidebarOpen={leftSidebarOpen}
+			rightPanelOpen={rightPanelOpen}
+			onCloseDrawers={handleCloseDrawers}
+			drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
+			drawerSwipeEnabled={drawerSwipeEnabled}
+			leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
+			rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
+			logViewerOpen={logViewerOpen}
+			onToastSessionClick={handleToastSessionClick}
+			logViewer={
+				logViewerOpen ? (
 					<div
-						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
-						style={
-							{
-								WebkitAppRegion: 'drag',
-								// Falls back to bgMain (the historical see-through behavior)
-								// for themes/saved customs that predate the bgTitleBar token.
-								backgroundColor: theme.colors.bgTitleBar ?? theme.colors.bgMain,
-							} as React.CSSProperties
-						}
+						className="flex-1 flex flex-col min-w-0"
+						style={{ backgroundColor: theme.colors.bgMain }}
 					>
-						{activeGroupChatId ? (
-							<span
-								className="text-xs select-none opacity-50"
-								style={{ color: theme.colors.textDim }}
-							>
-								Maestro Group Chat:{' '}
-								{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
-							</span>
-						) : (
-							activeSession && (
-								<span
-									className="text-xs select-none opacity-50"
-									style={{ color: theme.colors.textDim }}
-								>
-									{(() => {
-										const parts: string[] = [];
-										// Group name (if grouped)
-										const group = groups.find((g) => g.id === activeSession.groupId);
-										if (group) {
-											parts.push(`${group.emoji} ${group.name}`);
-										}
-										// Agent name (user-given name for this agent instance)
-										parts.push(activeSession.name);
-										// Active tab name or UUID octet
-										const activeTab = activeSession.aiTabs?.find(
-											(t) => t.id === activeSession.activeTabId
-										);
-										if (activeTab) {
-											const tabLabel =
-												activeTab.name ||
-												(activeTab.agentSessionId
-													? activeTab.agentSessionId.split('-')[0].toUpperCase()
-													: null);
-											if (tabLabel) {
-												parts.push(tabLabel);
-											}
-										}
-										return parts.join(' | ');
-									})()}
-								</span>
-							)
-						)}
+						<Suspense fallback={null}>
+							<LogViewer
+								theme={theme}
+								onClose={handleCloseLogViewer}
+								logLevel={logLevel}
+								savedSelectedLevels={logViewerSelectedLevels}
+								onSelectedLevelsChange={setLogViewerSelectedLevels}
+								onShortcutUsed={handleLogViewerShortcutUsed}
+								onSessionClick={(sessionId, tabId) => {
+									handleCloseLogViewer();
+									handleToastSessionClick(sessionId, tabId);
+								}}
+							/>
+						</Suspense>
 					</div>
-				)}
-
-				{/* --- UNIFIED MODALS (all modal groups consolidated into AppModals) --- */}
+				) : null
+			}
+			groupChatView={
+				!logViewerOpen &&
+				activeGroupChatId &&
+				isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
+				groupChats.find((c) => c.id === activeGroupChatId) ? (
+					<>
+						<div
+							className="flex-1 flex flex-col min-w-0 relative"
+							{...groupChatDropZone.dragHandlers}
+						>
+							{groupChatDropZone.overlay}
+							<GroupChatPanel
+								theme={theme}
+								groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
+								messages={groupChatMessages}
+								state={groupChatState}
+								groups={groups}
+								onStopAll={handleGroupChatStopAll}
+								totalCost={(() => {
+									const chat = groupChats.find((c) => c.id === activeGroupChatId);
+									const participantsCost = (chat?.participants || []).reduce(
+										(sum, p) => sum + (p.totalCost || 0),
+										0
+									);
+									const modCost = moderatorUsage?.totalCost || 0;
+									return participantsCost + modCost;
+								})()}
+								costIncomplete={(() => {
+									const chat = groupChats.find((c) => c.id === activeGroupChatId);
+									const participants = chat?.participants || [];
+									const anyParticipantMissingCost = participants.some(
+										(p) => p.totalCost === undefined || p.totalCost === null
+									);
+									const moderatorMissingCost =
+										moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
+									return anyParticipantMissingCost || moderatorMissingCost;
+								})()}
+								onSendMessage={handleSendGroupChatMessage}
+								onRename={() =>
+									activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
+								}
+								onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
+								rightPanelOpen={rightPanelOpen}
+								onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
+								shortcuts={shortcuts}
+								sessions={sessions}
+								onDraftChange={handleGroupChatDraftChange}
+								onOpenPromptComposer={() => setPromptComposerOpen(true)}
+								stagedImages={groupChatStagedImages}
+								setStagedImages={setGroupChatStagedImages}
+								readOnlyMode={groupChatReadOnlyMode}
+								setReadOnlyMode={setGroupChatReadOnlyMode}
+								inputRef={groupChatInputRef}
+								handlePaste={handlePaste}
+								handleDrop={handleDrop}
+								onOpenLightbox={handleSetLightboxImage}
+								executionQueue={groupChatExecutionQueue.filter(
+									(item) => item.tabId === activeGroupChatId
+								)}
+								onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
+								onReorderQueuedItems={handleReorderGroupChatQueueItems}
+								markdownEditMode={chatRawTextMode}
+								onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
+								maxOutputLines={maxOutputLines}
+								enterToSendAI={enterToSendAI}
+								setEnterToSendAI={setEnterToSendAI}
+								showFlashNotification={(message: string) => {
+									setSuccessFlashNotification(message);
+									setTimeout(() => setSuccessFlashNotification(null), 2000);
+								}}
+								participantColors={groupChatParticipantColors}
+								messagesRef={groupChatMessagesRef}
+								ghCliAvailable={ghCliAvailable}
+								onPublishMessageGist={(text: string, messageId?: string) => {
+									if (!text.trim()) return;
+									const filename = `group_chat_response_${Date.now()}.md`;
+									useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
+									setGistPublishModalOpen(true);
+								}}
+							/>
+						</div>
+						<GroupChatRightPanel
+							theme={theme}
+							groupChatId={activeGroupChatId}
+							participants={groupChats.find((c) => c.id === activeGroupChatId)?.participants || []}
+							participantStates={participantStates}
+							participantSessionPaths={
+								new Map(
+									sessions
+										.filter((s) =>
+											groupChats
+												.find((c) => c.id === activeGroupChatId)
+												?.participants.some((p) => p.sessionId === s.id)
+										)
+										.map((s) => [s.id, s.projectRoot])
+								)
+							}
+							sessionSshRemoteNames={sessionSshRemoteNames}
+							isOpen={rightPanelOpen}
+							onToggle={() => setRightPanelOpen(!rightPanelOpen)}
+							width={rightPanelWidth}
+							setWidthState={setRightPanelWidth}
+							shortcuts={shortcuts}
+							moderatorAgentId={
+								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
+								'claude-code'
+							}
+							moderatorSessionId={
+								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
+							}
+							moderatorAgentSessionId={
+								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
+							}
+							moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
+							moderatorUsage={moderatorUsage}
+							activeTab={groupChatRightTab}
+							onTabChange={handleGroupChatRightTabChange}
+							onJumpToMessage={handleJumpToGroupChatMessage}
+							onColorsComputed={setGroupChatParticipantColors}
+						/>
+					</>
+				) : null
+			}
+			modals={
 				<AppModals
 					// Common props (sessions/groups/groupChats + modal booleans self-sourced from stores — Tier 1B)
 					theme={theme}
@@ -3414,9 +3442,8 @@ function MaestroConsoleInner() {
 					onCloseSendToAgent={handleCloseSendToAgent}
 					onSendToAgent={handleSendToAgent}
 				/>
-
-				{/* --- STANDALONE MODALS (debug, marketplace, wizard, settings, etc.) --- */}
-				{/* Self-sources modal open states from modalStore, sessionStore, fileExplorerStore, tabStore */}
+			}
+			standaloneModals={
 				<AppStandaloneModals
 					theme={theme}
 					// Debug / Playground
@@ -3483,270 +3510,8 @@ function MaestroConsoleInner() {
 					recordTourComplete={recordTourComplete}
 					recordTourSkip={recordTourSkip}
 				/>
-
-				{/* --- LOADING VIEW (agent list still streaming in, no splash) --- */}
-				{sessions.length === 0 && !sessionsLoaded && !isMobileLandscape ? (
-					<AgentsLoadingView theme={theme} />
-				) : null}
-
-				{/* --- EMPTY STATE VIEW (loaded, genuinely no sessions) --- */}
-				{sessions.length === 0 && sessionsLoaded && !isMobileLandscape ? (
-					<EmptyStateView
-						theme={theme}
-						shortcuts={shortcuts}
-						onNewAgent={addNewSession}
-						onOpenWizard={openWizardModal}
-						onOpenSettings={() => {
-							setSettingsModalOpen(true);
-						}}
-						onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
-						onOpenAbout={() => setAboutModalOpen(true)}
-						onCheckForUpdates={() => setUpdateCheckModalOpen(true)}
-						// Don't show tour option when no agents exist - nothing to tour
-					/>
-				) : null}
-
-				{/* --- LEFT SIDEBAR (hidden in mobile landscape and when no sessions) --- */}
-				{!isMobileLandscape && sessions.length > 0 && (
-					<ErrorBoundary>
-						<SessionList {...sessionListProps} />
-					</ErrorBoundary>
-				)}
-
-				{/* --- PLUGIN LEFT DOCK (sandboxed iframe panels; null when none/off) --- */}
-				<PluginPanelSlot
-					theme={theme}
-					placement="left"
-					className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
-				/>
-
-				{/* --- MOBILE BACKDROP (tap or swipe-to-close outside a drawer) --- */}
-				{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
-					<div
-						className="maestro-mobile-backdrop"
-						onClick={() => {
-							setLeftSidebarOpen(false);
-							setRightPanelOpen(false);
-						}}
-						{...drawerCloseSwipe.handlers}
-						aria-hidden
-					/>
-				)}
-
-				{/* --- EDGE-SWIPE OPENER ZONES (phones only) --- thin fixed strips at
-				    the screen edges so a rightward swipe from the left edge opens the
-				    Left Bar drawer and a leftward swipe from the right edge opens the
-				    Right Panel drawer. Only rendered while no drawer is open, so they
-				    never overlap the backdrop. */}
-				{drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen && (
-					<>
-						<div
-							className="maestro-edge-swipe-zone maestro-edge-swipe-zone--left"
-							{...leftEdgeSwipe.handlers}
-							aria-hidden
-						/>
-						<div
-							className="maestro-edge-swipe-zone maestro-edge-swipe-zone--right"
-							{...rightEdgeSwipe.handlers}
-							aria-hidden
-						/>
-					</>
-				)}
-
-				{/* Sidebar-show opener is now rendered inline inside the
-				    MainPanelHeader (left edge of the header row) so it shifts
-				    content instead of overlapping the session name. */}
-
-				{/* Right-edge mobile button removed — the existing top-right panel
-				    toggle in MainPanelHeader already handles opening Files. */}
-
-				{/* --- SYSTEM LOG VIEWER (replaces center content when open, lazy-loaded) --- */}
-				{logViewerOpen && (
-					<div
-						className="flex-1 flex flex-col min-w-0"
-						style={{ backgroundColor: theme.colors.bgMain }}
-					>
-						<Suspense fallback={null}>
-							<LogViewer
-								theme={theme}
-								onClose={handleCloseLogViewer}
-								logLevel={logLevel}
-								savedSelectedLevels={logViewerSelectedLevels}
-								onSelectedLevelsChange={setLogViewerSelectedLevels}
-								onShortcutUsed={handleLogViewerShortcutUsed}
-								onSessionClick={(sessionId, tabId) => {
-									handleCloseLogViewer();
-									handleToastSessionClick(sessionId, tabId);
-								}}
-							/>
-						</Suspense>
-					</div>
-				)}
-
-				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
-				{/* Multi-window: render only in the window that initiated the chat. */}
-				{!logViewerOpen &&
-					activeGroupChatId &&
-					isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
-					groupChats.find((c) => c.id === activeGroupChatId) && (
-						<>
-							<div
-								className="flex-1 flex flex-col min-w-0 relative"
-								{...groupChatDropZone.dragHandlers}
-							>
-								{groupChatDropZone.overlay}
-								<GroupChatPanel
-									theme={theme}
-									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
-									messages={groupChatMessages}
-									state={groupChatState}
-									groups={groups}
-									onStopAll={handleGroupChatStopAll}
-									totalCost={(() => {
-										const chat = groupChats.find((c) => c.id === activeGroupChatId);
-										const participantsCost = (chat?.participants || []).reduce(
-											(sum, p) => sum + (p.totalCost || 0),
-											0
-										);
-										const modCost = moderatorUsage?.totalCost || 0;
-										return participantsCost + modCost;
-									})()}
-									costIncomplete={(() => {
-										const chat = groupChats.find((c) => c.id === activeGroupChatId);
-										const participants = chat?.participants || [];
-										// Check if any participant is missing cost data
-										const anyParticipantMissingCost = participants.some(
-											(p) => p.totalCost === undefined || p.totalCost === null
-										);
-										// Moderator is also considered - if no usage stats yet, cost is incomplete
-										const moderatorMissingCost =
-											moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
-										return anyParticipantMissingCost || moderatorMissingCost;
-									})()}
-									onSendMessage={handleSendGroupChatMessage}
-									onRename={() =>
-										activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
-									}
-									onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
-									rightPanelOpen={rightPanelOpen}
-									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
-									shortcuts={shortcuts}
-									sessions={sessions}
-									onDraftChange={handleGroupChatDraftChange}
-									onOpenPromptComposer={() => setPromptComposerOpen(true)}
-									stagedImages={groupChatStagedImages}
-									setStagedImages={setGroupChatStagedImages}
-									readOnlyMode={groupChatReadOnlyMode}
-									setReadOnlyMode={setGroupChatReadOnlyMode}
-									inputRef={groupChatInputRef}
-									handlePaste={handlePaste}
-									handleDrop={handleDrop}
-									onOpenLightbox={handleSetLightboxImage}
-									executionQueue={groupChatExecutionQueue.filter(
-										(item) => item.tabId === activeGroupChatId
-									)}
-									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
-									onReorderQueuedItems={handleReorderGroupChatQueueItems}
-									markdownEditMode={chatRawTextMode}
-									onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
-									maxOutputLines={maxOutputLines}
-									enterToSendAI={enterToSendAI}
-									setEnterToSendAI={setEnterToSendAI}
-									showFlashNotification={(message: string) => {
-										setSuccessFlashNotification(message);
-										setTimeout(() => setSuccessFlashNotification(null), 2000);
-									}}
-									participantColors={groupChatParticipantColors}
-									messagesRef={groupChatMessagesRef}
-									ghCliAvailable={ghCliAvailable}
-									onPublishMessageGist={(text: string, messageId?: string) => {
-										if (!text.trim()) return;
-										const filename = `group_chat_response_${Date.now()}.md`;
-										useTabStore
-											.getState()
-											.setTabGistContent({ filename, content: text, messageId });
-										setGistPublishModalOpen(true);
-									}}
-								/>
-							</div>
-							<GroupChatRightPanel
-								theme={theme}
-								groupChatId={activeGroupChatId}
-								participants={
-									groupChats.find((c) => c.id === activeGroupChatId)?.participants || []
-								}
-								participantStates={participantStates}
-								participantSessionPaths={
-									new Map(
-										sessions
-											.filter((s) =>
-												groupChats
-													.find((c) => c.id === activeGroupChatId)
-													?.participants.some((p) => p.sessionId === s.id)
-											)
-											.map((s) => [s.id, s.projectRoot])
-									)
-								}
-								sessionSshRemoteNames={sessionSshRemoteNames}
-								isOpen={rightPanelOpen}
-								onToggle={() => setRightPanelOpen(!rightPanelOpen)}
-								width={rightPanelWidth}
-								setWidthState={setRightPanelWidth}
-								shortcuts={shortcuts}
-								moderatorAgentId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
-									'claude-code'
-								}
-								moderatorSessionId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
-								}
-								moderatorAgentSessionId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
-								}
-								moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
-								moderatorUsage={moderatorUsage}
-								activeTab={groupChatRightTab}
-								onTabChange={handleGroupChatRightTabChange}
-								onJumpToMessage={handleJumpToGroupChatMessage}
-								onColorsComputed={setGroupChatParticipantColors}
-							/>
-						</>
-					)}
-
-				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
-				{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
-				)}
-
-				{/* --- PLUGIN MAIN DOCK (sandboxed iframe panels; null when none/off) --- */}
-				<PluginPanelSlot
-					theme={theme}
-					placement="main"
-					className="flex flex-col flex-1 min-w-0 overflow-hidden"
-				/>
-
-				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
-				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-					<ErrorBoundary>
-						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
-					</ErrorBoundary>
-				)}
-
-				{/* --- PLUGIN RIGHT DOCK (sandboxed iframe panels; null when none/off) --- */}
-				<PluginPanelSlot theme={theme} placement="right" />
-
-				{/* NOTE: Settings, Wizard, Tour, and flash notifications are now rendered via AppStandaloneModals */}
-
-				{/* --- TOAST NOTIFICATIONS --- */}
-				<ToastContainer theme={theme} onSessionClick={handleToastSessionClick} />
-
-				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
-				<CenterFlash theme={theme} />
-
-				{/* --- THOUGHT STREAM (single, app-wide; persists across tab switches) --- */}
-				<ThoughtStreamPanel theme={theme} />
-			</div>
-		</>
+			}
+		/>
 	);
 }
 
