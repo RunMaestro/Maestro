@@ -786,7 +786,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				type: 'select',
 				label: 'Reasoning Effort',
 				description:
-					'How much the model should reason before responding. Leave empty for the model default (high).',
+					"How much the model should reason before responding. Leave empty for the model default (high). Note: 'none' is model-dependent - the default model (grok-4.5) rejects it; grok-composer-2.5-fast accepts it.",
 				// Accepted values discovered empirically from grok v0.2.93: a bogus value
 				// errors with "Use none, minimal, low, medium, high, xhigh, max, or a
 				// model menu option id" (see Auto Run Working/grok-discovery.md). Live

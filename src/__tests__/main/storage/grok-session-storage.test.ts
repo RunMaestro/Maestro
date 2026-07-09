@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ============================================================================
 // Mocks (must be declared before imports)
@@ -558,5 +558,85 @@ describe('GrokSessionStorage — misc contract', () => {
 		expect(sessionPath).toBe(
 			path.join(SESSIONS_DIR, encodeURIComponent(PROJECT), SESSION_ID, 'chat_history.jsonl')
 		);
+	});
+
+	describe('getSessionPath symlink-prefix handling', () => {
+		const originalPlatform = process.platform;
+
+		function setPlatform(value: string) {
+			Object.defineProperty(process, 'platform', { value, configurable: true });
+		}
+
+		afterEach(() => {
+			setPlatform(originalPlatform);
+		});
+
+		it('expands macOS /var|/tmp|/etc to the /private realpath form Grok records', () => {
+			setPlatform('darwin');
+			const storage = new GrokSessionStorage();
+
+			expect(storage.getSessionPath('/tmp/grok-test', SESSION_ID)).toBe(
+				path.join(
+					SESSIONS_DIR,
+					encodeURIComponent('/private/tmp/grok-test'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+			expect(storage.getSessionPath('/var/folders/x/T', SESSION_ID)).toBe(
+				path.join(
+					SESSIONS_DIR,
+					encodeURIComponent('/private/var/folders/x/T'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+			// Already-realpath'd input passes through unchanged.
+			expect(storage.getSessionPath('/private/tmp/grok-test', SESSION_ID)).toBe(
+				path.join(
+					SESSIONS_DIR,
+					encodeURIComponent('/private/tmp/grok-test'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+			// Trailing slashes are stripped before encoding.
+			expect(storage.getSessionPath('/tmp/grok-test/', SESSION_ID)).toBe(
+				path.join(
+					SESSIONS_DIR,
+					encodeURIComponent('/private/tmp/grok-test'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+		});
+
+		it('leaves /var paths untouched on Linux, where /var is a real directory', () => {
+			setPlatform('linux');
+			const storage = new GrokSessionStorage();
+
+			expect(storage.getSessionPath('/var/www/app', SESSION_ID)).toBe(
+				path.join(
+					SESSIONS_DIR,
+					encodeURIComponent('/var/www/app'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+		});
+
+		it('leaves remote paths untouched regardless of the local platform', () => {
+			setPlatform('darwin');
+			const storage = new GrokSessionStorage();
+
+			expect(storage.getSessionPath('/tmp/remote-proj', SESSION_ID, sshConfig)).toBe(
+				path.posix.join(
+					'~/.grok/sessions',
+					encodeURIComponent('/tmp/remote-proj'),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+		});
 	});
 });

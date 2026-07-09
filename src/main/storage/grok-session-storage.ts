@@ -24,7 +24,11 @@ import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
-import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import {
+	mapWithConcurrency,
+	LOCAL_SESSION_READ_CONCURRENCY,
+	REMOTE_SESSION_READ_CONCURRENCY,
+} from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
 	SessionMessagesResult,
@@ -32,6 +36,7 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { isMacOS } from '../../shared/platformDetection';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 
@@ -134,6 +139,22 @@ function normalizePathForComparison(value: string): string {
 	let normalized = value.replace(/\/+$/, '');
 	if (!normalized) normalized = '/';
 	return normalized.replace(/^\/private(\/(?:var|tmp|etc))(\/|$)/, '$1$2');
+}
+
+/**
+ * Convert a project path to the cwd form Grok records on disk (the inverse of
+ * normalizePathForComparison). Grok stores the realpath'd cwd, so on macOS the
+ * symlinked `/var`, `/tmp`, and `/etc` prefixes must be expanded back to
+ * `/private/...` before percent-encoding. The remote OS is unknown over SSH,
+ * so remote paths are left untouched apart from trailing-slash cleanup.
+ */
+function toGrokRecordedCwd(projectPath: string, isRemote: boolean): string {
+	let normalized = projectPath.replace(/\/+$/, '');
+	if (!normalized) normalized = '/';
+	if (!isRemote && isMacOS()) {
+		normalized = normalized.replace(/^(\/(?:var|tmp|etc))(\/|$)/, '/private$1$2');
+	}
+	return normalized;
 }
 
 /** Check whether a session cwd belongs to the given project (exact match or subdirectory). */
@@ -384,15 +405,14 @@ export class GrokSessionStorage extends BaseSessionStorage {
 			}
 		}
 
-		// Bound the per-session fan-out over SSH so many sessions don't burst
-		// past sshd's MaxStartups connection cap (same pattern as Copilot).
-		const sessions = sshConfig
-			? await mapWithConcurrency(sessionRefs, REMOTE_SESSION_READ_CONCURRENCY, (ref) =>
-					this.loadSessionInfo(ref.cwdFolder, ref.sessionId, sshConfig)
-				)
-			: await Promise.all(
-					sessionRefs.map((ref) => this.loadSessionInfo(ref.cwdFolder, ref.sessionId))
-				);
+		// Bound the per-session fan-out: over SSH so many sessions don't burst
+		// past sshd's MaxStartups connection cap, and locally so a large
+		// ~/.grok/sessions folder doesn't open hundreds of transcripts at once.
+		const sessions = await mapWithConcurrency(
+			sessionRefs,
+			sshConfig ? REMOTE_SESSION_READ_CONCURRENCY : LOCAL_SESSION_READ_CONCURRENCY,
+			(ref) => this.loadSessionInfo(ref.cwdFolder, ref.sessionId, sshConfig)
+		);
 
 		return sessions
 			.filter((session): session is AgentSessionInfo => session !== null)
@@ -548,16 +568,18 @@ export class GrokSessionStorage extends BaseSessionStorage {
 	/**
 	 * Get the filesystem path to a session's chat_history.jsonl file.
 	 *
-	 * Best-effort: encodes the project path literally, so sessions recorded
-	 * under a symlink-resolved cwd variant (`/private/var` vs `/var`) will not
-	 * resolve here. Matches sibling behavior of returning a synchronous guess.
+	 * Best-effort synchronous guess (matches sibling behavior): the project
+	 * path is first mapped to the realpath'd cwd form Grok records (macOS
+	 * `/var|/tmp|/etc` -> `/private/...`) so the local path agrees with what
+	 * listSessions() finds. Over SSH the remote OS is unknown, so the path is
+	 * encoded as given and may miss symlink-resolved variants.
 	 */
 	getSessionPath(
 		projectPath: string,
 		sessionId: string,
 		sshConfig?: SshRemoteConfig
 	): string | null {
-		const encoded = encodeURIComponent(projectPath);
+		const encoded = encodeURIComponent(toGrokRecordedCwd(projectPath, Boolean(sshConfig)));
 		return this.joinPath(
 			sshConfig,
 			this.getSessionsDir(sshConfig),
