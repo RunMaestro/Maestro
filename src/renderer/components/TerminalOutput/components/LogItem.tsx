@@ -14,7 +14,6 @@ import {
 	Hammer,
 	GitFork,
 } from 'lucide-react';
-import type Convert from 'ansi-to-html';
 import type { LogItemProps } from '../types';
 import {
 	processLogTextHelper,
@@ -30,7 +29,7 @@ import { RetryStatusCard } from '../../RetryStatusCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { summarizeToolInput, summarizeToolOutput } from '../utils/toolSummaries';
-import { isHiddenProgressEntry } from '../utils/logEntryHelpers';
+import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
 
 export const LogItem = memo(
@@ -828,7 +827,7 @@ export const LogItem = memo(
 					)}
 					{/* Cross-agent attribution now lives in the header at the TOP of the
 					    bubble (CrossAgentResponseHeader); no bottom pill is rendered here. */}
-					{/* Mode pill — shows which CLI captured this Claude turn (TUI Wrapper =
+					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
 					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
 					    session has Dynamic Mode enabled (auto-switching between the two).
 					    Suppressed on cross-agent entries so the attribution pill above
@@ -866,7 +865,7 @@ export const LogItem = memo(
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button — available on both user and assistant
+						{/* Markdown toggle button - available on both user and assistant
 						    messages in AI mode for consistent UX (#622). */}
 						{isAIMode && (
 							<button
@@ -913,7 +912,7 @@ export const LogItem = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
-						{/* Fork conversation — user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
+						{/* Fork conversation - user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
 						{(log.source === 'user' || log.source === 'ai' || log.source === 'stdout') &&
 							isAIMode &&
 							onForkConversation && (

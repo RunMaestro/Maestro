@@ -1,5 +1,8 @@
 import type { LogEntry } from '../../../types';
 
+export const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
 /**
  * Collapse a tab's logs into render groups for the AI transcript.
  *
@@ -52,7 +55,7 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 		} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
 			// Flush the response group, then keep tool/thinking and Agent Resilience
 			// outage markers as their own entries. The outage marker must not merge
-			// into a text group — it renders as a live status card.
+			// into a text group - it renders as a live status card.
 			flushResponseGroup();
 			result.push(log);
 		} else if (log.metadata?.crossAgent) {

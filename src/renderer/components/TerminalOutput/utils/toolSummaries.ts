@@ -9,7 +9,7 @@ const safeCommand = (v: unknown): string | null => {
 	return null;
 };
 
-/** Summarize TodoWrite todos array — shows in-progress task and progress count */
+/** Summarize TodoWrite todos array - shows in-progress task and progress count */
 const summarizeTodos = (v: unknown): string | null => {
 	if (!Array.isArray(v) || v.length === 0) return null;
 	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
@@ -21,7 +21,7 @@ const summarizeTodos = (v: unknown): string | null => {
 };
 
 /**
- * Summarize tool input generically — no per-tool extractors needed.
+ * Summarize tool input generically - no per-tool extractors needed.
  * Returns structured data so the renderer can display description and command
  * with proper visual hierarchy.
  *
@@ -30,7 +30,7 @@ const summarizeTodos = (v: unknown): string | null => {
  */
 export const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
-	// as a raw string instead of an object — Object.entries on a string would
+	// as a raw string instead of an object - Object.entries on a string would
 	// iterate it character-by-character and produce garbled, space-separated
 	// output, so surface the string as-is.
 	if (typeof input === 'string') {
@@ -55,7 +55,7 @@ export const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	const parts: string[] = [];
 	for (const [key, val] of Object.entries(inputRecord)) {
 		if (val === undefined || val === null || val === '') continue;
-		// Skip description — rendered separately
+		// Skip description - rendered separately
 		if (key === 'description') continue;
 		// Command arrays (Codex)
 		const cmd = safeCommand(val);

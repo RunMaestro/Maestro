@@ -7,7 +7,7 @@ import type Convert from 'ansi-to-html';
 export interface ToolSummary {
 	/** Human-readable description (e.g. Bash description field) */
 	description?: string;
-	/** Primary content — command text or generic summary */
+	/** Primary content - command text or generic summary */
 	detail: string;
 }
 
@@ -73,14 +73,14 @@ export interface LogItemProps {
 	ghCliAvailable?: boolean;
 	onPublishGist?: (text: string, messageId?: string) => void;
 	publishedGistUrl?: string;
-	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
+	// Fork conversation from this message (AI mode only, user messages and AI responses - source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when

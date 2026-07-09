@@ -151,7 +151,6 @@ export const TerminalOutput = memo(
 				scrollContainerRef,
 				terminalOutputRef,
 				outputSearchOpen,
-				outputSearchQuery,
 				outputSearchRegex,
 				debouncedSearchQuery,
 				filteredLogsLength: filteredLogs.length,
@@ -229,7 +228,7 @@ export const TerminalOutput = memo(
 						return;
 					}
 					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
-					// an input/textarea inside the region — those handle their own
+					// an input/textarea inside the region - those handle their own
 					// arrow-key cursor movement.
 					if (
 						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
@@ -302,7 +301,7 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
-				{/* CSS for Custom Highlight API — paints matches without mutating DOM */}
+				{/* CSS for Custom Highlight API - paints matches without mutating DOM */}
 				<style>{`
 					::highlight(terminal-search-all) {
 						background-color: ${theme.colors.warning};

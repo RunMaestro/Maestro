@@ -6,7 +6,6 @@ interface UseTerminalOutputSearchOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	terminalOutputRef: React.RefObject<HTMLDivElement>;
 	outputSearchOpen: boolean;
-	outputSearchQuery: string;
 	outputSearchRegex: boolean;
 	debouncedSearchQuery: string;
 	filteredLogsLength: number;
@@ -18,7 +17,6 @@ export function useTerminalOutputSearch({
 	scrollContainerRef,
 	terminalOutputRef,
 	outputSearchOpen,
-	outputSearchQuery,
 	outputSearchRegex,
 	debouncedSearchQuery,
 	filteredLogsLength,
