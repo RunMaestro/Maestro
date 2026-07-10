@@ -58,8 +58,7 @@ import {
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
 import { PluginHostViewRegistry, type HostViewMutation } from './plugins/plugin-host-view-registry';
-import type { MovementPayload } from '../shared/movement-types';
-import type { CadenzaPayload } from '../shared/cadenza-types';
+import { forwardPluginHostViewToRenderer } from './plugins/plugin-host-view-forwarder';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
@@ -683,58 +682,17 @@ function arePluginHostViewsEnabled(): boolean {
 function forwardPluginHostView(mutation: HostViewMutation): boolean {
 	if (!(mutation.kind === 'remove' && mutation.force) && !arePluginHostViewsEnabled()) return false;
 	if (!mainWindow || mainWindow.isDestroyed() || !isWebContentsAvailable(mainWindow)) return false;
+	const targetWindow = mainWindow;
 	const sourcePlugin =
 		pluginManager?.getRegistry().records.find((record) => record.id === mutation.view.pluginId)
 			?.manifest?.name ?? mutation.view.pluginId;
-	let body: string | undefined;
-	if (mutation.kind === 'upsert') {
-		try {
-			body = JSON.stringify(mutation.blocks);
-		} catch {
-			return false;
-		}
-	}
-
-	if (mutation.view.surface === 'movement') {
-		const payload: MovementPayload =
-			mutation.kind === 'upsert'
-				? {
-						op: 'add',
-						id: mutation.view.id,
-						title: mutation.view.title,
-						body,
-						sourcePlugin,
-					}
-				: { op: 'remove', id: mutation.view.id };
-		mainWindow.webContents.send('remote:movement', payload);
-		return true;
-	}
-
-	const payload: CadenzaPayload =
-		mutation.kind === 'upsert'
-			? {
-					op: 'open',
-					id: mutation.view.id,
-					viewType: 'view',
-					title: mutation.view.title,
-					body,
-					sourcePlugin,
-				}
-			: { op: 'close', id: mutation.view.id };
-
-	// Closing a view must never create a new always-on-top HUD. Deliver a close
-	// to an existing HUD (including its pre-ready queue) or the main fallback only.
-	if (mutation.kind === 'remove') {
-		if (deliverCadenzaToExistingHud(payload)) return true;
-		mainWindow.webContents.send('remote:cadenza', payload);
-		return true;
-	}
-
-	// Match the CLI cadenza bridge: open/upsert prefers the HUD and creates it
-	// lazily, then falls back to the main renderer.
-	if (store.get('encoreFeatures', {})?.concerto === true && deliverCadenza(payload)) return true;
-	mainWindow.webContents.send('remote:cadenza', payload);
-	return true;
+	return forwardPluginHostViewToRenderer(mutation, {
+		sourcePlugin,
+		isCadenzaEnabled: store.get('encoreFeatures', {})?.concerto === true,
+		sendToMain: (channel, payload) => targetWindow.webContents.send(channel, payload),
+		deliverCadenza,
+		deliverCadenzaToExistingHud,
+	});
 }
 
 const pluginHostViews = new PluginHostViewRegistry({

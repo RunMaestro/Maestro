@@ -9,6 +9,7 @@ import {
 	PluginHostViewRegistry,
 	type HostViewMutation,
 } from '../../../main/plugins/plugin-host-view-registry';
+import { forwardPluginHostViewToRenderer } from '../../../main/plugins/plugin-host-view-forwarder';
 
 function tierZeroManifest(): PluginManifest {
 	return {
@@ -167,6 +168,72 @@ describe('PluginHostViewRegistry', () => {
 			2,
 			expect.objectContaining({ kind: 'remove', view, force: true })
 		);
+	});
+
+	it('removes a live runtime view when its declaration disappears on sync', () => {
+		const view: HostViewContribution = {
+			id: 'com.example.runtime/status',
+			localId: 'status',
+			pluginId: 'com.example.runtime',
+			surface: 'cadenza',
+			title: 'Runtime status',
+		};
+		let views: readonly HostViewContribution[] = [view];
+		const forward = vi.fn(() => true);
+		const registry = new PluginHostViewRegistry({
+			isEnabled: () => true,
+			getHostViews: () => views,
+			forward,
+		});
+
+		registry.update('com.example.runtime', 'status', [{ kind: 'text', text: 'Live' }]);
+		views = [];
+		registry.sync();
+		registry.purge('com.example.runtime');
+
+		expect(forward).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'remove', view }));
+		expect(forward.mock.calls[1][0]).not.toHaveProperty('force');
+		expect(forward).toHaveBeenCalledTimes(2);
+	});
+
+	it('forwards a Cadenza close to both an existing HUD and the main renderer', () => {
+		const view: HostViewContribution = {
+			id: 'com.example.runtime/status',
+			localId: 'status',
+			pluginId: 'com.example.runtime',
+			surface: 'cadenza',
+			title: 'Runtime status',
+		};
+		const sendToMain = vi.fn();
+		const deliverCadenzaToExistingHud = vi.fn(() => false);
+		const forward = (mutation: HostViewMutation) =>
+			forwardPluginHostViewToRenderer(mutation, {
+				sourcePlugin: view.pluginId,
+				isCadenzaEnabled: true,
+				sendToMain,
+				deliverCadenza: vi.fn(() => false),
+				deliverCadenzaToExistingHud,
+			});
+		const registry = new PluginHostViewRegistry({
+			isEnabled: () => true,
+			getHostViews: () => [view],
+			forward,
+		});
+
+		registry.update('com.example.runtime', 'status', [{ kind: 'text', text: 'Live' }]);
+		deliverCadenzaToExistingHud.mockReturnValue(true);
+		registry.purge('com.example.runtime');
+
+		expect(deliverCadenzaToExistingHud).toHaveBeenCalledWith({ op: 'close', id: view.id });
+		expect(sendToMain).toHaveBeenNthCalledWith(
+			1,
+			'remote:cadenza',
+			expect.objectContaining({ op: 'open', id: view.id })
+		);
+		expect(sendToMain).toHaveBeenNthCalledWith(2, 'remote:cadenza', {
+			op: 'close',
+			id: view.id,
+		});
 	});
 
 	it('does not forward or retain runtime updates while either feature gate is off', () => {

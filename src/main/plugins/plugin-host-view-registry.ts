@@ -70,9 +70,10 @@ export class PluginHostViewRegistry {
 		const declarations = this.deps.getHostViews();
 		const declaredById = new Map(declarations.map((view) => [view.id, view]));
 		for (const [id, live] of this.live) {
-			if (live.source !== 'static') continue;
 			const declaration = declaredById.get(id);
-			if (!declaration || declaration.blocks === undefined) this.removeLive(id, false);
+			if (!declaration || (live.source === 'static' && declaration.blocks === undefined)) {
+				this.removeLive(id, false);
+			}
 		}
 
 		for (const view of declarations) {
