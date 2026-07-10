@@ -394,7 +394,7 @@ describe('agent-definitions', () => {
 			expect(reasoningEffort?.type).toBe('select');
 			// Empirically discovered from grok v0.2.93: passing a bogus value errors
 			// with "Use none, minimal, low, medium, high, xhigh, max, or a model menu
-			// option id" (see Auto Run Working/grok-discovery.md).
+			// option id".
 			expect((reasoningEffort as any)?.options).toEqual([
 				'',
 				'none',

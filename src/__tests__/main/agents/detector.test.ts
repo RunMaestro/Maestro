@@ -1290,7 +1290,7 @@ describe('agent-detector', () => {
 					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
 				}
 				if (cmd === '/usr/bin/grok' && args[0] === 'models') {
-					// Captured from `grok models` v0.2.93 (Working/grok-models.txt)
+					// Captured from `grok models` v0.2.93
 					return {
 						stdout:
 							'You are logged in with grok.com.\n' +

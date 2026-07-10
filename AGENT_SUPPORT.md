@@ -969,7 +969,7 @@ codex exec --json resume <thread_id> "continue"
 
 ### Grok CLI ✅ Fully Implemented
 
-**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93 (see `Working/grok-discovery.md` and `Working/grok-session-format.md` in the Grok Auto Run folder for captured evidence).
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93.
 
 | Aspect           | Value                                                                                                                         |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |

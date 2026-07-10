@@ -717,8 +717,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// PTY integration - the grok TUI is not wired into Maestro's terminal
 		// (capabilities: requiresPromptToStart: true).
 		//
-		// Grok CLI argument builders (verified against `grok --help` v0.2.93, see
-		// Auto Run Working/grok-help.txt)
+		// Grok CLI argument builders (verified against `grok --help` v0.2.93)
 		// Batch mode: grok --cwd <dir> -p "prompt" --output-format streaming-json --always-approve
 		batchModePrefix: [], // No subcommand needed; -p/--single triggers headless mode
 		// YOLO required by Maestro, mirroring Claude Code's --dangerously-skip-permissions.
@@ -740,13 +739,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		// No noToolsArgs (tab naming falls back to the same graceful path as
-		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93
-		// (see Auto Run Working/grok-notools-probe.txt): grok has no reliable
-		// "disable ALL tools" switch. `--tools ""` is treated as unset (the
-		// write tool still ran), and `--disallowed-tools` works per-tool but
-		// silently accepts unknown names while the built-in list is
-		// undocumented, ~31 names, and version-dependent - a hard-coded list
-		// would silently rot, and MCP-provided tools are outside its reach.
+		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93:
+		// grok has no reliable "disable ALL tools" switch. `--tools ""` is
+		// treated as unset (the write tool still ran), and `--disallowed-tools`
+		// works per-tool but silently accepts unknown names while the built-in
+		// list is undocumented, ~31 names, and version-dependent - a hard-coded
+		// list would silently rot, and MCP-provided tools are outside its reach.
 		// Do not add noToolsArgs unless grok ships a verified all-off flag.
 		yoloModeArgs: ['--always-approve'],
 		workingDirArgs: (dir: string) => ['--cwd', dir], // Set working directory
@@ -779,10 +777,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 					"How much the model should reason before responding. Leave empty for the model default (high). Note: 'none' is model-dependent - the default model (grok-4.5) rejects it; grok-composer-2.5-fast accepts it.",
 				// Accepted values discovered empirically from grok v0.2.93: a bogus value
 				// errors with "Use none, minimal, low, medium, high, xhigh, max, or a
-				// model menu option id" (see Auto Run Working/grok-discovery.md). Live
-				// runs confirmed all seven work on grok-composer-2.5-fast; grok-4.5
-				// rejects 'none' server-side (HTTP 400 "This model does not support
-				// reasoning_effort value none") but accepts the other six.
+				// model menu option id". Live runs confirmed all seven work on
+				// grok-composer-2.5-fast; grok-4.5 rejects 'none' server-side
+				// (HTTP 400 "This model does not support reasoning_effort value none")
+				// but accepts the other six.
 				options: ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
 				default: '',
 				argBuilder: (value: string) =>

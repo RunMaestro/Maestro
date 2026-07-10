@@ -7,6 +7,7 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { getAgentLoginCommand } from '../../../shared/agentMetadata';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -383,11 +384,14 @@ export class StdoutHandler {
 				}
 
 				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
-					// Prefix the remote-host context but keep the parser's message:
-					// each agent's error patterns name that agent's own login
-					// command, so replacing the message wholesale would tell
-					// non-Claude users to run the wrong CLI.
-					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate. ${agentError.message}`;
+					// Choose the login command by agentId - error-pattern messages
+					// are often generic (no CLI name) and first-match-wins ordering
+					// can shadow the ones that do name a command. A small map keeps
+					// every agent correct without depending on pattern text/order.
+					const loginCmd = getAgentLoginCommand(toolType);
+					agentError.message = loginCmd
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
 				this.emitter.emit('agent-error', sessionId, agentError);

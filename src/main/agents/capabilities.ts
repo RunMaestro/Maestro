@@ -414,10 +414,9 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 * Grok CLI - xAI's Grok coding agent CLI
 	 *
 	 * Capabilities verified against captured output from grok v0.2.93
-	 * (streaming-json fixtures). See the Phase 01 discovery document
-	 * (Working/grok-discovery.md in the Grok Auto Run folder) for evidence.
-	 * Notable: the streaming-json stdout stream carries NO tool events and
-	 * NO token usage/cost; the session ID arrives only on the final "end" event.
+	 * (streaming-json fixtures). Notable: the streaming-json stdout stream
+	 * carries NO tool events and NO token usage/cost; the session ID arrives
+	 * only on the final "end" event.
 	 */
 	grok: {
 		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event

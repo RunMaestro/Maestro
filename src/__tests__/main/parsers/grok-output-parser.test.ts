@@ -2,12 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { GrokOutputParser } from '../../../main/parsers/grok-output-parser';
 
 // All event lines below are copied verbatim from real captured fixtures
-// (grok v0.2.93, `--output-format streaming-json`):
-// Working/grok-simple-turn.jsonl, Working/grok-tool-use.jsonl,
-// Working/grok-resume.jsonl, and Working/grok-error-bad-model.txt in the
-// Phase 01 Auto Run folder. Grok's stream has exactly four event types
-// (thought, text, end, error); there is no init event, no tool_use event,
-// and no usage/cost data in the stream.
+// (grok v0.2.93, `--output-format streaming-json`). Grok's stream has exactly
+// four event types (thought, text, end, error); there is no init event, no
+// tool_use event, and no usage/cost data in the stream.
 
 const SIMPLE_TURN_END_LINE =
 	'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"b860c3ae-0e8c-4cc4-b478-01d4ba187c9a"}';
@@ -22,9 +19,9 @@ const BAD_MODEL_STDERR =
 	"Error: Couldn't set model 'nonexistent-model-xyz': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
 
 // Verbatim stderr from `grok -p "hi" --resume 00000000-0000-0000-0000-000000000000
-// --output-format streaming-json` (Working/grok-error-bad-resume.txt). Stdout is
-// EMPTY for this failure (no JSON error event), so only detectErrorFromExit can
-// catch it. A transient spinner line between the two is elided.
+// --output-format streaming-json` (v0.2.93). Stdout is EMPTY for this failure
+// (no JSON error event), so only detectErrorFromExit can catch it. A transient
+// spinner line between the two is elided.
 const BAD_RESUME_STDERR =
 	'Session 00000000-0000-0000-0000-000000000000 not found locally, restoring from remote...\n' +
 	'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
@@ -33,7 +30,7 @@ describe('GrokOutputParser', () => {
 	it('parses text delta events as partial text events', () => {
 		const parser = new GrokOutputParser();
 
-		// From Working/grok-simple-turn.jsonl
+		// From a simple text turn fixture
 		const event = parser.parseJsonLine('{"type":"text","data":"Hello"}');
 
 		expect(event).toEqual(
@@ -50,7 +47,7 @@ describe('GrokOutputParser', () => {
 	it('concatenates cleanly across consecutive text deltas (whitespace embedded in payloads)', () => {
 		const parser = new GrokOutputParser();
 
-		// Consecutive lines from Working/grok-tool-use.jsonl
+		// Consecutive text deltas from a tool-use turn fixture
 		const deltas = [
 			'{"type":"text","data":"Created"}',
 			'{"type":"text","data":" `"}',
@@ -66,7 +63,7 @@ describe('GrokOutputParser', () => {
 	it('tags thought delta events with isReasoning for the ThinkingMode lifecycle', () => {
 		const parser = new GrokOutputParser();
 
-		// From Working/grok-simple-turn.jsonl
+		// From a simple text turn fixture
 		const event = parser.parseJsonLine('{"type":"thought","data":"The"}');
 
 		expect(event).toEqual(
@@ -116,7 +113,7 @@ describe('GrokOutputParser', () => {
 	});
 
 	it('extracts the same session ID from a resumed turn', () => {
-		// From Working/grok-resume.jsonl - resume preserves the sessionId of the
+		// Resume preserves the sessionId of the
 		// resumed session in its end event.
 		const parser = new GrokOutputParser();
 
@@ -125,12 +122,12 @@ describe('GrokOutputParser', () => {
 	});
 
 	it('emits no tool_use events - tool turns stream only thought/text/end lines', () => {
-		// Verified in Working/grok-tool-use.jsonl: the turn created and read a
+		// Verified on a tool-use turn: the turn created and read a
 		// file, yet zero tool events appeared on stdout. Tool telemetry lives
-		// only in the on-disk session files (Phase 02 material).
+		// only in the on-disk session files.
 		const parser = new GrokOutputParser();
 
-		// Representative lines from Working/grok-tool-use.jsonl
+		// Representative lines from a tool-use turn
 		const toolTurnLines = [
 			'{"type":"thought","data":"Now"}',
 			'{"type":"thought","data":" read"}',
@@ -165,7 +162,7 @@ describe('GrokOutputParser', () => {
 	it('parses error events and classifies the verified bad-model failure', () => {
 		const parser = new GrokOutputParser();
 
-		// From Working/grok-error-bad-model.txt (stdout, streaming-json)
+		// Bad-model failure on stdout (streaming-json)
 		const event = parser.parseJsonLine(BAD_MODEL_ERROR_LINE);
 		expect(event).toEqual(
 			expect.objectContaining({
@@ -290,7 +287,7 @@ describe('GrokOutputParser', () => {
 
 	it('classifies exit failures from the duplicated stderr message', () => {
 		// Grok duplicates its error on stderr as `Error: <message>` and exits 1
-		// (verified in Working/grok-error-bad-model.txt).
+		// (verified against grok v0.2.93).
 		const parser = new GrokOutputParser();
 
 		const error = parser.detectErrorFromExit(1, BAD_MODEL_STDERR, '');

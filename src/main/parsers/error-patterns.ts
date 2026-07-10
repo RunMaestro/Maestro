@@ -1155,10 +1155,10 @@ const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
 // duplicates the message on stderr as `Error: <message>`, and exits 1 (verified
 // against grok v0.2.93). Exception: a failed `--resume` emits NOTHING on stdout
 // (no JSON error event) - the failure appears only on stderr, so it is caught
-// via detectErrorFromExit. The bad-model and bad-resume failures were reproduced
-// live (Working/grok-error-bad-model.txt, Working/grok-error-bad-resume.txt);
-// ~/.grok/logs/ surfaced no real auth or rate-limit strings, so those patterns
-// remain conservative and should be tightened when real strings are observed.
+// via detectErrorFromExit. Bad-model and bad-resume failures were reproduced
+// live; ~/.grok/logs/ surfaced no real auth or rate-limit strings, so those
+// patterns remain conservative and should be tightened when real strings are
+// observed.
 
 const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [

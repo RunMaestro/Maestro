@@ -592,9 +592,9 @@ describe('error-patterns', () => {
 
 			describe('session_not_found patterns', () => {
 				// Real stderr from `grok -p "hi" --resume <bad-uuid>
-				// --output-format streaming-json` (grok v0.2.93), captured in
-				// Working/grok-error-bad-resume.txt. Stdout carries no JSON error
-				// event for this failure, so the stderr string is the only signal.
+				// --output-format streaming-json` (grok v0.2.93). Stdout carries
+				// no JSON error event for this failure, so the stderr string is
+				// the only signal.
 				it('should match the Grok "Failed to restore session" resume failure', () => {
 					const stderr =
 						'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
@@ -624,7 +624,7 @@ describe('error-patterns', () => {
 
 			describe('agent_crashed patterns', () => {
 				// Real message from `grok -p "hi" -m nonexistent-model-xyz`
-				// (Working/grok-error-bad-model.txt).
+				// (grok v0.2.93).
 				it('should match the Grok bad-model failure', () => {
 					const message =
 						"Couldn't set model 'nonexistent-model-xyz': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";

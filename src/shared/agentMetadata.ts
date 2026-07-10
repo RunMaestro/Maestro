@@ -131,3 +131,24 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 export function isBetaAgent(agentId: AgentId | string): boolean {
 	return BETA_AGENTS.has(agentId as AgentId);
 }
+
+/**
+ * CLI login commands for re-authenticating an agent on a remote host.
+ * Used by StdoutHandler when auth expires over SSH so the user is told to run
+ * that agent's own login command rather than a hardcoded "claude login".
+ * Partial: agents without a known CLI login command (API-key-only, etc.) are
+ * omitted and get a generic "SSH into the remote to re-authenticate" message.
+ */
+export const AGENT_LOGIN_COMMANDS: Partial<Record<AgentId, string>> = {
+	'claude-code': 'claude login',
+	codex: 'codex login',
+	'copilot-cli': 'gh auth login',
+	grok: 'grok login',
+};
+
+/**
+ * Return the CLI login command for an agent, if one is known.
+ */
+export function getAgentLoginCommand(agentId: AgentId | string): string | undefined {
+	return AGENT_LOGIN_COMMANDS[agentId as AgentId];
+}

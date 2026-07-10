@@ -10,14 +10,14 @@
  *   {"type":"end","stopReason":"EndTurn","sessionId":"<uuid>","requestId":"<uuid>"}
  *   {"type":"error","message":"<text>"}
  *
- * Schema notes (see Working/grok-discovery.md in the Phase 01 Auto Run folder):
+ * Schema notes (verified against grok v0.2.93):
  * - There is NO init/session-start event. The session ID (camelCase
  *   `sessionId`, UUIDv7) arrives only on the final `end` event, so it is
  *   extracted from the `result` event rather than an `init` event.
  * - Tool invocations are NOT emitted on stdout at all - a tool-use turn
  *   produces only thought/text/end lines. Tool telemetry exists solely in the
- *   on-disk session files (`~/.grok/sessions/.../events.jsonl`), which Phase 02
- *   session storage will surface. No `tool_use` events can be parsed here.
+ *   on-disk session files (`~/.grok/sessions/.../events.jsonl`). No
+ *   `tool_use` events can be parsed here.
  * - No token usage or cost appears anywhere in the stream, so `end` maps to a
  *   `result` event without a usage object.
  * - Runtime failures emit the `error` JSON on stdout, duplicate the message on
