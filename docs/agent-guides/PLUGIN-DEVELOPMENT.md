@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                    |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.4.0`)                      |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.9.0`)                      |
 | `description` | string                   | no        |                                                                 |
 | `author`      | string                   | no        |                                                                 |
 | `license`     | string                   | no        |                                                                 |
@@ -273,28 +273,29 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); absent means the broad form. `reason` shows at the consent prompt.
 
-| Capability            | Risk   | Scope | What it allows                                                       | How to request                                                  |
-| --------------------- | ------ | ----- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `fs:read`             | medium | path  | read files under the scope path                                      | `{ "capability": "fs:read", "scope": "/abs/dir" }`              |
-| `fs:write`            | high   | path  | write files under the scope path                                     | `{ "capability": "fs:write", "scope": "/abs/dir" }`             |
-| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                                      | `{ "capability": "net:fetch", "scope": "example.com" }`         |
-| `agents:read`         | low    | none  | list/read agent metadata                                             | `{ "capability": "agents:read" }`                               |
-| `agents:dispatch`     | high   | none  | send a prompt to an agent (INERT today)                              | `{ "capability": "agents:dispatch" }`                           |
-| `notifications:toast` | low    | none  | raise a toast                                                        | `{ "capability": "notifications:toast" }`                       |
-| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*`                  | `{ "capability": "settings:read" }`                             |
-| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                                 | `{ "capability": "settings:write" }`                            |
-| `sessions:read`       | medium | none  | list session METADATA (never transcript)                             | `{ "capability": "sessions:read" }`                             |
-| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields)                  | `{ "capability": "transcripts:read", "scope": "/abs/project" }` |
-| `storage:read`        | low    | none  | read own private key-value store                                     | `{ "capability": "storage:read" }`                              |
-| `storage:write`       | low    | none  | write own private key-value store                                    | `{ "capability": "storage:write" }`                             |
-| `ui:command`          | low    | none  | invoke a registered palette command                                  | `{ "capability": "ui:command" }`                                |
-| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                               | `{ "capability": "events:subscribe" }`                          |
-| `process:spawn`       | high   | none  | run a shell command (INERT today)                                    | `{ "capability": "process:spawn" }`                             |
-| `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar) | `{ "capability": "ui:contribute" }`                             |
-| `ui:panel`            | medium | none  | render its own sandboxed interactive panels                          | `{ "capability": "ui:panel" }`                                  |
-| `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)           | `{ "capability": "ui:render-unsafe" }`                          |
+| Capability            | Risk   | Scope | What it allows                                                                         | How to request                                                   |
+| --------------------- | ------ | ----- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `fs:read`             | medium | path  | read files under the scope path                                                        | `{ "capability": "fs:read", "scope": "/abs/dir" }`               |
+| `fs:write`            | high   | path  | write files under the scope path                                                       | `{ "capability": "fs:write", "scope": "/abs/dir" }`              |
+| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                                                        | `{ "capability": "net:fetch", "scope": "example.com" }`          |
+| `net:connect`         | high   | host  | persistent outbound `wss://` socket to the scope host (trusted-only)                   | `{ "capability": "net:connect", "scope": "gateway.discord.gg" }` |
+| `agents:read`         | low    | none  | list/read agent metadata                                                               | `{ "capability": "agents:read" }`                                |
+| `agents:dispatch`     | high   | none  | send a prompt to an agent (LIVE, gated; direct dispatch also needs unattended consent) | `{ "capability": "agents:dispatch" }`                            |
+| `notifications:toast` | low    | none  | raise a toast                                                                          | `{ "capability": "notifications:toast" }`                        |
+| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*`                                    | `{ "capability": "settings:read" }`                              |
+| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                                                   | `{ "capability": "settings:write" }`                             |
+| `sessions:read`       | medium | none  | list session METADATA (never transcript)                                               | `{ "capability": "sessions:read" }`                              |
+| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields)                                    | `{ "capability": "transcripts:read", "scope": "/abs/project" }`  |
+| `storage:read`        | low    | none  | read own private key-value store                                                       | `{ "capability": "storage:read" }`                               |
+| `storage:write`       | low    | none  | write own private key-value store                                                      | `{ "capability": "storage:write" }`                              |
+| `ui:command`          | low    | none  | invoke a registered palette command                                                    | `{ "capability": "ui:command" }`                                 |
+| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                                                 | `{ "capability": "events:subscribe" }`                           |
+| `process:spawn`       | high   | none  | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                 | `{ "capability": "process:spawn" }`                              |
+| `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar)                   | `{ "capability": "ui:contribute" }`                              |
+| `ui:panel`            | medium | none  | render its own sandboxed interactive panels                                            | `{ "capability": "ui:panel" }`                                   |
+| `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)                             | `{ "capability": "ui:render-unsafe" }`                           |
 
-`agents:dispatch` and `process:spawn` have no production handler; the SDK methods exist but reject. The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path.
+`agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch` or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
@@ -345,9 +346,12 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.fs.read(path)` -> `Promise<string>`                                    | `fs:read`                    |
 | `maestro.fs.write(path, contents)` -> `Promise<void>`                           | `fs:write`                   |
 | `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                           | `net:fetch`                  |
+| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)    | `net:connect`                |
+| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                   | `net:connect`                |
+| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                 | `net:connect`                |
 | `maestro.agents.list()`                                                         | `agents:read`                |
 | `maestro.agents.get(agentId)`                                                   | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (INERT)                       | `agents:dispatch`            |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)    | `agents:dispatch`            |
 | `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                | `notifications:toast`        |
 | `maestro.settings.get(key)`                                                     | `settings:read`              |
 | `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)               | `settings:write`             |
@@ -364,11 +368,56 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
 | `maestro.commands.register(commandId, handler(args))`                           | - (invoked by host)          |
 | `maestro.tools.register(toolId, handler(args))` (result returned to host)       | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (INERT)                                 | `process:spawn`              |
+| `maestro.process.spawn(command, opts?)` (trusted + gated)                       | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
 `transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. It is bounded as a high-risk verb and audited per read.
+
+### Persistent network connections (net:connect)
+
+`net:connect` holds an open, two-way `wss://` socket from inside the sandbox, so a plugin can bridge a chat gateway (Discord Gateway, Slack Socket Mode) into Maestro. Unlike `net.fetch`'s one-shot request/response, the connection stays open and pushes frames to you as they arrive.
+
+Request it with a **host scope** (the gateway hostname) and remember it requires a **trusted (signed) plugin** - a persistent egress channel is a larger exfiltration surface than one-shot fetch, so an untrusted plugin is refused even with the grant:
+
+```json
+{
+	"capability": "net:connect",
+	"scope": "gateway.discord.gg",
+	"reason": "hold the Discord Gateway connection"
+}
+```
+
+The API is three brokered calls plus event delivery:
+
+- `maestro.net.connect(url, opts?)` -> `{ socketId }` - opens the socket (`wss://` only; `ws://` and any other scheme are rejected). `opts` may carry `protocols`.
+- `maestro.net.send(socketId, data)` - send one frame (`data` is a string, capped at 64 KB).
+- `maestro.net.close(socketId, opts?)` - close it (`opts` may carry `code` / `reason`).
+- Frames arrive as events on the topic `net.connect:<socketId>` via `maestro.events.on(...)`. These per-socket frame events do NOT need `events:subscribe` (that gates only the fixed metadata catalog). Each event payload is `{ socketId, type: 'message' | 'close' | 'error', data?, code?, reason?, message? }`.
+
+Caps and guarantees: at most **4 open sockets** per plugin; **64 KB** per frame in both directions; the connect is pinned through the same egress guard as `net.fetch` (loopback / RFC1918 / link-local / cloud-metadata are blocked); and `send`/`close` re-authorize your still-held grant on every call, so if the user revokes `net:connect` mid-stream the next call is denied. Every socket is force-closed when the plugin is disabled, crashes, or is uninstalled.
+
+Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. And if your bridge turns inbound messages into agent work via `maestro.agents.dispatch(...)`, that path needs BOTH the allowlist `agents:dispatch` grant AND the separate **unattended consent** - dispatch driven by a socket event is never user-present.
+
+```js
+/** @import { MaestroSdk } from '@maestro/plugin-sdk' */
+
+/** @param {MaestroSdk} maestro */
+async function activate(maestro) {
+	const { socketId } = await maestro.net.connect('wss://gateway.discord.gg/?v=10&encoding=json');
+
+	maestro.events.on('net.connect:' + socketId, async (frame) => {
+		if (frame.type === 'message') {
+			const msg = JSON.parse(frame.data);
+			// ... react to the gateway payload, e.g. heartbeat or dispatch to an agent
+			await maestro.net.send(socketId, JSON.stringify({ op: 1, d: null }));
+		} else if (frame.type === 'close' || frame.type === 'error') {
+			// let the background supervisor restart us; reopen in the next activate()
+			console.warn('gateway closed', frame.code, frame.reason || frame.message);
+		}
+	});
+}
+```
 
 ---
 
