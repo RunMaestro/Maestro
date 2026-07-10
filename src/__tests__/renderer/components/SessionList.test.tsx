@@ -26,13 +26,16 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { BatchRunState } from '../../../renderer/types';
 
+const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
+
 // Mock QRCodeSVG to avoid complex rendering
 vi.mock('qrcode.react', () => ({
 	QRCodeSVG: ({ value }: { value: string }) => <div data-testid="qr-code">{value}</div>,
 }));
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	Wand2: ({ className }: { className?: string }) => (
 		<span data-testid="icon-wand" className={className} />
 	),
@@ -49,7 +52,9 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
 	PanelLeftOpen: () => <span data-testid="icon-panel-left-open" />,
-	Folder: () => <span data-testid="icon-folder" />,
+	Folder: ({ style }: { style?: { color?: string } }) => (
+		<span data-testid="icon-folder" style={style} />
+	),
 	Info: () => <span data-testid="icon-info" />,
 	FileText: () => <span data-testid="icon-file-text" />,
 	GitBranch: () => <span data-testid="icon-git-branch" />,
@@ -138,6 +143,8 @@ const mockModalActions = {
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -776,6 +783,24 @@ describe('SessionList', () => {
 			expect(screen.getByText('Session in Group')).toBeInTheDocument();
 		});
 
+		it('renders a selected standard icon and label color', () => {
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'My Group',
+				emoji: '',
+				icon: 'folder',
+				color: '#22C55E',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByTestId('icon-folder')).toHaveStyle({ color: '#22C55E' });
+			expect(screen.getByText('My Group')).toHaveStyle({ color: '#22C55E' });
+		});
+
 		it('toggles group collapse on click', () => {
 			const toggleGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
@@ -1008,7 +1033,11 @@ describe('SessionList', () => {
 		});
 
 		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
-			const group = createMockGroup({ id: 'g1', name: 'Worktree Group', emoji: '🌳' });
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'Worktree Group',
+				emoji: LEGACY_WORKTREE_EMOJI,
+			});
 			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
 			useSessionStore.setState({ sessions, groups: [group] });
 			useUIStore.setState({ leftSidebarOpen: true });

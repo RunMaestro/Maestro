@@ -16,7 +16,8 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Group } from '../../../renderer/types';
 
 // Mock lucide-react
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: () => <svg data-testid="x-icon" />,
 }));
 
@@ -135,10 +136,10 @@ describe('CreateGroupModal', () => {
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
 		});
 
-		it('renders Icon label', () => {
+		it('renders emoji label', () => {
 			renderModal();
 
-			expect(screen.getByText('Icon')).toBeInTheDocument();
+			expect(screen.getByText('Emoji')).toBeInTheDocument();
 		});
 
 		it('renders Group Name label', () => {
@@ -482,6 +483,21 @@ describe('CreateGroupModal', () => {
 				...groups,
 				expect.objectContaining({
 					collapsed: false,
+				}),
+			]);
+		});
+
+		it('creates a user group', () => {
+			renderModal();
+
+			const input = screen.getByPlaceholderText('Enter group name...');
+			fireEvent.change(input, { target: { value: 'Test' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+			expect(setGroups).toHaveBeenCalledWith([
+				...groups,
+				expect.objectContaining({
+					kind: 'user',
 				}),
 			]);
 		});

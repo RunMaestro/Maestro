@@ -16,7 +16,8 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Group } from '../../../renderer/types';
 
 // Mock lucide-react
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: () => <svg data-testid="x-icon" />,
 }));
 
@@ -87,6 +88,8 @@ describe('RenameGroupModal', () => {
 	let setGroups: ReturnType<typeof vi.fn>;
 	let setGroupName: ReturnType<typeof vi.fn>;
 	let setGroupEmoji: ReturnType<typeof vi.fn>;
+	let setGroupIcon: ReturnType<typeof vi.fn>;
+	let setGroupColor: ReturnType<typeof vi.fn>;
 	let onClose: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
@@ -95,6 +98,8 @@ describe('RenameGroupModal', () => {
 		setGroups = vi.fn();
 		setGroupName = vi.fn();
 		setGroupEmoji = vi.fn();
+		setGroupIcon = vi.fn();
+		setGroupColor = vi.fn();
 		onClose = vi.fn();
 		vi.useFakeTimers();
 	});
@@ -112,6 +117,10 @@ describe('RenameGroupModal', () => {
 		setGroupName,
 		groupEmoji: '📁',
 		setGroupEmoji,
+		groupIcon: undefined,
+		setGroupIcon,
+		groupColor: undefined,
+		setGroupColor,
 		onClose,
 		groups,
 		setGroups,
@@ -134,10 +143,10 @@ describe('RenameGroupModal', () => {
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
 		});
 
-		it('should display icon label and group name label', () => {
+		it('should display emoji and group name labels', () => {
 			renderWithLayerStack(<RenameGroupModal {...defaultProps()} />);
 
-			expect(screen.getByText('Icon')).toBeInTheDocument();
+			expect(screen.getByText('Emoji')).toBeInTheDocument();
 			expect(screen.getByText('Group Name')).toBeInTheDocument();
 		});
 
@@ -373,6 +382,8 @@ describe('RenameGroupModal', () => {
 				id: 'group-1',
 				name: 'NEW NAME', // uppercased
 				emoji: '🎸',
+				icon: undefined,
+				color: undefined,
 				collapsed: false,
 			});
 
@@ -605,7 +616,17 @@ describe('RenameGroupModal', () => {
 		});
 
 		it('should preserve other group properties when renaming', async () => {
-			const groupsWithExtras = [{ id: 'group-1', name: 'MY GROUP', emoji: '📁', collapsed: true }];
+			const groupsWithExtras = [
+				{
+					id: 'group-1',
+					name: 'MY GROUP',
+					emoji: '📁',
+					kind: 'user' as const,
+					icon: 'folder',
+					color: '#22C55E',
+					collapsed: true,
+				},
+			];
 
 			renderWithLayerStack(
 				<RenameGroupModal
@@ -613,6 +634,8 @@ describe('RenameGroupModal', () => {
 					groups={groupsWithExtras}
 					groupName="Updated"
 					groupEmoji="🎉"
+					groupIcon="folder"
+					groupColor="#22C55E"
 				/>
 			);
 
@@ -629,6 +652,9 @@ describe('RenameGroupModal', () => {
 				id: 'group-1',
 				name: 'UPDATED',
 				emoji: '🎉',
+				kind: 'user',
+				icon: 'folder',
+				color: '#22C55E',
 				collapsed: true,
 			});
 		});
@@ -786,7 +812,7 @@ describe('RenameGroupModal', () => {
 		it('should have labeled input fields', () => {
 			renderWithLayerStack(<RenameGroupModal {...defaultProps()} />);
 
-			expect(screen.getByText('Icon')).toBeInTheDocument();
+			expect(screen.getByText('Emoji')).toBeInTheDocument();
 			expect(screen.getByText('Group Name')).toBeInTheDocument();
 		});
 
