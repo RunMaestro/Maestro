@@ -156,6 +156,7 @@ export interface ModalHandlersReturn {
 
 	// Git diff opener (Tier 3C)
 	handleViewGitDiff: () => Promise<void>;
+	handleViewGitDiffForSession: (sessionId: string) => Promise<void>;
 
 	// Director's Notes session navigation (Tier 3C)
 	handleDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
@@ -944,31 +945,45 @@ export function useModalHandlers(
 
 	const { refreshGitStatus } = useGitDetail();
 
+	const openGitDiff = useCallback(
+		async (session: Session, useShellCwd: boolean, refreshOnEmpty: boolean) => {
+			if (!session.isGitRepo) return;
+
+			const cwd =
+				useShellCwd && session.inputMode === 'terminal'
+					? session.shellCwd || session.cwd
+					: session.cwd;
+			const sshRemoteId =
+				session.sshRemoteId ||
+				(session.sessionSshRemoteConfig?.enabled
+					? session.sessionSshRemoteConfig.remoteId
+					: undefined) ||
+				undefined;
+			const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
+
+			if (diff.diff) {
+				getModalActions().setGitDiffPreview(diff.diff);
+			} else {
+				notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
+				if (refreshOnEmpty) void refreshGitStatus();
+			}
+		},
+		[refreshGitStatus]
+	);
+
 	const handleViewGitDiff = useCallback(async () => {
-		if (!activeSession || !activeSession.isGitRepo) return;
+		if (!activeSession) return;
+		await openGitDiff(activeSession, true, true);
+	}, [activeSession, openGitDiff]);
 
-		const cwd =
-			activeSession.inputMode === 'terminal'
-				? activeSession.shellCwd || activeSession.cwd
-				: activeSession.cwd;
-		const sshRemoteId =
-			activeSession.sshRemoteId ||
-			(activeSession.sessionSshRemoteConfig?.enabled
-				? activeSession.sessionSshRemoteConfig.remoteId
-				: undefined) ||
-			undefined;
-		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
-
-		if (diff.diff) {
-			getModalActions().setGitDiffPreview(diff.diff);
-		} else {
-			notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-			// Polling cache said there were changes but `git diff` is empty —
-			// repo state changed since the last poll. Re-sync so the widget
-			// stops advertising stale stats.
-			void refreshGitStatus();
-		}
-	}, [activeSession, refreshGitStatus]);
+	const handleViewGitDiffForSession = useCallback(
+		async (sessionId: string) => {
+			const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
+			if (!session) return;
+			await openGitDiff(session, false, false);
+		},
+		[openGitDiff]
+	);
 
 	// ====================================================================
 	// Director's Notes Session Navigation (Tier 3C)
@@ -1115,6 +1130,7 @@ export function useModalHandlers(
 
 		// Git diff opener (Tier 3C)
 		handleViewGitDiff,
+		handleViewGitDiffForSession,
 
 		// Director's Notes session navigation (Tier 3C)
 		handleDirectorNotesResumeSession,

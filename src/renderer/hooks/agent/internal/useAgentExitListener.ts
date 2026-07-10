@@ -3,7 +3,8 @@
  *
  * Orchestration only: pure logic lives in `helpers/exitDequeue`,
  * `helpers/exitTabCleanup`, `helpers/exitGitRefresh`, and
- * `helpers/exitSynopsis`. This hook coordinates them in the original
+ * `helpers/exitSynopsis`. Review-ready Movement logic lives in
+ * `helpers/exitReviewReady`. This hook coordinates them in the original
  * sequence:
  *  1. Parse the rawSessionId. Bail on terminal-tab and batch suffixes.
  *  2. Verify the process is actually gone (avoids "ghost" exits).
@@ -32,10 +33,12 @@ import {
 } from '../../../utils/tabHelpers';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
 import { chooseNextQueuedItem } from './helpers/exitDequeue';
 import { takeNextRunnableQueueItem } from '../../../utils/executionQueue';
 import { refreshGitRefsAfterTerminalExit } from './helpers/exitGitRefresh';
+import { refreshReviewReadyMovement, type ReviewReadyTarget } from './helpers/exitReviewReady';
 import {
 	runExitSynopsis,
 	shouldRunSynopsisOnExit,
@@ -219,6 +222,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 			let synopsisData: SynopsisData | null = null;
 			let synopsisDidWork = false;
+			let reviewReadyTarget: ReviewReadyTarget | null = null;
 
 			if (isFromAi) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
@@ -319,12 +323,36 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						),
 					};
 
+					const didMeaningfulWork = turnDidMeaningfulWork(
+						logs,
+						!!currentSession.pendingAICommandForSynopsis,
+						thinkingLogsRecorded(completedTab?.showThinking)
+					);
+
+					if (
+						code === 0 &&
+						didMeaningfulWork &&
+						currentSession.isGitRepo &&
+						completedTab &&
+						!completedTab.readOnlyMode &&
+						completedTab.permissionMode !== 'readonly'
+					) {
+						reviewReadyTarget = {
+							sessionId: actualSessionId,
+							tabId: completedTab.id,
+							projectName,
+							cwd: currentSession.cwd,
+							sshRemoteId:
+								currentSession.sshRemoteId ||
+								(currentSession.sessionSshRemoteConfig?.enabled
+									? currentSession.sessionSshRemoteConfig.remoteId
+									: undefined) ||
+								undefined,
+						};
+					}
+
 					if (shouldRunSynopsisOnExit(currentSession, completedTab)) {
-						synopsisDidWork = turnDidMeaningfulWork(
-							logs,
-							!!currentSession.pendingAICommandForSynopsis,
-							thinkingLogsRecorded(completedTab?.showThinking)
-						);
+						synopsisDidWork = didMeaningfulWork;
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
@@ -835,6 +863,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						});
 					}
 				}, 0);
+			}
+
+			if (
+				!queuedItemToProcess &&
+				reviewReadyTarget &&
+				useSettingsStore.getState().encoreFeatures.concerto
+			) {
+				// Diff inspection is intentionally detached from process-exit handling so
+				// a slow Git operation cannot delay queue, toast, or idle-state updates.
+				void refreshReviewReadyMovement(reviewReadyTarget).catch((error) => {
+					logger.warn('[onProcessExit] Failed to refresh review-ready Movement:', undefined, error);
+					void captureException(error, {
+						extra: { operation: 'refresh-review-ready-movement' },
+					});
+				});
 			}
 
 			if (synopsisData) {

@@ -36,6 +36,14 @@ Use Cadenzas for the one number or the one question you want in view while your 
 
 When an agent composes a view, its chat message should point at the view rather than repeat it. Agents do this with a **chip**: a link like `maestro://concerto/movement/deploy-status` renders as a clickable chip in the transcript that jumps to (or flashes) the referenced Movement or Cadenza. The view carries the data; the chat carries the takeaway and the pointer.
 
+## Review-ready handoff
+
+When a successful write-mode turn finishes with no queued work, Maestro checks the current Git diff for review signals. If the change is broad, large, touches a higher-risk boundary, or spans several implementation files without changed tests, Concerto opens one Maestro-owned **Review ready** Movement for that agent.
+
+The card summarizes changed files, changed lines, and how many files need attention. Select **Open Rehearsal** to jump to the completed AI tab and open the latest Rehearsal Change Brief. The same Movement is updated after later write turns rather than creating repeated cards. Read-only turns, conversational turns without tool work, failed runs, and small low-risk diffs do not create the card.
+
+This handoff is deterministic and based on the Git diff. Agent-authored Movement JSON cannot create the internal Open Rehearsal action.
+
 ## How agents drive it
 
 Concerto is driven over the Maestro CLI bridge, so anything that can run `maestro-cli` - an agent mid-session, a playbook, or you at a shell - can compose views. Each view is a JSON block spec; the app renders it natively.

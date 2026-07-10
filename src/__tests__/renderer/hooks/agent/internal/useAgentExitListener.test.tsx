@@ -2,8 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+
+const { mockRefreshReviewReadyMovement } = vi.hoisted(() => ({
+	mockRefreshReviewReadyMovement: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../../../../../renderer/hooks/agent/internal/helpers/exitReviewReady', () => ({
+	refreshReviewReadyMovement: mockRefreshReviewReadyMovement,
+}));
 
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -53,6 +62,12 @@ beforeEach(() => {
 		initialLoadComplete: false,
 		removedWorktreePaths: new Set(),
 	});
+	useSettingsStore.setState({
+		encoreFeatures: {
+			...useSettingsStore.getState().encoreFeatures,
+			concerto: false,
+		},
+	});
 	(window as any).maestro = {
 		...((window as any).maestro || {}),
 		process: mockProcess,
@@ -96,6 +111,82 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	it('refreshes the review-ready Movement after successful queue-empty write work', async () => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			showThinking: 'on',
+			logs: [
+				{ id: 'user', timestamp: 1, source: 'user', text: 'Implement the feature' },
+				{ id: 'tool', timestamp: 2, source: 'tool', text: 'Edit file' },
+				{ id: 'ai', timestamp: 3, source: 'stdout', text: 'Implemented.' },
+			],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			name: 'Maestro',
+			cwd: '/repo',
+			isGitRepo: true,
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useSettingsStore.setState({
+			encoreFeatures: {
+				...useSettingsStore.getState().encoreFeatures,
+				concerto: true,
+			},
+		});
+
+		renderHook(() => useAgentExitListener(makeDeps()));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+		});
+
+		expect(mockRefreshReviewReadyMovement).toHaveBeenCalledWith({
+			sessionId: 'sess-1',
+			tabId: 'tab-1',
+			projectName: 'Maestro',
+			cwd: '/repo',
+			sshRemoteId: undefined,
+		});
+	});
+
+	it('does not surface review-ready work from a read-only tab', async () => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			readOnlyMode: true,
+			showThinking: 'on',
+			logs: [
+				{ id: 'user', timestamp: 1, source: 'user', text: 'Inspect the feature' },
+				{ id: 'tool', timestamp: 2, source: 'tool', text: 'Read file' },
+			],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			isGitRepo: true,
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useSettingsStore.setState({
+			encoreFeatures: {
+				...useSettingsStore.getState().encoreFeatures,
+				concerto: true,
+			},
+		});
+
+		renderHook(() => useAgentExitListener(makeDeps()));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+		});
+
+		expect(mockRefreshReviewReadyMovement).not.toHaveBeenCalled();
 	});
 
 	it('appends a system log on terminal exit', async () => {

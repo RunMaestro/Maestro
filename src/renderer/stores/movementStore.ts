@@ -14,6 +14,13 @@ import { upsertById, scheduleFlashClear } from './concertoShared';
 /** Default item width when the agent doesn't specify one (px). */
 export const MOVEMENT_ITEM_DEFAULT_WIDTH = 500;
 
+/** Maestro-owned actions are attached in-process and never parsed from agent payloads. */
+export type MovementItemAction = {
+	kind: 'open-git-review';
+	sessionId: string;
+	tabId?: string;
+};
+
 /** A resolved movement item ready to render (spec parsed, defaults applied). */
 export interface MovementItem {
 	id: string;
@@ -26,6 +33,8 @@ export interface MovementItem {
 	title?: string;
 	/** Parsed BlockView spec. Parse failures become an error callout. */
 	spec: BlockSpec;
+	/** Optional allowlisted action for a Maestro-owned panel. */
+	action?: MovementItemAction;
 	/** Actual rendered height (px), measured by the overlay - so `movement state`
 	 *  reports a real footprint even for auto-sized (unset `height`) panels. */
 	measuredHeight?: number;

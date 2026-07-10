@@ -1812,6 +1812,38 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('diff --git a/file.ts');
 		});
 
+		it('fetches a diff for an explicit non-active session', async () => {
+			const activeSession = createMockSession({ id: 'active', isGitRepo: false });
+			const reviewSession = createMockSession({
+				id: 'review',
+				isGitRepo: true,
+				cwd: '/projects/review-repo',
+				inputMode: 'ai',
+			});
+			useSessionStore.setState({
+				sessions: [activeSession, reviewSession],
+				activeSessionId: activeSession.id,
+			});
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({
+				diff: 'diff --git a/review.ts',
+			});
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiffForSession(reviewSession.id);
+			});
+
+			expect(gitService.getDiff).toHaveBeenCalledWith(
+				'/projects/review-repo',
+				undefined,
+				undefined
+			);
+			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('diff --git a/review.ts');
+		});
+
 		it('flashes a notification and re-polls git status when the diff is empty', async () => {
 			const session = createMockSession({
 				isGitRepo: true,

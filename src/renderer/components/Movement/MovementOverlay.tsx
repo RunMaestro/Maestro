@@ -14,14 +14,19 @@
 
 import { memo, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { X, EyeOff, LayoutGrid } from 'lucide-react';
+import { X, EyeOff, LayoutGrid, ClipboardCheck } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useMovementStore, type MovementItem } from '../../stores/movementStore';
+import {
+	useMovementStore,
+	type MovementItem,
+	type MovementItemAction,
+} from '../../stores/movementStore';
 import { BlockView } from '../BlockView';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 
 interface MovementOverlayProps {
 	theme: Theme;
+	onOpenGitReview?: (sessionId: string, tabId?: string) => void;
 }
 
 /** Above app content; below momentary overlays (Center Flash) which sit at 100000. */
@@ -32,9 +37,11 @@ const AUTO_MAX_HEIGHT = 560;
 const MovementPanel = memo(function MovementPanel({
 	item,
 	theme,
+	onOpenGitReview,
 }: {
 	item: MovementItem;
 	theme: Theme;
+	onOpenGitReview?: (sessionId: string, tabId?: string) => void;
 }) {
 	const moveItem = useMovementStore((s) => s.moveItem);
 	const resizeItem = useMovementStore((s) => s.resizeItem);
@@ -58,6 +65,12 @@ const MovementPanel = memo(function MovementPanel({
 	};
 
 	const frameRef = useRef<HTMLDivElement>(null);
+	const action = item.action;
+	const handleAction = (movementAction: MovementItemAction) => {
+		if (movementAction.kind !== 'open-git-review') return;
+		removeItem(item.id);
+		onOpenGitReview?.(movementAction.sessionId, movementAction.tabId);
+	};
 
 	// Report the panel's real rendered height to the store so `movement state`
 	// gives the agent an accurate footprint (even for auto-sized panels).
@@ -114,12 +127,28 @@ const MovementPanel = memo(function MovementPanel({
 			<div
 				className="p-4 overflow-auto select-text"
 				style={{
-					height: item.height ? 'calc(100% - 34px)' : undefined,
+					height: item.height ? `calc(100% - ${action ? 76 : 34}px)` : undefined,
 					maxHeight: item.height ? undefined : AUTO_MAX_HEIGHT,
 				}}
 			>
 				<BlockView spec={item.spec} theme={theme} />
 			</div>
+			{action?.kind === 'open-git-review' && (
+				<div className="border-t p-2" style={{ borderColor: theme.colors.border }}>
+					<button
+						type="button"
+						onClick={() => handleAction(action)}
+						className="flex w-full items-center justify-center gap-1.5 rounded px-3 py-2 text-xs font-semibold transition-opacity hover:opacity-90"
+						style={{
+							color: theme.colors.accentForeground,
+							backgroundColor: theme.colors.accent,
+						}}
+					>
+						<ClipboardCheck className="h-3.5 w-3.5" />
+						Open Rehearsal
+					</button>
+				</div>
+			)}
 			{/* Resize handle (bottom-right corner). */}
 			<div
 				onPointerDown={onResizeStart}
@@ -134,7 +163,10 @@ const MovementPanel = memo(function MovementPanel({
 	);
 });
 
-export const MovementOverlay = memo(function MovementOverlay({ theme }: MovementOverlayProps) {
+export const MovementOverlay = memo(function MovementOverlay({
+	theme,
+	onOpenGitReview,
+}: MovementOverlayProps) {
 	const items = useMovementStore((s) => s.items);
 	const hidden = useMovementStore((s) => s.hidden);
 	const setHidden = useMovementStore((s) => s.setHidden);
@@ -171,7 +203,12 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 			) : (
 				<>
 					{items.map((item) => (
-						<MovementPanel key={item.id} item={item} theme={theme} />
+						<MovementPanel
+							key={item.id}
+							item={item}
+							theme={theme}
+							onOpenGitReview={onOpenGitReview}
+						/>
 					))}
 					<button
 						type="button"

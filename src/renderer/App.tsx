@@ -1168,6 +1168,7 @@ function MaestroConsoleInner() {
 		handleQuickActionsOpenCreatePR,
 		handleLogViewerShortcutUsed,
 		handleViewGitDiff,
+		handleViewGitDiffForSession,
 		handleDirectorNotesResumeSession,
 	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef);
 
@@ -1529,6 +1530,14 @@ function MaestroConsoleInner() {
 		inputRef,
 		handleFileClick,
 	});
+
+	const handleOpenGitReview = useCallback(
+		(sessionId: string, tabId?: string) => {
+			handleToastSessionClick(sessionId, tabId);
+			void handleViewGitDiffForSession(sessionId);
+		},
+		[handleToastSessionClick, handleViewGitDiffForSession]
+	);
 
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
@@ -2976,6 +2985,7 @@ function MaestroConsoleInner() {
 			rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
 			logViewerOpen={logViewerOpen}
 			onToastSessionClick={handleToastSessionClick}
+			onOpenGitReview={handleOpenGitReview}
 			logViewer={
 				logViewerOpen ? (
 					<div

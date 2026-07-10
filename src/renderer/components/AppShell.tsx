@@ -72,6 +72,7 @@ export interface AppShellProps {
 	rightEdgeSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
 
 	onToastSessionClick: (sessionId: string, tabId?: string) => void;
+	onOpenGitReview: (sessionId: string, tabId?: string) => void;
 }
 
 export function AppShell({
@@ -109,6 +110,7 @@ export function AppShell({
 	leftEdgeSwipeHandlers,
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
+	onOpenGitReview,
 }: AppShellProps) {
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
@@ -266,7 +268,7 @@ export function AppShell({
 			{concertoEnabled && (
 				<>
 					<CadenzaLayer theme={theme} />
-					<MovementOverlay theme={theme} />
+					<MovementOverlay theme={theme} onOpenGitReview={onOpenGitReview} />
 				</>
 			)}
 		</div>
