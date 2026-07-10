@@ -31,4 +31,29 @@ describe('buildVirtualGrouping', () => {
 			cwd: 'C:/work/api',
 		});
 	});
+
+	it('places sessions omitted from a computed snapshot in Other', () => {
+		const model = buildVirtualGrouping(
+			{
+				id: 'com.test/by-agent',
+				pluginId: 'com.test',
+				localId: 'by-agent',
+				groups: [{ id: 'claude', label: 'Claude' }],
+				assignments: { claude: 'claude' },
+			},
+			[
+				{ id: 'claude', name: 'Claude task' },
+				{ id: 'unassigned', name: 'Unassigned task' },
+			]
+		);
+
+		expect(model.groups).toEqual([
+			{ id: 'virtual:com.test/by-agent:claude', name: 'Claude' },
+			{ id: 'virtual:com.test/by-agent:Other', name: 'Other' },
+		]);
+		expect(model.assignments).toEqual({
+			claude: 'virtual:com.test/by-agent:claude',
+			unassigned: 'virtual:com.test/by-agent:Other',
+		});
+	});
 });

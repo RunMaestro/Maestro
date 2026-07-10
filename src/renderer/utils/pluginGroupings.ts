@@ -35,15 +35,23 @@ export function buildVirtualGrouping(
 			...(group.parentId ? { parentGroupId: virtualId(grouping.id, group.parentId) } : {}),
 		}));
 		const validIds = new Set(groups.map((group) => group.id));
-		return {
-			groups,
-			assignments: Object.fromEntries(
-				Object.entries(grouping.assignments).flatMap(([sessionId, groupId]) => {
-					const id = virtualId(grouping.id, groupId);
-					return validIds.has(id) ? [[sessionId, id]] : [];
-				})
-			),
-		};
+		const otherId = virtualId(grouping.id, 'Other');
+		const assignments: Record<string, string> = {};
+		let hasUnassignedSession = false;
+		for (const session of sessions) {
+			const groupId = grouping.assignments[session.id];
+			const id = virtualId(grouping.id, groupId ?? 'Other');
+			if (validIds.has(id)) {
+				assignments[session.id] = id;
+			} else {
+				assignments[session.id] = otherId;
+				hasUnassignedSession = true;
+			}
+		}
+		if (hasUnassignedSession && !validIds.has(otherId)) {
+			groups.push({ id: otherId, name: 'Other' });
+		}
+		return { groups, assignments };
 	}
 
 	const groups = new Map<string, { id: string; name: string; parentGroupId?: string }>();

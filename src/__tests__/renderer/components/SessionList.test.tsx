@@ -1107,6 +1107,47 @@ describe('SessionList', () => {
 				'manual'
 			);
 		});
+
+		it('renders every session from a sparse computed snapshot by placing extras in Other', async () => {
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([
+				{
+					id: 'com.acme/by-agent-type',
+					pluginId: 'com.acme',
+					localId: 'by-agent-type',
+					groups: [{ id: 'claude', label: 'Claude' }],
+					assignments: { claude: 'claude' },
+				},
+			]);
+			const sessions = [
+				createMockSession({ id: 'claude', name: 'Claude Agent' }),
+				createMockSession({ id: 'unassigned', name: 'Unassigned Agent' }),
+			];
+			useSessionStore.setState({ sessions });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+				expect(screen.getByText('Claude Agent')).toBeInTheDocument();
+				expect(screen.getByText('Unassigned Agent')).toBeInTheDocument();
+			});
+		});
 	});
 
 	// ============================================================================

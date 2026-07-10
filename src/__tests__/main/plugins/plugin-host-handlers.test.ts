@@ -1214,7 +1214,7 @@ describe('resource cleanup on plugin stop', () => {
 });
 
 describe('ui.groupingPublish / ui.groupingClear', () => {
-	it('requires a declared grouping, drops unknown sessions, and retains no session mutations', async () => {
+	it('requires a declared grouping and preserves published assignments without session mutations', async () => {
 		const groupingRegistry = new PluginGroupingRegistry();
 		const sessions: PluginSessionMetadata[] = [
 			{ id: 'known', title: 'Known session' },
@@ -1236,7 +1236,7 @@ describe('ui.groupingPublish / ui.groupingClear', () => {
 		});
 
 		expect(groupingRegistry.snapshot()).toEqual([
-			expect.objectContaining({ assignments: { known: 'claude' } }),
+			expect.objectContaining({ assignments: { known: 'claude', missing: 'claude' } }),
 		]);
 		expect(sessions).toEqual([
 			{ id: 'known', title: 'Known session' },

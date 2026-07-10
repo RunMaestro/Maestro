@@ -1214,14 +1214,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			assertBrokerAllowed(deps, pluginId, 'ui.groupingPublish', p);
 			if (!deps.groupingRegistry) throw new Error('grouping registry unavailable');
-			deps.groupingRegistry.publish(
-				validatePublishedGrouping(
-					pluginId,
-					p.id,
-					p,
-					new Set(deps.sessionsList().map((session) => session.id))
-				)
-			);
+			deps.groupingRegistry.publish(validatePublishedGrouping(pluginId, p.id, p));
 			return { ok: true };
 		},
 

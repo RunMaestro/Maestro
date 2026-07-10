@@ -54,8 +54,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 export function validatePublishedGrouping(
 	pluginId: string,
 	localId: string,
-	input: unknown,
-	sessionIds: ReadonlySet<string>
+	input: unknown
 ): PluginPublishedGrouping {
 	if (!input || typeof input !== 'object' || Array.isArray(input))
 		throw new Error('grouping payload required');
@@ -123,8 +122,9 @@ export function validatePublishedGrouping(
 	const validGroups = new Set(groups.map((group) => group.id));
 	const assignments: Record<string, string> = {};
 	for (const [sessionId, groupId] of assignmentEntries) {
-		if (sessionIds.has(sessionId) && typeof groupId === 'string' && validGroups.has(groupId))
-			assignments[sessionId] = groupId;
+		// Preserve published ids: filtering by host sessions would let a grouping plugin
+		// infer session existence from snapshot readback. Unknown ids simply render nowhere.
+		if (typeof groupId === 'string' && validGroups.has(groupId)) assignments[sessionId] = groupId;
 	}
 	return { id: `${pluginId}/${localId}`, pluginId, localId, groups, assignments };
 }

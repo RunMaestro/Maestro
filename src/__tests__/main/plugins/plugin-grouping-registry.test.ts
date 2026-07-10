@@ -4,8 +4,6 @@ import {
 	validatePublishedGrouping,
 } from '../../../main/plugins/plugin-grouping-registry';
 
-const sessions = new Set(['session-1', 'session-2']);
-
 function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		id: 'by-agent-type',
@@ -19,14 +17,21 @@ function payload(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe('validatePublishedGrouping', () => {
-	it('drops unknown sessions without changing virtual group ownership', () => {
-		const result = validatePublishedGrouping('com.acme', 'by-agent-type', payload(), sessions);
+	it('preserves a fake session id in snapshot readback without checking host sessions', () => {
+		const registry = new PluginGroupingRegistry();
+		registry.publish(
+			validatePublishedGrouping(
+				'com.acme',
+				'by-agent-type',
+				payload({ assignments: { 'fake-session-id': 'claude' } })
+			)
+		);
 
-		expect(result).toMatchObject({
-			id: 'com.acme/by-agent-type',
-			assignments: { 'session-1': 'claude' },
-		});
-		expect(result.assignments).not.toHaveProperty('unknown');
+		expect(registry.snapshot()).toEqual([
+			expect.objectContaining({
+				assignments: { 'fake-session-id': 'claude' },
+			}),
+		]);
 	});
 
 	it('rejects nested schema extras, cycles, and hierarchies deeper than two levels', () => {
@@ -34,8 +39,7 @@ describe('validatePublishedGrouping', () => {
 			validatePublishedGrouping(
 				'com.acme',
 				'by-agent-type',
-				payload({ groups: [{ id: 'root', label: 'Root', unexpected: true }] }),
-				sessions
+				payload({ groups: [{ id: 'root', label: 'Root', unexpected: true }] })
 			)
 		).toThrow(/invalid group/);
 		expect(() =>
@@ -47,8 +51,7 @@ describe('validatePublishedGrouping', () => {
 						{ id: 'a', label: 'A', parentId: 'b' },
 						{ id: 'b', label: 'B', parentId: 'a' },
 					],
-				}),
-				sessions
+				})
 			)
 		).toThrow(/cycle/);
 		expect(() =>
@@ -61,8 +64,7 @@ describe('validatePublishedGrouping', () => {
 						{ id: 'child', label: 'Child', parentId: 'root' },
 						{ id: 'grandchild', label: 'Grandchild', parentId: 'child' },
 					],
-				}),
-				sessions
+				})
 			)
 		).toThrow(/depth/);
 	});
@@ -72,14 +74,9 @@ describe('PluginGroupingRegistry', () => {
 	it('purges every snapshot for a stopped or disabled plugin and never leaks mutable state', () => {
 		const onChanged = vi.fn();
 		const registry = new PluginGroupingRegistry(onChanged);
-		registry.publish(validatePublishedGrouping('com.acme', 'by-agent-type', payload(), sessions));
+		registry.publish(validatePublishedGrouping('com.acme', 'by-agent-type', payload()));
 		registry.publish(
-			validatePublishedGrouping(
-				'com.other',
-				'by-agent-type',
-				payload({ id: 'by-agent-type' }),
-				sessions
-			)
+			validatePublishedGrouping('com.other', 'by-agent-type', payload({ id: 'by-agent-type' }))
 		);
 
 		const snapshot = registry.snapshot();
@@ -94,7 +91,7 @@ describe('PluginGroupingRegistry', () => {
 
 	it('clears all snapshots when the plugins feature is switched off', () => {
 		const registry = new PluginGroupingRegistry();
-		registry.publish(validatePublishedGrouping('com.acme', 'by-agent-type', payload(), sessions));
+		registry.publish(validatePublishedGrouping('com.acme', 'by-agent-type', payload()));
 
 		registry.clearAll();
 
