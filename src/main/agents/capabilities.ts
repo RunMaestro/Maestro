@@ -438,7 +438,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Verified: thought delta events precede text deltas
 		supportsContextMerge: false, // Conservative default: not yet exercised
 		supportsContextExport: true, // Verified: session storage reads full transcripts (chat_history.jsonl), same export path as siblings
-		supportsWizard: false, // Conservative default: wizard structured output not yet exercised
+		supportsWizard: true, // Streaming-json text deltas carry structured JSON wizard replies; conversation uses --permission-mode plan
 		supportsGroupChatModeration: false, // Conservative default: moderation flow not yet exercised
 		usesJsonLineOutput: true, // Verified: streaming-json is JSONL (one JSON object per line); also gates CLI batch spawning (spawnJsonLineAgent)
 		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified

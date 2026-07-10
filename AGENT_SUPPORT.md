@@ -990,7 +990,7 @@ codex exec --json resume <thread_id> "continue"
 - ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
 - ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
-- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode; `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
+- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`); `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
 
 **JSON Event Types:**
 

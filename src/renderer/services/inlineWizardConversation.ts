@@ -440,7 +440,7 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 
 /**
  * Extract the result text from agent JSON output.
- * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex).
+ * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex, Grok).
  */
 function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
 	try {
@@ -481,6 +481,27 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 					}
 					if (msg.type === 'message' && msg.text) {
 						textParts.push(msg.text);
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
+			}
+			if (textParts.length > 0) {
+				return textParts.join('');
+			}
+		}
+
+		// For Grok: concatenate text deltas only (skip thought/reasoning deltas).
+		// The `end` event has sessionId but no result body, so the full answer is
+		// only available by joining {"type":"text","data":"..."} lines.
+		if (agentType === 'grok') {
+			const textParts: string[] = [];
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
+						textParts.push(msg.data);
 					}
 				} catch {
 					// Ignore non-JSON lines
@@ -575,6 +596,17 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'copilot-cli': {
+			const args = [...(agent.args || [])];
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
+			return args;
+		}
+
+		case 'grok': {
+			// Discovery phase only: plan mode blocks writes. IPC buildAgentArgs still
+			// adds batch/json/cwd/prompt; keep this list free of those so they do not
+			// duplicate. Do not pass --always-approve here (read-only path strips it).
 			const args = [...(agent.args || [])];
 			if (agent.readOnlyArgs) {
 				args.push(...agent.readOnlyArgs);

@@ -744,6 +744,15 @@ class ConversationManager {
 				return args;
 			}
 
+			case 'grok': {
+				// Grok: base args + plan mode for discovery; IPC adds batch/json/cwd
+				const args = [...(agent.args || [])];
+				if (agent.readOnlyArgs) {
+					args.push(...agent.readOnlyArgs);
+				}
+				return args;
+			}
+
 			default: {
 				// For unknown agents, use base args
 				return [...(agent.args || [])];
@@ -844,6 +853,25 @@ class ConversationManager {
 						// Also check for message type with text field (older format)
 						if (msg.type === 'message' && msg.text) {
 							textParts.push(msg.text);
+						}
+					} catch {
+						// Ignore non-JSON lines
+					}
+				}
+				if (textParts.length > 0) {
+					return textParts.join('');
+				}
+			}
+
+			// For Grok: join text deltas only (skip thought); end has no body
+			if (agentType === 'grok') {
+				const textParts: string[] = [];
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
+							textParts.push(msg.data);
 						}
 					} catch {
 						// Ignore non-JSON lines

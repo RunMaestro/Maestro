@@ -340,6 +340,62 @@ describe('inlineWizardConversation', () => {
 				})
 			);
 		});
+
+		it('should apply Grok plan-mode args and join text deltas for structured replies', async () => {
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+				readOnlyArgs: ['--permission-mode', 'plan'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Thought deltas must not pollute the structured JSON body
+			dataCallback(session.sessionId, '{"type":"thought","data":"planning response"}\n');
+			dataCallback(
+				session.sessionId,
+				'{"type":"text","data":"{\\"confidence\\":88,\\"ready\\":true,"}\n'
+			);
+			dataCallback(
+				session.sessionId,
+				'{"type":"text","data":"\\"message\\":\\"Ready to build the playbook\\"}"}\n'
+			);
+			dataCallback(
+				session.sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"req-1"}\n'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					agentSessionId: '019f47fa-e297-7993-a1f6-adfaf940ba8c',
+					response: expect.objectContaining({
+						confidence: 88,
+						ready: true,
+						message: 'Ready to build the playbook',
+					}),
+				})
+			);
+		});
 	});
 
 	describe('activity-based timeout', () => {

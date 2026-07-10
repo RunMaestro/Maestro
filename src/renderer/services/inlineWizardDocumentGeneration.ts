@@ -118,6 +118,13 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 					textParts.push(msg.text);
 				}
 			}
+
+			// Grok streaming-json: text deltas only (skip thought/reasoning)
+			else if (agentType === 'grok') {
+				if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
+					textParts.push(msg.data);
+				}
+			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
 		}
@@ -734,6 +741,25 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 					}
 					if (msg.type === 'message' && msg.text) {
 						textParts.push(msg.text);
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
+			}
+			if (textParts.length > 0) {
+				return textParts.join('');
+			}
+		}
+
+		// For Grok: join text deltas (end event has no body)
+		if (agentType === 'grok') {
+			const textParts: string[] = [];
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
+						textParts.push(msg.data);
 					}
 				} catch {
 					// Ignore non-JSON lines
