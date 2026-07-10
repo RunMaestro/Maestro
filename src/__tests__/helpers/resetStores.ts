@@ -5,11 +5,13 @@
  * unless reset. Prefer this helper over hand-rolled partial `setState`
  * snapshots that drift from each store's real initial state.
  *
- * Uses `getInitialState()` + replace (`setState(..., true)`), and clones
- * top-level `Set` / `Map` values so in-place mutations in one test cannot
- * poison the shared initial collections.
+ * Uses `getInitialState()` + replace (`setState(..., true)`), and deep-clones
+ * `Set` / `Map` / arrays / plain objects so in-place mutations in one test
+ * cannot poison the shared initial collections. Functions (store actions)
+ * keep their original references.
  */
 
+import { useImageAnnotatorStore } from '../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useAgentStore } from '../../renderer/stores/agentStore';
 import { useBatchStore } from '../../renderer/stores/batchStore';
 import { useCenterFlashStore } from '../../renderer/stores/centerFlashStore';
@@ -51,14 +53,37 @@ export type ResettableStore = {
 	setState: (...args: any[]) => void;
 };
 
+function isPlainObject(value: object): boolean {
+	const proto = Object.getPrototypeOf(value);
+	return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Deep-clone mutable collection defaults from `getInitialState()`.
+ * Leaves functions and non-plain objects (class instances, etc.) shared.
+ */
 function cloneCollections(value: unknown): unknown {
 	if (value instanceof Set) {
-		return new Set(value);
+		const next = new Set();
+		for (const entry of value) {
+			next.add(cloneCollections(entry));
+		}
+		return next;
 	}
 	if (value instanceof Map) {
 		const next = new Map();
 		for (const [key, entry] of value) {
 			next.set(key, cloneCollections(entry));
+		}
+		return next;
+	}
+	if (Array.isArray(value)) {
+		return value.map((entry) => cloneCollections(entry));
+	}
+	if (value && typeof value === 'object' && isPlainObject(value)) {
+		const next: Record<string, unknown> = {};
+		for (const [key, entry] of Object.entries(value)) {
+			next[key] = cloneCollections(entry);
 		}
 		return next;
 	}
@@ -106,6 +131,7 @@ export const ALL_RENDERER_STORES: ResettableStore[] = [
 	useCoworkingApprovalStore,
 	useCoworkingBackgroundBrowserStore,
 	useCoworkingBrowserKeepAliveStore,
+	useImageAnnotatorStore,
 ];
 
 /**

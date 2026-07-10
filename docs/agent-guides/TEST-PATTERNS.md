@@ -270,7 +270,7 @@ beforeEach(() => {
 });
 ```
 
-`resetAllStores()` / `resetStore()` / `resetStores(...)` live in `src/__tests__/helpers/resetStores.ts` (re-exported from `src/__tests__/helpers`). They use Zustand v5 `getInitialState()` with replace mode and clone top-level `Set`/`Map` values so in-place mutations cannot poison later tests.
+`resetAllStores()` / `resetStore()` / `resetStores(...)` live in `src/__tests__/helpers/resetStores.ts` (re-exported from `src/__tests__/helpers`). They use Zustand v5 `getInitialState()` with replace mode and deep-clone `Set`/`Map`/array/plain-object defaults so in-place mutations cannot poison later tests. Store actions keep their original function references.
 
 For a single-store unit suite, `resetStore(useSessionStore)` (or `resetStores(useSessionStore, useUIStore)`) is enough.
 

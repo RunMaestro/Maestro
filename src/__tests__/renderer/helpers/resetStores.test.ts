@@ -3,10 +3,16 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
-import { resetAllStores, resetStore, resetStores } from '../../helpers/resetStores';
+import {
+	ALL_RENDERER_STORES,
+	resetAllStores,
+	resetStore,
+	resetStores,
+} from '../../helpers/resetStores';
 
 describe('resetStores helpers', () => {
 	beforeEach(() => {
@@ -36,6 +42,15 @@ describe('resetStores helpers', () => {
 		expect(useSessionStore.getState().removedWorktreePaths.has('/tmp/poison')).toBe(false);
 	});
 
+	it('resetStore clones array and plain-object defaults so in-place mutations do not leak', () => {
+		const sessions = useSessionStore.getState().sessions;
+		sessions.push({ id: 'poison' } as any);
+
+		resetStore(useSessionStore);
+		expect(useSessionStore.getState().sessions).toEqual([]);
+		expect(useSessionStore.getState().sessions).not.toBe(sessions);
+	});
+
 	it('resetStores only touches the listed stores', () => {
 		useSessionStore.setState({ activeSessionId: 'keep-me-reset' });
 		useUIStore.setState({ leftSidebarOpen: false });
@@ -54,5 +69,18 @@ describe('resetStores helpers', () => {
 
 		expect(useModalStore.getState().isOpen('about')).toBe(false);
 		expect(useModalStore.getState().modals.size).toBe(0);
+	});
+
+	it('resetAllStores includes and clears the image annotator store', () => {
+		expect(ALL_RENDERER_STORES).toContain(useImageAnnotatorStore);
+
+		useImageAnnotatorStore.getState().openAnnotator('data:image/png;base64,xx', () => {});
+		expect(useImageAnnotatorStore.getState().isOpen).toBe(true);
+
+		resetAllStores();
+
+		expect(useImageAnnotatorStore.getState().isOpen).toBe(false);
+		expect(useImageAnnotatorStore.getState().imageDataUrl).toBeNull();
+		expect(useImageAnnotatorStore.getState().onSave).toBeNull();
 	});
 });
