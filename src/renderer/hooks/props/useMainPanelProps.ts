@@ -573,6 +573,11 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.activeSession?.inputMode,
 			deps.activeSession?.projectRoot,
 			deps.activeSession?.cwd,
+			// Track the execution-queue reference so editing/removing/pausing/reordering
+			// a queued item recomputes this memo and the inline QUEUED list re-renders.
+			// Without it, queue mutations while the agent is idle (no other tracked dep
+			// changing) leave the transcript showing a stale queued message.
+			deps.activeSession?.executionQueue,
 			deps.thinkingItems,
 			deps.theme,
 			deps.isMobileLandscape,
