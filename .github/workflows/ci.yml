@@ -19,6 +19,7 @@ jobs:
       - run: npx prettier --check .
       - run: npx eslint src/
       - run: npm run lint # TypeScript type checking
+      - run: npm run test:verify-shards
 
   test-ubuntu-shards:
     name: test shard (ubuntu-latest, ${{ matrix.shard }}/4)

@@ -53,6 +53,7 @@
 		"test": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run",
 		"test:changed": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run --changed",
 		"test:related": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest related",
+		"test:verify-shards": "node scripts/verify-test-shards.mjs",
 		"test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest",
 		"test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run --coverage",
 		"test:e2e": "bun run build:main && bun run build:renderer && playwright test",

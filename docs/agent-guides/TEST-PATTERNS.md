@@ -37,13 +37,16 @@ Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` repo
 npm run test          # Unit tests (excludes integration/e2e/performance)
 npm run test:changed  # Tests affected by uncommitted and branch changes
 npm run test:related -- src/path/to/file.ts # Tests related to specific source files
+npm run test:verify-shards # Verify CI shards cover every unit-test file exactly once
 npm run test:watch    # Watch mode
 ```
 
 CI divides the default unit suite into four Vitest shards on Ubuntu and four
 matching shards on Windows. The aggregate `test (ubuntu-latest)` and
 `test (windows-latest)` jobs preserve the required check names and pass only
-when every shard for that platform succeeds.
+when every shard for that platform succeeds. The lint job also compares
+Vitest's unsharded file list with all four shard lists, failing on missing,
+duplicated, unexpected, or empty shards.
 
 ---
 

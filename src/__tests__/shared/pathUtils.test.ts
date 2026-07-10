@@ -29,7 +29,7 @@ vi.mock('os', async () => {
 	return {
 		...actual,
 		homedir: vi.fn(() => '/Users/testuser'),
-		tmpdir: () => '/tmp',
+		tmpdir: vi.fn(() => actual.tmpdir()),
 	};
 });
 
