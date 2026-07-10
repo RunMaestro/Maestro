@@ -13,6 +13,15 @@ import { applyMovementPayload, getMovementSnapshot } from '../../stores/movement
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 
+type RemoteConfigureAutoRunConfig = {
+	documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+};
+
 /**
  * Dependencies for the useRemoteIntegration hook.
  * Uses refs for values that change frequently to avoid re-attaching listeners.
@@ -225,6 +234,74 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSwitchMode();
 		};
 	}, [setSessions]);
+
+	// Handle remote file tab open requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeOpenFileTab = window.maestro.process.onRemoteOpenFileTab(
+			(sessionId: string, filePath: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: { sessionId, filePath },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeOpenFileTab();
+		};
+	}, []);
+
+	// Handle remote file tree refresh requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeRefreshFileTree = window.maestro.process.onRemoteRefreshFileTree(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshFileTree', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeRefreshFileTree();
+		};
+	}, []);
+
+	// Handle remote Auto Run document refresh requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeRefreshAutoRunDocs = window.maestro.process.onRemoteRefreshAutoRunDocs(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshAutoRunDocs', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeRefreshAutoRunDocs();
+		};
+	}, []);
+
+	// Handle remote Auto Run configuration requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeConfigureAutoRun = window.maestro.process.onRemoteConfigureAutoRun(
+			(sessionId: string, config: RemoteConfigureAutoRunConfig, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:configureAutoRun', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeConfigureAutoRun();
+		};
+	}, []);
 
 	// Handle remote interrupts from web interface
 	// This allows web interrupts to go through the same code path as desktop (handleInterrupt)

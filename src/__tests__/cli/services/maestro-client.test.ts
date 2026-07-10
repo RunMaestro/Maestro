@@ -275,19 +275,29 @@ describe('MaestroClient', () => {
 			expect(result.type).toBe('pong');
 		});
 
-		it('should ignore non-JSON messages', async () => {
+		it('should not match by response type when requestId is present but unknown', async () => {
 			const client = await createConnectedClient();
 
 			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
-			// Send invalid JSON
-			mockWsInstance.emit('message', 'not json');
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({ type: 'pong', requestId: 'different-request' })
+			);
 
-			// Then send valid matching message
 			mockWsInstance.emit('message', JSON.stringify({ type: 'pong' }));
 
 			const result = await commandPromise;
 			expect(result.type).toBe('pong');
+		});
+
+		it('should reject pending requests on non-JSON messages', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+
+			expect(() => mockWsInstance.emit('message', 'not json')).toThrow();
+			await expect(commandPromise).rejects.toThrow('Invalid message from Maestro desktop app');
 		});
 	});
 

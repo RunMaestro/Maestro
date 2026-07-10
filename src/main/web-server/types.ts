@@ -222,6 +222,42 @@ export interface CliActivity {
 	startedAt: number;
 }
 
+/**
+ * Auto Run document configuration received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunDocument {
+	filename: string;
+	resetOnCompletion?: boolean;
+}
+
+/**
+ * Auto Run configuration payload received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunConfig {
+	documents: ConfigureAutoRunDocument[];
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+	worktree?: {
+		enabled: boolean;
+		path: string;
+		branchName: string;
+		createPROnCompletion: boolean;
+		prTargetBranch: string;
+	};
+}
+
+/**
+ * Response returned after forwarding an Auto Run configuration request.
+ */
+export interface ConfigureAutoRunResult {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+}
+
 // =============================================================================
 // WebSocket Client Types
 // =============================================================================
@@ -241,6 +277,7 @@ export interface WebClient {
  */
 export interface WebClientMessage {
 	type: string;
+	requestId?: string;
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
@@ -363,6 +400,10 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+export type ConfigureAutoRunCallback = (
+	sessionId: string,
+	config: ConfigureAutoRunConfig
+) => Promise<ConfigureAutoRunResult>;
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop
@@ -470,24 +511,6 @@ export type MovementViewCallback = (params: MovementPayload) => Promise<boolean>
 /** Read the current movement snapshot (items + size) for agent awareness. */
 export type GetMovementStateCallback = () => Promise<MovementStateSnapshot | null>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
-export type ConfigureAutoRunCallback = (
-	sessionId: string,
-	config: {
-		documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
-		prompt?: string;
-		loopEnabled?: boolean;
-		maxLoops?: number;
-		saveAsPlaybook?: string;
-		launch?: boolean;
-		worktree?: {
-			enabled: boolean;
-			path: string;
-			branchName: string;
-			createPROnCompletion: boolean;
-			prTargetBranch: string;
-		};
-	}
-) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
 /**
  * Callback type for fetching current theme.

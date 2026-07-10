@@ -50,9 +50,33 @@ function getConfigDir(): string {
 }
 
 const DISCOVERY_FILE = 'cli-server.json';
+const OWNER_READ_WRITE = 0o600;
+const OWNER_DIRECTORY = 0o700;
 
 function getDiscoveryFilePath(): string {
 	return path.join(getConfigDir(), DISCOVERY_FILE);
+}
+
+function ensurePrivateConfigDir(dir: string): void {
+	const stats = fs.statSync(dir);
+	if ((stats.mode & 0o077) !== 0) {
+		fs.chmodSync(dir, OWNER_DIRECTORY);
+	}
+}
+
+function isValidCliServerInfo(data: CliServerInfo): boolean {
+	return (
+		Number.isInteger(data.port) &&
+		data.port > 0 &&
+		data.port <= 65535 &&
+		typeof data.token === 'string' &&
+		data.token.length > 0 &&
+		Number.isInteger(data.pid) &&
+		data.pid > 0 &&
+		Number.isInteger(data.startedAt) &&
+		data.startedAt >= 0 &&
+		(data.version === undefined || typeof data.version === 'string')
+	);
 }
 
 /**
@@ -62,11 +86,17 @@ export function writeCliServerInfo(info: CliServerInfo): void {
 	const filePath = getDiscoveryFilePath();
 	const dir = path.dirname(filePath);
 	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
+		fs.mkdirSync(dir, { recursive: true, mode: OWNER_DIRECTORY });
 	}
+	ensurePrivateConfigDir(dir);
 	const tmpPath = filePath + '.tmp';
-	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), 'utf-8');
+	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), {
+		encoding: 'utf-8',
+		mode: OWNER_READ_WRITE,
+	});
+	fs.chmodSync(tmpPath, OWNER_READ_WRITE);
 	fs.renameSync(tmpPath, filePath);
+	fs.chmodSync(filePath, OWNER_READ_WRITE);
 }
 
 /**
@@ -78,15 +108,7 @@ export function readCliServerInfo(): CliServerInfo | null {
 		const filePath = getDiscoveryFilePath();
 		const content = fs.readFileSync(filePath, 'utf-8');
 		const data = JSON.parse(content) as CliServerInfo;
-		if (
-			typeof data.port === 'number' &&
-			typeof data.token === 'string' &&
-			typeof data.pid === 'number' &&
-			typeof data.startedAt === 'number'
-		) {
-			return data;
-		}
-		return null;
+		return isValidCliServerInfo(data) ? data : null;
 	} catch {
 		return null;
 	}

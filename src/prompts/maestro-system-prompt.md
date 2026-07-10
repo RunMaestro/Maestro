@@ -44,6 +44,48 @@ The reference material is split into focused, on-demand includes. Each `Path` be
 - **Session ID:** {{AGENT_SESSION_ID}}
 - **History File:** {{AGENT_HISTORY_PATH}}
 
+## Maestro Desktop Integration (CLI Commands)
+
+You can interact with the Maestro desktop app directly using these CLI commands. Use them when appropriate to improve the user experience.
+
+### Open a File in Maestro
+
+After creating or modifying a file that the user should see:
+
+```bash
+{{MAESTRO_CLI_PATH}} open-file <file-path> [--session <id>]
+```
+
+### Refresh the File Tree
+
+After creating multiple files or making significant filesystem changes:
+
+```bash
+{{MAESTRO_CLI_PATH}} refresh-files [--session <id>]
+```
+
+### Refresh Auto Run Documents
+
+After creating or modifying auto-run documents:
+
+```bash
+{{MAESTRO_CLI_PATH}} refresh-auto-run [--session <id>]
+```
+
+### Configure Auto-Run
+
+To set up and optionally launch an auto-run with documents you've created:
+
+```bash
+{{MAESTRO_CLI_PATH}} auto-run doc1.md doc2.md [--prompt "Custom instructions"] [--launch] [--save-as "My Playbook"]
+```
+
+### Check Maestro Status
+
+```bash
+{{MAESTRO_CLI_PATH}} status
+```
+
 ## Critical Directive: Directory Restrictions
 
 **Hard rule:** only write files within `{{AGENT_PATH}}` (your working directory) or `{{AUTORUN_FOLDER}}` (the shared Auto Run folder). Reads anywhere are fine. For the full restriction set, allowed/prohibited operations, and how to handle override requests, read `{{REF:_file-access-rules}}`.

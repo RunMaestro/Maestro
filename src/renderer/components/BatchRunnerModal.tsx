@@ -77,6 +77,7 @@ interface BatchRunnerModalProps {
 	onGo: (config: BatchRunConfig) => void | Promise<void>;
 	onSave: (prompt: string) => void;
 	initialPrompt?: string;
+	initialConfig?: Partial<BatchRunConfig>;
 	lastModifiedAt?: number;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	// Multi-document support
@@ -132,6 +133,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onGo,
 		onSave,
 		initialPrompt,
+		initialConfig,
 		lastModifiedAt,
 		showConfirmation,
 		folderPath,
@@ -181,6 +183,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Document list state. Opens empty unless the inline wizard's "Start Auto
 	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
+		if (initialConfig?.documents?.length) {
+			return initialConfig.documents;
+		}
 		if (presetDocuments && presetDocuments.length > 0) {
 			return presetDocuments.map((filename) => ({
 				id: generateId(),
@@ -195,7 +200,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Track initial document state for dirty checking. Mirrors the run-list
 	// initialization above so dirty detection is correct for preset opens too.
 	const initialDocumentsRef = useRef<string[]>(
-		presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : []
+		initialConfig?.documents?.map((doc) => doc.filename) ??
+			(presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : [])
 	);
 
 	// Task counts per document (keyed by filename, value = unchecked task count).
@@ -220,12 +226,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	);
 
 	// Loop mode state
-	const [loopEnabled, setLoopEnabled] = useState(false);
-	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
+	const [loopEnabled, setLoopEnabled] = useState(initialConfig?.loopEnabled || false);
+	const [maxLoops, setMaxLoops] = useState<number | null>(initialConfig?.maxLoops ?? null); // null = infinite
 
 	// Track initial loop settings for dirty checking
-	const initialLoopEnabledRef = useRef(false);
-	const initialMaxLoopsRef = useRef<number | null>(null);
+	const initialLoopEnabledRef = useRef(initialConfig?.loopEnabled || false);
+	const initialMaxLoopsRef = useRef<number | null>(initialConfig?.maxLoops ?? null);
 
 	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
 	// agent invocation per unchecked task). 'document' makes the agent walk
@@ -260,14 +266,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [showHelp, setShowHelp] = useState(false);
 
 	// Prompt state
-	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const resolvedInitialPrompt = initialConfig?.prompt || initialPrompt || DEFAULT_BATCH_PROMPT;
+	const [prompt, setPrompt] = useState(resolvedInitialPrompt);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
-	const [savedPrompt, setSavedPrompt] = useState(initialPrompt || '');
+	const [savedPrompt, setSavedPrompt] = useState(initialConfig?.prompt || initialPrompt || '');
 	const [promptComposerOpen, setPromptComposerOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// Track initial prompt for dirty checking
-	const initialPromptRef = useRef(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const initialPromptRef = useRef(resolvedInitialPrompt);
 
 	// Persist the goal config + selected Auto Run tab back onto the session so the
 	// modal reopens in the same mode with the same inputs. Uses the canonical
