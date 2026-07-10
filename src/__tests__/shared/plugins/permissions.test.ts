@@ -288,3 +288,35 @@ describe('UI customization capabilities', () => {
 		expect(isPermitted([grant('ui:render-unsafe')], 'ui:render-unsafe')).toBe(true);
 	});
 });
+
+describe('net:connect capability (persistent outbound websocket)', () => {
+	const grant = (capability: string, scope?: string): PermissionGrant =>
+		({ capability, ...(scope ? { scope } : {}), grantedAt: 1 }) as PermissionGrant;
+
+	it('parses as a valid capability and is describable', () => {
+		expect(isPluginCapability('net:connect')).toBe(true);
+		expect(PLUGIN_CAPABILITIES).toContain('net:connect');
+		const r = parsePermissions([{ capability: 'net:connect', scope: 'gateway.discord.gg' }]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests[0]).toEqual({ capability: 'net:connect', scope: 'gateway.discord.gg' });
+		expect(describeCapability('net:connect')).toBeTruthy();
+	});
+
+	it('is a high-risk capability', () => {
+		expect(capabilityRisk('net:connect')).toBe('high');
+	});
+
+	it('uses host-scope matching (exact host + subdomains, not unrelated hosts)', () => {
+		const g = [grant('net:connect', 'gateway.discord.gg')];
+		expect(isPermitted(g, 'net:connect', 'gateway.discord.gg')).toBe(true);
+		expect(isPermitted(g, 'net:connect', 'v2.gateway.discord.gg')).toBe(true);
+		expect(isPermitted(g, 'net:connect', 'discord.gg')).toBe(false);
+		expect(isPermitted(g, 'net:connect', 'evilgateway.discord.gg')).toBe(false);
+		expect(isPermitted(g, 'net:connect', 'gateway.discord.gg.evil.com')).toBe(false);
+	});
+
+	it('an unscoped grant is the broadest form (covers any host)', () => {
+		expect(isPermitted([grant('net:connect')], 'net:connect', 'gateway.discord.gg')).toBe(true);
+		expect(isPermitted([grant('net:connect')], 'net:connect', 'wss.slack.com')).toBe(true);
+	});
+});

@@ -29,6 +29,7 @@ export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'net:fetch' // HTTP(S) fetch to a host scope
+	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -60,6 +61,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
 	'net:fetch',
+	'net:connect',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -102,6 +104,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
+	'net:connect': 'high',
 	'sessions:read': 'medium',
 	'history:read': 'medium',
 	'events:subscribe': 'medium',
@@ -138,6 +141,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:write': 'path',
 	'fs:watch': 'path',
 	'net:fetch': 'host',
+	'net:connect': 'host',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -292,6 +296,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create and modify files';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
+		case 'net:connect':
+			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
@@ -349,10 +355,13 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.8.0 for the
- * backward-compatible `background.list` host method (supervised background-
- * service health: state/restarts/services under the existing
- * `background:service` capability). (1.7.0 added history/session/tab/transcript
+/** The host API version this Maestro build implements. Bumped to 1.9.0 for the
+ * backward-compatible additive `net:connect` capability plus its `net.connect`
+ * / `net.send` / `net.close` host methods (hold an outbound persistent
+ * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
+ * (1.8.0 added the backward-compatible `background.list` host method for
+ * supervised background-service health: state/restarts/services under the
+ * existing `background:service` capability; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
@@ -360,7 +369,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.8.0';
+export const HOST_API_VERSION = '1.9.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -467,11 +476,19 @@ export type PluginTier = 0 | 1 | 2;
 export const PLUGIN_TIERS: readonly PluginTier[] = [0, 1, 2];
 
 /** Coarse marketplace category used to group/filter extensions. Absent => 'other'. */
-export type PluginCategory = 'automation' | 'agents' | 'ui' | 'data' | 'devtools' | 'other';
+export type PluginCategory =
+	| 'automation'
+	| 'agents'
+	| 'insights'
+	| 'ui'
+	| 'data'
+	| 'devtools'
+	| 'other';
 
 export const PLUGIN_CATEGORIES: readonly PluginCategory[] = [
 	'automation',
 	'agents',
+	'insights',
 	'ui',
 	'data',
 	'devtools',
@@ -998,6 +1015,9 @@ export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'net.fetch': { capability: 'net:fetch' },
+	'net.connect': { capability: 'net:connect' },
+	'net.send': { capability: 'net:connect' },
+	'net.close': { capability: 'net:connect' },
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
@@ -1126,9 +1146,20 @@ export interface MaestroFsApi {
 	watch(path: string, opts?: unknown): Promise<unknown>;
 }
 
-/** HTTP(S) fetch, gated by `net:fetch` host scopes. */
+/** HTTP(S) fetch (`net:fetch`) plus persistent outbound websockets
+ * (`net:connect`). `connect` opens a host-owned socket to the target and
+ * resolves to an opaque `socketId` handle; frames arrive as topic-string events
+ * on `net.connect:<socketId>`. `send` writes a frame and `close` tears the
+ * socket down. Both `send`/`close` reference the socket by its handle; the host
+ * re-authorizes the socket's origin host. */
 export interface MaestroNetApi {
 	fetch(url: string, init?: unknown): Promise<unknown>;
+	connect(
+		url: string,
+		opts?: { protocols?: string | readonly string[]; headers?: Record<string, string> }
+	): Promise<unknown>;
+	send(socketId: string, data: unknown): Promise<unknown>;
+	close(socketId: string, opts?: { code?: number; reason?: string }): Promise<unknown>;
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */

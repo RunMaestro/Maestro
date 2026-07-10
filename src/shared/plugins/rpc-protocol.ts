@@ -27,6 +27,9 @@ export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'net.fetch': { capability: 'net:fetch' },
+	'net.connect': { capability: 'net:connect' },
+	'net.send': { capability: 'net:connect' },
+	'net.close': { capability: 'net:connect' },
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
@@ -138,6 +141,18 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			if (!url) return undefined;
 			return hostnameOf(url);
 		}
+		case 'net.connect': {
+			// Mirror net.fetch: the scope target is the connect URL's hostname.
+			const url = typeof p.url === 'string' ? p.url : undefined;
+			if (!url) return undefined;
+			return hostnameOf(url);
+		}
+		case 'net.send':
+		case 'net.close':
+			// These params carry only a socketId (no URL); the host handler
+			// re-authorizes the origin host of the referenced socket itself, so
+			// there is no scope target to extract here.
+			return undefined;
 		case 'shell.openExternal': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;

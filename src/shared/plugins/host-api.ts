@@ -20,10 +20,13 @@
 
 import semver from 'semver';
 
-/** The host API version this Maestro build implements. Bumped to 1.8.0 for the
- * backward-compatible `background.list` host method (supervised background-
- * service health: state/restarts/services under the existing
- * `background:service` capability). (1.7.0 added history/session/tab/transcript
+/** The host API version this Maestro build implements. Bumped to 1.9.0 for the
+ * backward-compatible additive `net:connect` capability plus its `net.connect`
+ * / `net.send` / `net.close` host methods (hold an outbound persistent
+ * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
+ * (1.8.0 added the backward-compatible `background.list` host method for
+ * supervised background-service health: state/restarts/services under the
+ * existing `background:service` capability; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
@@ -31,7 +34,7 @@ import semver from 'semver';
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.8.0';
+export const HOST_API_VERSION = '1.9.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

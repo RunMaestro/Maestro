@@ -44,6 +44,25 @@ describe('P0 host RPC contract additions', () => {
 		}
 	});
 
+	it('maps the net:connect methods to the net:connect capability', () => {
+		expect(HOST_METHOD_CAPABILITY['net.connect']).toBe('net:connect');
+		expect(HOST_METHOD_CAPABILITY['net.send']).toBe('net:connect');
+		expect(HOST_METHOD_CAPABILITY['net.close']).toBe('net:connect');
+		for (const method of ['net.connect', 'net.send', 'net.close'] as const) {
+			expect(HOST_METHODS).toContain(method);
+		}
+	});
+
+	it('extracts the hostname target for net.connect and nothing for net.send/close', () => {
+		expect(extractTarget('net.connect', { url: 'wss://gateway.discord.gg/?v=10' })).toBe(
+			'gateway.discord.gg'
+		);
+		expect(extractTarget('net.connect', {})).toBeUndefined();
+		// send/close carry only a socketId; the host handler re-authorizes.
+		expect(extractTarget('net.send', { socketId: 'sock-1', data: 'hi' })).toBeUndefined();
+		expect(extractTarget('net.close', { socketId: 'sock-1' })).toBeUndefined();
+	});
+
 	it('extracts only scope-relevant targets for scoped P0 methods', () => {
 		expect(extractTarget('fs.watch', { path: '/repo/src' })).toBe('/repo/src');
 		expect(extractTarget('shell.openExternal', { url: 'https://docs.example.com/a' })).toBe(
