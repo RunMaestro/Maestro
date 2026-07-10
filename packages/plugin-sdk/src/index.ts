@@ -21,6 +21,40 @@ function isNonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim() !== '';
 }
 
+/**
+ * Maximum UTF-8 size of one host view's serialized BlockView data. This pure
+ * contract matches the host declaration and runtime update limits.
+ */
+export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
+
+/** Size of JSON data as it crosses a UTF-8 message boundary. */
+export function serializedJsonByteLength(value: unknown): number | null {
+	let serialized: string | undefined;
+	try {
+		serialized = JSON.stringify(value);
+	} catch {
+		return null;
+	}
+	if (typeof serialized !== 'string') return null;
+
+	let bytes = 0;
+	for (let index = 0; index < serialized.length; index += 1) {
+		const codePoint = serialized.codePointAt(index);
+		if (codePoint === undefined) continue;
+		if (codePoint <= 0x7f) {
+			bytes += 1;
+		} else if (codePoint <= 0x7ff) {
+			bytes += 2;
+		} else if (codePoint <= 0xffff) {
+			bytes += 3;
+		} else {
+			bytes += 4;
+			index += 1;
+		}
+	}
+	return bytes;
+}
+
 // --- Permissions / capabilities (from shared/plugins/permissions.ts) --------
 
 /** The fixed vocabulary of things a sandboxed plugin can ask to do. Adding a
@@ -54,6 +88,7 @@ export type PluginCapability =
 	| 'background:service' // register supervised background service work
 	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
 	| 'ui:panel' // show its own sandboxed interactive panels
+	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
@@ -85,6 +120,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'background:service',
 	'ui:contribute',
 	'ui:panel',
+	'ui:hostView',
 	'ui:render-unsafe',
 ];
 
@@ -120,6 +156,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'background:service': 'high',
 	'ui:contribute': 'medium',
 	'ui:panel': 'medium',
+	'ui:hostView': 'medium',
 	'ui:render-unsafe': 'high',
 };
 
@@ -169,6 +206,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'transcripts:write': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 	'ui:contribute': 'none',
 	'ui:panel': 'none',
+	'ui:hostView': 'none',
 	'ui:render-unsafe': 'none',
 };
 
@@ -342,6 +380,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
 		case 'ui:panel':
 			return 'Show its own panels inside Maestro';
+		case 'ui:hostView':
+			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}
@@ -349,18 +389,20 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.8.0 for the
- * backward-compatible `background.list` host method (supervised background-
- * service health: state/restarts/services under the existing
- * `background:service` capability). (1.7.0 added history/session/tab/transcript
+/**
+ * The host API version this Maestro build implements. Bumped to 1.9.0 for
+ * host-rendered `hostViews`, their `ui:hostView` capability, and the
+ * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods. (1.8.0 added
+ * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
  * `agent.error` / `usage.updated` / `run.completed` + functional
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
- * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.8.0';
+ * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.)
+ */
+export const HOST_API_VERSION = '1.9.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -467,11 +509,19 @@ export type PluginTier = 0 | 1 | 2;
 export const PLUGIN_TIERS: readonly PluginTier[] = [0, 1, 2];
 
 /** Coarse marketplace category used to group/filter extensions. Absent => 'other'. */
-export type PluginCategory = 'automation' | 'agents' | 'ui' | 'data' | 'devtools' | 'other';
+export type PluginCategory =
+	| 'automation'
+	| 'agents'
+	| 'insights'
+	| 'ui'
+	| 'data'
+	| 'devtools'
+	| 'other';
 
 export const PLUGIN_CATEGORIES: readonly PluginCategory[] = [
 	'automation',
 	'agents',
+	'insights',
 	'ui',
 	'data',
 	'devtools',
@@ -844,6 +894,37 @@ export interface UiItemContribution {
 	priority?: number;
 }
 
+/** The host-owned view surfaces that render only BlockView data. */
+export type HostViewSurface = 'movement' | 'cadenza';
+
+export const HOST_VIEW_SURFACES: readonly HostViewSurface[] = ['movement', 'cadenza'];
+
+/** Type guard for the two host-rendered view surfaces. */
+export function isHostViewSurface(value: unknown): value is HostViewSurface {
+	return typeof value === 'string' && (HOST_VIEW_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * The only data accepted for a host view: the same BlockView top-level shapes
+ * rendered by Maestro, never a cadenza command/prompt payload or plugin UI.
+ */
+export type HostViewBlocks = unknown[] | { blocks: unknown[] };
+
+/**
+ * A host-rendered view declared by a tier-1 plugin. The host owns its renderer;
+ * the plugin supplies only static BlockView data and may later update/remove
+ * that declared view through the brokered `ui:hostView` RPC methods.
+ */
+export interface HostViewContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	surface: HostViewSurface;
+	title: string;
+	description?: string;
+	blocks?: HostViewBlocks;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -857,6 +938,7 @@ export interface PluginContributions {
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
 	uiItems: UiItemContribution[];
+	hostViews: HostViewContribution[];
 	errors: string[];
 }
 
@@ -873,6 +955,7 @@ export interface AggregatedContributions {
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
 	uiItems: UiItemContribution[];
+	hostViews: HostViewContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -1020,6 +1103,8 @@ export const HOST_API = {
 	'storage.sql': { capability: 'storage:sql' },
 	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'ui.hostViewUpdate': { capability: 'ui:hostView' },
+	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1218,9 +1303,14 @@ export interface MaestroStorageApi {
 	): Promise<MaestroSqlResult<Row>>;
 }
 
-/** Invoke a registered command-palette command (`ui:command`). */
+/**
+ * Invoke a registered command-palette command (`ui:command`) or update/remove
+ * a previously declared host-rendered BlockView (`ui:hostView`).
+ */
 export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
+	hostViewUpdate(id: string, blocks: HostViewBlocks): Promise<void>;
+	hostViewRemove(id: string): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

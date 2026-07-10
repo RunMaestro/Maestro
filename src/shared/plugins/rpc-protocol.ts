@@ -49,6 +49,8 @@ export const HOST_API = {
 	'storage.sql': { capability: 'storage:sql' },
 	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'ui.hostViewUpdate': { capability: 'ui:hostView' },
+	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },

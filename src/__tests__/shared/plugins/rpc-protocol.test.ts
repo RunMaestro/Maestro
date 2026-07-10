@@ -25,6 +25,8 @@ describe('P0 host RPC contract additions', () => {
 		expect(HOST_METHOD_CAPABILITY['power.releaseSleep']).toBe('power:preventSleep');
 		expect(HOST_METHOD_CAPABILITY['background.register']).toBe('background:service');
 		expect(HOST_METHOD_CAPABILITY['background.unregister']).toBe('background:service');
+		expect(HOST_METHOD_CAPABILITY['ui.hostViewUpdate']).toBe('ui:hostView');
+		expect(HOST_METHOD_CAPABILITY['ui.hostViewRemove']).toBe('ui:hostView');
 	});
 
 	it('includes the P0 methods in the runtime method catalog', () => {
@@ -39,6 +41,8 @@ describe('P0 host RPC contract additions', () => {
 			'fs.watch',
 			'power.preventSleep',
 			'background.register',
+			'ui.hostViewUpdate',
+			'ui.hostViewRemove',
 		] as const) {
 			expect(HOST_METHODS).toContain(method);
 		}

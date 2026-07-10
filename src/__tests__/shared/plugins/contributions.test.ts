@@ -3,6 +3,7 @@ import {
 	collectContributions,
 	aggregateContributions,
 	gateContributions,
+	MAX_HOST_VIEW_BLOCKS_BYTES,
 } from '../../../shared/plugins/contributions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
@@ -449,6 +450,95 @@ describe('uiItems contribution (ui:contribute surface items)', () => {
 		const c = collectContributions(withItem({ command: 'other-plugin/cmd' }));
 		expect(c.uiItems).toEqual([]);
 		expect(c.errors.join(' ')).toContain('command');
+	});
+});
+
+describe('hostViews contribution (host-rendered BlockView data)', () => {
+	const hostView = (overrides: Record<string, unknown> = {}) =>
+		manifest(
+			'com.host-view',
+			{
+				hostViews: [
+					{
+						id: 'status',
+						surface: 'movement',
+						title: 'Status',
+						blocks: [{ kind: 'text', content: 'Rendered by the host.' }],
+						...overrides,
+					},
+				],
+			},
+			1
+		);
+
+	it.each([
+		['movement', [{ kind: 'text', content: 'Movement data' }]],
+		['cadenza', { blocks: [{ kind: 'heading', text: 'Cadenza data' }] }],
+	])('parses and namespaces a valid %s host view', (surface, blocks) => {
+		const c = collectContributions(hostView({ surface, blocks }));
+
+		expect(c.errors).toEqual([]);
+		expect(c.hostViews).toEqual([
+			{
+				id: 'com.host-view/status',
+				localId: 'status',
+				pluginId: 'com.host-view',
+				surface,
+				title: 'Status',
+				blocks,
+			},
+		]);
+	});
+
+	it('drops a host view with an invalid surface', () => {
+		const c = collectContributions(hostView({ surface: 'sidebar' }));
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('surface');
+	});
+
+	it('rejects non-BlockView data, including a decision cadenza payload', () => {
+		const c = collectContributions(
+			hostView({ blocks: { op: 'open', viewType: 'decision', options: [{ label: 'Allow' }] } })
+		);
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('blocks');
+	});
+
+	it('drops blocks whose serialized UTF-8 payload exceeds the pure size cap', () => {
+		const c = collectContributions(
+			hostView({ blocks: [{ kind: 'text', content: 'x'.repeat(MAX_HOST_VIEW_BLOCKS_BYTES) }] })
+		);
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('size limit');
+	});
+
+	it('keeps the first host view on a same-id collision during aggregation', () => {
+		const agg = aggregateContributions([
+			manifest(
+				'com.host-view',
+				{
+					hostViews: [
+						{ id: 'status', surface: 'movement', title: 'First' },
+						{ id: 'status', surface: 'cadenza', title: 'Second' },
+					],
+				},
+				1
+			),
+		]);
+
+		expect(agg.hostViews).toMatchObject([{ id: 'com.host-view/status', title: 'First' }]);
+		expect(agg.errorsByPlugin['com.host-view']?.join(' ')).toContain('duplicate hostViews');
+	});
+
+	it('requires ui:hostView and does not let ui:render-unsafe substitute for it', () => {
+		const collected = collectContributions(hostView());
+
+		expect(gateContributions(collected, () => false).hostViews).toEqual([]);
+		expect(gateContributions(collected, (cap) => cap === 'ui:hostView').hostViews).toHaveLength(1);
+		expect(gateContributions(collected, (cap) => cap === 'ui:render-unsafe').hostViews).toEqual([]);
 	});
 });
 

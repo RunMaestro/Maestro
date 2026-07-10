@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                    |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.4.0`)                      |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.9.0`)                      |
 | `description` | string                   | no        |                                                                 |
 | `author`      | string                   | no        |                                                                 |
 | `license`     | string                   | no        |                                                                 |
@@ -113,7 +113,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Data)",
 	"version": "1.0.0",
 	"tier": 0,
-	"maestro": { "minHostApi": "1.4.0" },
+	"maestro": { "minHostApi": "1.9.0" },
 	"description": "Data-only contributions for the vet workflow.",
 	"contributes": {
 		"themes": [
@@ -147,7 +147,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Code)",
 	"version": "1.0.0",
 	"tier": 1,
-	"maestro": { "minHostApi": "1.4.0" },
+	"maestro": { "minHostApi": "1.9.0" },
 	"entry": "entry.js",
 	"permissions": [
 		{ "capability": "storage:read", "reason": "Remember the last greeting." },
@@ -245,6 +245,36 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
 ```
 
+### hostViews (tier 1, host-rendered)
+
+`{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }` declares a static,
+host-rendered view. A host view is **not** a plugin panel: Maestro renders its BlockView data
+with the active theme, and no plugin renderer code or HTML executes. It needs `ui:hostView`,
+so declare `minHostApi: "1.9.0"` and request that capability in a tier-1 manifest.
+
+`blocks` is optional and must be either a bare BlockView block array or `{ "blocks": [...] }`.
+Its JSON serialization is capped at 1,000,000 UTF-8 bytes. A cadenza host view is visual data
+only: it cannot carry a cadenza `decision` payload, options, or agent/session routing.
+
+```json
+{
+	"id": "run-status",
+	"surface": "movement",
+	"title": "Plugin Run Status",
+	"description": "A host-rendered, theme-native status card.",
+	"blocks": [
+		{ "kind": "heading", "text": "Ready" },
+		{ "kind": "badge", "text": "Waiting for a run", "color": "neutral" }
+	]
+}
+```
+
+The manifest author writes the local `id`; Maestro namespaces it to
+`<pluginId>/run-status`. An enabled plugin without `ui:hostView` contributes none of its
+host views. A running plugin may change only the blocks of one of its own declared views with
+`maestro.ui.hostViewUpdate('run-status', blocks)`, or remove it with
+`maestro.ui.hostViewRemove('run-status')`; it cannot change the title or surface.
+
 ### agents (tier 1)
 
 `{ id, displayName, binaryName, baseArgs?, capabilities? }`. `binaryName` is a bare command (no path, traversal, or shell metacharacters); `capabilities` is a boolean feature map. Registering an agent adds it to the registry but does NOT enable spawning it (arbitrary binary execution is a separate, security-reviewed step).
@@ -292,13 +322,18 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 | `process:spawn`       | high   | none  | run a shell command (INERT today)                                    | `{ "capability": "process:spawn" }`                             |
 | `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar) | `{ "capability": "ui:contribute" }`                             |
 | `ui:panel`            | medium | none  | render its own sandboxed interactive panels                          | `{ "capability": "ui:panel" }`                                  |
+| `ui:hostView`         | medium | none  | render/update declared host BlockView data                           | `{ "capability": "ui:hostView" }`                               |
 | `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)           | `{ "capability": "ui:render-unsafe" }`                          |
 
 `agents:dispatch` and `process:spawn` have no production handler; the SDK methods exist but reject. The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch` or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
-The `ui:*` capabilities gate what the host accepts and renders, not a brokered SDK call: `ui:contribute` admits your declarative `uiItems` into host surfaces, `ui:panel` admits your sandboxed `panels`, and `ui:render-unsafe` is the high-trust escape hatch for full custom UI. An enabled plugin WITHOUT the matching grant contributes none of that surface.
+The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits
+declarative `uiItems`, `ui:panel` admits sandboxed `panels`, and `ui:hostView` admits
+host-rendered `hostViews` plus their brokered block updates/removals. `ui:render-unsafe` is the
+high-trust escape hatch for full custom UI, not a substitute for any of those grants. An enabled
+plugin WITHOUT the matching grant contributes none of that surface.
 
 ---
 
@@ -359,6 +394,8 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.storage.set(key, value)` (value is a string)                           | `storage:write`              |
 | `maestro.storage.delete(key)`                                                   | `storage:write`              |
 | `maestro.ui.runCommand(commandId, args?)`                                       | `ui:command`                 |
+| `maestro.ui.hostViewUpdate(localId, blocks)` -> `Promise<void>`                 | `ui:hostView`                |
+| `maestro.ui.hostViewRemove(localId)` -> `Promise<void>`                         | `ui:hostView`                |
 | `maestro.events.on(topic, handler(payload, meta))`                              | - (delivery needs subscribe) |
 | `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
@@ -369,6 +406,11 @@ Every method below is broker-gated and needs the matching capability granted. Si
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
 `transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. It is bounded as a high-risk verb and audited per read.
+
+`hostViewUpdate` accepts only BlockView data for a view declared by the calling plugin; it
+resolves the local id in that plugin's namespace, keeps the declaration's title and surface, and
+applies the same 1,000,000-byte serialized-block cap. `hostViewRemove` likewise accepts only a
+declared local id. Neither method accepts cadenza decision/options payloads or agent routing data.
 
 ---
 

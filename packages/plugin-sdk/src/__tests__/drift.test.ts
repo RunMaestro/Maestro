@@ -12,6 +12,9 @@ import {
 	HOST_API_VERSION,
 	PLUGIN_ID_PATTERN,
 	UI_SURFACES,
+	HOST_VIEW_SURFACES,
+	MAX_HOST_VIEW_BLOCKS_BYTES,
+	serializedJsonByteLength,
 	capabilityRisk,
 	describeCapability,
 	isPluginCategory,
@@ -39,7 +42,12 @@ import {
 	HOST_METHOD_CAPABILITY as SRC_HOST_METHOD_CAPABILITY,
 } from '../../../../src/shared/plugins/rpc-protocol';
 import { HOST_API_VERSION as SRC_HOST_API_VERSION } from '../../../../src/shared/plugins/host-api';
-import { UI_SURFACES as SRC_UI_SURFACES } from '../../../../src/shared/plugins/contributions';
+import {
+	HOST_VIEW_SURFACES as SRC_HOST_VIEW_SURFACES,
+	MAX_HOST_VIEW_BLOCKS_BYTES as SRC_MAX_HOST_VIEW_BLOCKS_BYTES,
+	serializedJsonByteLength as srcSerializedJsonByteLength,
+	UI_SURFACES as SRC_UI_SURFACES,
+} from '../../../../src/shared/plugins/contributions';
 
 // This package VENDORS the frozen plugin contracts so it can publish standalone
 // (no imports outside the package). That copy must never silently fall behind
@@ -76,9 +84,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.8.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.9.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.8.0');
+		expect(HOST_API_VERSION).toBe('1.9.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -90,6 +98,17 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 
 	it('UI_SURFACES matches the source render-surface catalog', () => {
 		expect(UI_SURFACES).toEqual(SRC_UI_SURFACES);
+	});
+
+	it('host view surfaces and serialized-block cap match the source', () => {
+		expect(HOST_VIEW_SURFACES).toEqual(SRC_HOST_VIEW_SURFACES);
+		expect(MAX_HOST_VIEW_BLOCKS_BYTES).toBe(SRC_MAX_HOST_VIEW_BLOCKS_BYTES);
+	});
+
+	it('serialized JSON byte measurement matches the source contract', () => {
+		for (const value of [[], { blocks: [{ kind: 'text', content: '🪄' }] }]) {
+			expect(serializedJsonByteLength(value)).toBe(srcSerializedJsonByteLength(value));
+		}
 	});
 
 	it('PLUGIN_ID_PATTERN source string matches', () => {
