@@ -2032,6 +2032,41 @@ describe('StdoutHandler — single JSON parse per line', () => {
 		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
 	});
 
+	describe('Grok thinking-chunk vs streamedText routing', () => {
+		it('emits thinking-chunk only for thought deltas; assistant text goes to streamedText', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const parser = new GrokOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(sessionId, '{"type":"thought","data":"planning..."}\n');
+			handler.handleData(sessionId, '{"type":"text","data":"{\\"confidence\\":40"}\n');
+			handler.handleData(
+				sessionId,
+				'{"type":"text","data":",\\"ready\\":false,\\"message\\":\\"hi\\"}"}\n'
+			);
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"sess-1","requestId":"req-1"}\n'
+			);
+
+			// Only reasoning deltas hit thinking-chunk (not assistant JSON fragments)
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'planning...');
+			// Assistant text accumulates for the final result emit
+			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'{"confidence":40,"ready":false,"message":"hi"}'
+			);
+		});
+	});
+
 	describe('SSH auth_expired login guidance by agentId', () => {
 		function mockAuthParser(agentId: string, message: string) {
 			return {

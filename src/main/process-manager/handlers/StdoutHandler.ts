@@ -489,15 +489,19 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// Handle streaming text events (OpenCode, Codex reasoning)
+		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// For Copilot, skip thinking-chunk emission — the parser's delta events
-			// accumulate in streamedText which is emitted once as the result at exit.
-			// Emitting thinking-chunks AND result would duplicate the content.
-			if (managedProcess.toolType !== 'copilot-cli') {
+			// Thinking panel only receives reasoning deltas. Assistant text must not
+			// go to thinking-chunk: Grok streams the final answer as partial `text`
+			// events, and dumping those into the thinking panel makes the wizard
+			// look finished while the process is still running tools with no
+			// further stdout (Grok emits no tool events on the stream).
+			// Copilot still skips entirely: its deltas accumulate in streamedText
+			// and flush once at exit.
+			if (event.isReasoning && managedProcess.toolType !== 'copilot-cli') {
 				this.emitter.emit('thinking-chunk', sessionId, event.text);
 			}
-			// Reasoning content is internal thinking — don't include it in the
+			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
 			if (!event.isReasoning) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;

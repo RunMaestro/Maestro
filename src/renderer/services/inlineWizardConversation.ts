@@ -218,10 +218,13 @@ export const READY_CONFIDENCE_THRESHOLD = 80;
 
 /**
  * Suffix appended to each user message to remind the agent about JSON format.
+ * Discovery turns must stay short: long tool loops (especially agents that emit
+ * no tool events on stdout, like Grok) leave the wizard UI stuck on the last
+ * thought/text with isWaiting true until the process finally exits.
  */
 const STRUCTURED_OUTPUT_SUFFIX = `
 
-IMPORTANT: Remember to respond ONLY with valid JSON in this exact format:
+IMPORTANT: This is a discovery conversation only. Do NOT use tools, browse the web, fetch URLs, or start implementing. Ask clarifying questions from the user's message and any system context already provided. Respond immediately with ONLY valid JSON in this exact format:
 {"confidence": <0-100>, "ready": <true/false>, "message": "<your response>"}`;
 
 /**
@@ -604,13 +607,22 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'grok': {
-			// Discovery phase only: plan mode blocks writes. IPC buildAgentArgs still
-			// adds batch/json/cwd/prompt; keep this list free of those so they do not
-			// duplicate. Do not pass --always-approve here (read-only path strips it).
+			// Discovery phase must finish quickly. Grok's streaming-json stream has
+			// no tool events, so a multi-minute tool loop looks like a frozen wizard
+			// after the first thought/text. Cap turns, block web fetch (GitHub issue
+			// URLs are a common trap), ban subagents, and auto-approve so headless
+			// runs never sit on a permission prompt. Plan mode still blocks writes.
+			// Leave batch/json/cwd/prompt out - IPC buildAgentArgs adds those.
 			const args = [...(agent.args || [])];
-			if (agent.readOnlyArgs) {
-				args.push(...agent.readOnlyArgs);
-			}
+			args.push(
+				'--always-approve',
+				'--permission-mode',
+				'plan',
+				'--disable-web-search',
+				'--max-turns',
+				'3',
+				'--no-subagents'
+			);
 			return args;
 		}
 
@@ -832,29 +844,26 @@ export async function sendWizardMessage(
 						// Extract the Claude agent session ID from output (for resume capability)
 						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
 
-						if (code === 0) {
-							// Extract result from stream-json format
-							const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-							const textToParse = extractedResult || outputBuffer;
+						// Prefer a parseable structured reply even on non-zero exit
+						// (e.g. Grok `--max-turns` can exit 1 after useful text).
+						const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
+						const textToParse = extractedResult || outputBuffer;
+						const parsedResponse = textToParse.trim() ? parseWizardResponse(textToParse) : null;
 
-							// Parse the wizard response
-							const parsedResponse = parseWizardResponse(textToParse);
-
-							if (parsedResponse) {
-								resolve({
-									success: true,
-									response: parsedResponse,
-									rawOutput: outputBuffer,
-									agentSessionId: agentSessionId || undefined,
-								});
-							} else {
-								resolve({
-									success: false,
-									error: 'Failed to parse agent response',
-									rawOutput: outputBuffer,
-									agentSessionId: agentSessionId || undefined,
-								});
-							}
+						if (parsedResponse) {
+							resolve({
+								success: true,
+								response: parsedResponse,
+								rawOutput: outputBuffer,
+								agentSessionId: agentSessionId || undefined,
+							});
+						} else if (code === 0) {
+							resolve({
+								success: false,
+								error: 'Failed to parse agent response',
+								rawOutput: outputBuffer,
+								agentSessionId: agentSessionId || undefined,
+							});
 						} else {
 							resolve({
 								success: false,

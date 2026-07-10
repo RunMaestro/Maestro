@@ -745,11 +745,17 @@ class ConversationManager {
 			}
 
 			case 'grok': {
-				// Grok: base args + plan mode for discovery; IPC adds batch/json/cwd
+				// Match inline wizard discovery: cap tool loops, block web fetch, plan mode.
 				const args = [...(agent.args || [])];
-				if (agent.readOnlyArgs) {
-					args.push(...agent.readOnlyArgs);
-				}
+				args.push(
+					'--always-approve',
+					'--permission-mode',
+					'plan',
+					'--disable-web-search',
+					'--max-turns',
+					'3',
+					'--no-subagents'
+				);
 				return args;
 			}
 

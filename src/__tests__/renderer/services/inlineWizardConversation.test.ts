@@ -341,13 +341,12 @@ describe('inlineWizardConversation', () => {
 			);
 		});
 
-		it('should apply Grok plan-mode args and join text deltas for structured replies', async () => {
+		it('should apply Grok discovery-safe args and join text deltas for structured replies', async () => {
 			const mockAgent = {
 				id: 'grok',
 				available: true,
 				command: 'grok',
 				args: [],
-				readOnlyArgs: ['--permission-mode', 'plan'],
 			};
 			mockMaestro.agents.get.mockResolvedValue(mockAgent);
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
@@ -363,7 +362,18 @@ describe('inlineWizardConversation', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
-			expect(spawnCall.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+			// Discovery phase: cap tool loops, block web fetch, plan mode, no subagents
+			expect(spawnCall.args).toEqual(
+				expect.arrayContaining([
+					'--always-approve',
+					'--permission-mode',
+					'plan',
+					'--disable-web-search',
+					'--max-turns',
+					'3',
+					'--no-subagents',
+				])
+			);
 
 			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
 			// Thought deltas must not pollute the structured JSON body
@@ -392,6 +402,49 @@ describe('inlineWizardConversation', () => {
 						confidence: 88,
 						ready: true,
 						message: 'Ready to build the playbook',
+					}),
+				})
+			);
+		});
+
+		it('should accept a parseable Grok reply even when the process exits non-zero', async () => {
+			// --max-turns can exit 1 after useful structured text; do not drop it.
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Production path: process:data gets assembled text, not raw JSONL
+			dataCallback(
+				session.sessionId,
+				'{"confidence":55,"ready":false,"message":"What is the acceptance criteria?"}'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 1);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: expect.objectContaining({
+						confidence: 55,
+						ready: false,
+						message: 'What is the acceptance criteria?',
 					}),
 				})
 			);
