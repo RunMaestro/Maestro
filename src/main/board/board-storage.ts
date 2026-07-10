@@ -157,6 +157,23 @@ export function saveBoards(projectRoot: string, boards: Board[]): string {
 	return filePath;
 }
 
+/**
+ * Upsert a single board into a project's `.maestro/board.yaml`: replace the
+ * board with the same id in place, or append it when new. All other boards are
+ * preserved. Used by the Phase 3 dispatcher to persist card-status changes for
+ * one board without disturbing its siblings. Returns the absolute path written.
+ */
+export function saveBoard(projectRoot: string, board: Board): string {
+	const boards = loadBoards(projectRoot);
+	const index = boards.findIndex((b) => b.id === board.id);
+	if (index >= 0) {
+		boards[index] = board;
+	} else {
+		boards.push(board);
+	}
+	return saveBoards(projectRoot, boards);
+}
+
 /** Load a board by id or throw a caller-surfaceable error when it is missing. */
 function requireBoard(boards: Board[], boardId: string): Board {
 	const board = boards.find((b) => b.id === boardId);

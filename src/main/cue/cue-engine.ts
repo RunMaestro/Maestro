@@ -75,6 +75,13 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
+import type { Board, BoardCard } from '../../shared/board/types';
+import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
+import {
+	BoardDispatcher,
+	type CardSpawnRequest,
+	type CardSpawnResult,
+} from '../board/board-dispatcher';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -154,6 +161,44 @@ export interface CueEngineDeps {
 	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
 	 * carries ids/status only, never prompt text or output. */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
+	 * Board dispatcher wiring (Board Phase 3). Optional: when absent the engine
+	 * runs Cue exactly as before. When present, the engine drains each project's
+	 * `.maestro/board.yaml` task DAG on the SAME tick loop that drives Cue (no
+	 * second timer). All board side effects are injected here so the engine core
+	 * stays free of board-storage / profile / spawn internals.
+	 *
+	 * The board dispatch pass is gated on BOTH the `maestroCue` and `board`
+	 * Encore flags (Board requires Cue - see {@link CueEngineBoardDeps.getEncoreFeatures}).
+	 */
+	board?: CueEngineBoardDeps;
+}
+
+/** Injected side effects for the Board Phase 3 dispatch pass. */
+export interface CueEngineBoardDeps {
+	/**
+	 * Read the current Encore flags fresh each tick (the existing on-demand
+	 * idiom, no listener). The board pass runs only when BOTH `maestroCue` and
+	 * `board` are on, so toggling either at runtime takes effect immediately.
+	 */
+	getEncoreFeatures: () => { maestroCue?: boolean; board?: boolean };
+	/** Unique project roots to scan for a `.maestro/board.yaml`. */
+	getProjectRoots: () => string[];
+	/** Load all boards for a project root. */
+	listBoards: (projectRoot: string) => Board[];
+	/** Persist one mutated board back to its project's board.yaml. */
+	saveBoard: (projectRoot: string, board: Board) => void;
+	/**
+	 * Resolve a card's assignee profile into spawn overrides, or `null` when it
+	 * can't be resolved (missing profile / base agent). Uses Phase 1
+	 * `resolveProfileSpawnOverrides`.
+	 */
+	resolveOverrides: (projectRoot: string, card: BoardCard) => ProfileSpawnOverrides | null;
+	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
+	spawnCard: (
+		projectRoot: string,
+		request: CardSpawnRequest
+	) => Promise<CardSpawnResult>;
 }
 
 export class CueEngine {
@@ -176,6 +221,12 @@ export class CueEngine {
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
 	private deps: CueEngineDeps;
+	/**
+	 * One {@link BoardDispatcher} per board, keyed by `${projectRoot}::${boardId}`.
+	 * Created lazily on first sighting so each board keeps its own in-flight set
+	 * across ticks (the stale-reclaim guard). Empty when board deps aren't wired.
+	 */
+	private boardDispatchers: Map<string, BoardDispatcher> = new Map();
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
 	 * does a read → mutate → write cycle that is not atomic on the filesystem;
@@ -513,7 +564,13 @@ export class CueEngine {
 			onLog: meteredOnLog,
 		});
 		this.heartbeat = createCueHeartbeat({
-			onTick: () => this.cleanupService.onTick(),
+			onTick: () => {
+				this.cleanupService.onTick();
+				// Board Phase 3: drain each project's task DAG on the SAME tick that
+				// drives Cue cleanup - no second timer. Gated on both Encore flags
+				// inside the pass; a throw here must never kill the heartbeat.
+				this.boardDispatchTick();
+			},
 			// Route heartbeat-failure notifications through the metered log
 			// channel so the engine's recordMetricFromPayload bumps the
 			// heartbeatFailures counter exactly once per failure run.
@@ -648,6 +705,9 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
+		// Drop board dispatchers so a re-enable rebuilds them with fresh in-flight
+		// sets (any card left `running` is reclaimed as stale on the next tick).
+		this.boardDispatchers.clear();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -1418,6 +1478,92 @@ export class CueEngine {
 			);
 			captureException(err, { operation: 'cue:hydrateActivityLogFromDb' });
 		}
+	}
+
+	/**
+	 * Board Phase 3 dispatch pass, invoked from the heartbeat tick.
+	 *
+	 * Gated on BOTH Encore flags: the Board is the first dependent Encore flag,
+	 * so "Board requires Cue" is expressed as a runtime dual-check read fresh
+	 * each tick (no new listener - matches the on-demand `encoreFeatures` read
+	 * idiom in index.ts). When either flag is off, the pass is a no-op.
+	 *
+	 * For each project root, each board gets its own {@link BoardDispatcher}
+	 * (kept in {@link boardDispatchers} so its in-flight set survives across
+	 * ticks) and one {@link BoardDispatcher.tick}. Everything the dispatcher
+	 * touches - load, save, profile resolution, spawn - is injected from
+	 * {@link CueEngineBoardDeps}, so the engine core stays board-agnostic.
+	 *
+	 * Never throws: a board or profile problem must not take down the Cue
+	 * heartbeat that shares this tick.
+	 */
+	private boardDispatchTick(): void {
+		const board = this.deps.board;
+		if (!board) return;
+		if (!this.enabled) return;
+
+		try {
+			// Dual-gate: Board requires Cue. Read both flags fresh each tick so a
+			// runtime toggle of either takes effect without an app restart.
+			const ef = board.getEncoreFeatures();
+			if (!ef.maestroCue || !ef.board) return;
+
+			const roots = new Set(board.getProjectRoots());
+			const seenKeys = new Set<string>();
+			for (const projectRoot of roots) {
+				let boards: Board[];
+				try {
+					boards = board.listBoards(projectRoot);
+				} catch (err) {
+					this.meteredOnLog(
+						'warn',
+						`[BOARD] Failed to load boards for "${projectRoot}": ${err instanceof Error ? err.message : String(err)}`
+					);
+					continue;
+				}
+				for (const b of boards) {
+					const key = `${projectRoot}::${b.id}`;
+					seenKeys.add(key);
+					const dispatcher = this.getOrCreateBoardDispatcher(key, projectRoot, b.id);
+					dispatcher.tick();
+				}
+			}
+
+			// Drop dispatchers whose board vanished (deleted board.yaml / board) so
+			// the map doesn't grow unbounded across the engine's lifetime.
+			for (const key of [...this.boardDispatchers.keys()]) {
+				if (!seenKeys.has(key)) this.boardDispatchers.delete(key);
+			}
+		} catch (err) {
+			this.meteredOnLog(
+				'warn',
+				`[BOARD] Dispatch tick failed: ${err instanceof Error ? err.message : String(err)}`
+			);
+			captureException(err, { operation: 'board:dispatchTick' });
+		}
+	}
+
+	/** Get (or lazily build) the dispatcher bound to one board at a project root. */
+	private getOrCreateBoardDispatcher(
+		key: string,
+		projectRoot: string,
+		boardId: string
+	): BoardDispatcher {
+		const existing = this.boardDispatchers.get(key);
+		if (existing) return existing;
+
+		const boardDeps = this.deps.board!;
+		const dispatcher = new BoardDispatcher({
+			loadBoard: () => boardDeps.listBoards(projectRoot).find((b) => b.id === boardId) ?? null,
+			saveBoard: (b: Board) => boardDeps.saveBoard(projectRoot, b),
+			resolveOverrides: (card: BoardCard): ProfileSpawnOverrides | null =>
+				boardDeps.resolveOverrides(projectRoot, card),
+			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> =>
+				boardDeps.spawnCard(projectRoot, request),
+			onLog: (level, message) => this.meteredOnLog(level, `[BOARD] ${message}`),
+		});
+		this.boardDispatchers.set(key, dispatcher);
+		return dispatcher;
 	}
 }
 

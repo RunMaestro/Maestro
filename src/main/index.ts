@@ -197,6 +197,12 @@ import {
 	clearModeratorResponseTimeout,
 } from './group-chat/group-chat-router';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
+import { listBoards, saveBoard } from './board/board-storage';
+import {
+	resolveCardOverrides,
+	spawnBoardCard,
+	type BoardSpawnContext,
+} from './board/board-spawn';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
@@ -1154,6 +1160,23 @@ app
 			usageRefreshScheduler.start();
 		}
 
+		// Board Phase 3: host context the board card spawner needs. Resolves a
+		// card's assignee profile to its base Left Bar agent and runs it through
+		// the same `executeCuePrompt` path Cue uses (SSH/custom config honored).
+		const boardSpawnContext: BoardSpawnContext = {
+			getStoredSessions: () =>
+				sessionsStore.get('sessions', []) as Array<Record<string, any>>,
+			getAgentConfig: (toolType) => getAgentConfigForAgent(toolType),
+			resolveAgentPath: async (toolType) => {
+				if (!agentDetector) return undefined;
+				const detected = await agentDetector.getAgent(toolType);
+				return detected?.available && detected.path ? detected.path : undefined;
+			},
+			getSshStore: () => createSshRemoteStoreAdapter(store),
+			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
+			nowMs: () => Date.now(),
+		};
+
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
 			getSessions: () => {
@@ -1421,6 +1444,33 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			// Board Phase 3: the task-DAG dispatcher rides this engine's tick. All
+			// board side effects are injected here so the engine core stays
+			// board-agnostic. The dispatch pass is gated on BOTH `maestroCue` and
+			// `board` (Board requires Cue) inside the engine's board pass.
+			board: {
+				getEncoreFeatures: () => {
+					const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+					return { maestroCue: ef.maestroCue === true, board: ef.board === true };
+				},
+				getProjectRoots: () => {
+					const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+					const roots = new Set<string>();
+					for (const s of sessions) {
+						const root = s.projectRoot || s.cwd || s.fullPath;
+						if (typeof root === 'string' && root.length > 0) roots.add(root);
+					}
+					return [...roots];
+				},
+				listBoards: (projectRoot) => listBoards(projectRoot),
+				saveBoard: (projectRoot, board) => {
+					saveBoard(projectRoot, board);
+				},
+				resolveOverrides: (projectRoot, card) =>
+					resolveCardOverrides(projectRoot, card, boardSpawnContext),
+				spawnCard: (projectRoot, request) =>
+					spawnBoardCard(projectRoot, request, boardSpawnContext),
+			},
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags

@@ -1231,6 +1231,11 @@ export interface EncoreFeatureFlags {
 	// Off by default. Optional so existing literals (older test fixtures, persisted
 	// settings without the key) continue to type-check.
 	concerto?: boolean;
+	// Board - persistent task DAG dispatched on the Cue engine tick. DEPENDS on
+	// maestroCue (the dispatcher's dual-gate refuses to run unless both are on).
+	// Off by default. Optional so existing literals (older fixtures, persisted
+	// settings without the key) continue to type-check.
+	board?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
