@@ -19,6 +19,9 @@ export const SHARED_HISTORY_DIR = '.maestro/history';
 /** Cue configuration file */
 export const CUE_CONFIG_PATH = '.maestro/cue.yaml';
 
+/** Agent Profiles configuration file (mirrors the Cue `.maestro/cue.yaml` convention) */
+export const PROFILES_CONFIG_PATH = '.maestro/profiles.yaml';
+
 /** Default directory for Cue prompt files */
 export const CUE_PROMPTS_DIR = '.maestro/prompts';
 

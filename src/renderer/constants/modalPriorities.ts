@@ -261,6 +261,9 @@ export const MODAL_PRIORITIES = {
 	/** Pianola dashboard modal (autonomous manager: rules + decision log) */
 	PIANOLA_MODAL: 459,
 
+	/** Agent Profiles management modal (named model/effort/role bundles) */
+	PROFILES_MODAL: 458,
+
 	/** Pianola rule editor (above the Pianola dashboard so Escape closes it first) */
 	PIANOLA_RULE_EDITOR: 461,
 

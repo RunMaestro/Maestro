@@ -3741,6 +3741,21 @@ interface MaestroAPI {
 		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
+	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
+	profiles: {
+		list: (
+			projectRoot: string
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		upsert: (
+			projectRoot: string,
+			profile: import('../shared/profiles/types').AgentProfile
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		delete: (
+			projectRoot: string,
+			profileId: string
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;
