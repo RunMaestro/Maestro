@@ -101,7 +101,7 @@ export function setupExitListener(
 		}
 	}
 
-	processManager.on('exit', (sessionId: string, code: number) => {
+	processManager.on('exit', (sessionId: string, code: number, signal?: number) => {
 		// Remove power block reason for this session
 		// This allows system sleep when no AI sessions are active
 		powerManager.removeBlockReason(`session:${sessionId}`);
@@ -536,16 +536,18 @@ export function setupExitListener(
 
 		// Diagnostic: log terminal PTY exits at the source (the ground truth for the
 		// "terminal tabs vanish" reports). A non-zero code on a remote terminal that
-		// the user didn't `exit` is the signature of a dropped SSH transport. Pairs
-		// with the renderer-side 'Terminal PTY exited' / 'Closing terminal tab' logs.
+		// the user didn't `exit` is the signature of a dropped SSH transport; a set
+		// `signal` means the shell was killed rather than exited. Pairs with the
+		// renderer-side 'Terminal PTY exited' / 'Closing terminal tab' logs.
 		if (sessionId.includes('-terminal-')) {
 			logger.info('Terminal PTY process exited', 'ProcessListener', {
 				sessionId,
 				exitCode: code,
+				signal,
 			});
 		}
 
-		safeSend('process:exit', sessionId, code);
+		safeSend('process:exit', sessionId, code, signal);
 
 		// Broadcast exit to web clients
 		const webServer = getWebServer();

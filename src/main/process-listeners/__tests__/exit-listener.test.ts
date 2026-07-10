@@ -126,7 +126,21 @@ describe('Exit Listener', () => {
 
 			handler?.('regular-session-123', 0);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'regular-session-123', 0);
+			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+				'process:exit',
+				'regular-session-123',
+				0,
+				undefined
+			);
+		});
+
+		it('should forward the kill signal to the renderer when the process was signalled', () => {
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('regular-session-123', 0, 9);
+
+			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'regular-session-123', 0, 9);
 		});
 
 		it('should remove power block for non-group-chat sessions', () => {
@@ -193,7 +207,12 @@ describe('Exit Listener', () => {
 
 			handler?.('plain-session-xyz', 0);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'plain-session-xyz', 0);
+			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+				'process:exit',
+				'plain-session-xyz',
+				0,
+				undefined
+			);
 			expect(notifyAgentCompleted).toHaveBeenCalledWith('plain-session-xyz', {
 				status: 'completed',
 				exitCode: 0,

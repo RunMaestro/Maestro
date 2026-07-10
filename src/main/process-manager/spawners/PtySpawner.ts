@@ -180,15 +180,18 @@ export class PtySpawner {
 				}
 			});
 
-			ptyProcess.onExit(({ exitCode }) => {
+			ptyProcess.onExit(({ exitCode, signal }) => {
 				// Flush any remaining buffered data before exit
 				this.bufferManager.flushDataBuffer(sessionId);
 
 				logger.debug('[ProcessManager] PTY onExit', 'ProcessManager', {
 					sessionId,
 					exitCode,
+					signal,
 				});
-				this.emitter.emit('exit', sessionId, exitCode);
+				// Forward `signal` so consumers can tell a shell the user exited from
+				// one that was killed out from under them (OOM killer, SIGHUP, crash).
+				this.emitter.emit('exit', sessionId, exitCode, signal);
 				this.processes.delete(sessionId);
 			});
 

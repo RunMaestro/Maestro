@@ -230,10 +230,14 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to process exit events
+		 * Subscribe to process exit events.
+		 * `signal` is present only when the process was killed by a signal.
 		 */
-		onExit: (callback: (sessionId: string, code: number) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, code: number) => callback(sessionId, code);
+		onExit: (
+			callback: (sessionId: string, code: number, signal?: number) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, code: number, signal?: number) =>
+				callback(sessionId, code, signal);
 			ipcRenderer.on('process:exit', handler);
 			return () => ipcRenderer.removeListener('process:exit', handler);
 		},
