@@ -101,7 +101,7 @@ import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
 
 describe('agents IPC handlers', () => {
-	let handlers: Map<string, Function>;
+	let handlers: Map<string, (...args: never[]) => unknown>;
 	let mockAgentDetector: {
 		detectAgents: ReturnType<typeof vi.fn>;
 		getAgent: ReturnType<typeof vi.fn>;
@@ -264,6 +264,38 @@ describe('agents IPC handlers', () => {
 					path.resolve('/Users/me/.codex-agent'),
 					path.resolve('/Users/me/.codex-session'),
 				],
+			});
+		});
+
+		it('excludes sessions with a truthy migrated SSH enabled value', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+				},
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'true' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude-migrated' },
+					},
+				]),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [path.resolve('/Users/me/.claude-agent')],
+				codexHomes: [],
 			});
 		});
 	});

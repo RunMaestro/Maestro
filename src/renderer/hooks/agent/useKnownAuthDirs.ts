@@ -16,7 +16,10 @@ export function useKnownAuthDirs(enabled = true): KnownAuthDirs {
 	const [knownAuthDirs, setKnownAuthDirs] = useState<KnownAuthDirs>(EMPTY_KNOWN_AUTH_DIRS);
 
 	useEffect(() => {
-		if (!enabled) return;
+		if (!enabled) {
+			setKnownAuthDirs(EMPTY_KNOWN_AUTH_DIRS);
+			return;
+		}
 		const getKnownAuthDirs = window.maestro?.agents?.getKnownAuthDirs;
 		if (!getKnownAuthDirs) return;
 

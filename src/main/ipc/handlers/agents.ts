@@ -79,7 +79,7 @@ function isLocalSession(session: Record<string, unknown>): boolean {
 		sshRemoteConfig &&
 		typeof sshRemoteConfig === 'object' &&
 		'enabled' in sshRemoteConfig &&
-		sshRemoteConfig.enabled === true
+		Boolean(sshRemoteConfig.enabled)
 	) {
 		return false;
 	}
