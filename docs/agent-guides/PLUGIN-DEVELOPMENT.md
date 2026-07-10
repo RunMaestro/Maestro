@@ -287,7 +287,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`).
+`{ id, title, entry, placement }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
 
 ```json
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
@@ -314,6 +314,27 @@ to update or remove a view after activation, and should declare `minHostApi: "1.
 	"blocks": [
 		{ "kind": "heading", "text": "Ready" },
 		{ "kind": "badge", "text": "Waiting for a run", "color": "neutral" }
+### uiItems (tier 1)
+
+`{ id, surface, label, command, icon?, tooltip?, group?, priority? }` adds a small host-rendered control. `surface` must be one of `'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar' | 'tabBar' | 'sessionRowBadge' | 'groupHeaderBadge' | 'settingsSection' | 'rightPanelTab' | 'contextMenuItem' | 'emptyState'`. `command` must be one of YOUR plugin-local command ids; the host controls the frame, icon mapping, tooltip, and non-suppressible plugin provenance.
+
+```json
+{
+	"uiItems": [
+		{
+			"id": "open-dashboard",
+			"surface": "tabBar",
+			"label": "Open dashboard",
+			"icon": "panel",
+			"tooltip": "Open the plugin dashboard",
+			"command": "open-dashboard"
+		},
+		{
+			"id": "welcome-action",
+			"surface": "emptyState",
+			"label": "Get started",
+			"command": "open-dashboard"
+		}
 	]
 }
 ```
@@ -323,7 +344,6 @@ The manifest author writes the local `id`; Maestro namespaces it to
 granted tier-1 plugin may change only the blocks of one of its own declared views with
 `maestro.ui.hostView.update('run-status', blocks)`, or remove it with
 `maestro.ui.hostView.remove('run-status')`; it cannot change the title or surface.
-
 ### agents (tier 1)
 
 `{ id, displayName, binaryName, baseArgs?, capabilities? }`. `binaryName` is a bare command (no path, traversal, or shell metacharacters); `capabilities` is a boolean feature map. Registering an agent adds it to the registry but does NOT enable spawning it (arbitrary binary execution is a separate, security-reviewed step).
@@ -379,11 +399,11 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch`, `net:connect`, or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
-The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits
-declarative `uiItems`, `ui:panel` admits sandboxed `panels`, and `ui:hostView` admits
-brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0
-plugins because they are host-rendered data, not a plugin UI. `ui:render-unsafe` is the
-high-trust escape hatch for full custom UI, not a substitute for any of those grants.
+The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits declarative `uiItems` into approved host-owned surfaces, `ui:panel` admits sandboxed `panels` into approved Maestro regions, and `ui:hostView` admits brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0 plugins because they are host-rendered data, not plugin UI. `ui:render-unsafe` is a high-trust policy for host-approved custom UI only; it neither grants another UI capability nor bypasses trusted chrome. An enabled plugin without the matching grant contributes none of that surface.
+
+### Trusted chrome (never plugin-accessible)
+
+The host permanently excludes plugin-management and enable/disable controls, permission or consent dialogs, uninstall or grant/revoke flows, and security indicators (SSH status, permission mode, and agent identity). These zones are not `uiItems` surfaces. The shared registry guard drops declarative and `ui:render-unsafe` attempts before rendering, and the renderer repeats the positive allowlist check. The current SDK exposes no generic `ui:render-unsafe` mount method.
 
 ---
 
@@ -621,6 +641,7 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - **Setting-key rules are enforced twice** (declarative contributions and runtime `settings.set`): no prototype segments, no `encoreFeatures`, no secret-looking names, no path separators.
 - **`entry` rules:** required for tier >= 1, forbidden for tier 0, must stay inside the plugin folder.
 - **Inert capabilities:** `agents:dispatch` and `process:spawn` are declared but have no production handler; do not build on them yet.
+- **Trusted chrome cannot be extended.** Declarative `uiItems`, sandboxed panels, and any high-trust `ui:render-unsafe` UI must never target or cover plugin management/enable-disable controls, consent dialogs, uninstall/grant-revoke flows, or SSH/permission-mode/agent-identity indicators.
 
 ## 14. Tooling: the SDK package and the `maestro plugin` CLI
 

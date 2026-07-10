@@ -28,7 +28,6 @@ import type {
 } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
 import { PluginPanelHost } from './PluginPanelHost';
-import { PluginPanelSlot } from '../plugins/PluginPanelSlot';
 import { PluginActivityView } from './PluginActivityView';
 
 interface PluginsPanelProps {
@@ -402,14 +401,6 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 
 			{/* Read-only per-plugin observability for running tier-1 plugins. */}
 			<PluginActivityView theme={theme} records={records} />
-
-			{/* Plugin panels that dock into Settings (placement: 'settings'). Each
-			    renders in the same locked-down sandboxed iframe with provenance. */}
-			<PluginPanelSlot
-				theme={theme}
-				placement="settings"
-				className="mt-4 flex flex-col overflow-hidden rounded-lg border h-[440px]"
-			/>
 
 			{openPanel && (
 				<PluginPanelHost theme={theme} panel={openPanel} onClose={() => setOpenPanel(null)} />

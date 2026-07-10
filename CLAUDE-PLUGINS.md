@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.12.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.13.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -151,6 +151,12 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 
 - `hostViews` are data-only contributions available to tier-0 and tier-1 plugins: `{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }`. `blocks` is an optional BlockView block array, serialized UTF-8 is capped at 1,000,000 bytes, and the host renderer - not plugin code - draws it. Tier-1 runtime update/remove RPCs require `ui:hostView`, resolve only an already-declared local id, retain its title/surface, and reject cadenza decision/options or agent-routing payloads.
 
+- `uiItems` (tier 1) are declarative host-rendered controls gated by `ui:contribute`: `status-bar`, `menu`, `sidebar`, `activity-bar`, `toolbar`, `tabBar`, `sessionRowBadge`, `groupHeaderBadge`, `settingsSection`, `rightPanelTab`, `contextMenuItem`, and `emptyState`. Their `command` is plugin-local; content is only label/icon/tooltip data, never raw markup.
+
+### Trusted chrome (never plugin-accessible)
+
+`PROTECTED_UI_SURFACES` is an explicit denylist enforced while contributions are collected and again during aggregation; every `PluginUiItemsSlot` repeats the positive-allowlist check at the render boundary. Plugins must never target, nest into, replace, or visually occlude: (1) plugin management and enable/disable controls, (2) permission or consent dialogs, (3) uninstall or grant/revoke flows, or (4) security indicators, including SSH status, permission mode, and agent identity. Those semantic zones are deliberately absent from `PluginUiSurface`. `ui:render-unsafe` is subject to the same guard and does not unlock `ui:contribute` or `ui:panel`.
+
 ## IPC surface (`src/main/ipc/handlers/plugins.ts`)
 
 Channels (all gated on `encoreFeatures.plugins`):
@@ -201,7 +207,8 @@ whose surface they use.
 7. **Built-in wins.** Plugin agents/contributions can never shadow first-party ids.
 8. **Host views remain data-only.** A plugin may contribute or update only BlockView data for its own declared host view; it cannot supply HTML, renderer code, cadenza decision actions, or agent-routing data. Enforce `MAX_HOST_VIEW_BLOCKS_BYTES` in both declaration parsing and runtime updates.
 9. **Uninstall purges everything** (dir, toggle, grants, KV, `plugins.<id>.*` settings, event subs). Add any new per-plugin state to `purgePluginData`.
-10. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler ADDITIONALLY requires the separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
+10. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler additionally requires separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
+11. **Trusted chrome is permanent.** `PROTECTED_UI_SURFACES` applies to declarative items and every high-trust render tier in collection, aggregation, and at the render boundary. Never create a mount in plugin management/enable-disable, consent, uninstall/grant-revoke, or SSH/permission-mode/agent-identity chrome.
 
 ## Honest tier-1 trust model
 

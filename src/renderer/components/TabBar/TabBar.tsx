@@ -23,6 +23,7 @@ import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { TabBarProps } from './types';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { logger } from '../../utils/logger';
 
 /** Approximate width of the sticky right "+" button area (px) */
@@ -856,6 +857,9 @@ function TabBarInner({
 			{/* Tab group chips render inline within the unified tab loop above (each
 			    tiled group is a first-class `group` unified tab, ordered by its ref in
 			    unifiedTabOrder), so no separate append here. */}
+
+			{/* Trailing plugin actions are host-rendered controls, never tab chips. */}
+			<PluginUiItemsSlot surface="tabBar" className="shrink-0 self-center mb-1" />
 
 			{/* New tab button + popover */}
 			<NewTabPopover

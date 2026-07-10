@@ -51,6 +51,7 @@ import { SessionContextMenu } from './SessionContextMenu';
 import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';

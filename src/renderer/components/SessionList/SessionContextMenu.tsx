@@ -23,6 +23,7 @@ import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -636,6 +637,8 @@ export function SessionContextMenu({
 					)}
 				</>
 			)}
+
+			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" />
 
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
