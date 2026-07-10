@@ -24,6 +24,10 @@ export function createBoardApi() {
 		get: (projectRoot: string, boardId: string): Promise<Board | null> =>
 			ipcRenderer.invoke('board:get', { projectRoot, boardId }),
 
+		// Create a new, empty board. Returns the created board.
+		create: (projectRoot: string, name: string): Promise<Board> =>
+			ipcRenderer.invoke('board:create', { projectRoot, name }),
+
 		// Create a card on a board. Returns the updated board.
 		addCard: (projectRoot: string, boardId: string, card: BoardCard): Promise<Board> =>
 			ipcRenderer.invoke('board:addCard', { projectRoot, boardId, card }),

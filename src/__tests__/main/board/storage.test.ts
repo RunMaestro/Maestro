@@ -15,6 +15,7 @@ import {
 	saveBoards,
 	listBoards,
 	getBoard,
+	createBoard,
 	addCard,
 	updateCard,
 	updateCardStatus,
@@ -63,6 +64,31 @@ function writeRawYaml(content: string): void {
 	fs.writeFileSync(path.join(projectRoot, BOARD_CONFIG_PATH), content, 'utf-8');
 }
 
+describe('createBoard', () => {
+	it('creates an empty board with a minted id and trimmed name, persisted to disk', () => {
+		const created = createBoard(projectRoot, '  Backend rework  ');
+		expect(created.name).toBe('Backend rework');
+		expect(created.id).toBeTruthy();
+		expect(created.cards).toEqual([]);
+
+		// It round-trips through the YAML store.
+		const reloaded = getBoard(projectRoot, created.id);
+		expect(reloaded).not.toBeNull();
+		expect(reloaded?.name).toBe('Backend rework');
+	});
+
+	it('rejects a blank name', () => {
+		expect(() => createBoard(projectRoot, '   ')).toThrow(/name is required/);
+	});
+
+	it('appends alongside existing boards without disturbing them', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a' })], { id: 'existing', name: 'Existing' })]);
+		const created = createBoard(projectRoot, 'Second');
+		const all = listBoards(projectRoot);
+		expect(all.map((b) => b.id).sort()).toEqual(['existing', created.id].sort());
+	});
+});
+
 describe('board-storage round-trip', () => {
 	it('returns an empty list when no file exists', () => {
 		expect(loadBoards(projectRoot)).toEqual([]);
@@ -98,10 +124,7 @@ describe('board-storage round-trip', () => {
 
 describe('board-storage cycle rejection', () => {
 	it('rejects saving a board with a cyclic parent graph', () => {
-		const cyclic = board([
-			card({ id: 'a', parents: ['b'] }),
-			card({ id: 'b', parents: ['a'] }),
-		]);
+		const cyclic = board([card({ id: 'a', parents: ['b'] }), card({ id: 'b', parents: ['a'] })]);
 		expect(() => saveBoards(projectRoot, [cyclic])).toThrow(/cyclic/i);
 		// Nothing should have been written.
 		expect(fs.existsSync(path.join(projectRoot, BOARD_CONFIG_PATH))).toBe(false);

@@ -36,6 +36,7 @@ interface BuildFeatureCommandsArgs {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenBoard?: () => void;
 	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
@@ -98,6 +99,7 @@ export function buildFeatureCommands({
 	onOpenSymphony,
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
+	onOpenBoard,
 	onOpenPianola,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
@@ -332,6 +334,18 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenBoard) {
+		commands.push({
+			id: 'board',
+			label: 'Board',
+			subtext: 'Task DAG kanban dispatched on the Cue tick',
+			action: () => {
+				onOpenBoard();
 				setQuickActionOpen(false);
 			},
 		});

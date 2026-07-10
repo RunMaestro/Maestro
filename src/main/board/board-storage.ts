@@ -42,6 +42,7 @@ import {
 	type CardStatus,
 } from '../../shared/board/types';
 import { hasCycle } from '../../shared/board/graph';
+import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'Board';
@@ -96,7 +97,7 @@ export function loadBoards(projectRoot: string): Board[] {
 	const seenIds = new Set<string>();
 	for (const entry of list) {
 		const before = Array.isArray((entry as { cards?: unknown })?.cards)
-			? ((entry as { cards: unknown[] }).cards).length
+			? (entry as { cards: unknown[] }).cards.length
 			: 0;
 		const board = validateBoard(entry);
 		if (!board) {
@@ -137,9 +138,7 @@ export function getBoard(projectRoot: string, boardId: string): Board | null {
  * the absolute path written.
  */
 export function saveBoards(projectRoot: string, boards: Board[]): string {
-	const valid = boards
-		.map((b) => validateBoard(b))
-		.filter((b): b is Board => b !== null);
+	const valid = boards.map((b) => validateBoard(b)).filter((b): b is Board => b !== null);
 
 	for (const board of valid) {
 		if (hasCycle(board)) {
@@ -172,6 +171,21 @@ export function saveBoard(projectRoot: string, board: Board): string {
 		boards.push(board);
 	}
 	return saveBoards(projectRoot, boards);
+}
+
+/**
+ * Create a new, empty board and persist it. Mints a UUID id, trims the name
+ * (required), and upserts it alongside any existing boards. Returns the created
+ * board. Used by the Board UI (Phase 4) to stand up the first board on demand.
+ */
+export function createBoard(projectRoot: string, name: string): Board {
+	const trimmed = (name ?? '').trim();
+	if (!trimmed) {
+		throw new Error('createBoard: name is required');
+	}
+	const board: Board = { id: generateUUID(), name: trimmed, cards: [] };
+	saveBoard(projectRoot, board);
+	return board;
 }
 
 /** Load a board by id or throw a caller-surfaceable error when it is missing. */
@@ -232,11 +246,7 @@ export function updateCardStatus(
  * introduce a cycle. Throws if the board or card is missing. Returns the
  * updated board.
  */
-export function updateCard(
-	projectRoot: string,
-	boardId: string,
-	card: BoardCard
-): Board {
+export function updateCard(projectRoot: string, boardId: string, card: BoardCard): Board {
 	const boards = loadBoards(projectRoot);
 	const board = requireBoard(boards, boardId);
 	const index = board.cards.findIndex((c) => c.id === card.id);

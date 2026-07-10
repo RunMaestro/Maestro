@@ -165,6 +165,7 @@ export interface QuickActionsModalProps {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenBoard?: () => void;
 	onOpenPianola?: () => void;
 	setAgentRunDashboardOpen?: (open: boolean) => void;
 	onConfigureCue?: (session: Session) => void;

@@ -62,7 +62,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 			setProfiles(await window.maestro.profiles.list(projectRoot));
 		} catch (err) {
 			logger.error(`Failed to load profiles: ${String(err)}`);
-			captureException(err, { operation: 'profiles:list' });
+			captureException(err, { tags: { operation: 'profiles:list' } });
 			notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to load profiles.' });
 		} finally {
 			setLoading(false);
@@ -105,7 +105,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 			notifyToast({ color: 'green', title: 'Profiles', message: `Created "${profile.name}".` });
 		} catch (err) {
 			logger.error(`Failed to create profile: ${String(err)}`);
-			captureException(err, { operation: 'profiles:upsert' });
+			captureException(err, { tags: { operation: 'profiles:upsert' } });
 			notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to save profile.' });
 		} finally {
 			setSaving(false);
@@ -118,7 +118,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 				setProfiles(await window.maestro.profiles.delete(projectRoot, profileId));
 			} catch (err) {
 				logger.error(`Failed to delete profile: ${String(err)}`);
-				captureException(err, { operation: 'profiles:delete' });
+				captureException(err, { tags: { operation: 'profiles:delete' } });
 				notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to delete profile.' });
 			}
 		},

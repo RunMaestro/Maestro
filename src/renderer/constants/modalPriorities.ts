@@ -264,6 +264,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent Profiles management modal (named model/effort/role bundles) */
 	PROFILES_MODAL: 458,
 
+	/** Board kanban modal (task DAG; depends on Maestro Cue) */
+	BOARD_MODAL: 457,
+
 	/** Pianola rule editor (above the Pianola dashboard so Escape closes it first) */
 	PIANOLA_RULE_EDITOR: 461,
 

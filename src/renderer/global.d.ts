@@ -3743,9 +3743,7 @@ interface MaestroAPI {
 
 	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
 	profiles: {
-		list: (
-			projectRoot: string
-		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		list: (projectRoot: string) => Promise<import('../shared/profiles/types').AgentProfile[]>;
 		upsert: (
 			projectRoot: string,
 			profile: import('../shared/profiles/types').AgentProfile
@@ -3763,6 +3761,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			boardId: string
 		) => Promise<import('../shared/board/types').Board | null>;
+		create: (projectRoot: string, name: string) => Promise<import('../shared/board/types').Board>;
 		addCard: (
 			projectRoot: string,
 			boardId: string,

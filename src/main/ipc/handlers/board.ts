@@ -15,6 +15,7 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import {
 	listBoards,
 	getBoard,
+	createBoard,
 	addCard,
 	updateCard,
 	updateCardStatus,
@@ -53,6 +54,17 @@ export function registerBoardHandlers(): void {
 			handlerOpts('get'),
 			async (options: { projectRoot: string; boardId: string }): Promise<Board | null> => {
 				return getBoard(options.projectRoot, options.boardId);
+			}
+		)
+	);
+
+	// Create a new, empty board. Returns the created board.
+	ipcMain.handle(
+		'board:create',
+		withIpcErrorLogging(
+			handlerOpts('create'),
+			async (options: { projectRoot: string; name: string }): Promise<Board> => {
+				return createBoard(options.projectRoot, options.name);
 			}
 		)
 	);
@@ -98,7 +110,12 @@ export function registerBoardHandlers(): void {
 				cardId: string;
 				status: CardStatus;
 			}): Promise<Board> => {
-				return updateCardStatus(options.projectRoot, options.boardId, options.cardId, options.status);
+				return updateCardStatus(
+					options.projectRoot,
+					options.boardId,
+					options.cardId,
+					options.status
+				);
 			}
 		)
 	);
@@ -108,11 +125,7 @@ export function registerBoardHandlers(): void {
 		'board:deleteCard',
 		withIpcErrorLogging(
 			handlerOpts('deleteCard'),
-			async (options: {
-				projectRoot: string;
-				boardId: string;
-				cardId: string;
-			}): Promise<Board> => {
+			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
 				return deleteCard(options.projectRoot, options.boardId, options.cardId);
 			}
 		)
