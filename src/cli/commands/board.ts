@@ -28,18 +28,21 @@ import { getBlockers } from '../../shared/board/graph';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
 import {
 	promoteEligibleCards,
-	claimReadyCards,
+	claimReadyCardsPooled,
 	applyCardResult,
 	reclaimStaleRunning,
 	DEFAULT_MAX_IN_PROGRESS,
 	DEFAULT_MAX_FAILURES,
 	DEFAULT_STALE_RUNNING_MS,
+	type CardAssignment,
 	type CardSpawnResult,
 } from '../../main/board/board-dispatcher';
 import {
 	resolveProfileSpawnOverrides,
 	type ProfileBaseAgentValues,
+	type ProfileSpawnOverrides,
 } from '../../shared/profiles/types';
+import { selectPoolAgentIds } from '../../shared/board/pool';
 import { listProfiles } from '../../main/profiles/profile-storage';
 import { autoDecomposeBoard, type DecomposeSpawn } from '../../main/board/board-decompose';
 import { readSessions, getSessionById, resolveAgentId } from '../services/storage';
@@ -59,7 +62,10 @@ interface BoardShowOptions extends BoardCommonOptions {}
 interface BoardAddCardOptions extends BoardCommonOptions {
 	title: string;
 	body?: string;
-	assignee: string;
+	/** Role profile id (`--assignee`). Optional if `assigneeAgent` is set. */
+	assignee?: string;
+	/** Pinned agent id (`--assignee-agent`). Optional if `assignee` is set. */
+	assigneeAgent?: string;
 	parents?: string;
 	worktree?: boolean;
 }
@@ -139,9 +145,9 @@ export async function boardShow(boardId: string, options: BoardShowOptions): Pro
 		lines.push('');
 		for (const card of board.cards) {
 			lines.push(`  [${card.status}]  ${card.title}  (${card.id.slice(0, 8)})`);
-			lines.push(`     assignee: ${card.assigneeProfileId.slice(0, 8)}`);
+			lines.push(`     assignee: ${assigneeLabel(card)}`);
 			if (card.parents.length > 0) {
-				const blockers = getBlockers(board, card.id);
+				const blockers = getBlockers(card, board);
 				const parentList = card.parents.map((p) => p.slice(0, 8)).join(', ');
 				lines.push(
 					`     parents: ${parentList}${blockers.length > 0 ? `  (waiting on ${blockers.length})` : ''}`
@@ -168,8 +174,17 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 
 		const title = (options.title ?? '').trim();
 		if (!title) throw new Error('A card title is required (--title <title>).');
+		// Board Phase 6: a card names a role (--assignee <profileId>) and/or pins a
+		// specific agent (--assignee-agent <agentId>). At least one is required. A
+		// role-only card floats to the free opt-in worker pool; an agent-only card
+		// runs on that agent with its own settings.
 		const assignee = (options.assignee ?? '').trim();
-		if (!assignee) throw new Error('An assignee profile is required (--assignee <profileId>).');
+		const assigneeAgent = (options.assigneeAgent ?? '').trim();
+		if (!assignee && !assigneeAgent) {
+			throw new Error(
+				'An assignee is required: --assignee <profileId> (role) and/or --assignee-agent <agentId> (pin).'
+			);
+		}
 
 		const parents = (options.parents ?? '')
 			.split(',')
@@ -182,12 +197,13 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 			id: cardId,
 			title,
 			body: options.body ?? '',
-			assigneeProfileId: assignee,
 			parents,
 			status: 'todo',
 			createdAt: now,
 			updatedAt: now,
 		};
+		if (assignee) card.assigneeProfileId = assignee;
+		if (assigneeAgent) card.assigneeAgentId = assigneeAgent;
 		if (options.worktree) {
 			// Advisory worktree intent: a conventional isolated checkout path for this
 			// card. The dispatcher currently runs cards in the project root; this ref
@@ -342,7 +358,7 @@ async function tickBoard(
 
 	// 2. Optional auto-decompose (off by default; gated on board.autoDecompose).
 	const decomposed = await autoDecomposeBoard(board, {
-		spawn: makeDecomposeSpawn(projectRoot, board, sessions),
+		spawn: makeDecomposeSpawn(projectRoot, sessions),
 		promptTemplate: decomposeTemplate,
 		now: () => new Date().toISOString(),
 		onLog: (level, message) => {
@@ -355,19 +371,56 @@ async function tickBoard(
 	const promoted = promoteEligibleCards(board, nowIso);
 	summary.promoted = promoted.length;
 
-	// 4. Claim ready cards up to the WIP cap.
+	// 4. Claim ready cards to FREE pool workers up to the WIP cap (Phase 6).
 	const cap = board.maxInProgress ?? DEFAULT_MAX_IN_PROGRESS;
-	const claims = claimReadyCards(board, cap, nowIso);
+	const { claimed, unresolvable } = claimReadyCardsPooled(board, cap, nowIso, (card, busy) =>
+		resolveCliAssignment(projectRoot, card, busy, sessions)
+	);
+
+	// Force-block cards that named a missing profile/agent (config error).
+	for (const { card, reason } of unresolvable) {
+		const target = board.cards.find((c) => c.id === card.id);
+		if (!target) continue;
+		target.status = 'blocked';
+		target.updatedAt = nowIso;
+		target.runs = [
+			...(target.runs ?? []),
+			{
+				attempt: (target.runs?.length ?? 0) + 1,
+				startedAt: nowIso,
+				endedAt: nowIso,
+				outcome: 'error',
+				summary: reason ?? 'Assignee could not be resolved.',
+			},
+		];
+		summary.blocked++;
+		summary.notes.push(
+			`${card.title} (${card.id.slice(0, 8)}) -> blocked (${reason ?? 'unresolvable'})`
+		);
+	}
 
 	// Persist BEFORE spawning so a crash / next tick sees the cards as running.
-	if (reclaimed.length > 0 || decomposed > 0 || promoted.length > 0 || claims.length > 0) {
+	if (
+		reclaimed.length > 0 ||
+		decomposed > 0 ||
+		promoted.length > 0 ||
+		claimed.length > 0 ||
+		unresolvable.length > 0
+	) {
 		saveBoard(projectRoot, board);
 	}
 
-	// 5. Spawn each claimed card, await, and apply its result.
-	for (const card of claims) {
+	// 5. Spawn each claimed card on its chosen worker, await, and apply its result.
+	for (const { card, agentId, overrides } of claimed) {
 		summary.ran++;
-		const result = await spawnCard(projectRoot, card, sessions);
+		const base = sessions.find((s) => s.id === agentId);
+		const result = base
+			? await spawnCard(projectRoot, card, base, overrides)
+			: {
+					output: '',
+					exitCode: null,
+					error: `Board card "${card.id}": worker agent "${agentId}" not found.`,
+				};
 		// Reload fresh so we don't clobber concurrent edits between claim and finish.
 		const fresh = getBoard(projectRoot, boardId);
 		if (!fresh) break;
@@ -388,46 +441,75 @@ async function tickBoard(
 	return summary;
 }
 
-/** Resolve a card's assignee profile + base session into spawn overrides. */
-function resolveCardBase(
+/**
+ * Resolve a card to a FREE pool worker for the CLI `board tick` (Board Phase 6).
+ * Mirrors the desktop `resolveCardAssignment`: a named-but-missing profile is a
+ * config error; a pinned agent (`assigneeAgentId` or a legacy profile's
+ * `baseAgentId`) yields a single candidate; a role-only card floats to the
+ * opt-in project pool. The first non-busy candidate wins.
+ */
+function resolveCliAssignment(
 	projectRoot: string,
 	card: BoardCard,
+	busyAgentIds: ReadonlySet<string>,
 	sessions: SessionInfo[]
-): { base: SessionInfo; overrides: ReturnType<typeof resolveProfileSpawnOverrides> } | null {
-	const profile = listProfiles(projectRoot).find((p) => p.id === card.assigneeProfileId);
-	if (!profile) return null;
-	const base = sessions.find((s) => s.id === profile.baseAgentId);
-	if (!base) return null;
+): CardAssignment {
+	let profile;
+	if (card.assigneeProfileId) {
+		profile = listProfiles(projectRoot).find((p) => p.id === card.assigneeProfileId);
+		if (!profile) {
+			return { kind: 'unresolvable', reason: `Profile "${card.assigneeProfileId}" not found.` };
+		}
+	}
+
+	const pinnedId = card.assigneeAgentId ?? profile?.baseAgentId;
+	const candidates = pinnedId
+		? [pinnedId]
+		: selectPoolAgentIds(
+				projectRoot,
+				sessions.map((s) => ({
+					id: s.id,
+					dir: s.projectRoot,
+					boardWorker: s.boardWorker === true,
+				}))
+			);
+	if (candidates.length === 0) return { kind: 'no-free-worker' };
+
+	const chosen = candidates.find((id) => !busyAgentIds.has(id));
+	if (!chosen) return { kind: 'no-free-worker' };
+
+	const base = sessions.find((s) => s.id === chosen);
+	if (!base) return { kind: 'unresolvable', reason: `Agent "${chosen}" not found.` };
+
 	const baseValues: ProfileBaseAgentValues = {
 		customModel: base.customModel,
 		customEffort: base.customEffort,
 		customArgs: base.customArgs,
-		appendSystemPrompt: (base as Record<string, unknown>).appendSystemPrompt as string | undefined,
+		appendSystemPrompt: (base as unknown as { appendSystemPrompt?: string }).appendSystemPrompt,
 	};
-	return { base, overrides: resolveProfileSpawnOverrides(profile, baseValues) };
+	const overrides: ProfileSpawnOverrides = profile
+		? resolveProfileSpawnOverrides(profile, baseValues)
+		: {
+				customModel: baseValues.customModel,
+				customEffort: baseValues.customEffort,
+				appendSystemPrompt: baseValues.appendSystemPrompt,
+				customArgs: baseValues.customArgs,
+			};
+	return { kind: 'assigned', agentId: chosen, overrides };
 }
 
 /**
- * Run a claimed card's assignee through the CLI spawn path (`spawnAgent`),
- * honoring SSH + profile model/effort/args overrides. Returns a
- * {@link CardSpawnResult} the pure `applyCardResult` can evaluate for markers /
- * exit status. A missing profile / base agent is a hard failure (never
- * dispatched as a mystery agent), returned as an errored result.
+ * Run a claimed card's assignee through the CLI spawn path (`spawnAgent`) on the
+ * resolved base session, honoring SSH + role model/effort/args overrides. Returns
+ * a {@link CardSpawnResult} the pure `applyCardResult` can evaluate for markers /
+ * exit status.
  */
 async function spawnCard(
 	projectRoot: string,
 	card: BoardCard,
-	sessions: SessionInfo[]
+	base: SessionInfo,
+	overrides: ProfileSpawnOverrides
 ): Promise<CardSpawnResult> {
-	const resolved = resolveCardBase(projectRoot, card, sessions);
-	if (!resolved) {
-		return {
-			output: '',
-			exitCode: null,
-			error: `Board card "${card.id}": assignee profile "${card.assigneeProfileId}" or its base agent could not be resolved.`,
-		};
-	}
-	const { base, overrides } = resolved;
 	// The role/system prompt is prepended to the card prompt (parity with the
 	// desktop board-spawn path, whose Cue executor has no system-prompt field).
 	const rolePreamble = overrides.appendSystemPrompt
@@ -454,18 +536,17 @@ async function spawnCard(
 }
 
 /** Build the auto-decompose spawn callback backed by the CLI spawn path. */
-function makeDecomposeSpawn(
-	projectRoot: string,
-	board: Board,
-	sessions: SessionInfo[]
-): DecomposeSpawn {
+function makeDecomposeSpawn(projectRoot: string, sessions: SessionInfo[]): DecomposeSpawn {
 	return async (prompt: string, triageCard: BoardCard) => {
-		const resolved = resolveCardBase(projectRoot, triageCard, sessions);
-		// Fall back to the first agent in the project when the triage card has no
-		// resolvable assignee - decomposition just needs any capable model.
-		const base = resolved?.base ?? sessions.find((s) => s.projectRoot === projectRoot);
+		const assignment = resolveCliAssignment(projectRoot, triageCard, new Set(), sessions);
+		// Decomposition just needs any capable model: prefer the resolved worker,
+		// else fall back to the first agent in the project.
+		const chosenId = assignment.kind === 'assigned' ? assignment.agentId : undefined;
+		const base =
+			(chosenId ? sessions.find((s) => s.id === chosenId) : undefined) ??
+			sessions.find((s) => s.projectRoot === projectRoot);
 		if (!base) return null;
-		const overrides = resolved?.overrides;
+		const overrides = assignment.kind === 'assigned' ? assignment.overrides : undefined;
 		const result = await spawnAgent(base.toolType as ToolType, projectRoot, prompt, undefined, {
 			customModel: overrides?.customModel,
 			customEffort: overrides?.customEffort,
@@ -480,6 +561,14 @@ function makeDecomposeSpawn(
 }
 
 // ─── Small helpers ───────────────────────────────────────────────────────────
+
+/** Short human-facing assignee label: role profile and/or pinned agent. */
+function assigneeLabel(card: BoardCard): string {
+	const parts: string[] = [];
+	if (card.assigneeProfileId) parts.push(`role ${card.assigneeProfileId.slice(0, 8)}`);
+	if (card.assigneeAgentId) parts.push(`agent ${card.assigneeAgentId.slice(0, 8)}`);
+	return parts.join(' + ') || '(pool)';
+}
 
 function countByStatus(board: Board): string {
 	const counts = new Map<CardStatus, number>();

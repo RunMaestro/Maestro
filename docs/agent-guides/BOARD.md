@@ -4,7 +4,7 @@
 
 Guide for the Board (a persistent task DAG) and Agent Profiles (assignee override bundles). Read this before editing `src/main/board/`, `src/shared/board/`, `src/main/profiles/`, `src/shared/profiles/`, or the `board:*` / `profiles:*` IPC and CLI surfaces.
 
-The Board is built in phases: Profiles (1), data model + YAML storage (2), the dispatcher on the Cue tick (3), the kanban UI (4), and CLI + optional auto-decompose + docs (5). It is an Encore Feature that **depends on Maestro Cue** (it rides Cue's engine tick, no second timer).
+The Board is built in phases: Profiles (1), data model + YAML storage (2), the dispatcher on the Cue tick (3), the kanban UI (4), CLI + optional auto-decompose + docs (5), and the opt-in **worker pool** (6). It is an Encore Feature that **depends on Maestro Cue** (it rides Cue's engine tick, no second timer).
 
 ---
 
@@ -14,7 +14,8 @@ The Board is built in phases: Profiles (1), data model + YAML storage (2), the d
 src/shared/board/
 ├── types.ts          # Board / BoardCard / CardStatus / CardRun / WorktreeRef + validators (pure)
 ├── graph.ts          # getEligibleCards / getBlockers / hasCycle (pure DAG helpers)
-└── cardMarkers.ts    # parseCardMarkers + CARD_HANDOFF_REMINDER (pure)
+├── cardMarkers.ts    # parseCardMarkers + CARD_HANDOFF_REMINDER (pure)
+└── pool.ts           # Phase 6 worker-pool selection: isPathWithin / selectPoolAgentIds (pure)
 
 src/main/board/
 ├── board-storage.ts    # single owner of .maestro/board.yaml (load/save/mutations)
@@ -49,7 +50,14 @@ A single top-level `boards:` list; each board owns its `cards:`. See [board.md](
 
 ## Profiles (`.maestro/profiles.yaml`)
 
-An `AgentProfile` is a named override bundle attached to a base Left Bar agent by `baseAgentId`. `resolveProfileSpawnOverrides(profile, baseValues)` merges each field as **profile -> base agent -> undefined** and returns `{ customModel, customEffort, appendSystemPrompt, customArgs }` - which map 1:1 onto the existing `SpawnAgentOptions` / `process:spawn` fields. Profiles invent **no** new spawn parameters.
+An `AgentProfile` is a named override bundle (a *role*: model / effort / role-prompt / args). `resolveProfileSpawnOverrides(profile, baseValues)` merges each field as **profile -> running agent -> undefined** and returns `{ customModel, customEffort, appendSystemPrompt, customArgs }` - which map 1:1 onto the existing `SpawnAgentOptions` / `process:spawn` fields. Profiles invent **no** new spawn parameters.
+
+`baseAgentId` is **optional** (Phase 6):
+
+- **Set** -> the profile pins its overrides to that specific agent (the classic "layer on a base agent"). The Board dispatches such a card to exactly that agent.
+- **Absent** -> a pure *pool role* the Board floats to any FREE opt-in worker in the project, layering the role's overrides on whichever agent picks it up.
+
+Create a pool role from the CLI with `profile create --base <agent> --pool` (`--base` only locates the project), or in the Profiles UI by choosing base agent "None (pool role)".
 
 ---
 
@@ -66,7 +74,18 @@ Per `tick()`:
 
 `applyCardResult` precedence: **block marker -> `blocked`; complete marker or clean exit -> `done`; otherwise a failed run** that retries (`ready`) until the circuit breaker (`DEFAULT_MAX_FAILURES = 2` consecutive non-completing runs) forces `blocked`. A card whose profile can't be resolved is force-blocked immediately (bypassing the breaker - retrying a missing profile is pointless).
 
-**Engine wiring:** `cue-engine.ts` `boardDispatchTick()` runs on the shared heartbeat, dual-gated on `maestroCue && board` (read fresh each tick). It keeps one `BoardDispatcher` per `${projectRoot}::${boardId}`, created lazily and dropped when the board vanishes. The host side effects are injected from `src/main/index.ts` via `board-spawn.ts` (`resolveCardOverrides`, `spawnBoardCard`), which run the card through the SAME `executeCuePrompt` path Cue uses - so SSH config, custom env/path, and token-source selection are honored (never bypass the SSH path).
+**Engine wiring:** `cue-engine.ts` `boardDispatchTick()` runs on the shared heartbeat, dual-gated on `maestroCue && board` (read fresh each tick). It keeps one `BoardDispatcher` per `${projectRoot}::${boardId}`, created lazily and dropped when the board vanishes. The host side effects are injected from `src/main/index.ts` via `board-spawn.ts` (`resolveCardOverrides`, `resolveCardAssignment`, `spawnBoardCard`), which run the card through the SAME `executeCuePrompt` path Cue uses - so SSH config, custom env/path, and token-source selection are honored (never bypass the SSH path).
+
+---
+
+## Worker pool (Phase 6)
+
+By default (no `assign` dep) the dispatcher runs the **legacy path**: one card resolves to one pinned agent via `resolveOverrides`. When the injected `assign` dep is present (it is, in both `index.ts` and the CLI), the dispatcher runs the **pooled path** (`tickPooled` -> `claimReadyCardsPooled`):
+
+- **Pool = opt-in + in-directory.** An agent is an eligible worker only when its session has `boardWorker: true` **and** its working dir is inside the board's project dir (or a sub-folder). `selectPoolAgentIds` (in `pool.ts`) is the single definition, shared by `index.ts` and the CLI. The `boardWorker` toggle lives on `EditAgentModal` (default OFF - an interactive agent is never hijacked).
+- **Assignee resolution** (`resolveCardAssignment` in `board-spawn.ts`, mirrored by `resolveCliAssignment`): a named-but-missing profile -> `unresolvable` (block); a pinned agent (`card.assigneeAgentId`, or a legacy profile's `baseAgentId`) -> a single candidate; a role-only card -> the free project pool. The first candidate **not** already running a board card wins (`computeBusyAgentIds` recomputes the busy set from the persisted board each tick, so "one card per worker" survives restarts - the worker id is stamped on `CardRun.workerAgentId`).
+- **All busy -> wait, don't block.** When every candidate is busy (or the pool is empty), `assign` returns `no-free-worker`; the card stays `ready` and retries on a later tick. Concurrency is bounded by free-worker count **and** the WIP cap (whichever is lower).
+- **Card assignee** (`BoardCard`): `assigneeProfileId` (role) and/or `assigneeAgentId` (pin); at least one is required (`validateBoardCard`). Set from `BoardModal` (Role + "Pin to agent" selects) or the CLI (`board add-card --assignee <profileId> --assignee-agent <agentId>`).
 
 ---
 
@@ -96,6 +115,7 @@ The prompt is registered in `src/shared/promptDefinitions.ts` (`PROMPT_IDS.BOARD
 ## Gotchas
 
 - **Board requires Cue.** The dual gate is read fresh each tick; the Extensions pane also disables the Board toggle while Cue is off (`BUILTIN_DEPENDENCIES` in `extensionModel.ts`).
+- **The pool never hijacks an interactive agent.** Only agents with `boardWorker: true` are auto-assigned role-only cards; the flag defaults OFF. A card can still *pin* any in-project agent by name regardless of the flag (explicit intent). Board card spawns are independent headless `executeCuePrompt` runs - they do **not** attach to the agent's live AI tab.
 - **Persist before spawn.** Never reorder `claimReadyCards` after the spawn - the pre-spawn save is what prevents double-dispatch.
 - **`ready` is derived.** Authors write `todo`; the dispatcher computes `ready`. Do not hand-persist `ready` cards expecting them to stay put.
 - **Cross-platform paths.** All board/profile file paths go through `path.join` on `BOARD_CONFIG_PATH` / `PROFILES_CONFIG_PATH` (`src/shared/maestro-paths.ts`), and project roots come from stored sessions - no separator or home-dir assumptions, so the Windows CI leg stays green.

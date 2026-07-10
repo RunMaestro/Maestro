@@ -15,10 +15,13 @@ import {
 	BoardDispatcher,
 	promoteEligibleCards,
 	claimReadyCards,
+	claimReadyCardsPooled,
+	computeBusyAgentIds,
 	countRunning,
 	reclaimStaleRunning,
 	applyCardResult,
 	type BoardDispatcherDeps,
+	type CardAssignment,
 	type CardSpawnResult,
 } from '../../../main/board/board-dispatcher';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
@@ -97,10 +100,7 @@ function harness(
 
 describe('promoteEligibleCards', () => {
 	it('promotes todo cards whose parents are all done', () => {
-		const b = board([
-			card({ id: 'a', status: 'done' }),
-			card({ id: 'c', parents: ['a'] }),
-		]);
+		const b = board([card({ id: 'a', status: 'done' }), card({ id: 'c', parents: ['a'] })]);
 		const promoted = promoteEligibleCards(b, NOW);
 		expect(promoted.map((c) => c.id)).toEqual(['c']);
 		expect(b.cards.find((c) => c.id === 'c')?.status).toBe('ready');
@@ -191,9 +191,7 @@ describe('reclaimStaleRunning', () => {
 	});
 
 	it('does not reclaim a card that is still live (in flight)', () => {
-		const b = board([
-			card({ id: 'a', status: 'running', runs: [{ attempt: 1, startedAt: NOW }] }),
-		]);
+		const b = board([card({ id: 'a', status: 'running', runs: [{ attempt: 1, startedAt: NOW }] })]);
 		const later = NOW_MS + 60 * 60 * 1000;
 		expect(reclaimStaleRunning(b, new Set(['a']), 30 * 60 * 1000, later, NOW)).toEqual([]);
 		expect(b.cards[0].status).toBe('running');
@@ -239,7 +237,9 @@ describe('BoardDispatcher lifecycle', () => {
 			],
 			2
 		);
-		const h = harness(initial, (id) => (id === 'b' ? blockMarker('cannot proceed') : completeMarker()));
+		const h = harness(initial, (id) =>
+			id === 'b' ? blockMarker('cannot proceed') : completeMarker()
+		);
 
 		h.dispatcher.tick();
 		await flush();
@@ -275,5 +275,155 @@ describe('BoardDispatcher lifecycle', () => {
 		await flush();
 		expect(h.status('a')).toBe('blocked');
 		expect(h.spawns).toEqual([]); // never spawned
+	});
+});
+
+// ─── Board Phase 6: worker pool ──────────────────────────────────────────────
+
+describe('computeBusyAgentIds', () => {
+	it('collects workerAgentId from running cards only', () => {
+		const b = board([
+			card({
+				id: 'a',
+				status: 'running',
+				runs: [{ attempt: 1, startedAt: NOW, workerAgentId: 'w1' }],
+			}),
+			card({ id: 'b', status: 'ready' }),
+			card({
+				id: 'c',
+				status: 'done',
+				runs: [{ attempt: 1, startedAt: NOW, workerAgentId: 'w2' }],
+			}),
+		]);
+		expect([...computeBusyAgentIds(b)]).toEqual(['w1']);
+	});
+});
+
+describe('claimReadyCardsPooled', () => {
+	/** Assign every card to the first free worker in `pool`, else no-free-worker. */
+	function poolAssign(pool: string[]) {
+		return (_card: BoardCard, busy: ReadonlySet<string>): CardAssignment => {
+			const free = pool.find((id) => !busy.has(id));
+			return free ? { kind: 'assigned', agentId: free, overrides: {} } : { kind: 'no-free-worker' };
+		};
+	}
+
+	it('runs at most one card per worker (2 ready cards, 1 worker)', () => {
+		const b = board([
+			card({ id: 'a', status: 'ready', createdAt: '2026-07-10T00:00:01.000Z' }),
+			card({ id: 'b', status: 'ready', createdAt: '2026-07-10T00:00:02.000Z' }),
+		]);
+		const { claimed } = claimReadyCardsPooled(b, 5, NOW, poolAssign(['w1']));
+		expect(claimed.map((c) => c.card.id)).toEqual(['a']);
+		expect(claimed[0].agentId).toBe('w1');
+		expect(b.cards.find((c) => c.id === 'a')?.status).toBe('running');
+		// The second card is left ready (all workers busy) - not claimed, not blocked.
+		expect(b.cards.find((c) => c.id === 'b')?.status).toBe('ready');
+	});
+
+	it('spreads cards across free workers and stamps workerAgentId', () => {
+		const b = board([
+			card({ id: 'a', status: 'ready', createdAt: '2026-07-10T00:00:01.000Z' }),
+			card({ id: 'b', status: 'ready', createdAt: '2026-07-10T00:00:02.000Z' }),
+		]);
+		const { claimed } = claimReadyCardsPooled(b, 5, NOW, poolAssign(['w1', 'w2']));
+		expect(claimed.map((c) => c.agentId)).toEqual(['w1', 'w2']);
+		expect(b.cards[0].runs?.[0].workerAgentId).toBe('w1');
+		expect(b.cards[1].runs?.[0].workerAgentId).toBe('w2');
+	});
+
+	it('leaves cards ready when the pool is empty (does not block or wait-hold)', () => {
+		const b = board([card({ id: 'a', status: 'ready' })]);
+		const { claimed, unresolvable } = claimReadyCardsPooled(b, 5, NOW, poolAssign([]));
+		expect(claimed).toEqual([]);
+		expect(unresolvable).toEqual([]);
+		expect(b.cards[0].status).toBe('ready');
+	});
+
+	it('collects unresolvable cards without marking them running', () => {
+		const b = board([card({ id: 'a', status: 'ready' })]);
+		const { claimed, unresolvable } = claimReadyCardsPooled(b, 5, NOW, () => ({
+			kind: 'unresolvable',
+			reason: 'no such profile',
+		}));
+		expect(claimed).toEqual([]);
+		expect(unresolvable.map((u) => u.card.id)).toEqual(['a']);
+		expect(b.cards[0].status).toBe('ready'); // caller blocks it, not the claim
+	});
+
+	it('honors the WIP cap across the pool', () => {
+		const b = board([
+			card({ id: 'a', status: 'ready', createdAt: '2026-07-10T00:00:01.000Z' }),
+			card({ id: 'b', status: 'ready', createdAt: '2026-07-10T00:00:02.000Z' }),
+			card({ id: 'c', status: 'ready', createdAt: '2026-07-10T00:00:03.000Z' }),
+		]);
+		const { claimed } = claimReadyCardsPooled(b, 2, NOW, poolAssign(['w1', 'w2', 'w3']));
+		expect(claimed.map((c) => c.card.id)).toEqual(['a', 'b']);
+	});
+});
+
+describe('BoardDispatcher pool lifecycle', () => {
+	/** Harness whose `assign` binds cards to free workers from a fixed pool. */
+	function poolHarness(
+		initial: Board,
+		pool: string[],
+		spawnScript: (id: string) => CardSpawnResult
+	) {
+		return harness(initial, spawnScript, {
+			assign: (_card, busy) => {
+				const free = pool.find((id) => !busy.has(id));
+				return free
+					? { kind: 'assigned', agentId: free, overrides: {} }
+					: { kind: 'no-free-worker' };
+			},
+		});
+	}
+
+	it('runs two independent cards concurrently across two workers', async () => {
+		const initial = board(
+			[
+				card({ id: 'a', createdAt: '2026-07-10T00:00:01.000Z' }),
+				card({ id: 'b', createdAt: '2026-07-10T00:00:02.000Z' }),
+			],
+			5
+		);
+		const h = poolHarness(initial, ['w1', 'w2'], () => completeMarker());
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.status('b')).toBe('done');
+		expect(h.spawns.sort()).toEqual(['a', 'b']);
+	});
+
+	it('serializes two cards onto a single worker across ticks', async () => {
+		const initial = board(
+			[
+				card({ id: 'a', createdAt: '2026-07-10T00:00:01.000Z' }),
+				card({ id: 'b', createdAt: '2026-07-10T00:00:02.000Z' }),
+			],
+			5
+		);
+		const h = poolHarness(initial, ['w1'], () => completeMarker());
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		// b waited (only worker was busy), picked up next tick once w1 freed.
+		expect(h.status('b')).toBe('ready');
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('b')).toBe('done');
+		expect(h.spawns).toEqual(['a', 'b']);
+	});
+
+	it('blocks an unresolvable card and never spawns it', async () => {
+		const initial = board([card({ id: 'a' })], 5);
+		const h = harness(initial, () => completeMarker(), {
+			assign: () => ({ kind: 'unresolvable', reason: 'gone' }),
+		});
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('blocked');
+		expect(h.spawns).toEqual([]);
 	});
 });

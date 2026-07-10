@@ -28,13 +28,7 @@
  *               a parent regressed; needs attention before it can retry.
  * - `done`    - completed successfully; unblocks children that depend on it.
  */
-export type CardStatus =
-	| 'triage'
-	| 'todo'
-	| 'ready'
-	| 'running'
-	| 'blocked'
-	| 'done';
+export type CardStatus = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done';
 
 /**
  * Reference to the git worktree a card's run happens in. Minimal by design:
@@ -66,6 +60,13 @@ export interface CardRun {
 	outcome?: CardRunOutcome;
 	/** Short human-facing summary of what the run did. */
 	summary?: string;
+	/**
+	 * Id of the pool worker (Left Bar agent) this attempt ran on (Board Phase 6).
+	 * Set when the card was claimed by the worker-pool dispatcher so the "one card
+	 * per worker" busy-set survives across ticks and engine restarts. Absent for
+	 * legacy single-agent runs.
+	 */
+	workerAgentId?: string;
 	/** Free-form dispatcher metadata (session id, tokens, etc.). */
 	metadata?: Record<string, unknown>;
 }
@@ -74,8 +75,17 @@ export interface CardRun {
  * A single task on the board.
  *
  * `parents` are card ids this card depends on; the card is eligible only when
- * every parent is `done` (see {@link getEligibleCards}). `assigneeProfileId`
- * references an {@link AgentProfile} from `.maestro/profiles.yaml`.
+ * every parent is `done` (see {@link getEligibleCards}).
+ *
+ * ── Assignee model (Board Phase 6: worker pool) ──────────────────────────────
+ * A card resolves to a worker via two optional fields; at least one is required:
+ *   - `assigneeProfileId` names an {@link AgentProfile} (a *role*: model/effort/
+ *     role-prompt overrides). A role-only card (profile has no `baseAgentId`)
+ *     floats to any FREE opt-in worker in the board's project directory.
+ *   - `assigneeAgentId` pins the card to one specific Left Bar agent (its own
+ *     native settings). Combined with a profile, that agent wears the role.
+ * Resolution: `assigneeAgentId` (or a legacy profile's `baseAgentId`) pins a
+ * single worker; otherwise the free project pool is used.
  */
 export interface BoardCard {
 	/** Stable unique id (UUID). */
@@ -84,8 +94,18 @@ export interface BoardCard {
 	title: string;
 	/** Task body / instructions handed to the assignee agent. */
 	body: string;
-	/** Id of the Agent Profile that runs this card. */
-	assigneeProfileId: string;
+	/**
+	 * Id of the Agent Profile (role) that runs this card. Optional since Phase 6:
+	 * a card may pin an agent directly via {@link assigneeAgentId} instead. At
+	 * least one of the two must be set.
+	 */
+	assigneeProfileId?: string;
+	/**
+	 * Id of a specific Left Bar agent this card is pinned to (Board Phase 6). When
+	 * absent and the profile is agent-less, the card floats to the free worker
+	 * pool. When set, the card runs on exactly this agent (waiting if it is busy).
+	 */
+	assigneeAgentId?: string;
 	/** Ids of cards that must be `done` before this one is eligible. */
 	parents: string[];
 	/** Lifecycle status. */
@@ -171,6 +191,8 @@ function validateCardRun(raw: unknown): CardRun | null {
 	}
 	const summary = optionalString(r.summary);
 	if (summary !== undefined) run.summary = summary;
+	const workerAgentId = optionalString(r.workerAgentId);
+	if (workerAgentId !== undefined) run.workerAgentId = workerAgentId;
 	if (r.metadata && typeof r.metadata === 'object' && !Array.isArray(r.metadata)) {
 		run.metadata = r.metadata as Record<string, unknown>;
 	}
@@ -183,11 +205,12 @@ function validateCardRun(raw: unknown): CardRun | null {
  * layer to skip bad entries without throwing, and by IPC handlers before
  * persisting caller input.
  *
- * Rules: `id`, `title`, `assigneeProfileId` must be non-empty strings; `status`
- * must be a known {@link CardStatus}. `parents` defaults to `[]` and keeps only
- * non-empty string ids. Missing `createdAt`/`updatedAt` fall back to
- * {@link nowIso} when supplied. Optional `worktree`/`runs` are validated
- * structurally and dropped when malformed.
+ * Rules: `id` and `title` must be non-empty strings, and the card must name an
+ * assignee - at least one of `assigneeProfileId` (role) or `assigneeAgentId`
+ * (pinned agent) must be a non-empty string. `status` must be a known
+ * {@link CardStatus}. `parents` defaults to `[]` and keeps only non-empty string
+ * ids. Missing `createdAt`/`updatedAt` fall back to {@link nowIso} when supplied.
+ * Optional `worktree`/`runs` are validated structurally and dropped when malformed.
  */
 export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -195,12 +218,17 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 
 	const id = typeof r.id === 'string' ? r.id.trim() : '';
 	const title = typeof r.title === 'string' ? r.title.trim() : '';
-	const assigneeProfileId = typeof r.assigneeProfileId === 'string' ? r.assigneeProfileId.trim() : '';
-	if (!id || !title || !assigneeProfileId) return null;
+	const assigneeProfileId =
+		typeof r.assigneeProfileId === 'string' ? r.assigneeProfileId.trim() : '';
+	const assigneeAgentId = typeof r.assigneeAgentId === 'string' ? r.assigneeAgentId.trim() : '';
+	// A card must resolve to *someone*: a role (profile) or a pinned agent.
+	if (!id || !title || (!assigneeProfileId && !assigneeAgentId)) return null;
 	if (!isCardStatus(r.status)) return null;
 
 	const parents = Array.isArray(r.parents)
-		? r.parents.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map((p) => p.trim())
+		? r.parents
+				.filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+				.map((p) => p.trim())
 		: [];
 
 	const body = typeof r.body === 'string' ? r.body : '';
@@ -211,12 +239,13 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 		id,
 		title,
 		body,
-		assigneeProfileId,
 		parents,
 		status: r.status,
 		createdAt,
 		updatedAt,
 	};
+	if (assigneeProfileId) card.assigneeProfileId = assigneeProfileId;
+	if (assigneeAgentId) card.assigneeAgentId = assigneeAgentId;
 
 	const worktree = validateWorktreeRef(r.worktree);
 	if (worktree) card.worktree = worktree;

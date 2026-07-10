@@ -17,17 +17,27 @@ import {
 import type { Board, BoardCard } from '../../../shared/board/types';
 
 function card(overrides: Partial<BoardCard> = {}): BoardCard {
+	// Default to a profile assignee unless the caller pins an agent instead
+	// (Phase 6: a card needs a role and/or a pinned agent, not necessarily both).
+	const hasExplicitAssignee = 'assigneeProfileId' in overrides || 'assigneeAgentId' in overrides;
 	return {
 		id: overrides.id ?? 'c1',
 		title: overrides.title ?? 'Implement feature X',
 		body: overrides.body ?? 'Do the thing',
-		assigneeProfileId: overrides.assigneeProfileId ?? 'p1',
 		parents: overrides.parents ?? [],
 		status: overrides.status ?? 'triage',
 		createdAt: overrides.createdAt ?? '2026-07-10T00:00:00.000Z',
 		updatedAt: overrides.updatedAt ?? '2026-07-10T00:00:00.000Z',
 		runs: overrides.runs,
 		worktree: overrides.worktree,
+		...(hasExplicitAssignee
+			? {
+					...(overrides.assigneeProfileId
+						? { assigneeProfileId: overrides.assigneeProfileId }
+						: {}),
+					...(overrides.assigneeAgentId ? { assigneeAgentId: overrides.assigneeAgentId } : {}),
+				}
+			: { assigneeProfileId: 'p1' }),
 	};
 }
 
@@ -143,6 +153,26 @@ describe('autoDecomposeBoard - enabled', () => {
 		expect(build.parents).toContain(design.id);
 	});
 
+	it('inherits a pinned agent (agent-only triage) so children stay valid (Phase 6)', async () => {
+		// An agent-only triage card has no profile; children must inherit the pin,
+		// or validateBoardCard would drop them (a card needs a role or an agent).
+		const triage = card({
+			id: 't1',
+			status: 'triage',
+			assigneeProfileId: undefined,
+			assigneeAgentId: 'agent-9',
+		});
+		const b = board([triage], true);
+		const spawn = vi.fn().mockResolvedValue('[{"title":"Sub","body":"s","dependsOn":[]}]');
+
+		const count = await autoDecomposeBoard(b, deps(spawn));
+
+		expect(count).toBe(1);
+		const child = b.cards.find((c) => c.title === 'Sub')!;
+		expect(child.assigneeAgentId).toBe('agent-9');
+		expect(child.assigneeProfileId).toBeUndefined();
+	});
+
 	it('caps the number of triage cards decomposed per tick', async () => {
 		const triageCards = Array.from({ length: DEFAULT_AUTO_DECOMPOSE_PER_TICK + 2 }, (_, i) =>
 			card({ id: `t${i}`, status: 'triage' })
@@ -157,7 +187,9 @@ describe('autoDecomposeBoard - enabled', () => {
 	});
 
 	it('respects a custom maxPerTick', async () => {
-		const triageCards = Array.from({ length: 3 }, (_, i) => card({ id: `t${i}`, status: 'triage' }));
+		const triageCards = Array.from({ length: 3 }, (_, i) =>
+			card({ id: `t${i}`, status: 'triage' })
+		);
 		const b = board(triageCards, true);
 		const spawn = vi.fn().mockResolvedValue('[{"title":"child","body":"","dependsOn":[]}]');
 

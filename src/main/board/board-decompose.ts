@@ -110,7 +110,9 @@ export function parseDecomposition(output: string): DecomposedChild[] {
 		if (!title) continue;
 		const body = typeof e.body === 'string' ? e.body.trim() : '';
 		const dependsOn = Array.isArray(e.dependsOn)
-			? e.dependsOn.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0)
+			? e.dependsOn.filter(
+					(n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0
+				)
 			: [];
 		children.push({ title, body, dependsOn });
 	}
@@ -203,19 +205,24 @@ function appendChildren(
 	const ids = children.map(() => generateUUID());
 	for (let i = 0; i < children.length; i++) {
 		const child = children[i];
-		const siblingParents = child.dependsOn.map((dep) => ids[dep]).filter((id): id is string => !!id);
+		const siblingParents = child.dependsOn
+			.map((dep) => ids[dep])
+			.filter((id): id is string => !!id);
 		const newCard: BoardCard = {
 			id: ids[i],
 			title: child.title,
 			body: child.body,
-			// Inherit the triage card's assignee so children run under the same profile.
-			assigneeProfileId: triage.assigneeProfileId,
 			// Depend on the triage umbrella (which we mark done below) + siblings.
 			parents: Array.from(new Set([triage.id, ...siblingParents])),
 			status: 'todo',
 			createdAt: nowIso,
 			updatedAt: nowIso,
 		};
+		// Inherit the triage card's assignee (role and/or pinned agent) so children
+		// run under the same assignment. Both are optional (Phase 6), but the triage
+		// card always has at least one, so children stay valid.
+		if (triage.assigneeProfileId) newCard.assigneeProfileId = triage.assigneeProfileId;
+		if (triage.assigneeAgentId) newCard.assigneeAgentId = triage.assigneeAgentId;
 		board.cards.push(newCard);
 	}
 

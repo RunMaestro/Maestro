@@ -74,10 +74,7 @@ describe('resolveProfileSpawnOverrides', () => {
 	});
 
 	it('uses profile values with no fallback when the base agent is missing', () => {
-		const merged = resolveProfileSpawnOverrides(
-			profile({ model: 'haiku', effort: 'high' }),
-			null
-		);
+		const merged = resolveProfileSpawnOverrides(profile({ model: 'haiku', effort: 'high' }), null);
 		expect(merged).toEqual({
 			customModel: 'haiku',
 			customEffort: 'high',
@@ -104,12 +101,19 @@ describe('validateAgentProfile', () => {
 		expect(p?.appendSystemPrompt).toBe('Be adversarial.');
 	});
 
-	it('rejects entries missing required fields', () => {
+	it('rejects entries missing required id/name', () => {
 		expect(validateAgentProfile(null)).toBeNull();
 		expect(validateAgentProfile({})).toBeNull();
-		expect(validateAgentProfile({ id: 'p1', name: 'x' })).toBeNull();
-		expect(validateAgentProfile({ id: 'p1', baseAgentId: 'a' })).toBeNull();
+		expect(validateAgentProfile({ id: 'p1' })).toBeNull(); // no name
+		expect(validateAgentProfile({ name: 'x', baseAgentId: 'a' })).toBeNull(); // no id
 		expect(validateAgentProfile({ id: '   ', name: 'x', baseAgentId: 'a' })).toBeNull();
+	});
+
+	it('accepts a base-agent-less pool role (Phase 6)', () => {
+		// A role with no baseAgentId floats to the free worker pool.
+		const p = validateAgentProfile({ id: 'p1', name: 'Reviewer' });
+		expect(p).not.toBeNull();
+		expect(p?.baseAgentId).toBeUndefined();
 	});
 
 	it('drops blank optional fields so they fall back to the base agent', () => {

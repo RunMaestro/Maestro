@@ -1048,6 +1048,13 @@ export interface Session {
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
 	};
+
+	// Board worker pool (Board Phase 6): opt-in flag marking this agent as an
+	// available worker for the Board in its project directory. Only opted-in,
+	// in-directory agents are eligible to be auto-assigned role-only cards; an
+	// agent is never hijacked for board work unless this is true. Cards may still
+	// pin this agent explicitly regardless of the flag.
+	boardWorker?: boolean;
 }
 
 // AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above

@@ -79,6 +79,7 @@ import type { Board, BoardCard } from '../../shared/board/types';
 import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
 import {
 	BoardDispatcher,
+	type CardAssignment,
 	type CardSpawnRequest,
 	type CardSpawnResult,
 } from '../board/board-dispatcher';
@@ -194,11 +195,18 @@ export interface CueEngineBoardDeps {
 	 * `resolveProfileSpawnOverrides`.
 	 */
 	resolveOverrides: (projectRoot: string, card: BoardCard) => ProfileSpawnOverrides | null;
-	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
-	spawnCard: (
+	/**
+	 * Worker-pool assignment (Board Phase 6). When provided, cards resolve to a
+	 * FREE opt-in worker in the project pool instead of a single pinned agent.
+	 * Takes precedence over {@link resolveOverrides}. See {@link CardAssignment}.
+	 */
+	assign?: (
 		projectRoot: string,
-		request: CardSpawnRequest
-	) => Promise<CardSpawnResult>;
+		card: BoardCard,
+		busyAgentIds: ReadonlySet<string>
+	) => CardAssignment;
+	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
+	spawnCard: (projectRoot: string, request: CardSpawnRequest) => Promise<CardSpawnResult>;
 	/**
 	 * OPTIONAL auto-decompose (Board Phase 5), OFF by default. When wired AND the
 	 * board's own `autoDecompose` flag is `true`, run one decomposition pass for a
@@ -1607,6 +1615,10 @@ export class CueEngine {
 			saveBoard: (b: Board) => boardDeps.saveBoard(projectRoot, b),
 			resolveOverrides: (card: BoardCard): ProfileSpawnOverrides | null =>
 				boardDeps.resolveOverrides(projectRoot, card),
+			assign: boardDeps.assign
+				? (card: BoardCard, busy: ReadonlySet<string>): CardAssignment =>
+						boardDeps.assign!(projectRoot, card, busy)
+				: undefined,
 			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> =>
 				boardDeps.spawnCard(projectRoot, request),
 			onLog: (level, message) => this.meteredOnLog(level, `[BOARD] ${message}`),

@@ -6,6 +6,7 @@ import type { AgentProfile } from '../../shared/profiles/types';
 import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
 import { CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers, hasCycle } from '../../shared/board/graph';
+import { isPathWithin } from '../../shared/board/pool';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
@@ -41,7 +42,8 @@ interface CardDraft {
 	id: string | null; // null = new card
 	title: string;
 	body: string;
-	assigneeProfileId: string;
+	assigneeProfileId: string; // '' = no role (float to pool, or pin an agent below)
+	assigneeAgentId: string; // '' = not pinned; else a specific agent runs this card
 	parents: string[];
 	worktreePath: string;
 	worktreeBranch: string;
@@ -63,6 +65,22 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	const activeSession = useSessionStore(selectActiveSession);
 	const projectRoot = activeSession?.projectRoot ?? '';
+	const allSessions = useSessionStore((s) => s.sessions);
+
+	// Board Phase 6: agents living in this board's project dir (or a sub-folder)
+	// are pin candidates. A card may pin any of them; role-only cards float to
+	// the opt-in worker subset (the `boardWorker` toggle, enforced at dispatch).
+	const projectAgents = useMemo(
+		() =>
+			allSessions
+				.filter((s) => isPathWithin(projectRoot, s.projectRoot || s.cwd))
+				.map((s) => ({ id: s.id, name: s.name, isWorker: s.boardWorker === true })),
+		[allSessions, projectRoot]
+	);
+	const agentName = useCallback(
+		(id: string) => projectAgents.find((a) => a.id === id)?.name ?? id,
+		[projectAgents]
+	);
 
 	const [board, setBoard] = useState<Board | null>(null);
 	const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -156,6 +174,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			title: '',
 			body: '',
 			assigneeProfileId: profiles[0]?.id ?? '',
+			assigneeAgentId: '',
 			parents: [],
 			worktreePath: '',
 			worktreeBranch: '',
@@ -169,7 +188,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			id: card.id,
 			title: card.title,
 			body: card.body,
-			assigneeProfileId: card.assigneeProfileId,
+			assigneeProfileId: card.assigneeProfileId ?? '',
+			assigneeAgentId: card.assigneeAgentId ?? '',
 			parents: [...card.parents],
 			worktreePath: card.worktree?.path ?? '',
 			worktreeBranch: card.worktree?.branch ?? '',
@@ -201,7 +221,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			!!projectRoot &&
 			!!board &&
 			draft.title.trim().length > 0 &&
-			draft.assigneeProfileId.length > 0 &&
+			// Phase 6: a card needs an assignee - a role (profile) and/or a pinned agent.
+			(draft.assigneeProfileId.length > 0 || draft.assigneeAgentId.length > 0) &&
 			!saving,
 		[draft, projectRoot, board, saving]
 	);
@@ -214,11 +235,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			id: draft.id ?? generateUUID(),
 			title: draft.title.trim(),
 			body: draft.body,
-			assigneeProfileId: draft.assigneeProfileId,
 			parents: draft.parents,
 			status: draft.status,
 			createdAt: draft.createdAt ?? now,
 			updatedAt: now,
+			// Assignee: a role (profile) and/or a pinned agent. Omit blank fields so
+			// a role-only card floats to the worker pool and a pinned card carries
+			// no stale profile id.
+			...(draft.assigneeProfileId ? { assigneeProfileId: draft.assigneeProfileId } : {}),
+			...(draft.assigneeAgentId ? { assigneeAgentId: draft.assigneeAgentId } : {}),
 			...(draft.worktreePath.trim()
 				? {
 						worktree: {
@@ -446,6 +471,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							onSave={() => void handleSaveCard()}
 							onCancel={closeEditor}
 							profileName={profileName}
+							projectAgents={projectAgents}
 						/>
 					)}
 
@@ -508,6 +534,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														card={card}
 														board={board}
 														profileName={profileName}
+														agentName={agentName}
 														dragging={dragCardId === card.id}
 														onDragStart={() => setDragCardId(card.id)}
 														onDragEnd={() => {
@@ -547,6 +574,7 @@ interface BoardCardTileProps {
 	card: BoardCard;
 	board: Board;
 	profileName: (id: string) => string;
+	agentName: (id: string) => string;
 	dragging: boolean;
 	onDragStart: () => void;
 	onDragEnd: () => void;
@@ -561,6 +589,7 @@ function BoardCardTile({
 	card,
 	board,
 	profileName,
+	agentName,
 	dragging,
 	onDragStart,
 	onDragEnd,
@@ -571,6 +600,12 @@ function BoardCardTile({
 	// The most recent run's handoff summary (from a `card-complete | summary`
 	// marker), surfaced as optional expandable metadata.
 	const latestSummary = card.runs?.[card.runs.length - 1]?.summary;
+	// Assignee label: role (profile) and/or a 📌 pinned agent; "pool" when the
+	// card floats to any free worker.
+	const roleText = card.assigneeProfileId ? profileName(card.assigneeProfileId) : null;
+	const pinText = card.assigneeAgentId ? `📌 ${agentName(card.assigneeAgentId)}` : null;
+	const assigneeText =
+		roleText && pinText ? `${roleText} · ${pinText}` : (roleText ?? pinText ?? 'pool');
 	return (
 		<div
 			draggable
@@ -608,9 +643,9 @@ function BoardCardTile({
 				<span
 					className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					title={profileName(card.assigneeProfileId)}
+					title={assigneeText}
 				>
-					{profileName(card.assigneeProfileId)}
+					{assigneeText}
 				</span>
 				{card.parents.length > 0 && (
 					<span
@@ -673,6 +708,7 @@ interface CardEditorProps {
 	onSave: () => void;
 	onCancel: () => void;
 	profileName: (id: string) => string;
+	projectAgents: { id: string; name: string; isWorker: boolean }[];
 }
 
 /** Inline create/edit form for a card. Replaces the board view while open, the
@@ -692,6 +728,7 @@ function CardEditor({
 	onSave,
 	onCancel,
 	profileName,
+	projectAgents,
 }: CardEditorProps) {
 	// Candidate parents are every other card (a card cannot depend on itself).
 	const candidateParents = board.cards.filter((c) => c.id !== draft.id);
@@ -741,7 +778,7 @@ function CardEditor({
 			<div className="flex gap-3 flex-wrap">
 				<label className="block space-y-1 flex-1 min-w-[180px]">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Assignee profile
+						Role (profile)
 					</span>
 					<select
 						value={draft.assigneeProfileId}
@@ -749,10 +786,33 @@ function CardEditor({
 						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
 						style={inputStyle}
 					>
-						{profiles.length === 0 && <option value="">No profiles available</option>}
+						{/* Empty = no role: the card floats to the free worker pool (or runs
+						    on the pinned agent below with its own settings). */}
+						<option value="">No role (free worker pool)</option>
 						{profiles.map((p) => (
 							<option key={p.id} value={p.id}>
 								{p.name}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className="block space-y-1 flex-1 min-w-[180px]">
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Pin to agent (optional)
+					</span>
+					<select
+						value={draft.assigneeAgentId}
+						onChange={(e) => setDraft((p) => (p ? { ...p, assigneeAgentId: e.target.value } : p))}
+						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+						style={inputStyle}
+					>
+						{/* Empty = not pinned: a role-only card is auto-assigned to any free
+						    opt-in worker. Pinning runs the card on exactly this agent. */}
+						<option value="">Any free worker</option>
+						{projectAgents.map((a) => (
+							<option key={a.id} value={a.id}>
+								{a.name}
+								{a.isWorker ? '' : ' (not a board worker)'}
 							</option>
 						))}
 					</select>
@@ -833,7 +893,7 @@ function CardEditor({
 									<input type="checkbox" checked={checked} onChange={() => onToggleParent(c.id)} />
 									<span className="truncate">{c.title}</span>
 									<span className="ml-auto shrink-0" style={{ color: theme.colors.textDim }}>
-										{profileName(c.assigneeProfileId)}
+										{c.assigneeProfileId ? profileName(c.assigneeProfileId) : 'pool'}
 									</span>
 								</label>
 							);

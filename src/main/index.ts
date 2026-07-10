@@ -200,10 +200,12 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { listBoards, saveBoard } from './board/board-storage';
 import {
 	resolveCardOverrides,
+	resolveCardAssignment,
 	spawnBoardCard,
 	decomposeBoardCard,
 	type BoardSpawnContext,
 } from './board/board-spawn';
+import { selectPoolAgentIds } from '../shared/board/pool';
 import { autoDecomposeBoard } from './board/board-decompose';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
@@ -1167,8 +1169,7 @@ app
 		// card's assignee profile to its base Left Bar agent and runs it through
 		// the same `executeCuePrompt` path Cue uses (SSH/custom config honored).
 		const boardSpawnContext: BoardSpawnContext = {
-			getStoredSessions: () =>
-				sessionsStore.get('sessions', []) as Array<Record<string, any>>,
+			getStoredSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, any>>,
 			getAgentConfig: (toolType) => getAgentConfigForAgent(toolType),
 			resolveAgentPath: async (toolType) => {
 				if (!agentDetector) return undefined;
@@ -1177,6 +1178,20 @@ app
 			},
 			getSshStore: () => createSshRemoteStoreAdapter(store),
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
+			// Board Phase 6 worker pool: opt-in (`boardWorker: true`) agents whose
+			// working directory is inside the board's project dir (or a sub-folder),
+			// in Left Bar order. Only these float role-only cards.
+			getPoolAgentIds: (projectRoot) => {
+				const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+				return selectPoolAgentIds(
+					projectRoot,
+					sessions.map((s) => ({
+						id: s.id,
+						dir: s.projectRoot || s.cwd || s.fullPath,
+						boardWorker: s.boardWorker === true,
+					}))
+				);
+			},
 			nowMs: () => Date.now(),
 		};
 
@@ -1471,6 +1486,10 @@ app
 				},
 				resolveOverrides: (projectRoot, card) =>
 					resolveCardOverrides(projectRoot, card, boardSpawnContext),
+				// Board Phase 6 worker pool: resolve each card to a FREE opt-in worker
+				// in the project dir. Takes precedence over resolveOverrides.
+				assign: (projectRoot, card, busy) =>
+					resolveCardAssignment(projectRoot, card, busy, boardSpawnContext),
 				spawnCard: (projectRoot, request) =>
 					spawnBoardCard(projectRoot, request, boardSpawnContext),
 				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when

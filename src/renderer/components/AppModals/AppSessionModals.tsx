@@ -77,7 +77,8 @@ export interface AppSessionModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	editAgentSession: Session | null;
 

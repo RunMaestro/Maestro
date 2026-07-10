@@ -98,7 +98,8 @@ export interface SessionLifecycleReturn {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -168,7 +169,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPPath?: string,
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean
+			retryOnTokenExhaustion?: boolean,
+			boardWorker?: boolean
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -191,6 +193,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// cleared on a provider switch below (unlike maestroP fields).
 						retryOnAvailabilityErrors,
 						retryOnTokenExhaustion,
+						// Board worker pool opt-in (Board Phase 6). Provider-agnostic, so
+						// it survives a provider switch (not cleared in the reset below).
+						boardWorker,
 					};
 
 					// If provider changed, reset tabs and provider-specific config

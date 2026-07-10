@@ -58,7 +58,27 @@ export interface CardSpawnResult {
 export interface CardSpawnRequest {
 	card: BoardCard;
 	overrides: ProfileSpawnOverrides;
+	/**
+	 * Id of the pool worker chosen for this card (Board Phase 6). Set on the
+	 * worker-pool path so the spawner runs the card on exactly this agent; absent
+	 * on the legacy single-agent path (the spawner then resolves the pinned agent
+	 * itself).
+	 */
+	agentId?: string;
 }
+
+/**
+ * How a ready card resolves to a worker on the pool path (Board Phase 6). The
+ * injected {@link BoardDispatcherDeps.assign} returns one of:
+ *   - `assigned`       - claim the card on `agentId` with these `overrides`;
+ *   - `no-free-worker` - candidates exist but are all busy (or the opt-in pool
+ *                        is empty); leave the card `ready` and retry next tick;
+ *   - `unresolvable`   - a config error (named profile/agent missing); block now.
+ */
+export type CardAssignment =
+	| { kind: 'assigned'; agentId: string; overrides: ProfileSpawnOverrides }
+	| { kind: 'no-free-worker' }
+	| { kind: 'unresolvable'; reason?: string };
 
 /** Injected side effects. Fakes for these are all a test needs. */
 export interface BoardDispatcherDeps {
@@ -70,8 +90,18 @@ export interface BoardDispatcherDeps {
 	 * Resolve a card's assignee profile into spawn overrides. Returns `null`
 	 * when the profile can't be resolved (missing / deleted) - the dispatcher
 	 * then blocks the card rather than spawning a mystery agent.
+	 *
+	 * Legacy single-agent path. Ignored when {@link assign} is provided.
 	 */
 	resolveOverrides: (card: BoardCard) => ProfileSpawnOverrides | null;
+	/**
+	 * Worker-pool assignment (Board Phase 6). When provided, the dispatcher
+	 * resolves each ready card to a FREE worker from the project's opt-in pool
+	 * instead of the single pinned agent, passing the set of workers already
+	 * running a board card this tick. See {@link CardAssignment} for the return
+	 * contract. When absent, the legacy {@link resolveOverrides} path is used.
+	 */
+	assign?: (card: BoardCard, busyAgentIds: ReadonlySet<string>) => CardAssignment;
 	/** Run the card's assignee to completion. Rejects on spawn failure. */
 	spawn: (request: CardSpawnRequest) => Promise<CardSpawnResult>;
 	/** ISO clock, injectable so tests get stable timestamps. */
@@ -135,6 +165,88 @@ export function claimReadyCards(board: Board, maxInProgress: number, nowIso: str
 		claimed.push(card);
 	}
 	return claimed;
+}
+
+/**
+ * Compute the set of pool workers currently busy with a `running` board card,
+ * keyed by the `workerAgentId` recorded on each running card's open run. This is
+ * the "one card per worker" guard, recomputed from the persisted board each tick
+ * so it survives engine restarts (no in-memory state needed).
+ */
+export function computeBusyAgentIds(board: Board): Set<string> {
+	const busy = new Set<string>();
+	for (const card of board.cards) {
+		if (card.status !== 'running') continue;
+		const run = card.runs?.[card.runs.length - 1];
+		const workerId = run?.workerAgentId;
+		if (workerId) busy.add(workerId);
+	}
+	return busy;
+}
+
+/** A card claimed on the pool path, bound to the worker chosen to run it. */
+export interface PooledClaim {
+	card: BoardCard;
+	agentId: string;
+	overrides: ProfileSpawnOverrides;
+}
+
+/** The outcome of one pooled claim pass over a board. */
+export interface PooledClaimResult {
+	/** Cards marked `running` on a free worker this pass, with their assignment. */
+	claimed: PooledClaim[];
+	/** Cards that named a missing profile/agent - the caller blocks these now. */
+	unresolvable: { card: BoardCard; reason?: string }[];
+}
+
+/**
+ * Worker-pool claim (Board Phase 6). Walks the oldest `ready` cards up to the WIP
+ * cap and asks `assign` to bind each to a FREE worker. A card assigned a worker
+ * is marked `running` with an open {@link CardRun} stamped with `workerAgentId`,
+ * and that worker is taken out of circulation for the rest of this pass (one card
+ * per worker). Cards whose workers are all busy (or whose pool is empty) are left
+ * `ready` - they are NOT claimed and simply retry on a later tick (the "don't
+ * wait for a free agent" rule). Unresolvable cards are collected for the caller
+ * to force-block. Mutates the board in place.
+ */
+export function claimReadyCardsPooled(
+	board: Board,
+	maxInProgress: number,
+	nowIso: string,
+	assign: (card: BoardCard, busyAgentIds: ReadonlySet<string>) => CardAssignment
+): PooledClaimResult {
+	const cap = maxInProgress > 0 ? maxInProgress : DEFAULT_MAX_IN_PROGRESS;
+	const ready = board.cards
+		.map((card, index) => ({ card, index }))
+		.filter((entry) => entry.card.status === 'ready')
+		.sort((a, b) => a.card.createdAt.localeCompare(b.card.createdAt) || a.index - b.index)
+		.map((entry) => entry.card);
+
+	const busy = computeBusyAgentIds(board);
+	const claimed: PooledClaim[] = [];
+	const unresolvable: { card: BoardCard; reason?: string }[] = [];
+
+	for (const card of ready) {
+		if (countRunning(board) >= cap) break;
+		const result = assign(card, busy);
+		if (result.kind === 'unresolvable') {
+			unresolvable.push({ card, reason: result.reason });
+			continue;
+		}
+		if (result.kind === 'no-free-worker') {
+			// Leave the card `ready`; a later tick retries when a worker frees up.
+			continue;
+		}
+		card.status = 'running';
+		card.updatedAt = nowIso;
+		const attempt = (card.runs?.length ?? 0) + 1;
+		const run: CardRun = { attempt, startedAt: nowIso, workerAgentId: result.agentId };
+		card.runs = [...(card.runs ?? []), run];
+		busy.add(result.agentId);
+		claimed.push({ card, agentId: result.agentId, overrides: result.overrides });
+	}
+
+	return { claimed, unresolvable };
 }
 
 /**
@@ -288,6 +400,20 @@ export class BoardDispatcher {
 		if (promoteEligibleCards(board, nowIso).length > 0) dirty = true;
 
 		const cap = board.maxInProgress ?? DEFAULT_MAX_IN_PROGRESS;
+
+		// Board Phase 6: when the worker-pool `assign` dep is wired, resolve each
+		// ready card to a free worker; otherwise fall back to the legacy
+		// single-agent claim + resolveOverrides path.
+		if (this.deps.assign) {
+			this.tickPooled(board, cap, nowIso, dirty);
+		} else {
+			this.tickLegacy(board, cap, nowIso, dirty);
+		}
+	}
+
+	/** Legacy single-agent dispatch (pre-Phase-6). One pinned agent per card. */
+	private tickLegacy(board: Board, cap: number, nowIso: string, dirtyIn: boolean): void {
+		let dirty = dirtyIn;
 		const claims = claimReadyCards(board, cap, nowIso);
 		if (claims.length > 0) dirty = true;
 
@@ -318,6 +444,62 @@ export class BoardDispatcher {
 					})
 				);
 		}
+	}
+
+	/** Worker-pool dispatch (Board Phase 6). Each card runs on a free pool worker. */
+	private tickPooled(board: Board, cap: number, nowIso: string, dirtyIn: boolean): void {
+		let dirty = dirtyIn;
+		const { claimed, unresolvable } = claimReadyCardsPooled(board, cap, nowIso, this.deps.assign!);
+		if (claimed.length > 0) dirty = true;
+
+		// Force-block cards that named a missing profile/agent (config error, not a
+		// transient failure) in place, so they persist with the rest of this pass.
+		for (const { card, reason } of unresolvable) {
+			this.forceBlock(
+				board,
+				card.id,
+				reason ?? `Assignee for card "${card.id}" could not be resolved.`,
+				nowIso
+			);
+			dirty = true;
+			this.log('error', `card "${card.id}" has an unresolvable assignee - blocking`);
+		}
+
+		// Persist BEFORE spawning so a crash / next tick sees `running`.
+		if (dirty) this.deps.saveBoard(board);
+
+		for (const { card, agentId, overrides } of claimed) {
+			this.inFlight.add(card.id);
+			this.deps
+				.spawn({ card, overrides, agentId })
+				.then((result) => this.finalize(card.id, result))
+				.catch((err) =>
+					this.finalize(card.id, {
+						output: '',
+						exitCode: null,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				);
+		}
+	}
+
+	/**
+	 * Force a card straight to `blocked` on the given (already-loaded) board,
+	 * closing any open run as an error. In-place variant of
+	 * {@link blockCardImmediately} used by the pooled pass, which blocks several
+	 * cards on one board before a single save.
+	 */
+	private forceBlock(board: Board, cardId: string, reason: string, nowIso: string): void {
+		const card = board.cards.find((c) => c.id === cardId);
+		if (!card) return;
+		const run = card.runs?.[card.runs.length - 1];
+		if (run && !run.endedAt) {
+			run.endedAt = nowIso;
+			run.outcome = 'error';
+			run.summary = reason;
+		}
+		card.status = 'blocked';
+		card.updatedAt = nowIso;
 	}
 
 	/** True while a spawn for `cardId` is in flight (used by tests + reclaim). */

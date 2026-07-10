@@ -21,19 +21,27 @@
  */
 
 /**
- * A named override bundle attached to a real base agent by id.
+ * A named override bundle: a *role* (model / effort / role-prompt / args).
  *
- * Only `id`, `name`, and `baseAgentId` are required. Every override field is
- * optional; an undefined field falls back to the base agent's value at spawn
- * time (see {@link resolveProfileSpawnOverrides}).
+ * Only `id` and `name` are required. `baseAgentId` is OPTIONAL (Board Phase 6):
+ * when set, the profile pins its overrides to that specific Left Bar agent (the
+ * classic "layer on a base agent" case, and the Board dispatches the card to
+ * exactly that agent). When ABSENT, the profile is a pure role that the Board
+ * floats to any FREE opt-in worker in the project pool, layering the role's
+ * overrides on whichever agent picks it up. Every override field is optional; an
+ * undefined field falls back to the running agent's value at spawn time (see
+ * {@link resolveProfileSpawnOverrides}).
  */
 export interface AgentProfile {
 	/** Stable unique id (UUID). */
 	id: string;
-	/** Human-facing label shown in the Profiles UI and (later) the Board. */
+	/** Human-facing label shown in the Profiles UI and the Board. */
 	name: string;
-	/** Id of the real Left Bar agent this profile layers onto. */
-	baseAgentId: string;
+	/**
+	 * Id of the Left Bar agent this profile pins to. OPTIONAL: when absent, the
+	 * role floats to the free worker pool instead of a fixed agent.
+	 */
+	baseAgentId?: string;
 	/** Model override (e.g. a Claude model id). Falls back to the base agent's model. */
 	model?: string;
 	/** Reasoning effort override. Falls back to the base agent's effort. */
@@ -93,10 +101,10 @@ export function resolveProfileSpawnOverrides(
  * storage layer to skip bad entries without throwing (defense in depth), and by
  * IPC handlers before persisting caller input.
  *
- * Rules: `id`, `name`, `baseAgentId` must be non-empty strings. Optional
- * override fields, when present, must be strings (empty/whitespace is dropped so
- * an accidentally-blank field falls back to the base agent rather than blanking
- * it).
+ * Rules: `id` and `name` must be non-empty strings. `baseAgentId` is optional
+ * (a pinned profile has it, a pool role omits it). Optional override fields, when
+ * present, must be strings (empty/whitespace is dropped so an accidentally-blank
+ * field falls back to the running agent rather than blanking it).
  */
 export function validateAgentProfile(raw: unknown): AgentProfile | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -104,16 +112,18 @@ export function validateAgentProfile(raw: unknown): AgentProfile | null {
 
 	const id = typeof r.id === 'string' ? r.id.trim() : '';
 	const name = typeof r.name === 'string' ? r.name.trim() : '';
-	const baseAgentId = typeof r.baseAgentId === 'string' ? r.baseAgentId.trim() : '';
-	if (!id || !name || !baseAgentId) return null;
+	if (!id || !name) return null;
 
-	const profile: AgentProfile = { id, name, baseAgentId };
+	const profile: AgentProfile = { id, name };
 
 	const optionalString = (value: unknown): string | undefined => {
 		if (typeof value !== 'string') return undefined;
 		const trimmed = value.trim();
 		return trimmed.length > 0 ? value : undefined;
 	};
+
+	const baseAgentId = optionalString(r.baseAgentId);
+	if (baseAgentId !== undefined) profile.baseAgentId = baseAgentId.trim();
 
 	const model = optionalString(r.model);
 	if (model !== undefined) profile.model = model;

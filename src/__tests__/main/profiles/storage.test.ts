@@ -84,10 +84,7 @@ describe('profile-storage round-trip', () => {
 	});
 
 	it('delete removes only the matching profile', () => {
-		saveProfiles(projectRoot, [
-			profile({ id: 'a', name: 'A' }),
-			profile({ id: 'b', name: 'B' }),
-		]);
+		saveProfiles(projectRoot, [profile({ id: 'a', name: 'A' }), profile({ id: 'b', name: 'B' })]);
 		const remaining = deleteProfile(projectRoot, 'a');
 		expect(remaining.map((p) => p.id)).toEqual(['b']);
 		expect(loadProfiles(projectRoot).map((p) => p.id)).toEqual(['b']);
@@ -95,20 +92,21 @@ describe('profile-storage round-trip', () => {
 });
 
 describe('profile-storage malformed handling', () => {
-	it('skips malformed entries but keeps valid ones', () => {
+	it('skips malformed entries but keeps valid ones (incl. base-agent-less pool roles)', () => {
 		const raw = yaml.dump({
 			profiles: [
 				{ id: 'good', name: 'Worker', baseAgentId: 'agent-1', model: 'haiku' },
-				{ id: 'bad-missing-base', name: 'Broken' }, // no baseAgentId
-				{ name: 'no-id', baseAgentId: 'agent-1' }, // no id
-				'not-an-object',
+				// Phase 6: a profile without baseAgentId is a valid pool role, not malformed.
+				{ id: 'pool-role', name: 'Reviewer' },
+				{ name: 'no-id', baseAgentId: 'agent-1' }, // no id -> skipped
+				'not-an-object', // -> skipped
 			],
 		});
 		writeRawYaml(raw);
 
 		const loaded = loadProfiles(projectRoot);
-		expect(loaded).toHaveLength(1);
-		expect(loaded[0].id).toBe('good');
+		expect(loaded.map((p) => p.id)).toEqual(['good', 'pool-role']);
+		expect(loaded.find((p) => p.id === 'pool-role')?.baseAgentId).toBeUndefined();
 	});
 
 	it('returns an empty list on unparseable YAML', () => {

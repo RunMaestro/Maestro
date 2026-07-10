@@ -595,7 +595,7 @@ const board = program.command('board').description('Manage and dispatch the Maes
 
 board
 	.command('list')
-	.description('List all boards in an agent\'s project')
+	.description("List all boards in an agent's project")
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardList);
@@ -612,7 +612,14 @@ board
 	.description('Add a card to a board')
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
 	.requiredOption('-t, --title <title>', 'Card title')
-	.requiredOption('--assignee <profileId>', 'Agent Profile id that runs this card')
+	.option(
+		'--assignee <profileId>',
+		'Agent Profile (role) id that runs this card; floats to the free worker pool'
+	)
+	.option(
+		'--assignee-agent <agentId>',
+		'Pin the card to a specific agent (runs with its own settings)'
+	)
 	.option('-b, --body <body>', 'Card body / instructions for the assignee')
 	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
 	.option('--worktree', 'Record an isolated-worktree intent for this card')
@@ -621,7 +628,7 @@ board
 
 board
 	.command('set-status <cardId> <status>')
-	.description('Set a card\'s status (triage|todo|ready|running|blocked|done)')
+	.description("Set a card's status (triage|todo|ready|running|blocked|done)")
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -641,7 +648,7 @@ const profile = program.command('profile').description('Manage Agent Profiles');
 
 profile
 	.command('list')
-	.description('List all profiles in an agent\'s project')
+	.description("List all profiles in an agent's project")
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profiles')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profileList);
@@ -651,7 +658,8 @@ profile
 	.description('Create a profile layered on a base agent')
 	.requiredOption('--base <agentId>', 'Base Left Bar agent (also locates the project)')
 	.requiredOption('-n, --name <name>', 'Profile name')
-	.option('--model <model>', 'Model override (falls back to the base agent)')
+	.option('--pool', 'Create a base-agent-less role that floats to the free worker pool')
+	.option('--model <model>', 'Model override (falls back to the running agent)')
 	.option('--effort <level>', 'Reasoning effort override')
 	.option('--role <text>', 'Role system-prompt appended for this profile')
 	.option('--json', 'Output as JSON (for scripting)')

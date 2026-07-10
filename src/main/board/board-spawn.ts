@@ -15,12 +15,13 @@
 import { listProfiles } from '../profiles/profile-storage';
 import {
 	resolveProfileSpawnOverrides,
+	type AgentProfile,
 	type ProfileBaseAgentValues,
 	type ProfileSpawnOverrides,
 } from '../../shared/profiles/types';
 import type { BoardCard } from '../../shared/board/types';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
-import type { CardSpawnRequest, CardSpawnResult } from './board-dispatcher';
+import type { CardAssignment, CardSpawnRequest, CardSpawnResult } from './board-dispatcher';
 import { executeCuePrompt } from '../cue/cue-executor';
 import { createCueEvent } from '../cue/cue-types';
 import type { TemplateContext } from '../../shared/templateVariables';
@@ -42,8 +43,83 @@ export interface BoardSpawnContext {
 	getSshStore: () => any;
 	/** Optional conductor profile string threaded into the template context. */
 	getConductorProfile?: () => string | undefined;
+	/**
+	 * Board Phase 6 worker pool: the ids of opt-in board-worker agents whose
+	 * working directory is inside `projectRoot` (or a sub-folder), in Left Bar
+	 * order. Used to resolve role-only / agent-less cards to a free worker. When
+	 * omitted, only pinned cards (explicit agent or legacy profile `baseAgentId`)
+	 * can run.
+	 */
+	getPoolAgentIds?: (projectRoot: string) => string[];
 	/** Monotonic-ish id suffix source (Date.now in production). */
 	nowMs: () => number;
+}
+
+/** Build spawn overrides from a base session's own values (no profile / role). */
+function nativeOverrides(baseSession: Record<string, any>): ProfileSpawnOverrides {
+	return {
+		customModel: baseSession.customModel,
+		customEffort: baseSession.customEffort,
+		appendSystemPrompt: baseSession.appendSystemPrompt,
+		customArgs: baseSession.customArgs,
+	};
+}
+
+/**
+ * Resolve a card to a FREE worker (Board Phase 6). Wired into
+ * `BoardDispatcherDeps.assign`. Resolution:
+ *   - a named-but-missing profile is a config error -> `unresolvable`;
+ *   - a pinned agent (`assigneeAgentId`, or a legacy profile's `baseAgentId`)
+ *     yields a single candidate; a role-only card uses the opt-in project pool;
+ *   - the first candidate not in `busyAgentIds` wins (one card per worker),
+ *     layering the role's overrides (if any) over the chosen agent's values;
+ *   - all candidates busy / empty pool -> `no-free-worker` (card waits).
+ */
+export function resolveCardAssignment(
+	projectRoot: string,
+	card: BoardCard,
+	busyAgentIds: ReadonlySet<string>,
+	ctx: BoardSpawnContext
+): CardAssignment {
+	let profile: AgentProfile | undefined;
+	if (card.assigneeProfileId) {
+		profile = listProfiles(projectRoot).find((p) => p.id === card.assigneeProfileId);
+		// The card named a role that no longer exists - a config error, block it.
+		if (!profile) {
+			return { kind: 'unresolvable', reason: `Profile "${card.assigneeProfileId}" not found.` };
+		}
+	}
+
+	// A pinned agent (explicit or legacy profile base) => single candidate.
+	// Otherwise float to the opt-in worker pool for this project.
+	const pinnedId = card.assigneeAgentId ?? profile?.baseAgentId;
+	const candidates = pinnedId ? [pinnedId] : (ctx.getPoolAgentIds?.(projectRoot) ?? []);
+	if (candidates.length === 0) {
+		// No pinned agent and an empty pool: nobody to run it yet. Wait (don't
+		// block) so it dispatches the moment a worker is opted in.
+		return { kind: 'no-free-worker' };
+	}
+
+	const chosen = candidates.find((id) => !busyAgentIds.has(id));
+	if (!chosen) return { kind: 'no-free-worker' };
+
+	const baseSession = ctx.getStoredSessions().find((s) => s.id === chosen);
+	if (!baseSession) {
+		// A pinned agent that no longer exists is a config error; a stale pool id
+		// (shouldn't happen) is also unrunnable. Block rather than spin.
+		return { kind: 'unresolvable', reason: `Agent "${chosen}" not found.` };
+	}
+
+	const overrides = profile
+		? resolveProfileSpawnOverrides(profile, {
+				customModel: baseSession.customModel,
+				customEffort: baseSession.customEffort,
+				customArgs: baseSession.customArgs,
+				appendSystemPrompt: baseSession.appendSystemPrompt,
+			})
+		: nativeOverrides(baseSession);
+
+	return { kind: 'assigned', agentId: chosen, overrides };
 }
 
 /** Find the profile a card is assigned to plus its base agent session. */
@@ -87,7 +163,17 @@ export async function spawnBoardCard(
 	request: CardSpawnRequest,
 	ctx: BoardSpawnContext
 ): Promise<CardSpawnResult> {
-	const { card, overrides } = request;
+	const { card, overrides, agentId } = request;
+	// Resolve the base session: the pool-chosen worker (`agentId`) on the Phase 6
+	// path, else the card's profile base agent (legacy single-agent path).
+	const baseSession = resolveBaseSession(projectRoot, card, agentId, ctx);
+	if (!baseSession) {
+		return {
+			output: '',
+			exitCode: null,
+			error: `Board card "${card.id}": worker agent could not be resolved.`,
+		};
+	}
 	// The Cue executor has no system-prompt injection field, so the profile's
 	// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble,
 	// followed by the four-question handoff reminder (structured completion
@@ -95,7 +181,24 @@ export async function spawnBoardCard(
 	const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
 	const promptText =
 		`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
-	return runCardPrompt(projectRoot, card, promptText, ctx);
+	return runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx);
+}
+
+/**
+ * Resolve the base Left Bar session a card should run on. Prefers the explicit
+ * pool-chosen `agentId` (Phase 6); falls back to the card's assignee profile's
+ * `baseAgentId` (legacy single-agent path). Returns `null` when neither resolves.
+ */
+function resolveBaseSession(
+	projectRoot: string,
+	card: BoardCard,
+	agentId: string | undefined,
+	ctx: BoardSpawnContext
+): Record<string, any> | null {
+	if (agentId) {
+		return ctx.getStoredSessions().find((s) => s.id === agentId) ?? null;
+	}
+	return resolveProfileAndBase(projectRoot, card, ctx)?.baseSession ?? null;
 }
 
 /**
@@ -112,31 +215,39 @@ export async function decomposeBoardCard(
 	promptText: string,
 	ctx: BoardSpawnContext
 ): Promise<string | null> {
-	const result = await runCardPrompt(projectRoot, card, promptText, ctx);
+	// Decomposition just needs any capable model: prefer the card's pinned/base
+	// agent, else the first opt-in pool worker, else any session in the project.
+	const resolved = resolveProfileAndBase(projectRoot, card, ctx);
+	let baseSession = resolved?.baseSession ?? null;
+	const overrides = resolved?.overrides ?? {};
+	if (!baseSession) {
+		const poolId = ctx.getPoolAgentIds?.(projectRoot)?.[0];
+		baseSession = poolId
+			? (ctx.getStoredSessions().find((s) => s.id === poolId) ?? null)
+			: (ctx
+					.getStoredSessions()
+					.find((s) => s.projectRoot === projectRoot || s.cwd === projectRoot) ?? null);
+	}
+	if (!baseSession) return null;
+	const result = await runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx);
 	if (result.error || result.exitCode !== 0) return null;
 	return result.output;
 }
 
 /**
- * Shared runner: execute `promptText` through a card's assignee base agent via
- * the SAME `executeCuePrompt` plumbing Cue uses (SSH / custom config honored).
+ * Shared runner: execute `promptText` through the resolved base agent via the
+ * SAME `executeCuePrompt` plumbing Cue uses (SSH / custom config honored). The
+ * caller resolves `baseSession` + `overrides` (pool worker or legacy profile
+ * base) so this runner stays assignment-agnostic.
  */
 async function runCardPrompt(
 	projectRoot: string,
 	card: BoardCard,
 	promptText: string,
+	baseSession: Record<string, any>,
+	overrides: ProfileSpawnOverrides,
 	ctx: BoardSpawnContext
 ): Promise<CardSpawnResult> {
-	const resolved = resolveProfileAndBase(projectRoot, card, ctx);
-	if (!resolved) {
-		return {
-			output: '',
-			exitCode: null,
-			error: `Board card "${card.id}": assignee profile "${card.assigneeProfileId}" or its base agent could not be resolved.`,
-		};
-	}
-
-	const { baseSession, overrides } = resolved;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
 	// into both the string `toolType` config field and the enum `session.toolType`
 	// field, exactly as the Cue `onCueRun` path passes it through.

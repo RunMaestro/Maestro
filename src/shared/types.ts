@@ -241,6 +241,12 @@ export interface SessionInfo {
 	retryOnTokenExhaustion?: boolean;
 	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * Board worker pool (Board Phase 6): opt-in flag marking this agent as an
+	 * available board worker in its project directory. Only opted-in, in-directory
+	 * agents are auto-assigned role-only cards.
+	 */
+	boardWorker?: boolean;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)

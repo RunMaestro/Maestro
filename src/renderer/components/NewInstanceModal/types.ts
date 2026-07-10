@@ -87,7 +87,8 @@ export interface EditAgentModalProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Users, Plus, Trash2, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -73,14 +73,21 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 		void load();
 	}, [load]);
 
-	// Default the base-agent picker to the active session once sessions load.
+	// Default the base-agent picker to the active session ONCE, so a later choice
+	// of "None (pool role)" (baseAgentId = '') is not snapped back to an agent.
+	const baseInitRef = useRef(false);
 	useEffect(() => {
-		if (!baseAgentId && activeSession) setBaseAgentId(activeSession.id);
-	}, [activeSession, baseAgentId]);
+		if (!baseInitRef.current && activeSession) {
+			setBaseAgentId(activeSession.id);
+			baseInitRef.current = true;
+		}
+	}, [activeSession]);
 
+	// A profile needs a name; the base agent is optional (empty = a pool role that
+	// floats to any free worker - Board Phase 6).
 	const canSave = useMemo(
-		() => !!projectRoot && name.trim().length > 0 && baseAgentId.length > 0 && !saving,
-		[projectRoot, name, baseAgentId, saving]
+		() => !!projectRoot && name.trim().length > 0 && !saving,
+		[projectRoot, name, saving]
 	);
 
 	const handleCreate = useCallback(async () => {
@@ -88,7 +95,8 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 		const profile: AgentProfile = {
 			id: generateUUID(),
 			name: name.trim(),
-			baseAgentId,
+			// Empty base = a pool role that floats to any free opt-in worker.
+			...(baseAgentId ? { baseAgentId } : {}),
 			...(model.trim() ? { model: model.trim() } : {}),
 			...(effort ? { effort } : {}),
 			...(role.trim() ? { appendSystemPrompt: role.trim() } : {}),
@@ -226,7 +234,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 										{p.name}
 									</div>
 									<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
-										{baseAgentName(p.baseAgentId)}
+										{p.baseAgentId ? baseAgentName(p.baseAgentId) : 'Pool role (any free worker)'}
 										{p.model ? ` · ${p.model}` : ''}
 										{p.effort ? ` · ${p.effort}` : ''}
 										{p.appendSystemPrompt ? ' · role' : ''}
@@ -280,7 +288,9 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
 								style={inputStyle}
 							>
-								{sessions.length === 0 && <option value="">No agents available</option>}
+								{/* Empty = a pool role: the Board floats it to any free opt-in
+								    worker instead of pinning one agent (Board Phase 6). */}
+								<option value="">None (pool role - any free worker)</option>
 								{sessions.map((s) => (
 									<option key={s.id} value={s.id}>
 										{s.name}

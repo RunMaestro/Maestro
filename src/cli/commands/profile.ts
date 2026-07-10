@@ -14,11 +14,7 @@
  */
 
 import { generateUUID } from '../../shared/uuid';
-import {
-	listProfiles,
-	upsertProfile,
-	deleteProfile,
-} from '../../main/profiles/profile-storage';
+import { listProfiles, upsertProfile, deleteProfile } from '../../main/profiles/profile-storage';
 import { type AgentProfile } from '../../shared/profiles/types';
 import { getSessionById, resolveAgentId } from '../services/storage';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -39,6 +35,8 @@ interface ProfileCreateOptions extends ProfileCommonOptions {
 	model?: string;
 	effort?: string;
 	role?: string;
+	/** When set, create a base-agent-less role that floats to the worker pool. */
+	pool?: boolean;
 }
 
 interface ProfileDeleteOptions extends ProfileCommonOptions {
@@ -87,7 +85,9 @@ export async function profileList(options: ProfileListOptions): Promise<void> {
 		const lines: string[] = [`Profiles (${profiles.length}):\n`];
 		for (const p of profiles) {
 			lines.push(`  ${p.name}  [${p.id.slice(0, 8)}]`);
-			const bits: string[] = [`base: ${p.baseAgentId.slice(0, 8)}`];
+			const bits: string[] = [
+				`base: ${p.baseAgentId ? p.baseAgentId.slice(0, 8) : 'pool (any free worker)'}`,
+			];
 			if (p.model) bits.push(`model: ${p.model}`);
 			if (p.effort) bits.push(`effort: ${p.effort}`);
 			lines.push(`     ${bits.join('  |  ')}`);
@@ -116,8 +116,11 @@ export async function profileCreate(options: ProfileCreateOptions): Promise<void
 		const profile: AgentProfile = {
 			id: generateUUID(),
 			name,
-			baseAgentId: base.id,
 		};
+		// `--pool` makes a base-agent-less role that floats to the free worker pool;
+		// otherwise the profile pins its overrides to the `--base` agent. Either way
+		// `--base` locates the project the profile is stored in.
+		if (!options.pool) profile.baseAgentId = base.id;
 		if (options.model?.trim()) profile.model = options.model.trim();
 		if (options.effort?.trim()) profile.effort = options.effort.trim();
 		if (options.role?.trim()) profile.appendSystemPrompt = options.role.trim();
@@ -140,7 +143,10 @@ export async function profileCreate(options: ProfileCreateOptions): Promise<void
 }
 
 /** `profile delete <profileId> --agent <id>` - remove a profile by id. */
-export async function profileDelete(profileId: string, options: ProfileDeleteOptions): Promise<void> {
+export async function profileDelete(
+	profileId: string,
+	options: ProfileDeleteOptions
+): Promise<void> {
 	try {
 		const session = resolveAgentSession(options.agent);
 		const before = listProfiles(session.projectRoot);
