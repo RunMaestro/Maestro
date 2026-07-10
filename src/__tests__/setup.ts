@@ -350,6 +350,7 @@ const mockMaestro = {
 		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		getKnownAuthDirs: vi.fn().mockResolvedValue({ claudeConfigDirs: [], codexHomes: [] }),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},

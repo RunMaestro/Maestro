@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 import { ipcMain } from 'electron';
 import {
 	registerAgentsHandlers,
@@ -186,6 +187,7 @@ describe('agents IPC handlers', () => {
 				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
+				'agents:getKnownAuthDirs',
 				'agents:getLimitResetAt',
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
@@ -197,6 +199,72 @@ describe('agents IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('agents:getKnownAuthDirs', () => {
+		it('returns canonical local auth paths from agent and session env vars', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return {
+					'claude-code': {
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+					},
+					codex: {
+						customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' },
+					},
+				};
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						customEnvVars: {
+							CLAUDE_CONFIG_DIR: '/Users/me/work/../.claude-session',
+						},
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						customEnvVars: { CODEX_HOME: '/Users/me/.codex-session' },
+					},
+					{
+						toolType: 'claude-code',
+						cwd: 'ssh://host/project',
+						sshRemoteId: 'remote-1',
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude' },
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: true },
+						customEnvVars: { CODEX_HOME: '/remote/.codex' },
+					},
+				]),
+			};
+			// The handler accepts electron-store's full Store shape, but reads only get().
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			expect(handler).toBeDefined();
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [
+					path.resolve('/Users/me/.claude-agent'),
+					path.resolve('/Users/me/.claude-session'),
+				],
+				codexHomes: [
+					path.resolve('/Users/me/.codex-agent'),
+					path.resolve('/Users/me/.codex-session'),
+				],
+			});
 		});
 	});
 
