@@ -6,10 +6,15 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { GroupChatMessage, GroupChatParticipant } from '../../../shared/group-chat-types';
 
+const { markdownRenderSpy } = vi.hoisted(() => ({ markdownRenderSpy: vi.fn() }));
+
 // MarkdownRenderer pulls in react-markdown; stub it to plain text so these
 // tests stay focused on the auto-scroll behaviour rather than markdown output.
 vi.mock('../../../renderer/components/MarkdownRenderer', () => ({
-	MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
+	MarkdownRenderer: ({ content }: { content: string }) => {
+		markdownRenderSpy(content);
+		return <div>{content}</div>;
+	},
 }));
 
 const participants: GroupChatParticipant[] = [
@@ -58,7 +63,42 @@ function renderChat(messages: GroupChatMessage[], chatId?: string) {
 
 describe('GroupChatMessages auto-scroll setting', () => {
 	beforeEach(() => {
+		markdownRenderSpy.mockClear();
 		useSettingsStore.setState({ groupChatAutoScroll: true });
+	});
+
+	it('skips rendering message content when stable props are rerendered', () => {
+		const messages = makeMessages(3);
+		const onToggleMarkdownEditMode = vi.fn();
+		const { rerender } = render(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={messages}
+				participants={participants}
+				state="idle"
+				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
+			/>
+		);
+		const initialRenderCount = markdownRenderSpy.mock.calls.length;
+
+		rerender(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={messages}
+				participants={participants}
+				state="idle"
+				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
+			/>
+		);
+
+		expect(markdownRenderSpy).toHaveBeenCalledTimes(initialRenderCount);
+	});
+
+	it('renders only a small virtual window for a large chat history', () => {
+		const messages = makeMessages(423);
+		const { container } = renderChat(messages, 'large-chat');
+
+		expect(container.querySelectorAll('[data-message-timestamp]').length).toBeLessThan(20);
 	});
 
 	it('scrolls to the bottom on new messages when auto-scroll is enabled', () => {

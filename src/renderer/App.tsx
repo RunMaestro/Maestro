@@ -1095,6 +1095,24 @@ function MaestroConsoleInner() {
 		handleCloseGroupChatInfo,
 	} = useGroupChatHandlers();
 
+	const handleToggleGroupChatMarkdownMode = useCallback(() => {
+		const { chatRawTextMode: currentMode, setChatRawTextMode: setCurrentMode } =
+			useSettingsStore.getState();
+		setCurrentMode(!currentMode);
+	}, []);
+
+	const handleGroupChatFlashNotification = useCallback((message: string) => {
+		setSuccessFlashNotification(message);
+		setTimeout(() => setSuccessFlashNotification(null), 2000);
+	}, []);
+
+	const handlePublishGroupChatMessageGist = useCallback((text: string, messageId?: string) => {
+		if (!text.trim()) return;
+		const filename = `group_chat_response_${Date.now()}.md`;
+		useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
+		setGistPublishModalOpen(true);
+	}, []);
+
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
 	const {
 		errorSession,
@@ -3053,23 +3071,15 @@ function MaestroConsoleInner() {
 								onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 								onReorderQueuedItems={handleReorderGroupChatQueueItems}
 								markdownEditMode={chatRawTextMode}
-								onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
+								onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
 								maxOutputLines={maxOutputLines}
 								enterToSendAI={enterToSendAI}
 								setEnterToSendAI={setEnterToSendAI}
-								showFlashNotification={(message: string) => {
-									setSuccessFlashNotification(message);
-									setTimeout(() => setSuccessFlashNotification(null), 2000);
-								}}
+								showFlashNotification={handleGroupChatFlashNotification}
 								participantColors={groupChatParticipantColors}
 								messagesRef={groupChatMessagesRef}
 								ghCliAvailable={ghCliAvailable}
-								onPublishMessageGist={(text: string, messageId?: string) => {
-									if (!text.trim()) return;
-									const filename = `group_chat_response_${Date.now()}.md`;
-									useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
-									setGistPublishModalOpen(true);
-								}}
+								onPublishMessageGist={handlePublishGroupChatMessageGist}
 							/>
 						</div>
 						<GroupChatRightPanel

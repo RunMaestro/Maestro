@@ -38,7 +38,7 @@ interface GroupChatPanelProps {
 	shortcuts: Record<string, Shortcut>;
 	sessions: Session[];
 	groups?: Group[];
-	onDraftChange?: (draft: string) => void;
+	onDraftChange?: (draft: string, groupChatId: string) => void;
 	onOpenPromptComposer?: () => void;
 	// Lifted state for sync with PromptComposer
 	stagedImages?: string[];
