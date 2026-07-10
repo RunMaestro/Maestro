@@ -17,7 +17,8 @@ import {
 	formatEnterToSendTooltip,
 	formatShortcutKeys,
 } from '../../../utils/shortcutFormatter';
-import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
+import { getPermissionModeLabel, getPermissionModeTooltip } from '../../../../shared/agentMetadata';
+import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
@@ -29,9 +30,10 @@ interface ToolbarControlsProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
-	isReadOnlyMode: boolean;
 	canAttachImages: boolean;
 	hasReadOnlyCapability: boolean;
+	/** Whether `standard` mode is functional for this agent (has a working relay). */
+	hasStandardCapability: boolean;
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -46,7 +48,6 @@ interface ToolbarControlsProps {
 	showFlashNotification?: (message: string) => void;
 	tabSaveToHistory: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	onToggleTabReadOnlyMode?: () => void;
 	tabShowThinking: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	supportsThinking: boolean;
@@ -68,9 +69,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 	session,
 	theme,
 	isTerminalMode,
-	isReadOnlyMode,
 	canAttachImages,
 	hasReadOnlyCapability,
+	hasStandardCapability,
 	enterToSend,
 	setEnterToSend,
 	setStagedImages,
@@ -82,7 +83,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 	showFlashNotification,
 	tabSaveToHistory,
 	onToggleTabSaveToHistory,
-	onToggleTabReadOnlyMode,
 	tabShowThinking,
 	onToggleTabShowThinking,
 	supportsThinking,
@@ -111,6 +111,15 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
 	// desktop users never see it.
 	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
+
+	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
+	const rawPermissionMode: 'full' | 'standard' | 'readonly' =
+		activeTab?.permissionMode ?? (activeTab?.readOnlyMode ? 'readonly' : 'full');
+	// Hide `standard` for agents without a working relay: if a stale tab is
+	// somehow in `standard`, display it as `full` so we never surface a
+	// non-functional mode.
+	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
+		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -269,23 +278,60 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<span>History</span>
 					</button>
 				)}
-				{isAiMode && onToggleTabReadOnlyMode && hasReadOnlyCapability && (
+				{isAiMode && hasReadOnlyCapability && (
 					<button
-						onClick={onToggleTabReadOnlyMode}
+						onClick={() => {
+							if (!activeTab) return;
+							// Cycle full -> standard -> readonly -> full. Agents without a
+							// working relay skip `standard` (full -> readonly -> full).
+							const nextMode: 'full' | 'standard' | 'readonly' =
+								currentPermissionMode === 'full'
+									? hasStandardCapability
+										? 'standard'
+										: 'readonly'
+									: currentPermissionMode === 'standard'
+										? 'readonly'
+										: 'full';
+							updateSessionWith(session.id, (s) => ({
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTab.id
+										? {
+												...t,
+												permissionMode: nextMode,
+												readOnlyMode: nextMode === 'readonly',
+											}
+										: t
+								),
+							}));
+						}}
 						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
+							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
 						}`}
 						style={{
-							backgroundColor: isReadOnlyMode ? `${theme.colors.warning}25` : 'transparent',
-							color: isReadOnlyMode ? theme.colors.warning : theme.colors.textDim,
-							border: isReadOnlyMode
-								? `1px solid ${theme.colors.warning}50`
-								: '1px solid transparent',
+							backgroundColor:
+								currentPermissionMode === 'readonly'
+									? `${theme.colors.warning}25`
+									: currentPermissionMode === 'full'
+										? `${theme.colors.accent}25`
+										: 'transparent',
+							color:
+								currentPermissionMode === 'readonly'
+									? theme.colors.warning
+									: currentPermissionMode === 'full'
+										? theme.colors.accent
+										: theme.colors.textDim,
+							border:
+								currentPermissionMode === 'readonly'
+									? `1px solid ${theme.colors.warning}50`
+									: currentPermissionMode === 'full'
+										? `1px solid ${theme.colors.accent}50`
+										: '1px solid transparent',
 						}}
-						title={getReadOnlyModeTooltip(session.toolType)}
+						title={getPermissionModeTooltip(currentPermissionMode, session.toolType)}
 					>
 						<Eye className="w-3 h-3" />
-						<span>{getReadOnlyModeLabel(session.toolType)}</span>
+						<span>{getPermissionModeLabel(currentPermissionMode, session.toolType)}</span>
 					</button>
 				)}
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (

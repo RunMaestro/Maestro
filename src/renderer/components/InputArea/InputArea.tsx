@@ -88,7 +88,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onStopAutoRun,
 		onOpenQueueBrowser,
 		tabReadOnlyMode = false,
-		onToggleTabReadOnlyMode,
 		tabSaveToHistory = false,
 		onToggleTabSaveToHistory,
 		onOpenPromptComposer,
@@ -165,7 +164,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	}, [isResumingSession, hasCapability]);
 
 	// PERF: Memoize mode-related derived state
-	const { isReadOnlyMode, showQueueingBorder } = useMemo(() => {
+	const { showQueueingBorder } = useMemo(() => {
 		// Check if we're in read-only mode (manual toggle only - Claude will be in plan mode)
 		// NOTE: Auto Run no longer forces read-only mode. Instead:
 		// - Yellow border shows during Auto Run to indicate queuing will happen for write messages
@@ -510,9 +509,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							session={session}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
-							isReadOnlyMode={isReadOnlyMode}
 							canAttachImages={canAttachImages}
 							hasReadOnlyCapability={hasCapability('supportsReadOnlyMode')}
+							hasStandardCapability={hasCapability('supportsStandardPermissionMode')}
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
@@ -524,7 +523,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							showFlashNotification={showFlashNotification}
 							tabSaveToHistory={tabSaveToHistory}
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-							onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
 							supportsThinking={supportsThinking}

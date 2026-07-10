@@ -11,12 +11,25 @@ import { mockTheme } from '../../helpers/mockTheme';
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
+const mockUpdateSessionWith = vi.fn();
+vi.mock('../../../renderer/stores/sessionStore', async (importActual) => {
+	// Preserve real exports (e.g. useSessionStore, which child components like
+	// InputTextarea subscribe to) and override only updateSessionWith so the
+	// permission-mode toggle assertions can observe it.
+	const actual = await importActual<typeof import('../../../renderer/stores/sessionStore')>();
+	return {
+		...actual,
+		updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+	};
+});
+
 // Mock useAgentCapabilities hook - return claude-code capabilities by default
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 	useAgentCapabilities: vi.fn(() => ({
 		capabilities: {
 			supportsResume: true,
 			supportsReadOnlyMode: true,
+			supportsStandardPermissionMode: true,
 			supportsJsonOutput: true,
 			supportsSessionId: true,
 			supportsImageInput: true,
@@ -40,6 +53,7 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 			const capabilities: Record<string, boolean> = {
 				supportsResume: true,
 				supportsReadOnlyMode: true,
+				supportsStandardPermissionMode: true,
 				supportsJsonOutput: true,
 				supportsSessionId: true,
 				supportsImageInput: true,
@@ -202,6 +216,7 @@ describe('InputArea', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		mockUpdateSessionWith.mockClear();
 	});
 
 	describe('Basic Rendering', () => {
@@ -342,9 +357,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle plan mode/);
+			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).toBeInTheDocument();
-			expect(toggle).toHaveTextContent('Plan-Mode');
+			expect(toggle).toHaveTextContent('Full Access');
 		});
 
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
@@ -561,18 +576,24 @@ describe('InputArea', () => {
 
 		it('keeps read-only toggle enabled when AutoRun is active', () => {
 			const onToggleTabReadOnlyMode = vi.fn();
+			const session = createMockSession({ inputMode: 'ai' });
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
+				session,
 				isAutoModeActive: true,
 				onToggleTabReadOnlyMode,
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
+			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).not.toBeDisabled();
 
 			fireEvent.click(toggle);
-			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
+			expect(mockUpdateSessionWith).toHaveBeenCalled();
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updatedSession = updater(session);
+			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
+			expect(updatedTab.permissionMode).toBe('standard');
+			expect(updatedTab.readOnlyMode).toBe(false);
 		});
 
 		it('shows the standard tooltip when AutoRun is active', () => {
@@ -584,7 +605,9 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
-				screen.getByTitle('Toggle plan mode (agent will plan but not modify files)')
+				screen.getByTitle(
+					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation.'
+				)
 			).toBeInTheDocument();
 		});
 
@@ -597,8 +620,8 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
-			expect(toggle).toHaveStyle({ color: mockTheme.colors.textDim });
+			const toggle = screen.getByTitle(/Full Access/);
+			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
 		});
 	});
 
@@ -1550,17 +1573,22 @@ describe('InputArea', () => {
 			expect(setEnterToSend).toHaveBeenCalledWith(false);
 		});
 
-		it('calls onToggleTabReadOnlyMode when clicking read-only toggle', () => {
-			const onToggleTabReadOnlyMode = vi.fn();
+		it('cycles permission mode when clicking the toggle', () => {
+			const session = createMockSession({ inputMode: 'ai' });
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				onToggleTabReadOnlyMode,
+				session,
+				onToggleTabReadOnlyMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Toggle plan mode/));
+			fireEvent.click(screen.getByTitle(/Full Access/));
 
-			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
+			expect(mockUpdateSessionWith).toHaveBeenCalled();
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updatedSession = updater(session);
+			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
+			expect(updatedTab.permissionMode).toBe('standard');
+			expect(updatedTab.readOnlyMode).toBe(false);
 		});
 
 		it('calls onToggleTabSaveToHistory when clicking history toggle', () => {
@@ -1791,13 +1819,37 @@ describe('InputArea', () => {
 	describe('Toggle Button Styling', () => {
 		it('applies active styling to read-only toggle when enabled', () => {
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
+				// ToolbarControls derives its mode from activeTab.permissionMode /
+				// activeTab.readOnlyMode directly, not from the disconnected
+				// tabReadOnlyMode prop, so the tab itself must be marked readonly.
+				session: createMockSession({
+					inputMode: 'ai',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [],
+							agentSessionId: null,
+							lastActivityAt: 0,
+							scrollTop: 0,
+							busyStartTime: null,
+							statusMessage: null,
+							contextUsage: null,
+							isStarred: false,
+							name: null,
+							readOnlyMode: true,
+							permissionMode: 'readonly',
+							draftInput: '',
+							saveToHistory: false,
+						},
+					] as any,
+					activeTabId: 'tab-1',
+				}),
 				tabReadOnlyMode: true,
 				onToggleTabReadOnlyMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle plan mode/);
+			const toggle = screen.getByTitle(/Plan-Mode|plan mode/i);
 			// Should have warning color and background
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.warning });
 		});

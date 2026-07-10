@@ -1373,6 +1373,40 @@ describe('agentStore', () => {
 			expect(spawnCall.readOnlyMode).toBe(true);
 		});
 
+		it('sends permissionMode "readonly" when queued item forces read-only despite tab permissionMode "full"', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						permissionMode: 'full',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'Read only query',
+				readOnlyMode: true,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			const spawnCall = mockSpawn.mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.permissionMode).toBe('readonly');
+		});
+
 		it('processes slash command and spawns agent', async () => {
 			const session = createMockSession({
 				id: 'session-1',

@@ -29,6 +29,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Claude Code standard-mode permission prompt - blocks until the user decides */
+	PERMISSION_PROMPT: 1008,
+
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 

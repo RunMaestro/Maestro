@@ -24,6 +24,11 @@ import { MaestroSettings } from './persistence';
 import { getDefaultShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
+import {
+	initPermissionRelay,
+	resolvePermissionResponse,
+	type PermissionDecision,
+} from '../../permission-relay';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -101,6 +106,18 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		getMainWindow,
 		safeSend,
 	} = deps;
+
+	// Wire the Claude Code permission relay: surface requests to the renderer
+	// and clean up per-spawn bindings when a process exits.
+	initPermissionRelay(getMainWindow, getProcessManager());
+
+	// Renderer -> main: the user's allow/deny decision for a relayed request.
+	ipcMain.handle(
+		'permission:respond',
+		(_event, requestId: string, decision: PermissionDecision) => {
+			return resolvePermissionResponse(requestId, decision);
+		}
+	);
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode

@@ -26,12 +26,13 @@
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:permission-relay-bridge",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
+		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
@@ -118,6 +119,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/permission-relay-bridge.js",
+					"to": "permission-relay-bridge.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -165,6 +170,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/permission-relay-bridge.js",
+					"to": "permission-relay-bridge.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -202,6 +211,10 @@
 				{
 					"from": "dist/cli/maestro-p.js",
 					"to": "maestro-p.js"
+				},
+				{
+					"from": "dist/cli/permission-relay-bridge.js",
+					"to": "permission-relay-bridge.js"
 				},
 				{
 					"from": "src/prompts",

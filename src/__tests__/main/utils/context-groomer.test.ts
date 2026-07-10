@@ -146,6 +146,7 @@ describe('groomContext', () => {
 			readOnlyMode: false,
 			modelId: undefined,
 			yoloMode: false,
+			permissionMode: 'standard',
 			agentSessionId: undefined,
 		});
 	});
