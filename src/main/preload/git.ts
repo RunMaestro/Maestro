@@ -57,7 +57,7 @@ export interface GitLogEntry {
 }
 
 /**
- * Git graph node — like GitLogEntry but with parent hashes for topology rendering.
+ * Git graph node - like GitLogEntry but with parent hashes for topology rendering.
  */
 export interface GitGraphNode {
 	hash: string;

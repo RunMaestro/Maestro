@@ -156,7 +156,7 @@ export const GitGraphView = memo(function GitGraphView({
 
 			commitToBranch.set(node.hash, branch);
 
-			// Attach tag refs (skip duplicate branch labels — gitgraph adds those automatically).
+			// Attach tag refs (skip duplicate branch labels - gitgraph adds those automatically).
 			for (const ref of node.refs) {
 				const cleaned = ref.replace(/^HEAD -> /, '').trim();
 				if (cleaned.startsWith('tag:')) {
@@ -171,7 +171,7 @@ export const GitGraphView = memo(function GitGraphView({
 	// `<Gitgraph>` reads `props.graph` once in its constructor, so swapping in a
 	// fresh GitgraphCore (e.g. when `selectedHash` changes) requires a remount.
 	// `key={selectedHash}` is StrictMode-safe here because the GitgraphCore itself
-	// is owned by `useMemo` above — both mounts in StrictMode's double-render share
+	// is owned by `useMemo` above - both mounts in StrictMode's double-render share
 	// the same fully-populated instance, so React only re-renders the SVG, never
 	// re-runs the imperative graph construction that breaks the children-callback API.
 	return (

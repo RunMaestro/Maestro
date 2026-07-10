@@ -177,7 +177,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 				setLoadingDiff(false);
 			}
 		},
-		[cwd]
+		[cwd, sshRemoteId]
 	);
 
 	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
