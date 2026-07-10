@@ -328,7 +328,8 @@ interface MaestroAPI {
 				};
 			}) => void
 		) => () => void;
-		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
+		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;

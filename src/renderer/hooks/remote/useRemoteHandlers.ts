@@ -371,7 +371,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					addLogToTab(
 						sessionId,
 						{
-							source: 'system',
+							source: 'error',
 							text: `Unknown command: ${commandText}`,
 						},
 						writeTabId

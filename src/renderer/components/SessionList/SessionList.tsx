@@ -767,6 +767,44 @@ function SessionListInner(props: SessionListProps) {
 		return map;
 	}, [sessionIdsKey, toggleBookmark]);
 
+	// `onStartRename` was the one row prop still built inline, so every row got a
+	// fresh callback identity on each SessionList render and SessionItem's memo
+	// bail-out never fired - undoing the maps above. Collapsing/expanding a
+	// sidebar folder or an agent group re-renders this component, so a toggle
+	// that changes nothing about the rows still re-rendered every visible agent
+	// (a dozen icons and ~11 store subscriptions each) (#1186). Rename keys are
+	// per-row strings (they encode the variant), so cache one callback per key;
+	// the cache resets when the session id-set changes.
+	const startRenamingSessionRef = useRef(startRenamingSession);
+	startRenamingSessionRef.current = startRenamingSession;
+
+	const getStartRenameHandler = useMemo(() => {
+		const cache = new Map<string, () => void>();
+		return (renameKey: string) => {
+			let handler = cache.get(renameKey);
+			if (!handler) {
+				handler = () => startRenamingSessionRef.current(renameKey);
+				cache.set(renameKey, handler);
+			}
+			return handler;
+		};
+	}, [sessionIdsKey]);
+
+	// Same story for the grouped rows' drop target: an inline
+	// `() => handleDropOnGroup(group.id)` per row per render. Keyed on the group
+	// id-set so a collapse/expand toggle (which only flips `collapsed`) reuses it.
+	const groupIdsKey = useMemo(() => groups.map((g) => g.id).join('|'), [groups]);
+
+	const dropOnGroupHandlers = useMemo(() => {
+		const map = new Map<string, () => void>();
+		if (groupIdsKey) {
+			groupIdsKey.split('|').forEach((id) => {
+				map.set(id, () => handleDropOnGroup(id));
+			});
+		}
+		return map;
+	}, [groupIdsKey, handleDropOnGroup]);
+
 	// Helper: compute navIndexMap key for a session based on render context
 	const getNavKey = (variant: string, session: Session, groupId?: string): string => {
 		if (variant === 'bookmark') return `bookmark:${session.id}`;
@@ -865,7 +903,7 @@ function SessionListInner(props: SessionListProps) {
 					onDrop={options.onDrop || handleDropOnUngrouped}
 					onContextMenu={contextMenuHandlers.get(session.id)!}
 					onFinishRename={finishRenameHandlers.get(session.id)!}
-					onStartRename={() => startRenamingSession(`${options.keyPrefix}-${session.id}`)}
+					onStartRename={getStartRenameHandler(`${options.keyPrefix}-${session.id}`)}
 					onToggleBookmark={toggleBookmarkHandlers.get(session.id)!}
 					onToggleWorktrees={onToggleWorktreeExpanded}
 				/>
@@ -924,7 +962,7 @@ function SessionListInner(props: SessionListProps) {
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
 										onFinishRename={finishRenameHandlers.get(child.id)!}
-										onStartRename={() => startRenamingSession(`worktree-${session.id}-${child.id}`)}
+										onStartRename={getStartRenameHandler(`worktree-${session.id}-${child.id}`)}
 										onToggleBookmark={toggleBookmarkHandlers.get(child.id)!}
 									/>
 								</div>
@@ -1542,7 +1580,7 @@ function SessionListInner(props: SessionListProps) {
 											renderSessionWithWorktrees(session, 'group', {
 												keyPrefix: `group-${group.id}`,
 												groupId: group.id,
-												onDrop: () => handleDropOnGroup(group.id),
+												onDrop: dropOnGroupHandlers.get(group.id),
 											})
 										)}
 									</div>

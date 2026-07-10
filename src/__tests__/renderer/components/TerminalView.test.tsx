@@ -482,6 +482,74 @@ describe('TerminalView — auto-close on shell exit', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Regression: a plain local scratch tab whose shell is KILLED (not exited) must
+// survive. node-pty reports a signalled death as exitCode 0 + a signal number,
+// so only the signal distinguishes it from the user typing `exit`. (#1184)
+// ---------------------------------------------------------------------------
+
+describe('TerminalView — killed shell keeps the tab (issue #1184)', () => {
+	/** Renders, delivers a process:exit through the real onExit subscription, then
+	 *  rerenders with the tab flipped to 'exited' as the store would. */
+	function exitPlainTabWith(code: number, signal?: number) {
+		let onExitCb: ((sessionId: string, code: number, signal?: number) => void) | undefined;
+		maestro().process.onExit = vi.fn((cb: typeof onExitCb) => {
+			onExitCb = cb;
+			return () => {};
+		});
+
+		const createdAt = Date.now() - 5000;
+		const tab = makeTab({ pid: 1234, state: 'busy', createdAt });
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />
+		);
+
+		// The PTY dies: main process broadcasts process:exit for this tab.
+		act(() => {
+			onExitCb?.('session-1-terminal-tab-1', code, signal);
+		});
+
+		// The store reacts by flipping the tab to 'exited'.
+		const exitedTab = makeTab({ pid: 1234, state: 'exited', exitCode: code, createdAt });
+		act(() => {
+			rerender(
+				<TerminalView {...defaultProps} session={makeSession([exitedTab])} isVisible={true} />
+			);
+		});
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	it('keeps a plain local tab when the shell is killed by a signal', () => {
+		// SIGKILL (9), e.g. the Linux OOM killer reaping a `bun run dev` shell.
+		exitPlainTabWith(0, 9);
+
+		expect(mockCloseTerminalTab).not.toHaveBeenCalled();
+		expect(mockWrite).toHaveBeenCalledWith(expect.stringContaining('process killed (signal 9)'));
+		vi.useRealTimers();
+	});
+
+	it('still closes a plain local tab when the user exits the shell cleanly', () => {
+		exitPlainTabWith(0, undefined);
+
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
+		vi.useRealTimers();
+	});
+
+	it('still closes a plain local tab when `exit` inherits a non-zero status', () => {
+		// `false; exit` exits with code 1 but is a deliberate user exit, not a kill.
+		exitPlainTabWith(1, undefined);
+
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
+		vi.useRealTimers();
+	});
+});
+
 describe('TerminalView — SSH terminal working directory (regression)', () => {
 	// Regression test suite: SSH terminals must cd to the correct remote directory.
 	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:

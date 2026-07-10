@@ -52,10 +52,17 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 		if (log.source === 'user') {
 			flushResponseGroup();
 			result.push(log);
-		} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
-			// Flush the response group, then keep tool/thinking and Agent Resilience
-			// outage markers as their own entries. The outage marker must not merge
-			// into a text group - it renders as a live status card.
+		} else if (
+			log.source === 'tool' ||
+			log.source === 'thinking' ||
+			log.source === 'error' ||
+			log.retryOutageId
+		) {
+			// Flush the response group, then keep tool/thinking/error entries and Agent
+			// Resilience outage markers as their own entries. The outage marker must not
+			// merge into a text group - it renders as a live status card. An error entry
+			// must not either, or it gets silently concatenated (no separator) into a
+			// later, unrelated AI response.
 			flushResponseGroup();
 			result.push(log);
 		} else if (log.metadata?.crossAgent) {

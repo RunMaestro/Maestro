@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useSessionCategories } from '../../../renderer/hooks/session/useSessionCategories';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, Group } from '../../../renderer/types';
@@ -838,6 +838,73 @@ describe('useSessionCategories', () => {
 			expect(result.current.getWorktreeChildren(parent.id).map((s) => s.name)).toEqual([
 				'Owner Worktree',
 			]);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Group collapse/expand must not re-categorize (#1186)
+	// -----------------------------------------------------------------------
+	describe('group collapse/expand', () => {
+		// Hoisted so `sortedSessions` / `activeBatchSessionIds` keep a stable
+		// identity across renders - both feed the categorization memo, so fresh
+		// literals would invalidate it no matter what `groupIds` does.
+		const batchIds: string[] = [];
+
+		it('keeps categorized collections reference-stable when a group is only collapsed', () => {
+			const group = makeGroup({ id: 'g1', collapsed: false });
+			const grouped = makeSession({ id: 's1', groupId: 'g1' });
+			const loose = makeSession({ id: 's2' });
+			const sorted = [grouped, loose];
+			resetStore(sorted, [group]);
+
+			const { result, rerender } = renderHook(() =>
+				useSessionCategories('', sorted, false, null, batchIds)
+			);
+
+			const before = {
+				grouped: result.current.sortedGroupSessionsById,
+				ungrouped: result.current.ungroupedSessions,
+				sortedFiltered: result.current.sortedFilteredSessions,
+				bookmarked: result.current.bookmarkedSessions,
+			};
+
+			// Collapsing rebuilds `groups` with a new array + new group object, but
+			// the set of group ids is untouched. Categorization must not re-run.
+			act(() => {
+				useSessionStore.setState({ groups: [{ ...group, collapsed: true }] } as any);
+			});
+			rerender();
+
+			expect(result.current.sortedGroupSessionsById).toBe(before.grouped);
+			expect(result.current.ungroupedSessions).toBe(before.ungrouped);
+			expect(result.current.sortedFilteredSessions).toBe(before.sortedFiltered);
+			expect(result.current.bookmarkedSessions).toBe(before.bookmarked);
+		});
+
+		it('re-categorizes when the set of group ids actually changes', () => {
+			const group = makeGroup({ id: 'g1', collapsed: false });
+			const grouped = makeSession({ id: 's1', groupId: 'g1' });
+			const orphan = makeSession({ id: 's2', groupId: 'g2' });
+			const sorted = [grouped, orphan];
+			resetStore(sorted, [group]);
+
+			const { result, rerender } = renderHook(() =>
+				useSessionCategories('', sorted, false, null, batchIds)
+			);
+
+			// 's2' points at a group that does not exist yet, so it lands in Ungrouped.
+			expect(result.current.ungroupedSessions.map((s) => s.id)).toEqual(['s2']);
+			const beforeGrouped = result.current.sortedGroupSessionsById;
+
+			act(() => {
+				useSessionStore.setState({ groups: [group, makeGroup({ id: 'g2' })] } as any);
+			});
+			rerender();
+
+			// New id in the signature → memo invalidates and 's2' moves into g2.
+			expect(result.current.sortedGroupSessionsById).not.toBe(beforeGrouped);
+			expect(result.current.ungroupedSessions).toEqual([]);
+			expect(result.current.sortedGroupSessionsById.get('g2')?.map((s) => s.id)).toEqual(['s2']);
 		});
 	});
 });
