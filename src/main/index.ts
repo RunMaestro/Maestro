@@ -675,6 +675,10 @@ function deliverCadenza(payload: Parameters<typeof deliverCadenzaToHud>[2]): boo
 // agent process is already spawned (with SSH if configured), so feeding its live
 // session inherits that transport - no new spawn, no separate SSH handling.
 ipcMain.on('cadenza-hud:decision', (_event, sessionId: string, message: string) => {
+	// Same Concerto gate as the other cadenza entry points: with the flag off no
+	// decision card can exist, so a decision arriving anyway must not inject a
+	// prompt into a live agent session.
+	if (store.get('encoreFeatures')?.concerto !== true) return;
 	if (!mainWindow || mainWindow.isDestroyed()) return;
 	if (!sessionId || !message) return;
 	// force=true (5th arg): a decision card is answered mid-turn, so the owning

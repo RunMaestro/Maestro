@@ -41,11 +41,16 @@ export function usePointerDrag() {
 			const cleanup = () => {
 				window.removeEventListener('pointermove', onMove);
 				window.removeEventListener('pointerup', cleanup);
+				window.removeEventListener('pointercancel', cleanup);
 				cleanupRef.current = null;
 			};
 			cleanupRef.current = cleanup;
 			window.addEventListener('pointermove', onMove);
 			window.addEventListener('pointerup', cleanup);
+			// pointercancel fires instead of pointerup when the system intercepts
+			// the gesture (touch scroll, window drag); without it the move listener
+			// would leak and keep dragging with stale origin coordinates.
+			window.addEventListener('pointercancel', cleanup);
 		},
 		[]
 	);

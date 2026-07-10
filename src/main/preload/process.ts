@@ -11,6 +11,8 @@
 
 import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
+import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -611,20 +613,8 @@ export function createProcessApi() {
 		 * the CLI/web interface. Cadenzas are small agent-opened panels that
 		 * display or track work.
 		 */
-		onRemoteCadenza: (
-			callback: (params: {
-				op: 'open' | 'update' | 'close';
-				id: string;
-				viewType?: 'tracker' | 'file' | 'markdown' | 'image' | 'code' | 'view' | 'decision';
-				title?: string;
-				body?: string;
-				path?: string;
-				options?: Array<{ label: string; value: string }>;
-				color?: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
-				sessionId?: string;
-			}) => void
-		): (() => void) => {
-			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+		onRemoteCadenza: (callback: (params: CadenzaPayload) => void): (() => void) => {
+			const handler = (_: unknown, params: CadenzaPayload) => callback(params);
 			ipcRenderer.on('remote:cadenza', handler);
 			return () => ipcRenderer.removeListener('remote:cadenza', handler);
 		},
@@ -646,19 +636,8 @@ export function createProcessApi() {
 		 * the CLI/web interface. The renderer applies them to the movement store and
 		 * opens the movement view.
 		 */
-		onRemoteMovement: (
-			callback: (params: {
-				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
-				id?: string;
-				x?: number;
-				y?: number;
-				width?: number;
-				height?: number;
-				title?: string;
-				body?: string;
-			}) => void
-		): (() => void) => {
-			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+		onRemoteMovement: (callback: (params: MovementPayload) => void): (() => void) => {
+			const handler = (_: unknown, params: MovementPayload) => callback(params);
 			ipcRenderer.on('remote:movement', handler);
 			return () => ipcRenderer.removeListener('remote:movement', handler);
 		},
@@ -675,7 +654,10 @@ export function createProcessApi() {
 		},
 
 		/** Reply to a `movement state` read with the current snapshot. */
-		sendMovementStateResponse: (responseChannel: string, snapshot: unknown): void => {
+		sendMovementStateResponse: (
+			responseChannel: string,
+			snapshot: MovementStateSnapshot | null
+		): void => {
 			ipcRenderer.send(responseChannel, snapshot);
 		},
 

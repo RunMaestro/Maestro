@@ -4502,7 +4502,17 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
+		// v === 'number'`, which would become invalid CSS geometry downstream.
+		const num = (v: unknown): number | undefined =>
+			typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+		const badGeometry = (['x', 'y', 'width', 'height'] as const).find(
+			(k) => message[k] !== undefined && num(message[k]) === undefined
+		);
+		if (badGeometry) {
+			sendResult(false, `Invalid ${badGeometry}: must be a finite number`);
+			return;
+		}
 		const payload: MovementPayload = {
 			op,
 			id: id || undefined,
@@ -4544,7 +4554,14 @@ export class WebSocketMessageHandler {
 		}
 		this.callbacks
 			.getMovementState()
-			.then((snapshot) => sendResult(snapshot))
+			// A null snapshot means the read did NOT happen (flag off, renderer gone,
+			// or timeout) - report failure so callers can retry instead of composing
+			// against a false empty 0x0 layout.
+			.then((snapshot) =>
+				snapshot
+					? sendResult(snapshot)
+					: sendResult(null, 'Movement state unavailable (Concerto off or renderer not responding)')
+			)
 			.catch((error) => sendResult(null, `Failed to read movement state: ${error.message}`));
 	}
 
@@ -4588,7 +4605,7 @@ export class WebSocketMessageHandler {
 			viewType = rawViewType as CadenzaViewType;
 		}
 		if (op === 'open' && !viewType) {
-			sendResult(false, "op 'open' requires a viewType (tracker | file)");
+			sendResult(false, `op 'open' requires a viewType (${CADENZA_VIEW_TYPES.join(' | ')})`);
 			return;
 		}
 

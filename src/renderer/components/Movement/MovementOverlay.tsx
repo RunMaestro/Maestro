@@ -128,6 +128,7 @@ const MovementPanel = memo(function MovementPanel({
 					background: `linear-gradient(135deg, transparent 50%, ${theme.colors.textDim}66 50%)`,
 				}}
 				title="Resize"
+				aria-label="Resize panel"
 			/>
 		</div>
 	);

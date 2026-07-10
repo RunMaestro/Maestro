@@ -201,13 +201,18 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 			console.error('Error: --type code requires --path, --body, or --body-file');
 			process.exit(1);
 		}
-		body = `\`\`\`${lang ?? ''}\n${code}\n\`\`\``;
+		// Fence longer than any backtick run inside the code, so displaying a file
+		// that itself contains ``` cannot close the fence early.
+		const longestRun = code.match(/`+/g)?.reduce((m, r) => Math.max(m, r.length), 0) ?? 0;
+		const fence = '`'.repeat(Math.max(3, longestRun + 1));
+		body = `${fence}${lang ?? ''}\n${code}\n${fence}`;
 	}
 
 	const sessionId = resolveOptionalAgent(options.agent);
-	if (viewType === 'file' && !sessionId) {
+	if (viewType === 'file' && !sessionId && !options.json) {
 		// A file cadenza without an agent still displays, but can't expand into a
-		// tab. Warn rather than fail so trackers-of-files stay easy to open.
+		// tab. Warn rather than fail so trackers-of-files stay easy to open. Kept
+		// off stderr in --json mode so scripted callers see clean streams.
 		console.error('Note: --agent recommended for --type file so the panel can expand into a tab');
 	}
 

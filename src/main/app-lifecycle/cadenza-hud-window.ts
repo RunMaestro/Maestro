@@ -319,6 +319,9 @@ export function ensureCadenzaHudWindow(
 
 	// The HUD only ever shows its own bundle: deny popups and navigation away.
 	win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+	win.webContents.on('will-navigate', (e) => {
+		if (e.url !== url) e.preventDefault();
+	});
 
 	logger.info('Cadenza HUD window created', 'CadenzaHud', {
 		display: `${width}x${height}`,

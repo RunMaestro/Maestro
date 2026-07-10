@@ -449,6 +449,7 @@ const OneBlock = memo(function OneBlock({ block, theme }: { block: Block; theme:
 			return <StatCardGrid theme={theme} cards={cards} minColumnWidth={block.minColumnWidth} />;
 		}
 		case 'section':
+			if (!block.title && !block.text) return null;
 			return (
 				<SectionCard theme={theme} title={toText(block.title)}>
 					<Markdown content={toText(block.text)} theme={theme} preset="chat" />

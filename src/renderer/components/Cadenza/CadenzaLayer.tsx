@@ -7,7 +7,7 @@
  *
  * Each card is absolutely positioned (cascades on open, drag the header to
  * move), shows the owning agent for fleet attribution, and can collapse to its
- * title bar. View types: tracker | file | markdown | image | code | view.
+ * title bar. View types: tracker | file | markdown | image | code | view | decision.
  * Color mapping mirrors CenterFlash so cadenzas read consistently per theme.
  */
 
@@ -136,13 +136,24 @@ const CadenzaCard = memo(function CadenzaCard({
 	const isFlashed = useCadenzaStore((s) => s.flashedId === view.id);
 	const startDrag = usePointerDrag();
 
-	/** Drag the whole card by its header (ignore drags starting on a button). */
+	/** Drag the whole card by its header (ignore drags starting on a button).
+	 *  Clamped on both ends so the header (the only handle + close button) can
+	 *  never be dragged out of reach past any viewport edge. */
 	const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) => {
 		const originX = view.x ?? 0;
 		const originY = view.y ?? 0;
+		const cardWidth = isContent ? CARD_WIDTH_CONTENT : CARD_WIDTH_COMPACT;
 		startDrag(
 			e,
-			(dx, dy) => moveCadenza(view.id, Math.max(0, originX + dx), Math.max(0, originY + dy)),
+			(dx, dy) => {
+				const maxX = Math.max(0, window.innerWidth - cardWidth);
+				const maxY = Math.max(0, window.innerHeight - 40);
+				moveCadenza(
+					view.id,
+					Math.min(Math.max(0, originX + dx), maxX),
+					Math.min(Math.max(0, originY + dy), maxY)
+				);
+			},
 			{ ignoreButtons: true }
 		);
 	};
