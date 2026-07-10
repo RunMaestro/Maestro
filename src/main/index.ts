@@ -1603,6 +1603,10 @@ app
 		// already refused anything but wss:// and any untrusted plugin before here.
 		const PLUGIN_SOCKET_MAX_FRAME_BYTES = 64 * 1024;
 		const pluginSockets = new Map<string, Map<string, WebSocket>>();
+		// Set by the handler (via registerNetSocketRelease). Lets a self-closing
+		// socket (remote close / error) free the handler's per-plugin quota slot, so
+		// a normal server-initiated close does not leak a stale count toward the cap.
+		let pluginNetSocketRelease: ((pluginId: string, socketId: string) => void) | undefined;
 		// v1: headers are dropped entirely. The connect URL and the broker host-scope
 		// grant are the only client-controlled inputs; a plugin cannot smuggle a
 		// forged Host/Origin/Authorization header. If a future gateway needs a bearer
@@ -1668,6 +1672,9 @@ app
 			ws.on('close', (code: number, reason: Buffer) => {
 				push({ type: 'close', code, reason: reason.toString('utf8') });
 				dropPluginSocket(pluginId, socketId);
+				// Free the handler's quota slot for this self-closed socket. (ws emits
+				// 'close' after 'error' too, so this covers fatal errors as well.)
+				pluginNetSocketRelease?.(pluginId, socketId);
 			});
 			ws.on('error', (err: Error) => {
 				// Message string only: never leak the Error object / stack to a plugin.
@@ -2287,6 +2294,9 @@ app
 				netConnect: pluginNetConnect,
 				netSend: pluginNetSend,
 				netClose: pluginNetClose,
+				registerNetSocketRelease: (release) => {
+					pluginNetSocketRelease = release;
+				},
 			}),
 			onLog: (pluginId, level, message) => {
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');

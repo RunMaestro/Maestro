@@ -297,7 +297,7 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 
 `agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 
-`transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch` or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
+`transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch`, `net:connect`, or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
 The `ui:*` capabilities gate what the host accepts and renders, not a brokered SDK call: `ui:contribute` admits your declarative `uiItems` into host surfaces, `ui:panel` admits your sandboxed `panels`, and `ui:render-unsafe` is the high-trust escape hatch for full custom UI. An enabled plugin WITHOUT the matching grant contributes none of that surface.
 

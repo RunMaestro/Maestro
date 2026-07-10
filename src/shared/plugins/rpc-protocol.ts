@@ -82,6 +82,22 @@ export function isHostMethod(value: unknown): value is HostMethod {
 	return typeof value === 'string' && (HOST_METHODS as readonly string[]).includes(value);
 }
 
+/**
+ * Methods that reference an already-open host resource by an opaque id (a
+ * socketId), not by a URL/path the broker can inspect. `extractTarget` returns
+ * undefined for them, so the broker CANNOT do its usual scope match - a scoped
+ * grant would be wrongly denied. For these the broker confirms only that the
+ * capability is held at all; the host handler then re-authorizes the resource's
+ * REAL origin (the stored socket URL) against the live grant on every call, so
+ * the scope is still enforced (and a mid-stream revoke still denies). Keeping
+ * this list here, next to the method table, keeps the broker free of per-method
+ * special-casing.
+ */
+export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>([
+	'net.send',
+	'net.close',
+]);
+
 /** A request from the sandbox to the host. */
 export interface HostRequest {
 	/** Monotonic per-sandbox correlation id. */

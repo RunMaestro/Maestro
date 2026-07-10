@@ -268,6 +268,12 @@ export interface HostHandlerDeps {
 		code?: number,
 		reason?: string
 	) => Promise<{ ok: true }>;
+	/** Optional `net:connect` back-channel: the SINK calls the registered release
+	 * when a socket closes on its own (remote close / error) so the HANDLER can
+	 * drop its `netSockets` entry and free the per-plugin quota slot. Without it a
+	 * server-initiated close would leak a stale count and the plugin could hit the
+	 * socket cap after four normal reconnects. Mirrors `registerResourceCleanup`. */
+	registerNetSocketRelease?: (release: (pluginId: string, socketId: string) => void) => void;
 }
 
 /** What the spawn sink actually executes: everything except `args` is
@@ -1213,7 +1219,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
 			// Unattended gate: direct plugin dispatch is never user-present, so it
 			// requires the separate unattended consent on top of the allowlist grant.
-			if (deps.dispatchUnattendedAllowed && !deps.dispatchUnattendedAllowed(pluginId, agentId)) {
+			// Fail CLOSED: an absent predicate denies (mirrors the net.connect trust
+			// gate) so a missing wiring can never silently drop the gate - dispatch is
+			// arbitrary-code-execution and must never revert to pre-gate behavior.
+			if (!deps.dispatchUnattendedAllowed || !deps.dispatchUnattendedAllowed(pluginId, agentId)) {
 				throw new Error(
 					'agents.dispatch requires the separate unattended consent (plugin dispatch is never user-present)'
 				);
@@ -1297,6 +1306,26 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			return entry;
 		};
+		const countOpenSockets = (pluginId: string): number => {
+			let open = 0;
+			for (const entry of netSockets.values()) {
+				if (entry.pluginId === pluginId) open += 1;
+			}
+			return open;
+		};
+		// In-flight net.connect reservations per plugin. Plugin host calls run
+		// concurrently (capped only by MAX_IN_FLIGHT), so counting live sockets alone
+		// is a TOCTOU race: several connects can pass the cap check before any reaches
+		// netSockets.set. Reserving a slot synchronously - before the first await -
+		// and releasing it in a finally closes that window.
+		const pendingConnects = new Map<string, number>();
+		// Let the sink free a quota slot when a socket closes on its own (remote
+		// close / error), so a normal server-initiated close does not leak a stale
+		// count. Explicit net.close and plugin-stop cleanup prune netSockets already.
+		deps.registerNetSocketRelease?.((pluginId, socketId) => {
+			const entry = netSockets.get(socketId);
+			if (entry && entry.pluginId === pluginId) netSockets.delete(socketId);
+		});
 
 		handlers['net.connect'] = async (pluginId, params) => {
 			const p = asObject(params);
@@ -1318,29 +1347,36 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (deps.isPluginTrusted?.(pluginId) !== true) {
 				throw new Error('net.connect requires a trusted signed plugin');
 			}
-			// Per-plugin socket cap.
-			let open = 0;
-			for (const entry of netSockets.values()) {
-				if (entry.pluginId === pluginId) open += 1;
-			}
-			if (open >= MAX_SOCKETS_PER_PLUGIN) {
+			// Per-plugin socket cap, counting live sockets AND in-flight reservations
+			// so concurrent connects cannot slip past between awaits. Reserve
+			// synchronously here (before any await); release in the finally below.
+			const inUse = countOpenSockets(pluginId) + (pendingConnects.get(pluginId) ?? 0);
+			if (inUse >= MAX_SOCKETS_PER_PLUGIN) {
 				throw new Error(`net.connect: socket limit reached (max ${MAX_SOCKETS_PER_PLUGIN})`);
 			}
-			// SSRF / DNS-rebind: run the existing egress classifier on the
-			// https-equivalent URL so loopback / RFC1918 / link-local / metadata are
-			// blocked identically to net.fetch. The actual connect is pinned to
-			// egressGuard.lookup by the sink.
-			const httpEquivalent = 'https:' + p.url.slice('wss:'.length);
-			await deps.egressGuard.assertUrlAllowed(httpEquivalent);
-			const { socketId } = await underGuard(
-				deps.actionGuard,
-				pluginId,
-				'net:connect',
-				parsed.hostname,
-				() => netConnect(pluginId, p.url as string, { protocols: p.protocols, headers: p.headers })
-			);
-			netSockets.set(socketId, { pluginId, url: p.url });
-			return { socketId };
+			pendingConnects.set(pluginId, (pendingConnects.get(pluginId) ?? 0) + 1);
+			try {
+				// SSRF / DNS-rebind: run the existing egress classifier on the
+				// https-equivalent URL so loopback / RFC1918 / link-local / metadata are
+				// blocked identically to net.fetch. The actual connect is pinned to
+				// egressGuard.lookup by the sink.
+				const httpEquivalent = 'https:' + p.url.slice('wss:'.length);
+				await deps.egressGuard.assertUrlAllowed(httpEquivalent);
+				const { socketId } = await underGuard(
+					deps.actionGuard,
+					pluginId,
+					'net:connect',
+					parsed.hostname,
+					() =>
+						netConnect(pluginId, p.url as string, { protocols: p.protocols, headers: p.headers })
+				);
+				netSockets.set(socketId, { pluginId, url: p.url });
+				return { socketId };
+			} finally {
+				const n = pendingConnects.get(pluginId) ?? 1;
+				if (n <= 1) pendingConnects.delete(pluginId);
+				else pendingConnects.set(pluginId, n - 1);
+			}
 		};
 
 		handlers['net.send'] = async (pluginId, params) => {
@@ -1414,11 +1450,12 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		// fs.watch and wake-lock discipline above.
 		for (const [socketId, entry] of netSockets) {
 			if (entry.pluginId !== pluginId) continue;
-			try {
-				void deps.netClose?.(pluginId, socketId);
-			} catch {
+			// `netClose` is async: a synchronous try/catch would miss a rejected
+			// promise (surfacing as an unhandled rejection). Swallow it on the
+			// promise itself so best-effort cleanup never crashes the process.
+			void deps.netClose?.(pluginId, socketId)?.catch(() => {
 				// best-effort: the socket may already be closing or the sink absent
-			}
+			});
 			netSockets.delete(socketId);
 		}
 	};

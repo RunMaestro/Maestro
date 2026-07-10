@@ -502,6 +502,23 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		expect(events).toEqual([]);
 	});
 
+	it('fails CLOSED: denies dispatch when dispatchUnattendedAllowed is not wired at all', async () => {
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				isPluginTrusted: () => true,
+				dispatch,
+				// dispatchUnattendedAllowed intentionally omitted: the gate must deny,
+				// never silently revert to pre-gate (no-unattended-check) behavior.
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/unattended consent/);
+		expect(dispatch).not.toHaveBeenCalled();
+	});
+
 	it('denies dispatch to an agent the allowlist grant does not name (exact membership, no wildcard)', async () => {
 		const dispatch = vi.fn(async () => 'dispatched');
 		const h = buildHostCallHandlers(
@@ -561,6 +578,8 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
 				isPluginTrusted: () => false,
 				dispatch,
+				// Past the unattended gate so this test exercises the TRUST gate.
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -670,6 +689,8 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				dispatch,
 				spawn,
 				resolveSpawnBinary,
+				// Past the unattended gate so this test exercises the RISK tripwire.
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -1228,6 +1249,62 @@ describe('net:connect (persistent socket) handlers', () => {
 		expect(netConnect).toHaveBeenCalledTimes(4);
 		// A DIFFERENT plugin is unaffected by p's count.
 		await expect(h['net.connect']!('q', { url: 'wss://gateway.example' })).resolves.toHaveProperty(
+			'socketId'
+		);
+	});
+
+	it('enforces the cap under CONCURRENT connects (synchronous reservation, no TOCTOU slip)', async () => {
+		// A slow sink keeps every connect in-flight simultaneously, so the cap must
+		// hold on the synchronous reservation, not on the count of settled sockets.
+		let n = 0;
+		const netConnect = vi.fn(
+			async () =>
+				new Promise<{ socketId: string }>((resolve) =>
+					setTimeout(() => resolve({ socketId: `sock_${++n}` }), 5)
+				)
+		);
+		// Permissive high-risk concurrency so the ActionGuard's own cap (default 2)
+		// does not mask what we are testing: the socket-count reservation itself.
+		const actionGuard = new ActionGuard({
+			limits: { high: { windowMs: 10_000, maxPerWindow: 100, maxConcurrent: 16 } },
+		});
+		const h = buildHostCallHandlers(makeDeps({ netConnect, actionGuard }));
+		const results = await Promise.allSettled(
+			Array.from({ length: 8 }, () => h['net.connect']!('p', { url: 'wss://gateway.example' }))
+		);
+		const ok = results.filter((r) => r.status === 'fulfilled');
+		const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+		expect(ok).toHaveLength(4);
+		expect(rejected).toHaveLength(4);
+		expect(rejected.every((r) => /socket limit reached/.test(String(r.reason)))).toBe(true);
+		// The sink is never asked to open more than the cap allows.
+		expect(netConnect).toHaveBeenCalledTimes(4);
+	});
+
+	it('frees a quota slot when a socket self-closes (release callback), so reconnect is not blocked', async () => {
+		let release: ((pluginId: string, socketId: string) => void) | undefined;
+		const { deps } = makeNetDeps({
+			registerNetSocketRelease: (fn) => {
+				release = fn;
+			},
+		});
+		const h = buildHostCallHandlers(deps);
+		const ids: string[] = [];
+		for (let i = 0; i < 4; i++) {
+			const { socketId } = (await h['net.connect']!('p', {
+				url: 'wss://gateway.example',
+			})) as { socketId: string };
+			ids.push(socketId);
+		}
+		// At the cap: the next connect is refused.
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).rejects.toThrow(
+			/socket limit reached/
+		);
+		// The remote closes one socket -> the sink releases the handler's slot.
+		expect(release).toBeDefined();
+		release!('p', ids[0]!);
+		// Reconnect now succeeds (stale entry no longer counts toward the cap).
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).resolves.toHaveProperty(
 			'socketId'
 		);
 	});
