@@ -174,7 +174,14 @@ export interface Group {
 	id: string;
 	name: string;
 	emoji: string;
+	kind?: 'user' | 'worktree';
+	icon?: string;
+	color?: string;
 	collapsed: boolean;
+}
+
+export function isWorktreeGroup(group: Group): boolean {
+	return group.kind === 'worktree' || group.emoji === '🌳';
 }
 
 /**

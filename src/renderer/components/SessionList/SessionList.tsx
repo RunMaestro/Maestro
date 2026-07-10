@@ -25,6 +25,8 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import type { Session, Group, Theme } from '../../types';
+import { isWorktreeGroup } from '../../../shared/types';
+import { GROUP_ICON_OPTIONS } from '../ui/groupAppearanceOptions';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
@@ -1448,6 +1450,9 @@ function SessionListInner(props: SessionListProps) {
 						// Hide empty groups when filtering by unread agents
 						if (showUnreadAgentsOnly && groupSessions.length === 0) return null;
 						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
+						const GroupIcon = group.icon
+							? GROUP_ICON_OPTIONS.find((option) => option.id === group.icon)?.Icon
+							: undefined;
 						return (
 							<div
 								key={group.id}
@@ -1501,7 +1506,14 @@ function SessionListInner(props: SessionListProps) {
 										) : (
 											<ChevronDown className="w-3 h-3" />
 										)}
-										<span className="text-sm">{group.emoji}</span>
+										{GroupIcon ? (
+											<GroupIcon
+												className="w-4 h-4"
+												style={{ color: group.color || theme.colors.textDim }}
+											/>
+										) : (
+											<span className="text-sm">{group.emoji}</span>
+										)}
 										{editingGroupId === group.id ? (
 											<input
 												autoFocus
@@ -1524,7 +1536,10 @@ function SessionListInner(props: SessionListProps) {
 												}}
 											/>
 										) : (
-											<span onDoubleClick={() => startRenamingGroup(group.id)}>
+											<span
+												onDoubleClick={() => startRenamingGroup(group.id)}
+												style={group.color ? { color: group.color } : undefined}
+											>
 												{group.name}
 												{showLeftPanelGroupMemberCount && groupCollapsedPills.length > 0 && (
 													<span className="ml-1 opacity-60">({groupCollapsedPills.length})</span>
@@ -1556,7 +1571,7 @@ function SessionListInner(props: SessionListProps) {
 										</button>
 									)}
 									{/* Delete button for worktree groups with agents */}
-									{group.emoji === '🌳' && groupSessions.length > 0 && onDeleteWorktreeGroup && (
+									{isWorktreeGroup(group) && groupSessions.length > 0 && onDeleteWorktreeGroup && (
 										<button
 											onClick={(e) => {
 												e.stopPropagation();
@@ -1937,6 +1952,8 @@ function SessionListInner(props: SessionListProps) {
 						modalActions.setRenameGroupId(groupContextMenuGroup.id);
 						modalActions.setRenameGroupValue(groupContextMenuGroup.name);
 						modalActions.setRenameGroupEmoji(groupContextMenuGroup.emoji);
+						modalActions.setRenameGroupIcon(groupContextMenuGroup.icon);
+						modalActions.setRenameGroupColor(groupContextMenuGroup.color);
 						modalActions.setRenameGroupModalOpen(true);
 					}}
 					onNewAgent={() => {
@@ -1951,7 +1968,7 @@ function SessionListInner(props: SessionListProps) {
 					}}
 					onDelete={
 						// Worktree groups always cascade-delete (handler removes agents).
-						groupContextMenuGroup.emoji === '🌳' && onDeleteWorktreeGroup
+						isWorktreeGroup(groupContextMenuGroup) && onDeleteWorktreeGroup
 							? () => onDeleteWorktreeGroup(groupContextMenuGroup.id)
 							: groupContextMenuMemberCount === 0
 								? () =>
@@ -1975,7 +1992,7 @@ function SessionListInner(props: SessionListProps) {
 										)
 					}
 					deleteLabel={
-						groupContextMenuGroup.emoji === '🌳' ? 'Remove Group and Agents' : 'Delete Group'
+						isWorktreeGroup(groupContextMenuGroup) ? 'Remove Group and Agents' : 'Delete Group'
 					}
 					onDismiss={() => setGroupContextMenu(null)}
 				/>

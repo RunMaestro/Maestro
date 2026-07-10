@@ -298,6 +298,10 @@ function MaestroConsoleInner() {
 		setRenameGroupValue,
 		renameGroupEmoji,
 		setRenameGroupEmoji,
+		renameGroupIcon,
+		setRenameGroupIcon,
+		renameGroupColor,
+		setRenameGroupColor,
 		// Agent Sessions Browser
 		agentSessionsOpen,
 		setAgentSessionsOpen,
@@ -3179,6 +3183,10 @@ function MaestroConsoleInner() {
 					setRenameGroupValue={setRenameGroupValue}
 					renameGroupEmoji={renameGroupEmoji}
 					setRenameGroupEmoji={setRenameGroupEmoji}
+					renameGroupIcon={renameGroupIcon}
+					setRenameGroupIcon={setRenameGroupIcon}
+					renameGroupColor={renameGroupColor}
+					setRenameGroupColor={setRenameGroupColor}
 					onCloseRenameGroupModal={handleCloseRenameGroupModal}
 					// AppWorktreeModals props
 					onCloseWorktreeConfigModal={handleCloseWorktreeConfigModal}
@@ -3205,6 +3213,8 @@ function MaestroConsoleInner() {
 					setRenameGroupId={setRenameGroupId}
 					setRenameGroupValueForQuickActions={setRenameGroupValue}
 					setRenameGroupEmojiForQuickActions={setRenameGroupEmoji}
+					setRenameGroupIconForQuickActions={setRenameGroupIcon}
+					setRenameGroupColorForQuickActions={setRenameGroupColor}
 					setRenameGroupModalOpenForQuickActions={setRenameGroupModalOpen}
 					setCreateGroupModalOpenForQuickActions={setCreateGroupModalOpen}
 					setLeftSidebarOpen={setLeftSidebarOpen}

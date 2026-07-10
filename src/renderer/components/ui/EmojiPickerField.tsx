@@ -28,6 +28,7 @@ import { X } from 'lucide-react';
 import data from '@emoji-mart/data';
 import Picker from '@emoji-mart/react';
 import type { Theme } from '../../types';
+import { GROUP_ICON_OPTIONS, GROUP_LABEL_COLORS } from './groupAppearanceOptions';
 
 export interface EmojiPickerFieldProps {
 	/** Theme object for styling */
@@ -50,6 +51,17 @@ export interface EmojiPickerFieldProps {
 	disabled?: boolean;
 	/** Data-testid for testing */
 	'data-testid'?: string;
+}
+
+export interface GroupAppearancePickerProps {
+	theme: Theme;
+	emoji: string;
+	icon?: string;
+	color?: string;
+	onEmojiChange: (emoji: string) => void;
+	onIconChange: (icon: string | undefined) => void;
+	onColorChange: (color: string | undefined) => void;
+	restoreFocusRef?: React.RefObject<HTMLElement>;
 }
 
 export function EmojiPickerField({
@@ -197,6 +209,104 @@ export function EmojiPickerField({
 					</div>
 				</div>
 			)}
+		</div>
+	);
+}
+
+export function GroupAppearancePicker({
+	theme,
+	emoji,
+	icon,
+	color,
+	onEmojiChange,
+	onIconChange,
+	onColorChange,
+	restoreFocusRef,
+}: GroupAppearancePickerProps) {
+	return (
+		<div className="space-y-4">
+			<div className="flex gap-4 items-start">
+				<EmojiPickerField
+					theme={theme}
+					value={emoji || '🙂'}
+					onChange={(nextEmoji) => {
+						onEmojiChange(nextEmoji);
+						onIconChange(undefined);
+					}}
+					label="Emoji"
+					restoreFocusRef={restoreFocusRef}
+				/>
+				<div className="flex-1">
+					<label
+						className="block text-xs font-bold opacity-70 uppercase mb-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						Standard icon
+					</label>
+					<div className="grid grid-cols-8 gap-1">
+						{GROUP_ICON_OPTIONS.map((option) => {
+							const Icon = option.Icon;
+							const selected = icon === option.id;
+
+							return (
+								<button
+									key={option.id}
+									type="button"
+									className="p-1.5 rounded border hover:bg-white/5 transition-colors"
+									style={{
+										borderColor: selected ? theme.colors.accent : theme.colors.border,
+										backgroundColor: selected ? `${theme.colors.accent}1A` : 'transparent',
+										color: selected ? color || theme.colors.accent : theme.colors.textDim,
+									}}
+									onClick={() => {
+										onIconChange(option.id);
+										onEmojiChange('');
+									}}
+									aria-label={`Use ${option.label} icon`}
+									aria-pressed={selected}
+									title={option.label}
+								>
+									{Icon && <Icon className="w-4 h-4" />}
+								</button>
+							);
+						})}
+					</div>
+				</div>
+			</div>
+			<div>
+				<label
+					className="block text-xs font-bold opacity-70 uppercase mb-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					Label color
+				</label>
+				<div className="flex items-center gap-2">
+					<button
+						type="button"
+						className="w-5 h-5 rounded border hover:bg-white/5 transition-colors"
+						style={{ borderColor: color ? theme.colors.border : theme.colors.accent }}
+						onClick={() => onColorChange(undefined)}
+						aria-label="Clear label color"
+						aria-pressed={!color}
+						title="No color"
+					/>
+					{GROUP_LABEL_COLORS.map((option) => (
+						<button
+							key={option.value}
+							type="button"
+							className="w-5 h-5 rounded-full border-2 transition-colors"
+							style={{
+								backgroundColor: option.value,
+								borderColor: color === option.value ? theme.colors.textMain : 'transparent',
+							}}
+							onClick={() => onColorChange(option.value)}
+							aria-label={`Use ${option.label} label color`}
+							aria-pressed={color === option.value}
+							title={option.label}
+						/>
+					))}
+				</div>
+			</div>
 		</div>
 	);
 }

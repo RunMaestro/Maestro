@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import type { Theme, Group } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal, ModalFooter, EmojiPickerField, FormInput } from './ui';
+import { Modal, ModalFooter, FormInput, GroupAppearancePicker } from './ui';
 
 interface RenameGroupModalProps {
 	theme: Theme;
@@ -10,6 +10,10 @@ interface RenameGroupModalProps {
 	setGroupName: (name: string) => void;
 	groupEmoji: string;
 	setGroupEmoji: (emoji: string) => void;
+	groupIcon?: string;
+	setGroupIcon: (icon: string | undefined) => void;
+	groupColor?: string;
+	setGroupColor: (color: string | undefined) => void;
 	onClose: () => void;
 	groups: Group[];
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
@@ -23,6 +27,10 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 		setGroupName,
 		groupEmoji,
 		setGroupEmoji,
+		groupIcon,
+		setGroupIcon,
+		groupColor,
+		setGroupColor,
 		onClose,
 		groups: _groups,
 		setGroups,
@@ -34,7 +42,15 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 		if (groupName.trim() && groupId) {
 			setGroups((prev) =>
 				prev.map((g) =>
-					g.id === groupId ? { ...g, name: groupName.trim().toUpperCase(), emoji: groupEmoji } : g
+					g.id === groupId
+						? {
+								...g,
+								name: groupName.trim().toUpperCase(),
+								emoji: groupEmoji,
+								icon: groupIcon,
+								color: groupColor,
+							}
+						: g
 				)
 			);
 			onClose();
@@ -58,29 +74,28 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 				/>
 			}
 		>
-			<div className="flex gap-4 items-end">
-				{/* Emoji Selector - Left Side */}
-				<EmojiPickerField
+			<div className="space-y-4">
+				<GroupAppearancePicker
 					theme={theme}
-					value={groupEmoji}
-					onChange={setGroupEmoji}
+					emoji={groupEmoji}
+					icon={groupIcon}
+					color={groupColor}
+					onEmojiChange={setGroupEmoji}
+					onIconChange={setGroupIcon}
+					onColorChange={setGroupColor}
 					restoreFocusRef={inputRef}
 				/>
-
-				{/* Group Name Input - Right Side */}
-				<div className="flex-1">
-					<FormInput
-						ref={inputRef}
-						theme={theme}
-						label="Group Name"
-						value={groupName}
-						onChange={setGroupName}
-						onSubmit={handleRename}
-						placeholder="Enter group name..."
-						heightClass="h-[52px]"
-						autoFocus
-					/>
-				</div>
+				<FormInput
+					ref={inputRef}
+					theme={theme}
+					label="Group Name"
+					value={groupName}
+					onChange={setGroupName}
+					onSubmit={handleRename}
+					placeholder="Enter group name..."
+					heightClass="h-[52px]"
+					autoFocus
+				/>
 			</div>
 		</Modal>
 	);

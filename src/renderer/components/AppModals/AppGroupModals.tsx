@@ -25,6 +25,10 @@ export interface AppGroupModalsProps {
 	setRenameGroupValue: (value: string) => void;
 	renameGroupEmoji: string;
 	setRenameGroupEmoji: (emoji: string) => void;
+	renameGroupIcon?: string;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	renameGroupColor?: string;
+	setRenameGroupColor: (color: string | undefined) => void;
 	onCloseRenameGroupModal: () => void;
 }
 
@@ -50,6 +54,10 @@ export const AppGroupModals = memo(function AppGroupModals({
 	setRenameGroupValue,
 	renameGroupEmoji,
 	setRenameGroupEmoji,
+	renameGroupIcon,
+	setRenameGroupIcon,
+	renameGroupColor,
+	setRenameGroupColor,
 	onCloseRenameGroupModal,
 }: AppGroupModalsProps) {
 	return (
@@ -74,6 +82,10 @@ export const AppGroupModals = memo(function AppGroupModals({
 					setGroupName={setRenameGroupValue}
 					groupEmoji={renameGroupEmoji}
 					setGroupEmoji={setRenameGroupEmoji}
+					groupIcon={renameGroupIcon}
+					setGroupIcon={setRenameGroupIcon}
+					groupColor={renameGroupColor}
+					setGroupColor={setRenameGroupColor}
 					onClose={onCloseRenameGroupModal}
 					groups={groups}
 					setGroups={setGroups}

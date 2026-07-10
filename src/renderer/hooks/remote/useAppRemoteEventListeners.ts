@@ -1432,6 +1432,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				id: newGroupId,
 				name: trimmed.toUpperCase(),
 				emoji: emoji || '\u{1F4C2}',
+				kind: 'user',
 				collapsed: false,
 			},
 		]);
