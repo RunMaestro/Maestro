@@ -180,7 +180,6 @@ const defaultTheme: Theme = {
 };
 
 // Default shortcuts
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const defaultShortcuts: Record<string, any> = {
 	help: { keys: ['?'], description: 'Show help' },
 	settings: { keys: ['meta', ','], description: 'Settings' },
@@ -2492,7 +2491,7 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
@@ -2513,7 +2512,7 @@ describe('SessionList', () => {
 				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
 			});
 			const props = createDefaultProps({ sortedSessions: sessions });
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
 			// Border must NOT be the accent color (active styling suppressed).
@@ -3226,7 +3225,6 @@ describe('SessionList', () => {
 				activeFocus: 'sidebar',
 			});
 			const setGroups = vi.spyOn(useSessionStore.getState(), 'setGroups');
-			const setBookmarksCollapsed = vi.spyOn(useUIStore.getState(), 'setBookmarksCollapsed');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -3388,7 +3386,6 @@ describe('SessionList', () => {
 
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({ leftSidebarWidth: 300 });
-			const setLeftSidebarWidthState = vi.spyOn(useSettingsStore.getState(), 'setLeftSidebarWidth');
 			const props = createDefaultProps({});
 			const { container } = render(<SessionList {...props} />);
 
@@ -3455,7 +3452,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
@@ -3485,7 +3481,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
