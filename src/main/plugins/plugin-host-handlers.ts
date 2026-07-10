@@ -50,6 +50,13 @@ const MAX_DISPATCH_AGENT_ID_CHARS = 256;
 const MAX_DISPATCH_PROMPT_CHARS = 64 * 1024;
 const MAX_SPAWN_ARGS = 32;
 const MAX_SPAWN_ARG_CHARS = 4 * 1024;
+/** At most this many concurrently-open host sockets per plugin (net:connect).
+ * A persistent socket is a larger egress channel than one-shot net:fetch, so the
+ * count is small and enforced by the handler's `netSockets` map. */
+const MAX_SOCKETS_PER_PLUGIN = 4;
+/** Per-frame byte cap for net:connect, enforced on BOTH directions: outbound in
+ * the net.send handler, inbound via the ws client's `maxPayload` in the sink. */
+const MAX_FRAME_BYTES = 64 * 1024;
 
 export interface PluginTabMetadata {
 	id: string;
@@ -232,6 +239,27 @@ export interface HostHandlerDeps {
 	/** The host-owned binary allowlist for `process.spawn`. Absent (or resolving
 	 * null) = deny: a name outside the registry can never be spawned. */
 	resolveSpawnBinary?: (name: string) => SpawnBinaryEntry | null;
+	/** Optional `net:connect` sink: open a persistent host-owned `wss://` socket.
+	 * The SINK owns the raw `ws.WebSocket` object (in src/main/index.ts) and pins
+	 * the connect to the egress-guard lookup; the HANDLER owns only the
+	 * `socketId -> { pluginId, url }` map used to re-authorize send/close and to
+	 * enforce the per-plugin socket count. Inert when absent (like dispatch/spawn). */
+	netConnect?: (
+		pluginId: string,
+		url: string,
+		opts: { protocols?: unknown; headers?: unknown }
+	) => Promise<{ socketId: string }>;
+	/** Optional `net:connect` sink: send one frame on a host-owned socket. The
+	 * handler re-authorizes the still-held grant and caps the frame BEFORE calling. */
+	netSend?: (pluginId: string, socketId: string, data: string) => Promise<{ ok: true }>;
+	/** Optional `net:connect` sink: close a host-owned socket. Best-effort; the
+	 * handler drops its `netSockets` entry regardless of outcome. */
+	netClose?: (
+		pluginId: string,
+		socketId: string,
+		code?: number,
+		reason?: string
+	) => Promise<{ ok: true }>;
 }
 
 /** What the spawn sink actually executes: everything except `args` is
@@ -569,6 +597,11 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
+	// The handler owns ONLY this map (socketId -> owning plugin + connect URL). The
+	// raw ws.WebSocket lives in the sink (src/main/index.ts). We keep the URL so
+	// net.send / net.close can re-authorize the still-held grant on every call, and
+	// we count entries per plugin to enforce MAX_SOCKETS_PER_PLUGIN.
+	const netSockets = new Map<string, { pluginId: string; url: string }>();
 
 	/**
 	 * Re-authorize the symlink-resolved real path against the plugin's grant.
@@ -1209,6 +1242,125 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	// Persistent outbound sockets (net:connect). Only wired when the sink is
+	// injected. A persistent socket is a larger egress channel than one-shot
+	// net:fetch, so this surface is trust-gated, wss-only, egress-pinned (via the
+	// sink's lookup), frame-capped both directions, per-plugin count-capped, and
+	// live-revocable (send/close re-authorize the still-held grant every call).
+	if (deps.netConnect) {
+		const netConnect = deps.netConnect;
+		const hostnameOf = (url: string): string => {
+			try {
+				return new URL(url).hostname;
+			} catch {
+				return url;
+			}
+		};
+		// Re-authorize the ORIGIN host of an already-open socket. Mirrors the
+		// net.connect scope check, so revoking the grant mid-stream denies the next
+		// send/close. `net.send`/`net.close` params carry only a socketId, so the
+		// broker cannot derive a scope target from them; we hand it the stored URL.
+		const reauthorizeSocket = (pluginId: string, url: string): void => {
+			assertBrokerAllowed(deps, pluginId, 'net.connect', { url });
+		};
+		const requireOwnedSocket = (
+			pluginId: string,
+			socketId: string
+		): { pluginId: string; url: string } => {
+			const entry = netSockets.get(socketId);
+			if (!entry || entry.pluginId !== pluginId) {
+				throw new Error(`unknown socketId: ${socketId}`);
+			}
+			return entry;
+		};
+
+		handlers['net.connect'] = async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.url !== 'string') throw new Error('url is required');
+			// wss only: a persistent socket must be TLS-encrypted; ws:// is refused
+			// before we ever touch the network.
+			let parsed: URL;
+			try {
+				parsed = new URL(p.url);
+			} catch {
+				throw new Error('net.connect: url is not a valid URL');
+			}
+			if (parsed.protocol !== 'wss:') {
+				throw new Error('net.connect: only wss:// URLs are permitted');
+			}
+			// Broker: host-scoped grant (the grant must name this connect hostname).
+			assertBrokerAllowed(deps, pluginId, 'net.connect', p);
+			// Trust gate: a persistent egress channel requires a signed plugin.
+			if (deps.isPluginTrusted?.(pluginId) !== true) {
+				throw new Error('net.connect requires a trusted signed plugin');
+			}
+			// Per-plugin socket cap.
+			let open = 0;
+			for (const entry of netSockets.values()) {
+				if (entry.pluginId === pluginId) open += 1;
+			}
+			if (open >= MAX_SOCKETS_PER_PLUGIN) {
+				throw new Error(`net.connect: socket limit reached (max ${MAX_SOCKETS_PER_PLUGIN})`);
+			}
+			// SSRF / DNS-rebind: run the existing egress classifier on the
+			// https-equivalent URL so loopback / RFC1918 / link-local / metadata are
+			// blocked identically to net.fetch. The actual connect is pinned to
+			// egressGuard.lookup by the sink.
+			const httpEquivalent = 'https:' + p.url.slice('wss:'.length);
+			await deps.egressGuard.assertUrlAllowed(httpEquivalent);
+			const { socketId } = await underGuard(
+				deps.actionGuard,
+				pluginId,
+				'net:connect',
+				parsed.hostname,
+				() => netConnect(pluginId, p.url as string, { protocols: p.protocols, headers: p.headers })
+			);
+			netSockets.set(socketId, { pluginId, url: p.url });
+			return { socketId };
+		};
+
+		handlers['net.send'] = async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.socketId !== 'string') throw new Error('socketId is required');
+			if (typeof p.data !== 'string') throw new Error('data must be a string');
+			// Outbound frame cap (byte length, not char count). Inbound is capped by
+			// the ws client's maxPayload in the sink.
+			if (Buffer.byteLength(p.data, 'utf8') > MAX_FRAME_BYTES) {
+				throw new Error(`net.send: frame exceeds ${MAX_FRAME_BYTES} byte limit`);
+			}
+			const socketId = p.socketId;
+			const entry = requireOwnedSocket(pluginId, socketId);
+			// Live-revoke: deny if the grant was revoked after connect.
+			reauthorizeSocket(pluginId, entry.url);
+			return underGuard(deps.actionGuard, pluginId, 'net:connect', hostnameOf(entry.url), () =>
+				deps.netSend!(pluginId, socketId, p.data as string)
+			);
+		};
+
+		handlers['net.close'] = async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.socketId !== 'string') throw new Error('socketId is required');
+			const socketId = p.socketId;
+			const entry = requireOwnedSocket(pluginId, socketId);
+			reauthorizeSocket(pluginId, entry.url);
+			const code = typeof p.code === 'number' ? p.code : undefined;
+			const reason = typeof p.reason === 'string' ? p.reason : undefined;
+			try {
+				return await underGuard(
+					deps.actionGuard,
+					pluginId,
+					'net:connect',
+					hostnameOf(entry.url),
+					() => deps.netClose!(pluginId, socketId, code, reason)
+				);
+			} finally {
+				// The socket is gone from the plugin's perspective regardless of the
+				// sink's close outcome; drop our tracking entry either way.
+				netSockets.delete(socketId);
+			}
+		};
+	}
+
 	// Release a plugin's still-open host resources (wake locks + fs watchers) when
 	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
@@ -1232,6 +1384,18 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				// best-effort: releasing a stale reason must not abort cleanup
 			}
 			sleepHandles.delete(handleId);
+		}
+		// Close every net:connect socket this plugin still holds. Disable / crash /
+		// uninstall must not leave a persistent connection open, matching the
+		// fs.watch and wake-lock discipline above.
+		for (const [socketId, entry] of netSockets) {
+			if (entry.pluginId !== pluginId) continue;
+			try {
+				void deps.netClose?.(pluginId, socketId);
+			} catch {
+				// best-effort: the socket may already be closing or the sink absent
+			}
+			netSockets.delete(socketId);
 		}
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
