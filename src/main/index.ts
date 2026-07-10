@@ -23,6 +23,7 @@ import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { configureSentry } from './utils/sentry';
 import type { AgentId } from '../shared/agentIds';
 import {
 	initGlobalHotkey,
@@ -355,6 +356,7 @@ configureImageStore(syncPath);
 // Get early settings before Sentry init (for crash reporting and GPU acceleration)
 const { crashReportingEnabled, disableGpuAcceleration, useNativeTitleBar, autoHideMenuBar } =
 	getEarlySettings(syncPath);
+configureSentry(crashReportingEnabled && !isDevelopment);
 
 // Disable GPU hardware acceleration if user has opted out or in WSL environment
 // Must be called before app.ready event
@@ -401,7 +403,9 @@ store.onDidChange('wakatimeEnabled', (newValue) => {
 // which fails if the module is imported before app.whenReady() in some Node/Electron version combinations
 if (crashReportingEnabled && !isDevelopment) {
 	import('@sentry/electron/main')
-		.then(({ init, setTag, IPCMode }) => {
+		.then((sentry) => {
+			const { init, setTag, IPCMode } = sentry;
+			configureSentry(true, sentry);
 			init({
 				dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
 				// Set release version for better debugging

@@ -412,6 +412,32 @@ describe('process IPC handlers', () => {
 			expect(result).toEqual({ pid: 12345, success: true });
 		});
 
+		it('does not block process launch on pending breadcrumb telemetry', async () => {
+			const { addBreadcrumb } = await import('../../../../main/utils/sentry');
+			vi.mocked(addBreadcrumb).mockReturnValueOnce(new Promise<void>(() => {}));
+
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12346, success: true });
+
+			const handler = handlers.get('process:spawn');
+			const result = await handler!({} as any, {
+				sessionId: 'session-telemetry',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'Review these changes.',
+			});
+
+			expect(addBreadcrumb).toHaveBeenCalledTimes(1);
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
+			expect(result).toEqual({ pid: 12346, success: true });
+		});
+
 		it('should return pid on successful spawn', async () => {
 			const mockAgent = { id: 'terminal', requiresPty: true };
 

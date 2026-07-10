@@ -21,7 +21,7 @@ export type BreadcrumbCategory =
 	| 'file';
 
 /** Sentry module type for crash reporting */
-interface SentryModule {
+export interface SentryModule {
 	captureMessage: (
 		message: string,
 		captureContext?: { level?: SentrySeverityLevel; extra?: Record<string, unknown> }
@@ -40,6 +40,46 @@ interface SentryModule {
 
 /** Cached Sentry module reference */
 let sentryModule: SentryModule | null = null;
+let sentryLoadPromise: Promise<SentryModule | null> | null = null;
+let sentryEnabled = false;
+
+/**
+ * Configure whether Sentry helpers may load and report telemetry.
+ *
+ * Call this once startup settings and the runtime mode are known. Passing the
+ * initialized module lets helpers reuse the startup import without another
+ * lookup. Disabled helpers are strict no-ops and never cold-load Sentry from a
+ * user interaction path.
+ */
+export function configureSentry(enabled: boolean, initializedModule?: SentryModule): void {
+	sentryEnabled = enabled;
+	if (!enabled) {
+		sentryModule = null;
+		sentryLoadPromise = null;
+		return;
+	}
+	if (initializedModule) {
+		sentryModule = initializedModule;
+		sentryLoadPromise = Promise.resolve(initializedModule);
+	}
+}
+
+async function getSentryModule(): Promise<SentryModule | null> {
+	if (!sentryEnabled) return null;
+	if (sentryModule) return sentryModule;
+
+	if (!sentryLoadPromise) {
+		sentryLoadPromise = import('@sentry/electron/main')
+			.then((sentry) => {
+				if (!sentryEnabled) return null;
+				sentryModule = sentry;
+				return sentry;
+			})
+			.catch(() => null);
+	}
+
+	return sentryLoadPromise;
+}
 
 /**
  * Reports an exception to Sentry from the main process.
@@ -53,11 +93,9 @@ export async function captureException(
 	extra?: Record<string, unknown>
 ): Promise<void> {
 	try {
-		if (!sentryModule) {
-			const sentry = await import('@sentry/electron/main');
-			sentryModule = sentry;
-		}
-		sentryModule.captureException(error, { extra });
+		const sentry = await getSentryModule();
+		if (!sentry) return;
+		sentry.captureException(error, { extra });
 	} catch {
 		// Sentry not available (development mode or initialization failed)
 		logger.debug('Sentry not available for exception reporting', '[Sentry]');
@@ -78,11 +116,9 @@ export async function captureMessage(
 	extra?: Record<string, unknown>
 ): Promise<void> {
 	try {
-		if (!sentryModule) {
-			const sentry = await import('@sentry/electron/main');
-			sentryModule = sentry;
-		}
-		sentryModule.captureMessage(message, { level, extra });
+		const sentry = await getSentryModule();
+		if (!sentry) return;
+		sentry.captureMessage(message, { level, extra });
 	} catch {
 		// Sentry not available (development mode or initialization failed)
 		logger.debug('Sentry not available for message reporting', '[Sentry]');
@@ -112,11 +148,9 @@ export async function addBreadcrumb(
 	level: SentrySeverityLevel = 'info'
 ): Promise<void> {
 	try {
-		if (!sentryModule) {
-			const sentry = await import('@sentry/electron/main');
-			sentryModule = sentry;
-		}
-		sentryModule.addBreadcrumb({
+		const sentry = await getSentryModule();
+		if (!sentry) return;
+		sentry.addBreadcrumb({
 			category,
 			message,
 			level,

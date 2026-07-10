@@ -574,7 +574,7 @@ export async function handleProcessSpawn(
 	});
 
 	// Add breadcrumb for crash diagnostics (MAESTRO-5A/4Y)
-	await addBreadcrumb('agent', `Spawn: ${config.toolType}`, {
+	void addBreadcrumb('agent', `Spawn: ${config.toolType}`, {
 		sessionId: config.sessionId,
 		toolType: config.toolType,
 		command: config.command,
