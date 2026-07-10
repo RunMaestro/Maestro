@@ -11,6 +11,12 @@ export function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
 		: [...list, item];
 }
 
+/** Return the owning plugin id for a namespaced contribution view id. */
+export function sourcePluginFromViewId(id: string): string | undefined {
+	const separator = id.indexOf('/');
+	return separator > 0 && separator < id.length - 1 ? id.slice(0, separator) : undefined;
+}
+
 /** How long a chat-chip "point" pulse stays lit (ms). */
 export const FLASH_DURATION_MS = 2200;
 

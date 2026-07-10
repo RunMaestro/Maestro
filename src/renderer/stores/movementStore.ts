@@ -9,7 +9,7 @@
 import { create } from 'zustand';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type { BlockSpec } from '../components/BlockView';
-import { upsertById, scheduleFlashClear } from './concertoShared';
+import { sourcePluginFromViewId, upsertById, scheduleFlashClear } from './concertoShared';
 
 /** Default item width when the agent doesn't specify one (px). */
 export const MOVEMENT_ITEM_DEFAULT_WIDTH = 500;
@@ -26,6 +26,8 @@ export interface MovementItem {
 	title?: string;
 	/** Parsed BlockView spec. Parse failures become an error callout. */
 	spec: BlockSpec;
+	/** Plugin id inferred from a namespaced host view id, for header provenance. */
+	sourcePlugin?: string;
 	/** Actual rendered height (px), measured by the overlay - so `movement state`
 	 *  reports a real footprint even for auto-sized (unset `height`) panels. */
 	measuredHeight?: number;
@@ -222,6 +224,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 		height: p.height ?? existing?.height,
 		title: p.title ?? existing?.title,
 		spec: p.body !== undefined ? parseSpec(p.body) : (existing?.spec ?? { blocks: [] }),
+		sourcePlugin: sourcePluginFromViewId(p.id),
 		timestamp: Date.now(),
 	});
 }

@@ -15,7 +15,7 @@ import type {
 	CadenzaDecisionOption,
 } from '../../shared/cadenza-types';
 import { selectSessionById, useSessionStore } from './sessionStore';
-import { upsertById, scheduleFlashClear } from './concertoShared';
+import { sourcePluginFromViewId, upsertById, scheduleFlashClear } from './concertoShared';
 
 /** A resolved cadenza ready to render (defaults applied). */
 export interface CadenzaView {
@@ -33,6 +33,8 @@ export interface CadenzaView {
 	sessionId?: string;
 	/** Resolved name of the owning agent, stamped on open for fleet attribution. */
 	sourceAgent?: string;
+	/** Plugin id inferred from a namespaced host view id, for header provenance. */
+	sourcePlugin?: string;
 	timestamp: number;
 	/** Free-floating position, px from the top-left of the layer. Cascades on
 	 *  open; the user drags the header to rearrange. */
@@ -145,6 +147,7 @@ export function applyCadenzaPayload(p: CadenzaPayload): void {
 		// Prefer the name the main process resolved (the HUD window has no session
 		// store); fall back to local resolution for the in-app layer.
 		sourceAgent: p.sourceAgent ?? resolveAgentName(p.sessionId),
+		sourcePlugin: sourcePluginFromViewId(p.id),
 		timestamp: Date.now(),
 		x: existing?.x ?? 24 + step,
 		y: existing?.y ?? 96 + step,

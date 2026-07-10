@@ -124,6 +124,40 @@ describe('applyMovementPayload', () => {
 		applyMovementPayload({ op: 'clear' });
 		expect(useMovementStore.getState().items).toHaveLength(0);
 	});
+
+	it('replaces then removes a plugin-namespaced host view by id', () => {
+		const id = 'com.acme.metrics/release-summary';
+		applyMovementPayload({
+			op: 'add',
+			id,
+			title: 'Release summary',
+			body: JSON.stringify({ blocks: [{ kind: 'text', text: 'Initial report' }] }),
+		});
+		applyMovementPayload({
+			op: 'add',
+			id,
+			title: 'Updated summary',
+			body: JSON.stringify({ blocks: [{ kind: 'text', text: 'Updated report' }] }),
+		});
+
+		const [view] = useMovementStore.getState().items;
+		expect(useMovementStore.getState().items).toHaveLength(1);
+		expect(view).toMatchObject({
+			id,
+			title: 'Updated summary',
+			sourcePlugin: 'com.acme.metrics',
+			spec: { blocks: [{ kind: 'text', text: 'Updated report' }] },
+		});
+
+		applyMovementPayload({ op: 'remove', id });
+		expect(useMovementStore.getState().items).toHaveLength(0);
+	});
+
+	it('keeps the legacy CLI payload shape free of plugin provenance', () => {
+		applyMovementPayload({ op: 'add', id: 'cli-status', body: JSON.stringify({ blocks: [] }) });
+
+		expect(useMovementStore.getState().items[0].sourcePlugin).toBeUndefined();
+	});
 });
 
 describe('movementStore actions', () => {
