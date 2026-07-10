@@ -18,6 +18,22 @@
  * takes the LAST match of each marker type so the agent's final word wins).
  */
 
+/**
+ * The four-question handoff reminder appended to every card's prompt so a
+ * worker's completion marker carries structured context to the cards it
+ * unblocks. Optional metadata: the run still completes without it (the
+ * dispatcher falls back to the process exit status), and any summary is captured
+ * into `CardRun.summary` from the `<!-- maestro:card-complete | summary -->`
+ * marker below. Shared by the desktop board-spawn path and the CLI `board tick`
+ * so the two never drift.
+ */
+export const CARD_HANDOFF_REMINDER = [
+	'When you finish this card, end your reply with a completion marker so the Board can capture your handoff:',
+	'`<!-- maestro:card-complete | <one-line summary> -->`',
+	'In your summary, briefly cover the four handoff questions: what changed, how you verified it, what this unblocks, and any residual risk.',
+	'If you cannot finish, emit `<!-- maestro:card-block: <reason> -->` instead.',
+].join('\n');
+
 /** The parsed result of scanning one card run's output for completion markers. */
 export interface CardMarkers {
 	/** True when a `card-complete` marker is present. */

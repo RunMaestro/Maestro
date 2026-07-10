@@ -568,6 +568,9 @@ function BoardCardTile({
 	onDelete,
 }: BoardCardTileProps) {
 	const blockers = getBlockers(card, board);
+	// The most recent run's handoff summary (from a `card-complete | summary`
+	// marker), surfaced as optional expandable metadata.
+	const latestSummary = card.runs?.[card.runs.length - 1]?.summary;
 	return (
 		<div
 			draggable
@@ -629,6 +632,27 @@ function BoardCardTile({
 					</span>
 				)}
 			</div>
+			{latestSummary && (
+				<details
+					className="mt-1.5 select-text"
+					// Stop the click bubbling to the tile so toggling the summary doesn't
+					// open the card editor.
+					onClick={(e) => e.stopPropagation()}
+				>
+					<summary
+						className="text-[10px] cursor-pointer list-none opacity-70 hover:opacity-100"
+						style={{ color: theme.colors.textDim }}
+					>
+						Last run summary
+					</summary>
+					<div
+						className="mt-1 text-[10px] leading-snug whitespace-pre-wrap"
+						style={{ color: theme.colors.textDim }}
+					>
+						{latestSummary}
+					</div>
+				</details>
+			)}
 		</div>
 	);
 }

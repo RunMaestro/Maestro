@@ -34,6 +34,8 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import { boardList, boardShow, boardAddCard, boardSetStatus, boardTick } from './commands/board';
+import { profileList, profileCreate, profileDelete } from './commands/profile';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -584,6 +586,83 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Board commands — drive the persistent task DAG (.maestro/board.yaml) headlessly.
+// Mirrors the board:* IPC surface via the same Electron-free storage module the
+// desktop uses. `board tick` runs one dispatcher pass (promote / claim / spawn /
+// apply) reusing the Phase 3 pure helpers + the existing CLI spawn path.
+const board = program.command('board').description('Manage and dispatch the Maestro Board');
+
+board
+	.command('list')
+	.description('List all boards in an agent\'s project')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardList);
+
+board
+	.command('show <boardId>')
+	.description('Show a board and its cards')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardShow);
+
+board
+	.command('add-card <boardId>')
+	.description('Add a card to a board')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.requiredOption('-t, --title <title>', 'Card title')
+	.requiredOption('--assignee <profileId>', 'Agent Profile id that runs this card')
+	.option('-b, --body <body>', 'Card body / instructions for the assignee')
+	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
+	.option('--worktree', 'Record an isolated-worktree intent for this card')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardAddCard);
+
+board
+	.command('set-status <cardId> <status>')
+	.description('Set a card\'s status (triage|todo|ready|running|blocked|done)')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardSetStatus);
+
+board
+	.command('tick')
+	.description('Run one dispatcher pass headlessly (promote, claim, spawn, apply)')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('--board <boardId>', 'Tick only a specific board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardTick);
+
+// Profile commands — manage Agent Profiles (.maestro/profiles.yaml), mirroring
+// the profiles:* IPC surface via the same Electron-free storage module.
+const profile = program.command('profile').description('Manage Agent Profiles');
+
+profile
+	.command('list')
+	.description('List all profiles in an agent\'s project')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profiles')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profileList);
+
+profile
+	.command('create')
+	.description('Create a profile layered on a base agent')
+	.requiredOption('--base <agentId>', 'Base Left Bar agent (also locates the project)')
+	.requiredOption('-n, --name <name>', 'Profile name')
+	.option('--model <model>', 'Model override (falls back to the base agent)')
+	.option('--effort <level>', 'Reasoning effort override')
+	.option('--role <text>', 'Role system-prompt appended for this profile')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profileCreate);
+
+profile
+	.command('delete <profileId>')
+	.description('Delete a profile by id')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profileDelete);
 
 // Director's Notes commands
 const directorNotes = program

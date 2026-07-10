@@ -201,8 +201,11 @@ import { listBoards, saveBoard } from './board/board-storage';
 import {
 	resolveCardOverrides,
 	spawnBoardCard,
+	decomposeBoardCard,
 	type BoardSpawnContext,
 } from './board/board-spawn';
+import { autoDecomposeBoard } from './board/board-decompose';
+import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
@@ -1470,6 +1473,24 @@ app
 					resolveCardOverrides(projectRoot, card, boardSpawnContext),
 				spawnCard: (projectRoot, request) =>
 					spawnBoardCard(projectRoot, request, boardSpawnContext),
+				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
+				// a board sets `autoDecompose: true`; loads the editable prompt template
+				// and fans triage cards into child cards via the same spawn plumbing.
+				decompose: async (projectRoot, board) => {
+					const template = getPrompt(PROMPT_IDS.BOARD_DECOMPOSE);
+					const count = await autoDecomposeBoard(board, {
+						promptTemplate: template,
+						spawn: (prompt, card) =>
+							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext),
+						onLog: (level, message) => {
+							if (level === 'error') logger.error(message, 'Board');
+							else if (level === 'warn') logger.warn(message, 'Board');
+							else logger.cue(message, 'Board');
+						},
+					});
+					if (count > 0) saveBoard(projectRoot, board);
+					return count;
+				},
 			},
 		});
 

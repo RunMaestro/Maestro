@@ -110,6 +110,18 @@ describe('board-storage round-trip', () => {
 		expect(loadBoards(projectRoot)).toEqual(boards);
 	});
 
+	it('round-trips the optional autoDecompose flag (Phase 5)', () => {
+		const boards = [board([card({ id: 'a' })], { autoDecompose: true })];
+		saveBoards(projectRoot, boards);
+		const reloaded = loadBoards(projectRoot);
+		expect(reloaded[0].autoDecompose).toBe(true);
+	});
+
+	it('omits autoDecompose when off (default) so the file stays clean', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a' })])]);
+		expect(loadBoards(projectRoot)[0].autoDecompose).toBeUndefined();
+	});
+
 	it('getBoard returns a single board by id or null', () => {
 		saveBoards(projectRoot, [board([card({ id: 'a' })])]);
 		expect(getBoard(projectRoot, 'b1')?.id).toBe('b1');

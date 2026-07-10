@@ -19,6 +19,7 @@ import {
 	type ProfileSpawnOverrides,
 } from '../../shared/profiles/types';
 import type { BoardCard } from '../../shared/board/types';
+import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
 import type { CardSpawnRequest, CardSpawnResult } from './board-dispatcher';
 import { executeCuePrompt } from '../cue/cue-executor';
 import { createCueEvent } from '../cue/cue-types';
@@ -87,6 +88,45 @@ export async function spawnBoardCard(
 	ctx: BoardSpawnContext
 ): Promise<CardSpawnResult> {
 	const { card, overrides } = request;
+	// The Cue executor has no system-prompt injection field, so the profile's
+	// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble,
+	// followed by the four-question handoff reminder (structured completion
+	// metadata). model/effort/args flow through the native override fields below.
+	const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
+	const promptText =
+		`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
+	return runCardPrompt(projectRoot, card, promptText, ctx);
+}
+
+/**
+ * Run one auto-decompose LLM pass for a triage card, using the card's assignee
+ * base agent, and return the raw agent output (or `null` on failure). Wired into
+ * the board deps' `decompose` step. The `promptText` is the filled
+ * `board-decompose` template (built by {@link buildDecomposePrompt}); we do NOT
+ * prepend the role preamble here because decomposition is a structured task, not
+ * the card's own work.
+ */
+export async function decomposeBoardCard(
+	projectRoot: string,
+	card: BoardCard,
+	promptText: string,
+	ctx: BoardSpawnContext
+): Promise<string | null> {
+	const result = await runCardPrompt(projectRoot, card, promptText, ctx);
+	if (result.error || result.exitCode !== 0) return null;
+	return result.output;
+}
+
+/**
+ * Shared runner: execute `promptText` through a card's assignee base agent via
+ * the SAME `executeCuePrompt` plumbing Cue uses (SSH / custom config honored).
+ */
+async function runCardPrompt(
+	projectRoot: string,
+	card: BoardCard,
+	promptText: string,
+	ctx: BoardSpawnContext
+): Promise<CardSpawnResult> {
 	const resolved = resolveProfileAndBase(projectRoot, card, ctx);
 	if (!resolved) {
 		return {
@@ -96,7 +136,7 @@ export async function spawnBoardCard(
 		};
 	}
 
-	const { baseSession } = resolved;
+	const { baseSession, overrides } = resolved;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
 	// into both the string `toolType` config field and the enum `session.toolType`
 	// field, exactly as the Cue `onCueRun` path passes it through.
@@ -107,14 +147,6 @@ export async function spawnBoardCard(
 	if (!resolvedAgentPath && ctx.resolveAgentPath) {
 		resolvedAgentPath = await ctx.resolveAgentPath(toolType);
 	}
-
-	// The Cue executor has no system-prompt injection field, so the profile's
-	// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble.
-	// model/effort/args flow through the native override fields below.
-	const rolePreamble = overrides.appendSystemPrompt
-		? `${overrides.appendSystemPrompt}\n\n---\n\n`
-		: '';
-	const promptText = `${rolePreamble}${card.title}\n\n${card.body}`.trim();
 
 	const runId = `board-${card.id}-${ctx.nowMs()}`;
 	const templateContext: TemplateContext = {

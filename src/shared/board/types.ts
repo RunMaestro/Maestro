@@ -112,6 +112,14 @@ export interface Board {
 	cards: BoardCard[];
 	/** Optional cap on how many cards may be `running` at once (Phase 3). */
 	maxInProgress?: number;
+	/**
+	 * OPTIONAL auto-decompose (Phase 5), OFF by default. When `true`, the
+	 * dispatcher may take a `triage` card and run one LLM pass to fan it into
+	 * child cards (capped per tick). When absent/false, `triage` cards are never
+	 * auto-expanded and simply wait for manual promotion. The manual Board
+	 * (Phases 1-4) is fully useful without this.
+	 */
+	autoDecompose?: boolean;
 }
 
 /** All statuses that are valid on a persisted/author-created card. */
@@ -255,6 +263,9 @@ export function validateBoard(raw: unknown, nowIso?: string): Board | null {
 		r.maxInProgress > 0
 	) {
 		board.maxInProgress = Math.floor(r.maxInProgress);
+	}
+	if (r.autoDecompose === true) {
+		board.autoDecompose = true;
 	}
 	return board;
 }

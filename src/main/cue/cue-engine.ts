@@ -199,6 +199,14 @@ export interface CueEngineBoardDeps {
 		projectRoot: string,
 		request: CardSpawnRequest
 	) => Promise<CardSpawnResult>;
+	/**
+	 * OPTIONAL auto-decompose (Board Phase 5), OFF by default. When wired AND the
+	 * board's own `autoDecompose` flag is `true`, run one decomposition pass for a
+	 * board (fan triage cards into child cards, capped per tick) and return how
+	 * many triage cards were expanded. Absent => the step is skipped and triage
+	 * cards wait for manual promotion.
+	 */
+	decompose?: (projectRoot: string, board: Board) => Promise<number>;
 }
 
 export class CueEngine {
@@ -227,6 +235,14 @@ export class CueEngine {
 	 * across ticks (the stale-reclaim guard). Empty when board deps aren't wired.
 	 */
 	private boardDispatchers: Map<string, BoardDispatcher> = new Map();
+	/**
+	 * Board keys (`${projectRoot}::${boardId}`) with an auto-decompose pass in
+	 * flight. The decompose LLM call is async and fire-and-forget on the tick, so
+	 * this guard prevents a slow pass from being re-launched (and a triage card
+	 * double-expanded) by the next tick before it persists. Only used when the
+	 * optional `decompose` dep is wired.
+	 */
+	private boardDecomposeInFlight: Set<string> = new Set();
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
 	 * does a read → mutate → write cycle that is not atomic on the filesystem;
@@ -1524,6 +1540,10 @@ export class CueEngine {
 				for (const b of boards) {
 					const key = `${projectRoot}::${b.id}`;
 					seenKeys.add(key);
+					// Optional auto-decompose (off by default; gated on the board's own
+					// flag). Fire-and-forget with an in-flight guard; expanded children
+					// are picked up by a subsequent tick's dispatch.
+					this.maybeAutoDecompose(key, projectRoot, b);
 					const dispatcher = this.getOrCreateBoardDispatcher(key, projectRoot, b.id);
 					dispatcher.tick();
 				}
@@ -1541,6 +1561,35 @@ export class CueEngine {
 			);
 			captureException(err, { operation: 'board:dispatchTick' });
 		}
+	}
+
+	/**
+	 * Kick off one auto-decompose pass for a board when the optional `decompose`
+	 * dep is wired and the board opted in (`autoDecompose: true`). Guarded so a
+	 * single slow pass isn't relaunched by the next tick. Errors are logged and
+	 * never propagate to the tick loop.
+	 */
+	private maybeAutoDecompose(key: string, projectRoot: string, board: Board): void {
+		const decompose = this.deps.board?.decompose;
+		if (!decompose) return;
+		if (board.autoDecompose !== true) return;
+		if (this.boardDecomposeInFlight.has(key)) return;
+		this.boardDecomposeInFlight.add(key);
+		decompose(projectRoot, board)
+			.then((count) => {
+				if (count > 0) {
+					this.meteredOnLog('info', `[BOARD] auto-decomposed ${count} triage card(s)`);
+				}
+			})
+			.catch((err) => {
+				this.meteredOnLog(
+					'warn',
+					`[BOARD] auto-decompose failed: ${err instanceof Error ? err.message : String(err)}`
+				);
+			})
+			.finally(() => {
+				this.boardDecomposeInFlight.delete(key);
+			});
 	}
 
 	/** Get (or lazily build) the dispatcher bound to one board at a project root. */
