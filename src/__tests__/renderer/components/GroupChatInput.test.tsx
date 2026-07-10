@@ -140,6 +140,26 @@ describe('GroupChatInput', () => {
 			expect(onDraftChange).toHaveBeenCalledWith('keep this draft', 'test-group-chat');
 		});
 
+		it('cancels a pending local draft when an external draft arrives', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const { rerender } = render(
+				<GroupChatInput {...createDefaultProps({ draftMessage: '', onDraftChange })} />
+			);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'stale local draft');
+			rerender(
+				<GroupChatInput
+					{...createDefaultProps({ draftMessage: 'new external draft', onDraftChange })}
+				/>
+			);
+			vi.advanceTimersByTime(300);
+
+			expect(textarea.value).toBe('new external draft');
+			expect(onDraftChange).not.toHaveBeenCalled();
+		});
+
 		it('publishes fresh text before opening Prompt Composer', () => {
 			vi.useFakeTimers();
 			const onDraftChange = vi.fn();

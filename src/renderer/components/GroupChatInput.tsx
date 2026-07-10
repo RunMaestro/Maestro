@@ -256,8 +256,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			lastPersistedDraftRef.current = null;
 			return;
 		}
+		cancelDraft();
 		setMessage((current) => (current === draftMessage ? current : draftMessage));
-	}, [draftMessage, groupChatId]);
+	}, [draftMessage, groupChatId, cancelDraft]);
 
 	const handleSend = useCallback(() => {
 		// Allow sending even when busy - messages will be queued in App.tsx

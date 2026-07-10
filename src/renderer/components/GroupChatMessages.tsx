@@ -79,8 +79,11 @@ export const GroupChatMessages = memo(
 	) {
 		const containerRef = useRef<HTMLDivElement>(null);
 		const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
+		const hasVirtualTypingIndicator = state !== 'idle' && messages.length > 0;
+		const virtualItemCount = messages.length + (hasVirtualTypingIndicator ? 1 : 0);
 		const estimateMessageHeight = useCallback(
 			(index: number) => {
+				if (index === messages.length) return 72;
 				const message = messages[index];
 				if (!message) return 140;
 				const lineCount = message.content.split('\n').length;
@@ -92,10 +95,13 @@ export const GroupChatMessages = memo(
 			[messages, maxOutputLines]
 		);
 		const virtualizer = useVirtualizer({
-			count: messages.length,
+			count: virtualItemCount,
 			getScrollElement: () => containerRef.current,
 			estimateSize: estimateMessageHeight,
-			getItemKey: (index) => `${messages[index]?.timestamp ?? 'message'}-${index}`,
+			getItemKey: (index) =>
+				index === messages.length
+					? 'typing-indicator'
+					: `${messages[index]?.timestamp ?? 'message'}-${index}`,
 			overscan: 5,
 			initialRect: { width: 900, height: 700 },
 		});
@@ -121,20 +127,24 @@ export const GroupChatMessages = memo(
 					});
 					if (targetIndex < 0 || closestDiff >= 5000) return;
 					virtualizer.scrollToIndex(targetIndex, { align: 'center' });
-					requestAnimationFrame(() => {
-						requestAnimationFrame(() => {
-							const element = containerRef.current?.querySelector(
-								`[data-message-index="${targetIndex}"]`
-							) as HTMLElement | null;
-							if (!element) return;
-							element.style.transition = 'background-color 0.3s ease';
-							const originalBg = element.style.backgroundColor;
-							element.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-							setTimeout(() => {
-								element.style.backgroundColor = originalBg;
-							}, 1000);
-						});
-					});
+					let remainingFrames = 12;
+					const highlightWhenMounted = () => {
+						const element = containerRef.current?.querySelector(
+							`[data-message-index="${targetIndex}"]`
+						) as HTMLElement | null;
+						if (!element) {
+							remainingFrames -= 1;
+							if (remainingFrames > 0) requestAnimationFrame(highlightWhenMounted);
+							return;
+						}
+						element.style.transition = 'background-color 0.3s ease';
+						const originalBg = element.style.backgroundColor;
+						element.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+						setTimeout(() => {
+							element.style.backgroundColor = originalBg;
+						}, 1000);
+					};
+					requestAnimationFrame(highlightWhenMounted);
 				},
 			}),
 			[messages, virtualizer]
@@ -194,9 +204,9 @@ export const GroupChatMessages = memo(
 			hasAutoScrolledRef.current = true;
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
-				virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+				virtualizer.scrollToIndex(virtualItemCount - 1, { align: 'end' });
 			}
-		}, [messages, virtualizer]);
+		}, [messages, virtualizer, virtualItemCount]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment
@@ -232,6 +242,25 @@ export const GroupChatMessages = memo(
 				</>
 			);
 		};
+		const typingIndicatorContent = state !== 'idle' && (
+			<>
+				<div className="w-20 shrink-0" />
+				<div
+					className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
+					style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				>
+					<div className="flex items-center gap-2">
+						<div
+							className="w-2 h-2 rounded-full animate-pulse"
+							style={{ backgroundColor: theme.colors.warning }}
+						/>
+						<span className="text-sm" style={{ color: theme.colors.textDim }}>
+							{state === 'moderator-thinking' ? 'Moderator is thinking...' : 'Agent is working...'}
+						</span>
+					</div>
+				</div>
+			</>
+		);
 
 		return (
 			<div
@@ -315,6 +344,26 @@ export const GroupChatMessages = memo(
 					>
 						{virtualMessages.map((virtualMessage) => {
 							const index = virtualMessage.index;
+							if (index === messages.length) {
+								return (
+									<div
+										key="typing-indicator"
+										ref={virtualizer.measureElement}
+										data-index={index}
+										data-typing-indicator
+										className="flex gap-4 px-6 py-2"
+										style={{
+											position: 'absolute',
+											top: 0,
+											left: 0,
+											width: '100%',
+											transform: `translateY(${virtualMessage.start}px)`,
+										}}
+									>
+										{typingIndicatorContent}
+									</div>
+								);
+							}
 							const msg = messages[index];
 							const isUser = msg.from === 'user';
 							const isSystem = msg.from === 'system';
@@ -595,27 +644,9 @@ export const GroupChatMessages = memo(
 					</div>
 				)}
 
-				{/* Typing indicator */}
-				{state !== 'idle' && (
-					<div className="flex gap-4 px-6 py-2">
-						<div className="w-20 shrink-0" />
-						<div
-							className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
-							style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
-						>
-							<div className="flex items-center gap-2">
-								<div
-									className="w-2 h-2 rounded-full animate-pulse"
-									style={{ backgroundColor: theme.colors.warning }}
-								/>
-								<span className="text-sm" style={{ color: theme.colors.textDim }}>
-									{state === 'moderator-thinking'
-										? 'Moderator is thinking...'
-										: 'Agent is working...'}
-								</span>
-							</div>
-						</div>
-					</div>
+				{/* Empty chats do not create a virtual list, so keep their indicator inline. */}
+				{messages.length === 0 && state !== 'idle' && (
+					<div className="flex gap-4 px-6 py-2">{typingIndicatorContent}</div>
 				)}
 			</div>
 		);

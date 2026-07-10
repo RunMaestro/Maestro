@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, act, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
 
 import {
@@ -71,6 +71,10 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		useSettingsStore.setState({ groupChatAutoScroll: true });
 	});
 
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it('skips rendering message content when stable props are rerendered', () => {
 		const messages = makeMessages(3);
 		const onToggleMarkdownEditMode = vi.fn();
@@ -105,6 +109,26 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		expect(container.querySelectorAll('[data-message-timestamp]').length).toBeLessThan(20);
 	});
 
+	it('virtualizes the typing indicator as the final scrollable row', async () => {
+		const result = render(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(3)}
+				participants={participants}
+				state="moderator-thinking"
+			/>
+		);
+		const indicator = await waitFor(() => {
+			const element = result.container.querySelector('[data-typing-indicator]');
+			expect(element).toBeInTheDocument();
+			return element as HTMLElement;
+		});
+
+		expect(indicator.dataset.index).toBe('3');
+		expect(indicator.style.position).toBe('absolute');
+		expect(indicator.textContent).toContain('Moderator is thinking...');
+	});
+
 	it('scrolls to messages whose timestamp is a numeric string', () => {
 		const ref = createRef<GroupChatMessagesHandle>();
 		const timestamp = 1700000000000;
@@ -126,6 +150,38 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		expect(scrollTo).toHaveBeenCalled();
 	});
 
+	it('retries highlighting until an offscreen target row mounts', async () => {
+		const ref = createRef<GroupChatMessagesHandle>();
+		const timestamp = 1700000000000;
+		const result = render(
+			<GroupChatMessages
+				ref={ref}
+				theme={mockTheme}
+				messages={[{ timestamp: String(timestamp), from: 'Alice', content: 'target' }]}
+				participants={participants}
+				state="idle"
+			/>
+		);
+		const container = result.container.querySelector('[role="region"]') as HTMLElement;
+		const target = document.createElement('div');
+		const originalQuerySelector = container.querySelector.bind(container);
+		let attempts = 0;
+		container.scrollTo = vi.fn();
+		const querySpy = vi.spyOn(container, 'querySelector').mockImplementation((selector: string) => {
+			if (selector === '[data-message-index="0"]') {
+				attempts += 1;
+				return attempts < 4 ? null : target;
+			}
+			return originalQuerySelector(selector);
+		});
+
+		act(() => ref.current?.scrollToMessage(timestamp));
+
+		await waitFor(() => expect(attempts).toBe(4));
+		expect(target.style.backgroundColor).toBe('rgba(255, 255, 255, 0.1)');
+		querySpy.mockRestore();
+	});
+
 	it('scrolls to the bottom on new messages when auto-scroll is enabled', () => {
 		const { rerender, container } = renderChat(makeMessages(2));
 		const scroll = instrumentScroll(container);
@@ -141,6 +197,34 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		);
 
 		expect(scroll.scrollTop).toBe(1000);
+	});
+
+	it('keeps the virtual typing indicator at the bottom when a message arrives', async () => {
+		const result = render(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(2)}
+				participants={participants}
+				state="moderator-thinking"
+			/>
+		);
+		const container = result.container.querySelector('[role="region"]') as HTMLElement;
+		const scroll = instrumentScroll(container);
+		scroll.scrollTop = 0;
+
+		result.rerender(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(3)}
+				participants={participants}
+				state="moderator-thinking"
+			/>
+		);
+
+		expect(scroll.scrollTop).toBe(1000);
+		await waitFor(() => {
+			expect(container.querySelector('[data-typing-indicator]')).toBeInTheDocument();
+		});
 	});
 
 	it('does not scroll on new messages when auto-scroll is disabled', () => {
