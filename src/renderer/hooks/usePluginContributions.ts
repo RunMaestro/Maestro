@@ -14,7 +14,6 @@ import type { AggregatedContributions } from '../../shared/plugins/contributions
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
-	iconPacks: [],
 	prompts: [],
 	settings: [],
 	commandMacros: [],
@@ -25,7 +24,7 @@ const EMPTY: AggregatedContributions = {
 	tools: [],
 	keybindings: [],
 	uiItems: [],
-	hostViews: [],
+	groupings: [],
 	errorsByPlugin: {},
 };
 

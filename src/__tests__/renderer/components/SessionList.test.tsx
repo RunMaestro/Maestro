@@ -19,6 +19,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 
 // Deep-cloned default autoRunStats captured from a fresh store (no longer exported).
 const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(useSettingsStore.getState().autoRunStats));
@@ -180,7 +181,7 @@ const defaultTheme: Theme = {
 };
 
 // Default shortcuts
-const defaultShortcuts: Record<string, any> = {
+const defaultShortcuts = {
 	help: { keys: ['?'], description: 'Show help' },
 	settings: { keys: ['meta', ','], description: 'Settings' },
 	systemLogs: { keys: ['meta', 'shift', 'l'], description: 'System logs' },
@@ -188,6 +189,22 @@ const defaultShortcuts: Record<string, any> = {
 	usageDashboard: { keys: ['alt', 'meta', 'u'], description: 'Usage dashboard' },
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
 	filterUnreadAgents: { keys: ['alt', 'u'], description: 'Filter unread agents' },
+};
+
+const EMPTY_PLUGIN_CONTRIBUTIONS: AggregatedContributions = {
+	themes: [],
+	prompts: [],
+	settings: [],
+	commandMacros: [],
+	cueTriggers: [],
+	commands: [],
+	panels: [],
+	agents: [],
+	tools: [],
+	keybindings: [],
+	uiItems: [],
+	groupings: [],
+	errorsByPlugin: {},
 };
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
@@ -260,6 +277,10 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
+		vi.mocked(window.maestro.plugins.onChanged).mockImplementation(() => () => {});
+		vi.mocked(window.maestro.plugins.onGroupingsChanged).mockImplementation(() => () => {});
 		// Reset all stores to clean test state
 		useUIStore.setState({
 			leftSidebarOpen: true,
@@ -831,32 +852,6 @@ describe('SessionList', () => {
 			expect(screen.getByText('Project')).not.toHaveStyle({ color: '#22C55E' });
 		});
 
-		it('falls back to the default folder without rewriting a disabled plugin appearance', () => {
-			enableGroupsPlus();
-			const group = createMockGroup({
-				id: 'g1',
-				name: 'Plugin Group',
-				emoji: '',
-				icon: 'com.acme/bright/bolt',
-				color: 'com.acme/bright/lime',
-			});
-			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
-			useSessionStore.setState({ sessions, groups: [group] });
-			useUIStore.setState({ leftSidebarOpen: true });
-
-			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
-
-			expect(screen.getByTestId('icon-folder')).toHaveStyle({ color: defaultTheme.colors.textDim });
-			expect(screen.getByText('Plugin Group')).not.toHaveAttribute(
-				'style',
-				`color: ${group.color};`
-			);
-			expect(group).toMatchObject({
-				icon: 'com.acme/bright/bolt',
-				color: 'com.acme/bright/lime',
-			});
-		});
-
 		it('renders child groups indented beneath their parent', () => {
 			enableGroupsPlus();
 			const parent = createMockGroup({ id: 'company', name: 'Company' });
@@ -1040,6 +1035,77 @@ describe('SessionList', () => {
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
+		});
+
+		it('renders plugin virtual groups without persisted group controls and falls back to Manual', async () => {
+			let notifyPluginChange: (() => void) | undefined;
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+						rules: [
+							{
+								match: { toolType: 'claude-code' },
+								group: 'Claude',
+								parentGroup: 'AI Agents',
+							},
+						],
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.onChanged).mockImplementation((callback) => {
+				notifyPluginChange = callback;
+				return () => {};
+			});
+			const persistedGroup = createMockGroup({ id: 'persisted', name: 'Persisted Group' });
+			const sessions = [
+				createMockSession({
+					id: 'claude',
+					name: 'Claude Agent',
+					toolType: 'claude-code',
+					groupId: 'persisted',
+				}),
+				createMockSession({ id: 'codex', name: 'Codex Agent', toolType: 'codex' }),
+			];
+			useSessionStore.setState({ sessions, groups: [persistedGroup] });
+			useSettingsStore.setState({
+				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, groupsPlus: false },
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Claude').closest('.ml-4')).not.toBeNull();
+			expect(screen.getAllByText('from Agent Classifier')).toHaveLength(3);
+			expect(screen.queryByText('Persisted Group')).not.toBeInTheDocument();
+			expect(screen.queryByText('New Group')).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions[0].groupId).toBe('persisted');
+			expect(useSessionStore.getState().groups).toEqual([persistedGroup]);
+
+			fireEvent.contextMenu(screen.getByText('Claude Agent'), { clientX: 100, clientY: 100 });
+			expect(screen.queryByText('Move to Group')).not.toBeInTheDocument();
+
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+			act(() => notifyPluginChange?.());
+			await waitFor(() => {
+				expect(screen.getByText('Persisted Group')).toBeInTheDocument();
+				expect(screen.getByText('New Group')).toBeInTheDocument();
+			});
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				'leftSidebarGroupingMode',
+				'manual'
+			);
 		});
 	});
 
@@ -3408,7 +3474,7 @@ describe('SessionList', () => {
 	describe('Resize Handle', () => {
 		it('saves sidebar width on mouseup', async () => {
 			const mockSettingsSet = vi.fn();
-			(window.maestro.settings.set as ReturnType<typeof vi.fn>).mockImplementation(mockSettingsSet);
+			vi.mocked(window.maestro.settings.set).mockImplementation(mockSettingsSet);
 
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({ leftSidebarWidth: 300 });

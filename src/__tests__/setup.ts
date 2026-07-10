@@ -453,6 +453,7 @@ const mockMaestro = {
 			tools: [],
 			keybindings: [],
 			uiItems: [],
+			groupings: [],
 			errorsByPlugin: {},
 		}),
 		getGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
@@ -461,7 +462,9 @@ const mockMaestro = {
 		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 		invokeTool: vi.fn().mockResolvedValue({ result: null }),
 		getActivity: vi.fn().mockResolvedValue({}),
+		getGroupings: vi.fn().mockResolvedValue([]),
 		onChanged: vi.fn().mockReturnValue(() => {}),
+		onGroupingsChanged: vi.fn().mockReturnValue(() => {}),
 		onRunUiCommand: vi.fn().mockReturnValue(() => {}),
 	},
 	agentRun: {

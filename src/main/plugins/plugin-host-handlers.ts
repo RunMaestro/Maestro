@@ -25,6 +25,7 @@ import type { PluginKvStore } from './plugin-kv-store';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
+import { validatePublishedGrouping, type PluginGroupingRegistry } from './plugin-grouping-registry';
 import {
 	isPluginEventTopic,
 	type PluginEvent,
@@ -132,6 +133,9 @@ export interface HostHandlerDeps {
 	/** Session METADATA listing (NEVER transcript/message content). */
 	sessionsList: () => PluginSessionMetadata[];
 	sessionsGet: (sessionId: string) => PluginSessionMetadata | null;
+	/** Process-local virtual grouping registry; never backed by persisted groups. */
+	groupingRegistry?: PluginGroupingRegistry;
+	isDeclaredGrouping?: (pluginId: string, localId: string) => boolean;
 	/** Optional session mutators. When omitted the handlers fail closed. */
 	sessionsCreate?: (params: Record<string, unknown>) => Promise<PluginSessionMetadata>;
 	sessionsUpdate?: (
@@ -1201,6 +1205,35 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				restarts: 0,
 				services: services.map((s) => ({ id: s.id, ...(s.name ? { name: s.name } : {}) })),
 			};
+		},
+		'ui.groupingPublish': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.groupingPublish', p, { id: true, groups: true, assignments: true });
+			if (typeof p.id !== 'string' || !deps.isDeclaredGrouping?.(pluginId, p.id)) {
+				throw new Error('grouping id is not declared by this plugin');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.groupingPublish', p);
+			if (!deps.groupingRegistry) throw new Error('grouping registry unavailable');
+			deps.groupingRegistry.publish(
+				validatePublishedGrouping(
+					pluginId,
+					p.id,
+					p,
+					new Set(deps.sessionsList().map((session) => session.id))
+				)
+			);
+			return { ok: true };
+		},
+
+		'ui.groupingClear': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.groupingClear', p, { id: true });
+			if (typeof p.id !== 'string' || !deps.isDeclaredGrouping?.(pluginId, p.id)) {
+				throw new Error('grouping id is not declared by this plugin');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.groupingClear', p);
+			deps.groupingRegistry?.clear(pluginId, p.id);
+			return { ok: true };
 		},
 	};
 

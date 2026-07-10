@@ -27,8 +27,7 @@ import { HamburgerDropdown } from './HamburgerDropdown';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
-import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
-import { SafeSvgIcon } from '../ui/SafeSvgIcon';
+import { GROUP_ICON_OPTIONS } from '../ui/groupAppearanceOptions';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
@@ -63,7 +62,8 @@ import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
-import { usePluginContributions } from '../../hooks/usePluginContributions';
+import { usePluginGroupings } from '../../hooks/usePluginGroupings';
+import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -155,7 +155,6 @@ interface SessionListProps {
 const UNGROUPED_DROP_TARGET = '__ungrouped__';
 
 function SessionListInner(props: SessionListProps) {
-	const pluginContributions = usePluginContributions();
 	// Store subscriptions
 	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
 	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
@@ -753,6 +752,32 @@ function SessionListInner(props: SessionListProps) {
 		stuckOutageSignature
 	);
 
+	const pluginGroupings = usePluginGroupings();
+	const [groupingMode, setGroupingMode] = useState('manual');
+	const [virtualCollapsed, setVirtualCollapsed] = useState<Record<string, boolean>>({});
+	useEffect(() => {
+		void window.maestro.settings.get('leftSidebarGroupingMode').then((value) => {
+			if (typeof value === 'string') setGroupingMode(value);
+		});
+	}, []);
+	const activeVirtualGrouping = pluginGroupings.find((grouping) => grouping.id === groupingMode);
+	useEffect(() => {
+		if (groupingMode === 'manual' || activeVirtualGrouping) return;
+		setGroupingMode('manual');
+		void window.maestro.settings.set('leftSidebarGroupingMode', 'manual');
+	}, [activeVirtualGrouping, groupingMode]);
+	const virtualGrouping = useMemo(
+		() =>
+			activeVirtualGrouping
+				? buildVirtualGrouping(activeVirtualGrouping, sortedFilteredSessions)
+				: undefined,
+		[activeVirtualGrouping, sortedFilteredSessions]
+	);
+	const selectGroupingMode = useCallback((id: string) => {
+		setGroupingMode(id);
+		void window.maestro.settings.set('leftSidebarGroupingMode', id);
+	}, []);
+
 	const { orderedGroups, groupById, childrenByParentId } = useMemo(() => {
 		const groupById = new Map(sortedGroups.map((group) => [group.id, group]));
 		if (!groupsPlusEnabled) {
@@ -952,10 +977,9 @@ function SessionListInner(props: SessionListProps) {
 		// When wrapped, use 'ungrouped' styling for flat sessions (no mx-3, consistent with grouped look)
 		const effectiveVariant = needsWorktreeWrapper && variant === 'flat' ? 'ungrouped' : variant;
 
-		// The Bookmarks section is a filtered view, not a real container - dragging
-		// agents out of it or dropping them into it has no meaningful target (drops
-		// previously fell through to "ungroup"). Disable drag/drop for those rows.
-		const dragDisabled = variant === 'bookmark';
+		// Bookmarks and virtual groupings are presentation-only views, not real
+		// containers. Dragging in either would mutate persisted session.groupId.
+		const dragDisabled = variant === 'bookmark' || activeVirtualGrouping !== undefined;
 
 		const content = (
 			<>
@@ -1354,6 +1378,29 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
+					{pluginGroupings.length > 0 && !isSecondaryWindow && (
+						<label
+							className="mx-3 mb-2 flex items-center gap-2 text-xs"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>Grouping</span>
+							<select
+								aria-label="Session grouping mode"
+								value={activeVirtualGrouping?.id ?? 'manual'}
+								onChange={(event) => selectGroupingMode(event.target.value)}
+								className="min-w-0 flex-1 rounded border bg-transparent px-1 py-0.5"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								<option value="manual">Manual</option>
+								{pluginGroupings.map((grouping) => (
+									<option key={grouping.id} value={grouping.id}>
+										{grouping.label ?? grouping.localId}
+									</option>
+								))}
+							</select>
+						</label>
+					)}
+
 					{/* Empty state for unread agents filter */}
 					{showUnreadAgentsOnly && sortedFilteredSessions.length === 0 && (
 						<div
@@ -1534,226 +1581,293 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
-					{/* GROUPS - hidden in a secondary window, which renders its owned agents
-					    as a flat focused list (see the flat-list branch below). */}
-					{(isSecondaryWindow ? [] : orderedGroups).map((group) => {
-						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
-						const parentGroup =
-							groupsPlusEnabled && group.parentGroupId
-								? groupById.get(group.parentGroupId)
-								: undefined;
-						const isNestedGroup = Boolean(parentGroup && !parentGroup.parentGroupId);
-						if (isNestedGroup && parentGroup?.collapsed && !showUnreadAgentsOnly) return null;
-						const childGroups = groupsPlusEnabled ? (childrenByParentId.get(group.id) ?? []) : [];
-						const hasVisibleChild = childGroups.some(
-							(childGroup) => (sortedGroupSessionsById.get(childGroup.id) || []).length > 0
-						);
-						// Keep a parent visible for a matching child while filtering by unread agents.
-						if (showUnreadAgentsOnly && groupSessions.length === 0 && !hasVisibleChild) return null;
-						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
-						const appearance = resolveGroupAppearance(
-							groupsPlusEnabled ? group.icon : undefined,
-							groupsPlusEnabled ? group.color : undefined,
-							groupsPlusEnabled ? pluginContributions.iconPacks : []
-						);
-						return (
-							<div
-								key={group.id}
-								data-group-depth={isNestedGroup ? 1 : 0}
-								className={`${isNestedGroup ? 'ml-4 ' : ''}mb-1 rounded`}
-								style={
-									dragOverTarget === group.id
-										? {
-												outline: `1px dashed ${theme.colors.accent}`,
-												outlineOffset: '-2px',
-												backgroundColor: `${theme.colors.accent}14`,
+					{activeVirtualGrouping &&
+						virtualGrouping &&
+						virtualGrouping.groups
+							.filter(
+								(group) =>
+									!group.parentGroupId ||
+									!virtualGrouping.groups.some((candidate) => candidate.id === group.parentGroupId)
+							)
+							.flatMap((group) => [
+								group,
+								...virtualGrouping.groups.filter(
+									(candidate) => candidate.parentGroupId === group.id
+								),
+							])
+							.map((group) => {
+								const parent = group.parentGroupId
+									? virtualGrouping.groups.find((candidate) => candidate.id === group.parentGroupId)
+									: undefined;
+								const collapsed = virtualCollapsed[group.id] === true;
+								if (parent && virtualCollapsed[parent.id] === true) return null;
+								const groupSessions = sortedFilteredSessions.filter(
+									(session) => virtualGrouping.assignments[session.id] === group.id
+								);
+								return (
+									<div key={group.id} className={`${parent ? 'ml-4 ' : ''}mb-1 rounded`}>
+										<button
+											type="button"
+											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider hover:bg-opacity-50"
+											style={{ color: theme.colors.textDim }}
+											aria-expanded={!collapsed}
+											onClick={() =>
+												setVirtualCollapsed((previous) => ({
+													...previous,
+													[group.id]: !collapsed,
+												}))
 											}
-										: undefined
-								}
-								onDragEnter={() => handleDropTargetEnter(group.id)}
-								onDragLeave={handleDropTargetLeave}
-							>
-								<LongPressable
-									role="button"
-									tabIndex={0}
-									draggable={groupsPlusEnabled && editingGroupId !== group.id}
-									onDragStart={
-										groupsPlusEnabled
-											? (event) => {
-													event.dataTransfer.effectAllowed = 'move';
-													event.dataTransfer.setData('text/plain', group.id);
-													setDraggingGroupId(group.id);
-												}
-											: undefined
-									}
-									onDragEnd={
-										groupsPlusEnabled
-											? () => {
-													setDraggingGroupId(null);
-													setDragOverTarget(null);
-												}
-											: undefined
-									}
-									aria-expanded={!group.collapsed}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											toggleGroup(group.id);
-										}
-									}}
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										>
+											{collapsed ? (
+												<ChevronRight className="w-3 h-3" />
+											) : (
+												<ChevronDown className="w-3 h-3" />
+											)}
+											<Folder className="w-3.5 h-3.5" />
+											<span>{group.name}</span>
+											<span className="normal-case font-normal opacity-60">
+												from {activeVirtualGrouping.pluginName ?? activeVirtualGrouping.pluginId}
+											</span>
+										</button>
+										{!collapsed && (
+											<div
+												className="flex flex-col border-l ml-4"
+												style={{ borderColor: theme.colors.border }}
+											>
+												{groupSessions.map((session) =>
+													renderSessionWithWorktrees(session, 'group', {
+														keyPrefix: `virtual-${group.id}`,
+													})
+												)}
+											</div>
+										)}
+									</div>
+								);
+							})}
+
+					{/* Persisted groups are hidden while a virtual grouping is active. */}
+					{!activeVirtualGrouping &&
+						(isSecondaryWindow ? [] : orderedGroups).map((group) => {
+							const groupSessions = sortedGroupSessionsById.get(group.id) || [];
+							const parentGroup =
+								groupsPlusEnabled && group.parentGroupId
+									? groupById.get(group.parentGroupId)
+									: undefined;
+							const isNestedGroup = Boolean(parentGroup && !parentGroup.parentGroupId);
+							if (isNestedGroup && parentGroup?.collapsed && !showUnreadAgentsOnly) return null;
+							const childGroups = groupsPlusEnabled ? (childrenByParentId.get(group.id) ?? []) : [];
+							const hasVisibleChild = childGroups.some(
+								(childGroup) => (sortedGroupSessionsById.get(childGroup.id) || []).length > 0
+							);
+							// Keep a parent visible for a matching child while filtering by unread agents.
+							if (showUnreadAgentsOnly && groupSessions.length === 0 && !hasVisibleChild)
+								return null;
+							const groupCollapsedPills = groupSessions.filter(
+								(session) => !session.parentSessionId
+							);
+							const GroupIcon =
+								groupsPlusEnabled && group.icon
+									? GROUP_ICON_OPTIONS.find((option) => option.id === group.icon)?.Icon
+									: undefined;
+							return (
+								<div
+									key={group.id}
+									data-group-depth={isNestedGroup ? 1 : 0}
+									className={`${isNestedGroup ? 'ml-4 ' : ''}mb-1 rounded`}
 									style={
 										dragOverTarget === group.id
-											? { backgroundColor: `${theme.colors.accent}33` }
+											? {
+													outline: `1px dashed ${theme.colors.accent}`,
+													outlineOffset: '-2px',
+													backgroundColor: `${theme.colors.accent}14`,
+												}
 											: undefined
 									}
-									onClick={() => toggleGroup(group.id)}
-									onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
-									// Touch: a long-press opens the same group context menu right-click opens.
-									onLongPress={(rect) =>
-										handleGroupContextMenu(longPressMouseEvent(rect), group.id)
-									}
-									onDragOver={handleDragOver}
-									onDrop={() => handleGroupDrop(group.id)}
+									onDragEnter={() => handleDropTargetEnter(group.id)}
+									onDragLeave={handleDropTargetLeave}
 								>
-									<div
-										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-										style={{ color: theme.colors.textDim }}
+									<LongPressable
+										role="button"
+										tabIndex={0}
+										draggable={groupsPlusEnabled && editingGroupId !== group.id}
+										onDragStart={
+											groupsPlusEnabled
+												? (event) => {
+														event.dataTransfer.effectAllowed = 'move';
+														event.dataTransfer.setData('text/plain', group.id);
+														setDraggingGroupId(group.id);
+													}
+												: undefined
+										}
+										onDragEnd={
+											groupsPlusEnabled
+												? () => {
+														setDraggingGroupId(null);
+														setDragOverTarget(null);
+													}
+												: undefined
+										}
+										aria-expanded={!group.collapsed}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												toggleGroup(group.id);
+											}
+										}}
+										className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										style={
+											dragOverTarget === group.id
+												? { backgroundColor: `${theme.colors.accent}33` }
+												: undefined
+										}
+										onClick={() => toggleGroup(group.id)}
+										onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
+										// Touch: a long-press opens the same group context menu right-click opens.
+										onLongPress={(rect) =>
+											handleGroupContextMenu(longPressMouseEvent(rect), group.id)
+										}
+										onDragOver={handleDragOver}
+										onDrop={() => handleGroupDrop(group.id)}
 									>
-										{group.collapsed && !showUnreadAgentsOnly ? (
-											<ChevronRight className="w-3 h-3" />
-										) : (
-											<ChevronDown className="w-3 h-3" />
-										)}
-										{appearance.icon ? (
-											appearance.icon.kind === 'plugin' ? (
-												<SafeSvgIcon
+										<div
+											className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+											style={{ color: theme.colors.textDim }}
+										>
+											{group.collapsed && !showUnreadAgentsOnly ? (
+												<ChevronRight className="w-3 h-3" />
+											) : (
+												<ChevronDown className="w-3 h-3" />
+											)}
+											{GroupIcon ? (
+												<GroupIcon
 													className="w-4 h-4"
-													path={appearance.icon.path}
-													viewBox={appearance.icon.viewBox}
-													style={{ color: appearance.color || theme.colors.textDim }}
+													style={{
+														color: groupsPlusEnabled
+															? group.color || theme.colors.textDim
+															: theme.colors.textDim,
+													}}
+												/>
+											) : group.emoji ? (
+												<span className="text-sm">{group.emoji}</span>
+											) : (
+												<Folder className="w-4 h-4" />
+											)}
+											{editingGroupId === group.id ? (
+												<input
+													autoFocus
+													className="bg-transparent outline-none w-full border-b border-indigo-500"
+													defaultValue={group.name}
+													onClick={(e) => e.stopPropagation()}
+													onBlur={(e) => {
+														if (ignoreNextBlurRef.current) {
+															ignoreNextBlurRef.current = false;
+															return;
+														}
+														finishRenamingGroup(group.id, e.target.value);
+													}}
+													onKeyDown={(e) => {
+														e.stopPropagation();
+														if (e.key === 'Enter') {
+															ignoreNextBlurRef.current = true;
+															finishRenamingGroup(group.id, e.currentTarget.value);
+														}
+													}}
 												/>
 											) : (
-												<appearance.icon.Icon
-													className="w-4 h-4"
-													style={{ color: appearance.color || theme.colors.textDim }}
-												/>
-											)
-										) : group.emoji ? (
-											<span className="text-sm">{group.emoji}</span>
-										) : (
-											<Folder className="w-4 h-4" />
-										)}
-										{editingGroupId === group.id ? (
-											<input
-												autoFocus
-												className="bg-transparent outline-none w-full border-b border-indigo-500"
-												defaultValue={group.name}
-												onClick={(e) => e.stopPropagation()}
-												onBlur={(e) => {
-													if (ignoreNextBlurRef.current) {
-														ignoreNextBlurRef.current = false;
-														return;
+												<span
+													onDoubleClick={() => startRenamingGroup(group.id)}
+													style={
+														groupsPlusEnabled && group.color ? { color: group.color } : undefined
 													}
-													finishRenamingGroup(group.id, e.target.value);
-												}}
-												onKeyDown={(e) => {
-													e.stopPropagation();
-													if (e.key === 'Enter') {
-														ignoreNextBlurRef.current = true;
-														finishRenamingGroup(group.id, e.currentTarget.value);
-													}
-												}}
+												>
+													{group.name}
+													{showLeftPanelGroupMemberCount && groupCollapsedPills.length > 0 && (
+														<span className="ml-1 opacity-60">({groupCollapsedPills.length})</span>
+													)}
+												</span>
+											)}
+											<WizardIndicator
+												active={wizardRollup.groups.has(group.id)}
+												generatingDocs={!!wizardRollup.groups.get(group.id)?.isGeneratingDocs}
 											/>
-										) : (
-											<span
-												onDoubleClick={() => startRenamingGroup(group.id)}
-												style={appearance.color ? { color: appearance.color } : undefined}
+										</div>
+										{/* Delete button for empty groups */}
+										{groupSessions.length === 0 && (
+											<button
+												onClick={(e) => {
+													e.stopPropagation();
+													showConfirmation(
+														`Are you sure you want to delete the group "${group.name}"?`,
+														() => {
+															setGroups((prev) => removeGroupAndPromoteChildren(prev, group.id));
+														}
+													);
+												}}
+												className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
+												style={{ color: theme.colors.error }}
+												title="Delete empty group"
 											>
-												{group.name}
-												{showLeftPanelGroupMemberCount && groupCollapsedPills.length > 0 && (
-													<span className="ml-1 opacity-60">({groupCollapsedPills.length})</span>
-												)}
-											</span>
+												<X className="w-3 h-3" />
+											</button>
 										)}
-										<WizardIndicator
-											active={wizardRollup.groups.has(group.id)}
-											generatingDocs={!!wizardRollup.groups.get(group.id)?.isGeneratingDocs}
-										/>
-									</div>
-									{/* Delete button for empty groups */}
-									{groupSessions.length === 0 && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												showConfirmation(
-													`Are you sure you want to delete the group "${group.name}"?`,
-													() => {
-														setGroups((prev) => removeGroupAndPromoteChildren(prev, group.id));
-													}
-												);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Delete empty group"
-										>
-											<X className="w-3 h-3" />
-										</button>
-									)}
-									{/* Delete button for worktree groups with agents */}
-									{isWorktreeGroup(group) && groupSessions.length > 0 && onDeleteWorktreeGroup && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												onDeleteWorktreeGroup(group.id);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Remove group and all agents"
-										>
-											<Trash2 className="w-3 h-3" />
-										</button>
-									)}
-								</LongPressable>
+										{/* Delete button for worktree groups with agents */}
+										{isWorktreeGroup(group) &&
+											groupSessions.length > 0 &&
+											onDeleteWorktreeGroup && (
+												<button
+													onClick={(e) => {
+														e.stopPropagation();
+														onDeleteWorktreeGroup(group.id);
+													}}
+													className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
+													style={{ color: theme.colors.error }}
+													title="Remove group and all agents"
+												>
+													<Trash2 className="w-3 h-3" />
+												</button>
+											)}
+									</LongPressable>
 
-								{!group.collapsed || showUnreadAgentsOnly ? (
-									<div
-										className="flex flex-col border-l ml-4"
-										style={{ borderColor: theme.colors.border }}
-									>
-										{groupSessions.map((session) =>
-											renderSessionWithWorktrees(session, 'group', {
-												keyPrefix: `group-${group.id}`,
-												groupId: group.id,
-												onDrop: dropOnGroupHandlers.get(group.id),
-											})
-										)}
-									</div>
-								) : groupCollapsedPills.length > 0 ? (
-									/* Collapsed Group Palette - uses subdivided pills for worktrees */
-									<CollapsedSessionPillRows
-										sessions={groupCollapsedPills}
-										keyPrefix={`group-collapsed-${group.id}`}
-										maxPerRow={leftPanelCollapsedPillsPerRow}
-										onContainerClick={() => toggleGroup(group.id)}
-										theme={theme}
-										activeBatchSessionIds={activeBatchSessionIds}
-										leftSidebarWidth={leftSidebarWidthState}
-										contextWarningYellowThreshold={contextWarningYellowThreshold}
-										contextWarningRedThreshold={contextWarningRedThreshold}
-										getFileCount={getFileCount}
-										getWorktreeChildren={getWorktreeChildren}
-										setActiveSessionId={setActiveSessionId}
-									/>
-								) : null}
-							</div>
-						);
-					})}
+									{!group.collapsed || showUnreadAgentsOnly ? (
+										<div
+											className="flex flex-col border-l ml-4"
+											style={{ borderColor: theme.colors.border }}
+										>
+											{groupSessions.map((session) =>
+												renderSessionWithWorktrees(session, 'group', {
+													keyPrefix: `group-${group.id}`,
+													groupId: group.id,
+													onDrop: dropOnGroupHandlers.get(group.id),
+												})
+											)}
+										</div>
+									) : groupCollapsedPills.length > 0 ? (
+										/* Collapsed Group Palette - uses subdivided pills for worktrees */
+										<CollapsedSessionPillRows
+											sessions={groupCollapsedPills}
+											keyPrefix={`group-collapsed-${group.id}`}
+											maxPerRow={leftPanelCollapsedPillsPerRow}
+											onContainerClick={() => toggleGroup(group.id)}
+											theme={theme}
+											activeBatchSessionIds={activeBatchSessionIds}
+											leftSidebarWidth={leftSidebarWidthState}
+											contextWarningYellowThreshold={contextWarningYellowThreshold}
+											contextWarningRedThreshold={contextWarningRedThreshold}
+											getFileCount={getFileCount}
+											getWorktreeChildren={getWorktreeChildren}
+											setActiveSessionId={setActiveSessionId}
+										/>
+									) : null}
+								</div>
+							);
+						})}
 
 					{/* SESSIONS - Flat list when no groups exist (or in a secondary window, which
 					    always shows its owned agents as a flat focused list), otherwise the
 					    Ungrouped folder. */}
-					{sessions.length > 0 && (groups.length === 0 || isSecondaryWindow) ? (
+					{!activeVirtualGrouping &&
+					sessions.length > 0 &&
+					(groups.length === 0 || isSecondaryWindow) ? (
 						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
 						<>
 							<div className="flex flex-col">
@@ -1779,7 +1893,10 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</>
-					) : !isSecondaryWindow && groups.length > 0 && ungroupedSessions.length > 0 ? (
+					) : !activeVirtualGrouping &&
+					  !isSecondaryWindow &&
+					  groups.length > 0 &&
+					  ungroupedSessions.length > 0 ? (
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div
 							className="mb-1 mt-4 rounded"
@@ -1876,7 +1993,10 @@ function SessionListInner(props: SessionListProps) {
 								/>
 							)}
 						</div>
-					) : !isSecondaryWindow && groups.length > 0 && !showUnreadAgentsOnly ? (
+					) : !activeVirtualGrouping &&
+					  !isSecondaryWindow &&
+					  groups.length > 0 &&
+					  !showUnreadAgentsOnly ? (
 						/* NO UNGROUPED AGENTS - Show drop zone for ungrouping + New Group button */
 						<div
 							className="mt-4 px-3"
@@ -2012,6 +2132,7 @@ function SessionListInner(props: SessionListProps) {
 						setContextMenu(null);
 					}}
 					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
+					showGroupActions={!activeVirtualGrouping}
 					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
 					onDelete={() => handleDeleteSession(contextMenuSession.id)}
 					onDismiss={() => setContextMenu(null)}

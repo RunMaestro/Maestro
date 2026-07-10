@@ -9,7 +9,6 @@ import type {
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
-	iconPacks: [],
 	prompts: [],
 	settings: [],
 	commandMacros: [],
@@ -20,7 +19,7 @@ const EMPTY: AggregatedContributions = {
 	tools: [],
 	keybindings: [],
 	uiItems: [],
-	hostViews: [],
+	groupings: [],
 	errorsByPlugin: {},
 };
 

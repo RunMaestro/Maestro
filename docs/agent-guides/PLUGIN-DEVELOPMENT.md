@@ -608,3 +608,41 @@ Typical flow: `init` -> edit -> `validate` -> `sign --gen-key --key-out key.pem`
 - `src/renderer/components/plugins/PluginPanelFrame.tsx` + `src/main/plugins/plugin-panel-host.ts` - the panel render host (isolated webview), CSP, and the postMessage bridge.
 - `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package.
 - `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.
+
+## Virtual sidebar groupings
+
+Groupings are virtual views of session metadata: they never change persisted
+groups or a session's `groupId`. A tier-0 manifest can provide a rule-based mode:
+
+```json
+{
+	"contributes": {
+		"groupings": [
+			{
+				"id": "by-agent-type",
+				"label": "Group by agent type",
+				"rules": [
+					{ "match": { "toolType": "claude" }, "group": "Claude" },
+					{ "match": { "toolType": "codex" }, "group": "Codex" }
+				]
+			}
+		]
+	}
+}
+```
+
+Rules are evaluated in order and unmatched sessions are shown in `Other`.
+`cwdGlob` and `namePattern` use only the safe `*` wildcard grammar, not regular
+expressions. A tier-1 plugin with the `ui:grouping` permission can publish a
+computed version of one of its declared grouping ids:
+
+```ts
+await maestro.ui.grouping.publish({
+	id: 'by-agent-type',
+	groups: [{ id: 'claude', label: 'Claude' }],
+	assignments: { 'session-id': 'claude' },
+});
+```
+
+Published group ids are local to the declared grouping, may nest only one level,
+and use session metadata only. The host silently drops unknown session ids.

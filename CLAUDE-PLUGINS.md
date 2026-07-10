@@ -216,3 +216,21 @@ External authors do not read this repo; two artifacts hand them the contract:
 - [docs/agent-guides/PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) - the practical authoring guide.
 - `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package (vendored contracts + drift guard).
 - `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.
+
+## Virtual session groupings (HOST_API 1.9.0)
+
+`contributes.groupings` adds a presentation-only sidebar mode. A tier-0 grouping
+declares `{ id, label, description?, rules? }`; rules are first-match-wins and
+may match `toolType`, `cwdGlob`, and `namePattern`, assigning display `group`
+and optional `parentGroup` labels. Unmatched sessions appear in **Other**.
+Patterns use only the bounded `*` wildcard grammar (all other characters are
+literal); no plugin-supplied regular expression is compiled. Groupings never
+write `session.groupId` or create, rename, or delete persisted groups.
+
+Tier-1 code may publish a validated metadata-only snapshot through
+`ui:grouping`: `maestro.ui.grouping.publish({ id, groups, assignments })` and
+`maestro.ui.grouping.clear(id)`. The id must be this plugin's declared local
+grouping id; group ids are local, depth is at most two, unknown session ids are
+dropped, and snapshots are process-local and purged when the sandbox stops,
+the plugin is disabled/uninstalled, or the feature flag is off. `ui:grouping`
+is low-risk and unscoped because its only output is virtual presentation.

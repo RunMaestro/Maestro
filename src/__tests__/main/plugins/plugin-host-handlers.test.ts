@@ -21,6 +21,7 @@ import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
+import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 let kvBase: string;
@@ -1209,5 +1210,70 @@ describe('resource cleanup on plugin stop', () => {
 			fs.rmSync(tmpA, { recursive: true, force: true });
 			fs.rmSync(tmpB, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('ui.groupingPublish / ui.groupingClear', () => {
+	it('requires a declared grouping, drops unknown sessions, and retains no session mutations', async () => {
+		const groupingRegistry = new PluginGroupingRegistry();
+		const sessions: PluginSessionMetadata[] = [
+			{ id: 'known', title: 'Known session' },
+			{ id: 'other', title: 'Other session' },
+		];
+		const h = buildHostCallHandlers(
+			makeDeps({
+				groupingRegistry,
+				isDeclaredGrouping: (pluginId, localId) =>
+					pluginId === 'com.acme' && localId === 'by-agent-type',
+				sessionsList: () => sessions,
+			})
+		);
+
+		await h['ui.groupingPublish']!('com.acme', {
+			id: 'by-agent-type',
+			groups: [{ id: 'claude', label: 'Claude' }],
+			assignments: { known: 'claude', missing: 'claude' },
+		});
+
+		expect(groupingRegistry.snapshot()).toEqual([
+			expect.objectContaining({ assignments: { known: 'claude' } }),
+		]);
+		expect(sessions).toEqual([
+			{ id: 'known', title: 'Known session' },
+			{ id: 'other', title: 'Other session' },
+		]);
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'not-declared',
+				groups: [],
+				assignments: {},
+			})
+		).rejects.toThrow(/not declared/);
+	});
+
+	it('denies publication without ui:grouping and rejects unknown payload fields', async () => {
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => []),
+				groupingRegistry: new PluginGroupingRegistry(),
+				isDeclaredGrouping: () => true,
+			})
+		);
+
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'by-agent-type',
+				groups: [],
+				assignments: {},
+				extra: true,
+			})
+		).rejects.toThrow(/unexpected field/);
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'by-agent-type',
+				groups: [],
+				assignments: {},
+			})
+		).rejects.toThrow(/permission denied/);
 	});
 });
