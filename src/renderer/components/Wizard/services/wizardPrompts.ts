@@ -147,7 +147,7 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
  */
 export const STRUCTURED_OUTPUT_SUFFIX = `
 
-IMPORTANT: This is a discovery conversation only. Do NOT use tools, browse the web, fetch URLs, or start implementing. Ask clarifying questions from the user's message and any system context already provided. Respond immediately with ONLY valid JSON in this exact format:
+IMPORTANT: This is a discovery conversation. You may read files or fetch issue/docs URLs to scope the work, but do not implement changes or run long multi-step builds. Prefer short clarifying questions when context is thin. End every turn with ONLY valid JSON in this exact format:
 {"confidence": <0-100>, "ready": <true/false>, "message": "<your response>", "projectName": "<short playbook name>"}`;
 
 /**

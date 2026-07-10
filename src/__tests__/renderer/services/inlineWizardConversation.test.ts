@@ -362,18 +362,13 @@ describe('inlineWizardConversation', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
-			// Discovery phase: cap tool loops, block web fetch, plan mode, no subagents
+			// Discovery needs read/fetch: no plan mode / no web-search ban.
+			// Cap turns + no subagents to avoid silent freezes; always-approve for headless.
 			expect(spawnCall.args).toEqual(
-				expect.arrayContaining([
-					'--always-approve',
-					'--permission-mode',
-					'plan',
-					'--disable-web-search',
-					'--max-turns',
-					'3',
-					'--no-subagents',
-				])
+				expect.arrayContaining(['--always-approve', '--max-turns', '8', '--no-subagents'])
 			);
+			expect(spawnCall.args).not.toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+			expect(spawnCall.args).not.toContain('--disable-web-search');
 
 			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
 			// Thought deltas must not pollute the structured JSON body

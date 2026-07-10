@@ -745,17 +745,10 @@ class ConversationManager {
 			}
 
 			case 'grok': {
-				// Match inline wizard discovery: cap tool loops, block web fetch, plan mode.
+				// Match inline wizard: no plan mode (discovery needs read/fetch).
+				// Cap turns + no subagents to avoid silent multi-minute freezes.
 				const args = [...(agent.args || [])];
-				args.push(
-					'--always-approve',
-					'--permission-mode',
-					'plan',
-					'--disable-web-search',
-					'--max-turns',
-					'3',
-					'--no-subagents'
-				);
+				args.push('--always-approve', '--max-turns', '8', '--no-subagents');
 				return args;
 			}
 
