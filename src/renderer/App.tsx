@@ -2179,7 +2179,8 @@ function MaestroConsoleInner() {
 	// Restart-when-idle — installs a downloaded update once the app is idle
 	useRestartWhenIdle();
 
-	// Queue processing (execution, startup recovery) — extracted to useQueueProcessing hook
+	// Queue processing — narrow idle-queue signature (not full sessions) so
+	// streaming updates do not re-render MaestroConsoleInner
 	const { processQueuedItem } = useQueueProcessing({
 		conductorProfile,
 		customAICommandsRef,
