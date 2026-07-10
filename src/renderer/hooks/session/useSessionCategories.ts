@@ -102,8 +102,17 @@ export function useSessionCategories(
 		[worktreeChildrenByParentId]
 	);
 
-	// Consolidated session categorization and sorting - computed in a single pass
-	const groupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+	// Consolidated session categorization and sorting - computed in a single pass.
+	// `groupIds` is only ever membership-tested below, so key it on a signature of
+	// the ids rather than the `groups` array reference. Collapsing or expanding a
+	// group rebuilds `groups` without changing which ids exist; keying on the array
+	// handed the categorization memo a fresh Set and re-ran the whole
+	// filter/categorize/sort pass over every agent on each toggle (#1186).
+	const groupIdsSignature = useMemo(() => groups.map((g) => g.id).join('|'), [groups]);
+	const groupIds = useMemo(
+		() => new Set(groupIdsSignature ? groupIdsSignature.split('|') : []),
+		[groupIdsSignature]
+	);
 
 	// Stable Set of stuck (outage) agent ids, recomputed only when the signature
 	// changes so the categorization memo isn't invalidated on unrelated renders.

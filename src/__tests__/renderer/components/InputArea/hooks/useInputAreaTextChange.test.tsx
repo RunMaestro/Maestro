@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useInputAreaTextChange } from '../../../../../renderer/components/InputArea/hooks/useInputAreaTextChange';
 
 function Harness({
@@ -30,6 +30,10 @@ function Harness({
 }
 
 describe('useInputAreaTextChange', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	function createHandlers() {
 		return {
 			setInputValue: vi.fn(),
@@ -90,5 +94,50 @@ describe('useInputAreaTextChange', () => {
 		});
 
 		expect(handlers.setAtMentionOpen).not.toHaveBeenCalled();
+	});
+
+	it('scrolls the resized textarea to the caret at the end during the keystroke frame', () => {
+		const handlers = createHandlers();
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		const value = `${'line\n'.repeat(80)}end`;
+		textarea.scrollTop = 0;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: value.length, configurable: true });
+
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: value.length },
+		});
+
+		expect(runAnimationFrame).toHaveBeenCalledTimes(1);
+		expect(textarea.scrollTop).toBe(640);
+	});
+
+	it('leaves the scroll position alone when editing mid-text', () => {
+		const handlers = createHandlers();
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		const value = `${'line\n'.repeat(80)}end`;
+		textarea.scrollTop = 42;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		// Caret parked mid-text: scrollTextareaToCaretEnd keys off selectionEnd, so
+		// the keystroke resize must preserve the scroll rather than jump to bottom.
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: 2 },
+		});
+
+		expect(textarea.scrollTop).toBe(42);
 	});
 });

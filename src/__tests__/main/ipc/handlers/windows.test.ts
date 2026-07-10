@@ -229,6 +229,20 @@ describe('Windows IPC Handlers', () => {
 			expect(result[1].sessionIds).toEqual(['b', 'c']);
 			expect(result[0].activeSessionId).toBeNull();
 		});
+
+		it('excludes feature windows (cadenza-hud kind) - not offered in "Move to Window"', async () => {
+			registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['a'], isMain: true });
+			registry.create({
+				browserWindow: makeFakeWindow(),
+				kind: 'cadenza-hud',
+				sessionIds: [],
+				isMain: false,
+			});
+
+			const result = (await handlers.get('windows:list')!({})) as unknown[];
+
+			expect(result).toHaveLength(1);
+		});
 	});
 
 	describe('windows:getForSession', () => {
@@ -734,6 +748,33 @@ describe('Windows IPC Handlers', () => {
 			expect(secondaryWin.close).toHaveBeenCalledTimes(1);
 			// The primary is never auto-closed, even when it happens to be empty.
 			expect(primaryWin.close).not.toHaveBeenCalled();
+		});
+
+		it('never auto-closes a cadenza-hud feature window, though it owns no agents', () => {
+			const hudWin = makeFakeWindow();
+			const primary = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: [],
+				isMain: true,
+			});
+			const secondary = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: ['agent-1'],
+				isMain: false,
+			});
+			registry.create({
+				browserWindow: hudWin,
+				kind: 'cadenza-hud',
+				sessionIds: [],
+				isMain: false,
+			});
+
+			wireEmptySecondaryWindowAutoClose(registry);
+			// A session move fires the auto-close pass; the HUD owns zero sessions but
+			// must be skipped (pre-guard, it would be closed as an empty window).
+			registry.moveSession('agent-1', secondary, primary);
+
+			expect(hudWin.close).not.toHaveBeenCalled();
 		});
 
 		it('leaves a secondary that still owns agents open', () => {

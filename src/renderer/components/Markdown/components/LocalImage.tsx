@@ -34,8 +34,25 @@ export interface LocalImageProps {
 	theme: Theme;
 	/** Optional width in pixels (from `![[image|300]]` syntax) */
 	width?: number;
+	/** Optional maximum height for compact surfaces such as Cadenza cards. */
+	maxHeight?: number;
+	/** Override native image dragging when the containing surface owns drag gestures. */
+	draggable?: boolean;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+}
+
+/** Extract the path from a file:// URL. Agent-authored paths can carry
+ *  malformed percent-encoding (e.g. %ZZ) that makes decodeURIComponent throw
+ *  mid-render; fall back to the raw path so one bad URL degrades to a broken
+ *  image instead of taking down the surface rendering it. */
+function safeDecodeFileUrl(src: string): string {
+	const raw = src.replace('file://', '');
+	try {
+		return decodeURIComponent(raw);
+	} catch {
+		return raw;
+	}
 }
 
 // Helper to compute initial image state synchronously from cache.
@@ -58,7 +75,7 @@ function getLocalImageInitialState(src: string | undefined) {
 	// Check cache for file paths
 	let filePath = src;
 	if (src.startsWith('file://')) {
-		filePath = decodeURIComponent(src.replace('file://', ''));
+		filePath = safeDecodeFileUrl(src);
 	}
 
 	if (localImageCache.has(filePath)) {
@@ -69,7 +86,8 @@ function getLocalImageInitialState(src: string | undefined) {
 	return { dataUrl: null, loading: true };
 }
 
-export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProps) => {
+export const LocalImage = memo((props: LocalImageProps) => {
+	const { src, alt, theme, width, maxHeight, draggable, sshRemoteId } = props;
 	// Compute initial state synchronously from cache to prevent flicker
 	const initialState = useMemo(() => getLocalImageInitialState(src), [src]);
 
@@ -93,7 +111,7 @@ export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalIm
 		// For file:// URLs, extract the path and load via IPC
 		let filePath = src;
 		if (src.startsWith('file://')) {
-			filePath = decodeURIComponent(src.replace('file://', ''));
+			filePath = safeDecodeFileUrl(src);
 		}
 
 		// Double-check cache
@@ -158,11 +176,14 @@ export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalIm
 	}
 
 	// Build style based on whether width is specified
-	const imageStyle: React.CSSProperties = width
-		? { width: `${width}px`, height: 'auto', borderRadius: '4px' }
-		: { maxWidth: '100%', height: 'auto', borderRadius: '4px' };
+	const imageStyle: React.CSSProperties = {
+		...(width ? { width: `${width}px` } : { maxWidth: '100%' }),
+		height: 'auto',
+		borderRadius: '4px',
+		...(maxHeight ? { maxHeight: `${maxHeight}px`, objectFit: 'contain' } : {}),
+	};
 
-	return <img src={dataUrl} alt={alt || ''} style={imageStyle} />;
+	return <img src={dataUrl} alt={alt || ''} style={imageStyle} draggable={draggable} />;
 });
 
 LocalImage.displayName = 'LocalImage';

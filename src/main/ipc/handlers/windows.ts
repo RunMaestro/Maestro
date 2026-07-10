@@ -123,7 +123,7 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 			fromWindowId: change.fromWindowId,
 			toWindowId: change.toWindowId,
 		};
-		for (const entry of registry.getAll()) {
+		for (const entry of registry.getAppWindows()) {
 			const { browserWindow } = entry;
 			if (browserWindow.isDestroyed()) continue;
 			const { webContents } = browserWindow;
@@ -149,7 +149,7 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 export function wireEmptySecondaryWindowAutoClose(registry: WindowRegistry): () => void {
 	return registry.onChange((change) => {
 		if (change.type !== 'session-moved' && change.type !== 'sessions-changed') return;
-		for (const entry of registry.getAll()) {
+		for (const entry of registry.getAppWindows()) {
 			if (entry.isMain) continue;
 			if (entry.sessionIds.length > 0) continue;
 			if (entry.browserWindow.isDestroyed()) continue;
@@ -213,7 +213,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			{ context: LOG_CONTEXT, operation: 'list' },
 			async (): Promise<WindowInfo[]> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
-				return registry.getAll().map(toWindowInfo);
+				return registry.getAppWindows().map(toWindowInfo);
 			}
 		)
 	);

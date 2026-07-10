@@ -106,12 +106,22 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  * platform is exposed via the preload bridge at `window.maestro.platform`.
  */
 function getCurrentPlatform(): string {
-	if (typeof process !== 'undefined' && process.platform) {
-		return process.platform;
-	}
-
+	// Renderer FIRST: the real OS platform arrives via the preload bridge. This
+	// must win over `process.platform`, because the renderer's `process` polyfill
+	// (process-shim.js) reports platform `'browser'`, which would otherwise mask
+	// the real OS and send agents a wrong (Linux) maestro-cli path on Windows/mac.
 	if (typeof globalThis !== 'undefined' && (globalThis as any).maestro?.platform) {
 		return (globalThis as any).maestro.platform;
+	}
+
+	// Node (main process / CLI): the genuine process.platform. Guard against the
+	// shim's 'browser' value in case this ever runs in a polyfilled context.
+	if (
+		typeof process !== 'undefined' &&
+		process.platform &&
+		(process.platform as string) !== 'browser'
+	) {
+		return process.platform;
 	}
 	return 'linux'; // safe fallback
 }
@@ -122,6 +132,17 @@ function getCurrentPlatform(): string {
  * so the returned value includes the `node` invocation with the full path.
  */
 export function getMaestroCLIPath(): string {
+	// Prefer the real, on-disk path the main process resolved and handed to the
+	// renderer via preload (`window.maestro.maestroCliPath`). This is correct in
+	// both dev (`dist/cli/maestro-cli.js`) and packaged builds, so it beats the
+	// platform-default guesses below. Absent in pure Node contexts (CLI), which
+	// fall through to the platform default.
+	const resolved =
+		typeof globalThis !== 'undefined' ? (globalThis as any).maestro?.maestroCliPath : undefined;
+	if (typeof resolved === 'string' && resolved) {
+		return `node "${resolved}"`;
+	}
+
 	const platform = getCurrentPlatform();
 	switch (platform) {
 		case 'darwin':

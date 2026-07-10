@@ -279,6 +279,74 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- permissionMode --
+	it('adds fullAccessArgs when permissionMode is full', () => {
+		const agent = makeAgent({ fullAccessArgs: ['--bypass-all'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--bypass-all');
+	});
+
+	it('falls back to yoloModeArgs when permissionMode is full and fullAccessArgs absent', () => {
+		const agent = makeAgent({ yoloModeArgs: ['--dangerously-bypass'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--dangerously-bypass');
+	});
+
+	it('adds no bypass args when permissionMode is standard', () => {
+		const agent = makeAgent({
+			fullAccessArgs: ['--bypass-all'],
+			yoloModeArgs: ['--dangerously-bypass'],
+			readOnlyArgs: ['--plan'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'standard',
+		});
+		expect(result).not.toContain('--bypass-all');
+		expect(result).not.toContain('--dangerously-bypass');
+		expect(result).not.toContain('--plan');
+	});
+
+	it('adds readOnlyArgs when permissionMode is readonly', () => {
+		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'readonly',
+		});
+		expect(result).toContain('--permission-mode');
+		expect(result).toContain('plan');
+	});
+
+	it('permissionMode full takes precedence over legacy readOnlyMode: true', () => {
+		const agent = makeAgent({
+			fullAccessArgs: ['--bypass-all'],
+			readOnlyArgs: ['--plan'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'full',
+			readOnlyMode: true, // should be ignored when permissionMode is set
+		});
+		expect(result).toContain('--bypass-all');
+		expect(result).not.toContain('--plan');
+	});
+
+	it('permissionMode standard suppresses bypass args even when yoloMode: true is also passed', () => {
+		const agent = makeAgent({ yoloModeArgs: ['--dangerously-bypass'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			permissionMode: 'standard',
+			yoloMode: true, // should be ignored when permissionMode is set
+		});
+		expect(result).not.toContain('--dangerously-bypass');
+	});
+
 	it('deduplicates Codex bypass flag when batch and yolo args both include it', () => {
 		const agent = makeAgent({
 			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
@@ -330,7 +398,7 @@ describe('buildAgentArgs', () => {
 	});
 
 	// -- combined --
-	it('combines multiple options together', () => {
+	it('combines options in read-only mode', () => {
 		const agent = makeAgent({
 			batchModePrefix: ['run'],
 			batchModeArgs: ['--skip-git'],
@@ -348,7 +416,6 @@ describe('buildAgentArgs', () => {
 			cwd: '/tmp',
 			readOnlyMode: true,
 			modelId: 'gpt-4',
-			yoloMode: true,
 			agentSessionId: 'abc',
 		});
 
@@ -367,7 +434,47 @@ describe('buildAgentArgs', () => {
 			'plan',
 			'--model',
 			'gpt-4',
+			'--resume',
+			'abc',
+		]);
+	});
+
+	it('combines options in full-access mode', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['run'],
+			batchModeArgs: ['--skip-git'],
+			jsonOutputArgs: ['--format', 'json'],
+			workingDirArgs: (dir: string) => ['-C', dir],
+			readOnlyArgs: ['--agent', 'plan'],
+			modelArgs: (model: string) => ['--model', model],
+			yoloModeArgs: ['--yolo'],
+			resumeArgs: (sid: string) => ['--resume', sid],
+		});
+
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: 'do stuff',
+			cwd: '/tmp',
+			modelId: 'gpt-4',
+			yoloMode: true,
+			agentSessionId: 'abc',
+		});
+
+		// batchModeArgs (--skip-git) IS included when not in read-only mode.
+		// workingDirArgs (-C /tmp) is prepended so the directory flag lands before
+		// the batchModePrefix subcommand (#959).
+		// readOnlyArgs are NOT included in full-access mode.
+		expect(result).toEqual([
+			'-C',
+			'/tmp',
+			'run',
+			'--print',
+			'--skip-git',
+			'--format',
+			'json',
 			'--yolo',
+			'--model',
+			'gpt-4',
 			'--resume',
 			'abc',
 		]);

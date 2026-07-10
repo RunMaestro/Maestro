@@ -237,6 +237,9 @@ import {
 	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
+	deliverCadenzaToHud,
+	closeCadenzaHudWindow,
+	getCadenzaHudWindow,
 	type QuitHandler,
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
@@ -603,12 +606,17 @@ let quitHandler: QuitHandler | null = null;
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
 
+// Shared by the main window and the cadenza HUD window (which reuses the same
+// preload + renderer bundle, loaded with `?cadenzaHud`).
+const preloadPath = path.join(__dirname, 'preload.js');
+const rendererProductionUrl = `${RENDERER_SCHEME}://app/index.html`;
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
 	isDevelopment,
-	preloadPath: path.join(__dirname, 'preload.js'),
-	rendererProductionUrl: `${RENDERER_SCHEME}://app/index.html`,
+	preloadPath,
+	rendererProductionUrl,
 	devServerUrl: devServerUrl,
 	useNativeTitleBar,
 	autoHideMenuBar,
@@ -623,12 +631,82 @@ const windowManager = createWindowManager({
 	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
 });
 
+// Deps shared by every cadenza HUD window operation (the HUD reuses the main
+// preload + renderer bundle, loaded with `?cadenzaHud`).
+const cadenzaHudDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
+
+// Disabling Concerto must tear down the already-running always-on-top HUD, not
+// merely reject future payloads. Without this listener, existing cards and the
+// cursor hover poll survive after the user turns the extension off.
+store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
+});
+
+/**
+ * Route a cadenza payload to the HUD window (creating it lazily). Returns
+ * false when there's no main window to parent it, so the caller can fall back
+ * to the in-app renderer.
+ */
+function deliverCadenza(payload: Parameters<typeof deliverCadenzaToHud>[2]): boolean {
+	if (!mainWindow) return false;
+	// Concerto is an opt-in Encore feature: don't spawn the HUD window (or
+	// route anything) unless the user enabled it in Extensions.
+	if (store.get('encoreFeatures')?.concerto !== true) return false;
+	// The HUD window has no session store, so resolve the owning agent's display
+	// name here (for the "opened by X" attribution chip) and stamp it on.
+	let stamped = payload;
+	if (payload.sessionId && !payload.sourceAgent) {
+		const sessions = sessionsStore.get('sessions', []) as Array<{ id?: string; name?: string }>;
+		const sourceAgent = sessions.find((s) => s.id === payload.sessionId)?.name;
+		if (sourceAgent) stamped = { ...payload, sourceAgent };
+	}
+	return deliverCadenzaToHud(mainWindow, cadenzaHudDeps, stamped);
+}
+
+// A `decision` cadenza's chosen option replies to the owning agent: inject the
+// value as a live prompt into that agent's session via the main renderer's
+// existing remote-command path (the same one `maestro-cli dispatch` uses). The
+// agent process is already spawned (with SSH if configured), so feeding its live
+// session inherits that transport - no new spawn, no separate SSH handling.
+ipcMain.on('cadenza-hud:decision', (_event, sessionId: string, message: string) => {
+	// Same Concerto gate as the other cadenza entry points: with the flag off no
+	// decision card can exist, so a decision arriving anyway must not inject a
+	// prompt into a live agent session.
+	if (store.get('encoreFeatures')?.concerto !== true) return;
+	if (!mainWindow || mainWindow.isDestroyed()) return;
+	if (!sessionId || !message) return;
+	// force=true (5th arg): a decision card is answered mid-turn, so the owning
+	// agent is busy by definition; without the force flag the renderer's busy
+	// guard would silently drop the choice while the UI reports it was sent.
+	mainWindow.webContents.send('remote:executeCommand', sessionId, message, 'ai', undefined, true);
+});
+
+// A chat "point" chip that targets a cadenza asks main to pulse it. Cadenzas live
+// in the HUD renderer (a separate window with its own store), so the flash must be
+// routed to whichever renderer actually holds the card: the HUD window when it's
+// up, otherwise the main window (the in-app fallback layer). Gated by Concerto so
+// it's inert when off (no cadenzas exist then anyway).
+ipcMain.on('cadenza:flash', (_event, id: string) => {
+	if (!id) return;
+	if (store.get('encoreFeatures')?.concerto !== true) return;
+	const hud = getCadenzaHudWindow();
+	const target = hud && !hud.isDestroyed() ? hud : mainWindow;
+	if (target && !target.isDestroyed()) target.webContents.send('remote:cadenzaFlash', id);
+});
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
 	getMainWindow: () => mainWindow,
+	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
 		if (!cueEngine) return false;
@@ -658,6 +736,11 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
+		// The cadenza HUD isn't an OS child of the main window (so card clicks
+		// can't steal focus), so tear it down explicitly when Maestro closes.
+		// It deliberately stays visible while Maestro is merely minimized - the
+		// whole point of a HUD is to watch things while working in other apps.
+		closeCadenzaHudWindow();
 
 		// The primary window is the app's anchor: it owns the auto-updater, the
 		// global hotkey, the deep-link target, and the quit-confirmation surface.

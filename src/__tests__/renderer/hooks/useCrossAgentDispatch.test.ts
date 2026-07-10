@@ -6,6 +6,11 @@ import {
 	ensureConsultTab,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	buildUnifiedTabs,
+	getNavigableTabs,
+	revealAiTab,
+} from '../../../renderer/utils/tabHelpers';
 import { createMockSession } from '../../helpers/mockSession';
 import type { CrossAgentResponseChunk } from '../../../shared/crossAgentTypes';
 
@@ -56,12 +61,17 @@ describe('accumulateCrossAgentChunk', () => {
 		expect(result.displayText).toContain('boom');
 	});
 
-	it('keeps accumulated text over the error note when text already exists', () => {
+	it('keeps BOTH the partial answer and the failure reason when a consult dies mid-answer', () => {
 		const result = accumulateCrossAgentChunk(
 			'partial answer',
-			chunk({ done: true, error: 'late failure' })
+			chunk({ done: true, error: 'went silent for 10 minutes' })
 		);
-		expect(result.displayText).toBe('partial answer');
+		// The reason must reach the bubble body: the attribution header only exposes
+		// `error` to screen readers, so text-only would hide WHY the consult failed.
+		expect(result.displayText).toContain('partial answer');
+		expect(result.displayText).toContain('went silent for 10 minutes');
+		// The raw accumulation stays clean - the note is presentation, not content.
+		expect(result.accumulated).toBe('partial answer');
 	});
 });
 
@@ -179,6 +189,77 @@ describe('ensureConsultTab', () => {
 		expect(consult.logs.map((l) => l.text)).toEqual(['what is the status?']);
 		// First mention has no session to resume yet.
 		expect(result!.resumeAgentSessionId).toBeUndefined();
+	});
+
+	it('creates the consult tab hidden, so a mention never opens a tab on the target', () => {
+		seedTarget();
+		const result = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q',
+		})!;
+
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		const consult = target.aiTabs.find((t) => t.id === result.targetTabId)!;
+		expect(consult.hidden).toBe(true);
+		// It exists as data, but the target's tab strip is untouched.
+		expect(buildUnifiedTabs(target).map((t) => t.id)).toEqual(['main-tab']);
+		// ...and no tab-cycling shortcut can land on it.
+		expect(getNavigableTabs(target).map((t) => t.id)).toEqual(['main-tab']);
+	});
+
+	it('leaves an already-revealed consult tab visible on a repeat mention', () => {
+		seedTarget();
+		const first = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q1',
+		})!;
+		// The user opened it; it must not re-hide when the same source mentions again.
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) => (s.id === 'target' ? revealAiTab(s, first.targetTabId) : s)),
+		} as never);
+
+		ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q2',
+		});
+
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		const consult = target.aiTabs.find((t) => t.id === first.targetTabId)!;
+		expect(consult.hidden).toBe(false);
+		expect(buildUnifiedTabs(target).map((t) => t.id)).toContain(first.targetTabId);
+	});
+
+	it('does not disturb the target view when it is displaying a tiled group', () => {
+		seedTarget();
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) => (s.id === 'target' ? { ...s, activeGroupId: 'group-1' } : s)),
+		} as never);
+
+		ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'scratch',
+			sourceTabId: 'scratch-tab-1',
+			sourceAgentName: 'Scratch',
+			question: 'q',
+		});
+
+		// createTab clears activeGroupId to focus its new tab; a consult must restore
+		// it, or the target silently pops out of the group it was showing.
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		expect(target.activeGroupId).toBe('group-1');
 	});
 
 	it('reuses the same consult tab (and resumes its session) on a repeat mention from the same source tab', () => {

@@ -21,6 +21,8 @@ import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
+import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { MovementStateSnapshot } from '../../shared/movement-types';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
@@ -31,6 +33,36 @@ import {
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
 } from '../services/marketplace-service';
+
+/**
+ * One request/reply round-trip with a renderer over IPC: mint a fresh response
+ * channel, send it on `requestChannel`, and resolve with the renderer's reply
+ * (mapped by `parse`) or `fallback` if it doesn't answer within `timeoutMs`.
+ * Extracts the hand-rolled once-listener + timeout dance used by several
+ * `remote:*` reads. Caller must have already confirmed the window's webContents.
+ */
+function requestFromRenderer<T>(
+	win: BrowserWindow,
+	requestChannel: string,
+	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number }
+): Promise<T> {
+	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000 } = options;
+	return new Promise<T>((resolve) => {
+		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
+		let settled = false;
+		const finish = (value: T) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeoutId);
+			ipcMain.removeListener(responseChannel, onReply);
+			resolve(value);
+		};
+		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
+		ipcMain.once(responseChannel, onReply);
+		win.webContents.send(requestChannel, responseChannel);
+		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
+	});
+}
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
@@ -89,6 +121,13 @@ export interface WebServerFactoryDependencies {
 	groupsStore: GroupsStore;
 	/** Function to get the main window reference */
 	getMainWindow: () => BrowserWindow | null;
+	/**
+	 * Deliver a cadenza payload to the desktop HUD window - the transparent,
+	 * always-on-top overlay that floats cadenza views over other apps (created
+	 * lazily, buffered until its renderer subscribes). Returns true if the HUD
+	 * handled it; false (or absent) means fall back to the in-app renderer.
+	 */
+	deliverCadenza?: (payload: CadenzaPayload) => boolean;
 	/** Function to get the process manager reference */
 	getProcessManager: () => ProcessManager | null;
 	/** Direct CUE subscription trigger — bypasses renderer IPC round-trip */
@@ -123,7 +162,14 @@ export interface WebServerFactoryDependencies {
  * This allows dependency injection and makes the code more testable.
  */
 export function createWebServerFactory(deps: WebServerFactoryDependencies) {
-	const { settingsStore, sessionsStore, groupsStore, getMainWindow, getProcessManager } = deps;
+	const {
+		settingsStore,
+		sessionsStore,
+		groupsStore,
+		getMainWindow,
+		deliverCadenza,
+		getProcessManager,
+	} = deps;
 
 	/**
 	 * Create and configure the web server with all necessary callbacks.
@@ -883,6 +929,62 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 			mainWindow.webContents.send('remote:notifyCenterFlash', params);
 			return true;
+		});
+
+		server.setCadenzaViewCallback(async (params) => {
+			// Gated by the Concerto Encore feature: when off, drop the payload so the
+			// opt-in feature stays fully inert (no invisible in-app store population).
+			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+				return false;
+			// Prefer the desktop HUD window (floats over other apps). It buffers the
+			// payload internally until its renderer subscribes.
+			if (deliverCadenza?.(params)) return true;
+
+			// Fall back to the in-app renderer if the HUD can't be created.
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('no window available for cadenzaView', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for cadenzaView', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:cadenza', params);
+			return true;
+		});
+
+		// Movement ops go to the main renderer, which applies them to the in-app
+		// floating movement overlay. Gated by the Concerto Encore feature: when
+		// off, drop the payload so the opt-in feature stays fully inert.
+		server.setMovementViewCallback(async (params) => {
+			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+				return false;
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for movementView', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for movementView', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:movement', params);
+			return true;
+		});
+
+		// `movement state` read: ask the renderer for the current snapshot (items +
+		// size) and return it, so an agent can place items around what's there.
+		server.setGetMovementStateCallback(async () => {
+			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+				return null;
+			const mainWindow = getMainWindow();
+			if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
+			return requestFromRenderer<MovementStateSnapshot | null>(
+				mainWindow,
+				'remote:getMovementState',
+				{ fallback: null, parse: (raw) => (raw as MovementStateSnapshot) ?? null }
+			);
 		});
 
 		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {

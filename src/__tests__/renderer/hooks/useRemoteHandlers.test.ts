@@ -1017,13 +1017,13 @@ describe('useRemoteHandlers', () => {
 			// Should NOT spawn — unknown slash command is early-returned
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 
-			// addLogToTab should have been called with system error about unknown command
+			// addLogToTab should have been called with an error log about the unknown command
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			const activeTab = updated?.aiTabs.find((t) => t.id === updated.activeTabId);
-			const systemLog = activeTab?.logs.find(
-				(l) => l.source === 'system' && l.text.includes('/nonexistent')
+			const errorLog = activeTab?.logs.find(
+				(l) => l.source === 'error' && l.text.includes('/nonexistent')
 			);
-			expect(systemLog).toBeTruthy();
+			expect(errorLog).toBeTruthy();
 		});
 
 		it('uses speckitCommandsRef for slash command matching', async () => {
@@ -1219,6 +1219,42 @@ describe('useRemoteHandlers', () => {
 			const spawnCall = (window.maestro.process.spawn as any).mock.calls[0][0];
 			expect(spawnCall.args).toContain('--json');
 			expect(spawnCall.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+		});
+
+		it('sends permissionMode "readonly" when tab.readOnlyMode forces read-only despite tab.permissionMode "full"', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						data: [],
+						logs: [],
+						stagedImages: [],
+						readOnlyMode: true,
+						permissionMode: 'full',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			const spawnCall = (window.maestro.process.spawn as any).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.permissionMode).toBe('readonly');
 		});
 
 		it('sets session state to busy with busySource=ai for AI commands', async () => {

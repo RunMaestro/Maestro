@@ -6,6 +6,14 @@ import { isPointInWindowBounds, type WindowPanelState } from '../shared/window-t
 import { generateUUID } from '../shared/uuid';
 
 /**
+ * The kind of a registered window. `app` windows own agents (sessions) and take
+ * part in all the multi-window machinery (session moves, persistence, the "Move
+ * to Window" menu, telemetry). Special kinds like `cadenza-hud` are host-owned
+ * feature windows that own no sessions; the multi-window consumers skip them.
+ */
+export type WindowKind = 'app' | 'cadenza-hud';
+
+/**
  * A single window tracked by the registry. `sessionIds` are agent IDs (what
  * Maestro surfaces to users as "sessions") owned by this window. Exactly one
  * registered window is the primary one (`isMain`).
@@ -21,6 +29,8 @@ export interface RegisteredWindow {
 	browserWindow: BrowserWindow;
 	sessionIds: string[];
 	isMain: boolean;
+	/** Window role; `app` unless a feature window (e.g. the cadenza HUD). */
+	kind: WindowKind;
 	leftPanelCollapsed: boolean;
 	rightPanelCollapsed: boolean;
 	/** User-assigned window name; undefined for the default generic label. */
@@ -91,6 +101,7 @@ export class WindowRegistry extends EventEmitter {
 		windowId?: string;
 		sessionIds?: string[];
 		isMain?: boolean;
+		kind?: WindowKind;
 		browserWindow: BrowserWindow;
 		name?: string;
 		leftPanelCollapsed?: boolean;
@@ -102,6 +113,7 @@ export class WindowRegistry extends EventEmitter {
 			browserWindow: options.browserWindow,
 			sessionIds: [...(options.sessionIds ?? [])],
 			isMain: options.isMain ?? false,
+			kind: options.kind ?? 'app',
 			// Default to expanded for a fresh window; a restore passes the saved
 			// per-window collapse state so panels come back as the user left them.
 			leftPanelCollapsed: options.leftPanelCollapsed ?? false,
@@ -120,6 +132,23 @@ export class WindowRegistry extends EventEmitter {
 	/** Every registered window, in insertion order. */
 	getAll(): RegisteredWindow[] {
 		return [...this.windows.values()];
+	}
+
+	/**
+	 * Only the session-owning `app` windows - the set the multi-window machinery
+	 * (persistence, "Move to Window", telemetry, empty-window auto-close) should
+	 * act on. Feature windows like the cadenza HUD are excluded.
+	 */
+	getAppWindows(): RegisteredWindow[] {
+		return [...this.windows.values()].filter((w) => w.kind === 'app');
+	}
+
+	/** The first registered window of a given kind, if any (e.g. the cadenza HUD). */
+	getByKind(kind: WindowKind): RegisteredWindow | undefined {
+		for (const entry of this.windows.values()) {
+			if (entry.kind === kind) return entry;
+		}
+		return undefined;
 	}
 
 	/** The primary (`isMain`) window, if one is registered. */

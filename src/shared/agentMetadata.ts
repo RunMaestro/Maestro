@@ -67,6 +67,48 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
 }
 
 /**
+ * Get the UI label for a permission mode pill.
+ * For readonly mode, delegates to getReadOnlyModeLabel() when an agentId is
+ * given so agents that use plan-mode terminology (e.g. Claude Code's
+ * "Plan-Mode") keep it instead of the generic "Read Only" label.
+ */
+export function getPermissionModeLabel(
+	mode: 'full' | 'standard' | 'readonly',
+	agentId?: AgentId | string
+): string {
+	switch (mode) {
+		case 'full':
+			return 'Full Access';
+		case 'standard':
+			return 'Standard';
+		case 'readonly':
+			return agentId ? getReadOnlyModeLabel(agentId) : 'Read Only';
+	}
+}
+
+/**
+ * Get the tooltip text for a permission mode button.
+ * For readonly mode, delegates to getReadOnlyModeTooltip() when an agentId is
+ * given so agents that use plan-mode terminology (e.g. Claude Code) keep their
+ * plan-mode-specific tooltip.
+ */
+export function getPermissionModeTooltip(
+	mode: 'full' | 'standard' | 'readonly',
+	agentId?: AgentId | string
+): string {
+	switch (mode) {
+		case 'full':
+			return 'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation.';
+		case 'standard':
+			return 'Standard: Agent uses default permission model. File edits and commands may be silently denied if not pre-approved.';
+		case 'readonly':
+			return agentId
+				? getReadOnlyModeTooltip(agentId)
+				: 'Read Only: Agent runs in plan/exploration mode only. No file writes or command execution.';
+	}
+}
+
+/**
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
  *

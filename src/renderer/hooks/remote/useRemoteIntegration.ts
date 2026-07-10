@@ -8,6 +8,8 @@ import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
+import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
+import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 
@@ -653,6 +655,53 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribe();
 		};
+	}, []);
+
+	// Handle remote cadenza-view operations (open/update/close) from CLI/web interface.
+	useEffect(() => {
+		// Guard: on a dev hot-restart the renderer can mount before the rebuilt
+		// preload exposes newer bridge methods. Degrade gracefully instead of
+		// crashing the whole app into the error boundary.
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRemoteCadenza !== 'function') return;
+		const unsubscribe = proc.onRemoteCadenza((params) => {
+			applyCadenzaPayload(params);
+		});
+		// Flash a cadenza when a chat chip points at it. Main routes the flash here
+		// only in the in-app fallback case (no HUD window); normally it goes to the HUD.
+		const unsubscribeFlash = proc.onRemoteCadenzaFlash?.((id) => {
+			useCadenzaStore.getState().flashItem(id);
+		});
+		return () => {
+			unsubscribe();
+			unsubscribeFlash?.();
+		};
+	}, []);
+
+	// Handle remote movement operations (add/update/move/remove/clear) from CLI/web.
+	useEffect(() => {
+		// Guard: on a dev hot-restart the renderer can mount before the rebuilt
+		// preload exposes newer bridge methods. Degrade gracefully instead of
+		// crashing the whole app into the error boundary.
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRemoteMovement !== 'function') return;
+		const unsubscribe = proc.onRemoteMovement((params) => {
+			applyMovementPayload(params);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Answer `movement state` reads: the main process sends a request with a
+	// response channel; reply with the current movement snapshot (items + size).
+	useEffect(() => {
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRequestMovementState !== 'function') return;
+		const unsubscribe = proc.onRequestMovementState((responseChannel: string) => {
+			proc.sendMovementStateResponse?.(responseChannel, getMovementSnapshot());
+		});
+		return () => unsubscribe();
 	}, []);
 
 	// Handle remote open browser tab from CLI/web interface.

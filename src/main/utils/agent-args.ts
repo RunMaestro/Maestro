@@ -14,6 +14,7 @@ type BuildAgentArgsOptions = {
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
 	/**
 	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
@@ -99,6 +100,15 @@ export function buildAgentArgs(
 		return finalArgs;
 	}
 
+	// Resolve effective permission level. permissionMode takes precedence over the
+	// legacy readOnlyMode/yoloMode booleans when set explicitly.
+	const isFullAccess =
+		options.permissionMode === 'full' ||
+		(options.permissionMode === undefined && options.yoloMode === true);
+	const isReadOnly =
+		options.permissionMode === 'readonly' ||
+		(options.permissionMode === undefined && options.readOnlyMode === true);
+
 	// Batch-mode gate: normally we infer "batch mode" from the presence of a
 	// truthy prompt, so a bare interactive launch (no prompt) doesn't get batch
 	// args it never asked for. Callers that never launch interactive mode pass
@@ -112,10 +122,10 @@ export function buildAgentArgs(
 
 	if (agent.batchModeArgs && inBatchMode) {
 		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
-		// when readOnlyMode is active. Batch mode args grant write/approval permissions
+		// when in read-only mode. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
 		// CLI-enforced read-only mode or prompt-only enforcement.
-		if (!options.readOnlyMode) {
+		if (!isReadOnly) {
 			finalArgs = [...finalArgs, ...agent.batchModeArgs];
 		}
 	}
@@ -135,24 +145,28 @@ export function buildAgentArgs(
 		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
 	}
 
-	if (options.readOnlyMode && agent.readOnlyArgs) {
-		finalArgs = [...finalArgs, ...agent.readOnlyArgs];
+	if (isFullAccess) {
+		// Prefer fullAccessArgs over the legacy yoloModeArgs alias.
+		const fullArgs = agent.fullAccessArgs ?? agent.yoloModeArgs;
+		if (fullArgs) {
+			finalArgs = [...finalArgs, ...fullArgs];
+		}
+	} else if (isReadOnly) {
+		if (agent.readOnlyArgs) {
+			finalArgs = [...finalArgs, ...agent.readOnlyArgs];
+		}
+		if (agent.readOnlyCliEnforced === false) {
+			logger.warn(
+				`Agent ${agent.name}: read-only mode requested but no CLI-level enforcement available`,
+				LOG_CONTEXT,
+				{ agentId: agent.id }
+			);
+		}
 	}
-
-	if (options.readOnlyMode && agent.readOnlyCliEnforced === false) {
-		logger.warn(
-			`Agent ${agent.name}: read-only mode requested but no CLI-level enforcement available`,
-			LOG_CONTEXT,
-			{ agentId: agent.id }
-		);
-	}
+	// standard mode: no bypass args, no read-only args - agent uses its default permission model
 
 	if (options.modelId && agent.modelArgs) {
 		finalArgs = [...finalArgs, ...agent.modelArgs(options.modelId)];
-	}
-
-	if (options.yoloMode && agent.yoloModeArgs) {
-		finalArgs = [...finalArgs, ...agent.yoloModeArgs];
 	}
 
 	if (options.agentSessionId && agent.resumeArgs) {

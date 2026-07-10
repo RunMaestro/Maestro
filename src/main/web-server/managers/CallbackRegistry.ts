@@ -97,6 +97,9 @@ import type {
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
 	NotifyToastCallback,
+	CadenzaViewCallback,
+	MovementViewCallback,
+	GetMovementStateCallback,
 	NotifyCenterFlashCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
@@ -112,6 +115,8 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
+import type { CadenzaPayload } from '../../../shared/cadenza-types';
+import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
 
@@ -192,6 +197,9 @@ export interface WebServerCallbacks {
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
+	cadenzaView: CadenzaViewCallback | null;
+	movementView: MovementViewCallback | null;
+	getMovementState: GetMovementStateCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
@@ -276,6 +284,9 @@ export class CallbackRegistry {
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
+		cadenzaView: null,
+		movementView: null,
+		getMovementState: null,
 		notifyCenterFlash: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
@@ -762,6 +773,21 @@ export class CallbackRegistry {
 		return this.callbacks.notifyToast(params);
 	}
 
+	async cadenzaView(params: CadenzaPayload): Promise<boolean> {
+		if (!this.callbacks.cadenzaView) return false;
+		return this.callbacks.cadenzaView(params);
+	}
+
+	async movementView(params: MovementPayload): Promise<boolean> {
+		if (!this.callbacks.movementView) return false;
+		return this.callbacks.movementView(params);
+	}
+
+	async getMovementState(): Promise<MovementStateSnapshot | null> {
+		if (!this.callbacks.getMovementState) return null;
+		return this.callbacks.getMovementState();
+	}
+
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
@@ -1107,6 +1133,18 @@ export class CallbackRegistry {
 
 	setNotifyToastCallback(callback: NotifyToastCallback): void {
 		this.callbacks.notifyToast = callback;
+	}
+
+	setCadenzaViewCallback(callback: CadenzaViewCallback): void {
+		this.callbacks.cadenzaView = callback;
+	}
+
+	setMovementViewCallback(callback: MovementViewCallback): void {
+		this.callbacks.movementView = callback;
+	}
+
+	setGetMovementStateCallback(callback: GetMovementStateCallback): void {
+		this.callbacks.getMovementState = callback;
 	}
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {

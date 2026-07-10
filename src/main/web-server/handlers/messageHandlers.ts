@@ -126,6 +126,21 @@ import {
 	isPluginsFeatureEnabled,
 } from '../../plugins/plugin-manager-singleton';
 import { evaluatePluginDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
+import {
+	CADENZA_OPS,
+	CADENZA_VIEW_TYPES,
+	CADENZA_COLORS,
+	type CadenzaPayload,
+	type CadenzaOp,
+	type CadenzaViewType,
+	type CadenzaColor,
+} from '../../../shared/cadenza-types';
+import {
+	MOVEMENT_OPS,
+	type MovementOp,
+	type MovementPayload,
+	type MovementStateSnapshot,
+} from '../../../shared/movement-types';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -363,6 +378,9 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; pid: number }>;
 	killTerminalForWeb: (sessionId: string) => boolean;
 	notifyToast: (params: NotifyToastParams) => Promise<boolean>;
+	cadenzaView: (params: CadenzaPayload) => Promise<boolean>;
+	movementView: (params: MovementPayload) => Promise<boolean>;
+	getMovementState: () => Promise<MovementStateSnapshot | null>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
 	getMarketplaceManifest: (options?: {
 		refresh?: boolean;
@@ -762,6 +780,16 @@ export class WebSocketMessageHandler {
 
 			case 'notify_toast':
 				this.handleNotifyToast(client, message);
+				break;
+
+			case 'movement':
+				this.handleMovement(client, message);
+				break;
+			case 'get_movement_state':
+				this.handleGetMovementState(client, message);
+				break;
+			case 'cadenza':
+				this.handleCadenza(client, message);
 				break;
 
 			case 'notify_center_flash':
@@ -4450,6 +4478,182 @@ export class WebSocketMessageHandler {
 			})
 			.then((success) => sendResult(success, success ? undefined : 'Failed to show toast'))
 			.catch((error) => sendResult(false, `Failed to show toast: ${error.message}`));
+	}
+
+	/**
+	 * Handle movement - add/update/move/remove/clear an item on the agent-driven
+	 * movement. Validates op + id, then hands a typed payload to the renderer via
+	 * the movementView callback (the `remote:movement` channel).
+	 */
+	private handleMovement(client: WebClient, message: WebClientMessage): void {
+		const op = typeof message.op === 'string' ? (message.op as MovementOp) : undefined;
+		const id = typeof message.id === 'string' ? message.id : '';
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, { type: 'movement_result', success, error, requestId: message.requestId });
+		};
+
+		if (!op || !MOVEMENT_OPS.includes(op)) {
+			sendResult(false, `Invalid or missing op. Must be one of: ${MOVEMENT_OPS.join(', ')}`);
+			return;
+		}
+		if (op !== 'clear' && !id) {
+			sendResult(false, `Missing movement item id for op '${op}'`);
+			return;
+		}
+
+		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
+		// v === 'number'`, which would become invalid CSS geometry downstream.
+		const num = (v: unknown): number | undefined =>
+			typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+		const badGeometry = (['x', 'y', 'width', 'height'] as const).find(
+			(k) => message[k] !== undefined && num(message[k]) === undefined
+		);
+		if (badGeometry) {
+			sendResult(false, `Invalid ${badGeometry}: must be a finite number`);
+			return;
+		}
+		const payload: MovementPayload = {
+			op,
+			id: id || undefined,
+			x: num(message.x),
+			y: num(message.y),
+			width: num(message.width),
+			height: num(message.height),
+			title: typeof message.title === 'string' ? message.title : undefined,
+			body: typeof message.body === 'string' ? message.body : undefined,
+		};
+
+		if (!this.callbacks.movementView) {
+			sendResult(false, 'Movement not configured');
+			return;
+		}
+		this.callbacks
+			.movementView(payload)
+			.then((success) => sendResult(success, success ? undefined : 'Failed to update movement'))
+			.catch((error) => sendResult(false, `Failed to update movement: ${error.message}`));
+	}
+
+	/**
+	 * Handle get_movement_state - return the current movement snapshot (items + size)
+	 * so an agent can compose around what's already placed.
+	 */
+	private handleGetMovementState(client: WebClient, message: WebClientMessage): void {
+		const sendResult = (snapshot: MovementStateSnapshot | null, error?: string) => {
+			this.send(client, {
+				type: 'movement_state_result',
+				success: !error,
+				snapshot,
+				error,
+				requestId: message.requestId,
+			});
+		};
+		if (!this.callbacks.getMovementState) {
+			sendResult(null, 'Movement not configured');
+			return;
+		}
+		this.callbacks
+			.getMovementState()
+			// A null snapshot means the read did NOT happen (flag off, renderer gone,
+			// or timeout) - report failure so callers can retry instead of composing
+			// against a false empty 0x0 layout.
+			.then((snapshot) =>
+				snapshot
+					? sendResult(snapshot)
+					: sendResult(null, 'Movement state unavailable (Concerto off or renderer not responding)')
+			)
+			.catch((error) => sendResult(null, `Failed to read movement state: ${error.message}`));
+	}
+
+	/**
+	 * Handle cadenza - open/update/close a small agent-driven cadenza view.
+	 * Validates the op/id/viewType/color, then hands a typed payload to the
+	 * renderer via the cadenzaView callback (the `remote:cadenza` channel).
+	 */
+	private handleCadenza(client: WebClient, message: WebClientMessage): void {
+		const op = typeof message.op === 'string' ? (message.op as CadenzaOp) : undefined;
+		const id = typeof message.id === 'string' ? message.id : '';
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: 'cadenza_result',
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!op || !CADENZA_OPS.includes(op)) {
+			sendResult(false, `Invalid or missing op. Must be one of: ${CADENZA_OPS.join(', ')}`);
+			return;
+		}
+		if (!id) {
+			sendResult(false, 'Missing cadenza id');
+			return;
+		}
+
+		let viewType: CadenzaViewType | undefined;
+		const rawViewType = typeof message.viewType === 'string' ? message.viewType : undefined;
+		if (rawViewType !== undefined) {
+			if (!CADENZA_VIEW_TYPES.includes(rawViewType as CadenzaViewType)) {
+				sendResult(
+					false,
+					`Invalid viewType: ${rawViewType}. Must be one of: ${CADENZA_VIEW_TYPES.join(', ')}`
+				);
+				return;
+			}
+			viewType = rawViewType as CadenzaViewType;
+		}
+		if (op === 'open' && !viewType) {
+			sendResult(false, `op 'open' requires a viewType (${CADENZA_VIEW_TYPES.join(' | ')})`);
+			return;
+		}
+
+		let color: CadenzaColor | undefined;
+		const rawColor = typeof message.color === 'string' ? message.color : undefined;
+		if (rawColor !== undefined) {
+			if (!CADENZA_COLORS.includes(rawColor as CadenzaColor)) {
+				sendResult(
+					false,
+					`Invalid color: ${rawColor}. Must be one of: ${CADENZA_COLORS.join(', ')}`
+				);
+				return;
+			}
+			color = rawColor as CadenzaColor;
+		}
+
+		// Decision buttons: keep only well-formed { label, value } string pairs.
+		const options = Array.isArray(message.options)
+			? (message.options as unknown[]).filter(
+					(o): o is { label: string; value: string } =>
+						!!o &&
+						typeof o === 'object' &&
+						typeof (o as { label?: unknown }).label === 'string' &&
+						typeof (o as { value?: unknown }).value === 'string'
+				)
+			: undefined;
+
+		const payload: CadenzaPayload = {
+			op,
+			id,
+			viewType,
+			title: typeof message.title === 'string' ? message.title : undefined,
+			body: typeof message.body === 'string' ? message.body : undefined,
+			path: typeof message.path === 'string' ? message.path : undefined,
+			options: options && options.length > 0 ? options : undefined,
+			color,
+			sessionId: typeof message.sessionId === 'string' ? message.sessionId : undefined,
+		};
+
+		if (!this.callbacks.cadenzaView) {
+			sendResult(false, 'Cadenza views not configured');
+			return;
+		}
+
+		this.callbacks
+			.cadenzaView(payload)
+			.then((success) => sendResult(success, success ? undefined : 'Failed to update cadenza view'))
+			.catch((error) => sendResult(false, `Failed to update cadenza view: ${error.message}`));
 	}
 
 	/**

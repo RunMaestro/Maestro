@@ -380,7 +380,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			const tabAgentSessionId = targetTab.agentSessionId;
-			const isReadOnly = item.readOnlyMode || targetTab.readOnlyMode;
+			const isReadOnly =
+				item.readOnlyMode === true ||
+				targetTab.readOnlyMode === true ||
+				targetTab.permissionMode === 'readonly';
+			const effectivePermissionMode = isReadOnly ? 'readonly' : targetTab.permissionMode;
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
 			const spawnArgs = isReadOnly
@@ -439,6 +443,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
+					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
 					sessionCustomEnvVars: session.customEnvVars,
@@ -452,11 +457,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
+				const matchingAgentCommand = session.agentCommands?.find(
+					(cmd) => cmd.command === item.command && cmd.prompt
+				);
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
 					deps.openspecCommands.find((cmd) => cmd.command === item.command) ||
-					deps.bmadCommands?.find((cmd) => cmd.command === item.command);
+					deps.bmadCommands?.find((cmd) => cmd.command === item.command) ||
+					(matchingAgentCommand
+						? {
+								command: matchingAgentCommand.command,
+								description: matchingAgentCommand.description,
+								prompt: matchingAgentCommand.prompt!,
+							}
+						: undefined);
 
 				if (matchingCommand) {
 					let gitBranch: string | undefined;
@@ -536,6 +551,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
+						permissionMode: effectivePermissionMode,
 						sessionCustomPath: session.customPath,
 						sessionCustomArgs: session.customArgs,
 						sessionCustomEnvVars: session.customEnvVars,
@@ -548,10 +564,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					});
 				} else {
 					// Unknown command - add error log and reset to idle
-					useSessionStore.getState().addLogToTab(sessionId, {
-						source: 'system',
-						text: `Unknown command: ${item.command}`,
-					});
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							source: 'error',
+							text: `Unknown command: ${item.command}`,
+						},
+						item.tabId
+					);
 					useSessionStore.getState().setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== sessionId) return s;
@@ -580,17 +600,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
-				source: 'system',
+				source: 'error',
 				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
 			};
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const activeTab = getActiveTab(s);
+					const resolvedTabId = item.tabId ?? s.activeTabId;
 					const updatedAiTabs =
 						s.aiTabs?.length > 0
 							? s.aiTabs.map((tab) =>
-									tab.id === s.activeTabId
+									tab.id === resolvedTabId
 										? {
 												...tab,
 												state: 'idle' as const,
@@ -601,9 +621,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								)
 							: s.aiTabs;
 
-					if (!activeTab) {
+					const targetTabExists = s.aiTabs?.some((tab) => tab.id === resolvedTabId);
+					if (!targetTabExists) {
 						logger.error(
-							'[processQueuedItem error] No active tab found - session has no aiTabs, this should not happen'
+							'[processQueuedItem error] Target tab not found - error log dropped',
+							undefined,
+							{
+								sessionId,
+								resolvedTabId,
+							}
 						);
 					}
 

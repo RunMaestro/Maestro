@@ -22,6 +22,14 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* HUD mode: the cadenza overlay window is transparent so the desktop and
+   other apps show through the gaps between floating cards. */
+html.cadenza-hud,
+html.cadenza-hud body,
+html.cadenza-hud #root {
+	background: transparent !important;
+}
+
 /* Placeholder text styling - ensure clear distinction from actual input values */
 /* Uses lower opacity and italic to clearly indicate placeholder state */
 input::placeholder,

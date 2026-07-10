@@ -37,7 +37,8 @@ export type FirstPartyEncoreFlag =
 	| 'maestroCue'
 	| 'pianola'
 	| 'coworking'
-	| 'opencodeServer';
+	| 'opencodeServer'
+	| 'concerto';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -511,6 +512,49 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	],
 };
 
+/** Broker capabilities Concerto actually touches. The feature lets an agent
+ * compose native, style-mandated data views: a floating in-app Movement of block
+ * panels plus always-on-top Cadenza/HUD cards, driven over the CLI. Grepped
+ * from `src/main/index.ts` (deliverCadenza), `src/main/web-server/*` (the
+ * cadenza/movement bridge callbacks), `src/cli/commands/{cadenza,movement}.ts`, and
+ * `src/renderer/components/{Movement,Cadenza,BlockView}/`. */
+export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: 'com.maestro.concerto',
+	name: 'Concerto',
+	description:
+		'Let agents compose rich data views from native building blocks: a floating movement of panels plus always-on-top cadenza HUD cards.',
+	firstParty: true,
+	category: 'ui',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Concerto Encore flag before rendering movement panels or HUD cards.',
+		},
+		{
+			capability: 'sessions:read',
+			reason:
+				'Resolve the owning agent’s display name for a cadenza card’s "opened by" attribution chip (the HUD window has no session store of its own).',
+		},
+		// NOTE: the CLI->renderer view/movement bridge is HOST-OWNED and app-scoped
+		// (the web server started/stopped with the app in main/index, NOT gated by
+		// the Encore flag beyond the per-command render gate). No broker verb models
+		// "push an agent-composed view into the desktop UI", so that authority stays
+		// host-owned - the same precedent as Coworking's terminal/browser bridge.
+		// NOTE: a `decision` cadenza's chosen option is injected as a live prompt
+		// into the owning agent's existing session (host-owned dispatch, same
+		// constraint as Pianola/Cue: a dynamically-resolved target a static
+		// `agents:dispatch` allowlist scope cannot name), so it is disclosed here
+		// rather than declared as a broker capability.
+	],
+	settingsNamespace: 'concerto',
+	encoreFlag: 'concerto',
+	// No supervised background service: the movement overlay + cadenza HUD are
+	// purely reactive to CLI-pushed payloads (dropped at the render gate when the
+	// flag is off), and the bridge that carries them is app-scoped. Disable =
+	// flag off + overlays unmount + payloads dropped; nothing keeps running.
+	backgroundServices: [],
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -523,6 +567,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	PIANOLA_FIRST_PARTY_PLUGIN,
 	COWORKING_FIRST_PARTY_PLUGIN,
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
+	CONCERTO_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -541,4 +586,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	pianola: PIANOLA_FIRST_PARTY_PLUGIN,
 	coworking: COWORKING_FIRST_PARTY_PLUGIN,
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
+	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 };

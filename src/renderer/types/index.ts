@@ -520,6 +520,7 @@ export interface AITab {
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
 	readOnlyMode?: boolean; // When true, agent operates in plan/read-only mode
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Controls agent permission handling: full (bypass all), standard (default permission model), readonly (plan mode)
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
@@ -549,6 +550,20 @@ export interface AITab {
 		/** The AI tab within the calling agent the mention was typed in. */
 		sourceTabId: string;
 	};
+	/**
+	 * When true, the tab exists as a data container but is NOT surfaced in the tab
+	 * strip or reachable by tab-cycling shortcuts. Set on consult tabs created by an
+	 * inbound `@mention`: the consulted agent's workspace belongs to the user, and a
+	 * mention typed in some OTHER agent must not spawn tabs there unprompted.
+	 *
+	 * The tab is revealed (flag cleared, permanently) the first time the user opens
+	 * it deliberately - clicking the attribution header on the response bubble, which
+	 * deep-links straight to this tab. See `revealAiTab`.
+	 *
+	 * Its `unifiedTabOrder` ref is kept while hidden, so revealing restores the tab
+	 * to its original position rather than appending it to the end of the strip.
+	 */
+	hidden?: boolean;
 }
 
 // A single "thinking item" — one busy tab within a session.
@@ -1066,6 +1081,7 @@ export interface ProcessConfig {
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Preferred over readOnlyMode + yoloMode
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -1225,6 +1241,10 @@ export interface EncoreFeatureFlags {
 	// Optional so existing literals (older fixtures, persisted settings without
 	// the key) continue to type-check.
 	opencodeServer?: boolean;
+	// Concerto - agents compose native movement panels + cadenza HUD cards.
+	// Off by default. Optional so existing literals (older test fixtures, persisted
+	// settings without the key) continue to type-check.
+	concerto?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

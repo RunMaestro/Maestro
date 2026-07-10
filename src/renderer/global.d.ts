@@ -57,6 +57,7 @@ interface ProcessConfig {
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -327,7 +328,24 @@ interface MaestroAPI {
 				};
 			}) => void
 		) => () => void;
-		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
+		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
+		onPermissionRequest: (
+			callback: (request: {
+				requestId: string;
+				sessionId: string;
+				tabId?: string;
+				toolName: string;
+				input: Record<string, unknown>;
+				createdAt: number;
+			}) => void
+		) => () => void;
+		respondPermission: (
+			requestId: string,
+			decision:
+				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+				| { behavior: 'deny'; message: string }
+		) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
@@ -404,6 +422,41 @@ interface MaestroAPI {
 					| { kind: 'open-url'; url: string };
 			}) => void
 		) => () => void;
+		onRemoteCadenza: (
+			callback: (params: {
+				op: 'open' | 'update' | 'close';
+				id: string;
+				viewType?: 'tracker' | 'file' | 'markdown' | 'image' | 'code' | 'view' | 'decision';
+				title?: string;
+				body?: string;
+				path?: string;
+				options?: Array<{ label: string; value: string }>;
+				color?: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				sessionId?: string;
+			}) => void
+		) => () => void;
+		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
+		flashCadenza: (id: string) => void;
+		onRemoteMovement: (
+			callback: (params: {
+				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+				id?: string;
+				x?: number;
+				y?: number;
+				width?: number;
+				height?: number;
+				title?: string;
+				body?: string;
+			}) => void
+		) => () => void;
+		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
+		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
+		notifyCadenzaHudReady: () => void;
+		setCadenzaHudCardRects: (
+			rects: Array<{ x: number; y: number; width: number; height: number }>
+		) => void;
+		openCadenzaFileTab: (sessionId: string, filePath: string) => void;
+		sendCadenzaDecision: (sessionId: string, message: string) => void;
 		onRemoteNotifyCenterFlash: (
 			callback: (params: {
 				message: string;
@@ -1649,6 +1702,8 @@ interface MaestroAPI {
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
 	};
 	platform: string;
+	/** Resolved on-disk maestro-cli.js path (dev vs packaged), or null. */
+	maestroCliPath: string | null;
 	logger: {
 		log: (
 			level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun',

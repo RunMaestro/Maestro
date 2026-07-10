@@ -20,6 +20,7 @@ import { renderHook, act, cleanup, waitFor } from '@testing-library/react';
 import { useStarredItems } from '../../../renderer/hooks/session/useStarredItems';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session } from '../../../renderer/types';
 
 // ============================================================================
@@ -61,6 +62,7 @@ beforeEach(() => {
 	mockNamedSessions([]);
 	useSessionStore.setState({ sessions: [], activeSessionId: null } as never);
 	useSettingsStore.setState({ showStarredSessionsSection: true } as never);
+	useGroupChatStore.setState({ activeGroupChatId: null } as never);
 });
 
 afterEach(() => {
@@ -227,6 +229,59 @@ describe('useStarredItems', () => {
 		expect(useSessionStore.getState().activeSessionId).toBe('s1');
 		expect(session?.activeTabId).toBe('t1');
 		expect(session?.inputMode).toBe('ai');
+	});
+
+	it('dismisses an active group chat when activating a starred item (regression #1175)', async () => {
+		// Bug: clicking a Starred Session while a group chat was open did nothing.
+		// The group chat view is gated on a truthy activeGroupChatId and renders on
+		// top of the session view, so activating a starred tab without clearing it
+		// left the group chat covering the screen. Activation must clear it.
+		useGroupChatStore.setState({ activeGroupChatId: 'gc-1' } as never);
+		useSessionStore.setState({
+			sessions: [
+				makeSession({
+					id: 's1',
+					aiTabs: [{ id: 't1', starred: true, agentSessionId: 'asid-1', name: 'Tab One' }] as never,
+				}),
+			],
+		} as never);
+
+		const { result } = renderHook(() => useStarredItems({}));
+		const row = result.current.starredItems[0];
+
+		await act(async () => {
+			await result.current.activateStarredItem(row);
+		});
+
+		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		expect(useSessionStore.getState().activeSessionId).toBe('s1');
+	});
+
+	it('activateStarredItem clears active group chat before resuming a closed starred session', async () => {
+		const onJumpToStarredSession = vi.fn().mockResolvedValue(true);
+		useGroupChatStore.setState({ activeGroupChatId: 'group-1' } as never);
+		mockNamedSessions([makeNamed({ agentSessionId: 'asid-closed', sessionName: 'Closed One' })]);
+		useSessionStore.setState({
+			sessions: [makeSession({ id: 's1', projectRoot: '/proj' })],
+		} as never);
+
+		const { result } = renderHook(() => useStarredItems({ onJumpToStarredSession }));
+		await waitFor(() => expect(result.current.starredItems).toHaveLength(1));
+		const closedRow = result.current.starredItems[0];
+
+		await act(async () => {
+			await result.current.activateStarredItem(closedRow);
+		});
+
+		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		expect(useSessionStore.getState().activeSessionId).toBe('s1');
+		expect(onJumpToStarredSession).toHaveBeenCalledWith(
+			'claude-code',
+			'/proj',
+			'asid-closed',
+			'Closed One',
+			's1'
+		);
 	});
 
 	it('offers to remove an aged-out star when the closed session can no longer be resumed', async () => {

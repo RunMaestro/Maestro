@@ -65,6 +65,19 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
+
+/**
+ * The real on-disk maestro-cli.js path, handed in by the main process via an
+ * additionalArguments flag (a sandboxed preload can't resolve it from fs).
+ * Exposed as `window.maestro.maestroCliPath` so the shared template resolver
+ * can point `{{MAESTRO_CLI_PATH}}` at a file that actually exists (dev vs
+ * packaged). Null when the main process couldn't find a bundled CLI.
+ */
+const resolvedMaestroCliPath: string | null =
+	process.argv
+		.find((a) => a.startsWith(MAESTRO_CLI_PATH_ARG_PREFIX))
+		?.slice(MAESTRO_CLI_PATH_ARG_PREFIX.length) ?? null;
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -195,6 +208,10 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Synchronous platform string — process.platform never changes at runtime
 	platform: process.platform,
+
+	// Resolved on-disk maestro-cli.js path (dev vs packaged), or null. Used by
+	// the shared template resolver for `{{MAESTRO_CLI_PATH}}`.
+	maestroCliPath: resolvedMaestroCliPath,
 
 	// Stats API
 	stats: createStatsApi(),

@@ -60,6 +60,15 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
+import {
+	movementAdd,
+	movementUpdate,
+	movementMove,
+	movementRemove,
+	movementClear,
+	movementState,
+} from './commands/movement';
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
@@ -1269,6 +1278,129 @@ profiling
 	.description('Report whether a capture is currently recording')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profilingStatus);
+
+// Cadenza commands - open small cadenza panels that display or track work.
+const cadenza = program
+	.command('cadenza')
+	.description('Open small cadenza views to display or track work in the Maestro desktop app');
+
+cadenza
+	.command('open <id>')
+	.description('Open (or replace by id) a cadenza view')
+	.option(
+		'--type <type>',
+		'tracker | file | markdown | image | code | view | decision (default: tracker)'
+	)
+	.option('--title <text>', 'Header label for the panel')
+	.option(
+		'--body <text>',
+		'Body content - tracker line, markdown/code source, JSON block spec (--type view), or the prompt (--type decision)'
+	)
+	.option(
+		'--body-file <path>',
+		'Read body content from a file (large markdown or a view JSON spec)'
+	)
+	.option(
+		'--path <path>',
+		'File/image path (required for file and image; for --type code, shows that file as a snippet)'
+	)
+	.option(
+		'--lang <lang>',
+		'Language for --type code highlighting (inferred from --path if omitted)'
+	)
+	.option(
+		'--option <label:value>',
+		'A decision button (repeatable); clicking replies value to --agent. Requires --type decision',
+		(val: string, prev: string[]) => prev.concat([val]),
+		[] as string[]
+	)
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
+	.option(
+		'-a, --agent <id>',
+		'Owning agent - lets a file cadenza expand into its tab, and the reply target for --type decision'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaOpen);
+
+cadenza
+	.command('update <id>')
+	.description('Update fields of an open cadenza in place (the living view)')
+	.option('--title <text>', 'New header label')
+	.option('--body <text>', 'New body content (tracker line or markdown source)')
+	.option('--body-file <path>', 'Read new body content from a file')
+	.option('--path <path>', 'New file/image path')
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaUpdate);
+
+cadenza
+	.command('close <id>')
+	.description('Close a cadenza view by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cadenzaClose);
+
+// Movement commands - compose the roomy, agent-driven "living view" in the main
+// window. Each item is free-placed at (x, y) and renders a BlockView JSON spec.
+const movement = program
+	.command('movement')
+	.description(
+		'Compose the agent-driven movement (free-placed data views) in the Maestro main window'
+	);
+
+movement
+	.command('add <id>')
+	.description('Add (or replace by id) a movement item rendering a JSON block spec')
+	.option('--x <px>', 'X position (px from movement left)')
+	.option('--y <px>', 'Y position (px from movement top)')
+	.option('--width <px>', 'Item width in px (default 320)')
+	.option('--height <px>', 'Optional fixed item height in px (default: fit content)')
+	.option('--title <text>', 'Item header title')
+	.option(
+		'--body <json>',
+		'Block spec JSON, e.g. {"blocks":[{"kind":"stat","label":"Tests","value":8}]}'
+	)
+	.option('--body-file <path>', 'Read the block spec JSON from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementAdd);
+
+movement
+	.command('update <id>')
+	.description('Update fields of an existing movement item in place')
+	.option('--x <px>', 'New X position')
+	.option('--y <px>', 'New Y position')
+	.option('--width <px>', 'New width')
+	.option('--height <px>', 'New fixed height')
+	.option('--title <text>', 'New title')
+	.option('--body <json>', 'New block spec JSON')
+	.option('--body-file <path>', 'Read the new block spec JSON from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementUpdate);
+
+movement
+	.command('move <id>')
+	.description('Reposition a movement item')
+	.requiredOption('--x <px>', 'New X position')
+	.requiredOption('--y <px>', 'New Y position')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementMove);
+
+movement
+	.command('remove <id>')
+	.description('Remove a movement item by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementRemove);
+
+movement
+	.command('clear')
+	.description('Remove all movement items')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementClear);
+
+movement
+	.command('state')
+	.description('Read the current movement layout (items + size) to compose around it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementState);
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).

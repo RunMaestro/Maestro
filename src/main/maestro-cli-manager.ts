@@ -25,6 +25,47 @@ function splitOutputLines(output: string): string[] {
 		.filter(Boolean);
 }
 
+/**
+ * Candidate on-disk locations for the bundled maestro-cli.js, most-specific
+ * first: packaged resources, the built dev output (`dist/cli`), and a path
+ * relative to the compiled main bundle. Shared by the async resolver and the
+ * sync one below so the two never drift.
+ */
+export function getBundledCliCandidates(): string[] {
+	const candidates: string[] = [];
+	// `process.resourcesPath` and `app.getAppPath()` only exist in a real Electron
+	// runtime; guard each so this never throws in a plain-Node context (tests) and
+	// degrades to just the __dirname-relative candidate instead.
+	if (typeof process.resourcesPath === 'string') {
+		candidates.push(path.join(process.resourcesPath, 'maestro-cli.js'));
+	}
+	try {
+		candidates.push(path.resolve(app.getAppPath(), 'dist', 'cli', 'maestro-cli.js'));
+	} catch {
+		// app not ready or not in Electron - skip this candidate.
+	}
+	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
+	return candidates;
+}
+
+/**
+ * Synchronously resolve the first bundled maestro-cli.js that exists on disk,
+ * or null if none do. Used at window-creation time to hand the renderer the
+ * real CLI path (dev vs packaged) via preload, so `{{MAESTRO_CLI_PATH}}` in
+ * agent prompts points at a file that actually exists.
+ */
+export function resolveBundledCliPathSync(): string | null {
+	for (const candidate of getBundledCliCandidates()) {
+		try {
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return candidate;
+		} catch {
+			continue;
+		}
+	}
+	return null;
+}
+
 export class MaestroCliManager {
 	private readonly posixPathMarker = '# Added by Maestro CLI installer';
 
@@ -47,16 +88,8 @@ export class MaestroCliManager {
 		return path.join(this.getInstallDir(), CLI_BINARY_NAME);
 	}
 
-	private getBundledCliCandidates(): string[] {
-		return [
-			path.join(process.resourcesPath, 'maestro-cli.js'),
-			path.resolve(app.getAppPath(), 'dist', 'cli', 'maestro-cli.js'),
-			path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'),
-		];
-	}
-
 	private async resolveBundledCliPath(): Promise<string | null> {
-		const candidates = this.getBundledCliCandidates();
+		const candidates = getBundledCliCandidates();
 		logger.debug('Resolving bundled maestro-cli.js path', LOG_CONTEXT, { candidates });
 		for (const candidate of candidates) {
 			try {
@@ -323,7 +356,7 @@ export class MaestroCliManager {
 
 		const bundledCliPath = await this.resolveBundledCliPath();
 		if (!bundledCliPath) {
-			const candidates = this.getBundledCliCandidates();
+			const candidates = getBundledCliCandidates();
 			logger.error('Unable to locate bundled maestro-cli.js in app resources', LOG_CONTEXT, {
 				candidates,
 			});

@@ -31,6 +31,33 @@ import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersist
 import { getLiveDraft } from './liveDraftStore';
 
 /**
+ * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
+ * Currently only unopened cross-agent consult tabs (see `AITab.hidden`).
+ *
+ * The single predicate behind both visibility surfaces: `buildUnifiedTabs` (what
+ * renders) and `getNavigableTabs` (what Cmd+1..9 / cycling reaches). They must
+ * agree, or a shortcut lands on a tab the strip never showed.
+ */
+export function isAiTabHidden(tab: AITab): boolean {
+	return tab.hidden === true;
+}
+
+/**
+ * Reveal a hidden AI tab, permanently. Called when the user deliberately opens a
+ * consult tab (via the attribution header's deep link). Returns the session
+ * unchanged when the tab is absent or already visible, so callers can apply it
+ * unconditionally without churning state.
+ */
+export function revealAiTab(session: Session, tabId: string): Session {
+	const tab = session.aiTabs?.find((t) => t.id === tabId);
+	if (!tab || !isAiTabHidden(tab)) return session;
+	return {
+		...session,
+		aiTabs: session.aiTabs.map((t) => (t.id === tabId ? { ...t, hidden: false } : t)),
+	};
+}
+
+/**
  * Build the unified tab list from a session's tab data.
  * Follows unifiedTabOrder, then appends any orphaned tabs as a safety net
  * (e.g., from migration or state corruption).
@@ -41,7 +68,13 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	if (!session) return [];
 	const { aiTabs, filePreviewTabs, browserTabs, terminalTabs, unifiedTabOrder } = session;
 
-	const aiTabMap = new Map((aiTabs || []).map((tab) => [tab.id, tab]));
+	// Hidden AI tabs are excluded up front, so neither the ordered walk below nor
+	// the orphan fallback can re-surface them (the fallback would: a hidden tab
+	// keeps its unifiedTabOrder ref, but dropping the ref instead would lose its
+	// position on reveal).
+	const aiTabMap = new Map(
+		(aiTabs || []).filter((tab) => !isAiTabHidden(tab)).map((tab) => [tab.id, tab])
+	);
 	const fileTabMap = new Map((filePreviewTabs || []).map((tab) => [tab.id, tab]));
 	const browserTabMap = new Map((browserTabs || []).map((tab) => [tab.id, tab]));
 	const terminalTabMap = new Map((terminalTabs || []).map((tab) => [tab.id, tab]));
@@ -588,15 +621,22 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 		return [];
 	}
 
+	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
+	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
+	// then, since callers memoize on its identity.
+	const visible = session.aiTabs.some(isAiTabHidden)
+		? session.aiTabs.filter((tab) => !isAiTabHidden(tab))
+		: session.aiTabs;
+
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
-		return session.aiTabs.filter(
+		return visible.filter(
 			(tab) =>
 				tab.hasUnread || tab.state === 'busy' || hasDraft(tab) || (showStarred && tab.starred)
 		);
 	}
 
-	return session.aiTabs;
+	return visible;
 }
 
 /**

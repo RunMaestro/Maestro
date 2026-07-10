@@ -8,6 +8,8 @@ import {
 	isBetaAgent,
 	getReadOnlyModeLabel,
 	getReadOnlyModeTooltip,
+	getPermissionModeLabel,
+	getPermissionModeTooltip,
 	AGENT_DISPLAY_NAMES,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
@@ -155,6 +157,50 @@ describe('agentMetadata', () => {
 		it('should return read-only tooltip for other agents', () => {
 			expect(getReadOnlyModeTooltip('codex')).toContain('Read-Only');
 			expect(getReadOnlyModeTooltip('factory-droid')).toContain('Read-Only');
+		});
+	});
+
+	describe('getPermissionModeLabel', () => {
+		it('should return "Full Access" for full mode regardless of agent', () => {
+			expect(getPermissionModeLabel('full')).toBe('Full Access');
+			expect(getPermissionModeLabel('full', 'claude-code')).toBe('Full Access');
+		});
+
+		it('should return "Standard" for standard mode regardless of agent', () => {
+			expect(getPermissionModeLabel('standard')).toBe('Standard');
+			expect(getPermissionModeLabel('standard', 'claude-code')).toBe('Standard');
+		});
+
+		it('should return "Read Only" for readonly mode when no agentId is given', () => {
+			expect(getPermissionModeLabel('readonly')).toBe('Read Only');
+		});
+
+		it('should delegate to getReadOnlyModeLabel for readonly mode when agentId is given', () => {
+			expect(getPermissionModeLabel('readonly', 'claude-code')).toBe('Plan-Mode');
+			expect(getPermissionModeLabel('readonly', 'codex')).toBe('Read-Only');
+			expect(getPermissionModeLabel('readonly', 'factory-droid')).toBe('Read-Only');
+		});
+	});
+
+	describe('getPermissionModeTooltip', () => {
+		it('should return the generic full access tooltip regardless of agent', () => {
+			expect(getPermissionModeTooltip('full')).toContain('Full Access');
+			expect(getPermissionModeTooltip('full', 'claude-code')).toContain('Full Access');
+		});
+
+		it('should return the generic standard tooltip regardless of agent', () => {
+			expect(getPermissionModeTooltip('standard')).toContain('Standard');
+			expect(getPermissionModeTooltip('standard', 'claude-code')).toContain('Standard');
+		});
+
+		it('should return the generic readonly tooltip when no agentId is given', () => {
+			expect(getPermissionModeTooltip('readonly')).toContain('Read Only');
+		});
+
+		it('should delegate to getReadOnlyModeTooltip for readonly mode when agentId is given', () => {
+			expect(getPermissionModeTooltip('readonly', 'claude-code')).toContain('plan mode');
+			expect(getPermissionModeTooltip('readonly', 'codex')).toContain('Read-Only');
+			expect(getPermissionModeTooltip('readonly', 'factory-droid')).toContain('Read-Only');
 		});
 	});
 });

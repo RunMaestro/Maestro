@@ -6,7 +6,7 @@
  * stay in App.tsx and are passed in as slots.
  */
 
-import React, { type ComponentProps, type ReactNode } from 'react';
+import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
 import { withMonoFallback } from '../../shared/fontStack';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { SessionList } from './SessionList';
@@ -19,6 +19,11 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
+import { PermissionPrompt } from './PermissionPrompt';
+import { CadenzaLayer } from './Cadenza';
+import { MovementOverlay } from './Movement';
+import { useCadenzaStore } from '../stores/cadenzaStore';
+import { useMovementStore } from '../stores/movementStore';
 import type { Group, GroupChat, Session, Theme } from '../types';
 
 type SessionListProps = ComponentProps<typeof SessionList>;
@@ -34,6 +39,7 @@ export interface AppShellProps {
 	isMobileLandscape: boolean;
 	useNativeTitleBar: boolean;
 	isMdDownViewport: boolean;
+	concertoEnabled: boolean;
 
 	activeGroupChatId: string | null;
 	groupChats: GroupChat[];
@@ -76,6 +82,7 @@ export function AppShell({
 	isMobileLandscape,
 	useNativeTitleBar,
 	isMdDownViewport,
+	concertoEnabled,
 	activeGroupChatId,
 	groupChats,
 	groups,
@@ -103,6 +110,15 @@ export function AppShell({
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
 }: AppShellProps) {
+	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
+	// outside React. Clear both stores when the feature is disabled so stale views
+	// do not return if the user enables it again later.
+	useEffect(() => {
+		if (concertoEnabled) return;
+		useCadenzaStore.getState().clearCadenzas();
+		useMovementStore.getState().clearItems();
+	}, [concertoEnabled]);
+
 	const showTitleBar =
 		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
 
@@ -245,6 +261,14 @@ export function AppShell({
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
+			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
+			<PermissionPrompt theme={theme} />
+			{concertoEnabled && (
+				<>
+					<CadenzaLayer theme={theme} />
+					<MovementOverlay theme={theme} />
+				</>
+			)}
 		</div>
 	);
 }

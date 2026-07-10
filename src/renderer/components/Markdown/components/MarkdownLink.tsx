@@ -21,6 +21,7 @@ import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
+import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -101,6 +102,35 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				agentName: props['data-mention-name'] as string | undefined,
 				onFileClick,
 			});
+		}
+
+		// Concerto "point" links: `maestro://concerto/<movement|cadenza>/<id>`.
+		// Render as an inline chip that flashes/focuses the referenced view, so an
+		// agent's chat can point at a Movement/Cadenza instead of re-typing it.
+		const concertoTarget = parseConcertoHref(href);
+		if (concertoTarget) {
+			return React.createElement(
+				'button',
+				{
+					type: 'button',
+					onClick: (e: React.MouseEvent) => {
+						e.preventDefault();
+						e.stopPropagation();
+						flashConcertoTarget(href);
+					},
+					title: `Show the ${concertoTarget.surface} "${concertoTarget.id}"`,
+					className:
+						'inline-flex items-center gap-1 px-1.5 py-px rounded align-baseline text-[0.92em] font-medium',
+					style: {
+						color: theme.colors.accentText ?? theme.colors.accent,
+						backgroundColor: `${theme.colors.accent}22`,
+						border: `1px solid ${theme.colors.accent}55`,
+						cursor: 'pointer',
+					},
+				},
+				'◉ ',
+				children
+			);
 		}
 
 		// Check for maestro-file:// protocol OR data-maestro-file attribute

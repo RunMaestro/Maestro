@@ -31,6 +31,14 @@ import {
 const FILE_TREE_RETRY_DELAY_MS = 20000;
 
 /**
+ * Stable, shared empty tree. Failed loads and 20s retries reuse this ONE
+ * reference instead of a fresh `[]`, so a permanently-failing load can't churn
+ * fileTree identity every retry. A new array identity invalidates every
+ * message's markdown memo and forces a full transcript re-parse (#1180).
+ */
+const EMPTY_FILE_TREE: FileTreeNode[] = [];
+
+/**
  * Options for building SSH context
  */
 interface SshContextOptions {
@@ -403,18 +411,26 @@ export function useFileTreeManagement(
 					.then((stats) => {
 						if (isStale(sessionId, seq)) return;
 						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? {
-											...s,
-											fileTreeStats: {
-												fileCount: stats.fileCount,
-												folderCount: stats.folderCount,
-												totalSize: stats.totalSize,
-											},
-										}
-									: s
-							)
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const cur = s.fileTreeStats;
+								if (
+									cur &&
+									cur.fileCount === stats.fileCount &&
+									cur.folderCount === stats.folderCount &&
+									cur.totalSize === stats.totalSize
+								) {
+									return s; // unchanged — preserve identity, skip re-render (#1180)
+								}
+								return {
+									...s,
+									fileTreeStats: {
+										fileCount: stats.fileCount,
+										folderCount: stats.folderCount,
+										totalSize: stats.totalSize,
+									},
+								};
+							})
 						);
 					})
 					.catch((err) => {
@@ -431,18 +447,31 @@ export function useFileTreeManagement(
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, loadResult.tree);
 
+				const treeUnchanged = changes.totalChanges === 0;
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === sessionId
-							? {
-									...s,
-									fileTree: loadResult.tree,
-									fileTreeError: undefined,
-									fileTreeTruncated: loadResult.truncated,
-									fileTreeLoadedCap: maxEntriesForRefresh,
-								}
-							: s
-					)
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						// Preserve the existing fileTree reference when the structure is
+						// unchanged so buildFileTreeIndices, the remark plugin array, and
+						// every message's markdown memo stay valid — otherwise each idle
+						// auto-refresh re-parses the whole transcript and freezes typing (#1180).
+						const nextTree = treeUnchanged ? (s.fileTree ?? loadResult.tree) : loadResult.tree;
+						if (
+							nextTree === s.fileTree &&
+							s.fileTreeError === undefined &&
+							s.fileTreeTruncated === loadResult.truncated &&
+							s.fileTreeLoadedCap === maxEntriesForRefresh
+						) {
+							return s; // nothing changed — skip the write entirely
+						}
+						return {
+							...s,
+							fileTree: nextTree,
+							fileTreeError: undefined,
+							fileTreeTruncated: loadResult.truncated,
+							fileTreeLoadedCap: maxEntriesForRefresh,
+						};
+					})
 				);
 
 				return changes;
@@ -516,18 +545,26 @@ export function useFileTreeManagement(
 					.then((stats) => {
 						if (isStale(sessionId, seq)) return;
 						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? {
-											...s,
-											fileTreeStats: {
-												fileCount: stats.fileCount,
-												folderCount: stats.folderCount,
-												totalSize: stats.totalSize,
-											},
-										}
-									: s
-							)
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const cur = s.fileTreeStats;
+								if (
+									cur &&
+									cur.fileCount === stats.fileCount &&
+									cur.folderCount === stats.folderCount &&
+									cur.totalSize === stats.totalSize
+								) {
+									return s; // unchanged — preserve identity (#1180)
+								}
+								return {
+									...s,
+									fileTreeStats: {
+										fileCount: stats.fileCount,
+										folderCount: stats.folderCount,
+										totalSize: stats.totalSize,
+									},
+								};
+							})
 						);
 					})
 					.catch((err) => {
@@ -566,12 +603,16 @@ export function useFileTreeManagement(
 				// Re-check after additional awaits (branches/tags fetch)
 				if (isStale(sessionId, seq)) return;
 
+				const treeUnchanged =
+					compareFileTrees(session.fileTree || [], loadResult.tree).totalChanges === 0;
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === sessionId
 							? {
 									...s,
-									fileTree: loadResult.tree,
+									// Preserve fileTree identity on no-change so a git refresh
+									// doesn't force a full markdown re-parse of the transcript (#1180).
+									fileTree: treeUnchanged ? (s.fileTree ?? loadResult.tree) : loadResult.tree,
 									fileTreeError: undefined,
 									fileTreeTruncated: loadResult.truncated,
 									fileTreeLoadedCap: maxEntriesForRefresh,
@@ -876,7 +917,7 @@ export function useFileTreeManagement(
 							s.id === sessionId
 								? {
 										...s,
-										fileTree: [],
+										fileTree: EMPTY_FILE_TREE,
 										fileTreeError: `Cannot access directory: ${treeRoot}\n${errorMsg}`,
 										fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS,
 										fileTreeLoading: false,

@@ -156,6 +156,97 @@ describe('useFileTreeManagement', () => {
 		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
 	});
 
+	describe('refreshFileTree fileTree identity (#1180)', () => {
+		it('preserves the existing fileTree reference when a refresh reports no structural changes', async () => {
+			const existingTree: FileNode[] = [
+				{
+					name: 'src',
+					type: 'folder',
+					children: [{ name: 'index.ts', type: 'file' }],
+				},
+			];
+			const reloadedTree: FileNode[] = [
+				{
+					name: 'src',
+					type: 'folder',
+					children: [{ name: 'index.ts', type: 'file' }],
+				},
+			];
+			const noChanges = {
+				totalChanges: 0,
+				newFiles: 0,
+				newFolders: 0,
+				removedFiles: 0,
+				removedFolders: 0,
+			};
+
+			vi.mocked(loadFileTree).mockResolvedValue(asResult(reloadedTree));
+			vi.mocked(compareFileTrees).mockReturnValue(noChanges);
+
+			const session = createMockSession({
+				fileTree: existingTree,
+				fileTreeStats: {
+					fileCount: 1,
+					folderCount: 1,
+					totalSize: 128,
+				},
+			});
+			const state = createSessionsState([session]);
+			const deps = createDeps(state);
+			const { result } = renderHook(() => useFileTreeManagement(deps));
+
+			let returnedChanges: typeof noChanges | undefined;
+			await act(async () => {
+				returnedChanges = await result.current.refreshFileTree(session.id);
+			});
+
+			expect(compareFileTrees).toHaveBeenCalledWith(existingTree, reloadedTree);
+			expect(returnedChanges).toEqual(noChanges);
+			expect(state.getSessions()[0].fileTree).toBe(existingTree);
+			expect(state.getSessions()[0].fileTree).not.toBe(reloadedTree);
+		});
+
+		it('replaces the fileTree reference when a refresh reports structural changes', async () => {
+			const existingTree: FileNode[] = [{ name: 'old.txt', type: 'file' }];
+			const reloadedTree: FileNode[] = [
+				{ name: 'old.txt', type: 'file' },
+				{ name: 'new.txt', type: 'file' },
+			];
+			const changes = {
+				totalChanges: 2,
+				newFiles: 1,
+				newFolders: 0,
+				removedFiles: 1,
+				removedFolders: 0,
+			};
+
+			vi.mocked(loadFileTree).mockResolvedValue(asResult(reloadedTree));
+			vi.mocked(compareFileTrees).mockReturnValue(changes);
+
+			const session = createMockSession({
+				fileTree: existingTree,
+				fileTreeStats: {
+					fileCount: 1,
+					folderCount: 0,
+					totalSize: 64,
+				},
+			});
+			const state = createSessionsState([session]);
+			const deps = createDeps(state);
+			const { result } = renderHook(() => useFileTreeManagement(deps));
+
+			let returnedChanges: typeof changes | undefined;
+			await act(async () => {
+				returnedChanges = await result.current.refreshFileTree(session.id);
+			});
+
+			expect(compareFileTrees).toHaveBeenCalledWith(existingTree, reloadedTree);
+			expect(returnedChanges).toEqual(changes);
+			expect(state.getSessions()[0].fileTree).toBe(reloadedTree);
+			expect(state.getSessions()[0].fileTree).not.toBe(existingTree);
+		});
+	});
+
 	it('refreshFileTree handles load errors', async () => {
 		vi.mocked(loadFileTree).mockRejectedValue(new Error('boom'));
 

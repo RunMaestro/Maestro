@@ -1303,6 +1303,27 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-concerto',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Concerto',
+		description:
+			'Agent-composed native views. Agents build rich, app-styled data panels (Movements) and small always-on-top cards (Cadenzas) from a fixed block vocabulary, instead of plain chat text',
+		keywords: [
+			'concerto',
+			'movement',
+			'cadenza',
+			'agent views',
+			'views',
+			'panel',
+			'dashboard',
+			'hud',
+			'blockview',
+			'data view',
+			'visualize',
+		],
+	},
+	{
 		id: 'encore-plugins',
 		tab: 'encore',
 		tabLabel: 'Plugins',

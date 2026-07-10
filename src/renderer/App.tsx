@@ -167,6 +167,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
+
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
@@ -177,9 +178,7 @@ import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
-import { THEMES } from './constants/themes';
-import { usePluginContributions } from './hooks/usePluginContributions';
-import { resolvePluginTheme } from './utils/pluginThemes';
+import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
@@ -421,8 +420,6 @@ function MaestroConsoleInner() {
 		conductorProfile,
 		fontFamily,
 		fontSize,
-		activeThemeId,
-		customThemeColors,
 		enterToSendAI,
 		setEnterToSendAI,
 		enterToSendAIExpanded,
@@ -1220,26 +1217,9 @@ function MaestroConsoleInner() {
 		onOpenFileTab: handleOpenFileTab,
 	});
 
-	// Active plugin contributions (themes/prompts/macros). Empty when the plugins
-	// Encore flag is off, so this is inert by default.
-	const pluginContributions = usePluginContributions();
-
-	// Use custom colors when custom theme is selected, otherwise use the standard theme
-	const theme = useMemo(() => {
-		if (activeThemeId === 'custom') {
-			return {
-				...THEMES.custom,
-				colors: customThemeColors,
-			};
-		}
-		const builtIn = THEMES[activeThemeId];
-		if (builtIn) return builtIn;
-		// A plugin-contributed theme may be active (its id is outside the built-in
-		// union). Resolve it from contributions; fall back to dracula so the app
-		// never renders with an undefined theme if the plugin was removed.
-		const pluginTheme = pluginContributions.themes.find((t) => t.id === activeThemeId);
-		return pluginTheme ? resolvePluginTheme(pluginTheme) : THEMES.dracula;
-	}, [activeThemeId, customThemeColors, pluginContributions.themes]);
+	// Resolve the active Theme (custom / built-in / plugin theme, dracula fallback)
+	// via the shared resolver - same hook the cadenza HUD root uses.
+	const theme = useResolvedTheme();
 
 	// Ref for theme (for use in memoized callbacks that need current theme without re-creating)
 	const themeRef = useRef(theme);
@@ -2957,6 +2937,7 @@ function MaestroConsoleInner() {
 			isMobileLandscape={isMobileLandscape}
 			useNativeTitleBar={useNativeTitleBar}
 			isMdDownViewport={isMdDownViewport}
+			concertoEnabled={encoreFeatures.concerto === true}
 			activeGroupChatId={activeGroupChatId}
 			groupChats={groupChats}
 			groups={groups}

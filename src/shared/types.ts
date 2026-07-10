@@ -48,6 +48,15 @@ export interface AgentCapabilities {
 	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
 	supportsReadOnlyMode: boolean;
 
+	/**
+	 * Agent supports the `standard` permission mode with a working live
+	 * permission relay (interactive allow/deny). Optional: only set true for
+	 * agents whose relay is implemented and verified (currently Claude Code).
+	 * When false/undefined, the UI hides `standard` from the permission toggle
+	 * rather than expose a non-functional option (it would abort/auto-deny).
+	 */
+	supportsStandardPermissionMode?: boolean;
+
 	/** Agent outputs JSON-formatted responses (for parsing) */
 	supportsJsonOutput: boolean;
 
@@ -393,6 +402,7 @@ export interface AgentConfig {
 	configOptions?: AgentConfigOption[];
 	capabilities?: AgentCapabilities;
 	yoloModeArgs?: string[];
+	fullAccessArgs?: string[]; // Same as yoloModeArgs - preferred name. Args added in 'full' permission mode.
 	readOnlyCliEnforced?: boolean;
 	/**
 	 * Latest persisted capability snapshot for this agent in the requested

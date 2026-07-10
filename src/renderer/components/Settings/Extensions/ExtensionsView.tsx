@@ -65,6 +65,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 			    this view; the registry/DOM parity contract needs the literal
 			    attribute present where the search should scroll to. */}
 			<span data-setting-id="encore-pianola" aria-hidden="true" />
+			<span data-setting-id="encore-concerto" aria-hidden="true" />
 			<div className="flex items-center justify-between gap-3 mb-1">
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins

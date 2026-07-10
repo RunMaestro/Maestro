@@ -131,6 +131,9 @@ import type {
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
+	CadenzaViewCallback,
+	MovementViewCallback,
+	GetMovementStateCallback,
 	NotifyCenterFlashCallback,
 	GetMarketplaceManifestCallback,
 	GetMarketplaceDocumentCallback,
@@ -661,6 +664,18 @@ export class WebServer {
 		this.callbackRegistry.setNotifyToastCallback(callback);
 	}
 
+	setCadenzaViewCallback(callback: CadenzaViewCallback): void {
+		this.callbackRegistry.setCadenzaViewCallback(callback);
+	}
+
+	setMovementViewCallback(callback: MovementViewCallback): void {
+		this.callbackRegistry.setMovementViewCallback(callback);
+	}
+
+	setGetMovementStateCallback(callback: GetMovementStateCallback): void {
+		this.callbackRegistry.setGetMovementStateCallback(callback);
+	}
+
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
@@ -1038,6 +1053,9 @@ export class WebServer {
 			killTerminalForWeb: (sessionId: string) =>
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
 			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
+			cadenzaView: async (params) => this.callbackRegistry.cadenzaView(params),
+			movementView: async (params) => this.callbackRegistry.movementView(params),
+			getMovementState: async () => this.callbackRegistry.getMovementState(),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 			getMarketplaceManifest: async (options) =>
 				this.callbackRegistry.getMarketplaceManifest(options),

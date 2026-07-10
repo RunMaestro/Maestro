@@ -57,6 +57,7 @@ import {
 	hasActiveWizard,
 	extractQuickTabName,
 	buildUnifiedTabs,
+	revealAiTab,
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
@@ -1269,6 +1270,22 @@ describe('tabHelpers', () => {
 			const result = getNavigableTabs(session, false);
 
 			expect(result).toBe(session.aiTabs);
+		});
+
+		it('excludes hidden tabs so tab-cycling never lands on one', () => {
+			const tab1 = createMockTab({ id: 'tab-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+			const session = createMockSession({ aiTabs: [tab1, consult] });
+
+			expect(getNavigableTabs(session).map((t) => t.id)).toEqual(['tab-1']);
+		});
+
+		it('excludes hidden tabs from the unread filter too', () => {
+			const tab1 = createMockTab({ id: 'tab-1', hasUnread: true });
+			const consult = createMockTab({ id: 'consult', hidden: true, hasUnread: true });
+			const session = createMockSession({ aiTabs: [tab1, consult] });
+
+			expect(getNavigableTabs(session, true).map((t) => t.id)).toEqual(['tab-1']);
 		});
 
 		it('returns only unread tabs when showUnreadOnly is true', () => {
@@ -3726,6 +3743,59 @@ describe('tabHelpers', () => {
 			expect(extractQuickTabName('https://github.com/org/repo/issues/789?q=is%3Aopen')).toBe(
 				'Issue #789'
 			);
+		});
+	});
+
+	describe('hidden AI tabs', () => {
+		it('keeps a hidden tab out of the strip even though it holds a unifiedTabOrder ref', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+			const session = createMockSession({
+				aiTabs: [visible, consult],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult' },
+				],
+			});
+
+			expect(buildUnifiedTabs(session).map((t) => t.id)).toEqual(['ai-1']);
+		});
+
+		it('does not let the orphan fallback re-surface a hidden tab with no order ref', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+			const session = createMockSession({
+				aiTabs: [visible, consult],
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+			});
+
+			expect(buildUnifiedTabs(session).map((t) => t.id)).toEqual(['ai-1']);
+		});
+
+		it('revealAiTab surfaces the tab at its original position in the strip', () => {
+			const consult = createMockTab({ id: 'consult', hidden: true });
+			const trailing = createMockTab({ id: 'ai-2' });
+			const session = createMockSession({
+				aiTabs: [consult, trailing],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'consult' },
+					{ type: 'ai', id: 'ai-2' },
+				],
+			});
+
+			const revealed = revealAiTab(session, 'consult');
+
+			// Position is preserved because the ref was never removed while hidden.
+			expect(buildUnifiedTabs(revealed).map((t) => t.id)).toEqual(['consult', 'ai-2']);
+			expect(revealed.aiTabs.find((t) => t.id === 'consult')!.hidden).toBe(false);
+		});
+
+		it('revealAiTab returns the session unchanged for a visible or unknown tab', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({ aiTabs: [visible] });
+
+			expect(revealAiTab(session, 'ai-1')).toBe(session);
+			expect(revealAiTab(session, 'nope')).toBe(session);
 		});
 	});
 

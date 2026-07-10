@@ -93,7 +93,8 @@ export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = FIRST_PARTY_PLUGIN
 			def.encoreFlag === 'directorNotes' ||
 			def.encoreFlag === 'pianola' ||
 			def.encoreFlag === 'coworking' ||
-			def.encoreFlag === 'opencodeServer',
+			def.encoreFlag === 'opencodeServer' ||
+			def.encoreFlag === 'concerto',
 		pluginBacking: def,
 	})
 );

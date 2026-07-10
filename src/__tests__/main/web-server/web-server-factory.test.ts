@@ -115,6 +115,12 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setImportMarketplacePlaybookCallback = vi.fn();
 			setListDesktopSessionsCallback = vi.fn();
 			setGetSessionHistoryCallback = vi.fn();
+			// Concerto: Movement (in-app panels) + Cadenza (HUD cards) bridge callbacks.
+			// The factory wires these during createWebServer; without the stubs the
+			// module-under-test throws TypeError on startup.
+			setCadenzaViewCallback = vi.fn();
+			setMovementViewCallback = vi.fn();
+			setGetMovementStateCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;

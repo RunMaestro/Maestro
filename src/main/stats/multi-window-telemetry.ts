@@ -61,7 +61,9 @@ export function wireMultiWindowTelemetry(
 		// Skip the always-present primary window - this telemetry measures the
 		// multi-window feature, not app launches.
 		const opened = registry.get(change.windowId);
-		if (!opened || opened.isMain) return;
+		// Only count app windows; the primary is a launch (not a multi-window event)
+		// and feature windows like the cadenza HUD aren't user-opened windows at all.
+		if (!opened || opened.isMain || opened.kind !== 'app') return;
 
 		// Honor the user's analytics setting: record nothing when it is off.
 		if (!isStatsCollectionEnabled(settingsStore)) return;
@@ -70,7 +72,7 @@ export function wireMultiWindowTelemetry(
 			const db = getStatsDb();
 			// Stats DB may be unavailable (failed to initialize); skip silently.
 			if (!db.isReady()) return;
-			const concurrentWindowCount = registry.getAll().length;
+			const concurrentWindowCount = registry.getAppWindows().length;
 			db.recordWindowOpened(Date.now(), concurrentWindowCount);
 		} catch (error) {
 			// Telemetry is best-effort and must never break window creation. Report
