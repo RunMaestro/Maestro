@@ -2239,6 +2239,11 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				// Direct plugin dispatch is never user-present, so it requires the
+				// separate unattended consent on TOP of the interactive allowlist grant
+				// — the same grant source and check the time-based scheduler uses.
+				dispatchUnattendedAllowed: (pluginId, agentId) =>
+					isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId),
 				spawn: async (pluginId, spec) => {
 					logger.info(
 						`process.spawn by "${pluginId}": ${spec.name} (${spec.binaryPath}) argv=${JSON.stringify(spec.args)}`,

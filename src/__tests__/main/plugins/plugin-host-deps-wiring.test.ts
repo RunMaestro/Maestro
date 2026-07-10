@@ -92,6 +92,16 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		expect(keys).toContain('resolveSpawnBinary');
 	});
 
+	it('gates direct dispatch behind the separate unattended consent (dispatch implies dispatchUnattendedAllowed)', () => {
+		// Direct plugin dispatch is definitionally "nobody at the keyboard", so the
+		// handler requires the unattended consent on top of the interactive
+		// allowlist grant. Removing the wired predicate would silently drop that
+		// gate — this pins it so doing so fails the build and forces a review.
+		if (keys.includes('dispatch')) {
+			expect(keys).toContain('dispatchUnattendedAllowed');
+		}
+	});
+
 	it('still wires the safe read-only deps (guard targets the right call)', () => {
 		expect(keys).toContain('listAgents');
 		expect(keys).toContain('broker');

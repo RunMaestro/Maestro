@@ -467,6 +467,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				actionGuard,
 				isPluginTrusted: () => true,
 				dispatch,
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -474,6 +475,31 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		).resolves.toBe('dispatched');
 		expect(events).toEqual(['audit', 'sink']);
 		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary');
+	});
+
+	it('denies dispatch without the separate unattended consent even when grant + trust + low risk all pass', async () => {
+		const events: string[] = [];
+		const dispatch = vi.fn(async () => 'dispatched');
+		const actionGuard = new ActionGuard({
+			now: () => 5,
+			audit: () => events.push('audit'),
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				actionGuard,
+				isPluginTrusted: () => true,
+				dispatch,
+				// Interactive grant present, but the unattended consent is withheld.
+				dispatchUnattendedAllowed: () => false,
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/unattended consent/);
+		// Denied before the sink and before the ActionGuard audit fires.
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(events).toEqual([]);
 	});
 
 	it('denies dispatch to an agent the allowlist grant does not name (exact membership, no wildcard)', async () => {

@@ -230,6 +230,14 @@ export interface HostHandlerDeps {
 	 * and re-checks broker (allowlist scope) + trust + risk + guard before
 	 * calling; the sink resolves the agent id to a live session at call time. */
 	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
+	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
+	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
+	 * "nobody at the keyboard" (a plugin's own code called it), so the handler
+	 * requires this on TOP of the interactive allowlist grant. Injected as a
+	 * predicate (mirroring `isPluginTrusted`) to keep the pure handler free of
+	 * grant-store access; wired to `isPermittedUnattended(...)` at the integration
+	 * site. If `dispatch` is wired, this MUST also be wired (see the wiring guard). */
+	dispatchUnattendedAllowed?: (pluginId: string, agentId: string) => boolean;
 	/** Optional Phase-4 act verb: run a HOST-BLESSED binary. The handler resolves
 	 * `command` through `resolveSpawnBinary` (the host-owned registry) and hands
 	 * the sink a fully host-owned spec — binary path, env, cwd all come from the
@@ -1168,6 +1176,15 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// closed opts schema, live broker grant (allowlist-scoped per target),
 	// trusted signature, Pianola risk gate, the host-owned binary registry, and
 	// ActionGuard audit/rate/concurrency BEFORE the effect.
+	//
+	// agents.dispatch ADDITIONALLY requires the separate, revocable UNATTENDED
+	// consent (via `dispatchUnattendedAllowed`), on top of the interactive
+	// allowlist grant. A plugin's own code calling dispatch is definitionally
+	// "nobody at the keyboard", so it must clear the same unattended bar as the
+	// time-based scheduler path (which checks unattended itself and calls the sink
+	// directly, bypassing this handler). We deliberately do NOT try to infer
+	// "user-initiated" presence here: it is racy and Relay needs the unattended
+	// grant regardless.
 	if (deps.dispatch) {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {
@@ -1194,6 +1211,13 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			// Broker: allowlist scope — the grant must name THIS exact agentId.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
+			// Unattended gate: direct plugin dispatch is never user-present, so it
+			// requires the separate unattended consent on top of the allowlist grant.
+			if (deps.dispatchUnattendedAllowed && !deps.dispatchUnattendedAllowed(pluginId, agentId)) {
+				throw new Error(
+					'agents.dispatch requires the separate unattended consent (plugin dispatch is never user-present)'
+				);
+			}
 			assertTrustedActVerb(deps, pluginId);
 			assertLowOrMediumRisk(prompt);
 			return underGuard(deps.actionGuard, pluginId, 'agents:dispatch', `agent:${agentId}`, () =>
