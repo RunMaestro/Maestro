@@ -26,6 +26,8 @@ import {
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
+import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
+import { AuthPathValueInput } from './AuthPathValueInput';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -412,6 +414,7 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
+	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -770,14 +773,14 @@ export function AgentConfigPanel({
 							<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 								=
 							</span>
-							<input
-								type="text"
+							<AuthPathValueInput
+								envVarKey={key}
 								value={value}
-								onChange={(e) => onEnvVarValueChange(key, e.target.value)}
+								knownAuthDirs={knownAuthDirs}
+								onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue)}
 								onBlur={onEnvVarsBlur}
-								onClick={(e) => e.stopPropagation()}
-								placeholder="value"
 								className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								containerClassName="flex-[2] min-w-0"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>
 							<GhostIconButton
