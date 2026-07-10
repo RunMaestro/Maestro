@@ -74,9 +74,19 @@ export function useInputAreaTextChange({
 			// coalesce rapid keystrokes into one resize per frame, off the input-latency
 			// critical path.
 			const textarea = e.target;
+			// When the caret is at the end of the content the user is typing at the
+			// bottom of a scrolled textarea, so pin the scroll to the bottom right
+			// after the resize - otherwise the height='auto' toggle leaves the view at
+			// the top and the freshly typed characters stay clipped out of sight until
+			// the user manually scrolls. Owning both the resize and the scroll here (in
+			// one rAF) keeps them ordered; the autosize effect no longer races us.
+			const caretAtEnd = (e.target.selectionStart ?? value.length) >= value.length;
 			keystrokeResizeScheduledRef.current = true;
 			requestAnimationFrame(() => {
 				resizeTextareaToContent(textarea, KEYSTROKE_TEXTAREA_MAX_HEIGHT);
+				if (caretAtEnd) {
+					textarea.scrollTop = textarea.scrollHeight;
+				}
 				keystrokeResizeScheduledRef.current = false;
 			});
 		},

@@ -91,4 +91,41 @@ describe('useInputAreaTextChange', () => {
 
 		expect(handlers.setAtMentionOpen).not.toHaveBeenCalled();
 	});
+
+	it('pins the scroll to the bottom after a keystroke when the caret is at the end', () => {
+		const handlers = createHandlers();
+		const rafSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((cb: FrameRequestCallback) => {
+				cb(0);
+				return 0;
+			});
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 500, configurable: true });
+
+		fireEvent.change(textarea, { target: { value: 'hello world', selectionStart: 11 } });
+
+		expect(textarea.scrollTop).toBe(500);
+		rafSpy.mockRestore();
+	});
+
+	it('leaves the scroll position alone when editing mid-text', () => {
+		const handlers = createHandlers();
+		const rafSpy = vi
+			.spyOn(window, 'requestAnimationFrame')
+			.mockImplementation((cb: FrameRequestCallback) => {
+				cb(0);
+				return 0;
+			});
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 500, configurable: true });
+		textarea.scrollTop = 42;
+
+		fireEvent.change(textarea, { target: { value: 'hello world', selectionStart: 3 } });
+
+		expect(textarea.scrollTop).toBe(42);
+		rafSpy.mockRestore();
+	});
 });
