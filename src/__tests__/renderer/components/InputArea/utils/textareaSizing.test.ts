@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	resizeTextareaToContent,
+	scrollTextareaToCaretEnd,
 	shouldScrollTextareaToEnd,
 } from '../../../../../renderer/components/InputArea/utils/textareaSizing';
 
@@ -23,6 +24,32 @@ describe('InputArea textareaSizing utils', () => {
 		expect(textarea.style.height).toBe('80px');
 	});
 
+	it('scrolls the textarea to the bottom when the caret is at the end', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.length,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(240);
+	});
+
+	it('leaves textarea scroll position untouched when the caret is mid-text', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(12);
+	});
 	it('scrolls when caret was at previous end', () => {
 		expect(shouldScrollTextareaToEnd(5, 5, 6)).toBe(true);
 	});

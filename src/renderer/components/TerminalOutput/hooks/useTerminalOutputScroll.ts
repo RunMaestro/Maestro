@@ -29,8 +29,6 @@ export function useTerminalOutputScroll({
 	isAtBottomRef.current = isAtBottom;
 
 	const [autoScrollPaused, setAutoScrollPaused] = useState(false);
-	const autoScrollPausedRef = useRef(false);
-	autoScrollPausedRef.current = autoScrollPaused;
 
 	const isProgrammaticScrollRef = useRef(false);
 	const tabReadStateRef = useRef<Map<string, number>>(new Map());
@@ -42,6 +40,9 @@ export function useTerminalOutputScroll({
 		const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
 		const atBottom = scrollHeight - scrollTop - clientHeight < 50;
 		setIsAtBottom(atBottom);
+		// Mirror into the ref synchronously so MutationObserver sees the user's
+		// new position before a content re-render can yank to bottom (#1140).
+		isAtBottomRef.current = atBottom;
 
 		if (atBottom !== prevIsAtBottomRef.current) {
 			prevIsAtBottomRef.current = atBottom;
@@ -139,12 +140,12 @@ export function useTerminalOutputScroll({
 		const container = scrollContainerRef.current;
 		if (!container) return;
 
-		const shouldAutoScroll = () => !autoScrollPausedRef.current || isAtBottomRef.current;
-
 		const scrollToBottom = () => {
 			if (!scrollContainerRef.current) return;
 			requestAnimationFrame(() => {
-				if (scrollContainerRef.current) {
+				// Re-check isAtBottomRef inside the rAF so a scroll-up that happens
+				// after schedule but before paint cancels the yank (#1140).
+				if (scrollContainerRef.current && isAtBottomRef.current) {
 					isProgrammaticScrollRef.current = true;
 					scrollContainerRef.current.scrollTo({
 						top: scrollContainerRef.current.scrollHeight,
@@ -157,12 +158,16 @@ export function useTerminalOutputScroll({
 			});
 		};
 
-		if (shouldAutoScroll()) {
+		// Only auto-scroll when the user's tracked position is at the bottom.
+		// Gating on isAtBottom (not `!autoScrollPaused`) keeps a content re-render
+		// after generation finishes — code-block re-highlight, markdown reflow —
+		// from yanking the view down while the user reads earlier output. (#1140)
+		if (isAtBottomRef.current) {
 			scrollToBottom();
 		}
 
 		const observer = new MutationObserver(() => {
-			if (shouldAutoScroll()) {
+			if (isAtBottomRef.current) {
 				scrollToBottom();
 			}
 		});
@@ -185,7 +190,8 @@ export function useTerminalOutputScroll({
 					const maxScroll = Math.max(0, scrollHeight - clientHeight);
 					const targetScroll = Math.min(initialScrollTop, maxScroll);
 					if (targetScroll < maxScroll - 50) {
-						autoScrollPausedRef.current = true;
+						// Flip isAtBottomRef first so the observer's live at-bottom
+						// check sees the restored position this frame (#1140).
 						isAtBottomRef.current = false;
 						setAutoScrollPaused(true);
 						setIsAtBottom(false);

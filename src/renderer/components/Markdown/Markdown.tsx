@@ -258,15 +258,23 @@ export const Markdown = memo(function Markdown({
 		codeBlockStyle,
 	]);
 
-	const markdown = (
-		<ReactMarkdown
-			remarkPlugins={remarkPlugins}
-			rehypePlugins={rehypePlugins}
-			urlTransform={urlTransformAllowingMaestro}
-			components={components}
-		>
-			{processedContent}
-		</ReactMarkdown>
+	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+
+	// rehype parse/runSync on every render (no internal memoization), so without
+	// this a re-render with referentially-stable inputs still re-parses the whole
+	// message. Keyed on the already-memoized plugin arrays, components, and
+	// content (urlTransform is a module constant). (#1180)
+	const markdown = useMemo(
+		() => (
+			<ReactMarkdown
+				remarkPlugins={remarkPlugins}
+				rehypePlugins={rehypePlugins}
+				urlTransform={urlTransformAllowingMaestro}
+				components={components}
+			>
+				{processedContent}
+			</ReactMarkdown>
+		),
+		[remarkPlugins, rehypePlugins, components, processedContent]
 	);
 
 	// Chat owns its prose container + context menus. Other presets render bare so

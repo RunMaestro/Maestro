@@ -99,6 +99,25 @@ describe('cue-task-scanner-trigger-source', () => {
 		source.stop();
 	});
 
+	it('start() does not forward an isActive visibility gate to the task scanner', () => {
+		const source = createCueTaskScannerTriggerSource({
+			session: makeSession(),
+			subscription: makeSub(),
+			registry: createCueSessionRegistry(),
+			enabled: () => false,
+			onLog: vi.fn(),
+			emit: vi.fn(),
+		})!;
+
+		source.start();
+
+		expect(mockCreateCueTaskScanner).toHaveBeenCalledOnce();
+		const config = mockCreateCueTaskScanner.mock.calls[0][0] as { isActive?: unknown };
+		expect(config.isActive).toBeUndefined();
+
+		source.stop();
+	});
+
 	it('start() defaults pollMinutes to 1 when subscription does not specify', () => {
 		const source = createCueTaskScannerTriggerSource({
 			session: makeSession(),
