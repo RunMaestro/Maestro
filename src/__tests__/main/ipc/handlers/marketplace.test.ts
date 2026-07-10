@@ -52,6 +52,15 @@ vi.mock('crypto', () => ({
 	},
 }));
 
+const { mockHomedir } = vi.hoisted(() => ({
+	mockHomedir: vi.fn(),
+}));
+
+vi.mock('os', () => ({
+	default: { homedir: mockHomedir },
+	homedir: mockHomedir,
+}));
+
 // Mock electron-store
 vi.mock('electron-store', () => {
 	return {
@@ -190,6 +199,7 @@ describe('marketplace IPC handlers', () => {
 
 		// Default mock for crypto.randomUUID
 		vi.mocked(crypto.randomUUID).mockReturnValue('test-uuid-123');
+		mockHomedir.mockReset().mockReturnValue('/Users/testuser');
 
 		// Reset remote-fs mocks
 		mockWriteFileRemote.mockReset();
@@ -1059,13 +1069,7 @@ describe('marketplace IPC handlers', () => {
 				manifest: sampleManifest,
 			};
 
-			// Mock os.homedir() to return a predictable path. Marketplace
-			// service uses `import os from 'os'` (default import), so the
-			// mock must expose `default` plus the named export.
-			vi.mock('os', () => ({
-				default: { homedir: vi.fn().mockReturnValue('/Users/testuser') },
-				homedir: vi.fn().mockReturnValue('/Users/testuser'),
-			}));
+			mockHomedir.mockReturnValue('/Users/testuser');
 
 			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
 			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)

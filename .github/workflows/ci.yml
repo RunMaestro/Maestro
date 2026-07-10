@@ -20,13 +20,13 @@ jobs:
       - run: npx eslint src/
       - run: npm run lint # TypeScript type checking
 
-  test:
+  test-ubuntu-shards:
+    name: test shard (ubuntu-latest, ${{ matrix.shard }}/4)
     strategy:
-      # Run the suite on both platforms; don't cancel one when the other fails.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -34,4 +34,41 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run test
+      - run: npm run test -- --shard=${{ matrix.shard }}/4
+
+  test-windows-shards:
+    name: test shard (windows-latest, ${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test -- --shard=${{ matrix.shard }}/4
+
+  # Preserve the existing required check names while the suite runs in shards.
+  test-ubuntu:
+    name: test (ubuntu-latest)
+    if: ${{ always() }}
+    needs: test-ubuntu-shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm all Ubuntu shards passed
+        if: ${{ needs.test-ubuntu-shards.result != 'success' }}
+        run: exit 1
+
+  test-windows:
+    name: test (windows-latest)
+    if: ${{ always() }}
+    needs: test-windows-shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm all Windows shards passed
+        if: ${{ needs.test-windows-shards.result != 'success' }}
+        run: exit 1

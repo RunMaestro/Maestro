@@ -3,7 +3,7 @@
  * Tests: error catching, retry functionality, error details, theming, accessibility
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ChartErrorBoundary } from '../../../../renderer/components/UsageDashboard/ChartErrorBoundary';
 import type { Theme } from '../../../../renderer/types';
@@ -77,6 +77,29 @@ const WorkingComponent = () => <div data-testid="working-child">Working componen
 describe('ChartErrorBoundary', () => {
 	const theme = createTheme();
 	const originalConsoleError = console.error;
+	type JSDOMErrorListener = (...args: unknown[]) => void;
+	type JSDOMVirtualConsole = {
+		listeners: (event: string) => JSDOMErrorListener[];
+		removeAllListeners: (event: string) => void;
+		on: (event: string, listener: JSDOMErrorListener) => void;
+	};
+	const virtualConsole = (window as typeof window & { _virtualConsole?: JSDOMVirtualConsole })
+		._virtualConsole;
+	let jsdomErrorListeners: JSDOMErrorListener[] = [];
+
+	beforeAll(() => {
+		// These tests intentionally throw during render. React reports the caught
+		// errors through jsdom as well as console.error, producing large duplicate
+		// stacks that obscure real failures in the full suite.
+		jsdomErrorListeners = virtualConsole?.listeners('jsdomError') ?? [];
+		virtualConsole?.removeAllListeners('jsdomError');
+	});
+
+	afterAll(() => {
+		for (const listener of jsdomErrorListeners) {
+			virtualConsole?.on('jsdomError', listener);
+		}
+	});
 
 	beforeEach(() => {
 		vi.clearAllMocks();

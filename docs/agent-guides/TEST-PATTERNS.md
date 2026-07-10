@@ -14,14 +14,16 @@ Config file: `vitest.config.mts`
 
 ```typescript
 // Key settings:
-environment: 'jsdom'; // Browser-like environment
 pool: 'forks'; // Process isolation between test files
 maxWorkers: 4; // Parallel execution
 setupFiles: ['./src/__tests__/setup.ts'];
-include: ['src/**/*.{test,spec}.{ts,tsx}'];
 testTimeout: 10000;
 hookTimeout: 10000;
 teardownTimeout: 5000;
+
+// Project environments:
+// - jsdom: TSX tests and renderer/web TS tests that need browser globals
+// - node: backend TS tests that do not need a browser environment
 
 // Excluded from default run (need separate config or flags):
 exclude: ['src/__tests__/integration/**', 'src/__tests__/e2e/**', 'src/__tests__/performance/**'];
@@ -33,8 +35,15 @@ Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` repo
 
 ```bash
 npm run test          # Unit tests (excludes integration/e2e/performance)
+npm run test:changed  # Tests affected by uncommitted and branch changes
+npm run test:related -- src/path/to/file.ts # Tests related to specific source files
 npm run test:watch    # Watch mode
 ```
+
+CI divides the default unit suite into four Vitest shards on Ubuntu and four
+matching shards on Windows. The aggregate `test (ubuntu-latest)` and
+`test (windows-latest)` jobs preserve the required check names and pass only
+when every shard for that platform succeeds.
 
 ---
 
