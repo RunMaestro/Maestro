@@ -1745,6 +1745,14 @@ function MaestroConsoleInner() {
 		activeSessionIdRef,
 	});
 
+	const handleSendGitReview = useCallback(
+		(prompt: string) => {
+			handleCloseGitDiff();
+			void processInput(prompt);
+		},
+		[handleCloseGitDiff, processInput]
+	);
+
 	// In-place recovery from session_not_found errors. The hook drives the
 	// inline SessionRecoveryCard surfaced by useAgentErrorListener — it grooms
 	// (or passes raw) the tab's prior conversation, sets pendingMergedContext,
@@ -3303,6 +3311,7 @@ function MaestroConsoleInner() {
 					gitDiffPreview={gitDiffPreview}
 					gitViewerCwd={gitViewerCwd}
 					onCloseGitDiff={handleCloseGitDiff}
+					onSendGitReview={activeSession?.inputMode === 'ai' ? handleSendGitReview : undefined}
 					onCloseGitLog={handleCloseGitLog}
 					onOpenGitFile={handleOpenGitFile}
 					onCloseAutoRunSetup={handleCloseAutoRunSetup}

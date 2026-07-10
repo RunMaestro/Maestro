@@ -895,6 +895,18 @@ export function generateDiffViewStyles(theme: Theme, colorBlindMode: boolean = f
     .diff-code-delete .diff-code-edit {
       background-color: ${deleteEdit} !important;
     }
+    .diff-gutter-selected {
+      background-color: ${c.accent}33 !important;
+      box-shadow: inset 3px 0 0 ${c.accent};
+    }
+    .diff-code-selected {
+      background-color: ${c.accent}24 !important;
+      box-shadow: inset 3px 0 0 ${c.accent};
+    }
+    .review-mode .diff-gutter,
+    .review-mode .diff-code {
+      cursor: pointer;
+    }
     .diff-hunk-header {
       background-color: ${c.bgActivity} !important;
       color: ${c.accent} !important;

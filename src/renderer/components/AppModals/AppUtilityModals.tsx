@@ -187,6 +187,7 @@ export interface AppUtilityModalsProps {
 	gitDiffPreview: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
+	onSendGitReview?: (prompt: string) => void;
 
 	// GitLogViewer
 	gitLogOpen: boolean;
@@ -432,6 +433,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	gitDiffPreview,
 	gitViewerCwd,
 	onCloseGitDiff,
+	onSendGitReview,
 	// GitLogViewer
 	gitLogOpen,
 	onCloseGitLog,
@@ -651,6 +653,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
+						onSendReview={onSendGitReview}
 					/>
 				</Suspense>
 			)}

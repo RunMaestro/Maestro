@@ -290,6 +290,7 @@ export interface AppModalsProps {
 	gitDiffPreview: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
+	onSendGitReview?: (prompt: string) => void;
 	/** Open a file clicked in either git viewer as a preview tab. */
 	onOpenGitFile?: (absolutePath: string, fileName: string) => void;
 	onCloseGitLog: () => void;
@@ -773,6 +774,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		gitDiffPreview,
 		gitViewerCwd,
 		onCloseGitDiff,
+		onSendGitReview,
 		onCloseGitLog,
 		onOpenGitFile,
 		onCloseAutoRunSetup,
@@ -1135,6 +1137,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				gitDiffPreview={gitDiffPreview}
 				gitViewerCwd={gitViewerCwd}
 				onCloseGitDiff={onCloseGitDiff}
+				onSendGitReview={onSendGitReview}
 				gitLogOpen={gitLogOpen}
 				onCloseGitLog={onCloseGitLog}
 				onOpenGitFile={onOpenGitFile}

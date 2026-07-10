@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect, useRef, memo } from 'react';
-import { Diff, Hunk } from 'react-diff-view';
-import { Plus, Minus, ImageIcon, Columns2, AlignJustify } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, memo, useCallback } from 'react';
+import { Diff, Hunk, getChangeKey, type ChangeData } from 'react-diff-view';
+import { Plus, Minus, ImageIcon, Columns2, AlignJustify, MessageSquareText } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
@@ -12,6 +12,8 @@ import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { GitDiffReviewPanel } from './GitDiffReviewPanel';
+import { buildGitChangeBrief, type GitReviewComment } from '../utils/gitReview';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -71,6 +73,8 @@ interface GitDiffViewerProps {
 	 * itself via `onClose` first, then calls this to open the file.
 	 */
 	onOpenFile?: (absolutePath: string, fileName: string) => void;
+	/** Send compiled line-level review feedback to the active AI tab. */
+	onSendReview?: (prompt: string) => void;
 	/**
 	 * Optional modal-layer priority override. Defaults to GIT_DIFF (200).
 	 * Use a higher priority when opening this viewer from inside another
@@ -88,8 +92,12 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	title = 'Git Diff',
 	priority,
 	onOpenFile,
+	onSendReview,
 }: GitDiffViewerProps) {
 	const [activeTab, setActiveTab] = useState(0);
+	const [reviewMode, setReviewMode] = useState(false);
+	const [reviewComments, setReviewComments] = useState<GitReviewComment[]>([]);
+	const [overallReviewFeedback, setOverallReviewFeedback] = useState('');
 	const [viewType, setViewType] = useState<GitDiffViewType>(
 		() => readStoredViewType() ?? initialViewType
 	);
@@ -108,6 +116,66 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
+	const changeBrief = useMemo(() => buildGitChangeBrief(parsedFiles), [parsedFiles]);
+
+	useEffect(() => {
+		setReviewMode(false);
+		setReviewComments([]);
+		setOverallReviewFeedback('');
+		setActiveTab(0);
+	}, [diffText]);
+
+	const toggleReviewChange = useCallback(
+		(sectionKey: string, filePath: string, change: ChangeData) => {
+			const changeKey = getChangeKey(change);
+			const id = `${sectionKey}:${changeKey}`;
+
+			setReviewComments((current) => {
+				if (current.some((comment) => comment.id === id)) {
+					return current.filter((comment) => comment.id !== id);
+				}
+
+				const oldLine =
+					change.type === 'delete'
+						? change.lineNumber
+						: change.type === 'normal'
+							? change.oldLineNumber
+							: undefined;
+				const newLine =
+					change.type === 'insert'
+						? change.lineNumber
+						: change.type === 'normal'
+							? change.newLineNumber
+							: undefined;
+
+				return [
+					...current,
+					{
+						id,
+						sectionKey,
+						changeKey,
+						filePath,
+						changeType: change.type,
+						oldLine,
+						newLine,
+						code: change.content,
+						note: '',
+					},
+				];
+			});
+		},
+		[]
+	);
+
+	const updateReviewNote = useCallback((id: string, note: string) => {
+		setReviewComments((current) =>
+			current.map((comment) => (comment.id === id ? { ...comment, note } : comment))
+		);
+	}, []);
+
+	const removeReviewComment = useCallback((id: string) => {
+		setReviewComments((current) => current.filter((comment) => comment.id !== id));
+	}, []);
 
 	// Dismiss the viewer and open the given repo-relative file as a preview tab.
 	const openFileInPreview = (relPath: string) => {
@@ -238,6 +306,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	const activeFile = parsedFiles[activeTab];
 	const stats = activeFile ? getDiffStats(activeFile.parsedDiff) : { additions: 0, deletions: 0 };
+	const reviewFeedbackCount = reviewComments.length + (overallReviewFeedback.trim() ? 1 : 0);
 
 	return (
 		<div
@@ -292,6 +361,33 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						</span>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
+						<button
+							type="button"
+							onClick={() => setReviewMode((enabled) => !enabled)}
+							className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors hover:bg-white/10"
+							style={{
+								color: reviewMode ? theme.colors.accent : theme.colors.textDim,
+								border: `1px solid ${reviewMode ? theme.colors.accent : theme.colors.border}`,
+								backgroundColor: reviewMode ? `${theme.colors.accent}18` : 'transparent',
+							}}
+							aria-pressed={reviewMode}
+							aria-label={reviewMode ? 'Close review panel' : 'Open review panel'}
+							title="Select diff lines and send structured feedback"
+						>
+							<MessageSquareText className="h-3.5 w-3.5" />
+							Review
+							{reviewFeedbackCount > 0 && (
+								<span
+									className="rounded-full px-1.5 text-[10px] font-semibold"
+									style={{
+										color: theme.colors.accentForeground,
+										backgroundColor: theme.colors.accent,
+									}}
+								>
+									{reviewFeedbackCount}
+								</span>
+							)}
+						</button>
 						{/* Layout toggle hidden on narrow viewports — unified is the only
 						    practical view at small widths. */}
 						<button
@@ -387,63 +483,107 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				</div>
 
 				{/* Diff Content */}
-				<div className="flex-1 overflow-auto p-6">
-					{activeFile && activeFile.isImage ? (
-						// Image diff view - side-by-side comparison
-						<ImageDiffViewer
-							oldPath={activeFile.oldPath}
-							newPath={activeFile.newPath}
-							cwd={cwd}
-							theme={theme}
-							isNewFile={activeFile.isNewFile}
-							isDeletedFile={activeFile.isDeletedFile}
-						/>
-					) : activeFile && activeFile.isBinary ? (
-						// Non-image binary file
-						<div className="flex flex-col items-center justify-center h-full gap-2">
-							<p className="text-sm" style={{ color: theme.colors.textDim }}>
-								Binary file changed
-							</p>
-							<p className="text-xs" style={{ color: theme.colors.textDim }}>
-								{activeFile.newPath}
-							</p>
-						</div>
-					) : activeFile && activeFile.parsedDiff.length > 0 ? (
-						<div className="font-mono text-sm">
-							<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
-							{activeFile.parsedDiff.map((file, fileIndex) => (
-								<div key={fileIndex}>
-									{/* File header (click to open the file as a preview tab) */}
-									<GitFilePathHeader
-										theme={theme}
-										className="mb-4"
-										onOpen={
-											onOpenFile && !activeFile.isDeletedFile
-												? () => openFileInPreview(activeFile.newPath)
-												: undefined
-										}
-										title={
-											activeFile.isDeletedFile
-												? undefined
-												: `Open ${activeFile.newPath} in a preview tab`
-										}
-									>
-										{file.oldPath} → {file.newPath}
-									</GitFilePathHeader>
+				<div className="flex flex-1 min-h-0 overflow-hidden">
+					<div className={`flex-1 overflow-auto p-6 ${reviewMode ? 'review-mode' : ''}`}>
+						{activeFile && activeFile.isImage ? (
+							// Image diff view - side-by-side comparison
+							<ImageDiffViewer
+								oldPath={activeFile.oldPath}
+								newPath={activeFile.newPath}
+								cwd={cwd}
+								theme={theme}
+								isNewFile={activeFile.isNewFile}
+								isDeletedFile={activeFile.isDeletedFile}
+							/>
+						) : activeFile && activeFile.isBinary ? (
+							// Non-image binary file
+							<div className="flex flex-col items-center justify-center h-full gap-2">
+								<p className="text-sm" style={{ color: theme.colors.textDim }}>
+									Binary file changed
+								</p>
+								<p className="text-xs" style={{ color: theme.colors.textDim }}>
+									{activeFile.newPath}
+								</p>
+							</div>
+						) : activeFile && activeFile.parsedDiff.length > 0 ? (
+							<div className="font-mono text-sm">
+								<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
+								{activeFile.parsedDiff.map((file, fileIndex) => {
+									const filePath = activeFile.isDeletedFile
+										? activeFile.oldPath
+										: activeFile.newPath;
+									const sectionKey = `${activeTab}:${fileIndex}:${filePath}`;
+									const selectedChanges = reviewComments
+										.filter((comment) => comment.sectionKey === sectionKey)
+										.map((comment) => comment.changeKey);
+									const reviewEvents = reviewMode
+										? {
+												onClick: ({ change }: { change: ChangeData | null }) => {
+													if (change) toggleReviewChange(sectionKey, filePath, change);
+												},
+											}
+										: undefined;
 
-									{/* Render each hunk */}
-									<Diff viewType={viewType} diffType={file.type} hunks={file.hunks}>
-										{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
-									</Diff>
-								</div>
-							))}
-						</div>
-					) : (
-						<div className="flex items-center justify-center h-full">
-							<p className="text-sm" style={{ color: theme.colors.textDim }}>
-								Unable to parse diff for this file
-							</p>
-						</div>
+									return (
+										<div key={fileIndex}>
+											{/* File header (click to open the file as a preview tab) */}
+											<GitFilePathHeader
+												theme={theme}
+												className="mb-4"
+												onOpen={
+													onOpenFile && !activeFile.isDeletedFile
+														? () => openFileInPreview(activeFile.newPath)
+														: undefined
+												}
+												title={
+													activeFile.isDeletedFile
+														? undefined
+														: `Open ${activeFile.newPath} in a preview tab`
+												}
+											>
+												{file.oldPath} → {file.newPath}
+											</GitFilePathHeader>
+
+											{/* Render each hunk */}
+											<Diff
+												viewType={viewType}
+												diffType={file.type}
+												hunks={file.hunks}
+												selectedChanges={selectedChanges}
+												codeEvents={reviewEvents}
+												gutterEvents={reviewEvents}
+											>
+												{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+											</Diff>
+										</div>
+									);
+								})}
+							</div>
+						) : (
+							<div className="flex items-center justify-center h-full">
+								<p className="text-sm" style={{ color: theme.colors.textDim }}>
+									Unable to parse diff for this file
+								</p>
+							</div>
+						)}
+					</div>
+					{reviewMode && (
+						<GitDiffReviewPanel
+							brief={changeBrief}
+							comments={reviewComments}
+							overallFeedback={overallReviewFeedback}
+							activeFileIndex={activeTab}
+							theme={theme}
+							onOverallFeedbackChange={setOverallReviewFeedback}
+							onSelectFile={setActiveTab}
+							onNoteChange={updateReviewNote}
+							onRemove={removeReviewComment}
+							onClear={() => {
+								setReviewComments([]);
+								setOverallReviewFeedback('');
+							}}
+							onSendReview={onSendReview}
+						/>
 					)}
 				</div>
 

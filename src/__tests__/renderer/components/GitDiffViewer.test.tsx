@@ -77,9 +77,29 @@ vi.mock('../../../renderer/utils/gitDiffParser', () => ({
 
 // Mock react-diff-view to avoid complex SVG rendering
 vi.mock('react-diff-view', () => ({
-	Diff: ({ children, hunks, viewType, diffType }: any) => (
-		<div data-testid="diff-component" data-view-type={viewType} data-diff-type={diffType}>
+	Diff: ({ children, hunks, viewType, diffType, codeEvents, selectedChanges }: any) => (
+		<div
+			data-testid="diff-component"
+			data-view-type={viewType}
+			data-diff-type={diffType}
+			data-selected-changes={(selectedChanges || []).join(',')}
+		>
 			{children ? children(hunks || []) : null}
+			{codeEvents?.onClick &&
+				hunks
+					.flatMap((hunk: any) => hunk.changes || [])
+					.map((change: any) => {
+						const line = change.lineNumber ?? change.newLineNumber ?? change.oldLineNumber;
+						return (
+							<button
+								key={`${change.type}-${line}`}
+								data-testid={`review-change-${change.type}-${line}`}
+								onClick={(event) => codeEvents.onClick({ change }, event)}
+							>
+								Select {change.content}
+							</button>
+						);
+					})}
 		</div>
 	),
 	Hunk: ({ hunk }: any) => (
@@ -89,6 +109,11 @@ vi.mock('react-diff-view', () => ({
 	),
 	tokenize: vi.fn(() => []),
 	parseDiff: vi.fn(() => []),
+	getChangeKey: (change: any) => {
+		if (change.type === 'insert') return `I${change.lineNumber}`;
+		if (change.type === 'delete') return `D${change.lineNumber}`;
+		return `N${change.oldLineNumber}`;
+	},
 }));
 
 // Mock ImageDiffViewer
@@ -1321,6 +1346,162 @@ describe('GitDiffViewer', () => {
 
 			// Should show unable to parse message since hunks are empty
 			expect(screen.getByText('Unable to parse diff for this file')).toBeInTheDocument();
+		});
+	});
+
+	describe('Rehearsal review', () => {
+		it('selects a diff line, captures a note, and sends structured feedback', () => {
+			const onSendReview = vi.fn();
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					onSendReview={onSendReview}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /open review panel/i }));
+			expect(screen.getByRole('complementary', { name: /diff review/i })).toBeInTheDocument();
+			expect(screen.getByText('Change Brief')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('tab', { name: /notes/i }));
+			expect(screen.getByText('Select a line in the diff')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('review-change-insert-2'));
+
+			const note = screen.getByRole('textbox', { name: /review note for comment 1/i });
+			const send = screen.getByRole('button', { name: /send review/i });
+			expect(send).toBeDisabled();
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-selected-changes', 'I2');
+
+			fireEvent.change(note, { target: { value: 'Handle the empty state explicitly.' } });
+			expect(send).toBeEnabled();
+
+			fireEvent.click(screen.getByRole('tab', { name: /prompt/i }));
+			expect(screen.getByText(/Please revise the current changes/)).toBeInTheDocument();
+			expect(screen.getByText(/Handle the empty state explicitly/)).toBeInTheDocument();
+
+			fireEvent.click(send);
+
+			expect(onSendReview).toHaveBeenCalledTimes(1);
+			expect(onSendReview.mock.calls[0][0]).toContain('"file": "src/test.ts"');
+			expect(onSendReview.mock.calls[0][0]).toContain('"location": "new line 2"');
+			expect(onSendReview.mock.calls[0][0]).toContain(
+				'"comment": "Handle the empty state explicitly."'
+			);
+		});
+
+		it('removes a comment when the selected line is clicked again', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /open review panel/i }));
+			fireEvent.click(screen.getByTestId('review-change-insert-2'));
+			fireEvent.click(screen.getByRole('tab', { name: /notes/i }));
+			expect(
+				screen.getByRole('textbox', { name: /review note for comment 1/i })
+			).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('review-change-insert-2'));
+			expect(screen.queryByRole('textbox', { name: /review note/i })).not.toBeInTheDocument();
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-selected-changes', '');
+		});
+
+		it('keeps send disabled when the active tab cannot accept AI feedback', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /open review panel/i }));
+			fireEvent.click(screen.getByTestId('review-change-insert-2'));
+			fireEvent.click(screen.getByRole('tab', { name: /notes/i }));
+			fireEvent.change(screen.getByRole('textbox', { name: /review note for comment 1/i }), {
+				target: { value: 'Use a clearer name.' },
+			});
+
+			expect(screen.getByText('Switch to an AI tab to send this review.')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /send review/i })).toBeDisabled();
+		});
+
+		it('sends high-level feedback without requiring line selection', () => {
+			const onSendReview = vi.fn();
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					onSendReview={onSendReview}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /open review panel/i }));
+			const overallFeedback = screen.getByRole('textbox', {
+				name: /overall feedback/i,
+			});
+			const send = screen.getByRole('button', { name: /send review/i });
+			expect(send).toBeDisabled();
+
+			fireEvent.change(overallFeedback, {
+				target: { value: 'Split the persistence work into a separate change.' },
+			});
+			expect(send).toBeEnabled();
+			fireEvent.click(screen.getByRole('tab', { name: /prompt/i }));
+			expect(
+				screen.getByText(/Split the persistence work into a separate change/)
+			).toBeInTheDocument();
+
+			fireEvent.click(send);
+			expect(onSendReview).toHaveBeenCalledTimes(1);
+			expect(onSendReview.mock.calls[0][0]).toContain('Overall feedback:');
+			expect(onSendReview.mock.calls[0][0]).toContain(
+				'Split the persistence work into a separate change.'
+			);
+		});
+
+		it('jumps from a risk card to the corresponding file', () => {
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/app.ts', newPath: 'src/app.ts' }),
+				createMockParsedFile({
+					oldPath: 'src/main/security/permissions.ts',
+					newPath: 'src/main/security/permissions.ts',
+				}),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /open review panel/i }));
+			const riskPath = screen.getAllByText('src/main/security/permissions.ts')[0];
+			fireEvent.click(riskPath.closest('button')!);
+
+			expect(screen.getByText('File 2 of 2')).toBeInTheDocument();
 		});
 	});
 

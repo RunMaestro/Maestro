@@ -31,6 +31,11 @@ The diff viewer displays:
 - **Side-by-side comparison** of file versions
 - **Syntax highlighting** matched to file type
 - **Line-by-line changes** with additions and deletions clearly marked
+- **Rehearsal review mode** for reviewing large changes by exception
+
+Select **Review** to open a deterministic Change Brief. It groups files by change area, highlights paths and change sizes associated with higher risk, calls out broad changes or missing test changes, and links each card back to the relevant file. These signals prioritize attention but do not guarantee that a change is safe.
+
+Add **Overall feedback** when you want to redirect the work at the intent or architecture level. Use the Notes tab and click a code line or line number only when focused line feedback is valuable. The Prompt tab shows the complete structured revision request before you send it to the active AI tab. Rehearsal is non-destructive: it does not stage, revert, commit, or otherwise modify Git state.
 
 Access diffs from the git log viewer by clicking any commit, or use **Command Palette** → "Git Diff".
 
