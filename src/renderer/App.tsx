@@ -2036,7 +2036,7 @@ function MaestroConsoleInner() {
 		ownsSession,
 	});
 
-	// cycleSession — provided by useCycleSession hook
+	// cycleSession — event-time getState() via useCycleSession (no store subscriptions)
 	const { cycleSession } = useCycleSession({
 		sortedSessions,
 		handleOpenGroupChat,
