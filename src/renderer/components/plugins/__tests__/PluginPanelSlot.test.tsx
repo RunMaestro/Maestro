@@ -12,6 +12,7 @@ const theme = THEMES.dracula;
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
+	iconPacks: [],
 	prompts: [],
 	settings: [],
 	commandMacros: [],

@@ -42,6 +42,81 @@ describe('collectContributions', () => {
 		expect(c.themes[0].localId).toBe('midnight');
 		expect(c.themes[0].pluginId).toBe('com.acme');
 	});
+	it('collects namespaced icon packs for tier-0 plugins', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'Starter pack',
+						icons: [
+							{
+								id: 'spark',
+								label: 'Spark',
+								path: 'M12 2L15 9L22 12L15 15L12 22',
+								viewBox: '0 0 24 24',
+							},
+						],
+						colors: [{ id: 'lime', label: 'Lime', value: '#22C55E' }],
+					},
+				],
+			})
+		);
+
+		expect(c.iconPacks).toEqual([
+			{
+				id: 'com.acme/starter',
+				localId: 'starter',
+				pluginId: 'com.acme',
+				label: 'Starter pack',
+				icons: [
+					{
+						id: 'com.acme/starter/spark',
+						localId: 'spark',
+						label: 'Spark',
+						path: 'M12 2L15 9L22 12L15 15L12 22',
+						viewBox: '0 0 24 24',
+					},
+				],
+				colors: [
+					{
+						id: 'com.acme/starter/lime',
+						localId: 'lime',
+						label: 'Lime',
+						value: '#22C55E',
+					},
+				],
+			},
+		]);
+		expect(c.errors).toEqual([]);
+	});
+
+	it('drops unsafe or oversized icon-pack entries while keeping valid siblings', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'Starter pack',
+						icons: [
+							{ id: 'good', label: 'Good', path: 'M3 12H21' },
+							{ id: 'markup', label: 'Markup', path: 'M3 12<foreignObject />' },
+							{ id: 'large', label: 'Large', path: `M${'0 '.repeat(4096)}` },
+							{ id: 'viewbox', label: 'ViewBox', path: 'M3 12H21', viewBox: '0 0 24 nope' },
+						],
+						colors: [
+							{ id: 'good', label: 'Good', value: '#22C55E' },
+							{ id: 'bad', label: 'Bad', value: 'green' },
+						],
+					},
+				],
+			})
+		);
+
+		expect(c.iconPacks[0].icons.map((icon) => icon.localId)).toEqual(['good']);
+		expect(c.iconPacks[0].colors.map((color) => color.localId)).toEqual(['good']);
+		expect(c.errors).toHaveLength(4);
+	});
 
 	it('validates each contribution type and drops bad ones with an error', () => {
 		const c = collectContributions(
@@ -279,6 +354,31 @@ describe('aggregateContributions', () => {
 			}),
 		]);
 		expect(agg.themes.map((t) => t.id).sort()).toEqual(['com.a/midnight', 'com.b/midnight']);
+	});
+
+	it('keeps the first icon pack when a plugin declares the same pack id twice', () => {
+		const agg = aggregateContributions([
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'First pack',
+						icons: [{ id: 'spark', label: 'Spark', path: 'M3 12H21' }],
+					},
+					{
+						id: 'starter',
+						label: 'Second pack',
+						icons: [{ id: 'bolt', label: 'Bolt', path: 'M12 2L12 22' }],
+					},
+				],
+			}),
+		]);
+
+		expect(agg.iconPacks).toHaveLength(1);
+		expect(agg.iconPacks[0].label).toBe('First pack');
+		expect(agg.errorsByPlugin['com.acme']).toContain(
+			'duplicate iconPacks contribution id "com.acme/starter"'
+		);
 	});
 });
 

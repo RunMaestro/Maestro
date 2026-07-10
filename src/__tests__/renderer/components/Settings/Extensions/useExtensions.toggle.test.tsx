@@ -75,6 +75,7 @@ beforeEach(() => {
 			list: vi.fn().mockResolvedValue({ hostApiVersion: '1.0.0', plugins: [] }),
 			contributions: vi.fn().mockResolvedValue({
 				themes: [],
+				iconPacks: [],
 				prompts: [],
 				settings: [],
 				commandMacros: [],

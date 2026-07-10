@@ -44,6 +44,7 @@ import { registerPluginsHandlers } from '../../../main/ipc/handlers/plugins';
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
+	iconPacks: [],
 	prompts: [],
 	settings: [],
 	commandMacros: [],

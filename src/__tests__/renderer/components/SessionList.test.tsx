@@ -831,6 +831,32 @@ describe('SessionList', () => {
 			expect(screen.getByText('Project')).not.toHaveStyle({ color: '#22C55E' });
 		});
 
+		it('falls back to the default folder without rewriting a disabled plugin appearance', () => {
+			enableGroupsPlus();
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'Plugin Group',
+				emoji: '',
+				icon: 'com.acme/bright/bolt',
+				color: 'com.acme/bright/lime',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByTestId('icon-folder')).toHaveStyle({ color: defaultTheme.colors.textDim });
+			expect(screen.getByText('Plugin Group')).not.toHaveAttribute(
+				'style',
+				`color: ${group.color};`
+			);
+			expect(group).toMatchObject({
+				icon: 'com.acme/bright/bolt',
+				color: 'com.acme/bright/lime',
+			});
+		});
+
 		it('renders child groups indented beneath their parent', () => {
 			enableGroupsPlus();
 			const parent = createMockGroup({ id: 'company', name: 'Company' });

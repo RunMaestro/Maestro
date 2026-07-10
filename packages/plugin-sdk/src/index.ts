@@ -390,9 +390,10 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.9.0 for
+ * The host API version this Maestro build implements. Bumped to 1.10.0 for the
+ * backward-compatible, data-only `iconPacks` contribution. (1.9.0 added
  * host-rendered `hostViews`, their `ui:hostView` capability, and the
- * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods. (1.8.0 added
+ * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
  * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
@@ -402,7 +403,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.)
  */
-export const HOST_API_VERSION = '1.9.0';
+export const HOST_API_VERSION = '1.10.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -742,6 +743,39 @@ export interface ThemeContribution {
 	colors: Record<string, string>;
 }
 
+/** A single safe SVG path within an icon pack. The host owns all SVG markup. */
+export interface IconPackIconContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated SVG path `d` data only; never arbitrary SVG markup. */
+	path: string;
+	/** Optional validated four-number SVG viewBox string. */
+	viewBox?: string;
+}
+
+/** A label color within an icon pack. */
+export interface IconPackColorContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated `#rrggbb` color value. */
+	value: string;
+}
+
+/** A tier-0 pack of host-rendered group icons and label colors. */
+export interface IconPackContribution {
+	/** Namespaced id: `<pluginId>/<localId>`. */
+	id: string;
+	localId: string;
+	pluginId: string;
+	label: string;
+	icons: IconPackIconContribution[];
+	colors: IconPackColorContribution[];
+}
+
 /** A reusable prompt a plugin adds to the prompt catalog. */
 export interface PromptContribution {
 	id: string;
@@ -930,6 +964,7 @@ export interface HostViewContribution {
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
@@ -947,6 +982,7 @@ export interface PluginContributions {
 /** Contributions aggregated across every active plugin. */
 export interface AggregatedContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];

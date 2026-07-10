@@ -67,6 +67,39 @@ export interface ThemeContribution {
 	colors: Record<string, string>;
 }
 
+/** A single safe SVG path within an icon pack. The host owns all SVG markup. */
+export interface IconPackIconContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated SVG path `d` data only; never arbitrary SVG markup. */
+	path: string;
+	/** Optional validated four-number SVG viewBox string. */
+	viewBox?: string;
+}
+
+/** A label color within an icon pack. */
+export interface IconPackColorContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated `#rrggbb` color value. */
+	value: string;
+}
+
+/** A tier-0 pack of host-rendered group icons and label colors. */
+export interface IconPackContribution {
+	/** Namespaced id: `<pluginId>/<localId>`. */
+	id: string;
+	localId: string;
+	pluginId: string;
+	label: string;
+	icons: IconPackIconContribution[];
+	colors: IconPackColorContribution[];
+}
+
 /** A reusable prompt a plugin adds to the prompt catalog. */
 export interface PromptContribution {
 	id: string;
@@ -278,6 +311,7 @@ export interface HostViewContribution {
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
@@ -296,6 +330,7 @@ export interface PluginContributions {
 /** Contributions aggregated across every active plugin. */
 export interface AggregatedContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
@@ -338,6 +373,7 @@ function asArray(value: unknown): unknown[] {
 export function collectContributions(manifest: PluginManifest): PluginContributions {
 	const out: PluginContributions = {
 		themes: [],
+		iconPacks: [],
 		prompts: [],
 		settings: [],
 		commandMacros: [],
@@ -360,6 +396,10 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 	for (const raw of asArray(contributes.themes)) {
 		const t = parseTheme(pluginId, raw, out.errors);
 		if (t) out.themes.push(t);
+	}
+	for (const raw of asArray(contributes.iconPacks)) {
+		const pack = parseIconPack(pluginId, raw, out.errors);
+		if (pack) out.iconPacks.push(pack);
 	}
 	for (const raw of asArray(contributes.prompts)) {
 		const p = parsePrompt(pluginId, raw, out.errors);
@@ -460,6 +500,7 @@ export function aggregateContributions(
 ): AggregatedContributions {
 	const agg: AggregatedContributions = {
 		themes: [],
+		iconPacks: [],
 		prompts: [],
 		settings: [],
 		commandMacros: [],
@@ -502,6 +543,7 @@ export function aggregateContributions(
 			(agg.errorsByPlugin[manifest.id] ??= []).push(...c.errors);
 		}
 		c.themes.forEach((t) => pushUnique('themes', agg.themes, t));
+		c.iconPacks.forEach((pack) => pushUnique('iconPacks', agg.iconPacks, pack));
 		c.prompts.forEach((p) => pushUnique('prompts', agg.prompts, p));
 		c.settings.forEach((s) => pushUnique('settings', agg.settings, s));
 		c.commandMacros.forEach((m) => pushUnique('commandMacros', agg.commandMacros, m));
@@ -569,6 +611,165 @@ function parseTheme(pluginId: string, raw: unknown, errors: string[]): ThemeCont
 		mode: raw.mode,
 		colors,
 	};
+}
+
+const MAX_SVG_PATH_LENGTH = 4096;
+const SVG_PATH_DATA_PATTERN = /^[MmLlHhVvCcSsQqTtAaZz0-9 ,.+\-eE]+$/;
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const SVG_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+function parseSvgViewBox(
+	pluginId: string,
+	packLocalId: string,
+	iconLocalId: string,
+	value: unknown,
+	errors: string[]
+): string | undefined | null {
+	if (value === undefined) return undefined;
+	if (typeof value !== 'string') {
+		errors.push(
+			`[${pluginId}] icon pack "${packLocalId}" icon "${iconLocalId}" viewBox must be four numbers`
+		);
+		return null;
+	}
+	const parts = value.trim().split(/[ ,]+/);
+	if (
+		parts.length !== 4 ||
+		parts.some((part) => !SVG_NUMBER_PATTERN.test(part) || !Number.isFinite(Number(part)))
+	) {
+		errors.push(
+			`[${pluginId}] icon pack "${packLocalId}" icon "${iconLocalId}" viewBox must be four numbers`
+		);
+		return null;
+	}
+	return value.trim();
+}
+
+function parseIconPackIcon(
+	pluginId: string,
+	packId: string,
+	packLocalId: string,
+	raw: unknown,
+	errors: string[]
+): IconPackIconContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] an icon pack icon is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.label)) {
+		errors.push(`[${pluginId}] icon pack "${packLocalId}" icon "${localId}" is missing a label`);
+		return null;
+	}
+	if (
+		!isNonEmptyString(raw.path) ||
+		raw.path.length > MAX_SVG_PATH_LENGTH ||
+		!SVG_PATH_DATA_PATTERN.test(raw.path)
+	) {
+		errors.push(
+			`[${pluginId}] icon pack "${packLocalId}" icon "${localId}" path must be safe SVG path data`
+		);
+		return null;
+	}
+	const viewBox = parseSvgViewBox(pluginId, packLocalId, localId, raw.viewBox, errors);
+	if (viewBox === null) return null;
+	return {
+		id: namespaced(packId, localId),
+		localId,
+		label: raw.label.trim(),
+		path: raw.path,
+		...(viewBox !== undefined ? { viewBox } : {}),
+	};
+}
+
+function parseIconPackColor(
+	pluginId: string,
+	packId: string,
+	packLocalId: string,
+	raw: unknown,
+	errors: string[]
+): IconPackColorContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] an icon pack color is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.label)) {
+		errors.push(`[${pluginId}] icon pack "${packLocalId}" color "${localId}" is missing a label`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.value) || !HEX_COLOR_PATTERN.test(raw.value)) {
+		errors.push(
+			`[${pluginId}] icon pack "${packLocalId}" color "${localId}" value must be #rrggbb`
+		);
+		return null;
+	}
+	return {
+		id: namespaced(packId, localId),
+		localId,
+		label: raw.label.trim(),
+		value: raw.value,
+	};
+}
+
+function parseIconPack(
+	pluginId: string,
+	raw: unknown,
+	errors: string[]
+): IconPackContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] an icon pack contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.label)) {
+		errors.push(`[${pluginId}] icon pack "${localId}" is missing a label`);
+		return null;
+	}
+	const id = namespaced(pluginId, localId);
+	const icons: IconPackIconContribution[] = [];
+	const colors: IconPackColorContribution[] = [];
+	const iconIds = new Set<string>();
+	const colorIds = new Set<string>();
+
+	if (raw.icons !== undefined && !Array.isArray(raw.icons)) {
+		errors.push(`[${pluginId}] icon pack "${localId}" icons must be an array`);
+	} else {
+		for (const item of asArray(raw.icons)) {
+			const icon = parseIconPackIcon(pluginId, id, localId, item, errors);
+			if (!icon) continue;
+			if (iconIds.has(icon.id)) {
+				errors.push(`[${pluginId}] icon pack "${localId}" has duplicate icon id "${icon.localId}"`);
+				continue;
+			}
+			iconIds.add(icon.id);
+			icons.push(icon);
+		}
+	}
+	if (raw.colors !== undefined && !Array.isArray(raw.colors)) {
+		errors.push(`[${pluginId}] icon pack "${localId}" colors must be an array`);
+	} else {
+		for (const item of asArray(raw.colors)) {
+			const color = parseIconPackColor(pluginId, id, localId, item, errors);
+			if (!color) continue;
+			if (colorIds.has(color.id)) {
+				errors.push(
+					`[${pluginId}] icon pack "${localId}" has duplicate color id "${color.localId}"`
+				);
+				continue;
+			}
+			colorIds.add(color.id);
+			colors.push(color);
+		}
+	}
+	if (icons.length === 0 && colors.length === 0) {
+		errors.push(`[${pluginId}] icon pack "${localId}" has no valid icons or colors`);
+		return null;
+	}
+	return { id, localId, pluginId, label: raw.label.trim(), icons, colors };
 }
 
 function parsePrompt(pluginId: string, raw: unknown, errors: string[]): PromptContribution | null {

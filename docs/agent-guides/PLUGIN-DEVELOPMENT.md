@@ -57,11 +57,11 @@ Drop the folder into `<userData>/plugins/` (or install the `.tgz` from Settings 
 
 ## 1. Pick a tier
 
-| Tier | What it is                                                                                     | Code?                  | Risk          |
-| ---- | ---------------------------------------------------------------------------------------------- | ---------------------- | ------------- |
-| 0    | Data only: declarative contributions (themes, prompts, settings, command macros, cue triggers) | NO (`entry` forbidden) | lowest        |
-| 1    | Sandboxed compute: runs `entry` code in an isolated process behind the permission broker       | YES (`entry` required) | needs consent |
-| 2    | UI contributions: sandboxed panels / modals / commands                                         | YES (`entry` required) | needs consent |
+| Tier | What it is                                                                                                 | Code?                  | Risk          |
+| ---- | ---------------------------------------------------------------------------------------------------------- | ---------------------- | ------------- |
+| 0    | Data only: declarative contributions (themes, icon packs, prompts, settings, command macros, cue triggers) | NO (`entry` forbidden) | lowest        |
+| 1    | Sandboxed compute: runs `entry` code in an isolated process behind the permission broker                   | YES (`entry` required) | needs consent |
+| 2    | UI contributions: sandboxed panels / modals / commands                                                     | YES (`entry` required) | needs consent |
 
 Do start at tier 0 if you only ship data. Do NOT request a capability you do not use - the user sees every one at the consent prompt.
 
@@ -139,6 +139,34 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 }
 ```
 
+### Worked example: tier 0 icon pack (manifest only)
+
+```json
+{
+	"id": "maestro-horizon-icons",
+	"name": "Maestro Horizon Icons",
+	"version": "1.0.0",
+	"tier": 0,
+	"maestro": { "minHostApi": "1.9.0" },
+	"contributes": {
+		"iconPacks": [
+			{
+				"id": "horizon",
+				"label": "Horizon",
+				"icons": [
+					{ "id": "sunrise", "label": "Sunrise", "path": "M12 3V5M4.93 4.93L6.34 6.34M3 12H5" },
+					{ "id": "sunset", "label": "Sunset", "path": "M4 17H20M7 14L12 9L17 14" }
+				],
+				"colors": [
+					{ "id": "coral", "label": "Coral", "value": "#F97316" },
+					{ "id": "sky", "label": "Sky", "value": "#38BDF8" }
+				]
+			}
+		]
+	}
+}
+```
+
 ### Worked example: tier 1 (code + panel)
 
 ```json
@@ -184,6 +212,26 @@ Every contributed `id` is the bare LOCAL id you author; the loader namespaces it
 	"name": "Vet Neon",
 	"mode": "dark",
 	"colors": { "bgMain": "#0b0f1a", "accent": "#36f9c5" }
+}
+```
+
+### iconPacks (tier 0)
+
+`{ id, label, icons?: [{ id, label, path, viewBox? }], colors?: [{ id, label, value }] }`
+
+`id` names the pack. The loader namespaces it to `<pluginId>/<packId>` and namespaces each
+icon or color id to `<pluginId>/<packId>/<itemId>`; those item ids are what groups store.
+Each `path` is at most 4,096 characters and may contain only SVG path-data characters
+(`MmLlHhVvCcSsQqTtAaZz0-9 ,.+-eE`); plugin authors must never provide `<svg>`, markup,
+or fill/stroke attributes. `viewBox`, when provided, is a string of four finite numbers.
+The host renders the path in its own SVG element. Every color `value` must be `#rrggbb`.
+
+```json
+{
+	"id": "horizon",
+	"label": "Horizon",
+	"icons": [{ "id": "sunrise", "label": "Sunrise", "path": "M12 3V5M4.93 4.93L6.34 6.34" }],
+	"colors": [{ "id": "coral", "label": "Coral", "value": "#F97316" }]
 }
 ```
 

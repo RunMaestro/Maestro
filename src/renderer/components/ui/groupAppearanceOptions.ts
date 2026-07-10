@@ -17,11 +17,22 @@ import {
 	Zap,
 	type LucideIcon,
 } from 'lucide-react';
+import type { IconPackContribution } from '../../../shared/plugins/contributions';
 
 export interface GroupIconOption {
 	id: string;
 	label: string;
 	Icon: LucideIcon;
+}
+
+export type ResolvedGroupIcon =
+	| { kind: 'built-in'; Icon: LucideIcon }
+	| { kind: 'plugin'; path: string; viewBox?: string }
+	| { kind: 'missing'; Icon: LucideIcon };
+
+export interface ResolvedGroupAppearance {
+	icon: ResolvedGroupIcon | undefined;
+	color: string | undefined;
 }
 
 export const GROUP_ICON_OPTIONS: readonly GroupIconOption[] = [
@@ -53,3 +64,45 @@ export const GROUP_LABEL_COLORS = [
 	{ value: '#EC4899', label: 'Pink' },
 	{ value: '#A855F7', label: 'Purple' },
 ] as const;
+
+/**
+ * Resolves a stored group appearance against the current host and plugin option
+ * catalogs. Missing namespaced values intentionally fall back without changing
+ * persistence, so disabling a plugin is reversible.
+ */
+export function resolveGroupAppearance(
+	iconId: string | undefined,
+	colorId: string | undefined,
+	iconPacks: readonly IconPackContribution[]
+): ResolvedGroupAppearance {
+	const builtInIcon = GROUP_ICON_OPTIONS.find((option) => option.id === iconId);
+	const builtInColor = GROUP_LABEL_COLORS.find((option) => option.value === colorId);
+	let contributedIcon: IconPackContribution['icons'][number] | undefined;
+	let contributedColor: IconPackContribution['colors'][number] | undefined;
+	for (const pack of iconPacks) {
+		contributedIcon ??= pack.icons.find((icon) => icon.id === iconId);
+		contributedColor ??= pack.colors.find((color) => color.id === colorId);
+		if (contributedIcon && contributedColor) break;
+	}
+
+	return {
+		icon: builtInIcon
+			? { kind: 'built-in', Icon: builtInIcon.Icon }
+			: contributedIcon
+				? {
+						kind: 'plugin',
+						path: contributedIcon.path,
+						...(contributedIcon.viewBox ? { viewBox: contributedIcon.viewBox } : {}),
+					}
+				: iconId?.includes('/')
+					? { kind: 'missing', Icon: Folder }
+					: undefined,
+		color: builtInColor
+			? builtInColor.value
+			: contributedColor
+				? contributedColor.value
+				: colorId && /^#[0-9a-fA-F]{6}$/.test(colorId)
+					? colorId
+					: undefined,
+	};
+}

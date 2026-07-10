@@ -4,6 +4,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, GroupAppearancePicker } from './ui';
 import { generateId } from '../utils/ids';
 import { canCreateGroupInside } from '../../shared/groupHierarchy';
+import { usePluginContributions } from '../hooks/usePluginContributions';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 
 interface CreateGroupModalProps {
@@ -30,6 +31,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 	const [groupColor, setGroupColor] = useState<string | undefined>(undefined);
 	const [parentGroupId, setParentGroupId] = useState(initialParentId);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const pluginContributions = usePluginContributions();
 
 	const handleCreate = () => {
 		if (groupName.trim()) {
@@ -90,6 +92,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 					onEmojiChange={setGroupEmoji}
 					onIconChange={setGroupIcon}
 					onColorChange={setGroupColor}
+					iconPacks={pluginContributions.iconPacks}
 					restoreFocusRef={inputRef}
 					groupsPlusEnabled={groupsPlusEnabled}
 				/>

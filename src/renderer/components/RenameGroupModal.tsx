@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import type { Theme, Group } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, GroupAppearancePicker } from './ui';
+import { usePluginContributions } from '../hooks/usePluginContributions';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 
 interface RenameGroupModalProps {
@@ -39,6 +40,7 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 
 	const inputRef = useRef<HTMLInputElement>(null);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
+	const pluginContributions = usePluginContributions();
 
 	const handleRename = () => {
 		if (groupName.trim() && groupId) {
@@ -85,6 +87,7 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 					onEmojiChange={setGroupEmoji}
 					onIconChange={setGroupIcon}
 					onColorChange={setGroupColor}
+					iconPacks={pluginContributions.iconPacks}
 					restoreFocusRef={inputRef}
 					groupsPlusEnabled={groupsPlusEnabled}
 				/>

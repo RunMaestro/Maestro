@@ -9,6 +9,7 @@ import type {
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
+	iconPacks: [],
 	prompts: [],
 	settings: [],
 	commandMacros: [],

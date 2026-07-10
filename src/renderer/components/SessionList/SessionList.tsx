@@ -27,7 +27,8 @@ import { HamburgerDropdown } from './HamburgerDropdown';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
-import { GROUP_ICON_OPTIONS } from '../ui/groupAppearanceOptions';
+import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
+import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
@@ -62,6 +63,7 @@ import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { usePluginContributions } from '../../hooks/usePluginContributions';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -153,6 +155,7 @@ interface SessionListProps {
 const UNGROUPED_DROP_TARGET = '__ungrouped__';
 
 function SessionListInner(props: SessionListProps) {
+	const pluginContributions = usePluginContributions();
 	// Store subscriptions
 	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
 	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
@@ -1548,10 +1551,11 @@ function SessionListInner(props: SessionListProps) {
 						// Keep a parent visible for a matching child while filtering by unread agents.
 						if (showUnreadAgentsOnly && groupSessions.length === 0 && !hasVisibleChild) return null;
 						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
-						const GroupIcon =
-							groupsPlusEnabled && group.icon
-								? GROUP_ICON_OPTIONS.find((option) => option.id === group.icon)?.Icon
-								: undefined;
+						const appearance = resolveGroupAppearance(
+							groupsPlusEnabled ? group.icon : undefined,
+							groupsPlusEnabled ? group.color : undefined,
+							groupsPlusEnabled ? pluginContributions.iconPacks : []
+						);
 						return (
 							<div
 								key={group.id}
@@ -1621,15 +1625,20 @@ function SessionListInner(props: SessionListProps) {
 										) : (
 											<ChevronDown className="w-3 h-3" />
 										)}
-										{GroupIcon ? (
-											<GroupIcon
-												className="w-4 h-4"
-												style={{
-													color: groupsPlusEnabled
-														? group.color || theme.colors.textDim
-														: theme.colors.textDim,
-												}}
-											/>
+										{appearance.icon ? (
+											appearance.icon.kind === 'plugin' ? (
+												<SafeSvgIcon
+													className="w-4 h-4"
+													path={appearance.icon.path}
+													viewBox={appearance.icon.viewBox}
+													style={{ color: appearance.color || theme.colors.textDim }}
+												/>
+											) : (
+												<appearance.icon.Icon
+													className="w-4 h-4"
+													style={{ color: appearance.color || theme.colors.textDim }}
+												/>
+											)
 										) : group.emoji ? (
 											<span className="text-sm">{group.emoji}</span>
 										) : (
@@ -1659,9 +1668,7 @@ function SessionListInner(props: SessionListProps) {
 										) : (
 											<span
 												onDoubleClick={() => startRenamingGroup(group.id)}
-												style={
-													groupsPlusEnabled && group.color ? { color: group.color } : undefined
-												}
+												style={appearance.color ? { color: appearance.color } : undefined}
 											>
 												{group.name}
 												{showLeftPanelGroupMemberCount && groupCollapsedPills.length > 0 && (

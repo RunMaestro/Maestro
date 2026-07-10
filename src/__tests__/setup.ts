@@ -442,6 +442,7 @@ const mockMaestro = {
 		uninstall: vi.fn().mockResolvedValue({ success: true }),
 		contributions: vi.fn().mockResolvedValue({
 			themes: [],
+			iconPacks: [],
 			prompts: [],
 			settings: [],
 			commandMacros: [],
