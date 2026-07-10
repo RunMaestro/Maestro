@@ -64,6 +64,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerProfileHandlers } from './profiles';
+import { registerBoardHandlers } from './board';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
@@ -141,6 +142,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerProfileHandlers };
+export { registerBoardHandlers };
 export { registerCueBackupHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };

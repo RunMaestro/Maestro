@@ -3756,6 +3756,36 @@ interface MaestroAPI {
 		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
 	};
 
+	// Board API (persistent task DAG stored in .maestro/board.yaml)
+	board: {
+		list: (projectRoot: string) => Promise<import('../shared/board/types').Board[]>;
+		get: (
+			projectRoot: string,
+			boardId: string
+		) => Promise<import('../shared/board/types').Board | null>;
+		addCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		updateCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		setCardStatus: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			status: import('../shared/board/types').CardStatus
+		) => Promise<import('../shared/board/types').Board>;
+		deleteCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string
+		) => Promise<import('../shared/board/types').Board>;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;

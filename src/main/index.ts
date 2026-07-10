@@ -156,6 +156,7 @@ import {
 	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerProfileHandlers,
+	registerBoardHandlers,
 	registerCueBackupHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
@@ -2869,6 +2870,9 @@ function setupIpcHandlers() {
 
 	// Agent Profiles - named model/effort/role bundles layered on a base agent
 	registerProfileHandlers();
+
+	// Board - persistent task DAG stored in .maestro/board.yaml
+	registerBoardHandlers();
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
