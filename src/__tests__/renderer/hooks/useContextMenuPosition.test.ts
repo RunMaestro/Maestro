@@ -162,6 +162,42 @@ describe('useContextMenuPosition', () => {
 		document.body.removeChild(el);
 	});
 
+	it('remeasures when menu content changes', () => {
+		setupViewport(800, 600);
+		let menuHeight = 100;
+		Element.prototype.getBoundingClientRect = function () {
+			return {
+				width: 160,
+				height: menuHeight,
+				top: 0,
+				left: 0,
+				right: 160,
+				bottom: menuHeight,
+				x: 0,
+				y: 0,
+				toJSON: () => ({}),
+			};
+		};
+
+		const el = document.createElement('div');
+		document.body.appendChild(el);
+		const { result, rerender } = renderHook(
+			({ submenuOpen }: { submenuOpen: boolean }) => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 100, 500, 8, submenuOpen);
+			},
+			{ initialProps: { submenuOpen: false } }
+		);
+
+		expect(result.current.top).toBe(492);
+
+		menuHeight = 200;
+		rerender({ submenuOpen: true });
+
+		expect(result.current.top).toBe(392);
+		document.body.removeChild(el);
+	});
+
 	it('returns ready=false when ref has no element', () => {
 		const { result } = renderHook(() => {
 			const ref = useRef<HTMLDivElement>(null);

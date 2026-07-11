@@ -764,6 +764,7 @@ program
 	.command('create-group <name>')
 	.description('Create a new group in the Maestro desktop app')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
+	.option('--parent <group-id>', 'Create inside this root group')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createGroup);
 

@@ -61,7 +61,7 @@ export function createCueTaskScannerTriggerSource(
 
 		nextTriggerAt() {
 			// Task scanners poll on a fixed interval but the next *fire* depends
-			// on whether any matching files have pending tasks — not predictable.
+			// on whether any matching files have pending tasks (not predictable).
 			return null;
 		},
 	};

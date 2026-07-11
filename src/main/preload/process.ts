@@ -258,10 +258,14 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to process exit events
+		 * Subscribe to process exit events.
+		 * `signal` is present only when the process was killed by a signal.
 		 */
-		onExit: (callback: (sessionId: string, code: number) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, code: number) => callback(sessionId, code);
+		onExit: (
+			callback: (sessionId: string, code: number, signal?: number) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, code: number, signal?: number) =>
+				callback(sessionId, code, signal);
 			ipcRenderer.on('process:exit', handler);
 			return () => ipcRenderer.removeListener('process:exit', handler);
 		},
@@ -1476,14 +1480,22 @@ export function createProcessApi() {
 		 * Uses request-response pattern with a unique responseChannel
 		 */
 		onRemoteCreateGroup: (
-			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
+			callback: (
+				name: string,
+				emoji: string | undefined,
+				parentGroupId: string | undefined,
+				responseChannel: string
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				name: string,
 				emoji: string | undefined,
+				parentGroupId: string | undefined,
 				responseChannel: string
-			) => callback(name, emoji, responseChannel);
+			) => {
+				callback(name, emoji, parentGroupId, responseChannel);
+			};
 			ipcRenderer.on('remote:createGroup', handler);
 			return () => ipcRenderer.removeListener('remote:createGroup', handler);
 		},

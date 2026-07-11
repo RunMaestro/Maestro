@@ -231,8 +231,12 @@ describe('useStarredItems', () => {
 		expect(session?.inputMode).toBe('ai');
 	});
 
-	it('activateStarredItem clears active group chat before focusing an open starred tab', async () => {
-		useGroupChatStore.setState({ activeGroupChatId: 'group-1' } as never);
+	it('dismisses an active group chat when activating a starred item (regression #1175)', async () => {
+		// Bug: clicking a Starred Session while a group chat was open did nothing.
+		// The group chat view is gated on a truthy activeGroupChatId and renders on
+		// top of the session view, so activating a starred tab without clearing it
+		// left the group chat covering the screen. Activation must clear it.
+		useGroupChatStore.setState({ activeGroupChatId: 'gc-1' } as never);
 		useSessionStore.setState({
 			sessions: [
 				makeSession({

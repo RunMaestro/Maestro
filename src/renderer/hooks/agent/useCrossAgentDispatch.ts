@@ -53,18 +53,27 @@ export interface SendCrossAgentRequestOptions {
 
 /**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
- * be displayed. On an error chunk with no accumulated text, we surface a short
- * failure note instead of an empty entry. Exported for unit testing.
+ * be displayed. Exported for unit testing.
+ *
+ * Three cases, all of which must show the user WHY a consult failed - the
+ * attribution header only carries `error` in an `sr-only` span, so the reason has
+ * to reach the bubble body:
+ * - success: the accumulated text, verbatim.
+ * - error, nothing accumulated: a standalone failure note.
+ * - error WITH partial text (a timed-out consult that had already said something):
+ *   the partial, followed by the reason. Dropping either one loses information.
  */
 export function accumulateCrossAgentChunk(
 	prior: string,
 	chunk: CrossAgentResponseChunk
 ): { accumulated: string; displayText: string } {
 	const accumulated = prior + (chunk.chunk ?? '');
-	const displayText = chunk.error
-		? accumulated || `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`
-		: accumulated;
-	return { accumulated, displayText };
+	if (!chunk.error) return { accumulated, displayText: accumulated };
+	const note = `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	return {
+		accumulated,
+		displayText: accumulated ? `${accumulated}\n\n${note}` : note,
+	};
 }
 
 /**
@@ -116,8 +125,13 @@ export function buildConsultTabName(sourceAgentName: string): string {
  * (sourceSessionId, sourceTabId, targetSessionId) triple, tagged with
  * `consultOrigin`. A repeat mention from the SAME source tab reuses it (and
  * resumes its captured provider `agentSessionId`); a mention from a fresh source
- * tab makes a new one. Creation does NOT steal focus - the user stays put in the
- * source agent.
+ * tab makes a new one.
+ *
+ * The tab is created HIDDEN: it holds the transcript and the resume id, but does
+ * not appear in the target's tab strip. A mention typed in some other agent is not
+ * the user asking for a tab in this one - it surfaces only when they deliberately
+ * open it from the response bubble's attribution header (see `revealAiTab`).
+ * Creation therefore steals neither focus nor strip real estate.
  *
  * Returns the consult tab id plus the provider session id to resume (undefined on
  * the first mention), or null if the target session no longer exists.
@@ -157,8 +171,11 @@ export function ensureConsultTab(opts: {
 		}
 
 		// Reuse the canonical tab factory (defaults + unifiedTabOrder insertion),
-		// then restore the pre-existing focus pointers so the new consult tab is
-		// added silently rather than yanking the user into the target agent.
+		// then restore EVERY view pointer createTab moves. It focuses the new tab by
+		// design (activeTabId, the non-AI active ids, inputMode, activeGroupId); a
+		// consult must leave the target's view exactly as the user left it. Missing
+		// activeGroupId in particular would silently pop the target out of a tiled
+		// group it was displaying.
 		const created = createTab(session, {
 			name: buildConsultTabName(opts.sourceAgentName),
 			logs: [questionEntry],
@@ -173,11 +190,14 @@ export function ensureConsultTab(opts: {
 			activeFileTabId: session.activeFileTabId,
 			activeBrowserTabId: session.activeBrowserTabId,
 			activeTerminalTabId: session.activeTerminalTabId,
+			activeGroupId: session.activeGroupId,
 			inputMode: session.inputMode,
 			aiTabs: created.session.aiTabs.map((t) =>
 				t.id === created.tab.id
 					? {
 							...t,
+							// Hidden until the user opens it from the attribution header.
+							hidden: true,
 							consultOrigin: {
 								sourceSessionId: opts.sourceSessionId,
 								sourceTabId: opts.sourceTabId,

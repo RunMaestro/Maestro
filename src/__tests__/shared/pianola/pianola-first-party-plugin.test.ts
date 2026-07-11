@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { parsePermissions } from '../../../shared/plugins/permissions';
+import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	FIRST_PARTY_PLUGINS,
+	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID,
+	GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	PIANOLA_FIRST_PARTY_PLUGIN,
 	PIANOLA_FIRST_PARTY_PLUGIN_ID,
 	PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
@@ -45,6 +49,32 @@ describe('Pianola first-party plugin definition', () => {
 	});
 });
 
+describe('Groups+ first-party plugin definition', () => {
+	it('declares Groups+ as an opt-in first-party UI extension', () => {
+		expect(GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID).toBe('com.maestro.groups-plus');
+		expect(GROUPS_PLUS_FIRST_PARTY_PLUGIN).toMatchObject({
+			id: GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID,
+			name: 'Groups+',
+			firstParty: true,
+			category: 'ui',
+			settingsNamespace: 'groupsPlus',
+			encoreFlag: 'groupsPlus',
+			backgroundServices: [],
+		});
+		expect(FIRST_PARTY_PLUGINS.groupsPlus).toBe(GROUPS_PLUS_FIRST_PARTY_PLUGIN);
+	});
+
+	it('only requests read access to its enabling setting', () => {
+		const parsed = parsePermissions(GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS);
+		expect(parsed.errors).toEqual([]);
+		expect(parsed.requests.map((permission) => permission.capability)).toEqual(['settings:read']);
+	});
+
+	it('defaults its Encore flag to off', () => {
+		expect(SETTINGS_METADATA.encoreFeatures.default).toMatchObject({ groupsPlus: false });
+	});
+});
+
 describe('first-party plugin registry', () => {
 	it('registers every Encore feature under its plan-stable plugin id', () => {
 		expect(FIRST_PARTY_PLUGIN_DEFINITIONS.map((def) => [def.encoreFlag, def.id])).toEqual([
@@ -56,6 +86,7 @@ describe('first-party plugin registry', () => {
 			['coworking', 'com.maestro.coworking'],
 			['opencodeServer', 'com.maestro.opencode-server'],
 			['concerto', 'com.maestro.concerto'],
+			['groupsPlus', 'com.maestro.groups-plus'],
 		]);
 	});
 

@@ -14,6 +14,9 @@ import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import * as https from 'https';
+import type { LookupFunction } from 'net';
+import WebSocket from 'ws';
 import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
@@ -45,6 +48,7 @@ import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gat
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
+import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
 import { setActivePluginManager } from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
@@ -53,6 +57,9 @@ import {
 	type PluginSessionMetadata,
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
+import { PluginHostViewRegistry, type HostViewMutation } from './plugins/plugin-host-view-registry';
+import type { MovementPayload } from '../shared/movement-types';
+import type { CadenzaPayload } from '../shared/cadenza-types';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
@@ -251,6 +258,7 @@ import {
 	createWindowManager,
 	createQuitHandler,
 	deliverCadenzaToHud,
+	deliverCadenzaToExistingHud,
 	closeCadenzaHudWindow,
 	getCadenzaHudWindow,
 	type QuitHandler,
@@ -501,6 +509,7 @@ let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
+let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
@@ -654,13 +663,6 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
-// Disabling Concerto must tear down the already-running always-on-top HUD, not
-// merely reject future payloads. Without this listener, existing cards and the
-// cursor hover poll survive after the user turns the extension off.
-store.onDidChange('encoreFeatures', (encoreFeatures) => {
-	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
-});
-
 /**
  * Route a cadenza payload to the HUD window (creating it lazily). Returns
  * false when there's no main window to parent it, so the caller can fall back
@@ -681,6 +683,94 @@ function deliverCadenza(payload: Parameters<typeof deliverCadenzaToHud>[2]): boo
 	}
 	return deliverCadenzaToHud(mainWindow, cadenzaHudDeps, stamped);
 }
+
+/** Host views are a bridge between two opt-in Encore features. Re-read both
+ * flags on every mutation: a disabled feature must never retain a pending view. */
+function arePluginHostViewsEnabled(): boolean {
+	const features = store.get('encoreFeatures', {}) as Record<string, boolean>;
+	return features.plugins === true && features.concerto === true;
+}
+
+/** Forward one host-owned mutation over the exact Concerto renderer channels
+ * used by the CLI bridge. No renderer handles or plugin code cross this seam. */
+function forwardPluginHostView(mutation: HostViewMutation): boolean {
+	if (!(mutation.kind === 'remove' && mutation.force) && !arePluginHostViewsEnabled()) return false;
+	if (!mainWindow || mainWindow.isDestroyed() || !isWebContentsAvailable(mainWindow)) return false;
+	const sourcePlugin =
+		pluginManager?.getRegistry().records.find((record) => record.id === mutation.view.pluginId)
+			?.manifest?.name ?? mutation.view.pluginId;
+	let body: string | undefined;
+	if (mutation.kind === 'upsert') {
+		try {
+			body = JSON.stringify(mutation.blocks);
+		} catch {
+			return false;
+		}
+	}
+
+	if (mutation.view.surface === 'movement') {
+		const payload: MovementPayload =
+			mutation.kind === 'upsert'
+				? {
+						op: 'add',
+						id: mutation.view.id,
+						title: mutation.view.title,
+						body,
+						sourcePlugin,
+					}
+				: { op: 'remove', id: mutation.view.id };
+		mainWindow.webContents.send('remote:movement', payload);
+		return true;
+	}
+
+	const payload: CadenzaPayload =
+		mutation.kind === 'upsert'
+			? {
+					op: 'open',
+					id: mutation.view.id,
+					viewType: 'view',
+					title: mutation.view.title,
+					body,
+					sourcePlugin,
+				}
+			: { op: 'close', id: mutation.view.id };
+
+	// Closing a view must never create a new always-on-top HUD. Deliver a close
+	// to an existing HUD (including its pre-ready queue) or the main fallback only.
+	if (mutation.kind === 'remove') {
+		if (deliverCadenzaToExistingHud(payload)) return true;
+		mainWindow.webContents.send('remote:cadenza', payload);
+		return true;
+	}
+
+	// Match the CLI cadenza bridge: open/upsert prefers the HUD and creates it
+	// lazily, then falls back to the main renderer.
+	if (store.get('encoreFeatures', {})?.concerto === true && deliverCadenza(payload)) return true;
+	mainWindow.webContents.send('remote:cadenza', payload);
+	return true;
+}
+
+const pluginHostViews = new PluginHostViewRegistry({
+	isEnabled: arePluginHostViewsEnabled,
+	getHostViews: () => pluginManager?.getContributions().hostViews ?? [],
+	forward: forwardPluginHostView,
+});
+
+// Disabling either side of the bridge purges any live views immediately. If both
+// are enabled after a flag change, re-sync static data without asking a renderer
+// read path to refresh plugin discovery.
+store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
+	if (encoreFeatures?.plugins !== true) {
+		pluginSandboxHost?.stopAll();
+		pluginGroupingRegistry?.clearAll();
+	}
+	if (!arePluginHostViewsEnabled()) {
+		pluginHostViews.purgeAll();
+		return;
+	}
+	pluginHostViews.sync();
+});
 
 // A `decision` cadenza's chosen option replies to the owning agent: inject the
 // value as a live prompt into that agent's session via the main renderer's
@@ -746,6 +836,9 @@ const createWebServer = createWebServerFactory({
 // - Auto-updater initialization in production
 function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<SharedWindowState> }) {
 	mainWindow = windowManager.createWindow(options);
+	// The plugin registry may have discovered static views before the renderer
+	// existed. Re-forward host-owned data after every renderer load/reload.
+	mainWindow.webContents.on('did-finish-load', () => pluginHostViews.replay());
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
@@ -1683,6 +1776,129 @@ app
 				return typeof p === 'number' && p > 0 ? [p] : [];
 			},
 		});
+
+		// net:connect host sink. The SINK owns the raw ws.WebSocket objects; the
+		// handler (plugin-host-handlers) owns the socketId -> {pluginId,url} map it
+		// uses to re-authorize send/close and to count sockets per plugin. The
+		// connect is pinned to the egress-guard lookup (same SSRF/DNS-rebind defense
+		// as net.fetch) and inbound frame size is capped by maxPayload; the handler
+		// already refused anything but wss:// and any untrusted plugin before here.
+		const PLUGIN_SOCKET_MAX_FRAME_BYTES = 64 * 1024;
+		const pluginSockets = new Map<string, Map<string, WebSocket>>();
+		// Set by the handler (via registerNetSocketRelease). Lets a self-closing
+		// socket (remote close / error) free the handler's per-plugin quota slot, so
+		// a normal server-initiated close does not leak a stale count toward the cap.
+		let pluginNetSocketRelease: ((pluginId: string, socketId: string) => void) | undefined;
+		// v1: headers are dropped entirely. The connect URL and the broker host-scope
+		// grant are the only client-controlled inputs; a plugin cannot smuggle a
+		// forged Host/Origin/Authorization header. If a future gateway needs a bearer
+		// token, add a narrow host-validated allowlist here - never a passthrough.
+		const sanitizePluginSocketHeaders = (_headers: unknown): undefined => undefined;
+		const dropPluginSocket = (pluginId: string, socketId: string): void => {
+			const forPlugin = pluginSockets.get(pluginId);
+			forPlugin?.delete(socketId);
+			if (forPlugin && forPlugin.size === 0) pluginSockets.delete(pluginId);
+		};
+		const hostnameForAudit = (url: string): string => {
+			try {
+				return new URL(url).hostname;
+			} catch {
+				return url;
+			}
+		};
+		const pluginNetConnect = async (
+			pluginId: string,
+			url: string,
+			opts: { protocols?: unknown; headers?: unknown }
+		): Promise<{ socketId: string }> => {
+			const socketId = `net_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+			const protocols = Array.isArray(opts.protocols)
+				? (opts.protocols.filter((p) => typeof p === 'string') as string[])
+				: undefined;
+			const ws = new WebSocket(url, protocols, {
+				// Pin the TLS connect to the validated address (loopback / RFC1918 /
+				// link-local / metadata are already refused by the classifier). The
+				// guard's lookup is runtime-compatible with Node's LookupFunction; the
+				// cast bridges the type-only `family` widening (string variants) the
+				// same way net.fetch casts the undici dispatcher.
+				agent: new https.Agent({
+					lookup: pluginEgressGuard.lookup as unknown as LookupFunction,
+				}),
+				handshakeTimeout: 15_000,
+				maxPayload: PLUGIN_SOCKET_MAX_FRAME_BYTES,
+				headers: sanitizePluginSocketHeaders(opts.headers),
+			});
+			const forPlugin = pluginSockets.get(pluginId) ?? new Map<string, WebSocket>();
+			forPlugin.set(socketId, ws);
+			pluginSockets.set(pluginId, forPlugin);
+			const push = (payload: Record<string, unknown>): void => {
+				pluginSandboxHost?.pushEvent(pluginId, {
+					topic: `net.connect:${socketId}`,
+					at: new Date().toISOString(),
+					payload: { socketId, ...payload },
+				});
+			};
+			ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+				// Defensive inbound cap on top of maxPayload.
+				const buf = Array.isArray(data)
+					? Buffer.concat(data)
+					: Buffer.isBuffer(data)
+						? data
+						: Buffer.from(data as ArrayBuffer);
+				if (buf.byteLength > PLUGIN_SOCKET_MAX_FRAME_BYTES) {
+					push({ type: 'error', message: 'inbound frame exceeds size limit' });
+					return;
+				}
+				push({ type: 'message', data: buf.toString('utf8'), binary: isBinary });
+			});
+			ws.on('close', (code: number, reason: Buffer) => {
+				push({ type: 'close', code, reason: reason.toString('utf8') });
+				dropPluginSocket(pluginId, socketId);
+				// Free the handler's quota slot for this self-closed socket. (ws emits
+				// 'close' after 'error' too, so this covers fatal errors as well.)
+				pluginNetSocketRelease?.(pluginId, socketId);
+			});
+			ws.on('error', (err: Error) => {
+				// Message string only: never leak the Error object / stack to a plugin.
+				push({ type: 'error', message: err.message });
+			});
+			// Resolve as soon as the socket is created and tracked; the plugin observes
+			// the actual OPEN via the first event on the topic (simpler than buffering
+			// an open handshake here, and handshakeTimeout still bounds a stuck
+			// connect). A send before OPEN is rejected by pluginNetSend.
+			logger.info(
+				`net.connect by "${pluginId}" -> ${hostnameForAudit(url)} (socket ${socketId})`,
+				'[PluginAudit]'
+			);
+			return { socketId };
+		};
+		const pluginNetSend = async (
+			pluginId: string,
+			socketId: string,
+			data: string
+		): Promise<{ ok: true }> => {
+			const ws = pluginSockets.get(pluginId)?.get(socketId);
+			if (!ws) throw new Error('net.send: unknown socketId');
+			if (ws.readyState !== WebSocket.OPEN) throw new Error('net.send: socket not open');
+			ws.send(data);
+			return { ok: true };
+		};
+		const pluginNetClose = async (
+			pluginId: string,
+			socketId: string,
+			code?: number,
+			reason?: string
+		): Promise<{ ok: true }> => {
+			const ws = pluginSockets.get(pluginId)?.get(socketId);
+			try {
+				ws?.close(code, reason);
+			} catch {
+				// best-effort: the socket may already be closing/closed
+			}
+			dropPluginSocket(pluginId, socketId);
+			return { ok: true };
+		};
+
 		// Loose view of the settings store for dynamic plugin-namespaced keys.
 		const pluginSettingsStore = store as unknown as {
 			get(key: string): unknown;
@@ -2106,6 +2322,14 @@ app
 		}
 
 		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
+		const groupingRegistry = new PluginGroupingRegistry(() => {
+			try {
+				mainWindow?.webContents.send('plugins:groupings-changed');
+			} catch {
+				// Renderer may be gone during shutdown; ignore.
+			}
+		});
+		pluginGroupingRegistry = groupingRegistry;
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -2119,6 +2343,13 @@ app
 				settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 				sessionsList: pluginSessionsList,
 				sessionsGet: pluginSessionsGet,
+				groupingRegistry,
+				isDeclaredGrouping: (pluginId, localId) =>
+					pluginManager
+						?.getContributions()
+						.groupings.some(
+							(grouping) => grouping.pluginId === pluginId && grouping.localId === localId
+						) ?? false,
 				sessionsCreate: pluginSessionsCreate,
 				sessionsUpdate: pluginSessionsUpdate,
 				sessionsDelete: pluginSessionsDelete,
@@ -2182,6 +2413,12 @@ app
 				// stub no longer type-checks; this round-trips to the renderer's shared
 				// command registry (the SAME registry the command palette is built from).
 				runUiCommand: createRunUiCommand(() => mainWindow),
+				isHostViewsEnabled: arePluginHostViewsEnabled,
+				getHostView: (pluginId, localId) => pluginHostViews.getDeclared(pluginId, localId),
+				forwardHostView: (pluginId, operation, localId, blocks) => {
+					if (operation === 'remove') return pluginHostViews.remove(pluginId, localId);
+					return blocks === undefined ? false : pluginHostViews.update(pluginId, localId, blocks);
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;
@@ -2212,6 +2449,11 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				// Direct plugin dispatch is never user-present, so it requires the
+				// separate unattended consent on TOP of the interactive allowlist grant
+				// — the same grant source and check the time-based scheduler uses.
+				dispatchUnattendedAllowed: (pluginId, agentId) =>
+					isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId),
 				spawn: async (pluginId, spec) => {
 					logger.info(
 						`process.spawn by "${pluginId}": ${spec.name} (${spec.binaryPath}) argv=${JSON.stringify(spec.args)}`,
@@ -2247,17 +2489,32 @@ app
 					});
 				},
 				resolveSpawnBinary: (name) => spawnBinaryRegistry.resolve(name),
+				// net:connect (persistent wss socket) sinks. Wired together so the
+				// handler surface is never partial. The handler enforces wss-only,
+				// trust, the broker host-scope grant, the per-plugin socket cap, and
+				// the outbound frame cap; these sinks own the raw ws objects and pin
+				// the connect to pluginEgressGuard.lookup.
+				netConnect: pluginNetConnect,
+				netSend: pluginNetSend,
+				netClose: pluginNetClose,
+				registerNetSocketRelease: (release) => {
+					pluginNetSocketRelease = release;
+				},
 			}),
 			onLog: (pluginId, level, message) => {
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
 				pluginResourceCleanup?.(pluginId);
+				pluginHostViews.purge(pluginId);
+				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
 			},
 			onStop: (pluginId) => {
 				pluginResourceCleanup?.(pluginId);
+				pluginHostViews.purge(pluginId);
+				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
 			},
 		});
@@ -2294,10 +2551,13 @@ app
 					kvStore: pluginKvStore,
 					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 					eventBus,
+					hostViews: pluginHostViews,
 				});
+				groupingRegistry.removePlugin(id);
 				backgroundSupervisor.teardown(id);
 			},
 			onChange: (registry) => {
+				pluginHostViews.sync();
 				try {
 					mainWindow?.webContents.send('plugins:changed', registry);
 				} catch {
@@ -3100,6 +3360,7 @@ function setupIpcHandlers() {
 			manager: pluginManager,
 			sandboxHost: pluginSandboxHost ?? undefined,
 			authStore: pluginAuthStore,
+			groupingRegistry: pluginGroupingRegistry ?? undefined,
 		});
 	}
 

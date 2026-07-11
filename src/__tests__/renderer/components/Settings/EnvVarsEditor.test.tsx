@@ -397,6 +397,100 @@ describe('EnvVarsEditor', () => {
 		expect(lastCall['CLAUDE_CONFIG_DIR']).toBe('/Users/me/.claude-smash');
 	});
 
+	it('renders known account selects for auth path keys only', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{
+					CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+					CODEX_HOME: '/Users/me/.codex-work',
+					OTHER_PATH: '/usr/local/bin',
+				}}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{
+					claudeConfigDirs: ['/Users/me/.claude-work'],
+					codexHomes: ['/Users/me/.codex-work'],
+				}}
+			/>
+		);
+
+		expect(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths')).toHaveValue(
+			'/Users/me/.claude-work'
+		);
+		expect(screen.getByLabelText('Known CODEX_HOME paths')).toHaveValue('/Users/me/.codex-work');
+		expect(screen.getAllByPlaceholderText('value')).toHaveLength(1);
+	});
+
+	it('reveals the validated text input for a custom auth path', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{ claudeConfigDirs: ['/Users/me/.claude-work'], codexHomes: [] }}
+			/>
+		);
+
+		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '__custom__' },
+		});
+		const valueInput = screen.getByPlaceholderText('value');
+		expect(valueInput).toHaveValue('/Users/me/.claude-work');
+
+		fireEvent.change(valueInput, { target: { value: 'relative/.claude' } });
+		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
+	});
+
+	it('falls back to a text input when no known auth paths exist', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CODEX_HOME: '/Users/me/.codex-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{ claudeConfigDirs: [], codexHomes: [] }}
+			/>
+		);
+
+		expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+		expect(screen.getByPlaceholderText('value')).toHaveValue('/Users/me/.codex-work');
+	});
+
+	it('commits a selected known auth path through the existing change callback', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{
+					claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+					codexHomes: [],
+				}}
+			/>
+		);
+
+		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '/Users/me/.claude-personal' },
+		});
+
+		expect(mockSetEnvVars).toHaveBeenLastCalledWith({
+			CLAUDE_CONFIG_DIR: '/Users/me/.claude-personal',
+		});
+	});
+
+	it('validates custom CODEX_HOME values as absolute paths', () => {
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Add Variable' }));
+		fireEvent.change(screen.getByPlaceholderText('VARIABLE_NAME'), {
+			target: { value: 'CODEX_HOME' },
+		});
+		fireEvent.change(screen.getByPlaceholderText('value'), {
+			target: { value: 'relative/.codex' },
+		});
+
+		expect(screen.getByText(/CODEX_HOME must be an absolute path/)).toBeInTheDocument();
+	});
+
 	it('should show = separator between key and value', () => {
 		render(
 			<EnvVarsEditor envVars={{ MY_VAR: 'hello' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />

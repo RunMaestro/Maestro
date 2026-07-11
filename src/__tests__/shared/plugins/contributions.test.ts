@@ -3,6 +3,9 @@ import {
 	collectContributions,
 	aggregateContributions,
 	gateContributions,
+	MAX_HOST_VIEW_BLOCKS_BYTES,
+	groupingRuleMatches,
+	matchesGroupingPattern,
 } from '../../../shared/plugins/contributions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
@@ -40,6 +43,81 @@ describe('collectContributions', () => {
 		expect(c.themes[0].id).toBe('com.acme/midnight');
 		expect(c.themes[0].localId).toBe('midnight');
 		expect(c.themes[0].pluginId).toBe('com.acme');
+	});
+	it('collects namespaced icon packs for tier-0 plugins', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'Starter pack',
+						icons: [
+							{
+								id: 'spark',
+								label: 'Spark',
+								path: 'M12 2L15 9L22 12L15 15L12 22',
+								viewBox: '0 0 24 24',
+							},
+						],
+						colors: [{ id: 'lime', label: 'Lime', value: '#22C55E' }],
+					},
+				],
+			})
+		);
+
+		expect(c.iconPacks).toEqual([
+			{
+				id: 'com.acme/starter',
+				localId: 'starter',
+				pluginId: 'com.acme',
+				label: 'Starter pack',
+				icons: [
+					{
+						id: 'com.acme/starter/spark',
+						localId: 'spark',
+						label: 'Spark',
+						path: 'M12 2L15 9L22 12L15 15L12 22',
+						viewBox: '0 0 24 24',
+					},
+				],
+				colors: [
+					{
+						id: 'com.acme/starter/lime',
+						localId: 'lime',
+						label: 'Lime',
+						value: '#22C55E',
+					},
+				],
+			},
+		]);
+		expect(c.errors).toEqual([]);
+	});
+
+	it('drops unsafe or oversized icon-pack entries while keeping valid siblings', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'Starter pack',
+						icons: [
+							{ id: 'good', label: 'Good', path: 'M3 12H21' },
+							{ id: 'markup', label: 'Markup', path: 'M3 12<foreignObject />' },
+							{ id: 'large', label: 'Large', path: `M${'0 '.repeat(4096)}` },
+							{ id: 'viewbox', label: 'ViewBox', path: 'M3 12H21', viewBox: '0 0 24 nope' },
+						],
+						colors: [
+							{ id: 'good', label: 'Good', value: '#22C55E' },
+							{ id: 'bad', label: 'Bad', value: 'green' },
+						],
+					},
+				],
+			})
+		);
+
+		expect(c.iconPacks[0].icons.map((icon) => icon.localId)).toEqual(['good']);
+		expect(c.iconPacks[0].colors.map((color) => color.localId)).toEqual(['good']);
+		expect(c.errors).toHaveLength(4);
 	});
 
 	it('validates each contribution type and drops bad ones with an error', () => {
@@ -279,6 +357,31 @@ describe('aggregateContributions', () => {
 		]);
 		expect(agg.themes.map((t) => t.id).sort()).toEqual(['com.a/midnight', 'com.b/midnight']);
 	});
+
+	it('keeps the first icon pack when a plugin declares the same pack id twice', () => {
+		const agg = aggregateContributions([
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'starter',
+						label: 'First pack',
+						icons: [{ id: 'spark', label: 'Spark', path: 'M3 12H21' }],
+					},
+					{
+						id: 'starter',
+						label: 'Second pack',
+						icons: [{ id: 'bolt', label: 'Bolt', path: 'M12 2L12 22' }],
+					},
+				],
+			}),
+		]);
+
+		expect(agg.iconPacks).toHaveLength(1);
+		expect(agg.iconPacks[0].label).toBe('First pack');
+		expect(agg.errorsByPlugin['com.acme']).toContain(
+			'duplicate iconPacks contribution id "com.acme/starter"'
+		);
+	});
 });
 
 describe('contributed setting key validation', () => {
@@ -452,6 +555,96 @@ describe('uiItems contribution (ui:contribute surface items)', () => {
 	});
 });
 
+describe('hostViews contribution (host-rendered BlockView data)', () => {
+	const hostView = (overrides: Record<string, unknown> = {}) =>
+		manifest(
+			'com.host-view',
+			{
+				hostViews: [
+					{
+						id: 'status',
+						surface: 'movement',
+						title: 'Status',
+						blocks: [{ kind: 'text', content: 'Rendered by the host.' }],
+						...overrides,
+					},
+				],
+			},
+			0
+		);
+
+	it.each([
+		['movement', [{ kind: 'text', content: 'Movement data' }]],
+		['cadenza', [{ kind: 'heading', text: 'Cadenza data' }]],
+	])('parses and namespaces a valid %s host view', (surface, blocks) => {
+		const c = collectContributions(hostView({ surface, blocks }));
+
+		expect(c.errors).toEqual([]);
+		expect(c.hostViews).toEqual([
+			{
+				id: 'com.host-view/status',
+				localId: 'status',
+				pluginId: 'com.host-view',
+				surface,
+				title: 'Status',
+				blocks,
+			},
+		]);
+	});
+
+	it('drops a host view with an invalid surface', () => {
+		const c = collectContributions(hostView({ surface: 'sidebar' }));
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('surface');
+	});
+
+	it('rejects non-BlockView data, including a decision cadenza payload', () => {
+		const c = collectContributions(
+			hostView({ blocks: { op: 'open', viewType: 'decision', options: [{ label: 'Allow' }] } })
+		);
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('blocks');
+	});
+
+	it('drops blocks whose serialized UTF-8 payload exceeds the pure size cap', () => {
+		const c = collectContributions(
+			hostView({ blocks: [{ kind: 'text', content: 'x'.repeat(MAX_HOST_VIEW_BLOCKS_BYTES) }] })
+		);
+
+		expect(c.hostViews).toEqual([]);
+		expect(c.errors.join(' ')).toContain('size limit');
+	});
+
+	it('keeps the first host view on a same-id collision during aggregation', () => {
+		const agg = aggregateContributions([
+			manifest(
+				'com.host-view',
+				{
+					hostViews: [
+						{ id: 'status', surface: 'movement', title: 'First' },
+						{ id: 'status', surface: 'cadenza', title: 'Second' },
+					],
+				},
+				1
+			),
+		]);
+
+		expect(agg.hostViews).toMatchObject([{ id: 'com.host-view/status', title: 'First' }]);
+		expect(agg.errorsByPlugin['com.host-view']?.join(' ')).toContain('duplicate hostViews');
+	});
+
+	it('keeps static host views when no ui:hostView grant exists', () => {
+		const collected = collectContributions(hostView());
+
+		expect(gateContributions(collected, () => false).hostViews).toHaveLength(1);
+		expect(
+			gateContributions(collected, (cap) => cap === 'ui:render-unsafe').hostViews
+		).toHaveLength(1);
+	});
+});
+
 describe('gateContributions (per-capability customization gate)', () => {
 	const built = collectContributions(
 		manifest(
@@ -509,5 +702,77 @@ describe('aggregateContributions — gated aggregation', () => {
 		const gated = aggregateContributions([m], () => false);
 		expect(gated.uiItems).toEqual([]); // gated out without ui:contribute
 		expect(gated.commands).toHaveLength(1); // ungated category survives
+	});
+});
+
+describe('groupings contribution', () => {
+	it('collects tier-0 rules, namespaces its id, and rejects unsafe patterns', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				groupings: [
+					{
+						id: 'by-type',
+						label: 'Group by agent type',
+						rules: [{ match: { toolType: 'claude' }, group: 'Claude' }],
+					},
+					{
+						id: 'bad-pattern',
+						label: 'Bad',
+						rules: [{ match: { namePattern: 'x'.repeat(257) }, group: 'Nope' }],
+					},
+				],
+			})
+		);
+		expect(c.groupings).toEqual([
+			expect.objectContaining({ id: 'com.acme/by-type', localId: 'by-type', pluginId: 'com.acme' }),
+		]);
+		expect(c.errors.join(' ')).toContain('pattern');
+	});
+
+	it('evaluates each matcher with literal-safe wildcards', () => {
+		const session = {
+			id: 'session-1',
+			toolType: 'claude-code',
+			cwd: 'C:/work/api',
+			name: 'API [draft]',
+		};
+		expect(
+			groupingRuleMatches(session, { match: { toolType: 'claude-code' }, group: 'Tool' })
+		).toBe(true);
+		expect(groupingRuleMatches(session, { match: { cwdGlob: 'C:/work/*' }, group: 'Cwd' })).toBe(
+			true
+		);
+		expect(groupingRuleMatches(session, { match: { namePattern: 'API [*]' }, group: 'Name' })).toBe(
+			true
+		);
+		expect(matchesGroupingPattern('abc', 'a.c')).toBe(false);
+	});
+});
+
+describe('combined contribution surfaces', () => {
+	it('collects hostViews, iconPacks, and groupings together', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				iconPacks: [
+					{
+						id: 'pack',
+						label: 'Pack',
+						icons: [{ id: 'folder', label: 'Folder', path: 'M1 1h2v2H1z' }],
+						colors: [],
+					},
+				],
+				hostViews: [{ id: 'status', surface: 'movement', title: 'Status', blocks: [] }],
+				groupings: [
+					{
+						id: 'by-tool',
+						label: 'By tool',
+						rules: [{ match: { toolType: 'claude' }, group: 'Claude' }],
+					},
+				],
+			})
+		);
+		expect(c.iconPacks).toHaveLength(1);
+		expect(c.hostViews).toHaveLength(1);
+		expect(c.groupings).toHaveLength(1);
 	});
 });

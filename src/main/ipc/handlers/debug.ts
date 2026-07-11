@@ -337,5 +337,51 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		})
 	);
 
+	// Stop the recording and write the bundle to a temp file WITHOUT prompting
+	// for a save location, returning the path. Used by the Feedback modal to
+	// attach a performance trace directly to a report. The caller either hands
+	// the path to feedback submission (which consumes and deletes it) or drops it
+	// via debug:discardTrace so the (potentially large) zip never lingers.
+	ipcMain.handle(
+		'debug:stopProfilingToFile',
+		createIpcHandler(handlerOpts('stopProfilingToFile'), async () => {
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
+			const { durationMs, categories } = await stopProfiling(tracePath);
+			const bundlePath = path.join(app.getPath('temp'), `maestro-profile-${timestamp}.zip`);
+			try {
+				const finalized = await finalizeCapture(tracePath, bundlePath, durationMs, categories);
+				logger.info(`${LOG_CONTEXT} Performance profile captured for feedback: ${finalized.path}`);
+				return {
+					path: finalized.path,
+					bundleSizeBytes: finalized.bundleSizeBytes,
+					traceSizeBytes: finalized.traceSizeBytes,
+					durationMs,
+				};
+			} finally {
+				await fs.promises.unlink(tracePath).catch(() => {});
+			}
+		})
+	);
+
+	// Delete a temp trace bundle produced by debug:stopProfilingToFile that the
+	// user abandoned (removed the attachment or discarded the report). Guarded to
+	// our own temp-dir naming so it can only unlink a maestro trace zip.
+	ipcMain.handle(
+		'debug:discardTrace',
+		createIpcHandler(handlerOpts('discardTrace', false), async (filePath?: string) => {
+			const tempDir = app.getPath('temp');
+			if (
+				typeof filePath === 'string' &&
+				filePath.startsWith(tempDir) &&
+				/[/\\]maestro-profile-[^/\\]+\.zip$/.test(filePath)
+			) {
+				await fs.promises.unlink(filePath).catch(() => {});
+				return { success: true };
+			}
+			return { success: false };
+		})
+	);
+
 	logger.debug(`${LOG_CONTEXT} Debug IPC handlers registered`);
 }

@@ -61,6 +61,36 @@ describe('applyCadenzaPayload', () => {
 		applyCadenzaPayload({ op: 'close', id: 'c' });
 		expect(useCadenzaStore.getState().cadenzas).toHaveLength(0);
 	});
+
+	it('keeps static plugin view data safe across update and close', () => {
+		const id = 'com.acme.metrics/release-summary';
+		applyCadenzaPayload({
+			op: 'open',
+			id,
+			viewType: 'view',
+			title: 'Release summary',
+			body: JSON.stringify({ blocks: [{ kind: 'text', text: 'Initial report' }] }),
+			sourcePlugin: 'Acme Metrics',
+		});
+		applyCadenzaPayload({
+			op: 'update',
+			id,
+			body: JSON.stringify({ blocks: [{ kind: 'text', text: 'Updated report' }] }),
+		});
+
+		expect(useCadenzaStore.getState().cadenzas).toMatchObject([
+			{
+				id,
+				viewType: 'view',
+				title: 'Release summary',
+				sourcePlugin: 'Acme Metrics',
+				body: JSON.stringify({ blocks: [{ kind: 'text', text: 'Updated report' }] }),
+			},
+		]);
+
+		applyCadenzaPayload({ op: 'close', id });
+		expect(useCadenzaStore.getState().cadenzas).toHaveLength(0);
+	});
 });
 
 describe('flashItem', () => {

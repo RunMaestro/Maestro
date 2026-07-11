@@ -100,6 +100,19 @@ const MovementPanel = memo(function MovementPanel({
 				>
 					{item.title ?? item.id}
 				</div>
+				{item.sourcePlugin && (
+					<span
+						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+						style={{
+							maxWidth: 120,
+							backgroundColor: `${theme.colors.accent}1f`,
+							color: theme.colors.accent,
+						}}
+						title={`from ${item.sourcePlugin}`}
+					>
+						from {item.sourcePlugin}
+					</span>
+				)}
 				<button
 					type="button"
 					onClick={() => removeItem(item.id)}

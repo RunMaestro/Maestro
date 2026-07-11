@@ -670,6 +670,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// open, the hotkey cycles between windowed and full-screen instead of
 				// being a no-op.
 				if (ctx.activeSession?.inputMode === 'ai') {
+					const composerOpen = useModalStore.getState().modals.get('promptComposer')?.open === true;
+					if (ctx.activeGroupChatId && !composerOpen) ctx.flushGroupChatDraft?.();
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}

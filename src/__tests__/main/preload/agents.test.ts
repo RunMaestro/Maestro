@@ -421,5 +421,18 @@ describe('Agents Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('agents:getCodexUsageAccountKeys');
 			expect(result).toEqual(keys);
 		});
+
+		it('should invoke agents:getKnownAuthDirs', async () => {
+			const dirs = {
+				claudeConfigDirs: ['/Users/me/.claude-work'],
+				codexHomes: ['/Users/me/.codex-work'],
+			};
+			mockInvoke.mockResolvedValue(dirs);
+
+			const result = await api.getKnownAuthDirs();
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getKnownAuthDirs');
+			expect(result).toEqual(dirs);
+		});
 	});
 });

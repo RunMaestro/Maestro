@@ -100,4 +100,6 @@ export interface CadenzaPayload {
 	 * `sessionId`). The in-app layer resolves this locally instead.
 	 */
 	sourceAgent?: string;
+	/** Host-stamped plugin display name for a plugin-contributed view. */
+	sourcePlugin?: string;
 }

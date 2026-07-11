@@ -18,21 +18,35 @@ declare global {
 			env: Record<string, string | undefined>;
 			versions: Record<string, string>;
 			platform: string;
+			argv?: string[];
 		};
 	}
 }
 
-if (!window.process) {
-	window.process = {
-		env: { NODE_ENV: 'production' },
-		versions: { electron: '0.0.0-web', chrome: '0.0.0', node: '0.0.0' },
-		platform: navigator.userAgent.includes('Mac')
-			? 'darwin'
-			: navigator.userAgent.includes('Win')
-				? 'win32'
-				: 'linux',
-	};
+export function ensureWebProcess(target: Window): void {
+	if (!target.process) {
+		target.process = {
+			env: { NODE_ENV: 'production' },
+			versions: { electron: '0.0.0-web', chrome: '0.0.0', node: '0.0.0' },
+			platform: navigator.userAgent.includes('Mac')
+				? 'darwin'
+				: navigator.userAgent.includes('Win')
+					? 'win32'
+					: 'linux',
+			argv: [],
+		};
+		return;
+	}
+
+	// The shared preload reads process.argv to resolve Electron-only launch
+	// arguments. Browser builds have no argv, so provide the empty Node shape
+	// instead of failing while the preload module evaluates.
+	if (!Array.isArray(target.process.argv)) {
+		target.process.argv = [];
+	}
 }
+
+ensureWebProcess(window);
 
 // Also expose `global` as `window` for legacy code that checks it.
 if (!(globalThis as Record<string, unknown>).global) {
@@ -46,14 +60,26 @@ if (!(globalThis as Record<string, unknown>).global) {
 // already matches.
 document.documentElement.dataset.runtime = 'web-desktop';
 
-async function boot(): Promise<void> {
-	// Run preload first so window.maestro is populated.
-	await import('../main/preload/index');
-	// Then mount the renderer.
-	await import('../renderer/main');
+interface WebDesktopBootstrapDependencies {
+	preload: () => Promise<unknown>;
+	renderer: () => Promise<unknown>;
 }
 
-void boot()
+export async function bootWebDesktop(
+	target: Window,
+	dependencies: WebDesktopBootstrapDependencies
+): Promise<void> {
+	ensureWebProcess(target);
+	// Run preload first so window.maestro is populated.
+	await dependencies.preload();
+	// Then mount the renderer.
+	await dependencies.renderer();
+}
+
+void bootWebDesktop(window, {
+	preload: () => import('../main/preload/index'),
+	renderer: () => import('../renderer/main'),
+})
 	.then(() => {
 		// Register the PWA service worker once the app is mounted. The server
 		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the

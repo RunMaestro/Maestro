@@ -464,6 +464,8 @@ export interface UseSettingsReturn {
 	setAutoRunDisabled: (value: boolean) => void;
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	autoRunMaxTaskDurationMin: number;
+	setAutoRunMaxTaskDurationMin: (value: number) => void;
 
 	// Built-in AI command bundle visibility
 	speckitEnabled: boolean;

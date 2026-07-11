@@ -26,6 +26,10 @@ import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
+import {
+	canCreateGroupInside,
+	removeGroupAndPromoteChildren,
+} from '../../../shared/groupHierarchy';
 
 // ============================================================================
 // Dependencies interface
@@ -1419,9 +1423,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create group from web interface
 	useEventListener('maestro:remoteCreateGroup', (e: Event) => {
-		const { name, emoji, responseChannel } = (e as CustomEvent).detail;
+		const {
+			name,
+			emoji,
+			parentGroupId: requestedParentGroupId,
+			responseChannel,
+		} = (e as CustomEvent).detail;
 		const trimmed = name.trim();
 		if (!trimmed) {
+			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
+			return;
+		}
+		const parentGroupId =
+			typeof requestedParentGroupId === 'string' && requestedParentGroupId
+				? requestedParentGroupId
+				: undefined;
+		if (!canCreateGroupInside(useSessionStore.getState().groups, parentGroupId)) {
 			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
 			return;
 		}
@@ -1432,6 +1449,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				id: newGroupId,
 				name: trimmed.toUpperCase(),
 				emoji: emoji || '\u{1F4C2}',
+				kind: 'user',
+				...(parentGroupId ? { parentGroupId } : {}),
 				collapsed: false,
 			},
 		]);
@@ -1460,7 +1479,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			prev.map((s) => (s.groupId === groupId ? { ...s, groupId: undefined } : s))
 		);
 		// Remove the group
-		setGroups((prev: Group[]) => prev.filter((g) => g.id !== groupId));
+		setGroups((prev: Group[]) => removeGroupAndPromoteChildren(prev, groupId));
 	});
 
 	// Handle remote move session to group from web interface

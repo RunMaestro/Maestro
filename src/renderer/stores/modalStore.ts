@@ -134,6 +134,8 @@ export interface RenameGroupModalData {
 	groupId: string;
 	value: string;
 	emoji: string;
+	icon?: string;
+	color?: string;
 }
 
 /** Agent sessions browser data */
@@ -784,6 +786,8 @@ export function getModalActions() {
 				groupId,
 				value: current?.value ?? '',
 				emoji: current?.emoji ?? '📂',
+				icon: current?.icon,
+				color: current?.color,
 			});
 		},
 		setRenameGroupValue: (value: string) => {
@@ -800,6 +804,22 @@ export function getModalActions() {
 				updateModalData('renameGroup', { emoji });
 			} else {
 				openModal('renameGroup', { groupId: '', value: '', emoji });
+			}
+		},
+		setRenameGroupIcon: (icon: string | undefined) => {
+			const current = useModalStore.getState().getData('renameGroup');
+			if (current) {
+				updateModalData('renameGroup', { icon });
+			} else {
+				openModal('renameGroup', { groupId: '', value: '', emoji: '📂', icon });
+			}
+		},
+		setRenameGroupColor: (color: string | undefined) => {
+			const current = useModalStore.getState().getData('renameGroup');
+			if (current) {
+				updateModalData('renameGroup', { color });
+			} else {
+				openModal('renameGroup', { groupId: '', value: '', emoji: '📂', color });
 			}
 		},
 
@@ -1145,6 +1165,8 @@ export function useModalActions() {
 		renameGroupId: renameGroupData?.groupId ?? null,
 		renameGroupValue: renameGroupData?.value ?? '',
 		renameGroupEmoji: renameGroupData?.emoji ?? '📂',
+		renameGroupIcon: renameGroupData?.icon,
+		renameGroupColor: renameGroupData?.color,
 
 		// Agent Sessions Browser
 		agentSessionsOpen,

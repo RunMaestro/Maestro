@@ -10,7 +10,7 @@
  * Regression test for: Group chat @mention tab completion
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
@@ -79,6 +79,137 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	describe('draft persistence', () => {
+		it('keeps typing local and persists only the latest draft after the debounce', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'a');
+			typeInTextarea(textarea, 'ab');
+			typeInTextarea(textarea, 'abc');
+
+			expect(textarea.value).toBe('abc');
+			expect(onDraftChange).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(300);
+
+			expect(onDraftChange).toHaveBeenCalledTimes(1);
+			expect(onDraftChange).toHaveBeenCalledWith('abc', 'test-group-chat');
+		});
+
+		it('flushes the pending draft to its original chat when switching chats', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const { rerender } = render(
+				<GroupChatInput {...createDefaultProps({ groupChatId: 'chat-a', onDraftChange })} />
+			);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'draft for a');
+
+			rerender(
+				<GroupChatInput
+					{...createDefaultProps({
+						groupChatId: 'chat-b',
+						draftMessage: 'draft for b',
+						onDraftChange,
+					})}
+				/>
+			);
+
+			expect(onDraftChange).toHaveBeenCalledWith('draft for a', 'chat-a');
+			expect(textarea.value).toBe('draft for b');
+		});
+
+		it('flushes the pending draft when the input unmounts', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const { unmount } = render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'keep this draft');
+			unmount();
+
+			expect(onDraftChange).toHaveBeenCalledOnce();
+			expect(onDraftChange).toHaveBeenCalledWith('keep this draft', 'test-group-chat');
+		});
+
+		it('cancels a pending local draft when an external draft arrives', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const { rerender } = render(
+				<GroupChatInput {...createDefaultProps({ draftMessage: '', onDraftChange })} />
+			);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'stale local draft');
+			rerender(
+				<GroupChatInput
+					{...createDefaultProps({ draftMessage: 'new external draft', onDraftChange })}
+				/>
+			);
+			vi.advanceTimersByTime(300);
+
+			expect(textarea.value).toBe('new external draft');
+			expect(onDraftChange).not.toHaveBeenCalled();
+		});
+
+		it('publishes fresh text before opening Prompt Composer', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const onOpenPromptComposer = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange, onOpenPromptComposer })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'fresh composer text');
+			expect(onDraftChange).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByTitle('Open Prompt Composer'));
+
+			expect(onDraftChange).toHaveBeenLastCalledWith('fresh composer text', 'test-group-chat');
+			expect(onDraftChange.mock.invocationCallOrder.at(-1)).toBeLessThan(
+				onOpenPromptComposer.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('publishes fresh text before delegating an external file drop', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const handleDrop = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange, handleDrop })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'fresh drop text');
+			expect(onDraftChange).not.toHaveBeenCalled();
+			fireEvent.drop(textarea, { dataTransfer: { files: [] } });
+
+			expect(onDraftChange).toHaveBeenLastCalledWith('fresh drop text', 'test-group-chat');
+			expect(onDraftChange.mock.invocationCallOrder.at(-1)).toBeLessThan(
+				handleDrop.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('exposes a flush ref for global shortcuts and outer drop zones', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			const draftFlushRef = { current: null as (() => void) | null };
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange, draftFlushRef })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'global path text');
+			expect(onDraftChange).not.toHaveBeenCalled();
+
+			draftFlushRef.current?.();
+
+			expect(onDraftChange).toHaveBeenCalledWith('global path text', 'test-group-chat');
+		});
+	});
+
 	describe('@mention autocomplete', () => {
 		it('shows mention dropdown when typing @', () => {
 			const sessions = [

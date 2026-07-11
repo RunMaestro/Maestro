@@ -118,6 +118,7 @@ function pluginTile(id: string): UnifiedExtension {
 function contributionsWith(setting: SettingContribution): AggregatedContributions {
 	return {
 		themes: [],
+		iconPacks: [],
 		prompts: [],
 		settings: [setting],
 		commandMacros: [],

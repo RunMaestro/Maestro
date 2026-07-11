@@ -952,8 +952,8 @@ export class WebServer {
 			getSettings: () => this.callbackRegistry.getSettings(),
 			setSetting: async (key: string, value: any) => this.callbackRegistry.setSetting(key, value),
 			getGroups: () => this.callbackRegistry.getGroups(),
-			createGroup: async (name: string, emoji?: string) =>
-				this.callbackRegistry.createGroup(name, emoji),
+			createGroup: async (name: string, emoji?: string, parentGroupId?: string) =>
+				this.callbackRegistry.createGroup(name, emoji, parentGroupId),
 			renameGroup: async (groupId: string, name: string) =>
 				this.callbackRegistry.renameGroup(groupId, name),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),

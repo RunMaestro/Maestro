@@ -174,7 +174,15 @@ export interface Group {
 	id: string;
 	name: string;
 	emoji: string;
+	kind?: 'user' | 'worktree';
+	icon?: string;
+	color?: string;
+	parentGroupId?: string;
 	collapsed: boolean;
+}
+
+export function isWorktreeGroup(group: Group): boolean {
+	return group.kind === 'worktree' || group.emoji === '🌳';
 }
 
 /**
@@ -263,6 +271,25 @@ export interface UsageStats {
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
+	/**
+	 * Pre-normalization absolute token totals, set ONLY for providers whose CLI
+	 * reports cumulative session usage that we delta-normalize before emitting
+	 * (currently Codex - see normalizeUsageToDelta in StdoutHandler). For those
+	 * providers the top-level fields above are per-turn DELTAS, which are correct
+	 * for token accumulation but wrong for context-fill display: the cumulative
+	 * total is what actually occupies the model window. Consumers that plot
+	 * context occupancy (the Context Timeline inspector) read from here when
+	 * present and fall back to the top-level fields otherwise. Undefined for
+	 * per-call providers (Claude, Copilot, OpenCode), whose top-level fields are
+	 * already absolute for the current turn.
+	 */
+	absoluteUsage?: {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		reasoningTokens: number;
+	};
 }
 
 // History entry types for the History panel

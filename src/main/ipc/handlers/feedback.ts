@@ -543,6 +543,54 @@ async function uploadAttachments(
 	return { markdown: uploadedMarkdown.join('\n\n') };
 }
 
+/**
+ * Upload a local .zip (debug package or performance trace) to the public
+ * attachments repo and return a markdown link, or '' on failure. Shared by the
+ * support-package and performance-trace paths so the upload logic lives once.
+ */
+async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<string> {
+	const zipData = await fs.readFile(zipPath);
+	const zipBase64 = zipData.toString('base64');
+	const owner = await getGitHubLogin();
+	await ensureAttachmentsRepo(owner);
+	const zipFilename = path.basename(zipPath);
+	const repoPath = `feedback/${Date.now()}-${zipFilename}`;
+	const payloadPath = path.join(os.tmpdir(), `maestro-feedback-zip-${Date.now()}.json`);
+	await fs.writeFile(
+		payloadPath,
+		JSON.stringify({
+			message: `Add feedback attachment ${Date.now()}`,
+			content: zipBase64,
+		}),
+		'utf8'
+	);
+	try {
+		const uploadResult = await execFileNoThrow(
+			'gh',
+			[
+				'api',
+				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
+				'--method',
+				'PUT',
+				'--input',
+				payloadPath,
+			],
+			undefined,
+			getExpandedEnv()
+		);
+		if (uploadResult.exitCode !== 0) {
+			return '';
+		}
+		const uploadJson = JSON.parse(uploadResult.stdout);
+		const rawUrl =
+			uploadJson.content?.download_url ||
+			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
+		return `[${linkText}](${rawUrl})`;
+	} finally {
+		await fs.unlink(payloadPath).catch(() => {});
+	}
+}
+
 async function composeFeedbackPrompt(
 	feedbackText: string,
 	attachments: FeedbackAttachmentInput[]
@@ -1051,6 +1099,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				sshRemoteEnabled?: boolean;
 				attachments?: FeedbackAttachmentInput[];
 				includeDebugPackage?: boolean;
+				performanceTracePath?: string;
 			}): Promise<{ success: boolean; error?: string; issueUrl?: string }> => {
 				if (!isFeedbackCategory(payload.category)) {
 					return { success: false, error: 'Invalid feedback category.' };
@@ -1113,50 +1162,37 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				let debugPackageMarkdown = '';
 				if (payload.includeDebugPackage && _deps.debugPackageDeps) {
 					try {
-						const tmpDir = os.tmpdir();
-						const packageResult = await generateDebugPackage(tmpDir, _deps.debugPackageDeps);
+						const packageResult = await generateDebugPackage(os.tmpdir(), _deps.debugPackageDeps);
 						if (packageResult.success && packageResult.path) {
-							const zipData = await fs.readFile(packageResult.path);
-							const zipBase64 = zipData.toString('base64');
-							const owner = await getGitHubLogin();
-							await ensureAttachmentsRepo(owner);
-							const zipFilename = path.basename(packageResult.path);
-							const repoPath = `feedback/${Date.now()}-${zipFilename}`;
-							const payloadPath = path.join(tmpDir, `maestro-feedback-debug-${Date.now()}.json`);
-							await fs.writeFile(
-								payloadPath,
-								JSON.stringify({
-									message: `Add feedback debug package ${Date.now()}`,
-									content: zipBase64,
-								}),
-								'utf8'
-							);
-							const uploadResult = await execFileNoThrow(
-								'gh',
-								[
-									'api',
-									`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-									'--method',
-									'PUT',
-									'--input',
-									payloadPath,
-								],
-								undefined,
-								getExpandedEnv()
-							);
-							await fs.unlink(payloadPath).catch(() => {});
-							await fs.unlink(packageResult.path).catch(() => {});
-							if (uploadResult.exitCode === 0) {
-								const uploadJson = JSON.parse(uploadResult.stdout);
-								const rawUrl =
-									uploadJson.content?.download_url ||
-									`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
-								debugPackageMarkdown = `[maestro-debug-package.zip](${rawUrl})`;
+							try {
+								debugPackageMarkdown = await uploadFeedbackZip(
+									packageResult.path,
+									'maestro-debug-package.zip'
+								);
+							} finally {
+								await fs.unlink(packageResult.path).catch(() => {});
 							}
 						}
 					} catch (e) {
 						void captureException(e);
 						logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+					}
+				}
+
+				// Upload performance trace if one was captured from the modal. The temp
+				// zip is consumed here and deleted regardless of upload outcome.
+				let performanceTraceMarkdown = '';
+				if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
+					try {
+						performanceTraceMarkdown = await uploadFeedbackZip(
+							payload.performanceTracePath,
+							'maestro-performance-trace.zip'
+						);
+					} catch (e) {
+						void captureException(e);
+						logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
+					} finally {
+						await fs.unlink(payload.performanceTracePath).catch(() => {});
 					}
 				}
 
@@ -1172,6 +1208,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					contextField.value ? `## Additional Context\n${contextField.value}` : null,
 					attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
 					debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
+					performanceTraceMarkdown ? `## Performance Trace\n${performanceTraceMarkdown}` : null,
 				]
 					.filter(Boolean)
 					.join('\n\n');

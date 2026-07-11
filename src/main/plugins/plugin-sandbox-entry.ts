@@ -249,7 +249,10 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				watch: function (path, opts) { return hostCall('fs.watch', { path: path, opts: opts }); }
 			}),
 			net: Object.freeze({
-				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); }
+				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); },
+				connect: function (url, opts) { return hostCall('net.connect', { url: url, protocols: opts && opts.protocols, headers: opts && opts.headers }); },
+				send: function (socketId, data) { return hostCall('net.send', { socketId: socketId, data: data }); },
+				close: function (socketId, opts) { return hostCall('net.close', { socketId: socketId, code: opts && opts.code, reason: opts && opts.reason }); }
 			}),
 			agents: Object.freeze({
 				list: function () { return hostCall('agents.list', {}); },
@@ -286,7 +289,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				sql: function (query, params) { return hostCall('storage.sql', { query: query, params: params }); }
 			}),
 			ui: Object.freeze({
-				runCommand: function (commandId, args) { return hostCall('ui.runCommand', { commandId: commandId, args: args }); }
+				runCommand: function (commandId, args) { return hostCall('ui.runCommand', { commandId: commandId, args: args }); },
+				hostView: Object.freeze({
+					update: function (id, blocks) { return hostCall('ui.hostViewUpdate', { id: id, blocks: blocks }); },
+					remove: function (id) { return hostCall('ui.hostViewRemove', { id: id }); }
+				}),
+				grouping: Object.freeze({
+					publish: function (params) { return hostCall('ui.groupingPublish', params); },
+					clear: function (id) { return hostCall('ui.groupingClear', { id: id }); }
+				})
 			}),
 			tabs: Object.freeze({
 				list: function () { return hostCall('tabs.list', {}); },

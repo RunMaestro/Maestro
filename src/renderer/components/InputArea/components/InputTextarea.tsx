@@ -158,7 +158,7 @@ export const InputTextarea = memo(function InputTextarea({
 				<div
 					ref={overlayRef}
 					aria-hidden="true"
-					className="pointer-events-none absolute inset-0 overflow-hidden"
+					className="maestro-input-text-overlay pointer-events-none absolute inset-0 overflow-hidden"
 					style={{
 						// wordBreak comes from SHARED_TYPOGRAPHY so it stays in sync with
 						// the textarea; only overlay-specific props are set here.

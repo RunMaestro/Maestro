@@ -50,6 +50,17 @@ describe('InputArea textareaSizing utils', () => {
 
 		expect(textarea.scrollTop).toBe(12);
 	});
+
+	it('preserves scroll position across the auto-height toggle', () => {
+		const textarea = document.createElement('textarea');
+		Object.defineProperty(textarea, 'scrollHeight', { value: 300, configurable: true });
+		textarea.scrollTop = 120;
+
+		resizeTextareaToContent(textarea, 176);
+
+		expect(textarea.scrollTop).toBe(120);
+	});
+
 	it('scrolls when caret was at previous end', () => {
 		expect(shouldScrollTextareaToEnd(5, 5, 6)).toBe(true);
 	});

@@ -45,6 +45,10 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { gitService } from '../../../renderer/services/git';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { captureException } from '../../../renderer/utils/sentry';
+import {
+	markWorktreePathAsRecentlyCreated,
+	clearRecentlyCreatedWorktreePath,
+} from '../../../renderer/utils/worktreeDedup';
 import type { Session } from '../../../renderer/types';
 
 // ============================================================================
@@ -2312,6 +2316,115 @@ describe('Effects', () => {
 			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-b']);
 		});
 
+		it('two SAME-repo parents each get their own child for the same worktree (rescan matches per-parent chokidar fan-out)', async () => {
+			vi.useFakeTimers();
+
+			// Both parents live in the same repo and share a basePath. On a restart /
+			// visibility rescan the single shared worktree must fan out to BOTH parents,
+			// mirroring the per-parent chokidar discovery. A global cwd dedup would let
+			// whichever parent iterates first claim it and silently drop the other's
+			// child.
+			const parentA = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			const parentB = {
+				...mockParentSession,
+				id: 'parent-b',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Both parents resolve to the same repo root.
+			mockGit.worktreeInfo.mockResolvedValue({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+
+			// One worktree, belonging to the shared repo.
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-shared',
+						branch: 'feat-shared',
+						name: 'feat-shared',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentA, parentB],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const childrenA = sessions.filter((s) => s.parentSessionId === 'parent-a');
+			const childrenB = sessions.filter((s) => s.parentSessionId === 'parent-b');
+			expect(childrenA.map((s) => s.worktreeBranch)).toEqual(['feat-shared']);
+			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-shared']);
+		});
+
+		it('rescan skips a path still marked recently-created by spawnWorktreeAgentAndDispatch', async () => {
+			vi.useFakeTimers();
+
+			const parent = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			mockGit.worktreeInfo.mockResolvedValue({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-live',
+						branch: 'feat-live',
+						name: 'feat-live',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parent],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			// The launcher marked this path while it builds the owning child. A rescan
+			// landing in that window must NOT create a (sibling) child for it.
+			markWorktreePathAsRecentlyCreated('/shared/worktrees/feat-live');
+
+			renderHook(() => useWorktreeHandlers());
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const children = useSessionStore
+				.getState()
+				.sessions.filter((s) => s.parentSessionId === 'parent-a');
+			expect(children).toHaveLength(0);
+
+			clearRecentlyCreatedWorktreePath('/shared/worktrees/feat-live');
+		});
+
 		it('falls back to legacy behavior when the parent repoRoot cannot be resolved', async () => {
 			vi.useFakeTimers();
 
@@ -2642,5 +2755,192 @@ describe('Effects', () => {
 
 			consoleSpy.mockRestore();
 		});
+	});
+});
+
+// ============================================================================
+// Worktree attribution across same-repo agents (PR #946)
+// ============================================================================
+//
+// Background: an Auto Run launched from web-desktop with auto-worktree enabled
+// created the worktree on disk, but the resulting child session ended up under a
+// *different* agent in the same working folder than the one the launch targeted.
+//
+// chokidar in the main process runs ONE watcher per watching agent and fires
+// `worktree:discovered` carrying that watcher's sessionId
+// (src/main/ipc/handlers/git.ts). The intended behavior:
+//   - Maestro-spawned worktrees (web Auto Run, Create Worktree) attach to the
+//     launching agent. spawnWorktreeAgentAndDispatch marks the resolved path as
+//     recently-created so every watcher skips it (the spawn already built the
+//     child under the launcher).
+//   - Externally-created worktrees (`git worktree add` from a shell) fan out:
+//     EVERY same-repo agent watching the basePath gets its own child, because
+//     dedup in onWorktreeDiscovered is scoped per-parent, not globally by cwd.
+describe('Worktree attribution across same-repo agents (PR #946)', () => {
+	let discoveryCallback: ((data: any) => Promise<void>) | undefined;
+
+	beforeEach(() => {
+		discoveryCallback = undefined;
+		mockGit.onWorktreeDiscovered.mockImplementation((cb: any) => {
+			discoveryCallback = cb;
+			return () => {};
+		});
+		// Same-repo for both the parent cwd lookup (resolveRepoRoot) and the
+		// discovered path, so the repo-identity guard in onWorktreeDiscovered lets
+		// the discovery through. Individual tests override as needed.
+		mockGit.worktreeInfo.mockImplementation(async () => ({
+			success: true,
+			exists: true,
+			isWorktree: true,
+			repoRoot: '/repos/repo-a',
+		}));
+	});
+
+	function watcherAgent(id: string) {
+		return {
+			...mockParentSession,
+			id,
+			name: `Agent ${id}`,
+			cwd: '/repos/repo-a',
+			worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: true },
+		};
+	}
+
+	const DISCOVERED = {
+		path: '/shared/worktrees/feat-autorun',
+		name: 'feat-autorun',
+		branch: 'feat-autorun',
+	};
+
+	it('Maestro-spawned worktree (dedup mark active) is skipped by sibling watchers; the launcher already owns it', async () => {
+		useSessionStore.setState({
+			sessions: [watcherAgent('sibling-B')],
+			activeSessionId: 'sibling-B',
+			sessionsLoaded: false,
+		} as any);
+
+		renderHook(() => useWorktreeHandlers());
+
+		// spawnWorktreeAgentAndDispatch marks the resolved path before/while it
+		// creates the worktree and builds the child under the launching agent. Any
+		// watcher that fires for that path must skip it.
+		markWorktreePathAsRecentlyCreated(DISCOVERED.path);
+
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'sibling-B', worktree: DISCOVERED });
+		});
+
+		const children = useSessionStore
+			.getState()
+			.sessions.filter((s) => s.parentSessionId === 'sibling-B');
+		expect(children).toHaveLength(0);
+
+		clearRecentlyCreatedWorktreePath(DISCOVERED.path);
+	});
+
+	it('external worktree fans out: a second same-repo agent gets its OWN child even when another agent already owns one', async () => {
+		const agentA = {
+			...watcherAgent('agent-A'),
+			worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+		};
+		// agent-A already has a child for the worktree (e.g. its own watcher fired
+		// first, or it spawned it). agent-B's watcher fires next.
+		const childUnderA = createChildSession({
+			id: 'child-under-A',
+			cwd: DISCOVERED.path,
+			projectRoot: DISCOVERED.path,
+			parentSessionId: 'agent-A',
+			worktreeBranch: DISCOVERED.branch,
+		});
+
+		useSessionStore.setState({
+			sessions: [agentA, watcherAgent('agent-B'), childUnderA],
+			activeSessionId: 'agent-A',
+			sessionsLoaded: false,
+		} as any);
+
+		renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'agent-B', worktree: DISCOVERED });
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		// agent-A keeps its child; agent-B gains its own. Both agents in the cwd now
+		// see the worktree.
+		expect(sessions.some((s) => s.id === 'child-under-A')).toBe(true);
+		const underB = sessions.filter((s) => s.parentSessionId === 'agent-B');
+		expect(underB).toHaveLength(1);
+		expect(underB[0].worktreeBranch).toBe(DISCOVERED.branch);
+	});
+
+	it('each same-repo watcher independently adopts a newly discovered external worktree', async () => {
+		useSessionStore.setState({
+			sessions: [watcherAgent('agent-A'), watcherAgent('agent-B')],
+			activeSessionId: 'agent-A',
+			sessionsLoaded: false,
+		} as any);
+
+		renderHook(() => useWorktreeHandlers());
+
+		// Each agent's own watcher fires its own discovery event.
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'agent-A', worktree: DISCOVERED });
+			await discoveryCallback!({ sessionId: 'agent-B', worktree: DISCOVERED });
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		expect(sessions.filter((s) => s.parentSessionId === 'agent-A')).toHaveLength(1);
+		expect(sessions.filter((s) => s.parentSessionId === 'agent-B')).toHaveLength(1);
+	});
+
+	it('a watcher does not create a second child for a worktree it already owns (per-parent idempotency)', async () => {
+		useSessionStore.setState({
+			sessions: [watcherAgent('agent-A')],
+			activeSessionId: 'agent-A',
+			sessionsLoaded: false,
+		} as any);
+
+		renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'agent-A', worktree: DISCOVERED });
+		});
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'agent-A', worktree: DISCOVERED });
+		});
+
+		const underA = useSessionStore
+			.getState()
+			.sessions.filter((s) => s.parentSessionId === 'agent-A');
+		expect(underA).toHaveLength(1);
+	});
+
+	it('does not attach a worktree from a different repo even when a sibling watches the same basePath', async () => {
+		// Repo-identity guard still applies per-parent: agent-A is in repo-a, the
+		// discovered worktree belongs to repo-b → no child for agent-A.
+		mockGit.worktreeInfo.mockImplementation(async (path: string) => {
+			if (path === DISCOVERED.path) {
+				return { success: true, exists: true, isWorktree: true, repoRoot: '/repos/repo-b' };
+			}
+			return { success: true, exists: true, isWorktree: false, repoRoot: '/repos/repo-a' };
+		});
+
+		useSessionStore.setState({
+			sessions: [watcherAgent('agent-A')],
+			activeSessionId: 'agent-A',
+			sessionsLoaded: false,
+		} as any);
+
+		renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await discoveryCallback!({ sessionId: 'agent-A', worktree: DISCOVERED });
+		});
+
+		const underA = useSessionStore
+			.getState()
+			.sessions.filter((s) => s.parentSessionId === 'agent-A');
+		expect(underA).toHaveLength(0);
 	});
 });

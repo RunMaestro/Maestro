@@ -31,6 +31,7 @@ function createDeps(overrides: Partial<UseSessionListPropsDeps> = {}): UseSessio
 		startRenamingSession: vi.fn(),
 		showConfirmation: vi.fn(),
 		createNewGroup: vi.fn(),
+		setGroupParent: vi.fn(),
 		handleCreateGroupAndMove: vi.fn(),
 		addNewSession: vi.fn(),
 		deleteSession: vi.fn(),

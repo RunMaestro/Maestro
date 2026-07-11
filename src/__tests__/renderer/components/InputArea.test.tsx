@@ -227,6 +227,13 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
+		it('marks the AI mention overlay for mobile typography synchronization', () => {
+			const props = createDefaultProps();
+			const { container } = render(<InputArea {...props} />);
+
+			expect(container.querySelector('.maestro-input-text-overlay')).toBeInTheDocument();
+		});
+
 		it('renders the notification settings button', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);

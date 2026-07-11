@@ -5,6 +5,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 
 interface CreateGroupOptions {
 	emoji?: string;
+	parent?: string;
 	json?: boolean;
 }
 
@@ -25,6 +26,7 @@ export async function createGroup(name: string, options: CreateGroupOptions): Pr
 		name,
 	};
 	if (options.emoji) payload.emoji = options.emoji;
+	if (options.parent) payload.parentGroupId = options.parent;
 
 	try {
 		const result = await withMaestroClient(async (client) => {

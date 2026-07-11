@@ -31,6 +31,33 @@ import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersist
 import { getLiveDraft } from './liveDraftStore';
 
 /**
+ * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
+ * Currently only unopened cross-agent consult tabs (see `AITab.hidden`).
+ *
+ * The single predicate behind both visibility surfaces: `buildUnifiedTabs` (what
+ * renders) and `getNavigableTabs` (what Cmd+1..9 / cycling reaches). They must
+ * agree, or a shortcut lands on a tab the strip never showed.
+ */
+export function isAiTabHidden(tab: AITab): boolean {
+	return tab.hidden === true;
+}
+
+/**
+ * Reveal a hidden AI tab, permanently. Called when the user deliberately opens a
+ * consult tab (via the attribution header's deep link). Returns the session
+ * unchanged when the tab is absent or already visible, so callers can apply it
+ * unconditionally without churning state.
+ */
+export function revealAiTab(session: Session, tabId: string): Session {
+	const tab = session.aiTabs?.find((t) => t.id === tabId);
+	if (!tab || !isAiTabHidden(tab)) return session;
+	return {
+		...session,
+		aiTabs: session.aiTabs.map((t) => (t.id === tabId ? { ...t, hidden: false } : t)),
+	};
+}
+
+/**
  * Build the unified tab list from a session's tab data.
  * Follows unifiedTabOrder, then appends any orphaned tabs as a safety net
  * (e.g., from migration or state corruption).
@@ -41,7 +68,13 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	if (!session) return [];
 	const { aiTabs, filePreviewTabs, browserTabs, terminalTabs, unifiedTabOrder } = session;
 
-	const aiTabMap = new Map((aiTabs || []).map((tab) => [tab.id, tab]));
+	// Hidden AI tabs are excluded up front, so neither the ordered walk below nor
+	// the orphan fallback can re-surface them (the fallback would: a hidden tab
+	// keeps its unifiedTabOrder ref, but dropping the ref instead would lose its
+	// position on reveal).
+	const aiTabMap = new Map(
+		(aiTabs || []).filter((tab) => !isAiTabHidden(tab)).map((tab) => [tab.id, tab])
+	);
 	const fileTabMap = new Map((filePreviewTabs || []).map((tab) => [tab.id, tab]));
 	const browserTabMap = new Map((browserTabs || []).map((tab) => [tab.id, tab]));
 	const terminalTabMap = new Map((terminalTabs || []).map((tab) => [tab.id, tab]));
@@ -156,6 +189,38 @@ function resolveFocusedAiTabId(group: TabGroup): string | null {
 	};
 	walk(group.layout);
 	return found;
+}
+
+/**
+ * Locate the tiled group and leaf-pane id that hold a given AI tab, or null when
+ * the tab isn't tiled into any group (i.e. it's a standalone tab). Walks each
+ * group's layout locally to avoid a circular import with panelLayout (which
+ * imports from this module). Used by setActiveTab so selecting a group-member AI
+ * tab (e.g. from the Tab Switcher) activates its group and focuses its pane
+ * instead of trying to render it standalone - group members have no standalone
+ * chip and are excluded from buildUnifiedTabs, so the standalone path leaves
+ * focus stuck on whatever was already showing.
+ */
+function findGroupPaneForAiTab(
+	session: Session,
+	tabId: string
+): { groupId: string; leafId: string } | null {
+	const groups = session.tabGroups;
+	if (!groups || groups.length === 0) return null;
+	for (const group of groups) {
+		let leafId: string | null = null;
+		const walk = (node: PanelLayoutNode): void => {
+			if (leafId) return;
+			if (node.kind === 'leaf') {
+				if (node.tab.type === 'ai' && node.tab.id === tabId) leafId = node.id;
+				return;
+			}
+			node.children.forEach(walk);
+		};
+		walk(group.layout);
+		if (leafId) return { groupId: group.id, leafId };
+	}
+	return null;
 }
 
 /**
@@ -588,15 +653,22 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 		return [];
 	}
 
+	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
+	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
+	// then, since callers memoize on its identity.
+	const visible = session.aiTabs.some(isAiTabHidden)
+		? session.aiTabs.filter((tab) => !isAiTabHidden(tab))
+		: session.aiTabs;
+
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
-		return session.aiTabs.filter(
+		return visible.filter(
 			(tab) =>
 				tab.hasUnread || tab.state === 'busy' || hasDraft(tab) || (showStarred && tab.starred)
 		);
 	}
 
-	return session.aiTabs;
+	return visible;
 }
 
 /**
@@ -1924,12 +1996,42 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		return null;
 	}
 
-	// If already active, no file/terminal tab is selected, and already in AI mode, return current state
+	// When the target AI tab is tiled inside a group, activate that group and focus
+	// its pane rather than falling through to the standalone path. A group member has
+	// no standalone chip and is excluded from buildUnifiedTabs, so the old behavior
+	// (clear activeGroupId + set activeTabId via aiTabFocusFields) left the panel stuck
+	// on whatever was showing. This mirrors the group branch in
+	// navigateToUnifiedTabByIndex: set activeGroupId, sync focusedPaneId to the leaf and
+	// activeTabId to the tab (so the shared input targets it), clear standalone ids.
+	const groupPane = findGroupPaneForAiTab(session, tabId);
+	if (groupPane) {
+		return {
+			tab: targetTab,
+			session: {
+				...session,
+				tabGroups: session.tabGroups.map((g) =>
+					g.id === groupPane.groupId ? { ...g, focusedPaneId: groupPane.leafId } : g
+				),
+				activeGroupId: groupPane.groupId,
+				activeTabId: tabId,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			},
+		};
+	}
+
+	// If already active, no file/terminal tab and no group is active, and already in
+	// AI mode, return current state. The activeGroupId guard mirrors
+	// navigateToUnifiedTabByIndex: without it, a stale active group could satisfy this
+	// no-op and leave the tiled view rendered instead of switching to the standalone tab.
 	if (
 		session.activeTabId === tabId &&
 		session.activeFileTabId === null &&
 		session.activeBrowserTabId === null &&
 		session.activeTerminalTabId === null &&
+		session.activeGroupId == null &&
 		session.inputMode === 'ai'
 	) {
 		return {

@@ -44,6 +44,7 @@ import {
 	discoverClaudeConfigDirs,
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
+import type { KnownAuthDirs } from '../../../shared/authPaths';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -57,6 +58,59 @@ const handlerOpts = (
 	operation,
 });
 
+type AuthPathResolver = (env: NodeJS.ProcessEnv) => string;
+
+function getCustomEnvVars(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || !('customEnvVars' in value)) {
+		return {};
+	}
+	const customEnvVars = value.customEnvVars;
+	return customEnvVars && typeof customEnvVars === 'object'
+		? (customEnvVars as Record<string, unknown>)
+		: {};
+}
+
+function isLocalSession(session: Record<string, unknown>): boolean {
+	if (typeof session.sshRemoteId === 'string' && session.sshRemoteId.length > 0) {
+		return false;
+	}
+	const sshRemoteConfig = session.sessionSshRemoteConfig;
+	if (
+		sshRemoteConfig &&
+		typeof sshRemoteConfig === 'object' &&
+		'enabled' in sshRemoteConfig &&
+		sshRemoteConfig.enabled === true
+	) {
+		return false;
+	}
+	return typeof session.cwd !== 'string' || !session.cwd.includes('://');
+}
+
+function collectKnownAuthPaths(
+	agentEnvVars: Record<string, unknown>,
+	sessions: Array<Record<string, unknown>>,
+	toolType: string,
+	envVarName: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME',
+	resolveKey: AuthPathResolver
+): string[] {
+	const pathsByKey = new Map<string, string>();
+	const addPath = (envVars: Record<string, unknown>) => {
+		const value = envVars[envVarName];
+		if (typeof value !== 'string' || value.length === 0) return;
+		const canonicalPath = resolveKey({ [envVarName]: value });
+		if (!pathsByKey.has(canonicalPath)) {
+			pathsByKey.set(canonicalPath, canonicalPath);
+		}
+	};
+
+	addPath(agentEnvVars);
+	for (const session of sessions) {
+		if (session.toolType !== toolType || !isLocalSession(session)) continue;
+		addPath({ ...agentEnvVars, ...getCustomEnvVars(session) });
+	}
+
+	return Array.from(pathsByKey.values()).sort((a, b) => a.localeCompare(b));
+}
 // Copilot CLI built-in slash commands (always available in interactive mode)
 const COPILOT_BUILTIN_COMMANDS = [
 	'help',
@@ -1382,6 +1436,36 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			}
 			return customEnvVars;
 		})
+	);
+
+	// Return only account paths explicitly configured on local sessions or
+	// agent settings. This deliberately does not inspect the filesystem: stale
+	// config directories can trigger provider OAuth flows when sampled.
+	ipcMain.handle(
+		'agents:getKnownAuthDirs',
+		withIpcErrorLogging(
+			handlerOpts('getKnownAuthDirs', CONFIG_LOG_CONTEXT),
+			async (): Promise<KnownAuthDirs> => {
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				return {
+					claudeConfigDirs: collectKnownAuthPaths(
+						getCustomEnvVars(allConfigs['claude-code']),
+						sessions,
+						'claude-code',
+						'CLAUDE_CONFIG_DIR',
+						resolveConfigDirKey
+					),
+					codexHomes: collectKnownAuthPaths(
+						getCustomEnvVars(allConfigs.codex),
+						sessions,
+						'codex',
+						'CODEX_HOME',
+						resolveCodexHomeKey
+					),
+				};
+			}
+		)
 	);
 
 	// Discover available models for an agent that supports model selection

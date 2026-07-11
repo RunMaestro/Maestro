@@ -19,8 +19,19 @@ import {
 	clearRecentlyCreatedWorktreePath,
 	normalizePath,
 	sessionMatchesWorktreeRoot,
+	sessionOwnedByParent,
 } from './worktreeDedup';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
+
+/**
+ * TTL for the pre-`git worktree add` dedup mark. Sized to comfortably outlast a
+ * slow worktree creation (large repo, cold disk, SSH remote) so the mark can't
+ * expire mid-setup and let a watcher adopt the worktree under the wrong parent.
+ * The success path re-marks with the default (short) TTL once setup completes,
+ * and the error/already-existed branches clear the path, so this window never
+ * outlives the operation it guards.
+ */
+const WORKTREE_SETUP_MARK_TTL_MS = 60000;
 
 /**
  * Get the SSH remote ID for a session, checking both runtime and config values.
@@ -69,8 +80,15 @@ export async function spawnWorktreeAgentAndDispatch(
 		worktreePath = basePath + '/' + branchName;
 
 		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
-		// skips this path and doesn't create a duplicate session.
-		markWorktreePathAsRecentlyCreated(worktreePath);
+		// skips this path and doesn't create a duplicate session. Use a generous TTL:
+		// `git worktree add` below can outrun the default 10s window on a large repo,
+		// cold disk, or SSH remote, and if this mark expired mid-`await` the
+		// main-process chokidar debounce could emit `worktree:discovered` before the
+		// re-mark on the resolved path runs - letting a sibling watcher adopt the
+		// worktree under the wrong parent. The error and already-existed branches
+		// clear this path explicitly, and the success path re-marks with the default
+		// TTL, so the long window never outlives the setup it guards.
+		markWorktreePathAsRecentlyCreated(worktreePath, WORKTREE_SETUP_MARK_TTL_MS);
 
 		// Step 2: Create worktree on disk. Pass baseBranch so the new branch is
 		// rooted at the user-selected base (e.g. "rc") instead of the main repo's
@@ -110,6 +128,24 @@ export async function spawnWorktreeAgentAndDispatch(
 				message: `Opened existing worktree at ${worktreePath}`,
 			});
 		}
+
+		// Refresh the dedup mark on the RESOLVED path. Two reasons this is not
+		// redundant with the mark above:
+		//   1. The initial mark's TTL started BEFORE `git worktree add`, which can be
+		//      slow (large repo, cold disk, SSH remote). The chokidar discovery then
+		//      fires during the `getBranches`/`buildWorktreeSession` window below,
+		//      AFTER the mark has aged out, letting a sibling agent watching the
+		//      same basePath adopt this worktree under the wrong parent (PR #946).
+		//   2. When the branch was already attached elsewhere, `worktreePath` was
+		//      reassigned to `result.existingPath`, which the original mark (and the
+		//      clear just above) never covered.
+		// Re-mark with the SAME long setup TTL, not the default: the owning session
+		// is not committed until after the awaited `getBranches` below, which is
+		// itself slow on SSH / large repos. A default 10s window could lapse before
+		// `setSessions` runs, so keep the mark alive across that window too.
+		// Only for create-new: existing-closed worktrees are already on disk and
+		// fire no addDir event, so there is nothing to race with.
+		markWorktreePathAsRecentlyCreated(worktreePath, WORKTREE_SETUP_MARK_TTL_MS);
 	} else {
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;
@@ -118,14 +154,23 @@ export async function spawnWorktreeAgentAndDispatch(
 		branchName = worktreePath.split(/[\\/]/).pop() || 'worktree';
 	}
 
-	// If a session for this worktree path already exists (e.g., the resolved
-	// existing worktree is already open in Maestro), reuse it instead of
-	// building a duplicate. We still fall through to populate config.worktree
-	// below so PR creation continues to work.
+	// If a session OWNED BY THIS PARENT already exists for this worktree path
+	// (e.g., a prior Auto Run against the same existing worktree), reuse it
+	// instead of building a duplicate. The match is scoped to the launching
+	// parent on purpose: a same-repo sibling agent may own its own child at this
+	// cwd, and dispatching this parent's Auto Run onto the sibling's child would
+	// reproduce the wrong-parent attribution this flow exists to prevent. When no
+	// owned session matches we fall through and build a fresh child for the
+	// launching parent below. Either way we still populate config.worktree so PR
+	// creation continues to work.
 	const normalizedWorktreePath = normalizePath(worktreePath);
 	const existingSession = useSessionStore
 		.getState()
-		.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedWorktreePath));
+		.sessions.find(
+			(s) =>
+				sessionOwnedByParent(s, parentSession) &&
+				sessionMatchesWorktreeRoot(s, normalizedWorktreePath)
+		);
 
 	// Step 3: Fetch git info for the worktree.
 	// gitService.getBranches uses createIpcMethod with defaultValue: [] and no
@@ -156,6 +201,30 @@ export async function spawnWorktreeAgentAndDispatch(
 		}
 		dispatchSessionId = existingSession.id;
 	} else {
+		// Refuse to duplicate a child into a worktree another agent is actively
+		// using. `worktreeSetup` can resolve to a branch already attached under a
+		// SIBLING agent (reuse above is parent-scoped, so that sibling's child is
+		// intentionally not reused). Building a second child here and dispatching an
+		// Auto Run into it would let two agents write the same checkout
+		// concurrently, so bail if any same-root session is in-flight. (A busy
+		// session OWNED by this parent is already handled by the existingSession
+		// guard above; here existingSession is null, so this only catches siblings.)
+		const busySameRootSibling = useSessionStore
+			.getState()
+			.sessions.find(
+				(s) =>
+					sessionMatchesWorktreeRoot(s, normalizedWorktreePath) &&
+					(s.state === 'busy' || s.state === 'connecting')
+			);
+		if (busySameRootSibling) {
+			notifyToast({
+				type: 'warning',
+				title: 'Worktree Busy',
+				message: 'Another agent is already running in this worktree. Please try again.',
+			});
+			return null;
+		}
+
 		// Step 4: Build the session
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 		const newSession = buildWorktreeSession({

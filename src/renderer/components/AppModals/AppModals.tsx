@@ -155,6 +155,7 @@ export interface AppModalsProps {
 
 	// --- AppGroupModals props ---
 	createGroupModalOpen: boolean;
+	createGroupParentId?: string;
 	onCloseCreateGroupModal: () => void;
 	onGroupCreated?: (groupId: string) => void;
 	renameGroupId: string | null;
@@ -162,6 +163,10 @@ export interface AppModalsProps {
 	setRenameGroupValue: (value: string) => void;
 	renameGroupEmoji: string;
 	setRenameGroupEmoji: (emoji: string) => void;
+	renameGroupIcon?: string;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	renameGroupColor?: string;
+	setRenameGroupColor: (color: string | undefined) => void;
 	onCloseRenameGroupModal: () => void;
 
 	// --- AppWorktreeModals props ---
@@ -190,6 +195,8 @@ export interface AppModalsProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValueForQuickActions: (value: string) => void;
 	setRenameGroupEmojiForQuickActions: (emoji: string) => void;
+	setRenameGroupIconForQuickActions: (icon: string | undefined) => void;
+	setRenameGroupColorForQuickActions: (color: string | undefined) => void;
 	setRenameGroupModalOpenForQuickActions: (open: boolean) => void;
 	setCreateGroupModalOpenForQuickActions: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -650,6 +657,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onAutoNameTab,
 		// Group modals
 		createGroupModalOpen,
+		createGroupParentId,
 		onCloseCreateGroupModal,
 		onGroupCreated,
 		renameGroupId,
@@ -657,6 +665,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setRenameGroupValue,
 		renameGroupEmoji,
 		setRenameGroupEmoji,
+		renameGroupIcon,
+		setRenameGroupIcon,
+		renameGroupColor,
+		setRenameGroupColor,
 		onCloseRenameGroupModal,
 		// Worktree modals
 		onCloseWorktreeConfigModal,
@@ -683,6 +695,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setRenameGroupId,
 		setRenameGroupValueForQuickActions,
 		setRenameGroupEmojiForQuickActions,
+		setRenameGroupIconForQuickActions,
+		setRenameGroupColorForQuickActions,
 		setRenameGroupModalOpenForQuickActions,
 		setCreateGroupModalOpenForQuickActions,
 		setLeftSidebarOpen,
@@ -989,6 +1003,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				groups={groups}
 				setGroups={setGroups}
 				createGroupModalOpen={createGroupModalOpen}
+				createGroupParentId={createGroupParentId}
 				onCloseCreateGroupModal={onCloseCreateGroupModal}
 				onGroupCreated={onGroupCreated}
 				renameGroupModalOpen={renameGroupModalOpen}
@@ -997,6 +1012,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setRenameGroupValue={setRenameGroupValue}
 				renameGroupEmoji={renameGroupEmoji}
 				setRenameGroupEmoji={setRenameGroupEmoji}
+				renameGroupIcon={renameGroupIcon}
+				setRenameGroupIcon={setRenameGroupIcon}
+				renameGroupColor={renameGroupColor}
+				setRenameGroupColor={setRenameGroupColor}
 				onCloseRenameGroupModal={onCloseRenameGroupModal}
 			/>
 
@@ -1045,6 +1064,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setRenameGroupId={setRenameGroupId}
 				setRenameGroupValue={setRenameGroupValueForQuickActions}
 				setRenameGroupEmoji={setRenameGroupEmojiForQuickActions}
+				setRenameGroupIcon={setRenameGroupIconForQuickActions}
+				setRenameGroupColor={setRenameGroupColorForQuickActions}
 				setRenameGroupModalOpen={setRenameGroupModalOpenForQuickActions}
 				setCreateGroupModalOpen={setCreateGroupModalOpenForQuickActions}
 				setLeftSidebarOpen={setLeftSidebarOpen}

@@ -14,7 +14,8 @@ import type { GroupChat, AgentConfig } from '../../../renderer/types';
 import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	Folder: ({ className }: { className?: string }) => (
 		<span data-testid="folder-icon" className={className}>
 			📁

@@ -74,6 +74,8 @@ describe('QuickActions command builders', () => {
 				setRenameGroupId: vi.fn(),
 				setRenameGroupValue: vi.fn(),
 				setRenameGroupEmoji: vi.fn(),
+				setRenameGroupIcon: vi.fn(),
+				setRenameGroupColor: vi.fn(),
 				setCreateGroupModalOpen: vi.fn(),
 				setRightPanelOpen: vi.fn(),
 				setActiveRightTab: vi.fn(),

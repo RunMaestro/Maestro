@@ -93,11 +93,13 @@ export function useThrottledCallback<T extends (...args: unknown[]) => void>(
  *
  * @param callback - The callback to debounce
  * @param delay - Delay in milliseconds before executing
- * @returns Debounced callback and flush function
+ * @param options.flushOnUnmount - Flush pending arguments instead of discarding them on unmount
+ * @returns Debounced callback, flush function, and cancel function
  */
-export function useDebouncedCallback<T extends (...args: unknown[]) => void>(
+export function useDebouncedCallback<T extends (...args: never[]) => void>(
 	callback: T,
-	delay: number
+	delay: number,
+	options: { flushOnUnmount?: boolean } = {}
 ): { debouncedCallback: T; flush: () => void; cancel: () => void } {
 	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const callbackRef = useRef(callback);
@@ -143,11 +145,16 @@ export function useDebouncedCallback<T extends (...args: unknown[]) => void>(
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
-			if (timeoutRef.current) {
+			if (timeoutRef.current && pendingArgsRef.current && options.flushOnUnmount) {
+				clearTimeout(timeoutRef.current);
+				callbackRef.current(...pendingArgsRef.current);
+				timeoutRef.current = null;
+				pendingArgsRef.current = null;
+			} else if (timeoutRef.current) {
 				clearTimeout(timeoutRef.current);
 			}
 		};
-	}, []);
+	}, [options.flushOnUnmount]);
 
 	return { debouncedCallback, flush, cancel };
 }

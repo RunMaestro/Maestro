@@ -370,4 +370,28 @@ describe('Process Preload API', () => {
 			);
 		});
 	});
+
+	describe('onRemoteCreateGroup', () => {
+		it('forwards a parent group ID in its fixed IPC argument position', () => {
+			const callback = vi.fn();
+			let registeredHandler: (
+				event: unknown,
+				name: string,
+				emoji: string | undefined,
+				parentGroupId: string | undefined,
+				responseChannel: string
+			) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:createGroup') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onRemoteCreateGroup(callback);
+			registeredHandler!({}, 'Project', '📁', 'company', 'response-channel');
+
+			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', 'response-channel');
+		});
+	});
 });

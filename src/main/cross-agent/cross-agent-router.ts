@@ -54,11 +54,24 @@ const LOG_CONTEXT = '[CrossAgentRouter]';
 export const CROSS_AGENT_SESSION_PREFIX = 'cross-agent-';
 
 /**
- * How long to wait for a consulted agent before giving up. Matches Group Chat's
- * participant timeout. Guards against a hung target leaking the data/exit
- * listeners we attach to the shared ProcessManager.
+ * How long a consulted agent may go SILENT before we give up on it. Reset on
+ * every `data` event, so an agent that keeps streaming (long tool runs, a
+ * subagent fan-out, extended thinking) is never killed mid-answer. Guards
+ * against a hung target leaking the data/exit listeners we attach to the shared
+ * ProcessManager.
+ *
+ * This was previously a single wall-clock budget armed at spawn, which killed
+ * healthy consults that simply took longer than the budget to finish - the
+ * failure mode that motivated the split.
  */
-const CROSS_AGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Absolute ceiling on a single consult, regardless of how chatty it is. A target
+ * stuck in a tool loop can emit output forever and never satisfy the idle timer,
+ * so the idle budget alone cannot bound the run.
+ */
+const CROSS_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
 
 /**
  * The subset of a target agent's stored session config the router needs to
@@ -109,8 +122,13 @@ const CONSULT_HEADER =
  * Read-access grant appended to the header when the source agent forwards its
  * working directory. The consult runs in the TARGET agent's own cwd, so this is
  * the only pointer it has to the user's project. It is a one-shot consultation
- * (no interactive approval loop), so we grant read but ask it not to write -
- * describe changes instead of applying them.
+ * (no interactive approval loop), so we grant read but not write - describe
+ * changes instead of applying them.
+ *
+ * This is advisory text ONLY; the enforcement is `readOnlyMode: true` on the
+ * spawn below (`--permission-mode plan` for Claude Code, `--sandbox read-only`
+ * for Codex, ...). Both must stay in agreement: consults used to spawn
+ * read-write while saying this, and targets took the write path anyway.
  */
 function cwdGrant(sourceCwd: string): string {
 	return (
@@ -244,9 +262,10 @@ export async function startCrossAgentRequest(
 			: baseAgentConfig;
 
 	// Build args exactly like Group Chat: base args -> batch/json/cwd args ->
-	// custom-config overrides. Read-write (readOnlyMode: false), matching a
-	// Group Chat participant, so the consulted agent can answer fully without
-	// stalling on an approval prompt.
+	// custom-config overrides. Read-only (readOnlyMode: true), matching the Group
+	// Chat moderator: a consult answers a question, it does not edit the user's
+	// project. The moderator proves this path doesn't stall a batch `--print` run
+	// on an approval prompt.
 	//
 	// Continuity: when the source tab has consulted this target before, the
 	// renderer forwards the target's captured provider session id here. Passing it
@@ -258,7 +277,7 @@ export async function startCrossAgentRequest(
 		baseArgs: [...agent.args],
 		prompt: fullPrompt,
 		cwd: target.cwd,
-		readOnlyMode: false,
+		readOnlyMode: true,
 		agentSessionId: request.resumeAgentSessionId,
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
@@ -283,11 +302,18 @@ export async function startCrossAgentRequest(
 	// resumes it on the next mention from this source tab.
 	let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
 	// Held on a const object so `cleanup` can close over the (later-assigned)
-	// handle without a `let` that trips prefer-const.
-	const timer: { handle?: ReturnType<typeof setTimeout> } = {};
+	// handles without `let`s that trip prefer-const. `idle` is rearmed on every
+	// data event; `hard` is armed once and never reset.
+	const timer: {
+		idle?: ReturnType<typeof setTimeout>;
+		hard?: ReturnType<typeof setTimeout>;
+	} = {};
 
 	const onData = (sid: string, data: string): void => {
-		if (sid === sessionId) buffer += data;
+		if (sid !== sessionId) return;
+		buffer += data;
+		// Output means the target is alive and working: restart its silence budget.
+		armIdleTimer();
 	};
 
 	const onSessionId = (sid: string, agentSessionId: string): void => {
@@ -298,7 +324,8 @@ export async function startCrossAgentRequest(
 		processManager.off('data', onData);
 		processManager.off('exit', onExit);
 		processManager.off('session-id', onSessionId);
-		if (timer.handle) clearTimeout(timer.handle);
+		if (timer.idle) clearTimeout(timer.idle);
+		if (timer.hard) clearTimeout(timer.hard);
 	};
 
 	const onExit = (sid: string, code: number): void => {
@@ -356,12 +383,15 @@ export async function startCrossAgentRequest(
 		}
 	};
 
-	processManager.on('data', onData);
-	processManager.on('exit', onExit);
-	processManager.on('session-id', onSessionId);
-
-	// Safety net: never leave the listeners attached forever if the target hangs.
-	timer.handle = setTimeout(() => {
+	/**
+	 * Terminal path shared by both timers: kill the process, then flush whatever
+	 * the target managed to say before we pulled the plug. Emitting the partial
+	 * keeps a long consult's real work visible instead of replacing it with a bare
+	 * warning. We deliberately do NOT forward `targetAgentSessionId` - matching the
+	 * non-zero-exit policy, a killed run starts fresh next time rather than
+	 * resuming a session we interrupted mid-turn.
+	 */
+	const settleWithTimeout = (message: string): void => {
 		if (settled) return;
 		settled = true;
 		cleanup();
@@ -370,11 +400,46 @@ export async function startCrossAgentRequest(
 		} catch {
 			// Process may already be gone - nothing to kill.
 		}
-		emitError(`${target.name} did not respond within ${CROSS_AGENT_TIMEOUT_MS / 60000} minutes.`);
-	}, CROSS_AGENT_TIMEOUT_MS);
+		let partial = '';
+		try {
+			partial = extractTextFromStreamJson(buffer, target.toolType).trim();
+		} catch {
+			// A stream truncated mid-object may not parse; the error still lands.
+		}
+		logger.warn(`${LOG_CONTEXT} ${message}`, LOG_CONTEXT, {
+			requestId: request.requestId,
+			targetSessionId: request.targetSessionId,
+			partialChars: partial.length,
+		});
+		onChunk(baseChunk({ chunk: partial, done: true, error: message }));
+	};
+
+	/** (Re)start the silence budget. Called on spawn and on every data event. */
+	const armIdleTimer = (): void => {
+		if (settled) return;
+		if (timer.idle) clearTimeout(timer.idle);
+		timer.idle = setTimeout(() => {
+			settleWithTimeout(
+				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+			);
+		}, CROSS_AGENT_IDLE_TIMEOUT_MS);
+	};
+
+	processManager.on('data', onData);
+	processManager.on('exit', onExit);
+	processManager.on('session-id', onSessionId);
+
+	// Safety net: never leave the listeners attached forever. The idle timer covers
+	// a wedged target; the hard ceiling covers one that chatters without finishing.
+	timer.hard = setTimeout(() => {
+		settleWithTimeout(
+			`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+		);
+	}, CROSS_AGENT_MAX_DURATION_MS);
+	armIdleTimer();
 
 	try {
-		await spawnGroupChatAgent({
+		const spawnResult = await spawnGroupChatAgent({
 			sessionId,
 			agentId: target.toolType,
 			agent,
@@ -392,9 +457,24 @@ export async function startCrossAgentRequest(
 			}),
 			maestroPPath: target.maestroPPath,
 			processManager,
-			readOnlyMode: false,
+			readOnlyMode: true,
+			// Background/orchestrated caller: maestro-p otherwise applies its own 300s
+			// idle default and kills a still-working consult long before our budget.
+			maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
 			debugLabel: `cross-agent:${target.name}`,
 		});
+		// The spawners CATCH their own failures and return `{ pid: -1, success: false }`
+		// rather than throwing (see ChildProcessSpawner). Such a process emits no
+		// 'exit' event, so without this check the only listener that ever fires is the
+		// timeout - the user waits the full budget for a process that never existed.
+		if (!spawnResult.success) {
+			if (!settled) {
+				settled = true;
+				cleanup();
+				emitError(`${target.name} could not be started.`);
+			}
+			return;
+		}
 		logger.info(`${LOG_CONTEXT} Dispatched to ${target.name}`, LOG_CONTEXT, {
 			requestId: request.requestId,
 			targetToolType: target.toolType,
