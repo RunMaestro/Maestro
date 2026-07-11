@@ -63,7 +63,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => enabled,
 			getHostViews: () => (enabled ? views : []),
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward: forwardToMovement,
 		});
 
@@ -88,7 +88,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => views,
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -128,7 +128,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => views,
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -154,7 +154,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => [view],
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -187,7 +187,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => views,
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -220,7 +220,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => views,
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -241,18 +241,18 @@ describe('PluginHostViewRegistry', () => {
 			title: 'Runtime status',
 		};
 		let views: readonly HostViewContribution[] = [view];
-		let pluginRecordLoaded = true;
+		let pluginRecordPresent = true;
 		const forward = vi.fn(() => true);
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => views,
-			isPluginRecordLoaded: () => pluginRecordLoaded,
+			isPluginRecordPresent: () => pluginRecordPresent,
 			forward,
 		});
 
 		registry.update('com.example.runtime', 'status', [{ kind: 'text', text: 'Live' }]);
 		views = [];
-		pluginRecordLoaded = false;
+		pluginRecordPresent = false;
 		registry.sync();
 		registry.replay();
 
@@ -260,6 +260,35 @@ describe('PluginHostViewRegistry', () => {
 			2,
 			expect.objectContaining({ kind: 'upsert', view, blocks: [{ kind: 'text', text: 'Live' }] })
 		);
+		expect(forward).toHaveBeenCalledTimes(2);
+	});
+
+	it('purges a live runtime view when the record persists in a failed load state', () => {
+		// A reload that produces an `invalid`/`incompatible` record keeps the record
+		// PRESENT while dropping its declarations — that is a permanent failure, not
+		// a transient window, so the stale runtime view must not keep replaying.
+		const view: HostViewContribution = {
+			id: 'com.example.runtime/status',
+			localId: 'status',
+			pluginId: 'com.example.runtime',
+			surface: 'movement',
+			title: 'Runtime status',
+		};
+		let views: readonly HostViewContribution[] = [view];
+		const forward = vi.fn(() => true);
+		const registry = new PluginHostViewRegistry({
+			isEnabled: () => true,
+			getHostViews: () => views,
+			isPluginRecordPresent: () => true,
+			forward,
+		});
+
+		registry.update('com.example.runtime', 'status', [{ kind: 'text', text: 'Live' }]);
+		views = [];
+		registry.sync();
+		registry.replay();
+
+		expect(forward).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'remove' }));
 		expect(forward).toHaveBeenCalledTimes(2);
 	});
 
@@ -284,7 +313,7 @@ describe('PluginHostViewRegistry', () => {
 		const registry = new PluginHostViewRegistry({
 			isEnabled: () => true,
 			getHostViews: () => [view],
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 			forward,
 		});
 
@@ -318,7 +347,7 @@ describe('PluginHostViewRegistry', () => {
 				},
 			],
 			forward,
-			isPluginRecordLoaded: () => true,
+			isPluginRecordPresent: () => true,
 		});
 
 		expect(registry.update('com.example.disabled', 'status', [])).toBe(false);
