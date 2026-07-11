@@ -104,10 +104,59 @@ describe('safeClipboardWrite', () => {
 			expect(shellMock.copyTextToClipboard).not.toHaveBeenCalled();
 		});
 
-		it('falls back to the host bridge when the navigator API throws', async () => {
+		it('falls back to the legacy copy (not the host bridge) when the navigator API throws', async () => {
+			// The host bridge would write to the HOST machine, not the browser the
+			// user is on, so in web-desktop we keep the copy local via execCommand.
 			clipboardMock.writeText.mockRejectedValue(new Error('not focused'));
+			const execCommand = vi.fn().mockReturnValue(true);
+			Object.assign(document, { execCommand });
+
 			expect(await safeClipboardWrite('hello')).toBe(true);
-			expect(shellMock.copyTextToClipboard).toHaveBeenCalledWith('hello');
+			expect(execCommand).toHaveBeenCalledWith('copy');
+			expect(shellMock.copyTextToClipboard).not.toHaveBeenCalled();
+		});
+
+		it('falls back to execCommand copy in an insecure context (no navigator.clipboard)', async () => {
+			// Plain-HTTP context (e.g. Tailscale/LAN IP): the secure-context async
+			// Clipboard API is undefined, so the legacy execCommand path must run.
+			// No host bridge should be reached - the copy stays on the user's machine.
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				writable: true,
+				value: undefined,
+			});
+			const execCommand = vi.fn().mockReturnValue(true);
+			Object.assign(document, { execCommand });
+
+			expect(await safeClipboardWrite('hello')).toBe(true);
+			expect(execCommand).toHaveBeenCalledWith('copy');
+			expect(shellMock.copyTextToClipboard).not.toHaveBeenCalled();
+		});
+
+		it('returns false when even the legacy copy fails', async () => {
+			clipboardMock.writeText.mockRejectedValue(new Error('NotAllowedError'));
+			const execCommand = vi.fn().mockReturnValue(false);
+			Object.assign(document, { execCommand });
+
+			expect(await safeClipboardWrite('hello')).toBe(false);
+		});
+
+		it('restores focus to the originating control after the legacy copy', async () => {
+			// The hidden textarea steals focus; it must be handed back so the next
+			// keystroke returns to the control that triggered the copy.
+			clipboardMock.writeText.mockRejectedValue(new Error('not focused'));
+			const execCommand = vi.fn().mockReturnValue(true);
+			Object.assign(document, { execCommand });
+
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+			input.focus();
+			expect(document.activeElement).toBe(input);
+
+			expect(await safeClipboardWrite('hello')).toBe(true);
+			expect(document.activeElement).toBe(input);
+
+			document.body.removeChild(input);
 		});
 	});
 });
