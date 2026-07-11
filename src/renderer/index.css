@@ -1660,7 +1660,10 @@ html[data-runtime='web-desktop'] .overflow-y-scroll {
  * inputs are text-sm (14px). Force 16px only at xs/sm inside web-desktop so the
  * zoom never triggers, without touching the components' Tailwind classes or the
  * native desktop app. `!important` guarantees the 16px floor regardless of
- * utility-class specificity; line-height keeps the taller text readable.
+ * utility-class specificity; line-height keeps the taller text readable. The
+ * AI composer has a decorative mention overlay beneath its transparent textarea,
+ * so that overlay receives the same font size or its visible glyphs drift from
+ * the native caret on iOS.
  */
 html[data-runtime='web-desktop'][data-bp='xs'] textarea,
 html[data-runtime='web-desktop'][data-bp='xs'] input[type='text'],
@@ -1674,6 +1677,11 @@ html[data-runtime='web-desktop'][data-bp='sm'] input:not([type]),
 html[data-runtime='web-desktop'][data-bp='sm'] select {
 	font-size: 16px !important;
 	line-height: 1.4;
+}
+
+html[data-runtime='web-desktop'][data-bp='xs'] .maestro-input-text-overlay,
+html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
+	font-size: 16px !important;
 }
 
 /*
