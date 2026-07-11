@@ -346,6 +346,32 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--dangerously-bypass');
 	});
 
+	// -- real claude-code definition: full access is what grants the bypass --
+	it("claude-code with permissionMode 'full' adds --dangerously-skip-permissions", () => {
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--dangerously-skip-permissions');
+	});
+
+	it('claude-code with an unset permissionMode (no yoloMode) does NOT add --dangerously-skip-permissions', () => {
+		// Resolution of an unset permissionMode -> full access now happens in the
+		// renderer (resolveTabPermissionMode), NOT here. buildAgentArgs still
+		// treats a literal undefined as non-full, so callers MUST resolve first.
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: undefined,
+		});
+		expect(result).not.toContain('--dangerously-skip-permissions');
+	});
+
 	it('deduplicates Codex bypass flag when batch and yolo args both include it', () => {
 		const agent = makeAgent({
 			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
