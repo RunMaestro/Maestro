@@ -46,7 +46,7 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener (with optional account throttle handling)
+	// Agent error listener (with optional account throttle + auth recovery handling)
 	setupErrorListener(
 		processManager,
 		deps,
@@ -54,6 +54,7 @@ export function setupProcessListeners(
 			? {
 					getAccountRegistry: deps.getAccountRegistry,
 					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+					getAuthRecovery: deps.getAuthRecovery,
 				}
 			: undefined
 	);

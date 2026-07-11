@@ -10,12 +10,15 @@ import type { AgentError } from '../../shared/types';
 import type { ProcessListenerDependencies } from './types';
 import { capabilitySnapshots } from '../agents/capability-snapshot';
 import type { AccountThrottleHandler } from '../accounts/account-throttle-handler';
+import type { AccountAuthRecovery } from '../accounts/account-auth-recovery';
 import type { AccountRegistry } from '../accounts/account-registry';
 
 /**
  * Sets up the agent-error listener.
  * Handles logging and forwarding of agent errors to renderer.
- * Optionally triggers throttle handling for account multiplexing.
+ * When account multiplexing is active:
+ * - auth_expired errors → auth recovery (automatic re-login + respawn)
+ * - rate_limited errors → throttle handler (account switching)
  *
  * Side effect: when the classified error is `auth_expired`, mirrors the
  * status into the capability snapshot store so the Settings → Agents tab
@@ -27,6 +30,7 @@ export function setupErrorListener(
 	accountDeps?: {
 		getAccountRegistry: () => AccountRegistry | null;
 		getThrottleHandler: () => AccountThrottleHandler | null;
+		getAuthRecovery?: () => AccountAuthRecovery | null;
 	}
 ): void {
 	const { safeSend, logger } = deps;
@@ -56,20 +60,40 @@ export function setupErrorListener(
 			);
 		}
 
-		// Trigger throttle handling for rate-limited/auth-expired errors on sessions with accounts
-		if (accountDeps && (agentError.type === 'rate_limited' || agentError.type === 'auth_expired')) {
-			const accountRegistry = accountDeps.getAccountRegistry();
-			const throttleHandler = accountDeps.getThrottleHandler();
-			if (accountRegistry && throttleHandler) {
-				const assignment = accountRegistry.getAssignment(sessionId);
-				if (assignment) {
-					throttleHandler.handleThrottle({
+		// Account multiplexing: route errors on sessions with account assignments
+		if (!accountDeps) return;
+		const accountRegistry = accountDeps.getAccountRegistry();
+		if (!accountRegistry) return;
+		const assignment = accountRegistry.getAssignment(sessionId);
+		if (!assignment) return;
+
+		if (agentError.type === 'auth_expired') {
+			// Auth expired → attempt automatic re-login (kill → login → respawn).
+			// Falls back to the throttle handler when recovery isn't available so
+			// the user still gets a switch prompt instead of a dead session.
+			const authRecovery = accountDeps.getAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.recoverAuth(sessionId, assignment.accountId).catch((err) => {
+					logger.error('Auth recovery failed', 'AgentError', {
+						error: String(err),
 						sessionId,
-						accountId: assignment.accountId,
-						errorType: agentError.type,
-						errorMessage: agentError.message,
 					});
-				}
+				});
+				return;
+			}
+		}
+
+		if (agentError.type === 'rate_limited' || agentError.type === 'auth_expired') {
+			// Rate limited (or auth expired without recovery) → throttle handler
+			// records the event and prompts/executes an account switch.
+			const throttleHandler = accountDeps.getThrottleHandler();
+			if (throttleHandler) {
+				throttleHandler.handleThrottle({
+					sessionId,
+					accountId: assignment.accountId,
+					errorType: agentError.type,
+					errorMessage: agentError.message,
+				});
 			}
 		}
 	});
