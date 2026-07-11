@@ -7,14 +7,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-	Users,
-	Activity,
-	AlertTriangle,
-	Zap,
-	TrendingUp,
-	ArrowRightLeft,
-} from 'lucide-react';
+import { Users, Activity, AlertTriangle, Zap, TrendingUp, ArrowRightLeft } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type {
 	AccountProfile,
@@ -182,16 +175,18 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 		// Estimate tokens/hour based on current window
 		const windowMs = accounts[0]?.tokenWindowMs || 5 * 60 * 60 * 1000;
 		const hoursInWindow = windowMs / 3_600_000;
-		const avgTokensPerHour = hoursInWindow > 0 ? Math.round(totalTokens / hoursInWindow / accounts.length) : 0;
+		const avgTokensPerHour =
+			hoursInWindow > 0 ? Math.round(totalTokens / hoursInWindow / accounts.length) : 0;
 		const peakTokensPerHour = avgTokensPerHour * 1.5; // estimate
 
 		// Recommend accounts based on usage
 		const maxTokensPerAccountPerHour = accounts[0]?.tokenLimitPerWindow
 			? accounts[0].tokenLimitPerWindow / hoursInWindow
 			: 200_000;
-		const recommended = maxTokensPerAccountPerHour > 0
-			? Math.max(1, Math.ceil(peakTokensPerHour / maxTokensPerAccountPerHour))
-			: 1;
+		const recommended =
+			maxTokensPerAccountPerHour > 0
+				? Math.max(1, Math.ceil(peakTokensPerHour / maxTokensPerAccountPerHour))
+				: 1;
 
 		return {
 			avgTokensPerHour,
@@ -204,7 +199,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 
 	if (loading) {
 		return (
-			<div className="flex items-center justify-center py-20" style={{ color: theme.colors.textDim }}>
+			<div
+				className="flex items-center justify-center py-20"
+				style={{ color: theme.colors.textDim }}
+			>
 				Loading virtuoso usage data...
 			</div>
 		);
@@ -212,7 +210,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 
 	if (error) {
 		return (
-			<div className="flex flex-col items-center justify-center py-20 gap-4" style={{ color: theme.colors.textDim }}>
+			<div
+				className="flex flex-col items-center justify-center py-20 gap-4"
+				style={{ color: theme.colors.textDim }}
+			>
 				<p>Failed to load virtuoso data: {error}</p>
 				<button
 					onClick={fetchData}
@@ -227,7 +228,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 
 	if (accounts.length === 0) {
 		return (
-			<div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: theme.colors.textDim }}>
+			<div
+				className="flex flex-col items-center justify-center py-20 gap-3"
+				style={{ color: theme.colors.textDim }}
+			>
 				<Users className="w-10 h-10" style={{ opacity: 0.3 }} />
 				<p className="text-sm">No virtuosos registered</p>
 				<p className="text-xs" style={{ opacity: 0.6 }}>
@@ -248,7 +252,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 					<Activity className="w-3.5 h-3.5" />
 					Virtuoso Overview
 				</h3>
-				<div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+				<div
+					className="grid gap-4"
+					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+				>
 					{accounts.map((account) => {
 						const usage = usageData[account.id];
 						const percent = usage?.usagePercent ?? null;
@@ -282,7 +289,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 										{account.isDefault && (
 											<span
 												className="text-[9px] font-bold px-1 py-0.5 rounded"
-												style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+												style={{
+													backgroundColor: theme.colors.accent + '20',
+													color: theme.colors.accent,
+												}}
 											>
 												DEFAULT
 											</span>
@@ -306,7 +316,8 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 											{formatTokens(totalTokens)}
 											{account.tokenLimitPerWindow > 0 && (
 												<span style={{ color: theme.colors.textDim, fontWeight: 'normal' }}>
-													{' / '}{formatTokens(account.tokenLimitPerWindow)}
+													{' / '}
+													{formatTokens(account.tokenLimitPerWindow)}
 												</span>
 											)}
 										</span>
@@ -364,7 +375,11 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 				{assignments.length === 0 ? (
 					<div
 						className="text-xs text-center py-6 rounded-lg"
-						style={{ color: theme.colors.textDim, backgroundColor: theme.colors.bgActivity, border: `1px solid ${theme.colors.border}` }}
+						style={{
+							color: theme.colors.textDim,
+							backgroundColor: theme.colors.bgActivity,
+							border: `1px solid ${theme.colors.border}`,
+						}}
 					>
 						No active account assignments
 					</div>
@@ -376,11 +391,36 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 						<table className="w-full text-xs">
 							<thead>
 								<tr style={{ backgroundColor: theme.colors.bgActivity }}>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Session</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Account</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Agent</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Assigned</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Status</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Session
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Account
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Agent
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Assigned
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Status
+									</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -409,12 +449,14 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 												<span
 													className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
 													style={{
-														backgroundColor: session?.state === 'busy'
-															? theme.colors.warning + '20'
-															: theme.colors.success + '20',
-														color: session?.state === 'busy'
-															? theme.colors.warning
-															: theme.colors.success,
+														backgroundColor:
+															session?.state === 'busy'
+																? theme.colors.warning + '20'
+																: theme.colors.success + '20',
+														color:
+															session?.state === 'busy'
+																? theme.colors.warning
+																: theme.colors.success,
 													}}
 												>
 													{session?.state || 'unknown'}
@@ -440,7 +482,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 				</h3>
 				<div
 					className="rounded-lg p-4"
-					style={{ backgroundColor: theme.colors.bgActivity, border: `1px solid ${theme.colors.border}` }}
+					style={{
+						backgroundColor: theme.colors.bgActivity,
+						border: `1px solid ${theme.colors.border}`,
+					}}
 				>
 					{accounts.map((account) => {
 						const usage = usageData[account.id];
@@ -450,7 +495,9 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 						const maxTokens = Math.max(
 							...accounts.map((a) => {
 								const u = usageData[a.id];
-								return u ? (u.inputTokens || 0) + (u.outputTokens || 0) + (u.cacheReadTokens || 0) : 0;
+								return u
+									? (u.inputTokens || 0) + (u.outputTokens || 0) + (u.cacheReadTokens || 0)
+									: 0;
 							}),
 							1
 						);
@@ -467,10 +514,7 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 									{(account.email || account.name).split('@')[0]}
 								</span>
 								<div className="flex-1 relative">
-									<div
-										className="h-5 rounded"
-										style={{ backgroundColor: theme.colors.bgMain }}
-									>
+									<div className="h-5 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
 										<div
 											className="h-full rounded transition-all duration-500 flex items-center px-2"
 											style={{
@@ -479,7 +523,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 												borderLeft: `3px solid ${usageColor}`,
 											}}
 										>
-											<span className="text-[10px] font-bold whitespace-nowrap" style={{ color: usageColor }}>
+											<span
+												className="text-[10px] font-bold whitespace-nowrap"
+												style={{ color: usageColor }}
+											>
 												{formatTokens(totalTokens)}
 											</span>
 										</div>
@@ -514,7 +561,11 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 				{throttleEvents.length === 0 ? (
 					<div
 						className="text-xs text-center py-6 rounded-lg"
-						style={{ color: theme.colors.textDim, backgroundColor: theme.colors.bgActivity, border: `1px solid ${theme.colors.border}` }}
+						style={{
+							color: theme.colors.textDim,
+							backgroundColor: theme.colors.bgActivity,
+							border: `1px solid ${theme.colors.border}`,
+						}}
 					>
 						No throttle events recorded
 					</div>
@@ -526,48 +577,72 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 						<table className="w-full text-xs">
 							<thead className="sticky top-0">
 								<tr style={{ backgroundColor: theme.colors.bgActivity }}>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Time</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Account</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Reason</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Tokens</th>
-									<th className="text-left px-3 py-2 font-bold" style={{ color: theme.colors.textDim }}>Recovery</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Time
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Account
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Reason
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Tokens
+									</th>
+									<th
+										className="text-left px-3 py-2 font-bold"
+										style={{ color: theme.colors.textDim }}
+									>
+										Recovery
+									</th>
 								</tr>
 							</thead>
 							<tbody>
-								{throttleEvents.slice().reverse().map((event, i) => {
-									const account = accountMap.get(event.accountId);
-									return (
-										<tr
-											key={i}
-											className="border-t"
-											style={{ borderColor: theme.colors.border }}
-										>
-											<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
-												{new Date(event.timestamp).toLocaleString()}
-											</td>
-											<td className="px-3 py-2" style={{ color: theme.colors.textMain }}>
-												{event.accountName || account?.email || event.accountId.slice(0, 8)}
-											</td>
-											<td className="px-3 py-2">
-												<span
-													className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
-													style={{
-														backgroundColor: theme.colors.warning + '20',
-														color: theme.colors.warning,
-													}}
-												>
-													{event.reason.replace(/_/g, ' ')}
-												</span>
-											</td>
-											<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
-												{formatTokens(event.totalTokens)}
-											</td>
-											<td className="px-3 py-2" style={{ color: theme.colors.textDim }}>
-												{event.recoveryAction || '—'}
-											</td>
-										</tr>
-									);
-								})}
+								{throttleEvents
+									.slice()
+									.reverse()
+									.map((event, i) => {
+										const account = accountMap.get(event.accountId);
+										return (
+											<tr key={i} className="border-t" style={{ borderColor: theme.colors.border }}>
+												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
+													{new Date(event.timestamp).toLocaleString()}
+												</td>
+												<td className="px-3 py-2" style={{ color: theme.colors.textMain }}>
+													{event.accountName || account?.email || event.accountId.slice(0, 8)}
+												</td>
+												<td className="px-3 py-2">
+													<span
+														className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+														style={{
+															backgroundColor: theme.colors.warning + '20',
+															color: theme.colors.warning,
+														}}
+													>
+														{event.reason.replace(/_/g, ' ')}
+													</span>
+												</td>
+												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
+													{formatTokens(event.totalTokens)}
+												</td>
+												<td className="px-3 py-2" style={{ color: theme.colors.textDim }}>
+													{event.recoveryAction || '—'}
+												</td>
+											</tr>
+										);
+									})}
 							</tbody>
 						</table>
 					</div>
@@ -586,7 +661,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 					</h3>
 					<div
 						className="rounded-lg p-4"
-						style={{ backgroundColor: theme.colors.bgActivity, border: `1px solid ${theme.colors.border}` }}
+						style={{
+							backgroundColor: theme.colors.bgActivity,
+							border: `1px solid ${theme.colors.border}`,
+						}}
 					>
 						<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
 							Based on your usage in the current window:
@@ -606,7 +684,15 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 							</div>
 							<div>
 								<div style={{ color: theme.colors.textDim }}>Throttle events</div>
-								<div className="text-sm font-bold" style={{ color: capacityMetrics.throttleEvents > 0 ? theme.colors.warning : theme.colors.textMain }}>
+								<div
+									className="text-sm font-bold"
+									style={{
+										color:
+											capacityMetrics.throttleEvents > 0
+												? theme.colors.warning
+												: theme.colors.textMain,
+									}}
+								>
 									{capacityMetrics.throttleEvents}
 								</div>
 							</div>
@@ -615,7 +701,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 								<div className="text-sm font-bold" style={{ color: theme.colors.accent }}>
 									{capacityMetrics.recommendedAccountCount}
 									{capacityMetrics.recommendedAccountCount > accounts.length && (
-										<span className="text-[10px] font-normal ml-1" style={{ color: theme.colors.warning }}>
+										<span
+											className="text-[10px] font-normal ml-1"
+											style={{ color: theme.colors.warning }}
+										>
 											(need {capacityMetrics.recommendedAccountCount - accounts.length} more)
 										</span>
 									)}

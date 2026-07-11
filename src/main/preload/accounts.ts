@@ -128,15 +128,20 @@ export function createAccountsApi() {
 			ipcRenderer.invoke('accounts:validate-base-dir'),
 
 		/** Discover existing ~/.claude-* account directories */
-		discoverExisting: (): Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>> =>
-			ipcRenderer.invoke('accounts:discover-existing'),
+		discoverExisting: (): Promise<
+			Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>
+		> => ipcRenderer.invoke('accounts:discover-existing'),
 
 		/** Create a new account directory with symlinks */
-		createDirectory: (name: string): Promise<{ success: boolean; configDir: string; error?: string }> =>
+		createDirectory: (
+			name: string
+		): Promise<{ success: boolean; configDir: string; error?: string }> =>
 			ipcRenderer.invoke('accounts:create-directory', name),
 
 		/** Validate symlinks in an account directory */
-		validateSymlinks: (configDir: string): Promise<{ valid: boolean; broken: string[]; missing: string[] }> =>
+		validateSymlinks: (
+			configDir: string
+		): Promise<{ valid: boolean; broken: string[]; missing: string[] }> =>
 			ipcRenderer.invoke('accounts:validate-symlinks', configDir),
 
 		/** Repair broken or missing symlinks */
@@ -156,7 +161,10 @@ export function createAccountsApi() {
 			ipcRenderer.invoke('accounts:remove-directory', configDir),
 
 		/** Validate an account directory on a remote SSH host */
-		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }): Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }> =>
+		validateRemoteDir: (params: {
+			sshConfig: { host: string; user?: string; port?: number };
+			configDir: string;
+		}): Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }> =>
 			ipcRenderer.invoke('accounts:validate-remote-dir', params),
 
 		/** Sync credentials from base ~/.claude to an account directory */
@@ -254,9 +262,13 @@ export function createAccountsApi() {
 		 * @param handler - Callback with assignment data
 		 * @returns Cleanup function to unsubscribe
 		 */
-		onAssigned: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; accountId: string; accountName: string }) =>
-				handler(data);
+		onAssigned: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		): (() => void) => {
+			const wrappedHandler = (
+				_event: Electron.IpcRendererEvent,
+				data: { sessionId: string; accountId: string; accountName: string }
+			) => handler(data);
 			ipcRenderer.on('account:assigned', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:assigned', wrappedHandler);
 		},
@@ -265,7 +277,9 @@ export function createAccountsApi() {
 
 		/** Reconcile account assignments after session restore on startup.
 		 * Removes stale assignments and returns account validation for sessions with accountId. */
-		reconcileSessions: (activeSessionIds: string[]): Promise<{
+		reconcileSessions: (
+			activeSessionIds: string[]
+		): Promise<{
 			success: boolean;
 			removed: number;
 			corrections: Array<{
@@ -305,16 +319,17 @@ export function createAccountsApi() {
 		},
 
 		/** Subscribe to switch-respawn events (renderer must respawn the agent) */
-		onSwitchRespawn: (handler: (data: {
-			sessionId: string;
-			toAccountId: string;
-			toAccountName: string;
-			configDir: string;
-			lastPrompt: string | null;
-			reason: string;
-		}) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
-				handler(data);
+		onSwitchRespawn: (
+			handler: (data: {
+				sessionId: string;
+				toAccountId: string;
+				toAccountName: string;
+				configDir: string;
+				lastPrompt: string | null;
+				reason: string;
+			}) => void
+		): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) => handler(data);
 			ipcRenderer.on('account:switch-respawn', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:switch-respawn', wrappedHandler);
 		},
@@ -342,38 +357,33 @@ export function createAccountsApi() {
 			ipcRenderer.invoke('accounts:trigger-auth-recovery', sessionId),
 
 		/** Subscribe to auth recovery started events */
-		onAuthRecoveryStarted: (handler: (data: {
-			sessionId: string;
-			accountId: string;
-			accountName: string;
-		}) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
-				handler(data);
+		onAuthRecoveryStarted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) => handler(data);
 			ipcRenderer.on('account:auth-recovery-started', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:auth-recovery-started', wrappedHandler);
 		},
 
 		/** Subscribe to auth recovery completed events */
-		onAuthRecoveryCompleted: (handler: (data: {
-			sessionId: string;
-			accountId: string;
-			accountName: string;
-		}) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
-				handler(data);
+		onAuthRecoveryCompleted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) => handler(data);
 			ipcRenderer.on('account:auth-recovery-completed', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:auth-recovery-completed', wrappedHandler);
 		},
 
 		/** Subscribe to auth recovery failed events */
-		onAuthRecoveryFailed: (handler: (data: {
-			sessionId: string;
-			accountId: string;
-			accountName?: string;
-			error: string;
-		}) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
-				handler(data);
+		onAuthRecoveryFailed: (
+			handler: (data: {
+				sessionId: string;
+				accountId: string;
+				accountName?: string;
+				error: string;
+			}) => void
+		): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) => handler(data);
 			ipcRenderer.on('account:auth-recovery-failed', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:auth-recovery-failed', wrappedHandler);
 		},
@@ -381,14 +391,15 @@ export function createAccountsApi() {
 		// --- Recovery Poller ---
 
 		/** Subscribe to account recovery available events (throttled accounts recovered by timer) */
-		onRecoveryAvailable: (handler: (data: {
-			recoveredAccountIds: string[];
-			recoveredCount: number;
-			stillThrottledCount: number;
-			totalAccounts: number;
-		}) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
-				handler(data);
+		onRecoveryAvailable: (
+			handler: (data: {
+				recoveredAccountIds: string[];
+				recoveredCount: number;
+				stillThrottledCount: number;
+				totalAccounts: number;
+			}) => void
+		): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) => handler(data);
 			ipcRenderer.on('account:recovery-available', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:recovery-available', wrappedHandler);
 		},

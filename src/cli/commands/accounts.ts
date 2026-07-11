@@ -16,11 +16,7 @@ export async function listAccounts(): Promise<void> {
 	for (const account of accounts) {
 		const defaultBadge = account.isDefault ? ' [DEFAULT]' : '';
 		const statusIcon =
-			account.status === 'active'
-				? '\u2713'
-				: account.status === 'throttled'
-					? '\u26A0'
-					: '\u2717';
+			account.status === 'active' ? '\u2713' : account.status === 'throttled' ? '\u26A0' : '\u2717';
 		console.log(`  ${statusIcon} ${account.name}${defaultBadge}`);
 		console.log(`    Email:  ${account.email || 'unknown'}`);
 		console.log(`    Dir:    ${account.configDir}`);

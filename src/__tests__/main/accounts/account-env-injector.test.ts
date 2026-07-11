@@ -6,7 +6,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AccountProfile } from '../../../shared/account-types';
-import type { AccountRegistry, AccountUsageStatsProvider } from '../../../main/accounts/account-registry';
+import type {
+	AccountRegistry,
+	AccountUsageStatsProvider,
+} from '../../../main/accounts/account-registry';
 
 // Hoist mocks
 const { mockExistsSync } = vi.hoisted(() => ({
@@ -72,7 +75,9 @@ describe('injectAccountEnv', () => {
 			getAssignment: vi.fn().mockReturnValue(null),
 			getDefaultAccount: vi.fn().mockReturnValue(null),
 			selectNextAccount: vi.fn().mockReturnValue(createMockAccount()),
-			assignToSession: vi.fn().mockReturnValue({ sessionId: 'sess-1', accountId: 'acct-1', assignedAt: Date.now() }),
+			assignToSession: vi
+				.fn()
+				.mockReturnValue({ sessionId: 'sess-1', accountId: 'acct-1', assignedAt: Date.now() }),
 		};
 
 		mockSafeSend = vi.fn();
@@ -88,8 +93,10 @@ describe('injectAccountEnv', () => {
 		const injectAccountEnv = await loadInjector();
 		const env: Record<string, string | undefined> = {};
 		const result = injectAccountEnv(
-			'sess-1', 'terminal', env,
-			mockRegistry as unknown as AccountRegistry,
+			'sess-1',
+			'terminal',
+			env,
+			mockRegistry as unknown as AccountRegistry
 		);
 		expect(result).toBeNull();
 	});
@@ -98,8 +105,10 @@ describe('injectAccountEnv', () => {
 		const injectAccountEnv = await loadInjector();
 		const env: Record<string, string | undefined> = { CLAUDE_CONFIG_DIR: '/custom/dir' };
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
-			mockRegistry as unknown as AccountRegistry,
+			'sess-1',
+			'claude-code',
+			env,
+			mockRegistry as unknown as AccountRegistry
 		);
 		expect(result).toBeNull();
 		expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/dir');
@@ -110,8 +119,10 @@ describe('injectAccountEnv', () => {
 		mockRegistry.getAll.mockReturnValue([]);
 		const env: Record<string, string | undefined> = {};
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
-			mockRegistry as unknown as AccountRegistry,
+			'sess-1',
+			'claude-code',
+			env,
+			mockRegistry as unknown as AccountRegistry
 		);
 		expect(result).toBeNull();
 	});
@@ -120,9 +131,11 @@ describe('injectAccountEnv', () => {
 		const injectAccountEnv = await loadInjector();
 		const env: Record<string, string | undefined> = {};
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
-			'acct-1',
+			'acct-1'
 		);
 		expect(result).toBe('acct-1');
 		expect(env.CLAUDE_CONFIG_DIR).toBe('/home/test/.claude-test');
@@ -135,10 +148,12 @@ describe('injectAccountEnv', () => {
 		const env: Record<string, string | undefined> = {};
 
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
 			undefined,
-			mockSafeSend,
+			mockSafeSend
 		);
 
 		expect(result).toBe('acct-1');
@@ -156,11 +171,13 @@ describe('injectAccountEnv', () => {
 		};
 
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
 			undefined,
 			mockSafeSend,
-			() => mockStatsDB,
+			() => mockStatsDB
 		);
 
 		expect(result).toBe('acct-1');
@@ -173,11 +190,13 @@ describe('injectAccountEnv', () => {
 		const env: Record<string, string | undefined> = {};
 
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
 			undefined,
 			mockSafeSend,
-			() => null,
+			() => null
 		);
 
 		expect(result).toBe('acct-1');
@@ -192,10 +211,12 @@ describe('injectAccountEnv', () => {
 		const env: Record<string, string | undefined> = {};
 
 		const result = injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
 			undefined,
-			mockSafeSend,
+			mockSafeSend
 		);
 
 		expect(result).toBe('default-1');
@@ -207,10 +228,12 @@ describe('injectAccountEnv', () => {
 		const env: Record<string, string | undefined> = {};
 
 		injectAccountEnv(
-			'sess-1', 'claude-code', env,
+			'sess-1',
+			'claude-code',
+			env,
 			mockRegistry as unknown as AccountRegistry,
 			'acct-1',
-			mockSafeSend,
+			mockSafeSend
 		);
 
 		expect(mockSafeSend).toHaveBeenCalledWith('account:assigned', {

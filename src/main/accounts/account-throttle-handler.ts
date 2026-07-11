@@ -32,7 +32,7 @@ export class AccountThrottleHandler {
 			info: (message: string, context: string, data?: Record<string, unknown>) => void;
 			error: (message: string, context: string, data?: Record<string, unknown>) => void;
 			warn: (message: string, context: string, data?: Record<string, unknown>) => void;
-		},
+		}
 	) {}
 
 	/**
@@ -56,19 +56,18 @@ export class AccountThrottleHandler {
 
 			// Get tokens at time of throttle
 			const usage = statsDb.getAccountUsageInWindow(accountId, start, end);
-			const tokensAtThrottle = usage.inputTokens + usage.outputTokens
-				+ usage.cacheReadTokens + usage.cacheCreationTokens;
+			const tokensAtThrottle =
+				usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
 
 			// Record throttle event
-			statsDb.insertThrottleEvent(
-				accountId, sessionId, errorType,
-				tokensAtThrottle, start, end
-			);
+			statsDb.insertThrottleEvent(accountId, sessionId, errorType, tokensAtThrottle, start, end);
 
 			// 2. Mark account as throttled
 			this.accountRegistry.setStatus(accountId, 'throttled');
 			this.logger.warn(`Account ${account.name} throttled`, LOG_CONTEXT, {
-				reason: errorType, tokens: tokensAtThrottle, sessionId,
+				reason: errorType,
+				tokens: tokensAtThrottle,
+				sessionId,
 			});
 
 			// 3. Determine if auto-switch should occur
@@ -133,10 +132,11 @@ export class AccountThrottleHandler {
 					automatic: true,
 				});
 			}
-
 		} catch (error) {
 			this.logger.error('Failed to handle throttle', LOG_CONTEXT, {
-				error: String(error), sessionId, accountId,
+				error: String(error),
+				sessionId,
+				accountId,
 			});
 		}
 	}

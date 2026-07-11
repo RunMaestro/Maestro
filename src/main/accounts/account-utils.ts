@@ -6,7 +6,10 @@
  * Calculate the window boundaries for a given timestamp and window size.
  * Windows are aligned to fixed intervals from midnight.
  */
-export function getWindowBounds(timestamp: number, windowMs: number): { start: number; end: number } {
+export function getWindowBounds(
+	timestamp: number,
+	windowMs: number
+): { start: number; end: number } {
 	const dayStart = new Date(timestamp);
 	dayStart.setHours(0, 0, 0, 0);
 	const dayStartMs = dayStart.getTime();

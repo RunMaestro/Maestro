@@ -81,8 +81,11 @@ export function setupAccountUsageListener(
 			// Calculate usage percentage if limit is configured
 			if (account.tokenLimitPerWindow > 0) {
 				const windowUsage = statsDb.getAccountUsageInWindow(account.id, start, end);
-				const totalTokens = windowUsage.inputTokens + windowUsage.outputTokens
-					+ windowUsage.cacheReadTokens + windowUsage.cacheCreationTokens;
+				const totalTokens =
+					windowUsage.inputTokens +
+					windowUsage.outputTokens +
+					windowUsage.cacheReadTokens +
+					windowUsage.cacheCreationTokens;
 				const usagePercent = Math.min(100, (totalTokens / account.tokenLimitPerWindow) * 100);
 
 				// Broadcast usage update to renderer for real-time dashboard
@@ -99,7 +102,10 @@ export function setupAccountUsageListener(
 
 				// Check warning threshold
 				const switchConfig = accountRegistry.getSwitchConfig();
-				if (usagePercent >= switchConfig.warningThresholdPercent && usagePercent < switchConfig.autoSwitchThresholdPercent) {
+				if (
+					usagePercent >= switchConfig.warningThresholdPercent &&
+					usagePercent < switchConfig.autoSwitchThresholdPercent
+				) {
 					safeSend('account:limit-warning', {
 						accountId: account.id,
 						accountName: account.name,
@@ -136,9 +142,11 @@ export function setupAccountUsageListener(
 
 			// Update the account's lastUsedAt
 			accountRegistry.touchLastUsed(account.id);
-
 		} catch (error) {
-			logger.error('Failed to track account usage', LOG_CONTEXT, { error: String(error), sessionId });
+			logger.error('Failed to track account usage', LOG_CONTEXT, {
+				error: String(error),
+				sessionId,
+			});
 		}
 	});
 }

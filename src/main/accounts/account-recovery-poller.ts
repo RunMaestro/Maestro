@@ -74,9 +74,9 @@ export class AccountRecoveryPoller {
 		const now = Date.now();
 		const recovered: string[] = [];
 
-		const throttledAccounts = accountRegistry.getAll().filter(
-			(a: AccountProfile) => a.status === 'throttled' && a.lastThrottledAt > 0
-		);
+		const throttledAccounts = accountRegistry
+			.getAll()
+			.filter((a: AccountProfile) => a.status === 'throttled' && a.lastThrottledAt > 0);
 
 		if (throttledAccounts.length === 0) return recovered;
 

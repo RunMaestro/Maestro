@@ -42,7 +42,7 @@ async function resolveAccountConfigDir(
 	taskIndex: number,
 	accountOption?: string,
 	accountRotation?: boolean,
-	cachedAccounts?: CLIAccountInfo[] | null,
+	cachedAccounts?: CLIAccountInfo[] | null
 ): Promise<string | undefined> {
 	if (accountOption) {
 		const account = await getAccountByIdOrName(accountOption);
@@ -50,7 +50,7 @@ async function resolveAccountConfigDir(
 	}
 
 	if (accountRotation) {
-		const accounts = cachedAccounts ?? await readAccountsFromStore();
+		const accounts = cachedAccounts ?? (await readAccountsFromStore());
 		const activeAccounts = accounts.filter((a) => a.status === 'active');
 		if (activeAccounts.length === 0) return undefined;
 		const account = activeAccounts[taskIndex % activeAccounts.length];

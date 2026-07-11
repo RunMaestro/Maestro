@@ -47,10 +47,16 @@ export function setupProcessListeners(
 	setupSessionIdListener(processManager, deps);
 
 	// Agent error listener (with optional account throttle handling)
-	setupErrorListener(processManager, deps, deps.getAccountRegistry ? {
-		getAccountRegistry: deps.getAccountRegistry,
-		getThrottleHandler: deps.getThrottleHandler ?? (() => null),
-	} : undefined);
+	setupErrorListener(
+		processManager,
+		deps,
+		deps.getAccountRegistry
+			? {
+					getAccountRegistry: deps.getAccountRegistry,
+					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+				}
+			: undefined
+	);
 
 	// Stats/query-complete listener
 	setupStatsListener(processManager, deps);

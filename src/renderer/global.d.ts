@@ -3627,35 +3627,115 @@ interface MaestroAPI {
 		getDefault: () => Promise<unknown>;
 		selectNext: (excludeIds?: string[]) => Promise<unknown>;
 		validateBaseDir: () => Promise<{ valid: boolean; baseDir: string; errors: string[] }>;
-		discoverExisting: () => Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>>;
-		createDirectory: (name: string) => Promise<{ success: boolean; configDir: string; error?: string }>;
-		validateSymlinks: (configDir: string) => Promise<{ valid: boolean; broken: string[]; missing: string[] }>;
+		discoverExisting: () => Promise<
+			Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>
+		>;
+		createDirectory: (
+			name: string
+		) => Promise<{ success: boolean; configDir: string; error?: string }>;
+		validateSymlinks: (
+			configDir: string
+		) => Promise<{ valid: boolean; broken: string[]; missing: string[] }>;
 		repairSymlinks: (configDir: string) => Promise<{ repaired: string[]; errors: string[] }>;
 		readEmail: (configDir: string) => Promise<string | null>;
 		getLoginCommand: (configDir: string) => Promise<string | null>;
 		removeDirectory: (configDir: string) => Promise<{ success: boolean; error?: string }>;
-		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
+		validateRemoteDir: (params: {
+			sshConfig: { host: string; user?: string; port?: number };
+			configDir: string;
+		}) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
 		syncCredentials: (configDir: string) => Promise<{ success: boolean; error?: string }>;
-		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number; totalTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
-		onLimitWarning: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
-		onLimitReached: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
+		onUsageUpdate: (
+			handler: (data: {
+				accountId: string;
+				usagePercent: number;
+				totalTokens: number;
+				limitTokens: number;
+				windowStart: number;
+				windowEnd: number;
+				queryCount: number;
+				costUsd: number;
+			}) => void
+		) => () => void;
+		onLimitWarning: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				usagePercent: number;
+				sessionId: string;
+			}) => void
+		) => () => void;
+		onLimitReached: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				usagePercent: number;
+				sessionId: string;
+			}) => void
+		) => () => void;
 		onThrottled: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onSwitchPrompt: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onSwitchExecute: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onStatusChanged: (handler: (data: Record<string, unknown>) => void) => () => void;
-		onAssigned: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
-		reconcileSessions: (activeSessionIds: string[]) => Promise<{ success: boolean; removed: number; corrections: Array<{ sessionId: string; accountId: string | null; accountName: string | null; configDir: string | null; status: 'valid' | 'removed' | 'inactive' }>; error?: string }>;
+		onAssigned: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		reconcileSessions: (activeSessionIds: string[]) => Promise<{
+			success: boolean;
+			removed: number;
+			corrections: Array<{
+				sessionId: string;
+				accountId: string | null;
+				accountName: string | null;
+				configDir: string | null;
+				status: 'valid' | 'removed' | 'inactive';
+			}>;
+			error?: string;
+		}>;
 		cleanupSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
-		executeSwitch: (params: { sessionId: string; fromAccountId: string; toAccountId: string; reason: string; automatic: boolean }) => Promise<{ success: boolean; event?: unknown; error?: string }>;
+		executeSwitch: (params: {
+			sessionId: string;
+			fromAccountId: string;
+			toAccountId: string;
+			reason: string;
+			automatic: boolean;
+		}) => Promise<{ success: boolean; event?: unknown; error?: string }>;
 		onSwitchStarted: (handler: (data: Record<string, unknown>) => void) => () => void;
-		onSwitchRespawn: (handler: (data: { sessionId: string; toAccountId: string; toAccountName: string; configDir: string; lastPrompt: string | null; reason: string }) => void) => () => void;
+		onSwitchRespawn: (
+			handler: (data: {
+				sessionId: string;
+				toAccountId: string;
+				toAccountName: string;
+				configDir: string;
+				lastPrompt: string | null;
+				reason: string;
+			}) => void
+		) => () => void;
 		onSwitchCompleted: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onSwitchFailed: (handler: (data: Record<string, unknown>) => void) => () => void;
 		triggerAuthRecovery: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
-		onAuthRecoveryStarted: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
-		onAuthRecoveryCompleted: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
-		onAuthRecoveryFailed: (handler: (data: { sessionId: string; accountId: string; accountName?: string; error: string }) => void) => () => void;
-		onRecoveryAvailable: (handler: (data: { recoveredAccountIds: string[]; recoveredCount: number; stillThrottledCount: number; totalAccounts: number }) => void) => () => void;
+		onAuthRecoveryStarted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		onAuthRecoveryCompleted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		onAuthRecoveryFailed: (
+			handler: (data: {
+				sessionId: string;
+				accountId: string;
+				accountName?: string;
+				error: string;
+			}) => void
+		) => () => void;
+		onRecoveryAvailable: (
+			handler: (data: {
+				recoveredAccountIds: string[];
+				recoveredCount: number;
+				stillThrottledCount: number;
+				totalAccounts: number;
+			}) => void
+		) => () => void;
 		checkRecovery: () => Promise<{ recovered: string[] }>;
 	};
 

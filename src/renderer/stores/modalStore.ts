@@ -951,8 +951,7 @@ export function getModalActions() {
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
 		// Virtuosos Modal
-		setVirtuososOpen: (open: boolean) =>
-			open ? openModal('virtuosos') : closeModal('virtuosos'),
+		setVirtuososOpen: (open: boolean) => (open ? openModal('virtuosos') : closeModal('virtuosos')),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),

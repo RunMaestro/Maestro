@@ -97,7 +97,7 @@ describe('AccountThrottleHandler', () => {
 			mockRegistry as unknown as AccountRegistry,
 			() => mockStatsDb as unknown as StatsDB,
 			mockSafeSend,
-			mockLogger,
+			mockLogger
 		);
 	});
 
@@ -114,9 +114,12 @@ describe('AccountThrottleHandler', () => {
 		});
 
 		expect(mockStatsDb.insertThrottleEvent).toHaveBeenCalledWith(
-			'acct-1', 'session-1', 'rate_limited',
+			'acct-1',
+			'session-1',
+			'rate_limited',
 			85000, // 50000 + 20000 + 10000 + 5000
-			expect.any(Number), expect.any(Number)
+			expect.any(Number),
+			expect.any(Number)
 		);
 
 		expect(mockRegistry.setStatus).toHaveBeenCalledWith('acct-1', 'throttled');
@@ -134,11 +137,14 @@ describe('AccountThrottleHandler', () => {
 			errorMessage: 'Too many requests',
 		});
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:throttled', expect.objectContaining({
-			accountId: 'acct-1',
-			accountName: 'Test Account',
-			autoSwitchAvailable: false,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:throttled',
+			expect.objectContaining({
+				accountId: 'acct-1',
+				accountName: 'Test Account',
+				autoSwitchAvailable: false,
+			})
+		);
 	});
 
 	it('should send throttled notification with noAlternatives when no accounts available', () => {
@@ -154,20 +160,25 @@ describe('AccountThrottleHandler', () => {
 			errorMessage: 'Too many requests',
 		});
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:throttled', expect.objectContaining({
-			accountId: 'acct-1',
-			noAlternatives: true,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:throttled',
+			expect.objectContaining({
+				accountId: 'acct-1',
+				noAlternatives: true,
+			})
+		);
 	});
 
 	it('should send switch-prompt when promptBeforeSwitch is true', () => {
 		const account = createMockAccount();
 		const nextAccount = createMockAccount({ id: 'acct-2', name: 'Second Account' });
 		mockRegistry.get.mockReturnValue(account);
-		mockRegistry.getSwitchConfig.mockReturnValue(createMockSwitchConfig({
-			enabled: true,
-			promptBeforeSwitch: true,
-		}));
+		mockRegistry.getSwitchConfig.mockReturnValue(
+			createMockSwitchConfig({
+				enabled: true,
+				promptBeforeSwitch: true,
+			})
+		);
 		mockRegistry.selectNextAccount.mockReturnValue(nextAccount);
 
 		handler.handleThrottle({
@@ -177,24 +188,29 @@ describe('AccountThrottleHandler', () => {
 			errorMessage: 'Too many requests',
 		});
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-prompt', expect.objectContaining({
-			sessionId: 'session-1',
-			fromAccountId: 'acct-1',
-			fromAccountName: 'Test Account',
-			toAccountId: 'acct-2',
-			toAccountName: 'Second Account',
-			reason: 'rate_limited',
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-prompt',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				fromAccountId: 'acct-1',
+				fromAccountName: 'Test Account',
+				toAccountId: 'acct-2',
+				toAccountName: 'Second Account',
+				reason: 'rate_limited',
+			})
+		);
 	});
 
 	it('should send switch-execute when promptBeforeSwitch is false', () => {
 		const account = createMockAccount();
 		const nextAccount = createMockAccount({ id: 'acct-2', name: 'Second Account' });
 		mockRegistry.get.mockReturnValue(account);
-		mockRegistry.getSwitchConfig.mockReturnValue(createMockSwitchConfig({
-			enabled: true,
-			promptBeforeSwitch: false,
-		}));
+		mockRegistry.getSwitchConfig.mockReturnValue(
+			createMockSwitchConfig({
+				enabled: true,
+				promptBeforeSwitch: false,
+			})
+		);
 		mockRegistry.selectNextAccount.mockReturnValue(nextAccount);
 
 		handler.handleThrottle({
@@ -204,12 +220,15 @@ describe('AccountThrottleHandler', () => {
 			errorMessage: 'Too many requests',
 		});
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-execute', expect.objectContaining({
-			sessionId: 'session-1',
-			fromAccountId: 'acct-1',
-			toAccountId: 'acct-2',
-			automatic: true,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-execute',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				fromAccountId: 'acct-1',
+				toAccountId: 'acct-2',
+				automatic: true,
+			})
+		);
 	});
 
 	it('should skip if account not found', () => {
@@ -257,7 +276,8 @@ describe('AccountThrottleHandler', () => {
 		}).not.toThrow();
 
 		expect(mockLogger.error).toHaveBeenCalledWith(
-			'Failed to handle throttle', 'account-throttle',
+			'Failed to handle throttle',
+			'account-throttle',
 			expect.objectContaining({ error: 'Error: Test error' })
 		);
 	});
