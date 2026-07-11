@@ -20,6 +20,7 @@
 		"dev": "node scripts/dev.mjs",
 		"dev:prod-data": "cross-env USE_PROD_DATA=1 node scripts/dev.mjs",
 		"dev:demo": "node scripts/dev-demo.mjs",
+		"dev:group-chat-load": "node scripts/group-chat-load-demo.mjs",
 		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development electron .",
 		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
