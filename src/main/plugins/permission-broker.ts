@@ -17,6 +17,7 @@ import {
 } from '../../shared/plugins/permissions';
 import {
 	HOST_METHOD_CAPABILITY,
+	HANDLER_REAUTHORIZED_METHODS,
 	extractTarget,
 	type HostMethod,
 } from '../../shared/plugins/rpc-protocol';
@@ -79,10 +80,22 @@ export class PermissionBroker {
 		const capability = HOST_METHOD_CAPABILITY[method];
 		const target = extractTarget(method, params);
 		const grants = this.deps.getGrants(pluginId);
-		let allowed = isPermitted(grants, capability, target);
-		let reason = allowed
-			? undefined
-			: `permission denied: ${capability}${target ? ` (${target})` : ''}`;
+		let allowed: boolean;
+		let reason: string | undefined;
+		if (HANDLER_REAUTHORIZED_METHODS.has(method)) {
+			// Scope lives in an already-open resource the params reference by opaque
+			// id, not here. Confirm only that the capability is held; the host handler
+			// re-authorizes the resource's real origin against the live grant. Without
+			// this, a scoped grant (the recommended form) would be denied for a
+			// missing target even though the operation is in-scope.
+			allowed = grants.some((g) => g.capability === capability);
+			reason = allowed ? undefined : `permission denied: ${capability}`;
+		} else {
+			allowed = isPermitted(grants, capability, target);
+			reason = allowed
+				? undefined
+				: `permission denied: ${capability}${target ? ` (${target})` : ''}`;
+		}
 
 		// Structural data-dir exclusion: fs:read AND fs:write can never touch the
 		// userData/config tree, regardless of how broad the grant is. Applied to

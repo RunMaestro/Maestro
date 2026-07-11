@@ -31,6 +31,7 @@ export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'net:fetch' // HTTP(S) fetch to a host scope
+	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -64,6 +65,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
 	'net:fetch',
+	'net:connect',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -108,6 +110,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
+	'net:connect': 'high',
 	'sessions:read': 'medium',
 	'history:read': 'medium',
 	'events:subscribe': 'medium',
@@ -146,6 +149,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:write': 'path',
 	'fs:watch': 'path',
 	'net:fetch': 'host',
+	'net:connect': 'host',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -476,6 +480,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create and modify files';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
+		case 'net:connect':
+			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':

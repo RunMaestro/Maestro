@@ -567,6 +567,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				actionGuard,
 				isPluginTrusted: () => true,
 				dispatch,
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -574,6 +575,48 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		).resolves.toBe('dispatched');
 		expect(events).toEqual(['audit', 'sink']);
 		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary');
+	});
+
+	it('denies dispatch without the separate unattended consent even when grant + trust + low risk all pass', async () => {
+		const events: string[] = [];
+		const dispatch = vi.fn(async () => 'dispatched');
+		const actionGuard = new ActionGuard({
+			now: () => 5,
+			audit: () => events.push('audit'),
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				actionGuard,
+				isPluginTrusted: () => true,
+				dispatch,
+				// Interactive grant present, but the unattended consent is withheld.
+				dispatchUnattendedAllowed: () => false,
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/unattended consent/);
+		// Denied before the sink and before the ActionGuard audit fires.
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(events).toEqual([]);
+	});
+
+	it('fails CLOSED: denies dispatch when dispatchUnattendedAllowed is not wired at all', async () => {
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				isPluginTrusted: () => true,
+				dispatch,
+				// dispatchUnattendedAllowed intentionally omitted: the gate must deny,
+				// never silently revert to pre-gate (no-unattended-check) behavior.
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/unattended consent/);
+		expect(dispatch).not.toHaveBeenCalled();
 	});
 
 	it('denies dispatch to an agent the allowlist grant does not name (exact membership, no wildcard)', async () => {
@@ -635,6 +678,8 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
 				isPluginTrusted: () => false,
 				dispatch,
+				// Past the unattended gate so this test exercises the TRUST gate.
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -744,6 +789,8 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				dispatch,
 				spawn,
 				resolveSpawnBinary,
+				// Past the unattended gate so this test exercises the RISK tripwire.
+				dispatchUnattendedAllowed: () => true,
 			})
 		);
 		await expect(
@@ -1210,6 +1257,257 @@ describe('resource cleanup on plugin stop', () => {
 			fs.rmSync(tmpA, { recursive: true, force: true });
 			fs.rmSync(tmpB, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('net:connect (persistent socket) handlers', () => {
+	// Sink stubs: the handler owns re-auth + counting; these fakes stand in for
+	// the real ws-owning sink in src/main/index.ts.
+	function makeNetDeps(over: Partial<HostHandlerDeps> = {}) {
+		let n = 0;
+		const netConnect = vi.fn(async () => ({ socketId: `sock_${++n}` }));
+		const netSend = vi.fn(async () => ({ ok: true }) as const);
+		const netClose = vi.fn(async () => ({ ok: true }) as const);
+		const deps = makeDeps({ netConnect, netSend, netClose, ...over });
+		return { deps, netConnect, netSend, netClose };
+	}
+
+	it('does NOT register net.connect/net.send/net.close without the sink deps', () => {
+		const h = buildHostCallHandlers(makeDeps());
+		expect(h['net.connect']).toBeUndefined();
+		expect(h['net.send']).toBeUndefined();
+		expect(h['net.close']).toBeUndefined();
+	});
+
+	it('registers all three verbs together when the sink is wired', () => {
+		const { deps } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		expect(typeof h['net.connect']).toBe('function');
+		expect(typeof h['net.send']).toBe('function');
+		expect(typeof h['net.close']).toBe('function');
+	});
+
+	it('rejects ws:// and any non-wss scheme before touching the network', async () => {
+		const { deps, netConnect } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		await expect(h['net.connect']!('p', { url: 'ws://gateway.example' })).rejects.toThrow(
+			/only wss/
+		);
+		await expect(h['net.connect']!('p', { url: 'https://gateway.example' })).rejects.toThrow(
+			/only wss/
+		);
+		await expect(h['net.connect']!('p', { url: 'not a url' })).rejects.toThrow();
+		expect(netConnect).not.toHaveBeenCalled();
+	});
+
+	it('refuses (and never opens) when the egress guard blocks the host', async () => {
+		const { deps, netConnect } = makeNetDeps({
+			egressGuard: {
+				assertUrlAllowed: async () => {
+					throw new Error('egress blocked: loopback');
+				},
+				lookup: (() => {}) as never,
+			},
+		});
+		const h = buildHostCallHandlers(deps);
+		await expect(h['net.connect']!('p', { url: 'wss://127.0.0.1/socket' })).rejects.toThrow(
+			/egress blocked/
+		);
+		expect(netConnect).not.toHaveBeenCalled();
+	});
+
+	it('runs the egress classifier on the https-equivalent of the wss URL', async () => {
+		const assertUrlAllowed = vi.fn(async () => {});
+		const { deps } = makeNetDeps({
+			egressGuard: { assertUrlAllowed, lookup: (() => {}) as never },
+		});
+		const h = buildHostCallHandlers(deps);
+		await h['net.connect']!('p', { url: 'wss://gateway.example/socket' });
+		expect(assertUrlAllowed).toHaveBeenCalledWith('https://gateway.example/socket');
+	});
+
+	it('denies an untrusted plugin before opening', async () => {
+		const { deps, netConnect } = makeNetDeps({ isPluginTrusted: () => false });
+		const h = buildHostCallHandlers(deps);
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).rejects.toThrow(
+			/trusted signed plugin/
+		);
+		expect(netConnect).not.toHaveBeenCalled();
+	});
+
+	it('enforces the per-plugin socket count cap', async () => {
+		const { deps, netConnect } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		for (let i = 0; i < 4; i++) {
+			await expect(
+				h['net.connect']!('p', { url: 'wss://gateway.example' })
+			).resolves.toHaveProperty('socketId');
+		}
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).rejects.toThrow(
+			/socket limit reached/
+		);
+		expect(netConnect).toHaveBeenCalledTimes(4);
+		// A DIFFERENT plugin is unaffected by p's count.
+		await expect(h['net.connect']!('q', { url: 'wss://gateway.example' })).resolves.toHaveProperty(
+			'socketId'
+		);
+	});
+
+	it('enforces the cap under CONCURRENT connects (synchronous reservation, no TOCTOU slip)', async () => {
+		// A slow sink keeps every connect in-flight simultaneously, so the cap must
+		// hold on the synchronous reservation, not on the count of settled sockets.
+		let n = 0;
+		const netConnect = vi.fn(
+			async () =>
+				new Promise<{ socketId: string }>((resolve) =>
+					setTimeout(() => resolve({ socketId: `sock_${++n}` }), 5)
+				)
+		);
+		// Permissive high-risk concurrency so the ActionGuard's own cap (default 2)
+		// does not mask what we are testing: the socket-count reservation itself.
+		const actionGuard = new ActionGuard({
+			limits: { high: { windowMs: 10_000, maxPerWindow: 100, maxConcurrent: 16 } },
+		});
+		const h = buildHostCallHandlers(makeDeps({ netConnect, actionGuard }));
+		const results = await Promise.allSettled(
+			Array.from({ length: 8 }, () => h['net.connect']!('p', { url: 'wss://gateway.example' }))
+		);
+		const ok = results.filter((r) => r.status === 'fulfilled');
+		const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+		expect(ok).toHaveLength(4);
+		expect(rejected).toHaveLength(4);
+		expect(rejected.every((r) => /socket limit reached/.test(String(r.reason)))).toBe(true);
+		// The sink is never asked to open more than the cap allows.
+		expect(netConnect).toHaveBeenCalledTimes(4);
+	});
+
+	it('frees a quota slot when a socket self-closes (release callback), so reconnect is not blocked', async () => {
+		let release: ((pluginId: string, socketId: string) => void) | undefined;
+		const { deps } = makeNetDeps({
+			registerNetSocketRelease: (fn) => {
+				release = fn;
+			},
+		});
+		const h = buildHostCallHandlers(deps);
+		const ids: string[] = [];
+		for (let i = 0; i < 4; i++) {
+			const { socketId } = (await h['net.connect']!('p', {
+				url: 'wss://gateway.example',
+			})) as { socketId: string };
+			ids.push(socketId);
+		}
+		// At the cap: the next connect is refused.
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).rejects.toThrow(
+			/socket limit reached/
+		);
+		// The remote closes one socket -> the sink releases the handler's slot.
+		expect(release).toBeDefined();
+		release!('p', ids[0]!);
+		// Reconnect now succeeds (stale entry no longer counts toward the cap).
+		await expect(h['net.connect']!('p', { url: 'wss://gateway.example' })).resolves.toHaveProperty(
+			'socketId'
+		);
+	});
+
+	it('net.send rejects an over-cap frame before delivery', async () => {
+		const { deps, netSend } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		const { socketId } = (await h['net.connect']!('p', {
+			url: 'wss://gateway.example',
+		})) as { socketId: string };
+		await expect(
+			h['net.send']!('p', { socketId, data: 'x'.repeat(64 * 1024 + 1) })
+		).rejects.toThrow(/frame exceeds/);
+		expect(netSend).not.toHaveBeenCalled();
+	});
+
+	it('net.send rejects an unknown or foreign socketId', async () => {
+		const { deps, netSend } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		const { socketId } = (await h['net.connect']!('p', {
+			url: 'wss://gateway.example',
+		})) as { socketId: string };
+		await expect(h['net.send']!('p', { socketId: 'nope', data: 'hi' })).rejects.toThrow(
+			/unknown socketId/
+		);
+		// Another plugin cannot send on p's socket.
+		await expect(h['net.send']!('other', { socketId, data: 'hi' })).rejects.toThrow(
+			/unknown socketId/
+		);
+		expect(netSend).not.toHaveBeenCalled();
+	});
+
+	it('delivers a valid frame on the plugin OWN open socket', async () => {
+		const { deps, netSend } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		const { socketId } = (await h['net.connect']!('p', {
+			url: 'wss://gateway.example',
+		})) as { socketId: string };
+		await expect(h['net.send']!('p', { socketId, data: 'hello' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(netSend).toHaveBeenCalledWith('p', socketId, 'hello');
+	});
+
+	it('re-authorizes on send: a revoked grant denies the next send', async () => {
+		let grants: PermissionGrant[] = [grant('net:connect')];
+		const { deps, netSend } = makeNetDeps({ broker: brokerFor(() => grants) });
+		const h = buildHostCallHandlers(deps);
+		const { socketId } = (await h['net.connect']!('p', {
+			url: 'wss://gateway.example',
+		})) as { socketId: string };
+		await expect(h['net.send']!('p', { socketId, data: 'hi' })).resolves.toEqual({ ok: true });
+		grants = [];
+		await expect(h['net.send']!('p', { socketId, data: 'hi' })).rejects.toThrow(
+			/permission denied/
+		);
+		// Only the first (pre-revoke) send reached the sink.
+		expect(netSend).toHaveBeenCalledTimes(1);
+	});
+
+	it('net.close tears the socket down and forgets it (subsequent ops fail)', async () => {
+		const { deps, netClose, netSend } = makeNetDeps();
+		const h = buildHostCallHandlers(deps);
+		const { socketId } = (await h['net.connect']!('p', {
+			url: 'wss://gateway.example',
+		})) as { socketId: string };
+		await expect(h['net.close']!('p', { socketId, code: 1000, reason: 'bye' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(netClose).toHaveBeenCalledWith('p', socketId, 1000, 'bye');
+		await expect(h['net.send']!('p', { socketId, data: 'hi' })).rejects.toThrow(/unknown socketId/);
+		expect(netSend).not.toHaveBeenCalled();
+	});
+
+	it('resource cleanup closes every socket the plugin still holds', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const registerResourceCleanup = vi.fn((fn: (pluginId: string) => void) => {
+			cleanup = fn;
+		});
+		const { deps, netClose } = makeNetDeps({ registerResourceCleanup });
+		const h = buildHostCallHandlers(deps);
+		const a1 = (await h['net.connect']!('a', { url: 'wss://gateway.example' })) as {
+			socketId: string;
+		};
+		const a2 = (await h['net.connect']!('a', { url: 'wss://gateway.example' })) as {
+			socketId: string;
+		};
+		const b1 = (await h['net.connect']!('b', { url: 'wss://gateway.example' })) as {
+			socketId: string;
+		};
+		expect(cleanup).toBeDefined();
+		cleanup!('a');
+		// Both of a's sockets closed; b's untouched.
+		expect(netClose).toHaveBeenCalledWith('a', a1.socketId);
+		expect(netClose).toHaveBeenCalledWith('a', a2.socketId);
+		expect(netClose).not.toHaveBeenCalledWith('b', b1.socketId);
+		// a's sockets are now forgotten (send fails); b can still send.
+		await expect(h['net.send']!('a', { socketId: a1.socketId, data: 'hi' })).rejects.toThrow(
+			/unknown socketId/
+		);
+		await expect(h['net.send']!('b', { socketId: b1.socketId, data: 'hi' })).resolves.toEqual({
+			ok: true,
+		});
 	});
 });
 

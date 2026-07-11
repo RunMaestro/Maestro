@@ -21,22 +21,25 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.11.0 for virtual
- * `groupings` contributions and the presentation-only `ui:grouping` publish/clear
- * methods. 1.10.0 added the backward-compatible, data-only `iconPacks` contribution.
- * 1.9.0 added
- * host-rendered `hostViews`, their `ui:hostView` capability, and the
- * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
- * `background.list`; 1.7.0 added history/session/tab/transcript
+ * The host API version this Maestro build implements. Bumped to 1.12.0 for the
+ * backward-compatible additive `net:connect` capability plus its `net.connect`
+ * / `net.send` / `net.close` host methods (hold an outbound persistent
+ * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
+ * 1.11.0 added virtual `groupings` contributions and the presentation-only
+ * `ui:grouping` publish/clear methods; 1.10.0 added the backward-compatible,
+ * data-only `iconPacks` contribution; 1.9.0 added host-rendered `hostViews`,
+ * their `ui:hostView` capability, and the `ui.hostViewUpdate` /
+ * `ui.hostViewRemove` RPC methods; 1.8.0 added `background.list`; 1.7.0 added
+ * history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
  * `agent.error` / `usage.updated` / `run.completed` + functional
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
- * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.)
+ * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.11.0';
+export const HOST_API_VERSION = '1.12.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

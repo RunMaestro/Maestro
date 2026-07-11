@@ -249,7 +249,10 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				watch: function (path, opts) { return hostCall('fs.watch', { path: path, opts: opts }); }
 			}),
 			net: Object.freeze({
-				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); }
+				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); },
+				connect: function (url, opts) { return hostCall('net.connect', { url: url, protocols: opts && opts.protocols, headers: opts && opts.headers }); },
+				send: function (socketId, data) { return hostCall('net.send', { socketId: socketId, data: data }); },
+				close: function (socketId, opts) { return hostCall('net.close', { socketId: socketId, code: opts && opts.code, reason: opts && opts.reason }); }
 			}),
 			agents: Object.freeze({
 				list: function () { return hostCall('agents.list', {}); },

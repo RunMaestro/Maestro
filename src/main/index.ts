@@ -14,6 +14,9 @@ import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import * as https from 'https';
+import type { LookupFunction } from 'net';
+import WebSocket from 'ws';
 import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
@@ -1681,6 +1684,129 @@ app
 				return typeof p === 'number' && p > 0 ? [p] : [];
 			},
 		});
+
+		// net:connect host sink. The SINK owns the raw ws.WebSocket objects; the
+		// handler (plugin-host-handlers) owns the socketId -> {pluginId,url} map it
+		// uses to re-authorize send/close and to count sockets per plugin. The
+		// connect is pinned to the egress-guard lookup (same SSRF/DNS-rebind defense
+		// as net.fetch) and inbound frame size is capped by maxPayload; the handler
+		// already refused anything but wss:// and any untrusted plugin before here.
+		const PLUGIN_SOCKET_MAX_FRAME_BYTES = 64 * 1024;
+		const pluginSockets = new Map<string, Map<string, WebSocket>>();
+		// Set by the handler (via registerNetSocketRelease). Lets a self-closing
+		// socket (remote close / error) free the handler's per-plugin quota slot, so
+		// a normal server-initiated close does not leak a stale count toward the cap.
+		let pluginNetSocketRelease: ((pluginId: string, socketId: string) => void) | undefined;
+		// v1: headers are dropped entirely. The connect URL and the broker host-scope
+		// grant are the only client-controlled inputs; a plugin cannot smuggle a
+		// forged Host/Origin/Authorization header. If a future gateway needs a bearer
+		// token, add a narrow host-validated allowlist here - never a passthrough.
+		const sanitizePluginSocketHeaders = (_headers: unknown): undefined => undefined;
+		const dropPluginSocket = (pluginId: string, socketId: string): void => {
+			const forPlugin = pluginSockets.get(pluginId);
+			forPlugin?.delete(socketId);
+			if (forPlugin && forPlugin.size === 0) pluginSockets.delete(pluginId);
+		};
+		const hostnameForAudit = (url: string): string => {
+			try {
+				return new URL(url).hostname;
+			} catch {
+				return url;
+			}
+		};
+		const pluginNetConnect = async (
+			pluginId: string,
+			url: string,
+			opts: { protocols?: unknown; headers?: unknown }
+		): Promise<{ socketId: string }> => {
+			const socketId = `net_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+			const protocols = Array.isArray(opts.protocols)
+				? (opts.protocols.filter((p) => typeof p === 'string') as string[])
+				: undefined;
+			const ws = new WebSocket(url, protocols, {
+				// Pin the TLS connect to the validated address (loopback / RFC1918 /
+				// link-local / metadata are already refused by the classifier). The
+				// guard's lookup is runtime-compatible with Node's LookupFunction; the
+				// cast bridges the type-only `family` widening (string variants) the
+				// same way net.fetch casts the undici dispatcher.
+				agent: new https.Agent({
+					lookup: pluginEgressGuard.lookup as unknown as LookupFunction,
+				}),
+				handshakeTimeout: 15_000,
+				maxPayload: PLUGIN_SOCKET_MAX_FRAME_BYTES,
+				headers: sanitizePluginSocketHeaders(opts.headers),
+			});
+			const forPlugin = pluginSockets.get(pluginId) ?? new Map<string, WebSocket>();
+			forPlugin.set(socketId, ws);
+			pluginSockets.set(pluginId, forPlugin);
+			const push = (payload: Record<string, unknown>): void => {
+				pluginSandboxHost?.pushEvent(pluginId, {
+					topic: `net.connect:${socketId}`,
+					at: new Date().toISOString(),
+					payload: { socketId, ...payload },
+				});
+			};
+			ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+				// Defensive inbound cap on top of maxPayload.
+				const buf = Array.isArray(data)
+					? Buffer.concat(data)
+					: Buffer.isBuffer(data)
+						? data
+						: Buffer.from(data as ArrayBuffer);
+				if (buf.byteLength > PLUGIN_SOCKET_MAX_FRAME_BYTES) {
+					push({ type: 'error', message: 'inbound frame exceeds size limit' });
+					return;
+				}
+				push({ type: 'message', data: buf.toString('utf8'), binary: isBinary });
+			});
+			ws.on('close', (code: number, reason: Buffer) => {
+				push({ type: 'close', code, reason: reason.toString('utf8') });
+				dropPluginSocket(pluginId, socketId);
+				// Free the handler's quota slot for this self-closed socket. (ws emits
+				// 'close' after 'error' too, so this covers fatal errors as well.)
+				pluginNetSocketRelease?.(pluginId, socketId);
+			});
+			ws.on('error', (err: Error) => {
+				// Message string only: never leak the Error object / stack to a plugin.
+				push({ type: 'error', message: err.message });
+			});
+			// Resolve as soon as the socket is created and tracked; the plugin observes
+			// the actual OPEN via the first event on the topic (simpler than buffering
+			// an open handshake here, and handshakeTimeout still bounds a stuck
+			// connect). A send before OPEN is rejected by pluginNetSend.
+			logger.info(
+				`net.connect by "${pluginId}" -> ${hostnameForAudit(url)} (socket ${socketId})`,
+				'[PluginAudit]'
+			);
+			return { socketId };
+		};
+		const pluginNetSend = async (
+			pluginId: string,
+			socketId: string,
+			data: string
+		): Promise<{ ok: true }> => {
+			const ws = pluginSockets.get(pluginId)?.get(socketId);
+			if (!ws) throw new Error('net.send: unknown socketId');
+			if (ws.readyState !== WebSocket.OPEN) throw new Error('net.send: socket not open');
+			ws.send(data);
+			return { ok: true };
+		};
+		const pluginNetClose = async (
+			pluginId: string,
+			socketId: string,
+			code?: number,
+			reason?: string
+		): Promise<{ ok: true }> => {
+			const ws = pluginSockets.get(pluginId)?.get(socketId);
+			try {
+				ws?.close(code, reason);
+			} catch {
+				// best-effort: the socket may already be closing/closed
+			}
+			dropPluginSocket(pluginId, socketId);
+			return { ok: true };
+		};
+
 		// Loose view of the settings store for dynamic plugin-namespaced keys.
 		const pluginSettingsStore = store as unknown as {
 			get(key: string): unknown;
@@ -2231,6 +2357,11 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				// Direct plugin dispatch is never user-present, so it requires the
+				// separate unattended consent on TOP of the interactive allowlist grant
+				// — the same grant source and check the time-based scheduler uses.
+				dispatchUnattendedAllowed: (pluginId, agentId) =>
+					isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId),
 				spawn: async (pluginId, spec) => {
 					logger.info(
 						`process.spawn by "${pluginId}": ${spec.name} (${spec.binaryPath}) argv=${JSON.stringify(spec.args)}`,
@@ -2266,6 +2397,17 @@ app
 					});
 				},
 				resolveSpawnBinary: (name) => spawnBinaryRegistry.resolve(name),
+				// net:connect (persistent wss socket) sinks. Wired together so the
+				// handler surface is never partial. The handler enforces wss-only,
+				// trust, the broker host-scope grant, the per-plugin socket cap, and
+				// the outbound frame cap; these sinks own the raw ws objects and pin
+				// the connect to pluginEgressGuard.lookup.
+				netConnect: pluginNetConnect,
+				netSend: pluginNetSend,
+				netClose: pluginNetClose,
+				registerNetSocketRelease: (release) => {
+					pluginNetSocketRelease = release;
+				},
 			}),
 			onLog: (pluginId, level, message) => {
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');

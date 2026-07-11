@@ -92,6 +92,16 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		expect(keys).toContain('resolveSpawnBinary');
 	});
 
+	it('gates direct dispatch behind the separate unattended consent (dispatch implies dispatchUnattendedAllowed)', () => {
+		// Direct plugin dispatch is definitionally "nobody at the keyboard", so the
+		// handler requires the unattended consent on top of the interactive
+		// allowlist grant. Removing the wired predicate would silently drop that
+		// gate — this pins it so doing so fails the build and forces a review.
+		if (keys.includes('dispatch')) {
+			expect(keys).toContain('dispatchUnattendedAllowed');
+		}
+	});
+
 	it('still wires the safe read-only deps (guard targets the right call)', () => {
 		expect(keys).toContain('listAgents');
 		expect(keys).toContain('broker');
@@ -115,5 +125,43 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		// execFile with explicit shell: false in the sink options object.
 		expect(source).toMatch(/shell: false/);
 		expect(source).not.toMatch(/shell: true/);
+	});
+});
+
+describe('production net:connect wiring (persistent socket sink)', () => {
+	const keys = depsObjectKeys();
+	const handlerSource = fs.readFileSync(
+		path.join(__dirname, '../../../main/plugins/plugin-host-handlers.ts'),
+		'utf-8'
+	);
+
+	it('wires netConnect / netSend / netClose TOGETHER (never a partial surface)', () => {
+		// A partial surface (e.g. connect without close) would leak sockets or make
+		// live-revoke unenforceable — either is a security review, not a refactor.
+		const wired = keys.filter((k) => k === 'netConnect' || k === 'netSend' || k === 'netClose');
+		// Either all three are wired, or none are (the inert Phase-1 state).
+		expect(wired.length === 0 || wired.length === 3).toBe(true);
+		if (wired.length > 0) {
+			expect(keys).toContain('netConnect');
+			expect(keys).toContain('netSend');
+			expect(keys).toContain('netClose');
+		}
+	});
+
+	it('the net.connect handler enforces wss:-only and a trusted signed plugin', () => {
+		// Pin the two gates that make a persistent egress channel acceptable. These
+		// live in the handler factory; weakening either must fail the build.
+		expect(handlerSource).toMatch(/only wss/);
+		expect(handlerSource).toMatch(/net\.connect requires a trusted signed plugin/);
+		// The per-plugin cap and per-frame cap constants must exist.
+		expect(handlerSource).toMatch(/MAX_SOCKETS_PER_PLUGIN\s*=\s*4/);
+		expect(handlerSource).toMatch(/MAX_FRAME_BYTES\s*=\s*64 \* 1024/);
+	});
+
+	it('the socket sink pins the connect to the egress-guard lookup and caps frames', () => {
+		// The raw ws must resolve through the SSRF/DNS-rebind classifier, identical
+		// to net.fetch, and cap inbound frame size.
+		expect(source).toMatch(/https\.Agent\(\{[\s\S]*?lookup: pluginEgressGuard\.lookup/);
+		expect(source).toMatch(/maxPayload:/);
 	});
 });
