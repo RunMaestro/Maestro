@@ -734,6 +734,7 @@ interface MaestroAPI {
 			sshRemoteEnabled?: boolean;
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
+			performanceTracePath?: string;
 		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
@@ -2442,6 +2443,17 @@ interface MaestroAPI {
 			durationMs: number;
 			error?: string;
 		}>;
+		// Stop + bundle to a temp .zip without a save dialog (for feedback attach)
+		stopProfilingToFile: () => Promise<{
+			success: boolean;
+			path: string;
+			bundleSizeBytes: number;
+			traceSizeBytes: number;
+			durationMs: number;
+			error?: string;
+		}>;
+		// Delete an abandoned temp trace zip from stopProfilingToFile
+		discardTrace: (filePath: string) => Promise<{ success: boolean }>;
 		onProfilingProgress: (
 			handler: (event: {
 				phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';

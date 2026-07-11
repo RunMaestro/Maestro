@@ -292,6 +292,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							onCancel={handleCloseRequest}
 							onWidthChange={setWidth}
 							resumeDraftId={resumeDraftId}
+							onRequestMinimize={handleMinimize}
 							onSubmitSuccess={(sessionId) => {
 								onSwitchToSession(sessionId);
 								onClose();

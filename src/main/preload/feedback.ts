@@ -111,6 +111,12 @@ export interface FeedbackConversationSubmitPayload {
 	sshRemoteEnabled?: boolean;
 	attachments?: FeedbackAttachmentPayload[];
 	includeDebugPackage?: boolean;
+	/**
+	 * Absolute path to a temp performance-trace .zip captured via
+	 * debug:stopProfilingToFile. When present, it is uploaded and linked in the
+	 * issue body, then deleted.
+	 */
+	performanceTracePath?: string;
 }
 
 export interface FeedbackApi {

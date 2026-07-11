@@ -13,6 +13,8 @@ import {
 	DebugHandlerDependencies,
 } from '../../../../main/ipc/handlers/debug';
 import * as debugPackage from '../../../../main/debug-package';
+import * as profiling from '../../../../main/profiling';
+import fs from 'fs';
 import { AgentDetector } from '../../../../main/agents';
 import { ProcessManager } from '../../../../main/process-manager';
 import { WebServer } from '../../../../main/web-server';
@@ -45,6 +47,20 @@ vi.mock('../../../../main/debug-package', () => ({
 	generateDebugPackage: vi.fn(),
 	previewDebugPackage: vi.fn(),
 }));
+
+// Mock the profiling module (Chromium contentTracing state machine)
+vi.mock('../../../../main/profiling', () => ({
+	startProfiling: vi.fn(),
+	stopProfiling: vi.fn(),
+	getProfilingStatus: vi.fn(),
+	finalizeCapture: vi.fn(),
+}));
+
+// Mock fs so temp-file cleanup (fs.promises.unlink) is observable
+vi.mock('fs', () => {
+	const unlink = vi.fn().mockResolvedValue(undefined);
+	return { default: { promises: { unlink } }, promises: { unlink } };
+});
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -359,6 +375,64 @@ describe('debug IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Preview generation failed');
+		});
+	});
+
+	describe('debug:stopProfilingToFile', () => {
+		it('bundles the trace to a temp zip without a save dialog', async () => {
+			vi.mocked(profiling.stopProfiling).mockResolvedValue({
+				durationMs: 1500,
+				categories: ['devtools.timeline'],
+			});
+			vi.mocked(profiling.finalizeCapture).mockResolvedValue({
+				path: '/Users/test/Desktop/maestro-profile-x.zip',
+				bundleSizeBytes: 5000,
+				traceSizeBytes: 9000,
+			});
+
+			const handler = handlers.get('debug:stopProfilingToFile');
+			expect(handler).toBeDefined();
+			const result = await handler!({} as any);
+
+			expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+			expect(profiling.stopProfiling).toHaveBeenCalled();
+			expect(profiling.finalizeCapture).toHaveBeenCalledWith(
+				expect.stringContaining('maestro-trace-'),
+				expect.stringContaining('maestro-profile-'),
+				1500,
+				['devtools.timeline']
+			);
+			// Raw trace temp file is cleaned up after bundling.
+			expect(fs.promises.unlink).toHaveBeenCalledWith(expect.stringContaining('maestro-trace-'));
+			expect(result).toMatchObject({
+				success: true,
+				path: '/Users/test/Desktop/maestro-profile-x.zip',
+				bundleSizeBytes: 5000,
+				traceSizeBytes: 9000,
+				durationMs: 1500,
+			});
+		});
+	});
+
+	describe('debug:discardTrace', () => {
+		it('deletes a temp maestro trace zip', async () => {
+			const handler = handlers.get('debug:discardTrace');
+			expect(handler).toBeDefined();
+			const target = '/Users/test/Desktop/maestro-profile-abc.zip';
+			const result = await handler!({} as any, target);
+
+			expect(fs.promises.unlink).toHaveBeenCalledWith(target);
+			expect(result.success).toBe(true);
+		});
+
+		it('refuses paths outside the temp dir or with the wrong name', async () => {
+			const handler = handlers.get('debug:discardTrace');
+			const bad = await handler!({} as any, '/etc/passwd');
+			const wrongName = await handler!({} as any, '/Users/test/Desktop/other.zip');
+
+			expect(fs.promises.unlink).not.toHaveBeenCalled();
+			expect(bad.success).toBe(false);
+			expect(wrongName.success).toBe(false);
 		});
 	});
 });
