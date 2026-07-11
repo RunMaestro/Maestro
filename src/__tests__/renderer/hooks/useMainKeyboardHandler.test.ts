@@ -61,6 +61,7 @@ describe('useMainKeyboardHandler', () => {
 		});
 		// Reset modal store so draft/wizard confirmation tests start clean
 		useModalStore.getState().closeModal('confirm');
+		useModalStore.getState().closeModal('promptComposer');
 	});
 
 	afterEach(() => {
@@ -134,6 +135,35 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('Prompt Composer shortcut', () => {
+		it('flushes the active group chat draft before opening the composer', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const flushGroupChatDraft = vi.fn(() => {
+				expect(useModalStore.getState().isOpen('promptComposer')).toBe(false);
+			});
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'openPromptComposer',
+				activeSession: { id: 'session-1', inputMode: 'ai' },
+				activeGroupChatId: 'group-chat-1',
+				flushGroupChatDraft,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'p',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(flushGroupChatDraft).toHaveBeenCalledOnce();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
 		});
 	});
 

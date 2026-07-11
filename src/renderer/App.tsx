@@ -867,6 +867,7 @@ function MaestroConsoleInner() {
 	const fileTreeKeyboardNavRef = useRef(false); // Shared between useInputHandlers and useFileExplorerEffects
 	const rightPanelRef = useRef<RightPanelHandle>(null);
 	const mainPanelRef = useRef<MainPanelHandle>(null);
+	const groupChatDraftFlushRef = useRef<(() => void) | null>(null);
 
 	// Refs for accessing latest values in event handlers
 	const customAICommandsRef = useRef(customAICommands);
@@ -1098,6 +1099,24 @@ function MaestroConsoleInner() {
 		handleCloseEditGroupChatModal,
 		handleCloseGroupChatInfo,
 	} = useGroupChatHandlers();
+
+	const handleToggleGroupChatMarkdownMode = useCallback(() => {
+		const { chatRawTextMode: currentMode, setChatRawTextMode: setCurrentMode } =
+			useSettingsStore.getState();
+		setCurrentMode(!currentMode);
+	}, []);
+
+	const handleGroupChatFlashNotification = useCallback((message: string) => {
+		setSuccessFlashNotification(message);
+		setTimeout(() => setSuccessFlashNotification(null), 2000);
+	}, []);
+
+	const handlePublishGroupChatMessageGist = useCallback((text: string, messageId?: string) => {
+		if (!text.trim()) return;
+		const filename = `group_chat_response_${Date.now()}.md`;
+		useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
+		setGistPublishModalOpen(true);
+	}, []);
 
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
 	const {
@@ -1748,6 +1767,23 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	const flushGroupChatDraft = useCallback(() => {
+		groupChatDraftFlushRef.current?.();
+	}, []);
+
+	const handleOpenGroupChatPromptComposer = useCallback(() => {
+		flushGroupChatDraft();
+		setPromptComposerOpen(true);
+	}, [flushGroupChatDraft, setPromptComposerOpen]);
+
+	const handleGroupChatDrop = useCallback(
+		(e: React.DragEvent) => {
+			flushGroupChatDraft();
+			handleDrop(e);
+		},
+		[flushGroupChatDraft, handleDrop]
+	);
 
 	// In-place recovery from session_not_found errors. The hook drives the
 	// inline SessionRecoveryCard surfaced by useAgentErrorListener — it grooms
@@ -2470,6 +2506,7 @@ function MaestroConsoleInner() {
 		// Group chat context
 		activeGroupChatId,
 		groupChatInputRef,
+		flushGroupChatDraft,
 		groupChatStagedImages,
 		setGroupChatRightTab,
 		// Navigation handlers from useKeyboardNavigation hook
@@ -2933,7 +2970,7 @@ function MaestroConsoleInner() {
 
 	// Chat-attach drop zone for the group chat view (parity with the main panel).
 	// Scoped to the group chat container so only that region reacts.
-	const groupChatDropZone = useChatFileDropZone(theme, handleDrop);
+	const groupChatDropZone = useChatFileDropZone(theme, handleGroupChatDrop);
 
 	const handleCloseDrawers = useCallback(() => {
 		setLeftSidebarOpen(false);
@@ -3050,14 +3087,15 @@ function MaestroConsoleInner() {
 								shortcuts={shortcuts}
 								sessions={sessions}
 								onDraftChange={handleGroupChatDraftChange}
-								onOpenPromptComposer={() => setPromptComposerOpen(true)}
+								onOpenPromptComposer={handleOpenGroupChatPromptComposer}
+								draftFlushRef={groupChatDraftFlushRef}
 								stagedImages={groupChatStagedImages}
 								setStagedImages={setGroupChatStagedImages}
 								readOnlyMode={groupChatReadOnlyMode}
 								setReadOnlyMode={setGroupChatReadOnlyMode}
 								inputRef={groupChatInputRef}
 								handlePaste={handlePaste}
-								handleDrop={handleDrop}
+								handleDrop={handleGroupChatDrop}
 								onOpenLightbox={handleSetLightboxImage}
 								executionQueue={groupChatExecutionQueue.filter(
 									(item) => item.tabId === activeGroupChatId
@@ -3065,23 +3103,15 @@ function MaestroConsoleInner() {
 								onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 								onReorderQueuedItems={handleReorderGroupChatQueueItems}
 								markdownEditMode={chatRawTextMode}
-								onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
+								onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
 								maxOutputLines={maxOutputLines}
 								enterToSendAI={enterToSendAI}
 								setEnterToSendAI={setEnterToSendAI}
-								showFlashNotification={(message: string) => {
-									setSuccessFlashNotification(message);
-									setTimeout(() => setSuccessFlashNotification(null), 2000);
-								}}
+								showFlashNotification={handleGroupChatFlashNotification}
 								participantColors={groupChatParticipantColors}
 								messagesRef={groupChatMessagesRef}
 								ghCliAvailable={ghCliAvailable}
-								onPublishMessageGist={(text: string, messageId?: string) => {
-									if (!text.trim()) return;
-									const filename = `group_chat_response_${Date.now()}.md`;
-									useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
-									setGistPublishModalOpen(true);
-								}}
+								onPublishMessageGist={handlePublishGroupChatMessageGist}
 							/>
 						</div>
 						<GroupChatRightPanel
