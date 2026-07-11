@@ -6,7 +6,7 @@ import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
-import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -44,7 +44,7 @@ function normalizeUsageToDelta(
 		contextWindow: number;
 		reasoningTokens?: number;
 	}
-): typeof usageStats {
+): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
 	const totals: UsageTotals = {
 		inputTokens: usageStats.inputTokens,
 		outputTokens: usageStats.outputTokens,
@@ -89,6 +89,14 @@ function normalizeUsageToDelta(
 
 	managedProcess.usageIsCumulative = true;
 	managedProcess.lastUsageTotals = totals;
+	// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
+	// for combined-context providers (Codex) whose cumulative total IS the current
+	// window occupancy. This function also runs for Claude Code, which can look
+	// monotonic for the first turns of a session; Claude's per-call values are NOT
+	// cumulative occupancy, so attaching an absolute snapshot there would let the
+	// timeline plot cumulative token spend as context fill. The first event of a
+	// session returns raw above (no `last` yet) and is already absolute.
+	const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
 	return {
 		...usageStats,
 		inputTokens: delta.inputTokens,
@@ -96,6 +104,17 @@ function normalizeUsageToDelta(
 		cacheReadInputTokens: delta.cacheReadInputTokens,
 		cacheCreationInputTokens: delta.cacheCreationInputTokens,
 		reasoningTokens: delta.reasoningTokens,
+		...(attachesAbsolute
+			? {
+					absoluteUsage: {
+						inputTokens: totals.inputTokens,
+						outputTokens: totals.outputTokens,
+						cacheReadInputTokens: totals.cacheReadInputTokens,
+						cacheCreationInputTokens: totals.cacheCreationInputTokens,
+						reasoningTokens: totals.reasoningTokens,
+					},
+				}
+			: {}),
 	};
 }
 
