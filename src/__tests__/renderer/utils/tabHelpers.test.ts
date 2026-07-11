@@ -61,6 +61,7 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
@@ -68,6 +69,7 @@ import {
 	groupHasUnreadTabs,
 	computeUnreadGroupIds,
 } from '../../../renderer/utils/tabHelpers';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
 import type {
 	Session,
@@ -5114,6 +5116,39 @@ describe('tabHelpers', () => {
 				activeTabId: 'a1',
 			});
 			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
+		});
+	});
+
+	describe('toggleReadOnlyModeFields', () => {
+		it('toggles a non-read-only tab to readonly on both fields', () => {
+			expect(toggleReadOnlyModeFields({ readOnlyMode: false })).toEqual({
+				readOnlyMode: true,
+				permissionMode: 'readonly',
+			});
+		});
+
+		it('toggles a read-only tab back to full access on both fields', () => {
+			expect(toggleReadOnlyModeFields({ readOnlyMode: true })).toEqual({
+				readOnlyMode: false,
+				permissionMode: 'full',
+			});
+		});
+
+		it('treats an unset readOnlyMode as not-read-only', () => {
+			expect(toggleReadOnlyModeFields({})).toEqual({
+				readOnlyMode: true,
+				permissionMode: 'readonly',
+			});
+		});
+
+		it('keeps permissionMode coherent so resolveTabPermissionMode agrees after a toggle', () => {
+			// The invariant this fix protects: the toolbar pill and the spawn path
+			// both resolve through resolveTabPermissionMode, so after toggling a Full
+			// Access tab to read-only the pill can no longer keep saying "Full Access".
+			const afterOn = toggleReadOnlyModeFields({ readOnlyMode: false });
+			expect(resolveTabPermissionMode(afterOn)).toBe('readonly');
+			const afterOff = toggleReadOnlyModeFields(afterOn);
+			expect(resolveTabPermissionMode(afterOff)).toBe('full');
 		});
 	});
 });

@@ -16,7 +16,7 @@
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
-import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { resolveQueuedItemTarget, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
 import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -151,7 +151,7 @@ export function useQuickActionsHandlers(
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+							tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
 						),
 					};
 				})

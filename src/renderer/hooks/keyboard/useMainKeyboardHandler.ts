@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
+import {
+	getInitialRenameValue,
+	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
+} from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -1113,7 +1117,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 								return {
 									...s,
 									aiTabs: s.aiTabs.map((tab: AITab) =>
-										tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+										tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
 									),
 								};
 							})

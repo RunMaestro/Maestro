@@ -1940,6 +1940,28 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 }
 
 /**
+ * Field patch for flipping a tab's read-only state.
+ *
+ * Keeps the legacy `readOnlyMode` boolean and the 3-way `permissionMode` in
+ * lockstep, so the toolbar pill (resolved via resolveTabPermissionMode) and the
+ * spawn path can never drift: toggling read-only ON means `readonly`, OFF means
+ * full access. This mirrors what the toolbar's permission cycle already writes.
+ * Every read-only toggle entry point (keyboard shortcut, quick action, prompt
+ * composer, tab menu, tab store) spreads this instead of writing `readOnlyMode`
+ * alone - the old inline `readOnlyMode: !tab.readOnlyMode` left `permissionMode`
+ * stale, so a Full Access tab kept its pill after being switched to read-only.
+ * `standard` is reachable only through the toolbar cycle, so toggling read-only
+ * off lands on `full` (the non-readonly default).
+ */
+export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
+	readOnlyMode: boolean;
+	permissionMode: 'full' | 'readonly';
+} {
+	const nextReadOnly = !tab.readOnlyMode;
+	return { readOnlyMode: nextReadOnly, permissionMode: nextReadOnly ? 'readonly' : 'full' };
+}
+
+/**
  * Detects the "closed the last tab" transition produced by closeTab(): when the
  * sole remaining AI tab is closed, closeTab() replaces it with a brand-new empty
  * tab, so the session still has exactly one AI tab but its id changed. Callers use

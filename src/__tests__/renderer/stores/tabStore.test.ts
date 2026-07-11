@@ -405,10 +405,12 @@ describe('tabStore', () => {
 			useTabStore.getState().toggleReadOnly('tab-1');
 			let session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(true);
+			expect(session.aiTabs[0].permissionMode).toBe('readonly');
 
 			useTabStore.getState().toggleReadOnly('tab-1');
 			session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(false);
+			expect(session.aiTabs[0].permissionMode).toBe('full');
 		});
 
 		it('should toggle save to history', () => {
