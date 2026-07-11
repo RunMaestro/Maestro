@@ -1035,6 +1035,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			coworking: false,
 			opencodeServer: false,
 			concerto: false,
+			groupsPlus: false,
 		},
 		category: 'advanced',
 	},

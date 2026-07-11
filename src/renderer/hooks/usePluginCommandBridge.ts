@@ -1,6 +1,6 @@
 /**
  * usePluginCommandBridge - mount ONCE near the App root. It does two things,
- * both against the SAME shared command registry the command palette reads:
+ * both against the SAME shared command registry:
  *
  *   1. Registers a curated set of STABLE global commands (open command palette,
  *      settings, usage dashboard, ...). Each `run` drives an existing modal
@@ -8,9 +8,14 @@
  *      single zero-arg hook call.
  *   2. Subscribes to the host's `plugins:run-ui-command` round-trip. When a
  *      plugin invokes the `ui:command` host method, the main process forwards
- *      the requested command id here; we run it through `runCommandById` (the
- *      exact registry the palette uses) and ack the boolean result so the host
- *      can report success/"unknown command" to the plugin.
+ *      the requested command id here; we run it through `runCommandById` and ack
+ *      the boolean result so the host can report success/"unknown command" to
+ *      the plugin.
+ *
+ * These commands are plugin-invokable only. The command palette does NOT surface
+ * the registry: each of these globals already has a richer dedicated palette
+ * entry (with shortcut/subtext) built by the QuickActionsModal command builders,
+ * so surfacing the registry too would render duplicate rows.
  */
 
 import { useEffect } from 'react';
@@ -19,9 +24,7 @@ import { getModalActions } from '../stores/modalStore';
 
 /**
  * Curated global command ids. These are part of the plugin-facing contract
- * (plugins invoke them by id via `ui.runCommand`) - keep them stable. The
- * palette surfaces them through `buildRegistryCommands`, so a single
- * registration here makes a command BOTH palette-visible and plugin-invokable.
+ * (plugins invoke them by id via `ui.runCommand`) - keep them stable.
  */
 function registerGlobalCommands(): () => void {
 	const actions = getModalActions();

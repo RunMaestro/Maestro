@@ -47,7 +47,8 @@ export interface UseSessionListPropsDeps {
 	startRenamingGroup: (groupId: string) => void;
 	startRenamingSession: (sessId: string) => void;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
-	createNewGroup: () => void;
+	createNewGroup: (parentGroupId?: string) => void;
+	setGroupParent: (groupId: string, parentGroupId: string | undefined) => void;
 	handleCreateGroupAndMove: (sessionId: string) => void;
 	addNewSession: () => void;
 	deleteSession: (id: string) => void;
@@ -119,6 +120,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			startRenamingSession: deps.startRenamingSession,
 			showConfirmation: deps.showConfirmation,
 			createNewGroup: deps.createNewGroup,
+			setGroupParent: deps.setGroupParent,
 			onCreateGroupAndMove: deps.handleCreateGroupAndMove,
 			addNewSession: deps.addNewSession,
 			onDeleteSession: deps.deleteSession,
@@ -173,6 +175,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.startRenamingSession,
 			deps.showConfirmation,
 			deps.createNewGroup,
+			deps.setGroupParent,
 			deps.handleCreateGroupAndMove,
 			deps.addNewSession,
 			deps.deleteSession,

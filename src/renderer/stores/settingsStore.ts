@@ -218,6 +218,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	pianola: false,
 	plugins: false,
 	concerto: false,
+	groupsPlus: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
@@ -673,6 +674,10 @@ export interface SettingsStoreActions {
 }
 
 export type SettingsStore = SettingsStoreState & SettingsStoreActions;
+
+/** Shared renderer selector for every Groups+ surface. */
+export const selectGroupsPlusEnabled = (state: SettingsStore) =>
+	state.encoreFeatures.groupsPlus === true;
 
 // ============================================================================
 // Store Implementation

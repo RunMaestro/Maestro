@@ -268,7 +268,7 @@ describe('P0 contract capabilities', () => {
 
 describe('UI customization capabilities', () => {
 	it('recognizes the new UI capabilities', () => {
-		for (const cap of ['ui:contribute', 'ui:panel', 'ui:render-unsafe'] as const) {
+		for (const cap of ['ui:contribute', 'ui:panel', 'ui:hostView', 'ui:render-unsafe'] as const) {
 			expect(isPluginCapability(cap)).toBe(true);
 			expect(PLUGIN_CAPABILITIES).toContain(cap);
 			expect(describeCapability(cap)).toBeTruthy();
@@ -278,6 +278,7 @@ describe('UI customization capabilities', () => {
 	it('risk tiers: contribute/panel medium, render-unsafe high', () => {
 		expect(capabilityRisk('ui:contribute')).toBe('medium');
 		expect(capabilityRisk('ui:panel')).toBe('medium');
+		expect(capabilityRisk('ui:hostView')).toBe('medium');
 		expect(capabilityRisk('ui:render-unsafe')).toBe('high');
 	});
 
@@ -285,6 +286,7 @@ describe('UI customization capabilities', () => {
 		const grant = (capability: string): PermissionGrant =>
 			({ capability, grantedAt: 1 }) as PermissionGrant;
 		expect(isPermitted([grant('ui:contribute')], 'ui:contribute')).toBe(true);
+		expect(isPermitted([grant('ui:hostView')], 'ui:hostView')).toBe(true);
 		expect(isPermitted([grant('ui:render-unsafe')], 'ui:render-unsafe')).toBe(true);
 	});
 });

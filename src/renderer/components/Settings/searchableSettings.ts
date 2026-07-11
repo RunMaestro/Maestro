@@ -1324,6 +1324,25 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-groups-plus',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Groups+',
+		description:
+			'Nested group folders with standard icons and label colors. Turn it on to organize the sidebar without changing stored group data.',
+		keywords: [
+			'groups',
+			'groups plus',
+			'folder',
+			'nested',
+			'hierarchy',
+			'icon',
+			'color',
+			'sidebar',
+			'organization',
+		],
+	},
+	{
 		id: 'encore-plugins',
 		tab: 'encore',
 		tabLabel: 'Plugins',

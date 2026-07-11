@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.9.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.12.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -21,7 +21,7 @@ Pure, bundle-safe contracts (no Electron, no fs) in `src/shared/plugins/`:
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `plugin-manifest.ts`                                                                                   | `PluginManifest`, `PluginTier`, `PLUGIN_ID_PATTERN`, `validatePluginManifest`, entry-traversal guard                                        |
 | `permissions.ts`                                                                                       | `PluginCapability`, `PLUGIN_CAPABILITIES`, risk/scope maps, `PermissionRequest`/`PermissionGrant`, `isPermitted` (the default-deny matcher) |
-| `contributions.ts`                                                                                     | every contribution interface, `collectContributions`, `aggregateContributions` (built-in-wins merge)                                        |
+| `contributions.ts`                                                                                     | every contribution interface, host-view block-size contract, `collectContributions`, `aggregateContributions` (built-in-wins merge)         |
 | `events.ts`                                                                                            | `PLUGIN_EVENT_TOPICS`, `PluginEventPayloads` (metadata only)                                                                                |
 | `host-api.ts`                                                                                          | `HOST_API_VERSION`, `isHostApiCompatible` (semver gate)                                                                                     |
 | `rpc-protocol.ts`                                                                                      | `HOST_API` method->capability table, `HostRequest`/`HostResponse`/`HostControlMessage`, `extractTarget`                                     |
@@ -134,6 +134,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `process:spawn`       | high   | none  | LIVE, fully gated: allowlist grant + trusted signature + Pianola risk + ActionGuard + closed schema                                                                                                                                    |
 | `ui:contribute`       | medium | none  | gates accepting declarative `uiItems` into host surfaces (menus, sidebar, status bar)                                                                                                                                                  |
 | `ui:panel`            | medium | none  | gates accepting the plugin's sandboxed `panels`                                                                                                                                                                                        |
+| `ui:hostView`         | medium | none  | drives brokered updates/removals of the plugin's declared native BlockView data; no plugin renderer runs                                                                                                                               |
 | `ui:render-unsafe`    | high   | none  | escape hatch: full custom UI with interface access (high-trust)                                                                                                                                                                        |
 
 `PermissionRequest = { capability, scope?, reason? }`. Scopes narrow `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
@@ -145,7 +146,10 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 - Every contributed id is namespaced `<pluginId>/<localId>`. The manifest author writes the bare local `id`; the loader stores both `localId` and the namespaced `id`.
 - Invalid individual items are dropped with a recorded error rather than failing the whole plugin (a typo in one theme must not hide good prompts).
 - On a namespaced-id collision the first wins (defended even though ids are plugin-scoped). For runtime agents, built-in agents always win, so a plugin can never shadow a first-party agent.
-- Contribution types: `themes`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip, and (when `plugins` is on) is exposed to a spawned agent's model over MCP via `maestro-cli mcp serve` (claude/codex auto-injected, others best-guess), each model call risk-gated. A `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`keybindings` does NOT by itself wire spawning / chord-binding - each is a separate step.
+- Contribution types: `themes`, `iconPacks`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip, and (when `plugins` is on) is exposed to a spawned agent's model over MCP via `maestro-cli mcp serve` (claude/codex auto-injected, others best-guess), each model call risk-gated. A `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`keybindings` does NOT by itself wire spawning / chord-binding - each is a separate step.
+- `iconPacks` is a tier-0 contribution: the host validates SVG path data and hex colors, namespaces pack entries, and renders paths only through host-owned SVG markup in the group appearance picker.
+
+- `hostViews` are data-only contributions available to tier-0 and tier-1 plugins: `{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }`. `blocks` is an optional BlockView block array, serialized UTF-8 is capped at 1,000,000 bytes, and the host renderer—not plugin code—draws it. Tier-1 runtime update/remove RPCs require `ui:hostView`, resolve only an already-declared local id, retain its title/surface, and reject cadenza decision/options or agent-routing payloads.
 
 ## IPC surface (`src/main/ipc/handlers/plugins.ts`)
 
@@ -179,6 +183,13 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
+The current host is `1.12.0`; it added the `net:connect` capability and the
+`net.connect` / `net.send` / `net.close` methods. Earlier: `1.11.0` added
+`groupings` + `ui:grouping`; `1.10.0` added `iconPacks`; `1.9.0` added
+`hostViews`, `ui:hostView`, and the `ui.hostViewUpdate` / `ui.hostViewRemove`
+methods. Plugins declare the `maestro.minHostApi` matching the lowest version
+whose surface they use.
+
 ## Key invariants and gotchas (read before editing)
 
 1. **Encore gate everywhere.** Any new `plugins:*` channel must throw `'PluginsDisabled'` outside `withIpcErrorLogging` when the flag is off, and any manager method that exposes plugin data must return empty when disabled.
@@ -188,8 +199,9 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 5. **Net scope alone is not enough.** Hostname scope plus the egress guard (resolved-IP block list + connection pinning + `redirect: 'error'`) together defend `net:fetch`. Do not loosen any one of them in isolation.
 6. **Events and sessions are metadata only.** Payloads NEVER contain transcript/prompt text or file contents. Redaction is not a boundary for free-form text. Content is reachable ONLY through the separate, consented, project-scoped, ActionGuard-bounded, audited `transcripts:read` capability - never the event bus.
 7. **Built-in wins.** Plugin agents/contributions can never shadow first-party ids.
-8. **Uninstall purges everything** (dir, toggle, grants, KV, `plugins.<id>.*` settings, event subs). Add any new per-plugin state to `purgePluginData`.
-9. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler ADDITIONALLY requires the separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
+8. **Host views remain data-only.** A plugin may contribute or update only BlockView data for its own declared host view; it cannot supply HTML, renderer code, cadenza decision actions, or agent-routing data. Enforce `MAX_HOST_VIEW_BLOCKS_BYTES` in both declaration parsing and runtime updates.
+9. **Uninstall purges everything** (dir, toggle, grants, KV, `plugins.<id>.*` settings, event subs). Add any new per-plugin state to `purgePluginData`.
+10. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler ADDITIONALLY requires the separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
 
 ## Honest tier-1 trust model
 
@@ -211,3 +223,21 @@ External authors do not read this repo; two artifacts hand them the contract:
 - [docs/agent-guides/PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) - the practical authoring guide.
 - `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package (vendored contracts + drift guard).
 - `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.
+
+## Virtual session groupings (HOST_API 1.9.0)
+
+`contributes.groupings` adds a presentation-only sidebar mode. A tier-0 grouping
+declares `{ id, label, description?, rules? }`; rules are first-match-wins and
+may match `toolType`, `cwdGlob`, and `namePattern`, assigning display `group`
+and optional `parentGroup` labels. Unmatched sessions appear in **Other**.
+Patterns use only the bounded `*` wildcard grammar (all other characters are
+literal); no plugin-supplied regular expression is compiled. Groupings never
+write `session.groupId` or create, rename, or delete persisted groups.
+
+Tier-1 code may publish a validated metadata-only snapshot through
+`ui:grouping`: `maestro.ui.grouping.publish({ id, groups, assignments })` and
+`maestro.ui.grouping.clear(id)`. The id must be this plugin's declared local
+grouping id; group ids are local, depth is at most two, unknown session ids are
+dropped, and snapshots are process-local and purged when the sandbox stops,
+the plugin is disabled/uninstalled, or the feature flag is off. `ui:grouping`
+is low-risk and unscoped because its only output is virtual presentation.

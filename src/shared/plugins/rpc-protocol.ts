@@ -52,6 +52,8 @@ export const HOST_API = {
 	'storage.sql': { capability: 'storage:sql' },
 	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'ui.hostViewUpdate': { capability: 'ui:hostView' },
+	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -66,6 +68,8 @@ export const HOST_API = {
 	'background.register': { capability: 'background:service' },
 	'background.unregister': { capability: 'background:service' },
 	'background.list': { capability: 'background:service' },
+	'ui.groupingPublish': { capability: 'ui:grouping' },
+	'ui.groupingClear': { capability: 'ui:grouping' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */

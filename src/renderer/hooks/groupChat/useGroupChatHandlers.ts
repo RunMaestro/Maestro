@@ -92,7 +92,7 @@ export interface GroupChatHandlersReturn {
 		images?: string[],
 		readOnly?: boolean
 	) => Promise<void>;
-	handleGroupChatDraftChange: (draft: string) => void;
+	handleGroupChatDraftChange: (draft: string, groupChatId?: string) => void;
 	handleRemoveGroupChatQueueItem: (itemId: string) => void;
 	handleReorderGroupChatQueueItems: (fromIndex: number, toIndex: number) => void;
 
@@ -792,11 +792,12 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		}
 	}, []);
 
-	const handleGroupChatDraftChange = useCallback((draft: string) => {
+	const handleGroupChatDraftChange = useCallback((draft: string, groupChatId?: string) => {
 		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
-		if (!activeGroupChatId) return;
+		const targetGroupChatId = groupChatId ?? activeGroupChatId;
+		if (!targetGroupChatId) return;
 		setGroupChats((prev) =>
-			prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
+			prev.map((c) => (c.id === targetGroupChatId ? { ...c, draftMessage: draft } : c))
 		);
 	}, []);
 

@@ -57,11 +57,11 @@ Drop the folder into `<userData>/plugins/` (or install the `.tgz` from Settings 
 
 ## 1. Pick a tier
 
-| Tier | What it is                                                                                     | Code?                  | Risk          |
-| ---- | ---------------------------------------------------------------------------------------------- | ---------------------- | ------------- |
-| 0    | Data only: declarative contributions (themes, prompts, settings, command macros, cue triggers) | NO (`entry` forbidden) | lowest        |
-| 1    | Sandboxed compute: runs `entry` code in an isolated process behind the permission broker       | YES (`entry` required) | needs consent |
-| 2    | UI contributions: sandboxed panels / modals / commands                                         | YES (`entry` required) | needs consent |
+| Tier | What it is                                                                                                 | Code?                  | Risk          |
+| ---- | ---------------------------------------------------------------------------------------------------------- | ---------------------- | ------------- |
+| 0    | Data only: declarative contributions (themes, icon packs, prompts, settings, command macros, cue triggers) | NO (`entry` forbidden) | lowest        |
+| 1    | Sandboxed compute: runs `entry` code in an isolated process behind the permission broker                   | YES (`entry` required) | needs consent |
+| 2    | UI contributions: sandboxed panels / modals / commands                                                     | YES (`entry` required) | needs consent |
 
 Do start at tier 0 if you only ship data. Do NOT request a capability you do not use - the user sees every one at the consent prompt.
 
@@ -113,7 +113,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Data)",
 	"version": "1.0.0",
 	"tier": 0,
-	"maestro": { "minHostApi": "1.4.0" },
+	"maestro": { "minHostApi": "1.9.0" },
 	"description": "Data-only contributions for the vet workflow.",
 	"contributes": {
 		"themes": [
@@ -139,6 +139,34 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 }
 ```
 
+### Worked example: tier 0 icon pack (manifest only)
+
+```json
+{
+	"id": "maestro-horizon-icons",
+	"name": "Maestro Horizon Icons",
+	"version": "1.0.0",
+	"tier": 0,
+	"maestro": { "minHostApi": "1.9.0" },
+	"contributes": {
+		"iconPacks": [
+			{
+				"id": "horizon",
+				"label": "Horizon",
+				"icons": [
+					{ "id": "sunrise", "label": "Sunrise", "path": "M12 3V5M4.93 4.93L6.34 6.34M3 12H5" },
+					{ "id": "sunset", "label": "Sunset", "path": "M4 17H20M7 14L12 9L17 14" }
+				],
+				"colors": [
+					{ "id": "coral", "label": "Coral", "value": "#F97316" },
+					{ "id": "sky", "label": "Sky", "value": "#38BDF8" }
+				]
+			}
+		]
+	}
+}
+```
+
 ### Worked example: tier 1 (code + panel)
 
 ```json
@@ -147,7 +175,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Code)",
 	"version": "1.0.0",
 	"tier": 1,
-	"maestro": { "minHostApi": "1.4.0" },
+	"maestro": { "minHostApi": "1.9.0" },
 	"entry": "entry.js",
 	"permissions": [
 		{ "capability": "storage:read", "reason": "Remember the last greeting." },
@@ -184,6 +212,26 @@ Every contributed `id` is the bare LOCAL id you author; the loader namespaces it
 	"name": "Vet Neon",
 	"mode": "dark",
 	"colors": { "bgMain": "#0b0f1a", "accent": "#36f9c5" }
+}
+```
+
+### iconPacks (tier 0)
+
+`{ id, label, icons?: [{ id, label, path, viewBox? }], colors?: [{ id, label, value }] }`
+
+`id` names the pack. The loader namespaces it to `<pluginId>/<packId>` and namespaces each
+icon or color id to `<pluginId>/<packId>/<itemId>`; those item ids are what groups store.
+Each `path` is at most 4,096 characters and may contain only SVG path-data characters
+(`MmLlHhVvCcSsQqTtAaZz0-9 ,.+-eE`); plugin authors must never provide `<svg>`, markup,
+or fill/stroke attributes. `viewBox`, when provided, is a string of four finite numbers.
+The host renders the path in its own SVG element. Every color `value` must be `#rrggbb`.
+
+```json
+{
+	"id": "horizon",
+	"label": "Horizon",
+	"icons": [{ "id": "sunrise", "label": "Sunrise", "path": "M12 3V5M4.93 4.93L6.34 6.34" }],
+	"colors": [{ "id": "coral", "label": "Coral", "value": "#F97316" }]
 }
 ```
 
@@ -245,6 +293,37 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
 ```
 
+### hostViews (tier 0 static; tier 1 updates)
+
+`{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }` declares a static,
+host-rendered view. A host view is **not** a plugin panel: Maestro renders its BlockView data
+with the active theme, and no plugin renderer code or HTML executes. A tier-0 manifest can use
+this contribution with no code and no permission grant. A tier-1 plugin needs `ui:hostView` only
+to update or remove a view after activation, and should declare `minHostApi: "1.9.0"`.
+
+`blocks` is optional and must be a BlockView block array. Its JSON serialization is capped at
+1,000,000 UTF-8 bytes. A cadenza host view is visual data only: it cannot carry a cadenza
+`decision` payload, options, or agent/session routing.
+
+```json
+{
+	"id": "run-status",
+	"surface": "movement",
+	"title": "Plugin Run Status",
+	"description": "A host-rendered, theme-native status card.",
+	"blocks": [
+		{ "kind": "heading", "text": "Ready" },
+		{ "kind": "badge", "text": "Waiting for a run", "color": "neutral" }
+	]
+}
+```
+
+The manifest author writes the local `id`; Maestro namespaces it to
+`<pluginId>/run-status`. An enabled plugin renders its declared static blocks. A running,
+granted tier-1 plugin may change only the blocks of one of its own declared views with
+`maestro.ui.hostView.update('run-status', blocks)`, or remove it with
+`maestro.ui.hostView.remove('run-status')`; it cannot change the title or surface.
+
 ### agents (tier 1)
 
 `{ id, displayName, binaryName, baseArgs?, capabilities? }`. `binaryName` is a bare command (no path, traversal, or shell metacharacters); `capabilities` is a boolean feature map. Registering an agent adds it to the registry but does NOT enable spawning it (arbitrary binary execution is a separate, security-reviewed step).
@@ -293,13 +372,18 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 | `process:spawn`       | high   | none  | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                 | `{ "capability": "process:spawn" }`                              |
 | `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar)                   | `{ "capability": "ui:contribute" }`                              |
 | `ui:panel`            | medium | none  | render its own sandboxed interactive panels                                            | `{ "capability": "ui:panel" }`                                   |
+| `ui:hostView`         | medium | none  | render/update declared host BlockView data                                             | `{ "capability": "ui:hostView" }`                                |
 | `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)                             | `{ "capability": "ui:render-unsafe" }`                           |
 
 `agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch`, `net:connect`, or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
-The `ui:*` capabilities gate what the host accepts and renders, not a brokered SDK call: `ui:contribute` admits your declarative `uiItems` into host surfaces, `ui:panel` admits your sandboxed `panels`, and `ui:render-unsafe` is the high-trust escape hatch for full custom UI. An enabled plugin WITHOUT the matching grant contributes none of that surface.
+The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits
+declarative `uiItems`, `ui:panel` admits sandboxed `panels`, and `ui:hostView` admits
+brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0
+plugins because they are host-rendered data, not a plugin UI. `ui:render-unsafe` is the
+high-trust escape hatch for full custom UI, not a substitute for any of those grants.
 
 ---
 
@@ -363,6 +447,8 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.storage.set(key, value)` (value is a string)                           | `storage:write`              |
 | `maestro.storage.delete(key)`                                                   | `storage:write`              |
 | `maestro.ui.runCommand(commandId, args?)`                                       | `ui:command`                 |
+| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                | `ui:hostView`                |
+| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                        | `ui:hostView`                |
 | `maestro.events.on(topic, handler(payload, meta))`                              | - (delivery needs subscribe) |
 | `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
@@ -373,6 +459,11 @@ Every method below is broker-gated and needs the matching capability granted. Si
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
 `transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. It is bounded as a high-risk verb and audited per read.
+
+`hostViewUpdate` accepts only BlockView data for a view declared by the calling plugin; it
+resolves the local id in that plugin's namespace, keeps the declaration's title and surface, and
+applies the same 1,000,000-byte serialized-block cap. `hostViewRemove` likewise accepts only a
+declared local id. Neither method accepts cadenza decision/options payloads or agent routing data.
 
 ### Persistent network connections (net:connect)
 
@@ -566,3 +657,41 @@ Typical flow: `init` -> edit -> `validate` -> `sign --gen-key --key-out key.pem`
 - `src/renderer/components/plugins/PluginPanelFrame.tsx` + `src/main/plugins/plugin-panel-host.ts` - the panel render host (isolated webview), CSP, and the postMessage bridge.
 - `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package.
 - `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.
+
+## Virtual sidebar groupings
+
+Groupings are virtual views of session metadata: they never change persisted
+groups or a session's `groupId`. A tier-0 manifest can provide a rule-based mode:
+
+```json
+{
+	"contributes": {
+		"groupings": [
+			{
+				"id": "by-agent-type",
+				"label": "Group by agent type",
+				"rules": [
+					{ "match": { "toolType": "claude" }, "group": "Claude" },
+					{ "match": { "toolType": "codex" }, "group": "Codex" }
+				]
+			}
+		]
+	}
+}
+```
+
+Rules are evaluated in order and unmatched sessions are shown in `Other`.
+`cwdGlob` and `namePattern` use only the safe `*` wildcard grammar, not regular
+expressions. A tier-1 plugin with the `ui:grouping` permission can publish a
+computed version of one of its declared grouping ids:
+
+```ts
+await maestro.ui.grouping.publish({
+	id: 'by-agent-type',
+	groups: [{ id: 'claude', label: 'Claude' }],
+	assignments: { 'session-id': 'claude' },
+});
+```
+
+Published group ids are local to the declared grouping, may nest only one level,
+and use session metadata only. The host silently drops unknown session ids.

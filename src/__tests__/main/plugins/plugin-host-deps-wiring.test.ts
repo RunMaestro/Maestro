@@ -107,6 +107,12 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		expect(keys).toContain('broker');
 	});
 
+	it('wires declared host-view lookup and the Concerto forwarding seam together', () => {
+		expect(keys).toContain('isHostViewsEnabled');
+		expect(keys).toContain('getHostView');
+		expect(keys).toContain('forwardHostView');
+	});
+
 	it('production blesses NO spawn binaries — the only register() site is the env-gated DEMO blessing', () => {
 		// Exactly one register call may exist, and it must sit behind both the
 		// DEMO_MODE flag and the harness env var. Adding a second call site (or

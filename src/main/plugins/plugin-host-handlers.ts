@@ -25,6 +25,7 @@ import type { PluginKvStore } from './plugin-kv-store';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
+import { validatePublishedGrouping, type PluginGroupingRegistry } from './plugin-grouping-registry';
 import {
 	isPluginEventTopic,
 	type PluginEvent,
@@ -33,6 +34,13 @@ import {
 } from '../../shared/plugins/events';
 import type { PluginCapability } from '../../shared/plugins/permissions';
 import { evaluatePluginDispatch } from '../../shared/plugins/plugin-dispatch-gate';
+import {
+	isHostViewBlocks,
+	MAX_HOST_VIEW_BLOCKS_BYTES,
+	serializedJsonByteLength,
+	type HostViewBlocks,
+	type HostViewContribution,
+} from '../../shared/plugins/contributions';
 import type { HistoryEntry } from '../../shared/types';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
@@ -132,6 +140,9 @@ export interface HostHandlerDeps {
 	/** Session METADATA listing (NEVER transcript/message content). */
 	sessionsList: () => PluginSessionMetadata[];
 	sessionsGet: (sessionId: string) => PluginSessionMetadata | null;
+	/** Process-local virtual grouping registry; never backed by persisted groups. */
+	groupingRegistry?: PluginGroupingRegistry;
+	isDeclaredGrouping?: (pluginId: string, localId: string) => boolean;
 	/** Optional session mutators. When omitted the handlers fail closed. */
 	sessionsCreate?: (params: Record<string, unknown>) => Promise<PluginSessionMetadata>;
 	sessionsUpdate?: (
@@ -192,6 +203,21 @@ export interface HostHandlerDeps {
 	 * the renderer registered; it can NEVER expose a privileged internal IPC/WS
 	 * verb (a plugin cannot fabricate a channel - only registered ids resolve). */
 	runUiCommand: (commandId: string, args?: unknown) => Promise<boolean>;
+
+	/** Host-view runtime gate. Both the `plugins` and `concerto` Encore flags
+	 * must be on; absent is fail-closed so a partially wired host cannot buffer
+	 * renderer state. */
+	isHostViewsEnabled?: () => boolean;
+	/** Resolve a caller-owned local id against active host-view declarations. */
+	getHostView?: (pluginId: string, localId: string) => HostViewContribution | null;
+	/** Main-owned forwarder to Concerto's existing Movement/Cadenza channels. The
+	 * handler passes only a declared local id and validated BlockView data. */
+	forwardHostView?: (
+		pluginId: string,
+		operation: 'update' | 'remove',
+		localId: string,
+		blocks?: HostViewBlocks
+	) => boolean;
 
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
@@ -564,6 +590,12 @@ function assertClosedSchema(
 			throw new Error(`${verb}: unexpected field "${key}" (closed schema)`);
 		}
 	}
+}
+
+function isDecisionCadenzaPayload(value: unknown): boolean {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const payload = value as Record<string, unknown>;
+	return payload.viewType === 'decision' || payload.op === 'decision';
 }
 
 /** Validate the plugin-supplied argv strings for process.spawn: bounded count
@@ -991,6 +1023,53 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			return { ok: true };
 		},
 
+		'ui.hostViewUpdate': async (pluginId, params) => {
+			const p = asObject(params);
+			if (deps.isHostViewsEnabled?.() !== true) throw new Error('host views are disabled');
+			assertClosedSchema('ui.hostViewUpdate', p, { id: true, blocks: true });
+			if (typeof p.id !== 'string' || p.id.trim() === '' || p.id !== p.id.trim()) {
+				throw new Error('host view id is required');
+			}
+			if (isDecisionCadenzaPayload(p.blocks)) {
+				throw new Error('decision cadenza payloads are not supported for plugin host views');
+			}
+			if (!isHostViewBlocks(p.blocks)) {
+				throw new Error('host view blocks must be BlockView data');
+			}
+			const byteLength = serializedJsonByteLength(p.blocks);
+			if (byteLength === null) throw new Error('host view blocks must be JSON-serializable');
+			if (byteLength > MAX_HOST_VIEW_BLOCKS_BYTES) {
+				throw new Error(
+					`host view blocks exceed the ${MAX_HOST_VIEW_BLOCKS_BYTES}-byte size limit`
+				);
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.hostViewUpdate', p);
+			if (!deps.getHostView?.(pluginId, p.id)) {
+				throw new Error(`host view "${p.id}" is not declared by this plugin`);
+			}
+			if (!deps.forwardHostView?.(pluginId, 'update', p.id, p.blocks)) {
+				throw new Error('host view update is unavailable');
+			}
+			return { ok: true };
+		},
+
+		'ui.hostViewRemove': async (pluginId, params) => {
+			const p = asObject(params);
+			if (deps.isHostViewsEnabled?.() !== true) throw new Error('host views are disabled');
+			assertClosedSchema('ui.hostViewRemove', p, { id: true });
+			if (typeof p.id !== 'string' || p.id.trim() === '' || p.id !== p.id.trim()) {
+				throw new Error('host view id is required');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.hostViewRemove', p);
+			if (!deps.getHostView?.(pluginId, p.id)) {
+				throw new Error(`host view "${p.id}" is not declared by this plugin`);
+			}
+			if (!deps.forwardHostView?.(pluginId, 'remove', p.id)) {
+				throw new Error('host view removal is unavailable');
+			}
+			return { ok: true };
+		},
+
 		'tabs.list': async (pluginId, params) => {
 			const p = asObject(params);
 			assertBrokerAllowed(deps, pluginId, 'tabs.list', p);
@@ -1173,6 +1252,28 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				restarts: 0,
 				services: services.map((s) => ({ id: s.id, ...(s.name ? { name: s.name } : {}) })),
 			};
+		},
+		'ui.groupingPublish': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.groupingPublish', p, { id: true, groups: true, assignments: true });
+			if (typeof p.id !== 'string' || !deps.isDeclaredGrouping?.(pluginId, p.id)) {
+				throw new Error('grouping id is not declared by this plugin');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.groupingPublish', p);
+			if (!deps.groupingRegistry) throw new Error('grouping registry unavailable');
+			deps.groupingRegistry.publish(validatePublishedGrouping(pluginId, p.id, p));
+			return { ok: true };
+		},
+
+		'ui.groupingClear': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.groupingClear', p, { id: true });
+			if (typeof p.id !== 'string' || !deps.isDeclaredGrouping?.(pluginId, p.id)) {
+				throw new Error('grouping id is not declared by this plugin');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.groupingClear', p);
+			deps.groupingRegistry?.clear(pluginId, p.id);
+			return { ok: true };
 		},
 	};
 
@@ -1466,9 +1567,9 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 
 /**
  * Purge ALL of a plugin's host-owned data: its private KV store, every
- * `plugins.<id>.*` setting, and any live event subscriptions. The integrator
- * calls this from uninstall, alongside removing the plugin dir, grants, and
- * enable-state, so uninstall leaves nothing behind.
+ * `plugins.<id>.*` setting, live event subscriptions, and rendered host views.
+ * The integrator calls this from uninstall, alongside removing the plugin dir
+ * and grants, so uninstall leaves nothing behind.
  */
 export function purgePluginData(
 	pluginId: string,
@@ -1476,9 +1577,11 @@ export function purgePluginData(
 		kvStore: Pick<PluginKvStore, 'purge'>;
 		settingsDeleteNamespace: (prefix: string) => void;
 		eventBus: { clear: (pluginId: string) => void };
+		hostViews?: { purge: (pluginId: string) => void };
 	}
 ): void {
 	deps.kvStore.purge(pluginId);
 	deps.settingsDeleteNamespace(`plugins.${pluginId}.`);
 	deps.eventBus.clear(pluginId);
+	deps.hostViews?.purge(pluginId);
 }

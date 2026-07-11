@@ -48,6 +48,7 @@ import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gat
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
+import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
 import { setActivePluginManager } from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
@@ -56,6 +57,9 @@ import {
 	type PluginSessionMetadata,
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
+import { PluginHostViewRegistry, type HostViewMutation } from './plugins/plugin-host-view-registry';
+import type { MovementPayload } from '../shared/movement-types';
+import type { CadenzaPayload } from '../shared/cadenza-types';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
@@ -241,6 +245,7 @@ import {
 	createWindowManager,
 	createQuitHandler,
 	deliverCadenzaToHud,
+	deliverCadenzaToExistingHud,
 	closeCadenzaHudWindow,
 	getCadenzaHudWindow,
 	type QuitHandler,
@@ -491,6 +496,7 @@ let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
+let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
@@ -644,13 +650,6 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
-// Disabling Concerto must tear down the already-running always-on-top HUD, not
-// merely reject future payloads. Without this listener, existing cards and the
-// cursor hover poll survive after the user turns the extension off.
-store.onDidChange('encoreFeatures', (encoreFeatures) => {
-	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
-});
-
 /**
  * Route a cadenza payload to the HUD window (creating it lazily). Returns
  * false when there's no main window to parent it, so the caller can fall back
@@ -671,6 +670,94 @@ function deliverCadenza(payload: Parameters<typeof deliverCadenzaToHud>[2]): boo
 	}
 	return deliverCadenzaToHud(mainWindow, cadenzaHudDeps, stamped);
 }
+
+/** Host views are a bridge between two opt-in Encore features. Re-read both
+ * flags on every mutation: a disabled feature must never retain a pending view. */
+function arePluginHostViewsEnabled(): boolean {
+	const features = store.get('encoreFeatures', {}) as Record<string, boolean>;
+	return features.plugins === true && features.concerto === true;
+}
+
+/** Forward one host-owned mutation over the exact Concerto renderer channels
+ * used by the CLI bridge. No renderer handles or plugin code cross this seam. */
+function forwardPluginHostView(mutation: HostViewMutation): boolean {
+	if (!(mutation.kind === 'remove' && mutation.force) && !arePluginHostViewsEnabled()) return false;
+	if (!mainWindow || mainWindow.isDestroyed() || !isWebContentsAvailable(mainWindow)) return false;
+	const sourcePlugin =
+		pluginManager?.getRegistry().records.find((record) => record.id === mutation.view.pluginId)
+			?.manifest?.name ?? mutation.view.pluginId;
+	let body: string | undefined;
+	if (mutation.kind === 'upsert') {
+		try {
+			body = JSON.stringify(mutation.blocks);
+		} catch {
+			return false;
+		}
+	}
+
+	if (mutation.view.surface === 'movement') {
+		const payload: MovementPayload =
+			mutation.kind === 'upsert'
+				? {
+						op: 'add',
+						id: mutation.view.id,
+						title: mutation.view.title,
+						body,
+						sourcePlugin,
+					}
+				: { op: 'remove', id: mutation.view.id };
+		mainWindow.webContents.send('remote:movement', payload);
+		return true;
+	}
+
+	const payload: CadenzaPayload =
+		mutation.kind === 'upsert'
+			? {
+					op: 'open',
+					id: mutation.view.id,
+					viewType: 'view',
+					title: mutation.view.title,
+					body,
+					sourcePlugin,
+				}
+			: { op: 'close', id: mutation.view.id };
+
+	// Closing a view must never create a new always-on-top HUD. Deliver a close
+	// to an existing HUD (including its pre-ready queue) or the main fallback only.
+	if (mutation.kind === 'remove') {
+		if (deliverCadenzaToExistingHud(payload)) return true;
+		mainWindow.webContents.send('remote:cadenza', payload);
+		return true;
+	}
+
+	// Match the CLI cadenza bridge: open/upsert prefers the HUD and creates it
+	// lazily, then falls back to the main renderer.
+	if (store.get('encoreFeatures', {})?.concerto === true && deliverCadenza(payload)) return true;
+	mainWindow.webContents.send('remote:cadenza', payload);
+	return true;
+}
+
+const pluginHostViews = new PluginHostViewRegistry({
+	isEnabled: arePluginHostViewsEnabled,
+	getHostViews: () => pluginManager?.getContributions().hostViews ?? [],
+	forward: forwardPluginHostView,
+});
+
+// Disabling either side of the bridge purges any live views immediately. If both
+// are enabled after a flag change, re-sync static data without asking a renderer
+// read path to refresh plugin discovery.
+store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
+	if (encoreFeatures?.plugins !== true) {
+		pluginSandboxHost?.stopAll();
+		pluginGroupingRegistry?.clearAll();
+	}
+	if (!arePluginHostViewsEnabled()) {
+		pluginHostViews.purgeAll();
+		return;
+	}
+	pluginHostViews.sync();
+});
 
 // A `decision` cadenza's chosen option replies to the owning agent: inject the
 // value as a live prompt into that agent's session via the main renderer's
@@ -736,6 +823,9 @@ const createWebServer = createWebServerFactory({
 // - Auto-updater initialization in production
 function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<SharedWindowState> }) {
 	mainWindow = windowManager.createWindow(options);
+	// The plugin registry may have discovered static views before the renderer
+	// existed. Re-forward host-owned data after every renderer load/reload.
+	mainWindow.webContents.on('did-finish-load', () => pluginHostViews.replay());
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
@@ -2140,6 +2230,14 @@ app
 		}
 
 		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
+		const groupingRegistry = new PluginGroupingRegistry(() => {
+			try {
+				mainWindow?.webContents.send('plugins:groupings-changed');
+			} catch {
+				// Renderer may be gone during shutdown; ignore.
+			}
+		});
+		pluginGroupingRegistry = groupingRegistry;
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -2153,6 +2251,13 @@ app
 				settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 				sessionsList: pluginSessionsList,
 				sessionsGet: pluginSessionsGet,
+				groupingRegistry,
+				isDeclaredGrouping: (pluginId, localId) =>
+					pluginManager
+						?.getContributions()
+						.groupings.some(
+							(grouping) => grouping.pluginId === pluginId && grouping.localId === localId
+						) ?? false,
 				sessionsCreate: pluginSessionsCreate,
 				sessionsUpdate: pluginSessionsUpdate,
 				sessionsDelete: pluginSessionsDelete,
@@ -2216,6 +2321,12 @@ app
 				// stub no longer type-checks; this round-trips to the renderer's shared
 				// command registry (the SAME registry the command palette is built from).
 				runUiCommand: createRunUiCommand(() => mainWindow),
+				isHostViewsEnabled: arePluginHostViewsEnabled,
+				getHostView: (pluginId, localId) => pluginHostViews.getDeclared(pluginId, localId),
+				forwardHostView: (pluginId, operation, localId, blocks) => {
+					if (operation === 'remove') return pluginHostViews.remove(pluginId, localId);
+					return blocks === undefined ? false : pluginHostViews.update(pluginId, localId, blocks);
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;
@@ -2303,11 +2414,15 @@ app
 			},
 			onCrash: (pluginId, code) => {
 				pluginResourceCleanup?.(pluginId);
+				pluginHostViews.purge(pluginId);
+				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
 			},
 			onStop: (pluginId) => {
 				pluginResourceCleanup?.(pluginId);
+				pluginHostViews.purge(pluginId);
+				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
 			},
 		});
@@ -2344,10 +2459,13 @@ app
 					kvStore: pluginKvStore,
 					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 					eventBus,
+					hostViews: pluginHostViews,
 				});
+				groupingRegistry.removePlugin(id);
 				backgroundSupervisor.teardown(id);
 			},
 			onChange: (registry) => {
+				pluginHostViews.sync();
 				try {
 					mainWindow?.webContents.send('plugins:changed', registry);
 				} catch {
@@ -3144,6 +3262,7 @@ function setupIpcHandlers() {
 			manager: pluginManager,
 			sandboxHost: pluginSandboxHost ?? undefined,
 			authStore: pluginAuthStore,
+			groupingRegistry: pluginGroupingRegistry ?? undefined,
 		});
 	}
 

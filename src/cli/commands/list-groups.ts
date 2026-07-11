@@ -19,6 +19,7 @@ export function listGroups(options: ListGroupsOptions): void {
 				name: g.name,
 				emoji: g.emoji,
 				collapsed: g.collapsed,
+				parentGroupId: g.parentGroupId,
 			}));
 			console.log(JSON.stringify(output, null, 2));
 		} else {

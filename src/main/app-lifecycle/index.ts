@@ -13,6 +13,7 @@ export {
 export {
 	ensureCadenzaHudWindow,
 	deliverCadenzaToHud,
+	deliverCadenzaToExistingHud,
 	getCadenzaHudWindow,
 	closeCadenzaHudWindow,
 	type CadenzaHudWindowDeps,

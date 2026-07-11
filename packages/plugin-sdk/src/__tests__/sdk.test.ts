@@ -26,6 +26,8 @@ import {
 	type PluginModule,
 	type AgentToolContribution,
 	type KeybindingContribution,
+	type HostViewBlocks,
+	type HostViewContribution,
 } from '../index';
 
 const sdkRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -153,6 +155,21 @@ describe('@maestro/plugin-sdk authoring surface', () => {
 		expectTypeOf<KeybindingContribution>().toHaveProperty('key');
 		expectTypeOf<MaestroSdk>().toHaveProperty('tools');
 		expectTypeOf<MaestroSdk['tools']>().toHaveProperty('register');
+	});
+
+	it('types host-rendered views and their ui:hostView runtime methods', () => {
+		expectTypeOf<HostViewContribution>().toHaveProperty('surface');
+		expectTypeOf<HostViewContribution>().toHaveProperty('blocks');
+		expectTypeOf<MaestroSdk['ui']>().toHaveProperty('hostView');
+		expectTypeOf<MaestroSdk['ui']['hostView']>().toHaveProperty('update');
+		expectTypeOf<MaestroSdk['ui']['hostView']['update']>().parameter(0).toBeString();
+		expectTypeOf<MaestroSdk['ui']['hostView']['update']>()
+			.parameter(1)
+			.toEqualTypeOf<HostViewBlocks>();
+		expectTypeOf<MaestroSdk['ui']['hostView']['update']>().returns.resolves.toBeVoid();
+		expectTypeOf<MaestroSdk['ui']['hostView']>().toHaveProperty('remove');
+		expectTypeOf<MaestroSdk['ui']['hostView']['remove']>().parameter(0).toBeString();
+		expectTypeOf<MaestroSdk['ui']['hostView']['remove']>().returns.resolves.toBeVoid();
 	});
 
 	it('loads from a packed standalone SDK copy without repo-internal imports', async () => {

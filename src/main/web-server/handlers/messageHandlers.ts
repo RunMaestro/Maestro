@@ -297,7 +297,11 @@ export interface MessageHandlerCallbacks {
 	getSettings: () => WebSettings;
 	setSetting: (key: string, value: SettingValue) => Promise<boolean>;
 	getGroups: () => GroupData[];
-	createGroup: (name: string, emoji?: string) => Promise<{ id: string } | null>;
+	createGroup: (
+		name: string,
+		emoji?: string,
+		parentGroupId?: string
+	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
@@ -3247,6 +3251,17 @@ export class WebSocketMessageHandler {
 	private handleCreateGroup(client: WebClient, message: WebClientMessage): void {
 		const name = message.name as string;
 		const emoji = message.emoji as string | undefined;
+		const requestedParentGroupId = message.parentGroupId;
+
+		if (
+			requestedParentGroupId !== undefined &&
+			(typeof requestedParentGroupId !== 'string' || !requestedParentGroupId.trim())
+		) {
+			this.sendError(client, 'Invalid parentGroupId');
+			return;
+		}
+
+		const parentGroupId = requestedParentGroupId?.trim();
 
 		if (!name || typeof name !== 'string') {
 			this.sendError(client, 'Missing or invalid group name');
@@ -3259,7 +3274,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.createGroup(name, emoji)
+			.createGroup(name, emoji, parentGroupId)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_group_result',

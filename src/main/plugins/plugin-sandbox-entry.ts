@@ -289,7 +289,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				sql: function (query, params) { return hostCall('storage.sql', { query: query, params: params }); }
 			}),
 			ui: Object.freeze({
-				runCommand: function (commandId, args) { return hostCall('ui.runCommand', { commandId: commandId, args: args }); }
+				runCommand: function (commandId, args) { return hostCall('ui.runCommand', { commandId: commandId, args: args }); },
+				hostView: Object.freeze({
+					update: function (id, blocks) { return hostCall('ui.hostViewUpdate', { id: id, blocks: blocks }); },
+					remove: function (id) { return hostCall('ui.hostViewRemove', { id: id }); }
+				}),
+				grouping: Object.freeze({
+					publish: function (params) { return hostCall('ui.groupingPublish', params); },
+					clear: function (id) { return hostCall('ui.groupingClear', { id: id }); }
+				})
 			}),
 			tabs: Object.freeze({
 				list: function () { return hostCall('tabs.list', {}); },

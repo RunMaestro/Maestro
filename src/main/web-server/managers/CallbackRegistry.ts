@@ -558,9 +558,13 @@ export class CallbackRegistry {
 		return this.callbacks.getGroups?.() ?? [];
 	}
 
-	async createGroup(name: string, emoji?: string): Promise<{ id: string } | null> {
+	async createGroup(
+		name: string,
+		emoji?: string,
+		parentGroupId?: string
+	): Promise<{ id: string } | null> {
 		if (!this.callbacks.createGroup) return null;
-		return this.callbacks.createGroup(name, emoji);
+		return this.callbacks.createGroup(name, emoji, parentGroupId);
 	}
 
 	async renameGroup(groupId: string, name: string): Promise<boolean> {

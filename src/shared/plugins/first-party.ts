@@ -38,7 +38,8 @@ export type FirstPartyEncoreFlag =
 	| 'pianola'
 	| 'coworking'
 	| 'opencodeServer'
-	| 'concerto';
+	| 'concerto'
+	| 'groupsPlus';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -555,6 +556,33 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** Groups+ uses the host-owned group model and renderer; it only needs to
+ * re-read its Encore setting before surfacing optional hierarchy and appearance UI. */
+export const GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID = 'com.maestro.groups-plus';
+
+export const GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason:
+			'Re-read the Groups+ Encore flag before rendering group hierarchy and appearance controls.',
+	},
+] as const;
+
+export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID,
+	name: 'Groups+',
+	description:
+		'Organize session groups into folders and personalize them with standard icons and label colors.',
+	firstParty: true,
+	category: 'ui',
+	permissions: GROUPS_PLUS_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	settingsNamespace: 'groupsPlus',
+	encoreFlag: 'groupsPlus',
+	// Groups+ has no service or broker entry point: existing group persistence stays
+	// host-owned. Disable only hides its renderer surfaces and preserves stored data.
+	backgroundServices: [],
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -568,6 +596,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	COWORKING_FIRST_PARTY_PLUGIN,
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
+	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -587,4 +616,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	coworking: COWORKING_FIRST_PARTY_PLUGIN,
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
+	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 };

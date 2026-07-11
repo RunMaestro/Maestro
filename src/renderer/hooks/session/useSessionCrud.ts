@@ -28,6 +28,7 @@ import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
 // ============================================================================
 // Dependencies interface
@@ -95,6 +96,8 @@ export interface UseSessionCrudReturn {
 	handleDragOver: (e: React.DragEvent) => void;
 	/** Opens create group modal with pending session to move */
 	handleCreateGroupAndMove: (sessionId: string) => void;
+	/** Clears a pending move when the create-group modal is cancelled. */
+	clearPendingMoveToGroup: () => void;
 	/** Callback when a group is created — moves pending session to it */
 	handleGroupCreated: (groupId: string) => void;
 	/** The session ID pending move to a newly created group */
@@ -400,7 +403,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					const latestSessions = useSessionStore.getState().sessions;
 					const newSessions = latestSessions.filter((s) => !sessionIdsToRemove.has(s.id));
 					setSessions(newSessions);
-					setGroups((prev) => prev.filter((g) => g.id !== groupId));
+					setGroups((prev) => removeGroupAndPromoteChildren(prev, groupId));
 
 					setTimeout(() => flushSessionPersistence(), 0);
 
@@ -511,6 +514,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 		[setCreateGroupModalOpen]
 	);
 
+	const clearPendingMoveToGroup = useCallback(() => {
+		setPendingMoveToGroupSessionId(null);
+	}, []);
+
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
@@ -539,6 +546,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 		handleDragStart,
 		handleDragOver,
 		handleCreateGroupAndMove,
+		clearPendingMoveToGroup,
 		handleGroupCreated,
 		pendingMoveToGroupSessionId,
 	};

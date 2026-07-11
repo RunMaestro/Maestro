@@ -175,6 +175,32 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	it('selects a known local auth path for agent environment variables', async () => {
+		vi.mocked(window.maestro.agents.getKnownAuthDirs).mockResolvedValueOnce({
+			claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+			codexHomes: [],
+		});
+		const onEnvVarValueChange = vi.fn();
+
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					onEnvVarValueChange,
+				})}
+			/>
+		);
+
+		fireEvent.change(await screen.findByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '/Users/me/.claude-personal' },
+		});
+
+		expect(onEnvVarValueChange).toHaveBeenCalledWith(
+			'CLAUDE_CONFIG_DIR',
+			'/Users/me/.claude-personal'
+		);
+	});
+
 	describe('Model field clear button', () => {
 		const modelAgent = createMockAgent({
 			configOptions: [

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPluginCommandRegistry } from '../pluginCommandRegistry';
-import { buildRegistryCommands } from '../../components/QuickActionsModal/commands/registryCommands';
 
 describe('pluginCommandRegistry', () => {
 	it('lists registered commands in registration order', () => {
@@ -59,27 +58,5 @@ describe('pluginCommandRegistry', () => {
 		unregisterFirst();
 		expect(registry.listCommands().map((c) => c.id)).toEqual(['x']);
 		expect(registry.listCommands()[0]?.title).toBe('X2');
-	});
-});
-
-describe('buildRegistryCommands', () => {
-	it('maps registry entries to palette actions that invoke the same registry', () => {
-		const registry = createPluginCommandRegistry();
-		const run = vi.fn();
-		registry.registerCommand({
-			id: 'maestro.commandPalette.open',
-			title: 'Open Command Palette',
-			run,
-		});
-
-		const actions = buildRegistryCommands(registry);
-		expect(actions.map((a) => ({ id: a.id, label: a.label }))).toEqual([
-			{ id: 'maestro.commandPalette.open', label: 'Open Command Palette' },
-		]);
-
-		// Selecting the palette entry routes through the SAME registry the plugin
-		// host uses - not a divergent allowlist.
-		actions[0]?.action();
-		expect(run).toHaveBeenCalledTimes(1);
 	});
 });

@@ -21,6 +21,7 @@ import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
+import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 let kvBase: string;
@@ -47,6 +48,18 @@ function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 		sessionsList: () => [],
 		sessionsGet: () => null,
 		runUiCommand: async () => true,
+		isHostViewsEnabled: () => true,
+		getHostView: (pluginId, localId) =>
+			pluginId === 'p' && localId === 'status'
+				? {
+						id: 'p/status',
+						localId: 'status',
+						pluginId: 'p',
+						surface: 'movement',
+						title: 'Plugin status',
+					}
+				: null,
+		forwardHostView: vi.fn(() => true),
 		listAgents: () => [],
 		isPluginTrusted: () => true,
 		readSessionTranscript: async () => [],
@@ -203,6 +216,91 @@ describe('ui.runCommand', () => {
 	});
 });
 
+describe('ui.hostViewUpdate / ui.hostViewRemove', () => {
+	const blocks = [{ kind: 'text', text: 'Rendered by the host' }];
+
+	it('fails cleanly without buffering when either Encore feature gate is off', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(makeDeps({ isHostViewsEnabled: () => false, forwardHostView }));
+
+		await expect(h['ui.hostViewUpdate']!('p', { id: 'status', blocks })).rejects.toThrow(
+			/host views are disabled/
+		);
+		expect(forwardHostView).not.toHaveBeenCalled();
+	});
+
+	it('denies an update when ui:hostView is not granted', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => []),
+				forwardHostView,
+			})
+		);
+
+		await expect(h['ui.hostViewUpdate']!('p', { id: 'status', blocks })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(forwardHostView).not.toHaveBeenCalled();
+	});
+
+	it('rejects an undeclared view id and caller-supplied surface override', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(makeDeps({ forwardHostView }));
+
+		await expect(h['ui.hostViewUpdate']!('p', { id: 'other', blocks })).rejects.toThrow(
+			/not declared/
+		);
+		await expect(
+			h['ui.hostViewUpdate']!('p', { id: 'status', blocks, surface: 'cadenza' })
+		).rejects.toThrow(/closed schema/);
+		expect(forwardHostView).not.toHaveBeenCalled();
+	});
+
+	it('rejects decision cadenza payloads without opening a reply channel', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(makeDeps({ forwardHostView }));
+
+		await expect(
+			h['ui.hostViewUpdate']!('p', {
+				id: 'status',
+				blocks: { viewType: 'decision', blocks: [], options: [{ label: 'Approve', value: 'yes' }] },
+			})
+		).rejects.toThrow(/decision cadenza payloads are not supported/);
+		expect(forwardHostView).not.toHaveBeenCalled();
+	});
+
+	it('rejects an oversized BlockView payload before forwarding', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(makeDeps({ forwardHostView }));
+
+		await expect(
+			h['ui.hostViewUpdate']!('p', {
+				id: 'status',
+				blocks: [{ kind: 'text', text: 'x'.repeat(1_000_000) }],
+			})
+		).rejects.toThrow(/size limit/);
+		expect(forwardHostView).not.toHaveBeenCalled();
+	});
+
+	it('forwards a granted update and remove only for the caller-owned declared id', async () => {
+		const forwardHostView = vi.fn(() => true);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('ui:hostView')]),
+				forwardHostView,
+			})
+		);
+
+		await expect(h['ui.hostViewUpdate']!('p', { id: 'status', blocks })).resolves.toEqual({
+			ok: true,
+		});
+		await expect(h['ui.hostViewRemove']!('p', { id: 'status' })).resolves.toEqual({ ok: true });
+		expect(forwardHostView).toHaveBeenNthCalledWith(1, 'p', 'update', 'status', blocks);
+		expect(forwardHostView).toHaveBeenNthCalledWith(2, 'p', 'remove', 'status');
+	});
+});
+
 describe('events.subscribe / events.unsubscribe', () => {
 	it('delegate to the bus and filter to catalog topics', async () => {
 		const bus = new PluginEventBusImpl({ isPermitted: () => true, push: () => true });
@@ -257,15 +355,17 @@ describe('net.fetch egress + fs.write guarding', () => {
 });
 
 describe('purgePluginData', () => {
-	it('purges KV, namespaced settings, and event subscriptions', async () => {
+	it('purges KV, namespaced settings, event subscriptions, and live host views', async () => {
 		kv.set('p', 'k', 'v');
 		const bus = new PluginEventBusImpl({ isPermitted: () => true, push: () => true });
 		bus.subscribe('p', ['session.created']);
 		const settingsDeleteNamespace = vi.fn();
-		purgePluginData('p', { kvStore: kv, settingsDeleteNamespace, eventBus: bus });
+		const hostViews = { purge: vi.fn() };
+		purgePluginData('p', { kvStore: kv, settingsDeleteNamespace, eventBus: bus, hostViews });
 		expect(kv.get('p', 'k')).toBeNull();
 		expect(settingsDeleteNamespace).toHaveBeenCalledWith('plugins.p.');
 		expect(bus.topicsFor('p')).toEqual([]);
+		expect(hostViews.purge).toHaveBeenCalledWith('p');
 	});
 });
 
@@ -1408,5 +1508,70 @@ describe('net:connect (persistent socket) handlers', () => {
 		await expect(h['net.send']!('b', { socketId: b1.socketId, data: 'hi' })).resolves.toEqual({
 			ok: true,
 		});
+	});
+});
+
+describe('ui.groupingPublish / ui.groupingClear', () => {
+	it('requires a declared grouping and preserves published assignments without session mutations', async () => {
+		const groupingRegistry = new PluginGroupingRegistry();
+		const sessions: PluginSessionMetadata[] = [
+			{ id: 'known', title: 'Known session' },
+			{ id: 'other', title: 'Other session' },
+		];
+		const h = buildHostCallHandlers(
+			makeDeps({
+				groupingRegistry,
+				isDeclaredGrouping: (pluginId, localId) =>
+					pluginId === 'com.acme' && localId === 'by-agent-type',
+				sessionsList: () => sessions,
+			})
+		);
+
+		await h['ui.groupingPublish']!('com.acme', {
+			id: 'by-agent-type',
+			groups: [{ id: 'claude', label: 'Claude' }],
+			assignments: { known: 'claude', missing: 'claude' },
+		});
+
+		expect(groupingRegistry.snapshot()).toEqual([
+			expect.objectContaining({ assignments: { known: 'claude', missing: 'claude' } }),
+		]);
+		expect(sessions).toEqual([
+			{ id: 'known', title: 'Known session' },
+			{ id: 'other', title: 'Other session' },
+		]);
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'not-declared',
+				groups: [],
+				assignments: {},
+			})
+		).rejects.toThrow(/not declared/);
+	});
+
+	it('denies publication without ui:grouping and rejects unknown payload fields', async () => {
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => []),
+				groupingRegistry: new PluginGroupingRegistry(),
+				isDeclaredGrouping: () => true,
+			})
+		);
+
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'by-agent-type',
+				groups: [],
+				assignments: {},
+				extra: true,
+			})
+		).rejects.toThrow(/unexpected field/);
+		await expect(
+			h['ui.groupingPublish']!('com.acme', {
+				id: 'by-agent-type',
+				groups: [],
+				assignments: {},
+			})
+		).rejects.toThrow(/permission denied/);
 	});
 });

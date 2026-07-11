@@ -19,6 +19,7 @@ import type { AggregatedContributions } from '../../../shared/plugins/contributi
 import type { PermissionRequest, PermissionGrant } from '../../../shared/plugins/permissions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
 import type { ActivitySnapshot } from '../../plugins/plugin-sandbox-host';
+import type { PluginPublishedGrouping } from '../../plugins/plugin-grouping-registry';
 import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
 import { setPanelHtmlProvider } from '../../plugins/plugin-panel-host';
 import { getFirstPartyBridge, type FirstPartyBridgeState } from '../../plugins/first-party-bridge';
@@ -49,6 +50,7 @@ export interface PluginGrantsSnapshot {
 /** Per-plugin read-only observability keyed by plugin id (running tier-1 only). */
 export type PluginActivityMap = Record<string, ActivitySnapshot>;
 export type { ActivitySnapshot };
+export type PluginGroupingSnapshot = readonly PluginPublishedGrouping[];
 
 export interface PluginsHandlerDependencies {
 	settingsStore: {
@@ -58,6 +60,8 @@ export interface PluginsHandlerDependencies {
 	/** Optional read-only observability source for running tier-1 plugins. When
 	 *  absent (e.g. before the sandbox host is constructed), activity reads as {}. */
 	sandboxHost?: { getActivity(): PluginActivityMap };
+	/** Process-local presentation snapshots published by running plugins. */
+	groupingRegistry?: { snapshot(): PluginGroupingSnapshot };
 	/** The sealed authorization ledger - the live grant source. `get-grants` reads
 	 * it, `revoke`/`uninstall` mutate it, and `set-enabled` gates code-tier
 	 * activation on it (a tier>=1 plugin may only be enabled once it holds a
@@ -81,7 +85,7 @@ function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
 }
 
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
-	const { settingsStore, manager, sandboxHost, authStore } = deps;
+	const { settingsStore, manager, sandboxHost, authStore, groupingRegistry } = deps;
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
@@ -152,6 +156,10 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				granted: authStore.readGrants(id),
 			};
 		}
+	);
+	const wrappedGetGroupings = withIpcErrorLogging(
+		handlerOpts('getGroupings'),
+		async (): Promise<PluginGroupingSnapshot> => groupingRegistry?.snapshot() ?? []
 	);
 	const wrappedRevokeGrants = withIpcErrorLogging(
 		handlerOpts('revokeGrants'),
@@ -289,6 +297,11 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 	ipcMain.handle('plugins:get-activity', async (event): Promise<PluginActivityMap> => {
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 		return wrappedGetActivity(event);
+	});
+
+	ipcMain.handle('plugins:get-groupings', async (event): Promise<PluginGroupingSnapshot> => {
+		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+		return wrappedGetGroupings(event);
 	});
 
 	ipcMain.handle(

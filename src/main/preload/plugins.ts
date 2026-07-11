@@ -16,6 +16,7 @@ import type {
 	PluginListSnapshot,
 	PluginGrantsSnapshot,
 	PluginActivityMap,
+	PluginGroupingSnapshot,
 } from '../ipc/handlers/plugins';
 import type { InstallResult } from '../plugins/plugin-manager';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
@@ -108,6 +109,10 @@ export function createPluginsApi() {
 		 */
 		getActivity: (): Promise<PluginActivityMap> => ipcRenderer.invoke('plugins:get-activity'),
 
+		/** Presentation-only virtual groupings from currently running plugins. */
+		getGroupings: (): Promise<PluginGroupingSnapshot> =>
+			ipcRenderer.invoke('plugins:get-groupings'),
+
 		/**
 		 * Subscribe to plugin-registry changes (install/uninstall/enable/disable/
 		 * refresh). The callback receives no payload - it is a signal to re-read
@@ -119,6 +124,12 @@ export function createPluginsApi() {
 			return () => {
 				ipcRenderer.removeListener('plugins:changed', handler);
 			};
+		},
+
+		onGroupingsChanged: (callback: () => void): (() => void) => {
+			const handler = (): void => callback();
+			ipcRenderer.on('plugins:groupings-changed', handler);
+			return () => ipcRenderer.removeListener('plugins:groupings-changed', handler);
 		},
 
 		/**

@@ -2345,6 +2345,7 @@ describe('SettingsModal', () => {
 			});
 			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
 				themes: [],
+				iconPacks: [],
 				prompts: [],
 				settings: [
 					{
@@ -2436,6 +2437,7 @@ describe('SettingsModal', () => {
 			});
 			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
 				themes: [],
+				iconPacks: [],
 				prompts: [],
 				settings: [
 					{

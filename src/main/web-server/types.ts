@@ -627,6 +627,7 @@ export interface GroupData {
 	id: string;
 	name: string;
 	emoji: string | null;
+	parentGroupId?: string;
 	sessionIds: string[];
 }
 
@@ -750,7 +751,11 @@ export interface NotificationEvent {
 export type GetSettingsCallback = () => WebSettings;
 export type SetSettingCallback = (key: string, value: SettingValue) => Promise<boolean>;
 export type GetGroupsCallback = () => GroupData[];
-export type CreateGroupCallback = (name: string, emoji?: string) => Promise<{ id: string } | null>;
+export type CreateGroupCallback = (
+	name: string,
+	emoji?: string,
+	parentGroupId?: string
+) => Promise<{ id: string } | null>;
 export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (

@@ -34,6 +34,7 @@ import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
 import { logger } from '../utils/logger';
+import { useDebouncedCallback } from '../hooks/utils/useThrottle';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -61,8 +62,9 @@ interface GroupChatInputProps {
 	groups?: Group[];
 	groupChatId: string;
 	draftMessage?: string;
-	onDraftChange?: (draft: string) => void;
+	onDraftChange?: (draft: string, groupChatId: string) => void;
 	onOpenPromptComposer?: () => void;
+	draftFlushRef?: React.MutableRefObject<(() => void) | null>;
 	// Lifted state for sync with PromptComposer
 	stagedImages?: string[];
 	setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
@@ -101,6 +103,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	draftMessage,
 	onDraftChange,
 	onOpenPromptComposer,
+	draftFlushRef,
 	stagedImages: stagedImagesProp,
 	setStagedImages: setStagedImagesProp,
 	readOnlyMode: readOnlyModeProp,
@@ -140,6 +143,27 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const prevGroupChatIdRef = useRef(groupChatId);
 	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
 	const notificationBtnRef = useRef<HTMLButtonElement>(null);
+	const lastPersistedDraftRef = useRef<{ groupChatId: string; draft: string } | null>(null);
+	const {
+		debouncedCallback: persistDraft,
+		flush: flushDraft,
+		cancel: cancelDraft,
+	} = useDebouncedCallback(
+		(draft: string, targetGroupChatId: string) => {
+			lastPersistedDraftRef.current = { groupChatId: targetGroupChatId, draft };
+			onDraftChange?.(draft, targetGroupChatId);
+		},
+		300,
+		{ flushOnUnmount: true }
+	);
+
+	useEffect(() => {
+		if (!draftFlushRef) return;
+		draftFlushRef.current = flushDraft;
+		return () => {
+			if (draftFlushRef.current === flushDraft) draftFlushRef.current = null;
+		};
+	}, [draftFlushRef, flushDraft]);
 
 	// Build list of mentionable items: groups first, then individual agents
 	// Groups expand into all their member @mentions when selected
@@ -218,28 +242,34 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	// Sync message state when switching to a different group chat
 	useEffect(() => {
 		if (groupChatId !== prevGroupChatIdRef.current) {
+			flushDraft();
 			setMessage(draftMessage || '');
 			prevGroupChatIdRef.current = groupChatId;
 		}
-	}, [groupChatId, draftMessage]);
+	}, [groupChatId, draftMessage, flushDraft]);
 
 	// Sync message when draftMessage changes externally (e.g., from PromptComposer)
 	useEffect(() => {
-		// Only sync if the draft differs from current message (external change)
-		if (draftMessage !== undefined && draftMessage !== message) {
-			setMessage(draftMessage);
+		if (draftMessage === undefined) return;
+		const lastPersisted = lastPersistedDraftRef.current;
+		if (lastPersisted?.groupChatId === groupChatId && lastPersisted.draft === draftMessage) {
+			lastPersistedDraftRef.current = null;
+			return;
 		}
-	}, [draftMessage]);
+		cancelDraft();
+		setMessage((current) => (current === draftMessage ? current : draftMessage));
+	}, [draftMessage, groupChatId, cancelDraft]);
 
 	const handleSend = useCallback(() => {
 		// Allow sending even when busy - messages will be queued in App.tsx
 		if (message.trim()) {
 			onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
+			cancelDraft();
 			setMessage('');
 			setStagedImages([]);
-			onDraftChange?.('');
+			onDraftChange?.('', groupChatId);
 		}
-	}, [message, onSend, readOnlyMode, onDraftChange, stagedImages]);
+	}, [message, onSend, readOnlyMode, cancelDraft, onDraftChange, groupChatId, stagedImages]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -327,7 +357,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
 			const value = e.target.value;
 			setMessage(value);
-			onDraftChange?.(value);
+			persistDraft(value, groupChatId);
 
 			// Check for @mention trigger
 			const lastAtIndex = value.lastIndexOf('@');
@@ -348,7 +378,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				setShowMentions(false);
 			}
 		},
-		[onDraftChange]
+		[persistDraft, groupChatId]
 	);
 
 	const insertMention = useCallback(
@@ -364,11 +394,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			}
 			const newMessage = prefix + insertion;
 			setMessage(newMessage);
-			onDraftChange?.(newMessage);
+			persistDraft(newMessage, groupChatId);
 			setShowMentions(false);
 			inputRef.current?.focus();
 		},
-		[message, onDraftChange]
+		[message, persistDraft, groupChatId]
 	);
 
 	// Wrapped paste handler that trims text and delegates images to prop handler
@@ -390,7 +420,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						const end = target.selectionEnd ?? 0;
 						const newValue = message.slice(0, start) + trimmedText + message.slice(end);
 						setMessage(newValue);
-						onDraftChange?.(newValue);
+						persistDraft(newValue, groupChatId);
 						// Set cursor position after the pasted text
 						requestAnimationFrame(() => {
 							target.selectionStart = target.selectionEnd = start + trimmedText.length;
@@ -403,8 +433,22 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			// Delegate image handling to prop handler
 			handlePaste?.(e);
 		},
-		[message, onDraftChange, handlePaste]
+		[message, persistDraft, groupChatId, handlePaste]
 	);
+
+	const handleDropWrapped = useCallback(
+		(e: React.DragEvent<HTMLTextAreaElement>) => {
+			e.stopPropagation();
+			flushDraft();
+			handleDrop?.(e);
+		},
+		[flushDraft, handleDrop]
+	);
+
+	const handleOpenPromptComposer = useCallback(() => {
+		flushDraft();
+		onOpenPromptComposer?.();
+	}, [flushDraft, onOpenPromptComposer]);
 
 	const handleImageSelect = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -594,10 +638,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							onChange={handleChange}
 							onKeyDown={handleKeyDown}
 							onPaste={handlePasteWrapped}
-							onDrop={(e) => {
-								e.stopPropagation();
-								handleDrop?.(e);
-							}}
+							onDrop={handleDropWrapped}
 							onDragOver={(e) => e.preventDefault()}
 							placeholder={
 								isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
@@ -618,7 +659,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						<div className="flex gap-1 items-center">
 							{onOpenPromptComposer && (
 								<button
-									onClick={onOpenPromptComposer}
+									onClick={handleOpenPromptComposer}
 									className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
 									title={`Open Prompt Composer${shortcuts?.openPromptComposer ? ` (${formatShortcutKeys(shortcuts.openPromptComposer.keys)})` : ''}`}
 								>
