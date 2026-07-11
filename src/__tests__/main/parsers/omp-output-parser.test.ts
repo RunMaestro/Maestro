@@ -153,7 +153,10 @@ describe('OmpOutputParser', () => {
 		).toBeNull();
 	});
 
-	it('does not surface a TTSR-aborted final assistant message as an agent_end error', () => {
+	it('does not emit a TTSR-aborted final message as an agent_end result or error', () => {
+		// The agent re-iterates after a TTSR interrupt, so the aborted turn must not
+		// be marked as the run's result (which would let the stdout handler drop the
+		// self-healed output) nor surface as an error.
 		const event = parser.parseJsonObject({
 			type: 'agent_end',
 			messages: [
@@ -167,8 +170,8 @@ describe('OmpOutputParser', () => {
 		});
 
 		expect(event).not.toBeNull();
-		expect(event!.type).toBe('result');
-		expect(event!.text).toBe('partial');
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
 	});
 
 	it('still surfaces a genuine agent error that is not a TTSR interrupt', () => {

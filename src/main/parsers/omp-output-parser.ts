@@ -166,10 +166,16 @@ export class OmpOutputParser implements AgentOutputParser {
 					return { type: 'system', sessionId, raw: event };
 				}
 				const finalMessage = this.findFinalAssistantMessage(event.messages);
-				if (
-					finalMessage?.errorMessage &&
-					!TTSR_ABORT_REASON_PATTERN.test(finalMessage.errorMessage.trim())
-				) {
+				if (finalMessage?.errorMessage) {
+					// A TTSR rule match is a deliberate in-loop interrupt: the agent
+					// re-iterates, so the aborted turn is never the run's real result.
+					// Return a non-result event (like the empty-transcript case below)
+					// so the stdout handler does not mark output emitted with the
+					// partial aborted text and drop the self-healed result; the exit
+					// fallback flushes the assembled streamed text the user already saw.
+					if (TTSR_ABORT_REASON_PATTERN.test(finalMessage.errorMessage.trim())) {
+						return { type: 'system', sessionId, raw: event };
+					}
 					return {
 						type: 'error',
 						text: finalMessage.errorMessage,
