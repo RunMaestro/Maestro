@@ -603,6 +603,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							prompt,
 							appendSystemPrompt,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
+							// Auto Run runs unattended in --print mode, so it must have full
+							// access - the same permission level as an interactive tab set to
+							// "full". Without this, agents whose bypass is gated on full access
+							// (e.g. Claude Code's --dangerously-skip-permissions in fullAccessArgs)
+							// fall back to the default permission model, can't get tool approvals
+							// non-interactively, and deadlock the run.
+							permissionMode: 'full',
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,

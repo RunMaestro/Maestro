@@ -108,6 +108,23 @@ export function getPermissionModeTooltip(
 }
 
 /**
+ * Resolve a tab's effective permission mode from its stored fields.
+ *
+ * A tab whose `permissionMode` was never explicitly set is treated as full
+ * access (falling back to `readonly` only when the legacy `readOnlyMode` boolean
+ * is set). This is the SINGLE source of truth for "what does an unset
+ * permissionMode mean" - both the toolbar pill (display) and the spawn path
+ * (which flags get passed) must call this so they can never drift apart. When
+ * they did drift, an unset tab rendered "Full Access" yet spawned in standard
+ * mode, so the agent's tool calls were silently denied.
+ */
+export function resolveTabPermissionMode(
+	tab?: { permissionMode?: 'full' | 'standard' | 'readonly'; readOnlyMode?: boolean } | null
+): 'full' | 'standard' | 'readonly' {
+	return tab?.permissionMode ?? (tab?.readOnlyMode ? 'readonly' : 'full');
+}
+
+/**
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
  *

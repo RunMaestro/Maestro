@@ -210,6 +210,49 @@ describe('useAgentExecution', () => {
 		await spawnPromise;
 	});
 
+	it('spawns Auto Run batches with full-access permissionMode', async () => {
+		// Auto Run runs unattended in --print mode and must have the same
+		// permission level as an interactive "Full Access" tab. Without an
+		// explicit permissionMode: 'full', agents whose bypass is gated on full
+		// access (e.g. Claude Code) fall back to the default permission model,
+		// can't get non-interactive tool approvals, and deadlock the run.
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.permissionMode).toBe('full');
+		expect(spawnConfig.readOnlyMode).toBe(false);
+
+		// Clean up
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
+	});
+
 	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {
 		const originalPlatform = (window as any).maestro?.platform;
 		(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };

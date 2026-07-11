@@ -1477,6 +1477,36 @@ describe('useInputProcessing', () => {
 			expect(spawnCall.permissionMode).toBe('full');
 		});
 
+		it('sends permissionMode "full" for a tab whose permissionMode was never set (matches the pill)', async () => {
+			// The core drift bug: an unset permissionMode rendered "Full Access" in
+			// the toolbar but previously spawned with an undefined permissionMode, so
+			// buildAgentArgs withheld the bypass and the agent was silently denied.
+			// resolveTabPermissionMode now maps unset -> 'full' on the spawn path too.
+			const unsetTab = createMockTab({
+				agentSessionId: 'existing-session-unset',
+			});
+			expect(unsetTab.permissionMode).toBeUndefined();
+			const session = createMockSession({
+				aiTabs: [unsetTab],
+				activeTabId: unsetTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'run the build',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('full');
+			expect(spawnCall.readOnlyMode).toBeFalsy();
+		});
+
 		it('sends permissionMode "standard" when tab permissionMode is "standard"', async () => {
 			// standard mode must propagate to the spawn config so the main process
 			// can wire up the permission relay (rather than defaulting to full).

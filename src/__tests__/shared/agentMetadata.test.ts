@@ -10,6 +10,7 @@ import {
 	getReadOnlyModeTooltip,
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
+	resolveTabPermissionMode,
 	AGENT_DISPLAY_NAMES,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
@@ -201,6 +202,32 @@ describe('agentMetadata', () => {
 			expect(getPermissionModeTooltip('readonly', 'claude-code')).toContain('plan mode');
 			expect(getPermissionModeTooltip('readonly', 'codex')).toContain('Read-Only');
 			expect(getPermissionModeTooltip('readonly', 'factory-droid')).toContain('Read-Only');
+		});
+	});
+
+	describe('resolveTabPermissionMode', () => {
+		it('treats a nullish tab as full access', () => {
+			expect(resolveTabPermissionMode(undefined)).toBe('full');
+			expect(resolveTabPermissionMode(null)).toBe('full');
+		});
+
+		it('treats a tab with no stored permissionMode as full access', () => {
+			expect(resolveTabPermissionMode({})).toBe('full');
+		});
+
+		it('falls back to readonly only when the legacy readOnlyMode boolean is set', () => {
+			expect(resolveTabPermissionMode({ readOnlyMode: true })).toBe('readonly');
+			expect(resolveTabPermissionMode({ readOnlyMode: false })).toBe('full');
+		});
+
+		it('passes an explicit permissionMode through unchanged', () => {
+			expect(resolveTabPermissionMode({ permissionMode: 'full' })).toBe('full');
+			expect(resolveTabPermissionMode({ permissionMode: 'standard' })).toBe('standard');
+			expect(resolveTabPermissionMode({ permissionMode: 'readonly' })).toBe('readonly');
+		});
+
+		it('prefers an explicit permissionMode over the legacy readOnlyMode boolean', () => {
+			expect(resolveTabPermissionMode({ permissionMode: 'full', readOnlyMode: true })).toBe('full');
 		});
 	});
 });
