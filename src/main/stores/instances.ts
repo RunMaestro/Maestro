@@ -190,6 +190,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-accounts',
 		cwd: _syncPath,
 		defaults: ACCOUNT_STORE_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	return {

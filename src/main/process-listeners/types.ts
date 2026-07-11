@@ -154,6 +154,8 @@ export interface ProcessListenerDependencies {
 	getAccountRegistry?: () => AccountRegistry | null;
 	/** Account throttle handler getter (optional — only needed for account multiplexing) */
 	getThrottleHandler?: () => AccountThrottleHandler | null;
+	/** Account auth recovery getter (optional — only needed for account multiplexing) */
+	getAuthRecovery?: () => import('../accounts/account-auth-recovery').AccountAuthRecovery | null;
 	/** Debug log function */
 	debugLog: (prefix: string, message: string, ...args: unknown[]) => void;
 	/** Regex patterns */

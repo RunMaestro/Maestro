@@ -14,7 +14,9 @@ import { formatRuntime } from './runtime';
 
 export interface ProcessListViewProps {
 	theme: Theme;
-	sessions: Session[];
+	/** Sessions for account badge lookup (account multiplexing). Optional so
+	 *  callers/tests without account data render unchanged. */
+	sessions?: Session[];
 	tree: ProcessNode[];
 	isLoading: boolean;
 	selectedNodeId: string | null;
@@ -34,7 +36,7 @@ export interface ProcessListViewProps {
 export function ProcessListView(props: ProcessListViewProps) {
 	const {
 		theme,
-		sessions,
+		sessions = [],
 		tree,
 		isLoading,
 		selectedNodeId,

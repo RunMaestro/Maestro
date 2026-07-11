@@ -51,7 +51,6 @@ import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import type { AccountRegistry } from '../accounts/account-registry';
-import { injectAccountEnv } from '../accounts/account-env-injector';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';

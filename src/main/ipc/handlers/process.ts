@@ -10,8 +10,6 @@ import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/
 import type { AccountSwitcher } from '../../accounts/account-switcher';
 import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountRegistry } from '../../accounts/account-registry';
-import { injectAccountEnv } from '../../accounts/account-env-injector';
-import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';

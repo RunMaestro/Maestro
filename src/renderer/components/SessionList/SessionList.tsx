@@ -31,6 +31,7 @@ import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
+import { useAccountUsage } from '../../hooks/useAccountUsage';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
 import { useLiveOverlay, useResizablePanel, useViewportBreakpoint } from '../../hooks';
@@ -158,6 +159,8 @@ const UNGROUPED_DROP_TARGET = '__ungrouped__';
 
 function SessionListInner(props: SessionListProps) {
 	const pluginContributions = usePluginContributions();
+	// Account usage metrics for SessionItem badge tooltips (account multiplexing)
+	const { metrics: accountUsageMetrics } = useAccountUsage();
 	// Store subscriptions
 	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
 	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,

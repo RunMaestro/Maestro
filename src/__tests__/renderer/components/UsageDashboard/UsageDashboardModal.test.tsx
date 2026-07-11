@@ -319,11 +319,13 @@ describe('UsageDashboardModal — tab ordering', () => {
 		const labels = screen.getAllByRole('tab').map((el) => el.textContent?.trim());
 		const autoRunIdx = labels.indexOf('Auto Run');
 		const cueIdx = labels.indexOf('Cue');
+		const virtuososIdx = labels.indexOf('Virtuosos');
 		const shortcutsIdx = labels.indexOf('Shortcuts');
 
 		expect(autoRunIdx).toBeGreaterThanOrEqual(0);
 		expect(cueIdx).toBe(autoRunIdx + 1);
-		expect(shortcutsIdx).toBe(cueIdx + 1);
+		expect(virtuososIdx).toBe(cueIdx + 1);
+		expect(shortcutsIdx).toBe(virtuososIdx + 1);
 	});
 });
 

@@ -215,6 +215,7 @@ describe('UsageDashboardModal hooks', () => {
 			'agents',
 			'activity',
 			'autorun',
+			'accounts',
 			'shortcuts',
 			'anthropic-usage',
 			'codex-usage',

@@ -253,16 +253,16 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			// Handle account change: resolve name immediately, then trigger switch/assign
 			if (accountId) {
-				const currentSession = useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === sessionId);
+				const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 				const fromAccountId = currentSession?.accountId;
 
 				// Resolve account name and update session right away
 				window.maestro.accounts
 					.list()
 					.then((accounts) => {
-						const account = accounts.find((a) => a.id === accountId);
+						const account = (accounts as Array<{ id: string; name: string }>).find(
+							(a) => a.id === accountId
+						);
 						if (account) {
 							useSessionStore.getState().setSessions((prev) =>
 								prev.map((s) => {
@@ -284,7 +284,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							reason: 'manual',
 							automatic: false,
 						})
-						.catch((err) => captureException(err, { operation: 'accounts:executeSwitch' }));
+						.catch((err) =>
+							captureException(err, { extra: { operation: 'accounts:executeSwitch' } })
+						);
 				} else {
 					// First assignment or same account — just update registry
 					window.maestro.accounts.assign(sessionId, accountId).catch(() => {});
