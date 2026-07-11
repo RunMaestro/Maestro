@@ -120,4 +120,67 @@ describe('OmpOutputParser', () => {
 
 		expect(parser.detectErrorFromParsed(retrying)).toBeNull();
 	});
+
+	it('treats a TTSR rule interrupt on message_end as usage, not an error', () => {
+		const event = parser.parseJsonObject({
+			type: 'message_end',
+			message: {
+				role: 'assistant',
+				errorMessage: 'TTSR matched rule: ts-no-any',
+				usage: { input: 10, output: 5, cost: { total: 0.01 } },
+			},
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('usage');
+		expect(event!.usage).toMatchObject({ inputTokens: 10, outputTokens: 5 });
+	});
+
+	it('does not report a TTSR rule interrupt via detectErrorFromParsed', () => {
+		expect(
+			parser.detectErrorFromParsed({
+				type: 'message_end',
+				message: { role: 'assistant', errorMessage: 'TTSR matched rule: ts-no-return-type' },
+			})
+		).toBeNull();
+	});
+
+	it('does not report a multi-rule TTSR interrupt as an error', () => {
+		expect(
+			parser.detectErrorFromParsed({
+				message: { errorMessage: 'TTSR matched rules: ts-no-any, ts-no-return-type' },
+			})
+		).toBeNull();
+	});
+
+	it('does not surface a TTSR-aborted final assistant message as an agent_end error', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{ role: 'user', content: [{ type: 'text', text: 'write some ts' }] },
+				{
+					role: 'assistant',
+					content: [{ type: 'text', text: 'partial' }],
+					errorMessage: 'TTSR matched rule: ts-no-any',
+				},
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('result');
+		expect(event!.text).toBe('partial');
+	});
+
+	it('still surfaces a genuine agent error that is not a TTSR interrupt', () => {
+		const genuine = {
+			type: 'message_end',
+			message: { role: 'assistant', errorMessage: 'invalid api key' },
+		};
+
+		expect(parser.parseJsonObject(genuine)!.type).toBe('error');
+
+		const detected = parser.detectErrorFromParsed(genuine);
+		expect(detected).not.toBeNull();
+		expect(detected!.type).toBe('auth_expired');
+	});
 });

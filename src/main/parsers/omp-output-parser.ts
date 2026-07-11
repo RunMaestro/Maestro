@@ -21,6 +21,18 @@ import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 
+/**
+ * Oh My Pi's Time-Traveling Stream Rules (TTSR) deliberately abort the in-flight
+ * turn when generated output matches a rule (e.g. `ts-no-any`), inject the rule
+ * reminder, and let the agent re-iterate on its own. The aborted turn carries an
+ * `errorMessage` of the form `TTSR matched rule: <names>` (see
+ * `#formatTtsrAbortReason` in the agent). This is an in-loop interrupt, not a
+ * failure, so it must never surface as an agent error - doing so aborts Auto Run
+ * and Session runs on something omp resolves by itself. Anchored to the exact
+ * label the agent emits so a real error that merely mentions a rule is unaffected.
+ */
+const TTSR_ABORT_REASON_PATTERN = /^TTSR matched rules?:/i;
+
 interface OmpUsage {
 	input?: number;
 	output?: number;
@@ -96,12 +108,18 @@ export class OmpOutputParser implements AgentOutputParser {
 			event.sessionId || event.session_id || (event.type === 'session' ? event.id : undefined);
 
 		if ((event.error || event.message?.errorMessage) && !event.willRetry) {
-			return {
-				type: 'error',
-				text: this.extractErrorText(event),
-				sessionId,
-				raw: event,
-			};
+			const errorText = this.extractErrorText(event);
+			// A TTSR rule match is a deliberate in-loop interrupt, not a failure:
+			// fall through so the aborted `message_end` still yields its usage and
+			// the agent's own re-iteration continues uninterrupted.
+			if (!TTSR_ABORT_REASON_PATTERN.test(errorText.trim())) {
+				return {
+					type: 'error',
+					text: errorText,
+					sessionId,
+					raw: event,
+				};
+			}
 		}
 
 		switch (event.type) {
@@ -148,7 +166,10 @@ export class OmpOutputParser implements AgentOutputParser {
 					return { type: 'system', sessionId, raw: event };
 				}
 				const finalMessage = this.findFinalAssistantMessage(event.messages);
-				if (finalMessage?.errorMessage) {
+				if (
+					finalMessage?.errorMessage &&
+					!TTSR_ABORT_REASON_PATTERN.test(finalMessage.errorMessage.trim())
+				) {
 					return {
 						type: 'error',
 						text: finalMessage.errorMessage,
@@ -248,6 +269,10 @@ export class OmpOutputParser implements AgentOutputParser {
 		}
 		const errorText = this.extractErrorText(event);
 		if (!errorText) {
+			return null;
+		}
+		if (TTSR_ABORT_REASON_PATTERN.test(errorText.trim())) {
+			// In-loop TTSR rule interrupt (see TTSR_ABORT_REASON_PATTERN), never a session error.
 			return null;
 		}
 
