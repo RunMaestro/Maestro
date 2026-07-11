@@ -1021,6 +1021,91 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeBrowserTabId).toBeNull();
 			expect(result!.session.activeTabId).toBe('tab-1');
 		});
+
+		it('activates the group and focuses the pane when selecting a tiled AI tab', () => {
+			// The Tab Switcher lists group-member AI tabs (they stay in aiTabs), but they
+			// have no standalone chip and are excluded from buildUnifiedTabs. Selecting one
+			// must open its group and focus its pane, not fall through to the standalone path.
+			const standalone = createMockTab({ id: 'tab-1' });
+			const grouped = createMockTab({ id: 'grouped-ai' });
+			const session = createMockSession({
+				aiTabs: [standalone, grouped],
+				activeTabId: 'tab-1',
+				activeGroupId: null,
+				inputMode: 'ai',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'group', id: 'g1' },
+				],
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						// Focused elsewhere so we can prove selection moves it to leaf-b.
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'other-grouped' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'grouped-ai' } },
+							],
+						},
+					},
+				] as never,
+			});
+
+			const result = setActiveTab(session, 'grouped-ai');
+
+			expect(result!.tab).toBe(grouped);
+			// The group takes over the panel and its focused pane moves to the selected tab.
+			expect(result!.session.activeGroupId).toBe('g1');
+			expect(result!.session.tabGroups[0].focusedPaneId).toBe('leaf-b');
+			// activeTabId is synced so the shared input targets the selected pane; standalone
+			// ids clear and we stay in AI mode.
+			expect(result!.session.activeTabId).toBe('grouped-ai');
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeTerminalTabId).toBeNull();
+			expect(result!.session.inputMode).toBe('ai');
+		});
+
+		it('clears activeGroupId when selecting a standalone AI tab while a group is active', () => {
+			// Regression: the standalone "already active" no-op must not fire while a group
+			// is active, or the tiled view stays rendered instead of switching to the tab.
+			const standalone = createMockTab({ id: 'tab-1' });
+			const grouped = createMockTab({ id: 'grouped-ai' });
+			const session = createMockSession({
+				aiTabs: [standalone, grouped],
+				activeTabId: 'tab-1',
+				activeGroupId: 'g1',
+				inputMode: 'ai',
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [1],
+							children: [{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'grouped-ai' } }],
+						},
+					},
+				] as never,
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.activeGroupId).toBeNull();
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
 	});
 
 	describe('aiTabFocusFields', () => {

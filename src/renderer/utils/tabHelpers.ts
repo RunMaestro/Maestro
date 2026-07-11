@@ -192,6 +192,38 @@ function resolveFocusedAiTabId(group: TabGroup): string | null {
 }
 
 /**
+ * Locate the tiled group and leaf-pane id that hold a given AI tab, or null when
+ * the tab isn't tiled into any group (i.e. it's a standalone tab). Walks each
+ * group's layout locally to avoid a circular import with panelLayout (which
+ * imports from this module). Used by setActiveTab so selecting a group-member AI
+ * tab (e.g. from the Tab Switcher) activates its group and focuses its pane
+ * instead of trying to render it standalone - group members have no standalone
+ * chip and are excluded from buildUnifiedTabs, so the standalone path leaves
+ * focus stuck on whatever was already showing.
+ */
+function findGroupPaneForAiTab(
+	session: Session,
+	tabId: string
+): { groupId: string; leafId: string } | null {
+	const groups = session.tabGroups;
+	if (!groups || groups.length === 0) return null;
+	for (const group of groups) {
+		let leafId: string | null = null;
+		const walk = (node: PanelLayoutNode): void => {
+			if (leafId) return;
+			if (node.kind === 'leaf') {
+				if (node.tab.type === 'ai' && node.tab.id === tabId) leafId = node.id;
+				return;
+			}
+			node.children.forEach(walk);
+		};
+		walk(group.layout);
+		if (leafId) return { groupId: group.id, leafId };
+	}
+	return null;
+}
+
+/**
  * Ensure a tab ID is present in unifiedTabOrder.
  * Returns the order unchanged if already present, or with the tab appended.
  */
@@ -1964,12 +1996,42 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		return null;
 	}
 
-	// If already active, no file/terminal tab is selected, and already in AI mode, return current state
+	// When the target AI tab is tiled inside a group, activate that group and focus
+	// its pane rather than falling through to the standalone path. A group member has
+	// no standalone chip and is excluded from buildUnifiedTabs, so the old behavior
+	// (clear activeGroupId + set activeTabId via aiTabFocusFields) left the panel stuck
+	// on whatever was showing. This mirrors the group branch in
+	// navigateToUnifiedTabByIndex: set activeGroupId, sync focusedPaneId to the leaf and
+	// activeTabId to the tab (so the shared input targets it), clear standalone ids.
+	const groupPane = findGroupPaneForAiTab(session, tabId);
+	if (groupPane) {
+		return {
+			tab: targetTab,
+			session: {
+				...session,
+				tabGroups: session.tabGroups.map((g) =>
+					g.id === groupPane.groupId ? { ...g, focusedPaneId: groupPane.leafId } : g
+				),
+				activeGroupId: groupPane.groupId,
+				activeTabId: tabId,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			},
+		};
+	}
+
+	// If already active, no file/terminal tab and no group is active, and already in
+	// AI mode, return current state. The activeGroupId guard mirrors
+	// navigateToUnifiedTabByIndex: without it, a stale active group could satisfy this
+	// no-op and leave the tiled view rendered instead of switching to the standalone tab.
 	if (
 		session.activeTabId === tabId &&
 		session.activeFileTabId === null &&
 		session.activeBrowserTabId === null &&
 		session.activeTerminalTabId === null &&
+		session.activeGroupId == null &&
 		session.inputMode === 'ai'
 	) {
 		return {
