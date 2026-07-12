@@ -5,7 +5,10 @@ import type { Theme } from '../types';
 import { logger } from '../utils/logger';
 
 // Track theme for mermaid initialization
-let lastThemeId: string | null = null;
+let lastThemeKey: string | null = null;
+let mermaidRenderCounter = 0;
+const MERMAID_SVG_CACHE_LIMIT = 40;
+const mermaidSvgCache = new Map<string, string>();
 
 interface MermaidRendererProps {
 	chart: string;
@@ -62,6 +65,39 @@ function blendColors(color1: string, color2: string, ratio: number): string {
  */
 function transparentize(color: string, bgColor: string, alpha: number): string {
 	return blendColors(bgColor, color, alpha);
+}
+
+function getMermaidThemeKey(theme: Theme): string {
+	const c = theme.colors;
+	return [
+		theme.id,
+		theme.name,
+		theme.mode,
+		c.bgMain,
+		c.border,
+		c.textMain,
+		c.textDim,
+		c.accent,
+		c.success,
+		c.warning,
+		c.error,
+	].join('|');
+}
+
+function getMermaidCacheKey(chart: string, themeKey: string): string {
+	return `${themeKey}\0${chart}`;
+}
+
+function getCachedMermaidSvg(chart: string, themeKey: string): string | null {
+	return mermaidSvgCache.get(getMermaidCacheKey(chart, themeKey)) ?? null;
+}
+
+function rememberMermaidSvg(chart: string, themeKey: string, svg: string): void {
+	mermaidSvgCache.set(getMermaidCacheKey(chart, themeKey), svg);
+	if (mermaidSvgCache.size > MERMAID_SVG_CACHE_LIMIT) {
+		const oldestKey = mermaidSvgCache.keys().next().value;
+		if (oldestKey) mermaidSvgCache.delete(oldestKey);
+	}
 }
 
 /**
@@ -316,34 +352,47 @@ const initMermaid = (theme: Theme) => {
 };
 
 export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
+	const themeKey = getMermaidThemeKey(theme);
+	const initialChart = chart.trim();
+	const initialSvgContent = initialChart ? getCachedMermaidSvg(initialChart, themeKey) : null;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
-	const [svgContent, setSvgContent] = useState<string | null>(null);
+	const [isLoading, setIsLoading] = useState(!initialSvgContent);
+	const [svgContent, setSvgContent] = useState<string | null>(() => initialSvgContent);
+	const themeRef = useRef(theme);
+	themeRef.current = theme;
 
 	// Use useLayoutEffect to ensure DOM is ready before we try to render
 	useLayoutEffect(() => {
 		let cancelled = false;
 
 		const renderChart = async () => {
-			if (!chart.trim()) {
+			const trimmed = chart.trim();
+			if (!trimmed) {
+				setSvgContent(null);
 				setIsLoading(false);
 				return;
 			}
 
-			setIsLoading(true);
+			const cachedSvg = getCachedMermaidSvg(trimmed, themeKey);
+			if (cachedSvg) {
+				setSvgContent((prev) => (prev === cachedSvg ? prev : cachedSvg));
+				setIsLoading(false);
+				setError(null);
+				return;
+			} else {
+				setIsLoading(true);
+			}
 			setError(null);
-			setSvgContent(null);
 
 			// Initialize mermaid with the app's theme colors (only when theme changes)
-			if (lastThemeId !== theme.name) {
-				initMermaid(theme);
-				lastThemeId = theme.name;
+			if (lastThemeKey !== themeKey) {
+				initMermaid(themeRef.current);
+				lastThemeKey = themeKey;
 			}
 
 			try {
 				// Pre-validate chart syntax before render to prevent DOM pollution.
-				const trimmed = chart.trim();
 				try {
 					await mermaid.parse(trimmed);
 				} catch (parseErr) {
@@ -354,7 +403,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				}
 
 				// Generate a unique ID for this diagram
-				const id = `mermaid-${Math.random().toString(36).substring(2, 11)}`;
+				const id = `mermaid-${++mermaidRenderCounter}`;
 
 				// Render the diagram - mermaid.render returns { svg: string }
 				const result = await mermaid.render(id, trimmed);
@@ -368,6 +417,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 						ADD_TAGS: ['foreignObject'],
 						ADD_ATTR: ['xmlns', 'xmlns:xlink', 'xlink:href', 'dominant-baseline', 'text-anchor'],
 					});
+					rememberMermaidSvg(trimmed, themeKey, sanitizedSvg);
 					setSvgContent(sanitizedSvg);
 					setError(null);
 				} else {
@@ -392,7 +442,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 		return () => {
 			cancelled = true;
 		};
-	}, [chart, theme]);
+	}, [chart, themeKey]);
 
 	// Update container with SVG when content changes
 	// NOTE: This hook must be called before any conditional returns to satisfy rules-of-hooks
@@ -418,7 +468,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				containerRef.current.appendChild(document.importNode(svgElement, true));
 			}
 		}
-	}, [svgContent, isLoading]);
+	}, [svgContent]);
 
 	if (error) {
 		return (
@@ -451,7 +501,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 	}
 
 	// Show loading state
-	if (isLoading) {
+	if (isLoading && !svgContent) {
 		return (
 			<div
 				className="mermaid-container p-4 rounded-lg overflow-x-auto"
