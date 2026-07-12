@@ -26,6 +26,7 @@ export type ThemeId =
 	| 'gruvbox-dark'
 	| 'olive-nights'
 	| 'indigo-blue'
+	| 'deep-wine-red'
 	| 'catppuccin-latte'
 	| 'ayu-light'
 	| 'pedurple'
@@ -156,6 +157,7 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'gruvbox-dark',
 		'olive-nights',
 		'indigo-blue',
+		'deep-wine-red',
 		'catppuccin-latte',
 		'ayu-light',
 		'pedurple',

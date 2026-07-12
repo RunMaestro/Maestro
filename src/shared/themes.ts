@@ -592,6 +592,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#ff5555',
 		},
 	},
+	'deep-wine-red': {
+		id: 'deep-wine-red',
+		name: 'Deep Wine Red',
+		mode: 'dark',
+		colors: {
+			bgMain: '#040102',
+			bgTitleBar: '#040102',
+			bgSidebar: '#040101',
+			bgActivity: '#070305',
+			border: '#0a0607',
+			textMain: '#f2ebc0',
+			textDim: '#c9bdb8',
+			accent: '#631f30',
+			accentDim: 'rgba(46, 14, 22, 1)',
+			accentText: '#dfa9b8',
+			accentForeground: '#ffffff',
+			success: '#a9caa5',
+			warning: '#d0a795',
+			error: '#ff5555',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',
