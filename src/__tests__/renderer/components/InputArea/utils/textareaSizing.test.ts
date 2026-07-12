@@ -15,6 +15,16 @@ describe('InputArea textareaSizing utils', () => {
 		expect(textarea.style.height).toBe('176px');
 	});
 
+	it('honors the computed CSS max-height when it is lower than the caller cap', () => {
+		const textarea = document.createElement('textarea');
+		textarea.style.maxHeight = '143px';
+		Object.defineProperty(textarea, 'scrollHeight', { value: 172, configurable: true });
+
+		resizeTextareaToContent(textarea, 176);
+
+		expect(textarea.style.height).toBe('143px');
+	});
+
 	it('resizes to exact content height below cap', () => {
 		const textarea = document.createElement('textarea');
 		Object.defineProperty(textarea, 'scrollHeight', { value: 80, configurable: true });

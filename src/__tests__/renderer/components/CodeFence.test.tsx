@@ -193,4 +193,18 @@ describe('CodeFence', () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it('reuses cached highlighted HTML on remount instead of flashing the plain fallback', async () => {
+		const code = 'const cachedHighlight = true;';
+		const { unmount } = render(<CodeFence {...defaultProps} language="ts" code={code} />);
+
+		await waitFor(() => {
+			expect(document.querySelector('.shiki-host')?.textContent).toContain('mocked');
+		});
+
+		unmount();
+		render(<CodeFence {...defaultProps} language="ts" code={code} />);
+
+		expect(document.querySelector('.shiki-host')?.textContent).toContain('mocked');
+	});
 });

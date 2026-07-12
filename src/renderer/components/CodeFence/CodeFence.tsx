@@ -23,6 +23,8 @@ interface CodeFenceProps {
 }
 
 const FALLBACK_LANG = 'text';
+const HIGHLIGHT_CACHE_LIMIT = 80;
+const highlightedHtmlCache = new Map<string, string>();
 
 // Auto-detection only needs to run once a fence has settled, not on every
 // streamed character. Debouncing the `code` value that feeds detection keeps
@@ -33,6 +35,28 @@ export const DETECTION_DEBOUNCE_MS = 150;
 
 function isExplicitLang(lang: string): boolean {
 	return Boolean(lang) && lang !== FALLBACK_LANG;
+}
+
+function highlightCacheKey(lang: string, code: string, mode: Theme['mode']): string {
+	return `${themeNameForMode(mode)}\0${lang}\0${code}`;
+}
+
+function getCachedHighlightHtml(lang: string, code: string, mode: Theme['mode']): string | null {
+	return highlightedHtmlCache.get(highlightCacheKey(lang, code, mode)) ?? null;
+}
+
+function rememberHighlightedHtml(
+	lang: string,
+	code: string,
+	mode: Theme['mode'],
+	html: string
+): void {
+	const key = highlightCacheKey(lang, code, mode);
+	highlightedHtmlCache.set(key, html);
+	if (highlightedHtmlCache.size > HIGHLIGHT_CACHE_LIMIT) {
+		const oldestKey = highlightedHtmlCache.keys().next().value;
+		if (oldestKey) highlightedHtmlCache.delete(oldestKey);
+	}
 }
 
 /**
@@ -47,14 +71,17 @@ export const CodeFence = memo(function CodeFence({
 	theme,
 	onCopy,
 }: CodeFenceProps) {
+	const initialResolvedLang = resolveLanguageSync(language) ?? language ?? FALLBACK_LANG;
 	// What the picker shows / what Shiki renders. Starts from the fence tag
 	// (resolved against our local alias table so common short tags like `js`
 	// surface as `javascript` on first paint), overridden by detection on
 	// no-language fences, overridden again by user picker choice.
-	const [resolvedLang, setResolvedLang] = useState<string>(
-		() => resolveLanguageSync(language) ?? language ?? FALLBACK_LANG
+	const [resolvedLang, setResolvedLang] = useState<string>(() => initialResolvedLang);
+	const [html, setHtml] = useState<string | null>(() =>
+		initialResolvedLang === FALLBACK_LANG
+			? null
+			: getCachedHighlightHtml(initialResolvedLang, code, theme.mode)
 	);
-	const [html, setHtml] = useState<string | null>(null);
 	const userOverrodeRef = useRef(false);
 
 	// Debounced code feeds auto-detection only. Without this, the effect below
@@ -104,6 +131,13 @@ export const CodeFence = memo(function CodeFence({
 			setHtml(null);
 			return;
 		}
+
+		const cached = getCachedHighlightHtml(resolvedLang, code, theme.mode);
+		if (cached) {
+			setHtml((prev) => (prev === cached ? prev : cached));
+			return;
+		}
+
 		let cancelled = false;
 		void (async () => {
 			try {
@@ -115,6 +149,7 @@ export const CodeFence = memo(function CodeFence({
 				}
 				const themeName = themeNameForMode(theme.mode);
 				const rendered = highlighter.codeToHtml(code, { lang, theme: themeName });
+				rememberHighlightedHtml(resolvedLang, code, theme.mode, rendered);
 				if (!cancelled) setHtml(rendered);
 			} catch (err) {
 				// Shiki failed (WASM load, missing grammar, malformed theme, …).
