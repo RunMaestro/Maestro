@@ -145,25 +145,28 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 								style={{ backgroundColor: theme.colors.error }}
 							/>
 						)}
-						<div
-							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
-							style={{
-								minWidth: '240px',
-								left: `${leftSidebarWidth + 8}px`,
-								top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-						>
-							<SessionTooltipContent
-								session={s}
-								theme={theme}
-								gitFileCount={getFileCount(s.id)}
-								isInBatch={isInBatch}
-								contextWarningYellowThreshold={contextWarningYellowThreshold}
-								contextWarningRedThreshold={contextWarningRedThreshold}
-							/>
-						</div>
+						{tooltipPosition && (
+							<div
+								data-testid="collapsed-session-tooltip"
+								className="fixed rounded px-3 py-2 z-[100] pointer-events-none shadow-xl"
+								style={{
+									minWidth: '240px',
+									left: `${leftSidebarWidth + 8}px`,
+									top: `${tooltipPosition.y}px`,
+									backgroundColor: theme.colors.bgSidebar,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<SessionTooltipContent
+									session={s}
+									theme={theme}
+									gitFileCount={getFileCount(s.id)}
+									isInBatch={isInBatch}
+									contextWarningYellowThreshold={contextWarningYellowThreshold}
+									contextWarningRedThreshold={contextWarningRedThreshold}
+								/>
+							</div>
+						)}
 					</div>
 				);
 			})}

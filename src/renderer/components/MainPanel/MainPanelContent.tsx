@@ -450,6 +450,65 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
+	// Keep the selected tab state urgent while moving the expensive transcript
+	// remount behind a guaranteed paint. Two animation frames let the tab bar and
+	// pending surface reach the screen before React parses and mounts the next
+	// conversation. Rapid tab changes cancel the stale target.
+	const [renderedAiTarget, setRenderedAiTarget] = React.useState(() => ({
+		sessionId: activeSession.id,
+		tabId: activeSession.activeTabId,
+	}));
+	React.useEffect(() => {
+		const nextTarget = {
+			sessionId: activeSession.id,
+			tabId: activeSession.activeTabId,
+		};
+		if (renderedAiTarget.sessionId !== activeSession.id) {
+			setRenderedAiTarget(nextTarget);
+			return;
+		}
+		if (renderedAiTarget.tabId === activeSession.activeTabId) return;
+
+		let contentFrame = 0;
+		const paintFrame = requestAnimationFrame(() => {
+			contentFrame = requestAnimationFrame(() => setRenderedAiTarget(nextTarget));
+		});
+		return () => {
+			cancelAnimationFrame(paintFrame);
+			if (contentFrame) cancelAnimationFrame(contentFrame);
+		};
+	}, [
+		activeSession.id,
+		activeSession.activeTabId,
+		renderedAiTarget.sessionId,
+		renderedAiTarget.tabId,
+	]);
+
+	const renderedAiTabId =
+		renderedAiTarget.sessionId === activeSession.id &&
+		activeSession.aiTabs?.some((tab) => tab.id === renderedAiTarget.tabId)
+			? renderedAiTarget.tabId
+			: activeSession.activeTabId;
+	const renderedActiveTab =
+		activeSession.aiTabs?.find((tab) => tab.id === renderedAiTabId) ?? activeTab;
+	// Preserve the exact session object while the selected tab is pending so the
+	// memoized TerminalOutput does not repeat its expensive render behind the
+	// loading surface. Once the deferred target commits, hand it the current
+	// session object and let the keyed remount render the selected transcript.
+	const renderedTranscriptSessionRef = React.useRef(activeSession);
+	if (
+		renderedTranscriptSessionRef.current.id !== activeSession.id ||
+		renderedAiTabId === activeSession.activeTabId
+	) {
+		renderedTranscriptSessionRef.current = activeSession;
+	}
+	const renderedTranscriptSession = renderedTranscriptSessionRef.current;
+	const isAiTabContentPending =
+		activeSession.inputMode === 'ai' &&
+		!activeFileTabId &&
+		!activeBrowserTabId &&
+		renderedAiTabId !== activeSession.activeTabId;
+
 	// Self-sourced from settingsStore. withMonoFallback guarantees the AI-output
 	// and terminal surfaces degrade to monospace instead of the browser's serif
 	// default when the stored font (a bare name from the picker) isn't installed.
@@ -766,56 +825,57 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					{/* User clicks "Exit Wizard" button in DocumentGenerationView which calls onWizardComplete to convert tab to normal session */}
 					<div className="flex-1 overflow-hidden flex flex-col relative" data-tour="main-terminal">
 						{activeSession.inputMode === 'ai' &&
-						(activeTab?.wizardState?.isGeneratingDocs ||
-							(activeTab?.wizardState?.generatedDocuments?.length ?? 0) > 0) ? (
+						(renderedActiveTab?.wizardState?.isGeneratingDocs ||
+							(renderedActiveTab?.wizardState?.generatedDocuments?.length ?? 0) > 0) ? (
 							<DocumentGenerationView
-								key={`wizard-gen-${activeSession.id}-${activeSession.activeTabId}`}
+								key={`wizard-gen-${activeSession.id}-${renderedAiTabId}`}
 								theme={theme}
-								documents={activeTab?.wizardState?.generatedDocuments ?? []}
-								currentDocumentIndex={activeTab?.wizardState?.currentDocumentIndex ?? 0}
-								isGenerating={activeTab?.wizardState?.isGeneratingDocs ?? false}
-								streamingContent={activeTab?.wizardState?.streamingContent}
+								documents={renderedActiveTab?.wizardState?.generatedDocuments ?? []}
+								currentDocumentIndex={renderedActiveTab?.wizardState?.currentDocumentIndex ?? 0}
+								isGenerating={renderedActiveTab?.wizardState?.isGeneratingDocs ?? false}
+								streamingContent={renderedActiveTab?.wizardState?.streamingContent}
 								onComplete={onWizardComplete || (() => {})}
 								onCompleteAndStartAutoRun={onWizardCompleteAndStartAutoRun}
 								onDocumentSelect={onWizardDocumentSelect || (() => {})}
 								folderPath={
-									activeTab?.wizardState?.subfolderPath ?? activeTab?.wizardState?.autoRunFolderPath
+									renderedActiveTab?.wizardState?.subfolderPath ??
+									renderedActiveTab?.wizardState?.autoRunFolderPath
 								}
 								onContentChange={onWizardContentChange}
-								progressMessage={activeTab?.wizardState?.progressMessage}
-								currentGeneratingIndex={activeTab?.wizardState?.currentGeneratingIndex}
-								totalDocuments={activeTab?.wizardState?.totalDocuments}
+								progressMessage={renderedActiveTab?.wizardState?.progressMessage}
+								currentGeneratingIndex={renderedActiveTab?.wizardState?.currentGeneratingIndex}
+								totalDocuments={renderedActiveTab?.wizardState?.totalDocuments}
 								onCancel={onWizardCancelGeneration}
-								subfolderName={activeTab?.wizardState?.subfolderName}
-								startedAt={activeTab?.wizardState?.docGenerationStartedAt}
+								subfolderName={renderedActiveTab?.wizardState?.subfolderName}
+								startedAt={renderedActiveTab?.wizardState?.docGenerationStartedAt}
 							/>
-						) : activeSession.inputMode === 'ai' && activeTab?.wizardState?.isActive ? (
+						) : activeSession.inputMode === 'ai' && renderedActiveTab?.wizardState?.isActive ? (
 							<WizardConversationView
-								key={`wizard-${activeSession.id}-${activeSession.activeTabId}`}
+								key={`wizard-${activeSession.id}-${renderedAiTabId}`}
 								theme={theme}
-								conversationHistory={activeTab.wizardState.conversationHistory}
-								isLoading={activeTab.wizardState.isWaiting ?? false}
+								conversationHistory={renderedActiveTab.wizardState.conversationHistory}
+								isLoading={renderedActiveTab.wizardState.isWaiting ?? false}
 								agentName={activeSession.name}
-								confidence={activeTab.wizardState.confidence}
-								ready={activeTab.wizardState.ready}
+								confidence={renderedActiveTab.wizardState.confidence}
+								ready={renderedActiveTab.wizardState.ready}
 								onLetsGo={onWizardLetsGo}
-								error={activeTab.wizardState.error}
+								error={renderedActiveTab.wizardState.error}
 								onRetry={onWizardRetry}
 								onClearError={onWizardClearError}
-								showThinking={activeTab.wizardState.showWizardThinking ?? false}
-								thinkingContent={activeTab.wizardState.thinkingContent ?? ''}
-								toolExecutions={activeTab.wizardState.toolExecutions ?? []}
+								showThinking={renderedActiveTab.wizardState.showWizardThinking ?? false}
+								thinkingContent={renderedActiveTab.wizardState.thinkingContent ?? ''}
+								toolExecutions={renderedActiveTab.wizardState.toolExecutions ?? []}
 								hasStartedGenerating={
-									activeTab.wizardState.isGeneratingDocs ||
-									(activeTab.wizardState.generatedDocuments?.length ?? 0) > 0
+									renderedActiveTab.wizardState.isGeneratingDocs ||
+									(renderedActiveTab.wizardState.generatedDocuments?.length ?? 0) > 0
 								}
 								setLightboxImage={setLightboxImage}
 							/>
 						) : (
 							<TerminalOutput
-								key={`${activeSession.id}-${activeSession.activeTabId}`}
+								key={`${activeSession.id}-${renderedAiTabId}`}
 								ref={terminalOutputRef}
-								session={activeSession}
+								session={renderedTranscriptSession}
 								theme={theme}
 								fontFamily={fontFamily}
 								activeFocus={activeFocus}
@@ -841,7 +901,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onInterrupt={handleInterrupt}
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}
-								initialScrollTop={activeTab?.scrollTop}
+								initialScrollTop={renderedActiveTab?.scrollTop}
 								markdownEditMode={chatRawTextMode}
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								onReplayMessage={onReplayMessage}
@@ -866,6 +926,17 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								ghCliAvailable={ghCliAvailable}
 								onPublishMessageGist={onPublishMessageGist}
 							/>
+						)}
+						{isAiTabContentPending && (
+							<div
+								data-testid="tab-content-pending"
+								role="status"
+								aria-label="Loading selected tab"
+								className="absolute inset-0 z-[2] flex items-center justify-center"
+								style={{ backgroundColor: theme.colors.bgMain }}
+							>
+								<Spinner size={24} color={theme.colors.accent} />
+							</div>
 						)}
 					</div>
 				</>

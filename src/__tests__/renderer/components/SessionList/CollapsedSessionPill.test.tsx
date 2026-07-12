@@ -159,14 +159,36 @@ describe('CollapsedSessionPill', () => {
 		expect(segment.style.backgroundColor).toBe('transparent');
 	});
 
-	it('renders tooltip content within each segment', () => {
+	it('mounts tooltip content only while a segment is hovered', () => {
 		const session = makeSession({ name: 'My Test Agent' });
-		const props = createDefaultProps({ session });
+		const getFileCount = vi.fn(() => 3);
+		const props = createDefaultProps({ session, getFileCount });
 
-		render(<CollapsedSessionPill {...props} />);
+		const { container } = render(<CollapsedSessionPill {...props} />);
+		const segment = container.firstElementChild!.firstElementChild!;
 
-		// The tooltip content should include the session name
+		expect(screen.queryByText('My Test Agent')).not.toBeInTheDocument();
+		expect(getFileCount).not.toHaveBeenCalled();
+
+		fireEvent.mouseEnter(segment, { clientX: 10, clientY: 20 });
 		expect(screen.getByText('My Test Agent')).toBeTruthy();
+		expect(getFileCount).toHaveBeenCalledTimes(1);
+
+		fireEvent.mouseLeave(segment);
+		expect(screen.queryByText('My Test Agent')).not.toBeInTheDocument();
+	});
+
+	it('mounts tooltip content while a segment has keyboard focus', () => {
+		const session = makeSession({ name: 'Keyboard Agent' });
+		const props = createDefaultProps({ session });
+		const { container } = render(<CollapsedSessionPill {...props} />);
+		const segment = container.firstElementChild!.firstElementChild!;
+
+		fireEvent.focus(segment);
+		expect(screen.getByText('Keyboard Agent')).toBeInTheDocument();
+
+		fireEvent.blur(segment);
+		expect(screen.queryByText('Keyboard Agent')).not.toBeInTheDocument();
 	});
 
 	it('does not show unread dot on non-last segments in multi-segment pill', () => {

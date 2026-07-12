@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MainPanelContent } from '../../../../renderer/components/MainPanel/MainPanelContent';
 import type { Session, Theme, AITab, FilePreviewTab } from '../../../../renderer/types';
+
+const { terminalOutputSessions } = vi.hoisted(() => ({
+	terminalOutputSessions: [] as Session[],
+}));
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
@@ -52,13 +56,22 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 
 // Mock child components
 vi.mock('../../../../renderer/components/TerminalOutput', () => ({
-	TerminalOutput: React.forwardRef((props: any, ref: any) =>
-		React.createElement('div', { 'data-testid': 'terminal-output', ref })
-	),
+	TerminalOutput: React.forwardRef((props: any, ref: any) => {
+		terminalOutputSessions.push(props.session);
+		return React.createElement('div', {
+			'data-testid': 'terminal-output',
+			'data-active-tab': props.session.activeTabId,
+			ref,
+		});
+	}),
 }));
 
 vi.mock('../../../../renderer/components/InputArea', () => ({
-	InputArea: (props: any) => React.createElement('div', { 'data-testid': 'input-area' }),
+	InputArea: (props: any) =>
+		React.createElement('div', {
+			'data-testid': 'input-area',
+			'data-active-tab': props.session.activeTabId,
+		}),
 }));
 
 vi.mock('../../../../renderer/components/FilePreview', () => ({
@@ -182,6 +195,7 @@ function makeDefaultProps() {
 describe('MainPanelContent', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		terminalOutputSessions.length = 0;
 		layerState.count = 0;
 	});
 
@@ -336,5 +350,48 @@ describe('MainPanelContent', () => {
 	it('renders data-tour attribute on input area', () => {
 		const { container } = render(<MainPanelContent {...makeDefaultProps()} />);
 		expect(container.querySelector('[data-tour="input-area"]')).toBeInTheDocument();
+	});
+
+	it('commits the selected tab before replacing its expensive transcript', () => {
+		const rafCallbacks: FrameRequestCallback[] = [];
+		const originalRaf = global.requestAnimationFrame;
+		const originalCancelRaf = global.cancelAnimationFrame;
+		global.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+			rafCallbacks.push(callback);
+			return rafCallbacks.length;
+		});
+		global.cancelAnimationFrame = vi.fn();
+
+		try {
+			const firstProps = makeDefaultProps();
+			firstProps.activeSession = makeSession({
+				aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }] as AITab[],
+				activeTabId: 'tab-1',
+			});
+			const { rerender } = render(<MainPanelContent {...firstProps} />);
+
+			const secondProps = makeDefaultProps();
+			secondProps.activeSession = makeSession({
+				aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }] as AITab[],
+				activeTabId: 'tab-2',
+			});
+			secondProps.activeTab = { id: 'tab-2' } as AITab;
+			rerender(<MainPanelContent {...secondProps} />);
+
+			expect(screen.getByTestId('input-area')).toHaveAttribute('data-active-tab', 'tab-2');
+			expect(screen.getByTestId('terminal-output')).toHaveAttribute('data-active-tab', 'tab-1');
+			expect(terminalOutputSessions.at(-1)).toBe(firstProps.activeSession);
+			expect(screen.getByTestId('tab-content-pending')).toBeInTheDocument();
+
+			act(() => rafCallbacks.shift()?.(0));
+			expect(screen.getByTestId('terminal-output')).toHaveAttribute('data-active-tab', 'tab-1');
+
+			act(() => rafCallbacks.shift()?.(16));
+			expect(screen.getByTestId('terminal-output')).toHaveAttribute('data-active-tab', 'tab-2');
+			expect(screen.queryByTestId('tab-content-pending')).not.toBeInTheDocument();
+		} finally {
+			global.requestAnimationFrame = originalRaf;
+			global.cancelAnimationFrame = originalCancelRaf;
+		}
 	});
 });
