@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
+import { InputTextarea } from '../../../renderer/components/InputArea/components/InputTextarea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
@@ -278,6 +279,44 @@ describe('InputArea', () => {
 			expect(overlay).toHaveStyle({ visibility: 'visible' });
 			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
+
+		it('aligns a newly mounted mention overlay with the textarea scroll position', () => {
+			const frames: FrameRequestCallback[] = [];
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				frames.push(callback);
+				return frames.length;
+			});
+			vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+			const inputRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
+
+			const { container } = render(
+				<InputTextarea
+					session={createMockSession({ inputMode: 'ai' })}
+					theme={mockTheme}
+					isTerminalMode={false}
+					inputValue="check @src/index.ts now"
+					spellCheckEnabled={false}
+					inputRef={inputRef}
+					onInputFocus={vi.fn()}
+					onChange={vi.fn()}
+					handleInputKeyDown={vi.fn()}
+					handlePaste={vi.fn()}
+					handleDrop={vi.fn()}
+				/>
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			textarea.scrollTop = 20;
+			textarea.scrollLeft = 7;
+
+			act(() => {
+				frames.splice(0).forEach((callback) => callback(0));
+			});
+
+			expect(overlay.scrollTop).toBe(20);
+			expect(overlay.scrollLeft).toBe(7);
+		});
+
 		it('renders the notification settings button', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);

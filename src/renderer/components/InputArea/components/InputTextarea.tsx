@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useRef, useState } from 'react';
+import React, { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Session, Group, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -133,6 +133,20 @@ export const InputTextarea = memo(function InputTextarea({
 		el.scrollTop = target.scrollTop;
 		el.scrollLeft = target.scrollLeft;
 	};
+
+	// A newly mounted overlay misses any scroll that happened before the mention
+	// became recognizable. Sync after the textarea resize/scroll frame so its
+	// first painted position matches the native text.
+	useLayoutEffect(() => {
+		if (!overlayRendered) return;
+
+		const frameId = requestAnimationFrame(() => {
+			const textarea = inputRef.current;
+			if (textarea) syncOverlayScroll(textarea);
+		});
+
+		return () => cancelAnimationFrame(frameId);
+	}, [inputRef, inputValue, overlayRendered]);
 
 	// Chip palette shared with the sent-transcript pill (same fill + border), so
 	// the mention reads as the same object whether the user is typing it or reading
