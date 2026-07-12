@@ -312,6 +312,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				}
 
 				const db = getStatsDB();
+				// Fire-and-forget analytics: an agent can be created (restored on boot,
+				// spawned by the wizard) before the stats DB has finished initializing.
+				// Skip that window rather than throwing "Database not initialized", an
+				// unactionable error that otherwise crosses the IPC bridge into Sentry.
+				// (MAESTRO-2S, same startup race as MAESTRO-SP below.)
+				if (!db.isReady()) {
+					return null;
+				}
 				const id = db.recordSessionCreated(event);
 				logger.debug(`Recorded session created: ${event.sessionId}`, LOG_CONTEXT, {
 					agentType: event.agentType,
@@ -330,6 +338,12 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			handlerOpts('recordSessionClosed'),
 			async (sessionId: string, closedAt: number) => {
 				const db = getStatsDB();
+				// Same fire-and-forget startup race as record-session-created: agents torn
+				// down during early boot would otherwise throw "Database not initialized".
+				// (MAESTRO-2Z)
+				if (!db.isReady()) {
+					return false;
+				}
 				const updated = db.recordSessionClosed(sessionId, closedAt);
 				if (updated) {
 					logger.debug(`Recorded session closed: ${sessionId}`, LOG_CONTEXT);

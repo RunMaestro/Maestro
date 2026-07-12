@@ -40,7 +40,12 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	if (/ENOSPC: no space left on device/i.test(haystack)) return true;
 
 	// Broken pipe writing to a closed stdout/stderr (process torn down underneath us).
+	// Two message shapes reach us: libuv fs-style writes surface as `EPIPE: broken pipe`,
+	// while Node stream/socket writes (console.* into a stdout pipe whose reader already
+	// exited) surface as `write EPIPE`. Both are the same unfixable teardown race, so
+	// match both - the stream form is by far the more common one in the field.
 	if (/EPIPE: broken pipe/i.test(haystack)) return true;
+	if (/\b(write|read) EPIPE\b/i.test(haystack)) return true;
 
 	// Windows rename races with antivirus / OneDrive holding the tmp file open.
 	if (/EPERM: operation not permitted, rename /i.test(haystack)) return true;
@@ -80,13 +85,17 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 		if (/Path does not exist:/i.test(haystack)) return true;
 	}
 
-	// ENOSPC / EPERM rename bubbling up through settings / sessions writes (same as
-	// rule 1 but the IPC wrapper changes the message prefix).
+	// ENOSPC / EPERM / EACCES bubbling up through settings / sessions writes (same as
+	// rule 1 but the IPC wrapper changes the message prefix). EACCES means the userData
+	// file itself is not writable (broken permissions, security software holding it);
+	// the persistence layer already degrades to a recoverable disk error the user sees,
+	// and no code change on our side can grant the process write access.
 	if (
-		/Error invoking remote method '(settings:set|sessions:setActiveSessionId|history:add|settings:get)'/.test(
+		/Error invoking remote method '(settings:set|sessions:setActiveSessionId|sessions:setMany|sessions:setAll|history:add|settings:get)'/.test(
 			haystack
 		) &&
 		(/ENOSPC: no space left on device/i.test(haystack) ||
+			/EACCES: permission denied/i.test(haystack) ||
 			/EPERM: operation not permitted, rename /i.test(haystack))
 	) {
 		return true;
