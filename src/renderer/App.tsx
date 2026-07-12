@@ -155,7 +155,7 @@ import { WindowProvider, useWindowContextOptional } from './contexts/WindowConte
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
-import { registerBatchResumer } from './stores/retryStore';
+import { registerBatchResumer, cancelRetry } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -1039,6 +1039,65 @@ function MaestroConsoleInner() {
 		return () => unsubThrottled();
 	}, []);
 
+	// Subscribe to auth recovery lifecycle events. Recovery runs entirely in the
+	// main process (kill → claude login → respawn + resume); without these the
+	// renderer would show a stale auth_expired error modal over a session that
+	// already recovered.
+	useEffect(() => {
+		const unsubStarted = window.maestro.accounts.onAuthRecoveryStarted((data) => {
+			notifyToast({
+				type: 'info',
+				title: 'Re-authenticating Virtuoso',
+				message: `Auth expired for ${data.accountName} — attempting automatic re-login`,
+				duration: 8_000,
+			});
+		});
+
+		const unsubCompleted = window.maestro.accounts.onAuthRecoveryCompleted((data) => {
+			// Clear the stale auth_expired error from the recovered session (both
+			// the session-level fields the error modal reads and the per-tab banner)
+			const session = sessionsRef.current.find((s) => data.sessionId.startsWith(s.id));
+			if (session) {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== session.id) return s;
+						const clearSessionError = s.agentError?.type === 'auth_expired';
+						return {
+							...s,
+							...(clearSessionError
+								? { agentError: undefined, agentErrorTabId: undefined, agentErrorPaused: undefined }
+								: {}),
+							aiTabs: s.aiTabs.map((t) =>
+								t.agentError?.type === 'auth_expired' ? { ...t, agentError: undefined } : t
+							),
+						};
+					})
+				);
+			}
+			notifyToast({
+				type: 'success',
+				title: 'Virtuoso Re-authenticated',
+				message: `${data.accountName} logged in again — agent resumed`,
+				duration: 5_000,
+			});
+		});
+
+		const unsubFailed = window.maestro.accounts.onAuthRecoveryFailed((data) => {
+			notifyToast({
+				type: 'error',
+				title: 'Virtuoso Re-authentication Failed',
+				message: data.error || 'Automatic re-login failed. Run "claude login" manually.',
+				duration: 0, // requires acknowledgment
+			});
+		});
+
+		return () => {
+			unsubStarted();
+			unsubCompleted();
+			unsubFailed();
+		};
+	}, []);
+
 	// Subscribe to account assignment events (update session state when main process assigns an account)
 	useEffect(() => {
 		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
@@ -1069,6 +1128,14 @@ function MaestroConsoleInner() {
 			if (!session) {
 				console.error('[AccountSwitch] Session not found for respawn:', switchSessionId);
 				return;
+			}
+
+			// Agent Resilience coordination: the switch respawn re-sends the last
+			// prompt itself, so cancel any pending auto-retry for this session's
+			// tabs. Without this, the retry timer (min 30s backoff) fires after the
+			// respawn and sends the SAME prompt a second time on the new account.
+			for (const tab of session.aiTabs ?? []) {
+				cancelRetry(session.id, tab.id);
 			}
 
 			// Update session with new account info and CLAUDE_CONFIG_DIR
