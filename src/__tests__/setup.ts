@@ -289,6 +289,11 @@ const mockMaestro = {
 			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),
 			delete: vi.fn().mockResolvedValue({}),
 		},
+		issues: {
+			list: vi.fn().mockResolvedValue({ issues: [] }),
+			delete: vi.fn().mockResolvedValue({}),
+			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
+		},
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),

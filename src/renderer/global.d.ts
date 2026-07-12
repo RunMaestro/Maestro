@@ -860,6 +860,31 @@ interface MaestroAPI {
 			}>;
 			delete: (id: string) => Promise<Record<string, never>>;
 		};
+		issues: {
+			list: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
+			delete: (issueNumber: number) => Promise<Record<string, never>>;
+			refreshStates: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
+		};
 	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;

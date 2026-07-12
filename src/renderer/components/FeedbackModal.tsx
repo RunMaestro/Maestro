@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Minimize2, X, History, ArrowLeft } from 'lucide-react';
+import { Minimize2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { FeedbackChatView } from './FeedbackChatView';
 import { FeedbackDraftsList } from './FeedbackDraftsList';
+import { FeedbackIssueHistoryList } from './FeedbackIssueHistoryList';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useFeedbackIssueHistoryStore } from '../stores/feedbackIssueHistoryStore';
 import { useUIStore } from '../stores/uiStore';
 
 interface FeedbackModalProps {
@@ -46,6 +48,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 	const cardRef = useRef<HTMLDivElement>(null);
 	const [showDrafts, setShowDrafts] = useState(false);
+	const [showHistory, setShowHistory] = useState(false);
 	const [resumeNonce, setResumeNonce] = useState(0);
 
 	const isMinimized = useFeedbackDraftStore((s) => s.isMinimized);
@@ -54,10 +57,32 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	const setLeftSidebarOpen = useUIStore((s) => s.setLeftSidebarOpen);
 	const drafts = useFeedbackDraftStore((s) => s.drafts);
 	const resumeDraftId = useFeedbackDraftStore((s) => s.resumeDraftId);
+	const issues = useFeedbackIssueHistoryStore((s) => s.issues);
+	const openIssueCount = issues.filter((i) => i.state === 'open').length;
 
 	// Refresh persisted drafts when the modal mounts so the Drafts list is fresh.
 	useEffect(() => {
 		void useFeedbackDraftStore.getState().loadDrafts();
+	}, []);
+
+	// Load submitted-issue history on mount so the history badge is populated.
+	useEffect(() => {
+		void useFeedbackIssueHistoryStore.getState().loadIssues();
+	}, []);
+
+	const handleToggleHistory = useCallback(() => {
+		setShowHistory((v) => {
+			const next = !v;
+			if (next) {
+				setShowDrafts(false);
+				void useFeedbackIssueHistoryStore.getState().refreshStates();
+			}
+			return next;
+		});
+	}, []);
+
+	const handleDeleteIssue = useCallback((issueNumber: number) => {
+		void useFeedbackIssueHistoryStore.getState().deleteIssue(issueNumber);
 	}, []);
 
 	// --- Apply / clear animation transforms on the card ---
@@ -245,13 +270,16 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							</h2>
 							<div className="flex items-center gap-1">
 								<GhostIconButton
-									onClick={() => setShowDrafts((v) => !v)}
+									onClick={() => {
+										setShowHistory(false);
+										setShowDrafts((v) => !v);
+									}}
 									ariaLabel="View saved drafts"
 									color={showDrafts ? theme.colors.accent : theme.colors.textDim}
 									title="Saved drafts"
 								>
 									<span className="relative inline-flex">
-										<History className="w-4 h-4" />
+										<PencilLine className="w-4 h-4" />
 										{drafts.length > 0 && (
 											<span
 												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
@@ -261,6 +289,27 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 												}}
 											>
 												{drafts.length}
+											</span>
+										)}
+									</span>
+								</GhostIconButton>
+								<GhostIconButton
+									onClick={handleToggleHistory}
+									ariaLabel="View submitted issues"
+									color={showHistory ? theme.colors.accent : theme.colors.textDim}
+									title="Submitted issues"
+								>
+									<span className="relative inline-flex">
+										<History className="w-4 h-4" />
+										{openIssueCount > 0 && (
+											<span
+												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												style={{
+													backgroundColor: theme.colors.success,
+													color: theme.colors.accentForeground,
+												}}
+											>
+												{openIssueCount}
 											</span>
 										)}
 									</span>
@@ -325,6 +374,36 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										drafts={drafts}
 										onResume={handleResume}
 										onDelete={handleDeleteDraft}
+									/>
+								</div>
+							</div>
+						)}
+						{showHistory && (
+							<div
+								className="absolute inset-0 z-10 flex flex-col"
+								style={{ backgroundColor: theme.colors.bgSidebar }}
+							>
+								<div
+									className="flex items-center gap-2 p-3 border-b shrink-0"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<GhostIconButton
+										onClick={() => setShowHistory(false)}
+										ariaLabel="Back to feedback"
+										color={theme.colors.textDim}
+										title="Back"
+									>
+										<ArrowLeft className="w-4 h-4" />
+									</GhostIconButton>
+									<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
+										Submitted Issues
+									</span>
+								</div>
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<FeedbackIssueHistoryList
+										theme={theme}
+										issues={issues}
+										onDelete={handleDeleteIssue}
 									/>
 								</div>
 							</div>
