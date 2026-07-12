@@ -125,7 +125,7 @@ let getModeratorSettingsCallback: GetModeratorSettingsCallback | null = null;
 let sshStore: SshRemoteSettingsStore | null = null;
 
 // Module-level account registry for account multiplexing
-let accountRegistryRef: AccountRegistry | null = null;
+let accountRegistryGetter: () => AccountRegistry | null = () => null;
 
 /**
  * Tracks pending participant responses for each group chat.
@@ -457,11 +457,12 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
 }
 
 /**
- * Sets the account registry for account multiplexing.
- * Called from index.ts during initialization.
+ * Sets the account registry getter for account multiplexing.
+ * Called from index.ts during initialization. A getter (not a direct ref)
+ * so the Virtuosos Encore flag is re-checked live on every spawn.
  */
-export function setAccountRegistry(registry: AccountRegistry): void {
-	accountRegistryRef = registry;
+export function setAccountRegistry(getRegistry: () => AccountRegistry | null): void {
+	accountRegistryGetter = getRegistry;
 }
 
 /**
@@ -985,7 +986,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					processManager,
 					readOnlyMode: true,
 					debugLabel: 'moderator',
-					accountRegistry: accountRegistryRef,
+					accountRegistry: accountRegistryGetter(),
 					accountId: chat.accountId,
 					// Match maestro-p's idle budget to the moderator supervising timeout
 					// so a still-working moderator isn't killed at maestro-p's 300s default.
@@ -1435,7 +1436,7 @@ export async function routeModeratorResponse(
 					processManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
-					accountRegistry: accountRegistryRef,
+					accountRegistry: accountRegistryGetter(),
 					accountId: updatedChat.accountId,
 					// Match maestro-p's idle budget to the participant supervising timeout
 					// so a still-working participant isn't killed at maestro-p's 300s default.
@@ -1831,7 +1832,7 @@ Review the agent responses above. Either:
 			processManager,
 			readOnlyMode: true,
 			debugLabel: 'synthesis moderator',
-			accountRegistry: accountRegistryRef,
+			accountRegistry: accountRegistryGetter(),
 			accountId: chat.accountId,
 			// Match maestro-p's idle budget to the moderator supervising timeout
 			// so a still-working synthesis turn isn't killed at maestro-p's 300s default.
@@ -1999,7 +2000,7 @@ export async function respawnParticipantWithRecovery(
 		processManager,
 		readOnlyMode: readOnly ?? false,
 		debugLabel: `recovery of ${participantName}`,
-		accountRegistry: accountRegistryRef,
+		accountRegistry: accountRegistryGetter(),
 		accountId: chat.accountId,
 		// Match maestro-p's idle budget to the participant supervising timeout
 		// so a still-working recovery turn isn't killed at maestro-p's 300s default.

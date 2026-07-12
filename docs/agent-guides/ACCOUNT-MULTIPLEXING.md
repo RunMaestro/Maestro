@@ -19,6 +19,8 @@ Account multiplexing lets one Maestro install drive **multiple Claude accounts**
 
 Multiplexing has **full parity for Claude Code, Codex, and OpenCode**; each provider isolates accounts behind its own config-dir env var (see the parity matrix in section 2.3). Providers without a relocatable config dir (Gemini CLI, Factory Droid) are import/observe only, and non-multiplexable agents (Copilot, terminal) are completely untouched: the injector returns early for any agent without a config-dir env var, and with zero accounts registered for a provider the entire system is a no-op for that provider.
 
+**The ENTIRE feature is gated on the `virtuosos` Encore flag** (Settings -> Plugins -> Virtuosos, default off). In `src/main/index.ts` every consumer receives the account machinery through gated getters (`getAccountRegistryGated` etc.) that re-read the flag live on each call: with the flag off there is no env injection, no account error routing, no per-account usage aggregation, no recovery polling, and no `account:*` events. The renderer hides all surfaces (hamburger entry, modal, selector, dashboard tab, badges) and the CLI ignores `--account`/`--account-rotation` with a warning. Toggling the flag on restores everything without a restart; account data in `maestro-accounts.json` is preserved while off.
+
 ---
 
 ## 2. Architecture
@@ -193,7 +195,7 @@ Known intentional gaps (UI-heavy, exercised manually): `AccountsPanel.tsx`, `Vir
 
 ### 5.2 Manual validation checklist
 
-Run with `npm run dev` (isolated data). Prereq: a real Claude login in `~/.claude`.
+Run with `npm run dev` (isolated data). Prereqs: a real Claude login in `~/.claude`, and the Virtuosos extension enabled (Settings -> Plugins -> Virtuosos) - with the flag off there is no Virtuosos menu entry, no selector, no badges, no injection, and `maestro-cli accounts` reports the feature as disabled.
 
 Setup
 
@@ -241,7 +243,7 @@ CLI parity
 
 ## 6. Provider switching (Virtuosos vertical swapping)
 
-Layered ON TOP of account multiplexing and gated behind the `virtuosos` Encore flag (Settings -> Plugins -> Virtuosos, default off). Account multiplexing itself is always on; the flag gates only these provider-level surfaces.
+Layered ON TOP of account multiplexing. The same `virtuosos` Encore flag gates BOTH layers: account multiplexing and these provider-level surfaces all appear together when the flag is turned on.
 
 ### 6.1 Modules
 

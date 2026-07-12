@@ -9,6 +9,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons - include all icons used by modal and its child components
@@ -223,6 +224,10 @@ describe('UsageDashboardModal', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Virtuosos tab only exists while the Encore flag is on
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, virtuosos: true },
+		}));
 		// The dashboard tab is now persisted in the shared uiStore singleton, which
 		// survives across tests in this file. Reset it so each test starts on the
 		// default 'overview' tab instead of inheriting whatever a prior tab-switching

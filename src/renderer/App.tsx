@@ -959,6 +959,7 @@ function MaestroConsoleInner() {
 
 	// Subscribe to account limit warning/reached events for toast notifications
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
 			notifyToast({
 				type: 'warning',
@@ -981,10 +982,11 @@ function MaestroConsoleInner() {
 			unsubWarning();
 			unsubReached();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account recovery events for auto-resume of paused Auto Runs
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
 			notifyToast({
 				type: 'success',
@@ -1027,10 +1029,11 @@ function MaestroConsoleInner() {
 		});
 
 		return () => unsubRecovery();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to all-accounts-exhausted throttle events for Auto Run pause
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubThrottled = window.maestro.accounts.onThrottled((data) => {
 			if (!data.noAlternatives) return; // Only handle the exhausted case
 
@@ -1057,13 +1060,14 @@ function MaestroConsoleInner() {
 		});
 
 		return () => unsubThrottled();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to auth recovery lifecycle events. Recovery runs entirely in the
 	// main process (kill → claude login → respawn + resume); without these the
 	// renderer would show a stale auth_expired error modal over a session that
 	// already recovered.
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubStarted = window.maestro.accounts.onAuthRecoveryStarted((data) => {
 			notifyToast({
 				type: 'info',
@@ -1116,10 +1120,11 @@ function MaestroConsoleInner() {
 			unsubCompleted();
 			unsubFailed();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account assignment events (update session state when main process assigns an account)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
 			setSessions((prev) =>
 				prev.map((s) => {
@@ -1129,10 +1134,11 @@ function MaestroConsoleInner() {
 			);
 		});
 		return () => unsubAssigned();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account switch events (respawn agent with new account after switch)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
 			const {
 				sessionId: switchSessionId,
@@ -1280,10 +1286,11 @@ function MaestroConsoleInner() {
 			unsubSwitchFailed();
 			unsubSwitchExecute();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account switch prompt events (user confirmation needed)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubSwitchPrompt = window.maestro.accounts.onSwitchPrompt((data: any) => {
 			setSwitchPromptData({
 				sessionId: data.sessionId,
@@ -1310,7 +1317,7 @@ function MaestroConsoleInner() {
 			unsubSwitchPrompt();
 			unsubSwitchCompleted();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Keyboard navigation state
 	// Note: selectedSidebarIndex/setSelectedSidebarIndex are destructured from useUIStore() above
@@ -4160,7 +4167,7 @@ function MaestroConsoleInner() {
 			)}
 			{/* Virtuosos Modal */}
 			<VirtuososModal
-				isOpen={virtuososOpen}
+				isOpen={virtuososOpen && encoreFeatures.virtuosos === true}
 				onClose={() => setVirtuososOpen(false)}
 				theme={theme}
 				sessions={sessions}

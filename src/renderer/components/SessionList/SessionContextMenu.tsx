@@ -24,6 +24,7 @@ import {
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 
@@ -158,6 +159,7 @@ export function SessionContextMenu({
 	onMoveToWindow,
 	onRenameWindow,
 }: SessionContextMenuProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const menuRef = useRef<HTMLDivElement>(null);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
@@ -262,8 +264,8 @@ export function SessionContextMenu({
 				Edit Agent...
 			</button>
 
-			{/* Account info - non-clickable info item */}
-			{session.accountId && (
+			{/* Account info - non-clickable info item (Virtuosos Encore flag) */}
+			{virtuososEnabled && session.accountId && (
 				<div
 					className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2"
 					style={{ color: theme.colors.textDim }}

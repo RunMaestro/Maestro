@@ -13,7 +13,7 @@ import {
 import { captureCliRun } from './agent-run-capture';
 import { readAccountsFromStore, getAccountByIdOrName, getDefaultAccount } from './account-reader';
 import type { CLIAccountInfo } from './account-reader';
-import { addHistoryEntry, readGroups } from './storage';
+import { addHistoryEntry, readGroups, readSettingValue } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
@@ -47,6 +47,17 @@ async function resolveAccountConfigDir(
 	accountRotation?: boolean,
 	cachedAccounts?: CLIAccountInfo[] | null
 ): Promise<string | undefined> {
+	// The entire Virtuosos feature is gated on the Encore flag; with it off the
+	// CLI behaves as if account multiplexing does not exist (same as the desktop).
+	if (readSettingValue('encoreFeatures.virtuosos') !== true) {
+		if (accountOption || accountRotation) {
+			process.stderr.write(
+				'Warning: --account/--account-rotation require the Virtuosos extension (Settings -> Plugins -> Virtuosos); ignoring.\n'
+			);
+		}
+		return undefined;
+	}
+
 	if (accountOption) {
 		const account = await getAccountByIdOrName(accountOption);
 		if (account && account.agentType !== toolType) {

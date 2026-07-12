@@ -30,6 +30,7 @@ import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReader
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * View modes for the modal
@@ -150,6 +151,7 @@ export function MergeSessionModal({
 	onClose,
 	onMerge,
 }: MergeSessionModalProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	// View mode state
 	const [viewMode, setViewMode] = useState<ViewMode>('search');
 
@@ -893,7 +895,7 @@ export function MergeSessionModal({
 																					{item.agentSessionId.split('-')[0].toUpperCase()}
 																				</span>
 																			)}
-																			{item.accountId && (
+																			{virtuososEnabled && item.accountId && (
 																				<span
 																					style={{
 																						fontSize: '10px',
@@ -956,7 +958,7 @@ export function MergeSessionModal({
 								~{formatTokensCompact(sourceTokens)} tokens
 							</span>
 						</div>
-						{sourceSession?.accountId && (
+						{virtuososEnabled && sourceSession?.accountId && (
 							<div
 								style={{
 									display: 'flex',

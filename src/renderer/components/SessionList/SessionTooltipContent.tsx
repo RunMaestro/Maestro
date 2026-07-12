@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Folder, GitBranch, Bot, Clock, Server } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { getContextColor, formatActiveTime } from '../../utils/theme';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 interface SessionTooltipContentProps {
 	session: Session;
@@ -22,6 +23,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 	contextWarningYellowThreshold = 60,
 	contextWarningRedThreshold = 80,
 }: SessionTooltipContentProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const clampedContextUsage = Math.max(0, Math.min(100, session.contextUsage));
 
 	return (
@@ -121,7 +123,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				{session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
-			{session.accountName && (
+			{virtuososEnabled && session.accountName && (
 				<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
 					Account: <span style={{ color: theme.colors.accent }}>{session.accountName}</span>
 				</div>

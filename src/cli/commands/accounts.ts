@@ -1,8 +1,16 @@
 // Accounts command - list configured provider accounts (Virtuosos)
 
 import { readAccountsFromStore } from '../services/account-reader';
+import { readSettingValue } from '../services/storage';
 
 export async function listAccounts(): Promise<void> {
+	if (readSettingValue('encoreFeatures.virtuosos') !== true) {
+		console.log(
+			'Virtuosos (account multiplexing) is disabled. Enable it in Maestro Settings > Plugins > Virtuosos.'
+		);
+		return;
+	}
+
 	const accounts = await readAccountsFromStore();
 
 	if (accounts.length === 0) {

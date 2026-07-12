@@ -9,6 +9,7 @@ import {
 	XCircle,
 } from 'lucide-react';
 import type { Session, Theme } from '../../types';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
 
@@ -34,6 +35,7 @@ export interface ProcessListViewProps {
 // selectedNodeRef + scroll-into-view side-effect; everything else is pure
 // presentation driven by props.
 export function ProcessListView(props: ProcessListViewProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const {
 		theme,
 		sessions = [],
@@ -396,8 +398,9 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
 									</span>
 								)}
-								{/* Account badge — show if session has an account assigned */}
+								{/* Account badge — Virtuosos Encore flag + session has an account assigned */}
 								{(() => {
+									if (!virtuososEnabled) return null;
 									const sess = sessions.find((s) => s.id === node.agentSessionId);
 									if (sess?.accountName) {
 										return (

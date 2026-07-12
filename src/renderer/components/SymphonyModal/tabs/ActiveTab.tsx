@@ -3,6 +3,7 @@ import { RefreshCw, Music } from 'lucide-react';
 import type { Theme, Session } from '../../../types';
 import type { ActiveContribution } from '../../../../shared/symphony-types';
 import { ActiveContributionCard } from '../components/ActiveContributionCard';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 export interface ActiveTabProps {
 	theme: Theme;
@@ -33,6 +34,7 @@ export const ActiveTab = memo(function ActiveTab({
 	onSelectSession,
 	onCloseModal,
 }: ActiveTabProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	return (
 		<div className="flex-1 flex flex-col overflow-hidden">
 			{/* Header with refresh button */}
@@ -101,7 +103,7 @@ export const ActiveTab = memo(function ActiveTab({
 									onSync={() => onSyncContribution(contribution.id)}
 									isSyncing={syncingContributionId === contribution.id}
 									sessionName={session?.name ?? null}
-									accountName={session?.accountName}
+									accountName={virtuososEnabled ? session?.accountName : undefined}
 									onNavigateToSession={() => {
 										if (session) {
 											onSelectSession(session.id);
