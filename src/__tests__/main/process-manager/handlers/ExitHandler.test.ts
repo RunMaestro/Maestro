@@ -40,6 +40,10 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	cleanupTempFiles: vi.fn(),
 }));
 
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // SSH config resolution: real getters require initialized stores, which don't
 // exist in unit tests. Mock so each test controls whether the remote resolves.
 vi.mock('../../../../main/stores/getters', () => ({
@@ -57,6 +61,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
+import { captureException } from '../../../../main/utils/sentry';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
@@ -224,6 +229,57 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain(invalidJson);
+		});
+
+		// Regression (MAESTRO-V9): in plain batch mode the whole jsonBuffer is
+		// JSON.parse'd at exit. Agents that ignore the JSON output flag answer with
+		// prose or a box-drawing TUI frame instead, which threw a SyntaxError that
+		// we reported to Sentry on every occurrence — even though the raw-buffer
+		// fallback below already recovers the output for the user.
+		describe('batch mode exit with non-JSON output', () => {
+			beforeEach(() => {
+				vi.mocked(captureException).mockClear();
+			});
+
+			it.each([
+				['plain prose', "Hello. I'm Claude, an AI assistant."],
+				['a box-drawing TUI frame', '┌────────────┐\n│ review doc │\n└────────────┘'],
+			])('emits %s as raw data without reporting to Sentry', async (_label, output) => {
+				const proc = createMockProcess({
+					isBatchMode: true,
+					isStreamJsonMode: false,
+					jsonBuffer: output,
+				});
+				processes.set('test-session', proc);
+
+				const dataEvents: string[] = [];
+				emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(dataEvents).toContain(output);
+				expect(captureException).not.toHaveBeenCalled();
+			});
+
+			it('still reports a non-SyntaxError fault raised while handling valid JSON', async () => {
+				// A genuine bug downstream of the parse (here: a throwing usage
+				// aggregator) must keep reaching Sentry — only SyntaxError is expected.
+				const { aggregateModelUsage } = await import('../../../../main/parsers/usage-aggregator');
+				vi.mocked(aggregateModelUsage).mockImplementationOnce(() => {
+					throw new TypeError('usage aggregation blew up');
+				});
+
+				const proc = createMockProcess({
+					isBatchMode: true,
+					isStreamJsonMode: false,
+					jsonBuffer: '{"result":"done","total_cost_usd":0.01}',
+				});
+				processes.set('test-session', proc);
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(captureException).toHaveBeenCalledWith(expect.any(TypeError));
+			});
 		});
 
 		it('should use streamedText as fallback when result event has no text', async () => {

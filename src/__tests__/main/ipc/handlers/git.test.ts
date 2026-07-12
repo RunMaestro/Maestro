@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import { registerGitHandlers } from '../../../../main/ipc/handlers/git';
 import * as execFile from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
 
 // Mock electron's ipcMain
@@ -140,6 +141,11 @@ vi.mock('child_process', () => {
 	// Also expose as default for modules that import via CJS interop
 	return { ...mock, default: mock };
 });
+
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -4061,6 +4067,39 @@ branch refs/heads/bugfix-123
 				gitSubdirs: [],
 				scanFailed: true,
 			});
+		});
+
+		// Regression (MAESTRO-VQ): the parent path is user-supplied and can sit
+		// behind macOS TCC (Documents, Desktop) or simply carry permissions we
+		// don't hold, so readdir rejects with EPERM/EACCES. The renderer still
+		// needs scanFailed, but there is no bug of ours to report.
+		it.each(['EPERM', 'EACCES'])(
+			'reports scanFailed without a Sentry report when readdir fails with %s',
+			async (code) => {
+				vi.mocked(mockFs.readdir).mockRejectedValue(
+					Object.assign(new Error(`${code}: operation not permitted, scandir '/protected'`), {
+						code,
+					})
+				);
+
+				const handler = handlers.get('git:scanWorktreeDirectory');
+				const result = await handler!({} as any, '/protected');
+
+				expect(result).toEqual({ success: true, gitSubdirs: [], scanFailed: true });
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected scan failure to Sentry', async () => {
+			vi.mocked(mockFs.readdir).mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, scandir'), { code: 'EIO' })
+			);
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/failing/disk');
+
+			expect(result).toEqual({ success: true, gitSubdirs: [], scanFailed: true });
+			expect(captureException).toHaveBeenCalled();
 		});
 
 		it('should handle null branch when git branch command fails', async () => {

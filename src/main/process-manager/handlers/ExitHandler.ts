@@ -396,8 +396,17 @@ export class ExitHandler {
 				this.emitter.emit('usage', sessionId, usageStats);
 			}
 		} catch (error) {
-			void captureException(error);
-			logger.error('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
+			// A SyntaxError here just means the agent didn't answer with JSON: in
+			// batch mode some agents fall back to plain prose ("Hello. I'm ...") or
+			// emit a TUI frame with box-drawing characters when they can't honor
+			// the JSON output flag. That's an expected shape we already recover
+			// from by emitting the raw buffer below, so it isn't worth a Sentry
+			// report. Anything else thrown out of the block above (a real fault in
+			// aggregateModelUsage or an emit handler) still gets captured. (MAESTRO-V9)
+			if (!(error instanceof SyntaxError)) {
+				void captureException(error);
+			}
+			logger.warn('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
 				sessionId,
 				error: String(error),
 			});

@@ -578,6 +578,20 @@ describe('stats IPC handlers', () => {
 				expect(mockStatsDB.recordSessionCreated).toHaveBeenCalled();
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
+
+			it('should skip silently when the stats DB is not yet initialized', async () => {
+				vi.mocked(mockStatsDB.isReady!).mockReturnValue(false);
+				const handler = handlers.get('stats:record-session-created');
+
+				const result = await handler!({} as any, {
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					createdAt: Date.now(),
+				});
+
+				expect(result).toBeNull();
+				expect(mockStatsDB.recordSessionCreated).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('stats:record-session-closed', () => {
@@ -592,6 +606,16 @@ describe('stats IPC handlers', () => {
 				expect(mockStatsDB.recordSessionClosed).toHaveBeenCalledWith(sessionId, closedAt);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
+			});
+
+			it('should skip silently when the stats DB is not yet initialized', async () => {
+				vi.mocked(mockStatsDB.isReady!).mockReturnValue(false);
+				const handler = handlers.get('stats:record-session-closed');
+
+				const result = await handler!({} as any, 'session-1', Date.now());
+
+				expect(result).toBe(false);
+				expect(mockStatsDB.recordSessionClosed).not.toHaveBeenCalled();
 			});
 
 			it('should broadcast stats:updated even when session not found', async () => {
