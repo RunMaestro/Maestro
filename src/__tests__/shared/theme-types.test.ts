@@ -17,6 +17,8 @@ describe('isValidThemeId', () => {
 		'olive-nights',
 		'indigo-blue',
 		'deep-wine-red',
+		'yellow-dark-mustard',
+		'deep-purple',
 		'pedurple',
 	];
 
