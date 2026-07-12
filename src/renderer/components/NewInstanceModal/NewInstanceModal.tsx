@@ -19,6 +19,7 @@ import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import { logger } from '../../utils/logger';
+import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 
 export function NewInstanceModal({
@@ -248,10 +249,7 @@ export function NewInstanceModal({
 					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
 					// actually defines so the value round-trips through the modal.
 					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
-					const hasReasoning = sourceAgent?.configOptions?.some(
-						(opt) => opt.key === 'reasoningEffort'
-					);
-					sourceConfig[hasReasoning ? 'reasoningEffort' : 'effort'] = source.customEffort;
+					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort;
 				}
 				configs[source.toolType] = sourceConfig;
 			}
@@ -518,10 +516,7 @@ export function NewInstanceModal({
 		const agentCustomProviderPath = agentConfigs[selectedAgent]?.providerPath?.trim() || undefined;
 		// Effort/reasoningEffort: agents use one or the other key (e.g. Codex stores
 		// it under `reasoningEffort`, Claude Code uses `effort`).
-		const agentCustomEffort =
-			agentConfigs[selectedAgent]?.reasoningEffort?.trim() ||
-			agentConfigs[selectedAgent]?.effort?.trim() ||
-			undefined;
+		const agentCustomEffort = readEffortFromConfig(agentConfigs[selectedAgent]);
 
 		// Get SSH remote configuration for this session (stored per-session, not per-agent)
 		const sshRemoteConfig = agentSshRemoteConfigs[selectedAgent];

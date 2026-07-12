@@ -71,6 +71,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_GROUP}}');
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
+		expect(variables).toContain('{{TAB_ID}}');
 		expect(variables).toContain('{{TAB_NAME}}');
 		expect(variables).toContain('{{TOOL_TYPE}}');
 	});
@@ -234,6 +235,18 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('Tab: {{TAB_NAME}}', context);
 			expect(result).toBe('Tab: My Custom Tab');
+		});
+
+		it('should replace {{TAB_ID}} with the active tab id', () => {
+			const context = createTestContext({ activeTabId: 'tab-abc-123' });
+			const result = substituteTemplateVariables('Tab: {{TAB_ID}}', context);
+			expect(result).toBe('Tab: tab-abc-123');
+		});
+
+		it('should replace {{TAB_ID}} with an empty string when there is no tab (headless spawn)', () => {
+			const context = createTestContext({ activeTabId: undefined });
+			const result = substituteTemplateVariables('Tab: {{TAB_ID}}', context);
+			expect(result).toBe('Tab: ');
 		});
 
 		it('should have {{TAB_NAME}} and {{SESSION_NAME}} as aliases (both return session.name)', () => {

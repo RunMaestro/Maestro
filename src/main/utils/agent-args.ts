@@ -220,8 +220,12 @@ export function applyAgentConfigOverrides(
 				}
 			} else if (
 				(option.key === 'effort' || option.key === 'reasoningEffort') &&
-				overrides.sessionCustomEffort !== undefined
+				overrides.sessionCustomEffort !== undefined &&
+				overrides.sessionCustomEffort !== ''
 			) {
+				// Empty means "cleared" and falls through to the agent-level config, the
+				// same rule `model` uses above - and the same order the effort pill shows
+				// (tab > agent override > agent config).
 				value = overrides.sessionCustomEffort;
 			} else {
 				value =

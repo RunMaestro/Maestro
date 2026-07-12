@@ -889,6 +889,68 @@ describe('applyAgentConfigOverrides', () => {
 		expect(r3.modelSource).toBe('session');
 	});
 
+	// -- effort precedence --
+	// Effort follows the same rules as model, which is also what the effort pill
+	// shows (tab > agent override > agent config). An empty session override means
+	// "cleared", not "no effort at all".
+	it('effort precedence: session overrides agent config, empty falls back', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'effort',
+					type: 'select',
+					label: 'Effort',
+					description: 'Effort',
+					options: ['', 'low', 'high', 'max'],
+					default: '',
+					argBuilder: (val: any) => (val ? ['--effort', String(val)] : []),
+				},
+			],
+		});
+
+		// agent config value is used when the session has no override
+		const r1 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+		});
+		expect(r1.args).toEqual(['--effort', 'high']);
+
+		// session override wins
+		const r2 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: 'max',
+		});
+		expect(r2.args).toEqual(['--effort', 'max']);
+
+		// cleared session override falls back to the agent config
+		const r3 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: '',
+		});
+		expect(r3.args).toEqual(['--effort', 'high']);
+	});
+
+	it('reasoningEffort honors the session override (Codex-style agents)', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'reasoningEffort',
+					type: 'select',
+					label: 'Reasoning Effort',
+					description: 'Reasoning Effort',
+					options: ['low', 'high'],
+					default: 'low',
+					argBuilder: (val: any) => (val ? ['-c', `model_reasoning_effort="${val}"`] : []),
+				},
+			],
+		});
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { reasoningEffort: 'low' },
+			sessionCustomEffort: 'high',
+		});
+		expect(result.args).toEqual(['-c', 'model_reasoning_effort="high"']);
+	});
+
 	it('uses agentConfigValues for non-model config options', () => {
 		const agent = makeAgent({
 			configOptions: [

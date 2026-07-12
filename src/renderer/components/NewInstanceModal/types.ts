@@ -81,6 +81,7 @@ export interface EditAgentModalProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: SessionSshRemoteConfig,
 		enableMaestroP?: boolean,

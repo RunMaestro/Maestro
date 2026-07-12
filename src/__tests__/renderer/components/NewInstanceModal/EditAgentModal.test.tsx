@@ -260,6 +260,127 @@ describe('EditAgentModal', () => {
 		});
 	});
 
+	// Effort is per-session (like model), but the panel used to render it straight
+	// from the agent-level config: an agent whose customEffort was 'max' displayed
+	// the agent-level 'high' while every new tab still spawned at max.
+	describe('effort (per-session)', () => {
+		const agentWithEffort = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			available: true,
+			path: '/usr/local/bin/claude',
+			binaryName: 'claude',
+			hidden: false,
+			configOptions: [
+				{ key: 'model', type: 'text', label: 'Model', default: '' },
+				{
+					key: 'effort',
+					type: 'select',
+					label: 'Effort',
+					options: ['', 'low', 'high', 'max'],
+					default: '',
+				},
+				{ key: 'yoloMode', type: 'checkbox', label: 'YOLO Mode', default: false },
+			],
+		} as unknown as AgentConfig;
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agentWithEffort]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'claude-sonnet',
+				contextWindow: 200000,
+				effort: 'high',
+				yoloMode: false,
+			});
+			vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(true);
+		});
+
+		it("shows the agent's own effort override, not the agent-level default", async () => {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession({ customEffort: 'max' })}
+					existingSessions={[]}
+				/>
+			);
+
+			// 'max' (session override), not 'high' (agent-level config)
+			expect(await screen.findByDisplayValue('max')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.any(String),
+				undefined,
+				expect.anything(),
+				undefined,
+				'/custom/claude',
+				'--verbose',
+				{ API_KEY: 'test-key' },
+				'claude-sonnet',
+				'max', // effort round-trips as a per-session override
+				100000,
+				expect.anything(),
+				undefined,
+				undefined,
+				undefined,
+				true,
+				true
+			);
+		});
+
+		it('saves an edited effort onto the session instead of the shared agent config', async () => {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession({ customEffort: 'max' })}
+					existingSessions={[]}
+				/>
+			);
+
+			const effortSelect = await screen.findByDisplayValue('max');
+			fireEvent.change(effortSelect, { target: { value: 'low' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][9]).toBe('low');
+			// Effort belongs to the session; it must not be written into the
+			// agent-level config, which only seeds newly created agents.
+			expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
+		});
+
+		it('preserves the agent-level model/effort defaults when an agent-level option is edited', async () => {
+			// agents:setConfig replaces the whole object, so a blur-save that rebuilt
+			// the config from the panel state used to erase the agent-level defaults.
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession({ customEffort: 'max', customModel: 'claude-opus' })}
+					existingSessions={[]}
+				/>
+			);
+
+			const yolo = await screen.findByLabelText('Enabled');
+			fireEvent.click(yolo);
+
+			expect(window.maestro.agents.setConfig).toHaveBeenCalledWith('claude-code', {
+				model: 'claude-sonnet', // agent-level default preserved, not the session's opus
+				contextWindow: 200000,
+				effort: 'high', // agent-level default preserved, not the session's max
+				yoloMode: true,
+			});
+		});
+	});
+
 	it('should call onSave with correct parameters when save button is clicked', async () => {
 		const session = createSession({
 			id: 'test-id',
@@ -295,6 +416,7 @@ describe('EditAgentModal', () => {
 			'--verbose',
 			{ API_KEY: 'test-key' },
 			expect.anything(), // model
+			expect.anything(), // effort
 			expect.anything(), // contextWindow
 			expect.objectContaining({ enabled: false }), // SSH disabled
 			undefined, // enableMaestroP
@@ -521,6 +643,7 @@ describe('EditAgentModal', () => {
 			'--verbose', // customArgs
 			{ API_KEY: 'test-key' }, // customEnvVars
 			'claude-sonnet', // model
+			'', // effort (no session override, none in agent config)
 			100000, // contextWindow
 			expect.objectContaining({
 				enabled: true,
@@ -591,6 +714,7 @@ describe('EditAgentModal', () => {
 			'--verbose', // customArgs
 			{ API_KEY: 'test-key' }, // customEnvVars
 			'claude-sonnet', // model
+			'', // effort (no session override, none in agent config)
 			100000, // contextWindow
 			expect.objectContaining({
 				enabled: true,
@@ -667,6 +791,7 @@ describe('EditAgentModal', () => {
 			'--verbose',
 			{ API_KEY: 'test-key' },
 			'claude-sonnet',
+			'', // effort
 			100000,
 			expect.objectContaining({
 				enabled: false,

@@ -261,7 +261,7 @@ export async function createSessionForAgent(
 	});
 
 	// Prepare Maestro system prompt for new sessions
-	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session });
+	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session, activeTabId: tabId });
 
 	// Build the spawn configuration
 	const spawnConfig = await buildSpawnConfigForAgent({

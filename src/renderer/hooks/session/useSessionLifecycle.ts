@@ -86,6 +86,7 @@ export interface SessionLifecycleReturn {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -156,6 +157,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			customArgs?: string,
 			customEnvVars?: Record<string, string>,
 			customModel?: string,
+			customEffort?: string,
 			customContextWindow?: number,
 			sessionSshRemoteConfig?: {
 				enabled: boolean;
@@ -182,6 +184,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customArgs,
 						customEnvVars,
 						customModel,
+						customEffort,
 						customContextWindow,
 						sessionSshRemoteConfig,
 						enableMaestroP,
@@ -219,6 +222,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customArgs: undefined,
 							customEnvVars: undefined,
 							customModel: undefined,
+							customEffort: undefined,
 							customContextWindow: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
