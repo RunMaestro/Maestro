@@ -157,7 +157,7 @@ describe('injectAccountEnv', () => {
 		);
 
 		expect(result).toBe('acct-1');
-		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], undefined);
+		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], undefined, 'claude-code');
 	});
 
 	it('should pass statsDB to selectNextAccount when getStatsDB is provided', async () => {
@@ -181,7 +181,7 @@ describe('injectAccountEnv', () => {
 		);
 
 		expect(result).toBe('acct-1');
-		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], mockStatsDB);
+		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], mockStatsDB, 'claude-code');
 	});
 
 	it('should pass undefined to selectNextAccount when getStatsDB returns null', async () => {
@@ -200,7 +200,7 @@ describe('injectAccountEnv', () => {
 		);
 
 		expect(result).toBe('acct-1');
-		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], undefined);
+		expect(mockRegistry.selectNextAccount).toHaveBeenCalledWith([], undefined, 'claude-code');
 	});
 
 	it('should skip selectNextAccount when default account exists', async () => {
@@ -240,6 +240,134 @@ describe('injectAccountEnv', () => {
 			sessionId: 'sess-1',
 			accountId: 'acct-1',
 			accountName: 'Test Account',
+		});
+	});
+
+	describe('provider parity', () => {
+		it('should inject CODEX_HOME for codex accounts', async () => {
+			const injectAccountEnv = await loadInjector();
+			const codexAccount = createMockAccount({
+				id: 'codex-1',
+				agentType: 'codex',
+				configDir: '/home/test/.codex-work',
+			});
+			mockRegistry.getAll.mockReturnValue([codexAccount]);
+			mockRegistry.get.mockReturnValue(codexAccount);
+			const env: Record<string, string | undefined> = {};
+
+			const result = injectAccountEnv(
+				'sess-1',
+				'codex',
+				env,
+				mockRegistry as unknown as AccountRegistry,
+				'codex-1'
+			);
+
+			expect(result).toBe('codex-1');
+			expect(env.CODEX_HOME).toBe('/home/test/.codex-work');
+			expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+		});
+
+		it('should inject XDG_DATA_HOME for opencode accounts', async () => {
+			const injectAccountEnv = await loadInjector();
+			const ocAccount = createMockAccount({
+				id: 'oc-1',
+				agentType: 'opencode',
+				configDir: '/home/test/.opencode-work',
+			});
+			mockRegistry.getAll.mockReturnValue([ocAccount]);
+			mockRegistry.get.mockReturnValue(ocAccount);
+			const env: Record<string, string | undefined> = {};
+
+			const result = injectAccountEnv(
+				'sess-1',
+				'opencode',
+				env,
+				mockRegistry as unknown as AccountRegistry,
+				'oc-1'
+			);
+
+			expect(result).toBe('oc-1');
+			expect(env.XDG_DATA_HOME).toBe('/home/test/.opencode-work');
+		});
+
+		it('should respect existing CODEX_HOME in env', async () => {
+			const injectAccountEnv = await loadInjector();
+			const env: Record<string, string | undefined> = { CODEX_HOME: '/custom/codex' };
+			const result = injectAccountEnv(
+				'sess-1',
+				'codex',
+				env,
+				mockRegistry as unknown as AccountRegistry
+			);
+			expect(result).toBeNull();
+			expect(env.CODEX_HOME).toBe('/custom/codex');
+		});
+
+		it('should return null for providers without a config-dir env var', async () => {
+			const injectAccountEnv = await loadInjector();
+			const env: Record<string, string | undefined> = {};
+			for (const agentType of ['gemini-cli', 'factory-droid']) {
+				expect(
+					injectAccountEnv('sess-1', agentType, env, mockRegistry as unknown as AccountRegistry)
+				).toBeNull();
+			}
+			expect(env).toEqual({});
+		});
+
+		it('should not route a claude session to a codex account', async () => {
+			const injectAccountEnv = await loadInjector();
+			const codexAccount = createMockAccount({
+				id: 'codex-1',
+				agentType: 'codex',
+				configDir: '/home/test/.codex-work',
+			});
+			mockRegistry.getAll.mockReturnValue([codexAccount]);
+			mockRegistry.getDefaultAccount.mockReturnValue(null);
+			mockRegistry.selectNextAccount.mockReturnValue(null);
+			const env: Record<string, string | undefined> = {};
+
+			const result = injectAccountEnv(
+				'sess-1',
+				'claude-code',
+				env,
+				mockRegistry as unknown as AccountRegistry
+			);
+
+			expect(result).toBeNull();
+			expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+			expect(env.CODEX_HOME).toBeUndefined();
+		});
+
+		it('should ignore an existing assignment pointing at another provider', async () => {
+			const injectAccountEnv = await loadInjector();
+			const claudeAccount = createMockAccount();
+			const codexAccount = createMockAccount({
+				id: 'codex-1',
+				agentType: 'codex',
+				configDir: '/home/test/.codex-work',
+			});
+			mockRegistry.getAll.mockReturnValue([claudeAccount, codexAccount]);
+			mockRegistry.getAssignment.mockReturnValue({
+				sessionId: 'sess-1',
+				accountId: 'codex-1',
+				assignedAt: Date.now(),
+			});
+			mockRegistry.get.mockImplementation((id: string) =>
+				id === 'codex-1' ? codexAccount : claudeAccount
+			);
+			mockRegistry.getDefaultAccount.mockReturnValue(claudeAccount);
+			const env: Record<string, string | undefined> = {};
+
+			const result = injectAccountEnv(
+				'sess-1',
+				'claude-code',
+				env,
+				mockRegistry as unknown as AccountRegistry
+			);
+
+			expect(result).toBe('acct-1');
+			expect(env.CLAUDE_CONFIG_DIR).toBe('/home/test/.claude-test');
 		});
 	});
 });

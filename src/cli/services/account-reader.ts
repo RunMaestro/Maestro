@@ -14,6 +14,8 @@ export interface CLIAccountInfo {
 	configDir: string;
 	status: AccountStatus;
 	isDefault: boolean;
+	/** Provider the account belongs to (legacy profiles default to claude-code) */
+	agentType: string;
 }
 
 /**
@@ -57,6 +59,7 @@ function profileToCliInfo(profile: AccountProfile): CLIAccountInfo {
 		configDir: profile.configDir,
 		status: profile.status || 'active',
 		isDefault: profile.isDefault || false,
+		agentType: profile.agentType || 'claude-code',
 	};
 }
 
@@ -130,6 +133,7 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 			configDir,
 			status: 'active',
 			isDefault: false,
+			agentType: 'claude-code',
 		});
 	}
 
@@ -138,9 +142,12 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 
 /**
  * Get the default account, or the first active account, or null.
+ * When agentType is given, only accounts of that provider are considered.
  */
-export async function getDefaultAccount(): Promise<CLIAccountInfo | null> {
-	const accounts = await readAccountsFromStore();
+export async function getDefaultAccount(agentType?: string): Promise<CLIAccountInfo | null> {
+	const accounts = (await readAccountsFromStore()).filter(
+		(a) => !agentType || a.agentType === agentType
+	);
 	return (
 		accounts.find((a) => a.isDefault && a.status === 'active') ||
 		accounts.find((a) => a.status === 'active') ||

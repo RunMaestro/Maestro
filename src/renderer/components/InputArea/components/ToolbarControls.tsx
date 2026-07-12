@@ -22,6 +22,7 @@ import {
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 } from '../../../../shared/agentMetadata';
+import { isMultiplexingCapable } from '../../../../shared/accountProviderMeta';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -264,11 +265,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
 				data-tour="toolbar-toggles"
 			>
-				{/* Account selector - AI mode + claude-code only */}
-				{isAiMode && session.toolType === 'claude-code' && (
+				{/* Account selector - AI mode + multiplexing-capable providers (claude-code, codex, opencode) */}
+				{isAiMode && isMultiplexingCapable(session.toolType) && (
 					<AccountSelector
 						theme={theme}
 						sessionId={session.id}
+						agentType={session.toolType}
 						currentAccountId={session.accountId}
 						currentAccountName={session.accountName}
 						onSwitchAccount={async (toAccountId) => {

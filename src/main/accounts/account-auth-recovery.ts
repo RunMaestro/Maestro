@@ -4,13 +4,13 @@
  * Orchestrates automatic re-authentication when an agent encounters
  * an expired OAuth token:
  * 1. Kills the failed agent process
- * 2. Spawns `claude login` with the account's CLAUDE_CONFIG_DIR
+ * 2. Spawns the provider's login command with the account's config-dir env var
  * 3. Browser opens for OAuth — user clicks "Authorize"
  * 4. Credentials are refreshed in the account directory
  * 5. Sends respawn event to renderer (reuses account:switch-respawn channel)
  *
- * Fallback: if `claude login` fails, attempts to sync credentials
- * from the base ~/.claude directory.
+ * Fallback: if login fails, attempts to sync credentials
+ * from the provider's base directory.
  */
 
 import { spawn } from 'child_process';
@@ -21,6 +21,7 @@ import type { AccountRegistry } from './account-registry';
 import type { AgentDetector } from '../agents';
 import type { SafeSendFn } from '../utils/safe-send';
 import { syncCredentialsFromBase } from './account-setup';
+import { getAccountProviderMeta, inferProviderFromDir } from '../../shared/accountProviderMeta';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'account-auth-recovery';
@@ -108,14 +109,15 @@ export class AccountAuthRecovery {
 			// Wait for process cleanup
 			await new Promise((resolve) => setTimeout(resolve, KILL_DELAY_MS));
 
-			// 4. Attempt `claude login`
-			const loginSuccess = await this.runClaudeLogin(account.configDir);
+			// 4. Attempt the provider's login command (claude login / codex login / opencode auth login)
+			const meta = getAccountProviderMeta(account.agentType);
+			const loginSuccess = await this.runProviderLogin(account.agentType, account.configDir);
 
 			if (loginSuccess) {
 				return this.handleLoginSuccess(sessionId, accountId, account.configDir, account.name);
 			}
 
-			// 5. Fallback: sync credentials from base ~/.claude directory
+			// 5. Fallback: sync credentials from the provider's base directory
 			logger.info('Login failed, attempting credential sync from base dir', LOG_CONTEXT);
 			const syncResult = await syncCredentialsFromBase(account.configDir);
 
@@ -131,11 +133,14 @@ export class AccountAuthRecovery {
 				syncError: syncResult.error,
 			});
 
+			const manualCommand = meta.buildLoginCommand
+				? meta.buildLoginCommand(account.configDir)
+				: `re-authenticate ${meta.displayName}`;
 			this.safeSend('account:auth-recovery-failed', {
 				sessionId,
 				accountId,
 				accountName: account.name,
-				error: 'Authentication failed. Please run "claude login" manually in a terminal.',
+				error: `Authentication failed. Please run "${manualCommand}" manually in a terminal.`,
 			});
 
 			return false;
@@ -198,41 +203,50 @@ export class AccountAuthRecovery {
 	}
 
 	/**
-	 * Spawn `claude login` with the account's CLAUDE_CONFIG_DIR.
+	 * Spawn the provider's login command with the account's config-dir env var.
 	 * Opens a browser for OAuth. Returns true if login exited successfully.
+	 * Providers without a login flow (gemini-cli, factory-droid) resolve false
+	 * so recovery falls through to credential sync / manual instructions.
 	 */
-	private async runClaudeLogin(configDir: string): Promise<boolean> {
-		// Resolve the claude binary path
-		const agent = await this.agentDetector.getAgent('claude-code');
-		const claudeBinary = agent?.path ?? agent?.command ?? 'claude';
+	private async runProviderLogin(agentType: string, configDir: string): Promise<boolean> {
+		const meta = getAccountProviderMeta(agentType);
+		if (!meta.loginSpawn || !meta.envVar) {
+			logger.info(`No automated login flow for ${meta.displayName}, skipping`, LOG_CONTEXT);
+			return false;
+		}
+		const envVar = meta.envVar;
 
-		logger.info(`Spawning claude login with binary: ${claudeBinary}`, LOG_CONTEXT, { configDir });
+		// Resolve the provider binary path
+		const agent = await this.agentDetector.getAgent(meta.agentType);
+		const binary = agent?.path ?? agent?.command ?? meta.loginSpawn.binary;
+
+		logger.info(`Spawning ${meta.displayName} login with binary: ${binary}`, LOG_CONTEXT, {
+			configDir,
+		});
 
 		return new Promise<boolean>((resolve) => {
-			const child = spawn(claudeBinary, ['login'], {
+			const child = spawn(binary, meta.loginSpawn!.args, {
 				env: {
 					...process.env,
-					CLAUDE_CONFIG_DIR: configDir,
+					[envVar]: configDir,
 				},
 				stdio: ['ignore', 'pipe', 'pipe'],
 			});
 
-			let stdout = '';
 			let stderr = '';
 
 			child.stdout?.on('data', (data) => {
-				stdout += data.toString();
-				logger.debug(`claude login stdout: ${data.toString().trim()}`, LOG_CONTEXT);
+				logger.debug(`login stdout: ${data.toString().trim()}`, LOG_CONTEXT);
 			});
 
 			child.stderr?.on('data', (data) => {
 				stderr += data.toString();
-				logger.debug(`claude login stderr: ${data.toString().trim()}`, LOG_CONTEXT);
+				logger.debug(`login stderr: ${data.toString().trim()}`, LOG_CONTEXT);
 			});
 
 			// Timeout: if user doesn't authorize in time
 			const timeout = setTimeout(() => {
-				logger.warn('claude login timed out', LOG_CONTEXT, { configDir });
+				logger.warn(`${meta.displayName} login timed out`, LOG_CONTEXT, { configDir });
 				child.kill('SIGTERM');
 				resolve(false);
 			}, LOGIN_TIMEOUT_MS);
@@ -244,14 +258,14 @@ export class AccountAuthRecovery {
 					// Verify credentials were actually written
 					const credsExist = await this.verifyCredentials(configDir);
 					if (credsExist) {
-						logger.info('claude login succeeded', LOG_CONTEXT, { configDir });
+						logger.info(`${meta.displayName} login succeeded`, LOG_CONTEXT, { configDir });
 						resolve(true);
 					} else {
-						logger.warn('claude login exited 0 but no credentials found', LOG_CONTEXT);
+						logger.warn(`${meta.displayName} login exited 0 but no credentials found`, LOG_CONTEXT);
 						resolve(false);
 					}
 				} else {
-					logger.warn(`claude login exited with code ${code}`, LOG_CONTEXT, {
+					logger.warn(`login exited with code ${code}`, LOG_CONTEXT, {
 						stderr: stderr.slice(0, 500),
 					});
 					resolve(false);
@@ -260,19 +274,21 @@ export class AccountAuthRecovery {
 
 			child.on('error', (err) => {
 				clearTimeout(timeout);
-				logger.error(`claude login spawn error: ${err.message}`, LOG_CONTEXT);
+				logger.error(`login spawn error: ${err.message}`, LOG_CONTEXT);
 				resolve(false);
 			});
 		});
 	}
 
 	/**
-	 * Verify that .credentials.json exists in the account directory
-	 * after a login attempt.
+	 * Verify that the provider's credential file exists in the account
+	 * directory after a login attempt.
 	 */
 	private async verifyCredentials(configDir: string): Promise<boolean> {
+		const meta = getAccountProviderMeta(inferProviderFromDir(configDir));
+		if (!meta.credentialFile) return false;
 		try {
-			const credPath = path.join(configDir, '.credentials.json');
+			const credPath = path.join(configDir, ...meta.credentialFile.split('/'));
 			await fs.access(credPath);
 			return true;
 		} catch {

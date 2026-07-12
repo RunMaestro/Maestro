@@ -4,22 +4,39 @@ import * as os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import type { MultiplexableAgent } from '../../shared/account-types';
+import {
+	ACCOUNT_PROVIDER_META,
+	getAccountProviderMeta,
+	inferProviderFromDir,
+} from '../../shared/accountProviderMeta';
 
 const LOG_CONTEXT = 'account-setup';
 const execFileAsync = promisify(execFile);
 
-/** Resources that are symlinked from ~/.claude to each account directory */
-const SHARED_SYMLINKS = [
-	'commands',
-	'ide',
-	'plans',
-	'plugins',
-	'settings.json',
-	'CLAUDE.md',
-	'todos',
-	'session-env',
-	'projects',
-];
+/**
+ * Resources symlinked from the provider's base dir into each account directory
+ * so shared config applies across accounts while auth/state stays isolated.
+ */
+const SHARED_SYMLINKS: Record<MultiplexableAgent, string[]> = {
+	'claude-code': [
+		'commands',
+		'ide',
+		'plans',
+		'plugins',
+		'settings.json',
+		'CLAUDE.md',
+		'todos',
+		'session-env',
+		'projects',
+	],
+	// config.toml carries user settings; prompts/ carries custom prompts. auth.json is NOT shared.
+	codex: ['config.toml', 'prompts'],
+	// OpenCode account dirs act as XDG_DATA_HOME roots; config comes from XDG_CONFIG_HOME untouched.
+	opencode: [],
+	'gemini-cli': [],
+	'factory-droid': [],
+};
 
 /**
  * Validate that the base ~/.claude directory exists and has the expected structure.
@@ -82,14 +99,16 @@ const PROVIDER_DISCOVERY: ProviderDiscoveryConfig[] = [
 	},
 	{
 		agentType: 'codex',
+		dirPrefix: '.codex-',
 		singleDir: '.codex',
 		authFiles: ['auth.json', 'config.toml'],
 		extractIdentity: extractCodexIdentity,
 	},
 	{
 		agentType: 'opencode',
+		dirPrefix: '.opencode-',
 		singleDir: '.opencode',
-		authFiles: ['config.json', 'auth.json'],
+		authFiles: ['opencode/auth.json', 'config.json', 'auth.json'],
 		extractIdentity: () => null,
 	},
 	{
@@ -97,6 +116,12 @@ const PROVIDER_DISCOVERY: ProviderDiscoveryConfig[] = [
 		singleDir: '.gemini',
 		authFiles: ['oauth_creds.json', 'google_accounts.json'],
 		extractIdentity: extractGeminiIdentity,
+	},
+	{
+		agentType: 'factory-droid',
+		singleDir: '.factory',
+		authFiles: ['auth.json', 'settings.json'],
+		extractIdentity: extractFactoryIdentity,
 	},
 ];
 
@@ -199,6 +224,16 @@ function extractCodexIdentity(content: string): string | null {
 	}
 }
 
+/** Extract identity from Factory Droid auth.json or settings.json */
+function extractFactoryIdentity(content: string): string | null {
+	try {
+		const json = JSON.parse(content);
+		return json.email || json.user?.email || json.account?.email || null;
+	} catch {
+		return null;
+	}
+}
+
 /** Extract identity from Gemini google_accounts.json or oauth_creds.json */
 function extractGeminiIdentity(content: string): string | null {
 	try {
@@ -234,30 +269,44 @@ function extractEmailFromClaudeJson(content: string): string | null {
 }
 
 /**
- * Read the email identity from an account's .claude.json file.
+ * Read the email identity from an account directory's auth files.
+ * Provider is inferred from the directory name; each provider's auth
+ * files are checked in order (same rules as discovery).
  */
 export async function readAccountEmail(configDir: string): Promise<string | null> {
-	try {
-		const authFile = path.join(configDir, '.claude.json');
-		const content = await fs.readFile(authFile, 'utf-8');
-		return extractEmailFromClaudeJson(content);
-	} catch {
-		return null;
-	}
+	const agentType = inferProviderFromDir(configDir);
+	const provider = PROVIDER_DISCOVERY.find((p) => p.agentType === agentType);
+	if (!provider) return null;
+	const { email } = await checkProviderAuth(configDir, provider);
+	return email;
 }
 
 /**
- * Create a new Claude account directory with symlinks to shared resources.
- * Does NOT authenticate — that requires running `claude login` separately.
+ * Create a new account directory for a provider, with symlinks to shared resources.
+ * Does NOT authenticate - that requires running the provider's login command separately.
  */
-export async function createAccountDirectory(accountName: string): Promise<{
+export async function createAccountDirectory(
+	accountName: string,
+	agentType: MultiplexableAgent = 'claude-code'
+): Promise<{
 	success: boolean;
 	configDir: string;
 	error?: string;
 }> {
+	const meta = getAccountProviderMeta(agentType);
+	if (!meta.supportsCreate || !meta.dirPrefix) {
+		return {
+			success: false,
+			configDir: '',
+			error:
+				meta.createUnsupportedReason ??
+				`${meta.displayName} does not support isolated account directories`,
+		};
+	}
+
 	const homeDir = os.homedir();
-	const baseDir = path.join(homeDir, '.claude');
-	const configDir = path.join(homeDir, `.claude-${accountName}`);
+	const baseDir = path.join(homeDir, meta.baseDirName);
+	const configDir = path.join(homeDir, `${meta.dirPrefix}${accountName}`);
 
 	try {
 		// Check if directory already exists
@@ -268,10 +317,13 @@ export async function createAccountDirectory(accountName: string): Promise<{
 			// Good — doesn't exist yet
 		}
 
-		// Validate base directory
-		const validation = await validateBaseClaudeDir();
-		if (!validation.valid) {
-			return { success: false, configDir, error: validation.errors.join('; ') };
+		// Claude requires an authenticated base dir because core resources are symlinked from it.
+		// Other providers work from an empty dir (login populates it), so no hard base requirement.
+		if (agentType === 'claude-code') {
+			const validation = await validateBaseClaudeDir();
+			if (!validation.valid) {
+				return { success: false, configDir, error: validation.errors.join('; ') };
+			}
 		}
 
 		// Create the account directory
@@ -279,7 +331,7 @@ export async function createAccountDirectory(accountName: string): Promise<{
 		logger.info(`Created account directory: ${configDir}`, LOG_CONTEXT);
 
 		// Create symlinks for shared resources
-		for (const resource of SHARED_SYMLINKS) {
+		for (const resource of SHARED_SYMLINKS[agentType]) {
 			const source = path.join(baseDir, resource);
 			const target = path.join(configDir, resource);
 
@@ -317,11 +369,12 @@ export async function validateAccountSymlinks(configDir: string): Promise<{
 	broken: string[];
 	missing: string[];
 }> {
-	const baseDir = path.join(os.homedir(), '.claude');
+	const agentType = inferProviderFromDir(configDir);
+	const baseDir = path.join(os.homedir(), getAccountProviderMeta(agentType).baseDirName);
 	const broken: string[] = [];
 	const missing: string[] = [];
 
-	for (const resource of SHARED_SYMLINKS) {
+	for (const resource of SHARED_SYMLINKS[agentType]) {
 		const target = path.join(configDir, resource);
 		try {
 			const stat = await fs.lstat(target);
@@ -355,7 +408,8 @@ export async function repairAccountSymlinks(configDir: string): Promise<{
 	repaired: string[];
 	errors: string[];
 }> {
-	const baseDir = path.join(os.homedir(), '.claude');
+	const agentType = inferProviderFromDir(configDir);
+	const baseDir = path.join(os.homedir(), getAccountProviderMeta(agentType).baseDirName);
 	const { broken, missing } = await validateAccountSymlinks(configDir);
 	const repaired: string[] = [];
 	const errors: string[] = [];
@@ -381,26 +435,45 @@ export async function repairAccountSymlinks(configDir: string): Promise<{
 }
 
 /**
- * Sync credentials from the base ~/.claude directory to an account directory.
- * Used after the user runs `claude login` in the base dir to propagate
- * fresh OAuth tokens to the account directory.
- *
- * Copies .credentials.json from ~/.claude to the target configDir.
+ * Sync credentials from the provider's base directory to an account directory.
+ * Used after the user logs in in the base dir to propagate fresh tokens
+ * to the account directory. Provider is inferred from the directory name:
+ * - claude-code: ~/.claude/.credentials.json -> <dir>/.credentials.json
+ * - codex: ~/.codex/auth.json -> <dir>/auth.json
+ * - opencode: $XDG_DATA_HOME|~/.local/share/opencode/auth.json -> <dir>/opencode/auth.json
  */
 export async function syncCredentialsFromBase(configDir: string): Promise<{
 	success: boolean;
 	error?: string;
 }> {
-	const baseDir = path.join(os.homedir(), '.claude');
-	const baseCreds = path.join(baseDir, '.credentials.json');
-	const targetCreds = path.join(configDir, '.credentials.json');
+	const agentType = inferProviderFromDir(configDir);
+	const homeDir = os.homedir();
+
+	let baseCreds: string;
+	let targetCreds: string;
+	if (agentType === 'claude-code') {
+		baseCreds = path.join(homeDir, '.claude', '.credentials.json');
+		targetCreds = path.join(configDir, '.credentials.json');
+	} else if (agentType === 'codex') {
+		baseCreds = path.join(homeDir, '.codex', 'auth.json');
+		targetCreds = path.join(configDir, 'auth.json');
+	} else if (agentType === 'opencode') {
+		const dataHome = process.env.XDG_DATA_HOME || path.join(homeDir, '.local', 'share');
+		baseCreds = path.join(dataHome, 'opencode', 'auth.json');
+		targetCreds = path.join(configDir, 'opencode', 'auth.json');
+	} else {
+		return {
+			success: false,
+			error: `Credential sync is not supported for ${getAccountProviderMeta(agentType).displayName}`,
+		};
+	}
 
 	try {
 		// Verify base credentials exist
 		try {
 			await fs.access(baseCreds);
 		} catch {
-			return { success: false, error: 'No .credentials.json found in base ~/.claude directory' };
+			return { success: false, error: `No credentials found at ${baseCreds}` };
 		}
 
 		// Verify target directory exists
@@ -413,7 +486,8 @@ export async function syncCredentialsFromBase(configDir: string): Promise<{
 			return { success: false, error: `${configDir} does not exist` };
 		}
 
-		// Copy the credentials
+		// Copy the credentials (opencode nests auth under <dir>/opencode/)
+		await fs.mkdir(path.dirname(targetCreds), { recursive: true });
 		const content = await fs.readFile(baseCreds, 'utf-8');
 		await fs.writeFile(targetCreds, content, 'utf-8');
 
@@ -426,12 +500,14 @@ export async function syncCredentialsFromBase(configDir: string): Promise<{
 }
 
 /**
- * Build the command string to launch `claude login` for a specific account.
+ * Build the command string to authenticate a specific account dir.
+ * Provider is inferred from the directory name. Returns null for
+ * providers without an isolated-dir login flow (gemini-cli, factory-droid).
  * This should be run in a Maestro terminal session.
  */
-export function buildLoginCommand(configDir: string, claudeBinaryPath?: string): string {
-	const binary = claudeBinaryPath || 'claude';
-	return `CLAUDE_CONFIG_DIR="${configDir}" ${binary} login`;
+export function buildLoginCommand(configDir: string, binaryPath?: string): string | null {
+	const meta = getAccountProviderMeta(inferProviderFromDir(configDir));
+	return meta.buildLoginCommand ? meta.buildLoginCommand(configDir, binaryPath) : null;
 }
 
 /**
@@ -443,12 +519,16 @@ export async function removeAccountDirectory(configDir: string): Promise<{
 	error?: string;
 }> {
 	try {
-		// Safety check: only remove directories matching ~/.claude-* pattern
+		// Safety check: only remove Maestro-managed account dirs (~/.claude-*, ~/.codex-*, ...).
+		// Bare base dirs (~/.claude, ~/.codex, ~/.gemini) never match a prefix and are protected.
 		const basename = path.basename(configDir);
-		if (!basename.startsWith('.claude-')) {
+		const managedPrefixes = Object.values(ACCOUNT_PROVIDER_META)
+			.map((m) => m.dirPrefix)
+			.filter((p): p is string => !!p);
+		if (!managedPrefixes.some((prefix) => basename.startsWith(prefix))) {
 			return {
 				success: false,
-				error: 'Safety check failed: directory name must start with .claude-',
+				error: `Safety check failed: directory name must start with one of ${managedPrefixes.join(', ')}`,
 			};
 		}
 

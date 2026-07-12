@@ -146,11 +146,12 @@ export function createAccountsApi() {
 			}>
 		> => ipcRenderer.invoke('accounts:discover-existing'),
 
-		/** Create a new account directory with symlinks */
+		/** Create a new account directory with symlinks (provider-specific layout) */
 		createDirectory: (
-			name: string
+			name: string,
+			agentType?: string
 		): Promise<{ success: boolean; configDir: string; error?: string }> =>
-			ipcRenderer.invoke('accounts:create-directory', name),
+			ipcRenderer.invoke('accounts:create-directory', name, agentType),
 
 		/** Validate symlinks in an account directory */
 		validateSymlinks: (
@@ -162,7 +163,7 @@ export function createAccountsApi() {
 		repairSymlinks: (configDir: string): Promise<{ repaired: string[]; errors: string[] }> =>
 			ipcRenderer.invoke('accounts:repair-symlinks', configDir),
 
-		/** Read the email from an account's .claude.json */
+		/** Read the email identity from an account dir (provider inferred from the path) */
 		readEmail: (configDir: string): Promise<string | null> =>
 			ipcRenderer.invoke('accounts:read-email', configDir),
 

@@ -14,6 +14,7 @@ import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
+import { getAccountProviderMeta } from '../../shared/accountProviderMeta';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
 import {
@@ -797,10 +798,18 @@ async function spawnJsonLineAgent(
 	agentSessionId?: string,
 	readOnlyMode?: boolean,
 	sshRemoteConfig?: AgentSshRemoteConfig,
-	overrides: SpawnOverrides = {}
+	overrides: SpawnOverrides = {},
+	configDir?: string
 ): Promise<AgentResult> {
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition(toolType);
+
+	// Inject account config dir if provided (account multiplexing).
+	// Env var is provider-specific: CODEX_HOME, XDG_DATA_HOME (opencode), etc.
+	if (configDir) {
+		const accountEnvVar = getAccountProviderMeta(toolType).envVar;
+		if (accountEnvVar) env[accountEnvVar] = configDir;
+	}
 
 	// Build args from agent definition (without the prompt or model/customArgs —
 	// those come from applyAgentConfigOverrides via configOptions).
@@ -1070,8 +1079,9 @@ export interface SpawnAgentOptions {
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
 	/**
-	 * Claude account config dir (account multiplexing). When set, exported as
-	 * CLAUDE_CONFIG_DIR for the spawned Claude Code process.
+	 * Account config dir (account multiplexing). When set, exported under the
+	 * provider's env var for the spawned process: CLAUDE_CONFIG_DIR (Claude Code),
+	 * CODEX_HOME (Codex), XDG_DATA_HOME (OpenCode).
 	 */
 	configDir?: string;
 }
@@ -1119,7 +1129,8 @@ export async function spawnAgent(
 			agentSessionId,
 			readOnly,
 			sshRemoteConfig,
-			overrides
+			overrides,
+			options?.configDir
 		);
 	}
 

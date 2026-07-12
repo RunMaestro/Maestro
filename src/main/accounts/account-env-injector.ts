@@ -1,8 +1,9 @@
 /**
  * Account Environment Injector
  *
- * Shared utility for injecting CLAUDE_CONFIG_DIR into spawn environments.
- * Called by ALL code paths that spawn Claude Code agents:
+ * Shared utility for injecting the provider's config-dir env var
+ * (CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_DATA_HOME for opencode) into spawn
+ * environments. Called by ALL code paths that spawn multiplexable agents:
  * - Standard process:spawn handler
  * - Group Chat participants and moderators
  * - Context Grooming
@@ -14,6 +15,7 @@ import * as path from 'path';
 import type { AccountRegistry, AccountUsageStatsProvider } from './account-registry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { syncCredentialsFromBase } from './account-setup';
+import { getAccountProviderMeta, isMultiplexingCapable } from '../../shared/accountProviderMeta';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'account-env-injector';
@@ -23,15 +25,16 @@ interface SpawnEnv {
 }
 
 /**
- * Injects CLAUDE_CONFIG_DIR into spawn environment for account multiplexing.
- * Called by all code paths that spawn Claude Code agents.
+ * Injects the provider's config-dir env var into the spawn environment for
+ * account multiplexing. Called by all code paths that spawn multiplexable agents.
+ * Providers without a config-dir env var (gemini-cli, factory-droid) and
+ * non-multiplexable agents are left completely untouched.
  *
- * Does NOT validate credential freshness — Claude Code handles its own
- * token refresh via the OAuth refresh token in .credentials.json.
- * If the refresh fails, the error listener catches the auth error.
+ * Does NOT validate credential freshness - providers handle their own
+ * token refresh. If the refresh fails, the error listener catches the auth error.
  *
  * @param sessionId - The session ID being spawned
- * @param agentType - The agent type (only 'claude-code' is handled)
+ * @param agentType - The agent type ('claude-code', 'codex', 'opencode')
  * @param env - Mutable env object to inject into
  * @param accountRegistry - The account registry instance
  * @param accountId - Pre-assigned account ID (optional, auto-assigns if missing)
@@ -48,17 +51,21 @@ export function injectAccountEnv(
 	safeSend?: SafeSendFn,
 	getStatsDB?: () => AccountUsageStatsProvider | null
 ): string | null {
-	if (agentType !== 'claude-code') return null;
+	if (!isMultiplexingCapable(agentType)) return null;
+	const meta = getAccountProviderMeta(agentType);
+	const envVar = meta.envVar as string;
 
-	// If CLAUDE_CONFIG_DIR is already explicitly set in customEnvVars, respect it
-	if (env.CLAUDE_CONFIG_DIR) {
-		logger.info('CLAUDE_CONFIG_DIR already set, skipping account injection', LOG_CONTEXT, {
+	// If the env var is already explicitly set in customEnvVars, respect it
+	if (env[envVar]) {
+		logger.info(`${envVar} already set, skipping account injection`, LOG_CONTEXT, {
 			sessionId,
 		});
 		return null;
 	}
 
-	const accounts = accountRegistry.getAll().filter((a) => a.status === 'active');
+	const accounts = accountRegistry
+		.getAll()
+		.filter((a) => a.status === 'active' && (a.agentType ?? 'claude-code') === agentType);
 	if (accounts.length === 0) return null;
 
 	// Use provided accountId, check for existing assignment, or auto-assign
@@ -68,28 +75,35 @@ export function injectAccountEnv(
 		const existingAssignment = accountRegistry.getAssignment(sessionId);
 		if (existingAssignment) {
 			const existingAccount = accountRegistry.get(existingAssignment.accountId);
-			if (existingAccount && existingAccount.status === 'active') {
+			if (
+				existingAccount &&
+				existingAccount.status === 'active' &&
+				(existingAccount.agentType ?? 'claude-code') === agentType
+			) {
 				resolvedAccountId = existingAssignment.accountId;
 				logger.info(`Reusing existing assignment for session ${sessionId}`, LOG_CONTEXT);
 			}
 		}
 	}
 	if (!resolvedAccountId) {
-		const defaultAccount = accountRegistry.getDefaultAccount();
+		const defaultAccount = accountRegistry.getDefaultAccount(meta.agentType);
 		const statsDB = getStatsDB?.() ?? undefined;
-		const selected = defaultAccount ?? accountRegistry.selectNextAccount([], statsDB ?? undefined);
+		const selected =
+			defaultAccount ?? accountRegistry.selectNextAccount([], statsDB ?? undefined, meta.agentType);
 		if (!selected) return null;
 		resolvedAccountId = selected.id;
 	}
 
 	const account = accountRegistry.get(resolvedAccountId);
-	if (!account) return null;
+	if (!account || (account.agentType ?? 'claude-code') !== agentType) return null;
 
 	// Ensure credentials exist in the account dir before spawning.
-	// If missing, attempt a best-effort sync from base ~/.claude dir.
-	const credPath = path.join(account.configDir, '.credentials.json');
-	if (!fs.existsSync(credPath)) {
-		logger.info('No .credentials.json in account dir, attempting sync from base', LOG_CONTEXT, {
+	// If missing, attempt a best-effort sync from the provider's base dir.
+	const credPath = meta.credentialFile
+		? path.join(account.configDir, ...meta.credentialFile.split('/'))
+		: null;
+	if (credPath && !fs.existsSync(credPath)) {
+		logger.info('No credentials in account dir, attempting sync from base', LOG_CONTEXT, {
 			sessionId,
 			configDir: account.configDir,
 		});
@@ -106,7 +120,7 @@ export function injectAccountEnv(
 	}
 
 	// Inject the env var
-	env.CLAUDE_CONFIG_DIR = account.configDir;
+	env[envVar] = account.configDir;
 
 	// Create/update assignment
 	accountRegistry.assignToSession(sessionId, resolvedAccountId);

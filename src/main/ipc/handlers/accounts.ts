@@ -351,14 +351,17 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
-	ipcMain.handle('accounts:create-directory', async (_event, accountName: string) => {
-		try {
-			return await createAccountDirectory(accountName);
-		} catch (error) {
-			logger.error('create directory error', LOG_CONTEXT, { error: String(error) });
-			return { success: false, configDir: '', error: String(error) };
+	ipcMain.handle(
+		'accounts:create-directory',
+		async (_event, accountName: string, agentType?: MultiplexableAgent) => {
+			try {
+				return await createAccountDirectory(accountName, agentType ?? 'claude-code');
+			} catch (error) {
+				logger.error('create directory error', LOG_CONTEXT, { error: String(error) });
+				return { success: false, configDir: '', error: String(error) };
+			}
 		}
-	});
+	);
 
 	ipcMain.handle('accounts:validate-symlinks', async (_event, configDir: string) => {
 		try {

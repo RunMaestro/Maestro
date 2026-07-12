@@ -228,9 +228,15 @@ export class AccountRegistry {
 		return Object.values(this.store.get('assignments', {}));
 	}
 
-	/** Get the default account (first one marked isDefault, or first active) */
-	getDefaultAccount(): AccountProfile | null {
-		const all = this.getAll();
+	/**
+	 * Get the default account (first one marked isDefault, or first active).
+	 * When agentType is given, only accounts of that provider are considered
+	 * (legacy profiles without agentType count as claude-code).
+	 */
+	getDefaultAccount(agentType?: MultiplexableAgent): AccountProfile | null {
+		const all = this.getAll().filter(
+			(a) => !agentType || (a.agentType ?? 'claude-code') === agentType
+		);
 		return (
 			all.find((a) => a.isDefault && a.status === 'active') ??
 			all.find((a) => a.status === 'active') ??
@@ -245,11 +251,16 @@ export class AccountRegistry {
 	 */
 	selectNextAccount(
 		excludeIds: AccountId[] = [],
-		statsDB?: AccountUsageStatsProvider
+		statsDB?: AccountUsageStatsProvider,
+		agentType?: MultiplexableAgent
 	): AccountProfile | null {
 		const config = this.getSwitchConfig();
 		const available = this.getAll().filter(
-			(a) => a.status === 'active' && a.autoSwitchEnabled && !excludeIds.includes(a.id)
+			(a) =>
+				a.status === 'active' &&
+				a.autoSwitchEnabled &&
+				!excludeIds.includes(a.id) &&
+				(!agentType || (a.agentType ?? 'claude-code') === agentType)
 		);
 		if (available.length === 0) return null;
 

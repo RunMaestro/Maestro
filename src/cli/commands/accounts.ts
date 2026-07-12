@@ -1,4 +1,4 @@
-// Accounts command - list configured Claude accounts
+// Accounts command - list configured provider accounts (Virtuosos)
 
 import { readAccountsFromStore } from '../services/account-reader';
 
@@ -18,9 +18,10 @@ export async function listAccounts(): Promise<void> {
 		const statusIcon =
 			account.status === 'active' ? '\u2713' : account.status === 'throttled' ? '\u26A0' : '\u2717';
 		console.log(`  ${statusIcon} ${account.name}${defaultBadge}`);
-		console.log(`    Email:  ${account.email || 'unknown'}`);
-		console.log(`    Dir:    ${account.configDir}`);
-		console.log(`    Status: ${account.status}`);
+		console.log(`    Email:    ${account.email || 'unknown'}`);
+		console.log(`    Provider: ${account.agentType}`);
+		console.log(`    Dir:      ${account.configDir}`);
+		console.log(`    Status:   ${account.status}`);
 		console.log('');
 	}
 }

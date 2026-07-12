@@ -3649,7 +3649,8 @@ interface MaestroAPI {
 			}>
 		>;
 		createDirectory: (
-			name: string
+			name: string,
+			agentType?: string
 		) => Promise<{ success: boolean; configDir: string; error?: string }>;
 		validateSymlinks: (
 			configDir: string

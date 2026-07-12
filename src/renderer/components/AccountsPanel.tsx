@@ -21,25 +21,19 @@ import type {
 } from '../../shared/account-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
+import {
+	ACCOUNT_PROVIDER_META,
+	ACCOUNT_PROVIDER_ORDER,
+	getAccountProviderMeta,
+} from '../../shared/accountProviderMeta';
 import { AccountUsageHistory } from './AccountUsageHistory';
 import { notifyToast } from '../stores/notificationStore';
-/** Provider types that can have accounts in Virtuosos */
-const ACCOUNT_PROVIDERS: MultiplexableAgent[] = [
-	'claude-code',
-	'codex',
-	'gemini-cli',
-	'opencode',
-	'factory-droid',
-];
+/** Provider types that can have accounts in Virtuosos (shared meta drives order + display) */
+const ACCOUNT_PROVIDERS: MultiplexableAgent[] = ACCOUNT_PROVIDER_ORDER;
 
-/** Display names for all multiplexable agents (extends beyond ToolType) */
-const PROVIDER_DISPLAY_NAMES: Record<MultiplexableAgent, string> = {
-	'claude-code': 'Claude Code',
-	codex: 'OpenAI Codex',
-	'gemini-cli': 'Gemini CLI',
-	opencode: 'OpenCode',
-	'factory-droid': 'Factory Droid',
-};
+const PROVIDER_DISPLAY_NAMES: Record<MultiplexableAgent, string> = Object.fromEntries(
+	ACCOUNT_PROVIDER_ORDER.map((p) => [p, ACCOUNT_PROVIDER_META[p].displayName])
+) as Record<MultiplexableAgent, string>;
 
 const PLAN_PRESETS = [
 	{ label: 'Custom', tokens: 0, cost: null },
@@ -188,7 +182,10 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 		setIsCreating(true);
 		setErrorMessage(null);
 		try {
-			const result = await window.maestro.accounts.createDirectory(newAccountName.trim());
+			const result = await window.maestro.accounts.createDirectory(
+				newAccountName.trim(),
+				newAccountProvider
+			);
 			if (!result.success) {
 				setErrorMessage(`Failed to create account directory: ${result.error}`);
 				return;
@@ -517,7 +514,10 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 																				fontSize: '10px',
 																			}}
 																		>
-																			CLAUDE_CONFIG_DIR=&quot;{account.configDir}&quot; claude login
+																			{getAccountProviderMeta(
+																				account.agentType
+																			).buildLoginCommand?.(account.configDir) ??
+																				`Re-authenticate via the ${PROVIDER_DISPLAY_NAMES[account.agentType] ?? account.agentType} CLI`}
 																		</code>
 																	</div>
 																)}
@@ -1104,8 +1104,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 									}}
 								>
 									{ACCOUNT_PROVIDERS.map((p) => (
-										<option key={p} value={p}>
+										<option key={p} value={p} disabled={!ACCOUNT_PROVIDER_META[p].supportsCreate}>
 											{PROVIDER_DISPLAY_NAMES[p] || p}
+											{ACCOUNT_PROVIDER_META[p].supportsCreate ? '' : ' (import only)'}
 										</option>
 									))}
 								</select>
@@ -1134,6 +1135,11 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 									<Plus className="w-3 h-3" />
 									{isCreating ? 'Creating...' : 'Create & Login'}
 								</button>
+							</div>
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Claude Code, Codex, and OpenCode support multiple isolated accounts. Gemini CLI and
+								Factory Droid are import only: use &quot;Discover Existing&quot; to register their
+								default directory.
 							</div>
 						</div>
 					)}

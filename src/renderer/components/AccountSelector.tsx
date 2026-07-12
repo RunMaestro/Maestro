@@ -18,6 +18,8 @@ import { useSettingsStore } from '../stores/settingsStore';
 export interface AccountSelectorProps {
 	theme: Theme;
 	sessionId: string;
+	/** Session provider; when set, only accounts of this provider are listed */
+	agentType?: string;
 	currentAccountId?: string;
 	currentAccountName?: string;
 	onSwitchAccount: (toAccountId: string) => void;
@@ -42,6 +44,7 @@ function getStatusColor(status: string, theme: Theme): string {
 export function AccountSelector({
 	theme,
 	sessionId: _sessionId,
+	agentType,
 	currentAccountId,
 	currentAccountName,
 	onSwitchAccount,
@@ -60,7 +63,10 @@ export function AccountSelector({
 		(async () => {
 			try {
 				const list = (await window.maestro.accounts.list()) as AccountProfile[];
-				if (!cancelled) setAccounts(list);
+				const scoped = agentType
+					? list.filter((a) => (a.agentType ?? 'claude-code') === agentType)
+					: list;
+				if (!cancelled) setAccounts(scoped);
 			} catch (err) {
 				Sentry.captureException(err, { extra: { operation: 'account:fetchAccountList' } });
 			}
@@ -68,7 +74,7 @@ export function AccountSelector({
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen, currentAccountId]);
+	}, [isOpen, currentAccountId, agentType]);
 
 	// Close dropdown on outside click
 	useEffect(() => {

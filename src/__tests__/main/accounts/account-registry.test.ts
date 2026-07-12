@@ -328,6 +328,18 @@ describe('AccountRegistry', () => {
 			const defaultAcct = registry.getDefaultAccount();
 			expect(defaultAcct?.email).toBe('b@example.com');
 		});
+
+		it('should scope to the requested provider', () => {
+			registry.add(makeParams({ email: 'claude@example.com' }));
+			const codex = registry.add({
+				...makeParams({ email: 'codex@example.com', configDir: '/home/user/.codex-work' }),
+				agentType: 'codex' as const,
+			});
+
+			expect(registry.getDefaultAccount('codex')?.id).toBe(codex.id);
+			expect(registry.getDefaultAccount('claude-code')?.email).toBe('claude@example.com');
+			expect(registry.getDefaultAccount('opencode')).toBeNull();
+		});
 	});
 
 	describe('selectNextAccount', () => {
@@ -368,6 +380,20 @@ describe('AccountRegistry', () => {
 
 			const next = registry.selectNextAccount();
 			expect(next?.id).toBe(b.id);
+		});
+
+		it('should scope selection to the requested provider', () => {
+			registry.add(makeParams({ email: 'claude@example.com' }));
+			const codex = registry.add({
+				...makeParams({ email: 'codex@example.com', configDir: '/home/user/.codex-work' }),
+				agentType: 'codex' as const,
+			});
+
+			expect(registry.selectNextAccount([], undefined, 'codex')?.id).toBe(codex.id);
+			expect(registry.selectNextAccount([], undefined, 'claude-code')?.email).toBe(
+				'claude@example.com'
+			);
+			expect(registry.selectNextAccount([], undefined, 'opencode')).toBeNull();
 		});
 
 		it('should use round-robin when configured', () => {

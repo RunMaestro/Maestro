@@ -13,6 +13,7 @@ const {
 	mockSymlink,
 	mockUnlink,
 	mockRm,
+	mockWriteFile,
 	mockExecFile,
 } = vi.hoisted(() => ({
 	TEST_HOME: '/home/testuser',
@@ -25,6 +26,7 @@ const {
 	mockSymlink: vi.fn(),
 	mockUnlink: vi.fn(),
 	mockRm: vi.fn(),
+	mockWriteFile: vi.fn(),
 	mockExecFile: vi.fn(),
 }));
 
@@ -40,6 +42,7 @@ vi.mock('fs/promises', () => ({
 		symlink: mockSymlink,
 		unlink: mockUnlink,
 		rm: mockRm,
+		writeFile: mockWriteFile,
 	},
 	stat: mockStat,
 	access: mockAccess,
@@ -50,6 +53,7 @@ vi.mock('fs/promises', () => ({
 	symlink: mockSymlink,
 	unlink: mockUnlink,
 	rm: mockRm,
+	writeFile: mockWriteFile,
 }));
 
 // Mock os module
@@ -130,7 +134,9 @@ import {
 	buildLoginCommand,
 	removeAccountDirectory,
 	validateRemoteAccountDir,
+	syncCredentialsFromBase,
 } from '../../../main/accounts/account-setup';
+import { inferProviderFromDir } from '../../../shared/accountProviderMeta';
 
 describe('account-setup', () => {
 	const baseDir = path.join(TEST_HOME, '.claude');
@@ -310,6 +316,112 @@ describe('account-setup', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Permission denied');
 		});
+
+		it('should remove managed dirs of other providers', async () => {
+			mockRm.mockResolvedValue(undefined);
+			const result = await removeAccountDirectory(path.join(TEST_HOME, '.codex-test'));
+			expect(result.success).toBe(true);
+		});
+
+		it('should protect bare provider base dirs', async () => {
+			for (const dir of ['.claude', '.codex', '.opencode', '.gemini', '.factory']) {
+				const result = await removeAccountDirectory(path.join(TEST_HOME, dir));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Safety check');
+			}
+		});
+	});
+
+	describe('provider parity', () => {
+		describe('inferProviderFromDir', () => {
+			it('should infer providers from managed prefixes and base dirs', () => {
+				expect(inferProviderFromDir('/home/u/.claude-work')).toBe('claude-code');
+				expect(inferProviderFromDir('/home/u/.codex-work')).toBe('codex');
+				expect(inferProviderFromDir('/home/u/.codex')).toBe('codex');
+				expect(inferProviderFromDir('/home/u/.opencode-alt')).toBe('opencode');
+				expect(inferProviderFromDir('C:\\Users\\u\\.codex-win')).toBe('codex');
+				expect(inferProviderFromDir('/home/u/.gemini')).toBe('gemini-cli');
+				expect(inferProviderFromDir('/home/u/.factory')).toBe('factory-droid');
+				expect(inferProviderFromDir('/home/u/somewhere-else')).toBe('claude-code');
+			});
+		});
+
+		describe('buildLoginCommand per provider', () => {
+			it('should build a CODEX_HOME login command for codex dirs', () => {
+				expect(buildLoginCommand('/home/u/.codex-work')).toBe(
+					'CODEX_HOME="/home/u/.codex-work" codex login'
+				);
+			});
+
+			it('should build an XDG_DATA_HOME auth login command for opencode dirs', () => {
+				expect(buildLoginCommand('/home/u/.opencode-work')).toBe(
+					'XDG_DATA_HOME="/home/u/.opencode-work" opencode auth login'
+				);
+			});
+
+			it('should return null for providers without a login flow', () => {
+				expect(buildLoginCommand(path.join(TEST_HOME, '.gemini'))).toBeNull();
+				expect(buildLoginCommand(path.join(TEST_HOME, '.factory'))).toBeNull();
+			});
+		});
+
+		describe('createAccountDirectory per provider', () => {
+			it('should create a codex account dir without requiring a base dir', async () => {
+				mockAccess.mockRejectedValue(new Error('ENOENT'));
+				mockMkdir.mockResolvedValue(undefined);
+
+				const result = await createAccountDirectory('work', 'codex');
+				expect(result.success).toBe(true);
+				expect(result.configDir).toBe(path.join(TEST_HOME, '.codex-work'));
+				expect(mockMkdir).toHaveBeenCalledWith(path.join(TEST_HOME, '.codex-work'), {
+					recursive: true,
+				});
+			});
+
+			it('should create an opencode account dir', async () => {
+				mockAccess.mockRejectedValue(new Error('ENOENT'));
+				mockMkdir.mockResolvedValue(undefined);
+
+				const result = await createAccountDirectory('alt', 'opencode');
+				expect(result.success).toBe(true);
+				expect(result.configDir).toBe(path.join(TEST_HOME, '.opencode-alt'));
+			});
+
+			it('should refuse to create dirs for import-only providers', async () => {
+				for (const agentType of ['gemini-cli', 'factory-droid'] as const) {
+					const result = await createAccountDirectory('x', agentType);
+					expect(result.success).toBe(false);
+					expect(mockMkdir).not.toHaveBeenCalled();
+				}
+			});
+		});
+
+		describe('syncCredentialsFromBase per provider', () => {
+			it('should copy codex auth.json from the base dir', async () => {
+				mockAccess.mockResolvedValue(undefined);
+				mockStat.mockResolvedValue({ isDirectory: () => true });
+				mockMkdir.mockResolvedValue(undefined);
+				mockReadFile.mockResolvedValue('{"token":"x"}');
+				mockWriteFile.mockResolvedValue(undefined);
+
+				const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.codex-work'));
+				expect(result.success).toBe(true);
+				expect(mockReadFile).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.codex', 'auth.json'),
+					'utf-8'
+				);
+				expect(mockWriteFile).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.codex-work', 'auth.json'),
+					'{"token":"x"}',
+					'utf-8'
+				);
+			});
+
+			it('should refuse credential sync for import-only providers', async () => {
+				const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.gemini'));
+				expect(result.success).toBe(false);
+			});
+		});
 	});
 
 	describe('discoverExistingAccounts', () => {
@@ -327,6 +439,8 @@ describe('account-setup', () => {
 				}
 				throw new Error('ENOENT');
 			});
+			// Single provider base dirs (~/.codex, ~/.gemini, ...) do not exist in this scenario
+			mockStat.mockRejectedValue(new Error('ENOENT'));
 
 			const accounts = await discoverExistingAccounts();
 			expect(accounts).toHaveLength(2);

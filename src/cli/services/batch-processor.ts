@@ -34,30 +34,41 @@ export { detectHaltMarker };
 
 /**
  * Resolve the account configDir for a given task, based on CLI options.
- * - If --account is set, use that specific account.
- * - If --account-rotation is set, round-robin through active accounts.
- * - Otherwise, use the default account if one exists.
+ * - If --account is set, use that specific account (must match the task's provider).
+ * - If --account-rotation is set, round-robin through active accounts of the provider.
+ * - Otherwise, use the provider's default account if one exists.
+ * Accounts are always scoped to the session's agent type so a Codex account
+ * dir is never exported into a Claude Code spawn (and vice versa).
  */
 async function resolveAccountConfigDir(
 	taskIndex: number,
+	toolType: string,
 	accountOption?: string,
 	accountRotation?: boolean,
 	cachedAccounts?: CLIAccountInfo[] | null
 ): Promise<string | undefined> {
 	if (accountOption) {
 		const account = await getAccountByIdOrName(accountOption);
+		if (account && account.agentType !== toolType) {
+			process.stderr.write(
+				`Warning: account "${accountOption}" belongs to ${account.agentType}, not ${toolType}; ignoring it for this run.\n`
+			);
+			return undefined;
+		}
 		return account?.configDir;
 	}
 
 	if (accountRotation) {
 		const accounts = cachedAccounts ?? (await readAccountsFromStore());
-		const activeAccounts = accounts.filter((a) => a.status === 'active');
+		const activeAccounts = accounts.filter(
+			(a) => a.status === 'active' && a.agentType === toolType
+		);
 		if (activeAccounts.length === 0) return undefined;
 		const account = activeAccounts[taskIndex % activeAccounts.length];
 		return account.configDir;
 	}
 
-	const defaultAccount = await getDefaultAccount();
+	const defaultAccount = await getDefaultAccount(toolType);
 	return defaultAccount?.configDir;
 }
 
@@ -499,9 +510,10 @@ export async function* runPlaybook(
 						};
 					}
 
-					// Resolve account for this task (account multiplexing)
+					// Resolve account for this task (account multiplexing, provider-scoped)
 					const configDir = await resolveAccountConfigDir(
 						globalTaskIndex,
+						session.toolType,
 						accountOption,
 						accountRotation,
 						cachedAccounts
