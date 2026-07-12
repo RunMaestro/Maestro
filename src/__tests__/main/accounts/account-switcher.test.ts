@@ -33,6 +33,7 @@ describe('AccountSwitcher', () => {
 	let switcher: AccountSwitcher;
 	let mockProcessManager: {
 		kill: ReturnType<typeof vi.fn>;
+		getAll: ReturnType<typeof vi.fn>;
 	};
 	let mockRegistry: {
 		get: ReturnType<typeof vi.fn>;
@@ -46,6 +47,8 @@ describe('AccountSwitcher', () => {
 
 		mockProcessManager = {
 			kill: vi.fn().mockReturnValue(true),
+			// Used by the prefix-matching kill fallback when the exact-ID kill misses
+			getAll: vi.fn().mockReturnValue([]),
 		};
 
 		mockRegistry = {

@@ -29,6 +29,33 @@ export interface AccountUsageStatsProvider {
 
 const LOG_CONTEXT = 'AccountRegistry';
 
+// Process session IDs carry per-surface suffixes (`${base}-ai-${tabId}`,
+// `${base}-terminal`, `${base}-synopsis-${ts}`, `${base}-batch-${n}`) while the
+// renderer's manual assign/cleanup/reconcile paths use the bare agent ID.
+// Assignments are per-AGENT (mirroring Session.accountId), so every key is
+// normalized to the base ID — otherwise a spawn-time assignment under
+// `x-ai-tab1` is invisible to a lookup for `x` and vice versa. Patterns mirror
+// src/renderer/utils/sessionIdParser.ts.
+const REGEX_AI_TAB_SUFFIX = /^(.+)-ai-.+$/;
+const REGEX_SYNOPSIS_SUFFIX = /^(.+)-synopsis-\d+$/;
+const REGEX_BATCH_SUFFIX = /^(.+)-batch-\d+$/;
+const REGEX_TERMINAL_SUFFIX = /^(.+)-terminal(?:-.+)?$/;
+
+/** Strip known process-suffix decorations down to the base agent session ID. */
+export function normalizeAssignmentSessionId(sessionId: string): string {
+	for (const re of [
+		REGEX_AI_TAB_SUFFIX,
+		REGEX_SYNOPSIS_SUFFIX,
+		REGEX_BATCH_SUFFIX,
+		REGEX_TERMINAL_SUFFIX,
+	]) {
+		const match = sessionId.match(re);
+		if (match) return match[1];
+	}
+	if (sessionId.endsWith('-ai')) return sessionId.slice(0, -3);
+	return sessionId;
+}
+
 export class AccountRegistry {
 	constructor(private store: Store<AccountStoreData>) {}
 
@@ -167,30 +194,31 @@ export class AccountRegistry {
 
 	// --- Assignments ---
 
-	/** Assign an account to a session */
+	/** Assign an account to a session (keyed by the base agent session ID) */
 	assignToSession(sessionId: string, accountId: AccountId): AccountAssignment {
+		const baseId = normalizeAssignmentSessionId(sessionId);
 		const assignment: AccountAssignment = {
-			sessionId,
+			sessionId: baseId,
 			accountId,
 			assignedAt: Date.now(),
 		};
 		const assignments = this.store.get('assignments', {});
-		assignments[sessionId] = assignment;
+		assignments[baseId] = assignment;
 		this.store.set('assignments', assignments);
 		this.touchLastUsed(accountId);
 		return assignment;
 	}
 
-	/** Get the account assigned to a session */
+	/** Get the account assigned to a session (suffixed process IDs resolve to their agent) */
 	getAssignment(sessionId: string): AccountAssignment | null {
 		const assignments = this.store.get('assignments', {});
-		return assignments[sessionId] ?? null;
+		return assignments[normalizeAssignmentSessionId(sessionId)] ?? null;
 	}
 
 	/** Remove a session assignment (e.g., when session is closed) */
 	removeAssignment(sessionId: string): void {
 		const assignments = this.store.get('assignments', {});
-		delete assignments[sessionId];
+		delete assignments[normalizeAssignmentSessionId(sessionId)];
 		this.store.set('assignments', assignments);
 	}
 
@@ -305,22 +333,35 @@ export class AccountRegistry {
 
 	/**
 	 * Reconcile assignments with a list of active session IDs.
-	 * Removes assignments for sessions that no longer exist.
+	 * Removes assignments for sessions that no longer exist and migrates any
+	 * legacy suffixed keys (`x-ai-tab1`) to their base agent ID.
 	 * Called on app startup after session restore.
 	 */
 	reconcileAssignments(activeSessionIds: Set<string>): number {
-		const assignments = this.getAllAssignments();
-		let removed = 0;
-		for (const assignment of assignments) {
-			if (!activeSessionIds.has(assignment.sessionId)) {
-				this.removeAssignment(assignment.sessionId);
-				removed++;
+		const assignments = this.store.get('assignments', {});
+		let changed = 0;
+		for (const [key, assignment] of Object.entries(assignments)) {
+			const baseId = normalizeAssignmentSessionId(key);
+			if (!activeSessionIds.has(baseId)) {
+				// Session no longer exists — drop the raw key (bypass the
+				// normalizing removeAssignment so legacy suffixed keys are hit).
+				delete assignments[key];
+				changed++;
+			} else if (key !== baseId) {
+				// Legacy suffixed key for a live session — migrate to the base ID
+				// (an existing base entry wins; it is the newer keying scheme).
+				if (!assignments[baseId]) {
+					assignments[baseId] = { ...assignment, sessionId: baseId };
+				}
+				delete assignments[key];
+				changed++;
 			}
 		}
-		if (removed > 0) {
-			logger.info(`Reconciled ${removed} stale account assignments`, LOG_CONTEXT);
+		if (changed > 0) {
+			this.store.set('assignments', assignments);
+			logger.info(`Reconciled ${changed} stale account assignments`, LOG_CONTEXT);
 		}
-		return removed;
+		return changed;
 	}
 
 	// --- Switch Config ---

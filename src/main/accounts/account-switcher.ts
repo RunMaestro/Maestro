@@ -78,8 +78,18 @@ export class AccountSwitcher {
 				toAccountName: toAccount.name,
 			});
 
-			// 1. Kill the current agent process
-			const killed = this.processManager.kill(sessionId);
+			// 1. Kill the current agent process(es). Manual switches pass the base
+			// agent ID while running processes are keyed by suffixed IDs
+			// (`${base}-ai-${tabId}`), so fall back to prefix matching — otherwise
+			// an in-flight turn keeps running on the old account.
+			let killed = this.processManager.kill(sessionId);
+			if (!killed && typeof this.processManager.getAll === 'function') {
+				for (const proc of this.processManager.getAll()) {
+					if (proc.sessionId.startsWith(`${sessionId}-ai`)) {
+						if (this.processManager.kill(proc.sessionId)) killed = true;
+					}
+				}
+			}
 			if (!killed) {
 				logger.warn('Could not kill process (may have already exited)', LOG_CONTEXT, { sessionId });
 			}
@@ -145,8 +155,13 @@ export class AccountSwitcher {
 		}
 	}
 
-	/** Clean up tracking data when a session is closed */
+	/** Clean up tracking data when a session is closed. Receives the base agent
+	 *  ID; prompts are recorded under suffixed process IDs (`${base}-ai-${tab}`),
+	 *  so match by prefix as well as exact key. */
 	cleanupSession(sessionId: string): void {
 		this.lastPrompts.delete(sessionId);
+		for (const key of this.lastPrompts.keys()) {
+			if (key.startsWith(`${sessionId}-`)) this.lastPrompts.delete(key);
+		}
 	}
 }

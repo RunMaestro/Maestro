@@ -1154,6 +1154,22 @@ function MaestroConsoleInner() {
 				})
 			);
 
+			// Manual switches never auto-respawn: the previous prompt already
+			// completed (or the user chose to abandon it) and re-executing it on
+			// the new account could repeat side effects. The next user message
+			// picks up the new account via session.accountId + CLAUDE_CONFIG_DIR.
+			// Automatic switches (throttle / auth recovery) resume the interrupted
+			// turn — but only when there is a recorded prompt to resume.
+			if (reason === 'manual' || !lastPrompt) {
+				notifyToast({
+					type: 'info',
+					title: 'Account Switched',
+					message: `Switched to account ${toAccountName} (${reason})`,
+					duration: 5_000,
+				});
+				return;
+			}
+
 			try {
 				// Get agent config for respawn
 				const agent = await window.maestro.agents.get(session.toolType);
@@ -1171,14 +1187,20 @@ function MaestroConsoleInner() {
 				// Determine the target session ID (with tab suffix)
 				const targetSessionId = `${session.id}-ai-${tab?.id || 'default'}`;
 
-				// Spawn with --resume and updated env vars
+				// Respawn as a normal batch turn: prompt in the spawn config (batch
+				// agents never read stdin), --resume for conversation continuity,
+				// and the tab's permission mode preserved. The main process builds
+				// agent-specific args exactly like a user-initiated turn.
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
 					cwd: session.cwd,
 					command: commandToUse,
 					args: agentArgs,
+					prompt: lastPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
+					permissionMode: tab?.permissionMode,
+					readOnlyMode: tab?.permissionMode === 'readonly',
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
 					sessionCustomEnvVars: {
@@ -1191,17 +1213,10 @@ function MaestroConsoleInner() {
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 
-				// Re-send the last prompt after a delay to allow the agent to initialize
-				if (lastPrompt) {
-					setTimeout(() => {
-						window.maestro.process.write(targetSessionId, lastPrompt);
-					}, 2000);
-				}
-
 				notifyToast({
 					type: 'info',
 					title: 'Account Switched',
-					message: `Switched to account ${toAccountName} (${reason})`,
+					message: `Switched to account ${toAccountName} (${reason}) — resuming interrupted turn`,
 					duration: 5_000,
 				});
 			} catch (error) {

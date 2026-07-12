@@ -132,8 +132,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
-			handleProcessSpawn(config, {
+		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) => {
+			// Record the prompt for account switch / auth recovery resume. Batch-mode
+			// agents deliver prompts via the spawn config (never process:write), so
+			// without this the switch respawn has nothing to re-send.
+			if (config.prompt) {
+				getAccountSwitcher?.()?.recordLastPrompt(config.sessionId, config.prompt);
+				getAccountAuthRecovery?.()?.recordLastPrompt(config.sessionId, config.prompt);
+			}
+			return handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,
 				agentConfigsStore,
@@ -143,8 +150,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
 				getAccountRegistry,
-			})
-		)
+			});
+		})
 	);
 
 	// Write data to a process

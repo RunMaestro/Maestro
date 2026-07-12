@@ -257,6 +257,47 @@ describe('AccountRegistry', () => {
 			expect(registry.getAllAssignments()).toHaveLength(2);
 		});
 
+		it('should normalize suffixed process IDs to the base agent ID', () => {
+			const added = registry.add(makeParams());
+
+			// Spawn-time assignment uses the suffixed process ID
+			registry.assignToSession('session-1-ai-tab-42', added.id);
+
+			// All ID variants resolve to the same per-agent assignment
+			expect(registry.getAssignment('session-1')?.accountId).toBe(added.id);
+			expect(registry.getAssignment('session-1-ai-tab-42')?.accountId).toBe(added.id);
+			expect(registry.getAssignment('session-1-ai-other-tab')?.accountId).toBe(added.id);
+			expect(registry.getAssignment('session-1-synopsis-1234567890')?.accountId).toBe(added.id);
+			expect(registry.getAssignment('session-1-batch-3')?.accountId).toBe(added.id);
+			expect(registry.getAssignment('session-1-terminal')?.accountId).toBe(added.id);
+
+			// Only ONE assignment exists (per-agent, not per-process)
+			expect(registry.getAllAssignments()).toHaveLength(1);
+			expect(registry.getAllAssignments()[0].sessionId).toBe('session-1');
+
+			// Manual assignment via the base ID overwrites the same entry
+			const second = registry.add(makeParams({ email: 'two@test.com', name: 'Two' }));
+			registry.assignToSession('session-1', second.id);
+			expect(registry.getAssignment('session-1-ai-tab-42')?.accountId).toBe(second.id);
+			expect(registry.getAllAssignments()).toHaveLength(1);
+
+			// Cleanup with the base ID removes the assignment created by a spawn
+			registry.removeAssignment('session-1');
+			expect(registry.getAssignment('session-1-ai-tab-42')).toBeNull();
+		});
+
+		it('should not normalize group-chat or groomer session IDs', () => {
+			const added = registry.add(makeParams());
+			registry.assignToSession('group-chat-g1-participant-Alice-uuid1', added.id);
+			registry.assignToSession('groomer-uuid2', added.id);
+
+			expect(registry.getAssignment('group-chat-g1-participant-Alice-uuid1')?.accountId).toBe(
+				added.id
+			);
+			expect(registry.getAssignment('groomer-uuid2')?.accountId).toBe(added.id);
+			expect(registry.getAllAssignments()).toHaveLength(2);
+		});
+
 		it('should touch lastUsedAt on assignment', () => {
 			const added = registry.add(makeParams());
 			expect(registry.get(added.id)?.lastUsedAt).toBe(0);
@@ -500,6 +541,35 @@ describe('AccountRegistry', () => {
 			const removed = registry.reconcileAssignments(new Set(['session-1']));
 
 			expect(removed).toBe(0);
+		});
+
+		it('should keep assignments made under suffixed process IDs for live sessions', () => {
+			const account = registry.add(makeParams());
+			// Spawn-time assignment (normalized to base on write)
+			registry.assignToSession('session-1-ai-tab-9', account.id);
+
+			// Reconcile receives BASE agent IDs from the renderer
+			const removed = registry.reconcileAssignments(new Set(['session-1']));
+
+			expect(removed).toBe(0);
+			expect(registry.getAssignment('session-1')?.accountId).toBe(account.id);
+		});
+
+		it('should migrate legacy suffixed keys to base IDs for live sessions', () => {
+			const account = registry.add(makeParams());
+			// Simulate a pre-normalization store entry written under a suffixed key
+			store._data.assignments['session-1-ai-tab-9'] = {
+				sessionId: 'session-1-ai-tab-9',
+				accountId: account.id,
+				assignedAt: Date.now(),
+			};
+
+			const changed = registry.reconcileAssignments(new Set(['session-1']));
+
+			expect(changed).toBe(1);
+			expect(registry.getAssignment('session-1')?.accountId).toBe(account.id);
+			expect(registry.getAllAssignments()).toHaveLength(1);
+			expect(registry.getAllAssignments()[0].sessionId).toBe('session-1');
 		});
 
 		it('should remove all assignments when no sessions are active', () => {

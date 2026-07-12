@@ -284,5 +284,13 @@ export class AccountAuthRecovery {
 	cleanupSession(sessionId: string): void {
 		this.lastPrompts.delete(sessionId);
 		activeRecoveries.delete(sessionId);
+		// Prompts are recorded under suffixed process IDs (`${base}-ai-${tab}`);
+		// cleanup receives the base agent ID, so also match by prefix.
+		for (const key of this.lastPrompts.keys()) {
+			if (key.startsWith(`${sessionId}-`)) this.lastPrompts.delete(key);
+		}
+		for (const key of activeRecoveries.keys()) {
+			if (key.startsWith(`${sessionId}-`)) activeRecoveries.delete(key);
+		}
 	}
 }
