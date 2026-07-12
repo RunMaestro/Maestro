@@ -9,24 +9,9 @@ import type { AccountRegistry } from '../accounts/account-registry';
 import type { StatsDB } from '../stats';
 import type { UsageStats } from './types';
 import { DEFAULT_TOKEN_WINDOW_MS } from '../../shared/account-types';
+import { getWindowBounds } from '../accounts/account-utils';
 
 const LOG_CONTEXT = 'account-usage-listener';
-
-/**
- * Calculate the window boundaries for a given timestamp and window size.
- * Windows are aligned to fixed intervals (e.g., every 5 hours from midnight).
- */
-function getWindowBounds(timestamp: number, windowMs: number): { start: number; end: number } {
-	// Align windows to midnight of the current day
-	const dayStart = new Date(timestamp);
-	dayStart.setHours(0, 0, 0, 0);
-	const dayStartMs = dayStart.getTime();
-
-	const windowsSinceDayStart = Math.floor((timestamp - dayStartMs) / windowMs);
-	const start = dayStartMs + windowsSinceDayStart * windowMs;
-	const end = start + windowMs;
-	return { start, end };
-}
 
 /**
  * Sets up the account usage listener that aggregates per-session usage events
