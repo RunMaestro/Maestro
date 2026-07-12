@@ -20,12 +20,29 @@ export interface UsagePrediction {
 }
 
 // ============================================================================
+// Rate Metrics Types
+// ============================================================================
+
+export interface RateMetrics {
+	tokensPerHour: number;
+	tokensPerDay: number;
+	tokensPerWeek: number;
+	dailyDelta: number;
+	weeklyDelta: number;
+	trend: 'up' | 'stable' | 'down';
+}
+
+// ============================================================================
 // Metrics Types
 // ============================================================================
 
 export interface AccountUsageMetrics {
 	accountId: string;
 	totalTokens: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	limitTokens: number;
 	usagePercent: number | null;
 	costUsd: number;
@@ -37,19 +54,20 @@ export interface AccountUsageMetrics {
 	estimatedTimeToLimitMs: number | null; // null if no limit or burn rate is 0
 	status: string;
 	prediction: UsagePrediction;
+	rateMetrics: RateMetrics;
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const URGENT_INTERVAL_MS = 5_000;
 const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
-const EMPTY_PREDICTION: UsagePrediction = {
-	linearTimeToLimitMs: null,
-	weightedTimeToLimitMs: null,
-	p90TokensPerWindow: 0,
-	avgTokensPerWindow: 0,
-	confidence: 'low',
-	windowsRemainingP90: null,
+const EMPTY_RATE_METRICS: RateMetrics = {
+	tokensPerHour: 0,
+	tokensPerDay: 0,
+	tokensPerWeek: 0,
+	dailyDelta: 0,
+	weeklyDelta: 0,
+	trend: 'stable',
 };
 
 // ============================================================================
@@ -144,6 +162,79 @@ export function calculatePrediction(
 }
 
 // ============================================================================
+// Rate Metrics Calculator
+// ============================================================================
+
+/**
+ * Calculate rate metrics from window history for trend display.
+ * Provides tokens/hr, tokens/day, tokens/week with period-over-period deltas.
+ */
+export function calculateRateMetrics(
+	windowHistory: Array<{ totalTokens: number; windowStart: number; windowEnd: number }>,
+	burnRatePerHour: number
+): RateMetrics {
+	if (windowHistory.length === 0) {
+		return { ...EMPTY_RATE_METRICS, tokensPerHour: burnRatePerHour };
+	}
+
+	// ~5 windows/day, ~34 windows/week
+	const n = windowHistory.length;
+
+	// Tokens/day: sum of last 5 windows (~24h)
+	const daySlice = windowHistory.slice(Math.max(0, n - 5));
+	const tokensPerDay = daySlice.reduce((s, w) => s + w.totalTokens, 0);
+
+	// Tokens/week: sum of last 34 windows (~7 days)
+	const weekSlice = windowHistory.slice(Math.max(0, n - 34));
+	const tokensPerWeek = weekSlice.reduce((s, w) => s + w.totalTokens, 0);
+
+	// Daily delta: compare last 5 vs previous 5
+	const prevDaySlice = windowHistory.slice(Math.max(0, n - 10), Math.max(0, n - 5));
+	const prevDayTotal = prevDaySlice.reduce((s, w) => s + w.totalTokens, 0);
+	const dailyDelta = prevDayTotal > 0 ? ((tokensPerDay - prevDayTotal) / prevDayTotal) * 100 : 0;
+
+	// Weekly delta: compare last 34 vs previous 34
+	const prevWeekSlice = windowHistory.slice(Math.max(0, n - 68), Math.max(0, n - 34));
+	const prevWeekTotal = prevWeekSlice.reduce((s, w) => s + w.totalTokens, 0);
+	const weeklyDelta =
+		prevWeekTotal > 0 ? ((tokensPerWeek - prevWeekTotal) / prevWeekTotal) * 100 : 0;
+
+	// Trend: linear regression on last 20 windows
+	const trendSlice = windowHistory.slice(Math.max(0, n - 20));
+	let trend: 'up' | 'stable' | 'down' = 'stable';
+	if (trendSlice.length >= 2) {
+		const tLen = trendSlice.length;
+		let sumX = 0,
+			sumY = 0,
+			sumXY = 0,
+			sumX2 = 0;
+		for (let i = 0; i < tLen; i++) {
+			sumX += i;
+			sumY += trendSlice[i].totalTokens;
+			sumXY += i * trendSlice[i].totalTokens;
+			sumX2 += i * i;
+		}
+		const denom = tLen * sumX2 - sumX * sumX;
+		if (denom !== 0) {
+			const slope = (tLen * sumXY - sumX * sumY) / denom;
+			const meanY = sumY / tLen;
+			const normalizedSlope = meanY > 0 ? (slope * tLen) / meanY : 0;
+			if (normalizedSlope > 0.05) trend = 'up';
+			else if (normalizedSlope < -0.05) trend = 'down';
+		}
+	}
+
+	return {
+		tokensPerHour: burnRatePerHour,
+		tokensPerDay,
+		tokensPerWeek,
+		dailyDelta,
+		weeklyDelta,
+		trend,
+	};
+}
+
+// ============================================================================
 // Hook
 // ============================================================================
 
@@ -173,6 +264,10 @@ export function useAccountUsage(): {
 		(raw: {
 			accountId: string;
 			totalTokens: number;
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadTokens: number;
+			cacheCreationTokens: number;
 			limitTokens: number;
 			usagePercent: number | null;
 			costUsd: number;
@@ -205,12 +300,19 @@ export function useAccountUsage(): {
 				raw.windowEnd - raw.windowStart
 			);
 
+			// Rate metrics from window history
+			const rateMetrics = calculateRateMetrics(
+				windowHistoriesRef.current[raw.accountId] || [],
+				burnRatePerHour
+			);
+
 			return {
 				...raw,
 				timeRemainingMs,
 				burnRatePerHour,
 				estimatedTimeToLimitMs,
 				prediction,
+				rateMetrics,
 			};
 		},
 		[]
@@ -248,6 +350,10 @@ export function useAccountUsage(): {
 				newMetrics[accountId] = calculateDerivedMetrics({
 					accountId,
 					totalTokens: usage.totalTokens || 0,
+					inputTokens: usage.inputTokens || 0,
+					outputTokens: usage.outputTokens || 0,
+					cacheReadTokens: usage.cacheReadTokens || 0,
+					cacheCreationTokens: usage.cacheCreationTokens || 0,
 					limitTokens: usage.account?.tokenLimitPerWindow || 0,
 					usagePercent: usage.usagePercent ?? null,
 					costUsd: usage.costUsd || 0,
@@ -259,7 +365,8 @@ export function useAccountUsage(): {
 			}
 			setMetrics(newMetrics);
 			setLoading(false);
-		} catch {
+		} catch (err) {
+			console.warn('[useAccountUsage] Failed to fetch usage data:', err);
 			setLoading(false);
 		}
 	}, [calculateDerivedMetrics]);
@@ -277,7 +384,7 @@ export function useAccountUsage(): {
 					try {
 						const history = (await window.maestro.accounts.getWindowHistory(
 							account.id,
-							40
+							68
 						)) as Array<{
 							inputTokens: number;
 							outputTokens: number;
@@ -292,13 +399,16 @@ export function useAccountUsage(): {
 							windowStart: w.windowStart,
 							windowEnd: w.windowEnd,
 						}));
-					} catch {
-						/* skip individual account errors */
+					} catch (err) {
+						console.warn(
+							`[useAccountUsage] Failed to load history for account ${account.id}:`,
+							err
+						);
 					}
 				}
 				windowHistoriesRef.current = histories;
-			} catch {
-				/* non-fatal */
+			} catch (err) {
+				console.warn('[useAccountUsage] Failed to load window histories:', err);
 			}
 		}
 		loadHistories();
@@ -317,6 +427,10 @@ export function useAccountUsage(): {
 				[accountId]: calculateDerivedMetrics({
 					accountId,
 					totalTokens: data.totalTokens || 0,
+					inputTokens: data.inputTokens || 0,
+					outputTokens: data.outputTokens || 0,
+					cacheReadTokens: data.cacheReadTokens || 0,
+					cacheCreationTokens: data.cacheCreationTokens || 0,
 					limitTokens: data.limitTokens || 0,
 					usagePercent: data.usagePercent ?? null,
 					costUsd: data.costUsd || 0,

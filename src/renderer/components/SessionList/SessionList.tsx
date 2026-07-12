@@ -112,6 +112,10 @@ interface SessionListProps {
 
 	// Edit agent modal handler (for context menu edit)
 	onEditAgent: (session: Session) => void;
+	/** Virtuosos: open the SwitchProviderModal for this agent (hidden when undefined). */
+	onSwitchProvider?: (sessionId: string) => void;
+	/** Virtuosos: restore a provider-switch-archived agent (hidden when undefined). */
+	onUnarchive?: (sessionId: string) => void;
 
 	// Duplicate agent handlers (for context menu duplicate)
 	onNewAgentSession: () => void;
@@ -425,6 +429,8 @@ function SessionListInner(props: SessionListProps) {
 		onDeleteSession,
 		onDeleteWorktreeGroup,
 		onEditAgent,
+		onSwitchProvider,
+		onUnarchive,
 		onNewAgentSession,
 		onToggleWorktreeExpanded,
 		onOpenCreatePR,
@@ -2142,6 +2148,12 @@ function SessionListInner(props: SessionListProps) {
 						setRenameInstanceModalOpen(true);
 					}}
 					onEdit={() => onEditAgent(contextMenuSession)}
+					onSwitchProvider={
+						onSwitchProvider && contextMenuSession.toolType !== 'terminal'
+							? () => onSwitchProvider(contextMenuSession.id)
+							: undefined
+					}
+					onUnarchive={onUnarchive ? () => onUnarchive(contextMenuSession.id) : undefined}
 					onDuplicate={() => {
 						useModalStore
 							.getState()

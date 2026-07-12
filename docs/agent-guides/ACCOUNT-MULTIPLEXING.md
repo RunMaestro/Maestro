@@ -216,3 +216,51 @@ CLI parity
 - **CLI + custom sync path:** `account-reader.ts` probes default userData locations for `maestro-accounts.json`; a custom desktop sync path is invisible to the CLI.
 - **Window model:** midnight-aligned windows approximate, not mirror, Anthropic's rolling quotas. Configured limits are advisory tripwires.
 - **`switchConfig.enabled` defaults to OFF.** With it off, a throttled account still gets recorded and marked (and `account:throttled` fires with `autoSwitchAvailable: false`), but no switch is proposed or executed. Turn it on in the Virtuosos panel before testing the switch flows. Per-account `autoSwitchEnabled` further filters which accounts are eligible targets, and `promptBeforeSwitch` picks prompt vs auto mode.
+
+---
+
+## 6. Provider switching (Virtuosos vertical swapping)
+
+Layered ON TOP of account multiplexing and gated behind the `virtuosos` Encore flag (Settings -> Plugins -> Virtuosos, default off). Account multiplexing itself is always on; the flag gates only these provider-level surfaces.
+
+### 6.1 Modules
+
+| Piece                   | File                                                                                                                                                                           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Error tracker           | `src/main/providers/provider-error-tracker.ts`                                                                                                                                 | Sliding-window counter of consecutive recoverable provider errors (`rate_limited`, `network_error`, `agent_crashed`, `auth_expired`) per session. `recordError()` is fed by the error listener; the ProcessManager `query-complete` event calls `clearSession()` so only CONSECUTIVE failures accumulate. At `errorThreshold` (default 3 in `errorWindowMs`, default 5m) it emits one `provider:failover-suggest` per window with the first configured fallback provider. Config live-updates via `store.onDidChange('providerSwitchConfig')`. |
+| IPC                     | `src/main/ipc/handlers/providers.ts` + `src/main/preload/providers.ts`                                                                                                         | `providers:get-error-stats`, `get-all-error-stats`, `clear-session-errors`; `window.maestro.providers.*` + `onFailoverSuggest`.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Switch orchestration    | `src/renderer/hooks/agent/useProviderSwitch.ts`                                                                                                                                | Grooms/extracts context from the source tab, then either creates a new session via `createMergedSession` (identity carry-over: name, nudge, bookmarks, SSH config, Auto Run folder; provenance: `migratedFromSessionId`, `migratedAt`, `migrationGeneration`) or, in merge-back mode, walks the provenance chain (`findArchivedPredecessor`) and reactivates the archived predecessor with the new context appended.                                                                                                                           |
+| Modal                   | `src/renderer/components/SwitchProviderModal.tsx` (priority `PROVIDER_SWITCH`)                                                                                                 | Provider picker + groom/archive/merge-back options. Opened from the agent context menu ("Switch Provider...") or automatically by a failover suggestion.                                                                                                                                                                                                                                                                                                                                                                                       |
+| Archive/unarchive       | `SessionItem.tsx` (dimmed row, "Archived (provider switched)" status) + `UnarchiveConflictModal.tsx`                                                                           | Switched-away sessions are parked, not deleted. Unarchive (context menu) restores them; a name+provider clash prompts archive-the-other or delete-the-other.                                                                                                                                                                                                                                                                                                                                                                                   |
+| Observability           | `ProviderPanel.tsx`, `ProviderHealthCard.tsx`, `ProviderDetailView.tsx`, `ProviderDetailCharts.tsx`, `VirtuosoUsageView.tsx` + `useProviderHealth.ts` / `useProviderDetail.ts` | Providers tab in VirtuososModal: live health grid, failover config, per-provider detail with hourly charts (backed by the `byAgentByHour` stats aggregation).                                                                                                                                                                                                                                                                                                                                                                                  |
+| Multi-provider accounts | `account-setup.ts` `PROVIDER_DISCOVERY`                                                                                                                                        | `MultiplexableAgent` widened to codex/opencode/factory-droid/gemini-cli; discovery scans `~/.codex`, `~/.opencode`, `~/.gemini` with provider-specific auth detection; AccountsPanel groups accounts by provider.                                                                                                                                                                                                                                                                                                                              |
+
+### 6.2 Failover flow
+
+```
+consecutive provider errors -> error-listener feeds tracker (account routing unaffected)
+  -> threshold reached -> 'provider:failover-suggest' {suggestedProvider, recentErrors}
+  -> App.tsx (encoreFeatures.virtuosos): warning toast + opens SwitchProviderModal
+     pre-scoped to the suggested fallback
+  -> user confirms -> useProviderSwitch: groom -> new/merge-back session -> archive source
+  -> providers.clearSessionErrors(source) -> navigate to the new session
+query-complete on any session -> tracker.clearSession (resets its consecutive count)
+```
+
+Coordination notes:
+
+- The tracker only OBSERVES errors; account-level routing (throttle switch, auth recovery) still runs first and usually resolves rate limits by switching accounts. Provider failover matters when a provider fails across accounts (outage, crash loops).
+- Provider switching creates a NEW session (or reactivates an archived one) - it never respawns in place, so it does not interact with the account switcher's kill/respawn path.
+- Manual entry point: agent context menu -> "Switch Provider..." (non-terminal agents, flag on). Archived agents get "Unarchive" instead.
+
+### 6.3 Tests
+
+`src/main/providers/__tests__/provider-error-tracker.test.ts` (21: thresholds, windowing, per-session isolation, suggestion payloads, config updates), `src/renderer/hooks/agent/__tests__/useProviderSwitch.test.ts` (13: switch orchestration, merge-back chain walking, identity carry-over), `src/__tests__/renderer/hooks/useProviderHealth.test.ts` (13: health status derivation, failover threshold config, event subscription).
+
+### 6.4 Manual validation additions
+
+- [ ] Enable the Virtuosos extension (Settings -> Plugins). "Switch Provider..." appears in agent context menus; Providers tab appears in the Virtuosos modal.
+- [ ] Manual switch: pick a target provider, confirm groomed context arrives in the new session, source dims to "Archived (provider switched)", unarchive restores it (conflict modal on name+provider clash).
+- [ ] Merge-back: switch A->B, then from B switch back to A with merge-back: the archived A session reactivates (no third session) with the B context appended.
+- [ ] Failover: with `providerSwitchConfig.enabled` + a fallback list, force 3 consecutive errors on one provider: warning toast + modal opens pre-scoped; a successful turn in between resets the count.
+- [ ] Multi-provider discovery: with `~/.codex` or `~/.gemini` present, Discover lists them under provider-grouped headers.

@@ -156,6 +156,10 @@ export interface ProcessListenerDependencies {
 	getThrottleHandler?: () => AccountThrottleHandler | null;
 	/** Account auth recovery getter (optional — only needed for account multiplexing) */
 	getAuthRecovery?: () => import('../accounts/account-auth-recovery').AccountAuthRecovery | null;
+	/** Provider error tracker (optional — only needed for Virtuosos provider failover) */
+	getProviderErrorTracker?: () =>
+		| import('../providers/provider-error-tracker').ProviderErrorTracker
+		| null;
 	/** Debug log function */
 	debugLog: (prefix: string, message: string, ...args: unknown[]) => void;
 	/** Regex patterns */

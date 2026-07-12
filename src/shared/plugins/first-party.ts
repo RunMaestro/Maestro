@@ -39,7 +39,8 @@ export type FirstPartyEncoreFlag =
 	| 'coworking'
 	| 'opencodeServer'
 	| 'concerto'
-	| 'groupsPlus';
+	| 'groupsPlus'
+	| 'virtuosos';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -583,6 +584,36 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** Virtuosos runs on host-owned account/provider infrastructure in the main
+ * process; the plugin only needs to re-read its Encore flag before rendering
+ * its modal, selector, and dashboard surfaces. */
+export const VIRTUOSOS_FIRST_PARTY_PLUGIN_ID = 'com.maestro.virtuosos';
+
+export const VIRTUOSOS_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason: 'Re-read the Virtuosos Encore flag before rendering account and provider UI.',
+	},
+] as const;
+
+export const VIRTUOSOS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: VIRTUOSOS_FIRST_PARTY_PLUGIN_ID,
+	name: 'Virtuosos',
+	description:
+		'Provider switching for agents: migrate a session to another AI provider with context carry-over, automatic failover suggestions on repeated provider errors, and provider health dashboards. Account multiplexing itself is always on.',
+	firstParty: true,
+	category: 'automation',
+	permissions: VIRTUOSOS_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	settingsNamespace: 'virtuosos',
+	encoreFlag: 'virtuosos',
+	// Account registry, throttle handler, auth recovery, recovery poller, and
+	// provider error tracker are host-owned main-process services that exist
+	// regardless of the flag; the flag only gates the renderer surfaces and the
+	// failover suggestion subscription. Disable = UI unmounts + suggestions
+	// ignored; assignments and usage history are preserved.
+	backgroundServices: [],
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -597,6 +628,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	VIRTUOSOS_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -617,4 +649,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	virtuosos: VIRTUOSOS_FIRST_PARTY_PLUGIN,
 };

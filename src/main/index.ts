@@ -176,6 +176,7 @@ import {
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
 	registerAccountHandlers,
+	registerProviderHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -189,6 +190,8 @@ import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { AccountAuthRecovery } from './accounts/account-auth-recovery';
 import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
 import { AccountSwitcher } from './accounts/account-switcher';
+import { ProviderErrorTracker } from './providers/provider-error-tracker';
+import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../shared/account-types';
 import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -514,6 +517,7 @@ let accountThrottleHandler: AccountThrottleHandler | null = null;
 let accountAuthRecovery: AccountAuthRecovery | null = null;
 let accountRecoveryPoller: AccountRecoveryPoller | null = null;
 let accountSwitcher: AccountSwitcher | null = null;
+let providerErrorTracker: ProviderErrorTracker | null = null;
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2747,6 +2751,45 @@ app
 			}
 		}
 
+		// Initialize provider error tracker for Virtuosos failover detection
+		try {
+			const savedConfig = store.get('providerSwitchConfig') as
+				| Partial<typeof DEFAULT_PROVIDER_SWITCH_CONFIG>
+				| undefined;
+			const config = savedConfig
+				? { ...DEFAULT_PROVIDER_SWITCH_CONFIG, ...savedConfig }
+				: DEFAULT_PROVIDER_SWITCH_CONFIG;
+			providerErrorTracker = new ProviderErrorTracker(
+				config,
+				(suggestion) => {
+					// Send failover suggestion to renderer
+					safeSend('provider:failover-suggest', suggestion);
+				},
+				(sessionId) => {
+					// Resolve session name from sessions store
+					const sessions = sessionsStore.get('sessions', []) as Array<{
+						id: string;
+						name?: string;
+					}>;
+					const session = sessions.find((s) => s.id === sessionId);
+					return session?.name || sessionId;
+				}
+			);
+			// Keep the tracker's thresholds live when the failover config changes
+			store.onDidChange('providerSwitchConfig' as never, (newValue: unknown) => {
+				if (providerErrorTracker && newValue && typeof newValue === 'object') {
+					providerErrorTracker.updateConfig({
+						...DEFAULT_PROVIDER_SWITCH_CONFIG,
+						...(newValue as Partial<typeof DEFAULT_PROVIDER_SWITCH_CONFIG>),
+					});
+				}
+			});
+			logger.info('Provider error tracker initialized', 'Startup');
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Failed to initialize provider error tracker: ${error}`, 'Startup');
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers();
@@ -3408,6 +3451,11 @@ function setupIpcHandlers() {
 		getAccountSwitcher: () => accountSwitcher,
 	});
 
+	// Register Provider Error Tracking handlers (stats queries, error clearing)
+	registerProviderHandlers({
+		getProviderErrorTracker: () => providerErrorTracker,
+	});
+
 	// Register Document Graph handlers for file watching
 	registerDocumentGraphHandlers({
 		getMainWindow: () => mainWindow,
@@ -3583,6 +3631,7 @@ function setupProcessListeners() {
 			getAccountRegistry: () => accountRegistry,
 			getThrottleHandler: () => accountThrottleHandler,
 			getAuthRecovery: () => accountAuthRecovery,
+			getProviderErrorTracker: () => providerErrorTracker,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

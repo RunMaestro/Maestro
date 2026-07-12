@@ -6,6 +6,7 @@ import type {
 	AccountSwitchConfig,
 	AccountId,
 	AccountStatus,
+	MultiplexableAgent,
 } from '../../shared/account-types';
 import { DEFAULT_TOKEN_WINDOW_MS, ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { generateUUID } from '../../shared/uuid';
@@ -88,7 +89,7 @@ export class AccountRegistry {
 		name: string;
 		email: string;
 		configDir: string;
-		agentType?: 'claude-code';
+		agentType?: MultiplexableAgent;
 		authMethod?: 'oauth' | 'api-key';
 	}): AccountProfile {
 		// Check for duplicate email

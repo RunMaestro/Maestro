@@ -46,7 +46,8 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener (with optional account throttle + auth recovery handling)
+	// Agent error listener (account throttle/auth recovery + provider failover)
+	const providerErrorTracker = deps.getProviderErrorTracker?.() ?? undefined;
 	setupErrorListener(
 		processManager,
 		deps,
@@ -56,8 +57,17 @@ export function setupProcessListeners(
 					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
 					getAuthRecovery: deps.getAuthRecovery,
 				}
-			: undefined
+			: undefined,
+		providerErrorTracker
 	);
+
+	// Reset provider error tracking on successful query completion so only
+	// CONSECUTIVE failures accumulate toward the failover threshold.
+	if (providerErrorTracker) {
+		processManager.on('query-complete', (sessionId: string) => {
+			providerErrorTracker.clearSession(sessionId);
+		});
+	}
 
 	// Stats/query-complete listener
 	setupStatsListener(processManager, deps);

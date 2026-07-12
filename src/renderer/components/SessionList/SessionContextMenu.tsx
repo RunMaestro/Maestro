@@ -18,6 +18,8 @@ import {
 	Pencil,
 	Check,
 	User,
+	ArrowRightLeft,
+	ArchiveRestore,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -47,6 +49,10 @@ interface SessionContextMenuProps {
 	/** Hide persisted-group mutation controls in a virtual grouping mode. */
 	showGroupActions?: boolean;
 	onConfigureCue?: () => void;
+	/** Virtuosos: migrate this agent to another AI provider (hidden when undefined). */
+	onSwitchProvider?: () => void;
+	/** Virtuosos: restore a provider-switch-archived agent (hidden when undefined). */
+	onUnarchive?: () => void;
 	/**
 	 * Multi-window: every window this agent can move into, labeled by number
 	 * ("Main Window" for the primary, "Window N" for secondaries, or a custom
@@ -145,6 +151,8 @@ export function SessionContextMenu({
 	onCreateGroup,
 	showGroupActions = true,
 	onConfigureCue,
+	onSwitchProvider,
+	onUnarchive,
 	windowTargets,
 	onMoveToNewWindow,
 	onMoveToWindow,
@@ -263,6 +271,38 @@ export function SessionContextMenu({
 					<User className="w-3.5 h-3.5" />
 					Account: {session.accountName || session.accountId}
 				</div>
+			)}
+
+			{/* Switch Provider (Virtuosos) - migrate this agent to another AI provider */}
+			{onSwitchProvider && !session.archivedByMigration && (
+				<button
+					type="button"
+					onClick={() => {
+						onSwitchProvider();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<ArrowRightLeft className="w-3.5 h-3.5" />
+					Switch Provider...
+				</button>
+			)}
+
+			{/* Unarchive (Virtuosos) - restore a provider-switch-archived agent */}
+			{onUnarchive && session.archivedByMigration && (
+				<button
+					type="button"
+					onClick={() => {
+						onUnarchive();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<ArchiveRestore className="w-3.5 h-3.5" />
+					Unarchive
+				</button>
 			)}
 
 			{!session.isPianola && (

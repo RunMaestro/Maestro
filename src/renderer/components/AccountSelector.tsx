@@ -7,11 +7,13 @@
  * Lists all active accounts with status dots, usage bars, and a "Manage Accounts" link.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import * as Sentry from '@sentry/electron/renderer';
 import { User, ChevronDown, Settings } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AccountProfile } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
+import { useSettingsStore } from '../stores/settingsStore';
 
 export interface AccountSelectorProps {
 	theme: Theme;
@@ -46,6 +48,7 @@ export function AccountSelector({
 	onManageAccounts,
 	compact = false,
 }: AccountSelectorProps) {
+	const virtuososEnabled = useSettingsStore((state) => state.encoreFeatures.virtuosos);
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [isOpen, setIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -58,8 +61,8 @@ export function AccountSelector({
 			try {
 				const list = (await window.maestro.accounts.list()) as AccountProfile[];
 				if (!cancelled) setAccounts(list);
-			} catch {
-				// Silently fail - dropdown will show empty
+			} catch (err) {
+				Sentry.captureException(err, { extra: { operation: 'account:fetchAccountList' } });
 			}
 		})();
 		return () => {
@@ -105,6 +108,8 @@ export function AccountSelector({
 		},
 		[currentAccountId, onSwitchAccount]
 	);
+
+	if (!virtuososEnabled) return null;
 
 	return (
 		<div className="relative" ref={dropdownRef}>
@@ -211,9 +216,9 @@ export function AccountSelector({
 																width: `${Math.min(100, usage.usagePercent)}%`,
 																backgroundColor:
 																	usage.usagePercent >= 95
-																		? '#ef4444'
+																		? theme.colors.error
 																		: usage.usagePercent >= 80
-																			? '#f59e0b'
+																			? theme.colors.warning
 																			: theme.colors.accent,
 															}}
 														/>

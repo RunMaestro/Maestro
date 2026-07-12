@@ -167,7 +167,7 @@ describe('account-setup', () => {
 			const result = await validateBaseClaudeDir();
 			expect(result.valid).toBe(false);
 			expect(result.errors).toContain(
-				'No .claude.json found — Claude Code may not be authenticated.'
+				'No .credentials.json or .claude.json found — Claude Code may not be authenticated.'
 			);
 		});
 	});

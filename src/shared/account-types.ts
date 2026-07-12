@@ -13,7 +13,12 @@ export type AccountStatus = 'active' | 'throttled' | 'expired' | 'disabled';
 export type AccountAuthMethod = 'oauth' | 'api-key';
 
 /** Agent types that support account multiplexing */
-export type MultiplexableAgent = 'claude-code';
+export type MultiplexableAgent =
+	| 'claude-code'
+	| 'codex'
+	| 'opencode'
+	| 'factory-droid'
+	| 'gemini-cli';
 
 /** A registered account profile */
 export interface AccountProfile {
@@ -128,3 +133,68 @@ export const ACCOUNT_SWITCH_DEFAULTS: AccountSwitchConfig = {
 
 /** Default token window: 5 hours in milliseconds */
 export const DEFAULT_TOKEN_WINDOW_MS = 5 * 60 * 60 * 1000;
+
+import type { ToolType, AgentErrorType } from './types';
+
+/** Controls what happens when switching back to a provider with an existing archived session. */
+export type ProviderSwitchBehavior = 'always-new' | 'merge-back';
+
+/**
+ * Configuration for automated provider failover (Virtuosos vertical swapping).
+ * Stored in settings alongside account switch config.
+ */
+export interface ProviderSwitchConfig {
+	/** Whether auto-provider-failover is enabled */
+	enabled: boolean;
+	/** Whether to prompt user before auto-switching */
+	promptBeforeSwitch: boolean;
+	/** Consecutive error count threshold before suggesting failover */
+	errorThreshold: number;
+	/** Time window for error counting (ms) */
+	errorWindowMs: number;
+	/** Ordered list of fallback providers (tried in order) */
+	fallbackProviders: ToolType[];
+	/** Default behavior when switching back to a provider with an archived session */
+	switchBehavior: ProviderSwitchBehavior;
+}
+
+export const DEFAULT_PROVIDER_SWITCH_CONFIG: ProviderSwitchConfig = {
+	enabled: false,
+	promptBeforeSwitch: true,
+	errorThreshold: 3,
+	errorWindowMs: 5 * 60 * 1000, // 5 minutes
+	fallbackProviders: [],
+	switchBehavior: 'merge-back',
+};
+
+/**
+ * Failover suggestion emitted when a provider exceeds the error threshold.
+ * Sent from main process to renderer via IPC to trigger SwitchProviderModal or auto-switch.
+ */
+export interface FailoverSuggestion {
+	sessionId: string;
+	sessionName: string;
+	currentProvider: ToolType;
+	suggestedProvider: ToolType;
+	errorCount: number;
+	windowMs: number;
+	recentErrors: Array<{
+		type: AgentErrorType;
+		message: string;
+		timestamp: number;
+	}>;
+}
+
+/**
+ * Error statistics for a single provider type.
+ * Used by the ProviderPanel health dashboard.
+ */
+export interface ProviderErrorStats {
+	toolType: ToolType;
+	activeErrorCount: number;
+	totalErrorsInWindow: number;
+	lastErrorAt: number | null;
+	sessionsWithErrors: number;
+	/** Error count breakdown by error type within the window */
+	errorsByType?: Partial<Record<AgentErrorType, number>>;
+}

@@ -60,6 +60,10 @@ export interface UseSessionListPropsDeps {
 	handleDeleteWorktreeSession: (session: Session) => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleConfigureCue: (session: Session) => void;
+	/** Virtuosos: open the SwitchProviderModal for this agent (context menu entry). */
+	handleSwitchProvider?: (sessionId: string) => void;
+	/** Virtuosos: restore a provider-switch-archived agent (context menu entry). */
+	handleUnarchive?: (sessionId: string) => void;
 	/** Whether the Maestro Cue Encore Feature is enabled. Gates the "Configure Maestro Cue" context-menu action. */
 	maestroCueEnabled: boolean;
 	handleJumpToStarredSession: (
@@ -126,6 +130,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onDeleteSession: deps.deleteSession,
 			onDeleteWorktreeGroup: deps.deleteWorktreeGroup,
 			onEditAgent: deps.handleEditAgent,
+			onSwitchProvider: deps.handleSwitchProvider,
+			onUnarchive: deps.handleUnarchive,
 			onNewAgentSession: deps.addNewSession,
 			onToggleWorktreeExpanded: deps.handleToggleWorktreeExpanded,
 			onOpenCreatePR: deps.handleOpenCreatePRSession,
@@ -181,6 +187,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.deleteSession,
 			deps.deleteWorktreeGroup,
 			deps.handleEditAgent,
+			deps.handleSwitchProvider,
+			deps.handleUnarchive,
 			deps.handleOpenCreatePRSession,
 			deps.handleQuickCreateWorktree,
 			deps.handleOpenWorktreeConfigSession,

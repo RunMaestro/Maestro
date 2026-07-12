@@ -21,6 +21,10 @@ import type { MainPanelHandle } from './components/MainPanel';
 import type { RightPanelHandle } from './components/RightPanel';
 import { AccountSwitchModal } from './components/AccountSwitchModal';
 import { VirtuososModal } from './components/VirtuososModal';
+import { SwitchProviderModal } from './components/SwitchProviderModal';
+import { UnarchiveConflictModal } from './components/UnarchiveConflictModal';
+import { useProviderSwitch } from './hooks/agent/useProviderSwitch';
+import { getAgentDisplayName } from '../shared/agentMetadata';
 
 // Lazy-loaded components for performance (rarely-used heavy views)
 const LogViewer = lazy(() =>
@@ -178,7 +182,14 @@ import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	ThinkingItem,
+	ToolType,
+} from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
@@ -817,6 +828,15 @@ function MaestroConsoleInner() {
 		reason: string;
 		tokensAtThrottle?: number;
 		usagePercent?: number;
+	} | null>(null);
+
+	// Provider Switch state (Virtuosos vertical swapping)
+	const [switchProviderSession, setSwitchProviderSession] = useState<Session | null>(null);
+
+	// Unarchive conflict state (restoring a provider-switch-archived agent)
+	const [unarchiveConflictState, setUnarchiveConflictState] = useState<{
+		archivedSession: Session;
+		conflictingSession: Session;
 	} | null>(null);
 
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
@@ -1964,6 +1984,195 @@ function MaestroConsoleInner() {
 		registerBatchResumer(resumeAutoRunAfterError);
 		return () => registerBatchResumer(null);
 	}, [resumeAutoRunAfterError]);
+
+	// --- PROVIDER SWITCHING (Virtuosos vertical swapping) ---
+	const { switchProvider, reset: resetProviderSwitch } = useProviderSwitch();
+
+	const handleSwitchProvider = useCallback((sessionId: string) => {
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (session && session.toolType !== 'terminal') {
+			setSwitchProviderSession(session);
+		}
+	}, []);
+
+	const handleConfirmProviderSwitch = useCallback(
+		async (request: {
+			targetProvider: ToolType;
+			groomContext: boolean;
+			archiveSource: boolean;
+			mergeBackInto?: Session;
+		}) => {
+			if (!switchProviderSession) return;
+
+			const activeTab = getActiveTab(switchProviderSession);
+			if (!activeTab) return;
+
+			const result = await switchProvider({
+				sourceSession: switchProviderSession,
+				sourceTabId: activeTab.id,
+				targetProvider: request.targetProvider,
+				groomContext: request.groomContext,
+				mergeBackInto: request.mergeBackInto,
+			});
+
+			if (result.success && result.newSession) {
+				if (result.mergedBack && request.mergeBackInto) {
+					// Merge-back: replace the archived session with the reactivated one
+					setSessions((prev) =>
+						prev.map((s) => (s.id === request.mergeBackInto!.id ? result.newSession! : s))
+					);
+				} else {
+					// Always-new: add the new session to state
+					setSessions((prev) => [...prev, result.newSession!]);
+				}
+
+				// Mark source as archived if requested
+				if (request.archiveSource) {
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === switchProviderSession.id
+								? {
+										...s,
+										archivedByMigration: true,
+										migratedToSessionId: result.newSessionId,
+									}
+								: s
+						)
+					);
+				}
+
+				// Clear provider error tracking for the source session
+				window.maestro.providers.clearSessionErrors(switchProviderSession.id).catch(() => {});
+
+				// Navigate to the new/reactivated session
+				setActiveSessionId(result.newSessionId!);
+
+				const action = result.mergedBack ? 'Merged back to' : 'Switched to';
+				notifyToast({
+					type: 'success',
+					title: 'Provider Switched',
+					message: `${action} ${getAgentDisplayName(request.targetProvider)}`,
+					duration: 5_000,
+				});
+			}
+
+			setSwitchProviderSession(null);
+		},
+		[switchProviderSession, switchProvider, setActiveSessionId, setSessions]
+	);
+
+	// Unarchive a provider-switch-archived agent, resolving name/provider clashes
+	const handleUnarchive = useCallback(
+		(sessionId: string) => {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session || !session.archivedByMigration) return;
+
+			// Conflict: another live session with the same name AND provider
+			const conflicting = sessionsRef.current.find(
+				(s) =>
+					s.id !== sessionId &&
+					s.toolType === session.toolType &&
+					s.name === session.name &&
+					!s.archivedByMigration
+			);
+
+			if (conflicting) {
+				setUnarchiveConflictState({ archivedSession: session, conflictingSession: conflicting });
+			} else {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+							: s
+					)
+				);
+				notifyToast({
+					type: 'success',
+					title: 'Agent Unarchived',
+					message: `${session.name || 'Agent'} has been restored`,
+					duration: 3_000,
+				});
+			}
+		},
+		[setSessions]
+	);
+
+	const handleUnarchiveWithArchiveConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id === archivedSession.id) {
+					return { ...s, archivedByMigration: false, migratedToSessionId: undefined };
+				}
+				if (s.id === conflictingSession.id) {
+					return { ...s, archivedByMigration: true };
+				}
+				return s;
+			})
+		);
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} archived`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState, setSessions]);
+
+	const handleUnarchiveWithDeleteConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions((prev) =>
+			prev
+				.filter((s) => s.id !== conflictingSession.id)
+				.map((s) =>
+					s.id === archivedSession.id
+						? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+						: s
+				)
+		);
+
+		// Kill process for deleted session if running
+		window.maestro.process.kill(conflictingSession.id).catch(() => {});
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} removed`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState, setSessions]);
+
+	// Subscribe to provider failover suggestion events (ProviderErrorTracker).
+	// Gated on the Virtuosos Encore flag so accountless installs never see it.
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+
+		const cleanup = window.maestro.providers.onFailoverSuggest((suggestion) => {
+			const session = sessionsRef.current.find((s) => s.id === suggestion.sessionId);
+			if (!session) return;
+
+			notifyToast({
+				type: 'warning',
+				title: 'Provider Issues Detected',
+				message: `${getAgentDisplayName(suggestion.currentProvider)} had ${suggestion.errorCount} errors in a row. Suggesting a provider switch.`,
+				duration: 8_000,
+			});
+
+			// Open SwitchProviderModal for confirmation (the modal pre-selects the
+			// suggested fallback provider).
+			setSwitchProviderSession(session);
+		});
+
+		return cleanup;
+	}, [encoreFeatures.virtuosos]);
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners
@@ -3273,6 +3482,9 @@ function MaestroConsoleInner() {
 		handleToggleWorktreeExpanded,
 		handleConfigureCue,
 		maestroCueEnabled: encoreFeatures.maestroCue,
+		// Virtuosos: provider switching entry points (gated on the Encore flag)
+		handleSwitchProvider: encoreFeatures.virtuosos ? handleSwitchProvider : undefined,
+		handleUnarchive: encoreFeatures.virtuosos ? handleUnarchive : undefined,
 		handleJumpToStarredSession,
 		openWizardModal,
 		handleOpenFeedbackModal,
@@ -3951,7 +4163,38 @@ function MaestroConsoleInner() {
 				isOpen={virtuososOpen}
 				onClose={() => setVirtuososOpen(false)}
 				theme={theme}
+				sessions={sessions}
+				onSelectSession={(sessionId) => {
+					setVirtuososOpen(false);
+					setActiveSessionId(sessionId);
+				}}
 			/>
+			{/* Provider Switch Modal (Virtuosos vertical swapping) */}
+			{switchProviderSession && (
+				<SwitchProviderModal
+					theme={theme}
+					isOpen={true}
+					onClose={() => {
+						setSwitchProviderSession(null);
+						resetProviderSwitch();
+					}}
+					sourceSession={switchProviderSession}
+					sourceTabId={getActiveTab(switchProviderSession)?.id || ''}
+					sessions={sessions}
+					onConfirmSwitch={handleConfirmProviderSwitch}
+				/>
+			)}
+			{/* Unarchive Conflict Modal */}
+			{unarchiveConflictState && (
+				<UnarchiveConflictModal
+					theme={theme}
+					archivedSession={unarchiveConflictState.archivedSession}
+					conflictingSession={unarchiveConflictState.conflictingSession}
+					onArchiveConflicting={handleUnarchiveWithArchiveConflict}
+					onDeleteConflicting={handleUnarchiveWithDeleteConflict}
+					onClose={() => setUnarchiveConflictState(null)}
+				/>
+			)}
 		</>
 	);
 }

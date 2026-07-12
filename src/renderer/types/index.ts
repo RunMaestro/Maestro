@@ -1068,6 +1068,20 @@ export interface Session {
 	accountId?: string;
 	/** Display name of the assigned account (for UI display without lookup) */
 	accountName?: string;
+
+	// Provider migration provenance (Virtuosos vertical swapping)
+	/** ID of the session this was migrated FROM (null if original) */
+	migratedFromSessionId?: string;
+	/** ID of the session this was migrated TO (set on source after switch) */
+	migratedToSessionId?: string;
+	/** Timestamp of the provider migration */
+	migratedAt?: number;
+	/** Whether this session was auto-archived after provider switch */
+	archivedByMigration?: boolean;
+	/** Migration generation counter (0 = original, increments with each switch) */
+	migrationGeneration?: number;
+	/** Timestamp of last merge-back (when an archived session was reactivated with new context) */
+	lastMergeBackAt?: number;
 }
 
 // AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above
@@ -1254,6 +1268,10 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// Virtuosos - account multiplexing + provider switching (multi-account
+	// routing, throttle failover, provider health). Off by default. Optional so
+	// existing literals and persisted settings without the key type-check.
+	virtuosos?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

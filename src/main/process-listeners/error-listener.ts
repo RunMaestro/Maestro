@@ -6,11 +6,12 @@
  */
 
 import type { ProcessManager } from '../process-manager';
-import type { AgentError } from '../../shared/types';
+import type { AgentError, ToolType } from '../../shared/types';
 import type { ProcessListenerDependencies } from './types';
 import { capabilitySnapshots } from '../agents/capability-snapshot';
 import type { AccountThrottleHandler } from '../accounts/account-throttle-handler';
 import type { AccountAuthRecovery } from '../accounts/account-auth-recovery';
+import type { ProviderErrorTracker } from '../providers/provider-error-tracker';
 import type { AccountRegistry } from '../accounts/account-registry';
 
 /**
@@ -31,7 +32,8 @@ export function setupErrorListener(
 		getAccountRegistry: () => AccountRegistry | null;
 		getThrottleHandler: () => AccountThrottleHandler | null;
 		getAuthRecovery?: () => AccountAuthRecovery | null;
-	}
+	},
+	providerErrorTracker?: ProviderErrorTracker
 ): void {
 	const { safeSend, logger } = deps;
 
@@ -45,6 +47,15 @@ export function setupErrorListener(
 			recoverable: agentError.recoverable,
 		});
 		safeSend('agent:error', sessionId, agentError);
+
+		// Feed into provider error tracker for failover detection (Virtuosos)
+		if (providerErrorTracker && agentError.agentId) {
+			providerErrorTracker.recordError(sessionId, agentError.agentId as ToolType, {
+				type: agentError.type,
+				message: agentError.message,
+				recoverable: agentError.recoverable,
+			});
+		}
 
 		// Reactive capability classification: an auth-expired event means the
 		// binary is present (otherwise we wouldn't have spawned it) but the

@@ -68,6 +68,10 @@ export function getEnhancedStatusColor(
 		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
 	}
 
+	if (session.archivedByMigration) {
+		return { color: theme.colors.textDim, animate: false, label: 'Archived (provider switched)' };
+	}
+
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
 	}
@@ -288,6 +292,8 @@ export const SessionItem = memo(function SessionItem({
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				// Provider-switch archive: keep the row visible but visually parked
+				opacity: session.archivedByMigration ? 0.45 : undefined,
 			}}
 		>
 			{/* Left side: Session name and metadata */}

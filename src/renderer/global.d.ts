@@ -3093,6 +3093,12 @@ interface MaestroAPI {
 				duration: number;
 				projectPath?: string;
 				tabId?: string;
+				isRemote?: boolean;
+				inputTokens?: number;
+				outputTokens?: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+				costUsd?: number;
 			}>
 		>;
 		// Get Auto Run sessions within a time range
@@ -3141,6 +3147,7 @@ interface MaestroAPI {
 			sessionsByDay: Array<{ date: string; count: number }>;
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			byAgentByHour: Record<string, Array<{ hour: number; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionSource: Record<string, { user: number; auto: number }>;
 			worktreeQueries: number;
@@ -3609,7 +3616,12 @@ interface MaestroAPI {
 	accounts: {
 		list: () => Promise<unknown[]>;
 		get: (id: string) => Promise<unknown>;
-		add: (params: { name: string; email: string; configDir: string }) => Promise<unknown>;
+		add: (params: {
+			name: string;
+			email: string;
+			configDir: string;
+			agentType?: string;
+		}) => Promise<unknown>;
 		update: (id: string, updates: Record<string, unknown>) => Promise<unknown>;
 		remove: (id: string) => Promise<unknown>;
 		setDefault: (id: string) => Promise<unknown>;
@@ -3628,7 +3640,13 @@ interface MaestroAPI {
 		selectNext: (excludeIds?: string[]) => Promise<unknown>;
 		validateBaseDir: () => Promise<{ valid: boolean; baseDir: string; errors: string[] }>;
 		discoverExisting: () => Promise<
-			Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>
+			Array<{
+				configDir: string;
+				name: string;
+				email: string | null;
+				hasAuth: boolean;
+				agentType: string;
+			}>
 		>;
 		createDirectory: (
 			name: string
@@ -3650,6 +3668,10 @@ interface MaestroAPI {
 				accountId: string;
 				usagePercent: number;
 				totalTokens: number;
+				inputTokens?: number;
+				outputTokens?: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
 				limitTokens: number;
 				windowStart: number;
 				windowEnd: number;
@@ -3737,6 +3759,46 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		checkRecovery: () => Promise<{ recovered: string[] }>;
+	};
+	// Provider Error Tracking API (error stats, failover suggestions)
+	providers: {
+		getErrorStats: (toolType: string) => Promise<{
+			toolType: string;
+			activeErrorCount: number;
+			totalErrorsInWindow: number;
+			lastErrorAt: number | null;
+			sessionsWithErrors: number;
+			errorsByType?: Partial<Record<string, number>>;
+		} | null>;
+		getAllErrorStats: () => Promise<
+			Record<
+				string,
+				{
+					toolType: string;
+					activeErrorCount: number;
+					totalErrorsInWindow: number;
+					lastErrorAt: number | null;
+					sessionsWithErrors: number;
+					errorsByType?: Partial<Record<string, number>>;
+				}
+			>
+		>;
+		clearSessionErrors: (sessionId: string) => Promise<void>;
+		onFailoverSuggest: (
+			handler: (data: {
+				sessionId: string;
+				sessionName: string;
+				currentProvider: string;
+				suggestedProvider: string;
+				errorCount: number;
+				windowMs: number;
+				recentErrors: Array<{
+					type: string;
+					message: string;
+					timestamp: number;
+				}>;
+			}) => void
+		) => () => void;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

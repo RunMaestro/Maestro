@@ -66,6 +66,7 @@ import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createAccountsApi } from './accounts';
+import { createProvidersApi } from './providers';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -268,6 +269,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Account Multiplexing API (usage events, limit warnings)
 	accounts: createAccountsApi(),
+
+	// Provider Error Tracking API (error stats, failover suggestions)
+	providers: createProvidersApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -374,6 +378,8 @@ export {
 	createImagesApi,
 	// Accounts
 	createAccountsApi,
+	// Providers
+	createProvidersApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -658,3 +664,7 @@ export type {
 	AccountUsageUpdate,
 	AccountLimitEvent,
 } from './accounts';
+export type {
+	// From providers
+	ProvidersApi,
+} from './providers';
