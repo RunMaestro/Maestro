@@ -1,14 +1,26 @@
 export const EXTERNAL_TEXTAREA_MAX_HEIGHT = 112;
 export const KEYSTROKE_TEXTAREA_MAX_HEIGHT = 176;
 
+function resolveTextareaMaxHeight(
+	textarea: HTMLTextAreaElement,
+	requestedMaxHeight: number
+): number {
+	const computedMaxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+	if (Number.isFinite(computedMaxHeight) && computedMaxHeight > 0) {
+		return Math.min(requestedMaxHeight, computedMaxHeight);
+	}
+	return requestedMaxHeight;
+}
+
 export function resizeTextareaToContent(textarea: HTMLTextAreaElement, maxHeight: number): void {
 	// Setting height to 'auto' momentarily removes the overflow and collapses the
 	// internal scroll to the top. Capture and restore scrollTop so resizing a
 	// scrolled textarea never yanks the view (and the caret) out of sight. Callers
 	// that want the caret pinned to the bottom re-scroll after this returns.
 	const previousScrollTop = textarea.scrollTop;
+	const resolvedMaxHeight = resolveTextareaMaxHeight(textarea, maxHeight);
 	textarea.style.height = 'auto';
-	textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+	textarea.style.height = `${Math.min(textarea.scrollHeight, resolvedMaxHeight)}px`;
 	textarea.scrollTop = previousScrollTop;
 }
 
