@@ -156,6 +156,46 @@ describe('useCueAutoDiscovery', () => {
 		});
 	});
 
+	describe('projectRoot moves', () => {
+		it('removes and refreshes when an existing session changes projectRoot', async () => {
+			const initialSessions = [makeSession('s1', '/project/a')];
+			const encoreFeatures = makeEncoreFeatures(true);
+
+			seedSessions(initialSessions, true);
+			renderHook(() => useCueAutoDiscovery(encoreFeatures));
+
+			mockRefreshSession.mockClear();
+			mockRemoveSession.mockClear();
+
+			act(() => {
+				seedSessions([makeSession('s1', '/project/moved')], true);
+			});
+
+			expect(mockRemoveSession).toHaveBeenCalledWith('s1');
+			await act(async () => {});
+			expect(mockRefreshSession).toHaveBeenCalledWith('s1', '/project/moved');
+		});
+
+		it('removes without refresh when projectRoot is cleared', async () => {
+			const initialSessions = [makeSession('s1', '/project/a')];
+			const encoreFeatures = makeEncoreFeatures(true);
+
+			seedSessions(initialSessions, true);
+			renderHook(() => useCueAutoDiscovery(encoreFeatures));
+
+			mockRefreshSession.mockClear();
+			mockRemoveSession.mockClear();
+
+			act(() => {
+				seedSessions([makeSession('s1', '')], true);
+			});
+
+			expect(mockRemoveSession).toHaveBeenCalledWith('s1');
+			await act(async () => {});
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('encore feature toggle', () => {
 		it('should enable Cue and scan all sessions when maestroCue is toggled ON', async () => {
 			const sessions = [makeSession('s1', '/project/a'), makeSession('s2', '/project/b')];

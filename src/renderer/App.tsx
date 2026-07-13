@@ -162,7 +162,11 @@ import {
 	updateAiTab,
 } from './stores/sessionStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { sidebarSessionEquality, gitPollSessionEquality } from './stores/sessionEquality';
+import {
+	sidebarSessionEquality,
+	gitPollSessionEquality,
+	projectRootSessionEquality,
+} from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
@@ -522,7 +526,7 @@ function MaestroConsoleInner() {
 		sidebarSessionEquality
 	);
 	const hasSessions = useSessionStore((s) => s.sessions.length > 0);
-	const hasNoAgents = useSessionStore((s) => s.sessions.length === 0);
+	const hasNoAgents = !hasSessions;
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// Whether the initial agent list has finished loading. On desktop the splash
@@ -2955,16 +2959,22 @@ function MaestroConsoleInner() {
 	}, [setLeftSidebarOpen, setRightPanelOpen]);
 
 	// Narrow map for GroupChatRightPanel: participant id → projectRoot.
-	// Uses sidebar-stable sessions so streaming does not rebuild the map.
+	// Dedicated equality (not sidebar): sidebar ignores projectRoot, so a
+	// directory change would otherwise leave this map stale.
+	const sessionsForProjectRoots = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		projectRootSessionEquality
+	);
 	const participantSessionPaths = useMemo(() => {
 		if (!activeGroupChatId) return new Map<string, string>();
 		const chat = groupChats.find((c) => c.id === activeGroupChatId);
 		if (!chat) return new Map<string, string>();
 		const ids = new Set(chat.participants.map((p) => p.sessionId));
 		return new Map(
-			sessionsForSidebar.filter((s) => ids.has(s.id)).map((s) => [s.id, s.projectRoot])
+			sessionsForProjectRoots.filter((s) => ids.has(s.id)).map((s) => [s.id, s.projectRoot])
 		);
-	}, [activeGroupChatId, groupChats, sessionsForSidebar]);
+	}, [activeGroupChatId, groupChats, sessionsForProjectRoots]);
 
 	return (
 		<AppShell

@@ -124,6 +124,28 @@ export function mentionSessionEquality(a: Session[], b: Session[]): boolean {
 }
 
 /**
+ * Fields that need a live id → projectRoot map (e.g. GroupChat participant paths).
+ * Ignores logs, tokens, and other streaming-heavy fields. Unlike
+ * `sidebarSessionEquality`, this *does* compare `projectRoot`.
+ */
+export function projectRootSessionEquality(a: Session[], b: Session[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+
+		if (x.id !== y.id || x.projectRoot !== y.projectRoot) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
  * Compact signature of session id + projectRoot for Cue auto-discovery.
  * Changes only when agents are added/removed or their project root moves.
  */
