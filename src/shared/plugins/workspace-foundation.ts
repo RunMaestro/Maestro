@@ -508,6 +508,11 @@ export function parseWorkspaceLink(url: string): ParsedWorkspaceLink | null {
 		return null;
 	}
 
+	const rawPathSegments = url.slice('maestro://workspace/'.length).split('/');
+	if (rawPathSegments.includes('.') || rawPathSegments.includes('..')) {
+		return null;
+	}
+
 	try {
 		const parsed = new URL(url);
 		if (

@@ -766,6 +766,7 @@ describe('parseWorkspaceLink', () => {
 		'maestro://workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12#fragment',
 		'maestro://workspace/com.maestro.omp//omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
 		'maestro://workspace/com.maestro.omp/omp%2Dworkspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		'maestro://workspace/com.maestro.omp/evil/../omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
 		'maestro://user@workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
 		'maestro://workspace:1/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
 		'maestro://other/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
