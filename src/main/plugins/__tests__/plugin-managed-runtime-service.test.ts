@@ -65,7 +65,11 @@ function rootService(activationContext = () => activation()) {
 	});
 }
 
-function buildService(root: NativeWorkspaceRootService, child = new FakeChild()) {
+function buildService(
+	root: NativeWorkspaceRootService,
+	child = new FakeChild(),
+	ompSandboxHandlers?: { readonly revoke: () => void }
+) {
 	let launch: ManagedRuntimeLaunch | undefined;
 	const service = new PluginManagedRuntimeService({
 		activation: () => activation(),
@@ -87,6 +91,7 @@ function buildService(root: NativeWorkspaceRootService, child = new FakeChild())
 		},
 		killTree: async () => undefined,
 		runtimeId: () => '00000000-0000-4000-8000-000000000001' as UUID,
+		ompSandboxHandlers,
 	});
 	return { service, child, launch: () => launch };
 }
@@ -319,5 +324,16 @@ describe('managed OMP runtime service', () => {
 			runtime.startOmpRuntime({ workspaceRoot: root, options: { restore: false } })
 		).rejects.toThrow('not authorized');
 		expect(spawned).toBe(false);
+	});
+	it('revokes injected OMP sandbox safety handlers with the managed owner', async () => {
+		const roots = rootService();
+		let revoked = 0;
+		const { service } = buildService(roots, new FakeChild(), {
+			revoke: () => {
+				revoked += 1;
+			},
+		});
+		await service.revokeOwner('com.maestro.omp');
+		expect(revoked).toBe(1);
 	});
 });

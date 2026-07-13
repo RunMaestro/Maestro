@@ -21,6 +21,10 @@ import {
 	NativeWorkspaceRootService,
 	type RuntimeActivationContext,
 } from './native-workspace-root-service';
+import type { OmpSandboxHostHandlerSeam } from './omp-host-safety-brokers';
+
+/** The runtime service owns only teardown of this injected host safety seam. */
+export type OmpManagedRuntimeSandboxHandlers = Pick<OmpSandboxHostHandlerSeam, 'revoke'>;
 
 export { NativeWorkspaceRootService } from './native-workspace-root-service';
 export type { ManagedRuntimeChild, ManagedRuntimeLaunch } from './managed-runtime-process';
@@ -56,6 +60,8 @@ export interface PluginManagedRuntimeServiceDependencies {
 	readonly killTree?: ProcessTreeKiller;
 	readonly runtimeId?: () => UUID;
 	readonly stopGraceMs?: number;
+	/** Injected by bootstrap; lifecycle authority stays with the managed runtime owner. */
+	readonly ompSandboxHandlers?: OmpManagedRuntimeSandboxHandlers;
 }
 
 /**
@@ -128,6 +134,7 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		ownerPluginId: string,
 		reason: InteractiveStopReason = 'revoked'
 	): Promise<void> {
+		this.deps.ompSandboxHandlers?.revoke();
 		const stops: Promise<void>[] = [];
 		for (const [key, active] of this.active) {
 			if (!key.startsWith(`${ownerPluginId}\u0000`)) continue;
