@@ -199,6 +199,41 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
+	it('bounds owner and local identifiers before canonical interpolation', () => {
+		expect(
+			parseWorkspaceFoundation(createRawContributes(), createRawPermissions(), 'a'.repeat(129))
+		).toEqual({
+			ok: false,
+			errors: ['ownerPluginId must not exceed 128 UTF-8 bytes'],
+		});
+
+		const workspaceLocalId = 'a'.repeat(65);
+		const workspaceTooLong = createRawContributes();
+		workspaceTooLong.workspaces[0]!.localId = workspaceLocalId;
+		workspaceTooLong.interactivePanels[0]!.workspaceLocalId = workspaceLocalId;
+		expect(
+			parseWorkspaceFoundation(workspaceTooLong, createRawPermissions(), ownerPluginId)
+		).toEqual({
+			ok: false,
+			errors: [
+				'interactivePanels[0].workspaceLocalId must not exceed 64 UTF-8 bytes',
+				'workspaces[0].localId must not exceed 64 UTF-8 bytes',
+			],
+		});
+
+		const panelLocalId = 'b'.repeat(65);
+		const panelTooLong = createRawContributes();
+		panelTooLong.workspaces[0]!.interactivePanelLocalId = panelLocalId;
+		panelTooLong.interactivePanels[0]!.localId = panelLocalId;
+		expect(parseWorkspaceFoundation(panelTooLong, createRawPermissions(), ownerPluginId)).toEqual({
+			ok: false,
+			errors: [
+				'interactivePanels[0].localId must not exceed 64 UTF-8 bytes',
+				'workspaces[0].interactivePanelLocalId must not exceed 64 UTF-8 bytes',
+			],
+		});
+	});
+
 	it('freezes canonical workspace foundation records', () => {
 		const result = parseWorkspaceFoundation(
 			createRawContributes(),

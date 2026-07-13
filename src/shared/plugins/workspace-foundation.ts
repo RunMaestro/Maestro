@@ -11,6 +11,8 @@ const MAX_WORKSPACE_LINK_BYTES = 512;
 export const MAX_WORKSPACE_TITLE_SCALARS = 160;
 export const MAX_INTERACTIVE_PANEL_ENTRY_UTF8_BYTES = 1_024;
 export const MAX_WORKSPACE_FOUNDATION_PERMISSIONS = 32;
+export const MAX_OWNER_PLUGIN_ID_BYTES = 128;
+export const MAX_FOUNDATION_LOCAL_ID_BYTES = 64;
 
 type WorkspaceIcon = (typeof WORKSPACE_ICONS)[number];
 type ErrorEntry = { readonly path: string; readonly message: string; readonly order: number };
@@ -293,6 +295,13 @@ function validateOwnerPluginId(
 		addError('ownerPluginId', 'ownerPluginId must be a non-empty string');
 		return null;
 	}
+	if (utf8ByteLength(ownerPluginId, MAX_OWNER_PLUGIN_ID_BYTES) > MAX_OWNER_PLUGIN_ID_BYTES) {
+		addError(
+			'ownerPluginId',
+			`ownerPluginId must not exceed ${MAX_OWNER_PLUGIN_ID_BYTES} UTF-8 bytes`
+		);
+		return null;
+	}
 	if (!PLUGIN_ID_PATTERN.test(ownerPluginId)) {
 		addError('ownerPluginId', 'ownerPluginId must be a valid plugin ID');
 		return null;
@@ -348,6 +357,14 @@ function validateWorkspaces(
 		if (typeof localId !== 'string') {
 			addError(`${path}.localId`, `${path}.localId must be a string`);
 			valid = false;
+		} else if (
+			utf8ByteLength(localId, MAX_FOUNDATION_LOCAL_ID_BYTES) > MAX_FOUNDATION_LOCAL_ID_BYTES
+		) {
+			addError(
+				`${path}.localId`,
+				`${path}.localId must not exceed ${MAX_FOUNDATION_LOCAL_ID_BYTES} UTF-8 bytes`
+			);
+			valid = false;
 		} else if (!LOCAL_ID_PATTERN.test(localId)) {
 			addError(`${path}.localId`, `${path}.localId must be a valid local ID`);
 			valid = false;
@@ -373,6 +390,14 @@ function validateWorkspaces(
 			addError(
 				`${path}.interactivePanelLocalId`,
 				`${path}.interactivePanelLocalId must be a string`
+			);
+			valid = false;
+		} else if (
+			utf8ByteLength(panelLocalId, MAX_FOUNDATION_LOCAL_ID_BYTES) > MAX_FOUNDATION_LOCAL_ID_BYTES
+		) {
+			addError(
+				`${path}.interactivePanelLocalId`,
+				`${path}.interactivePanelLocalId must not exceed ${MAX_FOUNDATION_LOCAL_ID_BYTES} UTF-8 bytes`
 			);
 			valid = false;
 		} else if (!LOCAL_ID_PATTERN.test(panelLocalId)) {
@@ -435,6 +460,14 @@ function validatePanels(
 		if (typeof localId !== 'string') {
 			addError(`${path}.localId`, `${path}.localId must be a string`);
 			valid = false;
+		} else if (
+			utf8ByteLength(localId, MAX_FOUNDATION_LOCAL_ID_BYTES) > MAX_FOUNDATION_LOCAL_ID_BYTES
+		) {
+			addError(
+				`${path}.localId`,
+				`${path}.localId must not exceed ${MAX_FOUNDATION_LOCAL_ID_BYTES} UTF-8 bytes`
+			);
+			valid = false;
 		} else if (!LOCAL_ID_PATTERN.test(localId)) {
 			addError(`${path}.localId`, `${path}.localId must be a valid local ID`);
 			valid = false;
@@ -467,6 +500,15 @@ function validatePanels(
 		}
 		if (typeof workspaceLocalId !== 'string') {
 			addError(`${path}.workspaceLocalId`, `${path}.workspaceLocalId must be a string`);
+			valid = false;
+		} else if (
+			utf8ByteLength(workspaceLocalId, MAX_FOUNDATION_LOCAL_ID_BYTES) >
+			MAX_FOUNDATION_LOCAL_ID_BYTES
+		) {
+			addError(
+				`${path}.workspaceLocalId`,
+				`${path}.workspaceLocalId must not exceed ${MAX_FOUNDATION_LOCAL_ID_BYTES} UTF-8 bytes`
+			);
 			valid = false;
 		} else if (!LOCAL_ID_PATTERN.test(workspaceLocalId)) {
 			addError(`${path}.workspaceLocalId`, `${path}.workspaceLocalId must be a valid local ID`);

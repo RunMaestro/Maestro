@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import {
 	MAX_EXTERNAL_SESSIONS_PER_WORKSPACE,
 	parseWorkspaceLink,
@@ -13,10 +15,14 @@ import {
 import { captureException } from '../utils/sentry';
 
 const SNAPSHOT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,86}$/;
+const TOKEN_SEED_PATTERN = /^[A-Za-z0-9_-]{22,60}$/;
+const INSTANCE_NONCE_PATTERN = /^[A-Za-z0-9_-]{16}$/;
+const MAX_TOKEN_EPOCH = 36 ** 8 - 1;
 const MAX_EXTERNAL_SESSION_TITLE_SCALARS = 160;
 const MAX_TOKEN_ATTEMPTS = 5;
 export const MAX_STALE_TOKENS_PER_WORKSPACE = 1_000;
 export const MAX_STALE_TOKENS_GLOBAL = 4_096;
+export const MAX_EXTERNAL_SESSION_ID_BYTES = 256;
 
 const REQUIRED_GRANTS = ['ui:workspace', 'ui:interactivePanel'] as const;
 const EXTERNAL_SESSION_STATUSES = new Set<ExternalSessionStatus>([
@@ -52,6 +58,7 @@ export interface WorkspaceRegistryOwnerContext {
 export interface PluginWorkspaceRegistryOptions {
 	readonly tokenSource: () => string;
 	readonly isOwnerEnabled: (ownerPluginId: string) => boolean;
+	readonly instanceNonce?: string;
 }
 
 export interface RegisteredWorkspace {
@@ -72,7 +79,8 @@ export type WorkspaceRegistryErrorCode =
 	| 'too_many_external_sessions'
 	| 'duplicate_external_session_id'
 	| 'invalid_snapshot_token'
-	| 'token_collision';
+	| 'token_collision'
+	| 'token_epoch_exhausted';
 
 export class WorkspaceRegistryError extends Error {
 	readonly name = 'WorkspaceRegistryError';
@@ -131,8 +139,16 @@ export class PluginWorkspaceRegistry {
 	private readonly currentTokensByWorkspace = new Map<string, Set<SnapshotToken>>();
 	private readonly staleTokensByWorkspace = new Map<string, Map<SnapshotToken, true>>();
 	private readonly staleTokens = new Map<SnapshotToken, string>();
+	private readonly instanceNonce: string;
+	private tokenEpoch = 0;
 
-	constructor(private readonly options: PluginWorkspaceRegistryOptions) {}
+	constructor(private readonly options: PluginWorkspaceRegistryOptions) {
+		const instanceNonce = options.instanceNonce ?? randomBytes(12).toString('base64url');
+		if (!INSTANCE_NONCE_PATTERN.test(instanceNonce)) {
+			throw new WorkspaceRegistryError('invalid_snapshot_token');
+		}
+		this.instanceNonce = instanceNonce;
+	}
 
 	register(foundation: CanonicalWorkspaceFoundation, generation: bigint): void {
 		if (!isValidFoundation(foundation) || typeof generation !== 'bigint') {
@@ -360,9 +376,17 @@ export class PluginWorkspaceRegistry {
 	}
 
 	private mintToken(stagedTokens: ReadonlySet<SnapshotToken>): SnapshotToken {
+		if (this.tokenEpoch > MAX_TOKEN_EPOCH) {
+			throw new WorkspaceRegistryError('token_epoch_exhausted');
+		}
+		const epoch = this.tokenEpoch.toString(36).padStart(8, '0');
 		for (let attempt = 0; attempt < MAX_TOKEN_ATTEMPTS; attempt += 1) {
-			const candidate = this.options.tokenSource();
-			if (typeof candidate !== 'string' || !SNAPSHOT_TOKEN_PATTERN.test(candidate)) {
+			const seed = this.options.tokenSource();
+			if (typeof seed !== 'string' || !TOKEN_SEED_PATTERN.test(seed)) {
+				throw new WorkspaceRegistryError('invalid_snapshot_token');
+			}
+			const candidate = `${this.instanceNonce}_${epoch}_${seed}`;
+			if (!SNAPSHOT_TOKEN_PATTERN.test(candidate)) {
 				throw new WorkspaceRegistryError('invalid_snapshot_token');
 			}
 			const snapshotToken = candidate as SnapshotToken;
@@ -386,7 +410,9 @@ export class PluginWorkspaceRegistry {
 		const tokenRecord = this.tokens.get(snapshotToken);
 		if (!tokenRecord) return;
 		this.tokens.set(snapshotToken, Object.freeze({ ...tokenRecord, state }));
-		this.currentTokensByWorkspace.get(tokenRecord.workspaceKey)?.delete(snapshotToken);
+		const currentTokens = this.currentTokensByWorkspace.get(tokenRecord.workspaceKey);
+		currentTokens?.delete(snapshotToken);
+		if (currentTokens?.size === 0) this.currentTokensByWorkspace.delete(tokenRecord.workspaceKey);
 
 		let workspaceStaleTokens = this.staleTokensByWorkspace.get(tokenRecord.workspaceKey);
 		if (!workspaceStaleTokens) {
@@ -435,6 +461,7 @@ export class PluginWorkspaceRegistry {
 		const workspaceStaleTokens = this.staleTokensByWorkspace.get(workspaceKey);
 		workspaceStaleTokens?.delete(snapshotToken);
 		if (workspaceStaleTokens?.size === 0) this.staleTokensByWorkspace.delete(workspaceKey);
+		this.tokenEpoch = Math.min(this.tokenEpoch + 1, MAX_TOKEN_EPOCH + 1);
 	}
 
 	private emitSelectionCleared(workspace: InternalWorkspace): void {
@@ -543,6 +570,9 @@ function validateSession(snapshot: unknown): ValidatedSession {
 	if (
 		typeof externalSessionId !== 'string' ||
 		externalSessionId.length === 0 ||
+		!isWellFormedUnicode(externalSessionId) ||
+		utf8ByteLength(externalSessionId, MAX_EXTERNAL_SESSION_ID_BYTES) >
+			MAX_EXTERNAL_SESSION_ID_BYTES ||
 		typeof title !== 'string' ||
 		!isValidTitle(title) ||
 		typeof status !== 'string' ||
@@ -589,6 +619,50 @@ function isValidTitle(title: string): boolean {
 		if (scalarCount > MAX_EXTERNAL_SESSION_TITLE_SCALARS) return false;
 	}
 	return true;
+}
+
+function isWellFormedUnicode(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const codeUnit = value.charCodeAt(index);
+		if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+			if (
+				index + 1 >= value.length ||
+				value.charCodeAt(index + 1) < 0xdc00 ||
+				value.charCodeAt(index + 1) > 0xdfff
+			) {
+				return false;
+			}
+			index += 1;
+		} else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function utf8ByteLength(value: string, limit: number): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codeUnit = value.charCodeAt(index);
+		if (codeUnit <= 0x7f) {
+			bytes += 1;
+		} else if (codeUnit <= 0x7ff) {
+			bytes += 2;
+		} else if (
+			codeUnit >= 0xd800 &&
+			codeUnit <= 0xdbff &&
+			index + 1 < value.length &&
+			value.charCodeAt(index + 1) >= 0xdc00 &&
+			value.charCodeAt(index + 1) <= 0xdfff
+		) {
+			bytes += 4;
+			index += 1;
+		} else {
+			bytes += 3;
+		}
+		if (bytes > limit) return bytes;
+	}
+	return bytes;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

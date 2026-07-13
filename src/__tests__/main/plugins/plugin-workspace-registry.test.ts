@@ -14,6 +14,7 @@ import {
 const OWNER_PLUGIN_ID = 'com.maestro.omp';
 const WORKSPACE_LOCAL_ID = 'omp-workspace';
 const PANEL_LOCAL_ID = 'omp-panel';
+const TEST_INSTANCE_NONCE = 'registrytestseed';
 
 const EXTERNAL_SESSION_STATUSES = [
 	'starting',
@@ -67,6 +68,10 @@ function parsedFoundation(
 
 function token(index: number): string {
 	return `t${index.toString(36).padStart(21, '0')}`;
+}
+
+function mintedToken(seed: string, epoch = 0): string {
+	return `${TEST_INSTANCE_NONCE}_${epoch.toString(36).padStart(8, '0')}_${seed}`;
 }
 
 function externalSession(
@@ -129,6 +134,7 @@ function createHarness(tokens: readonly string[] = [token(1), token(2), token(3)
 	const registry = new PluginWorkspaceRegistry({
 		tokenSource: () => tokens[tokenIndex++] ?? token(tokenIndex),
 		isOwnerEnabled: (ownerPluginId) => enabledOwners.has(ownerPluginId),
+		instanceNonce: TEST_INSTANCE_NONCE,
 	});
 	registry.onDidChangeContext((context) => selectedContexts.push(context));
 	return {
@@ -507,6 +513,14 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 
 	it.each([
 		['externalSessionId', externalSession('invalid-id', { externalSessionId: '' })],
+		[
+			'externalSessionId lone surrogate',
+			externalSession('invalid-id-surrogate', { externalSessionId: 'invalid\uD800' }),
+		],
+		[
+			'externalSessionId byte length',
+			externalSession('invalid-id-length', { externalSessionId: 'a'.repeat(257) }),
+		],
 		['title type', externalSession('invalid-title', { title: 1 })],
 		['title scalar length', externalSession('invalid-title-length', { title: '🙂'.repeat(161) })],
 		['status', externalSession('invalid-status', { status: 'active' })],
@@ -538,17 +552,22 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 		const capability = acquireCurrent(harness);
 		harness.registry.publishExternalSessions(capability, 1, [externalSession('kept')]);
 		const before = structuredClone(publishedSessions(harness, capability));
+		const keptToken = before[0]?.snapshotToken;
+		if (!keptToken) throw new Error('expected a kept snapshot token');
 
 		expectRegistryError(
 			() => harness.registry.publishExternalSessions(capability, 2, [invalidSnapshot]),
 			'invalid_external_session'
 		);
 		expect(publishedSessions(harness, capability)).toEqual(before);
+		expect(harness.registry.resolveWorkspaceLink(sessionLink(keptToken))).toMatchObject({
+			kind: 'resolved',
+		});
 	});
 
 	it('emits only injected opaque tokens with 22–86 URL-safe characters', () => {
 		const shortest = 'Ab9_KLMNopQRsTuvWxyZ12';
-		const longest = `${'A'.repeat(85)}_`;
+		const longest = `${'A'.repeat(59)}_`;
 		const harness = createHarness([shortest, longest]);
 		registerCurrent(harness);
 		const capability = acquireCurrent(harness);
@@ -559,8 +578,8 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 		]);
 
 		expect(publishedSessions(harness, capability).map((session) => session.snapshotToken)).toEqual([
-			shortest,
-			longest,
+			mintedToken(shortest),
+			mintedToken(longest),
 		]);
 		expect(
 			publishedSessions(harness, capability).every((session) =>
@@ -634,7 +653,9 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 
 		expect(harness.tokenCalls()).toBe(6);
 		expect(publishedSessions(harness, capability)).toEqual(before);
-		expect(harness.registry.resolveWorkspaceLink(sessionLink(priorToken))).toMatchObject({
+		expect(
+			harness.registry.resolveWorkspaceLink(sessionLink(mintedToken(priorToken)))
+		).toMatchObject({
 			kind: 'resolved',
 		});
 	});
@@ -662,7 +683,9 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 
 		expect(harness.tokenCalls()).toBe(6);
 		expect(publishedSessions(harness, otherCapability)).toEqual([]);
-		expect(harness.registry.resolveWorkspaceLink(sessionLink(ownerToken))).toMatchObject({
+		expect(
+			harness.registry.resolveWorkspaceLink(sessionLink(mintedToken(ownerToken)))
+		).toMatchObject({
 			kind: 'resolved',
 			externalSession: { externalSessionId: 'owner-session' },
 		});
@@ -678,6 +701,54 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 			'invalid_snapshot_token'
 		);
 		expect(publishedSessions(harness, capability)).toEqual([]);
+	});
+
+	it('does not recreate an evicted URL when a maximum-length seed is reissued', () => {
+		const maximumSeed = `${'A'.repeat(59)}_`;
+		const seeds = Array.from({ length: 2_000 }, (_, index) => token(index + 1));
+		seeds[0] = maximumSeed;
+		seeds.push(maximumSeed, ...Array.from({ length: 499 }, (_, index) => token(index + 3_000)));
+		const harness = createHarness(seeds);
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		let evictedToken: string | undefined;
+		for (let revision = 1; revision <= 4; revision += 1) {
+			harness.registry.publishExternalSessions(
+				capability,
+				revision,
+				Array.from({ length: 500 }, (_, index) => externalSession(`session-${revision}-${index}`))
+			);
+			if (revision === 1) evictedToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		}
+		if (!evictedToken) throw new Error('expected an evicted snapshot token');
+
+		harness.registry.publishExternalSessions(
+			capability,
+			5,
+			Array.from({ length: 500 }, (_, index) => externalSession(`session-5-${index}`))
+		);
+		const replacementToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!replacementToken) throw new Error('expected a replacement snapshot token');
+
+		expect(replacementToken).toBe(mintedToken(maximumSeed, 500));
+		expect(replacementToken).not.toBe(evictedToken);
+		expect(harness.registry.resolveWorkspaceLink(sessionLink(evictedToken))).toEqual({
+			kind: 'unknown_token',
+		});
+		expect(harness.registry.resolveWorkspaceLink(sessionLink(replacementToken))).toMatchObject({
+			kind: 'resolved',
+		});
+	});
+
+	it('rejects a 61-character token seed', () => {
+		const harness = createHarness(['A'.repeat(61)]);
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+
+		expectRegistryError(
+			() => harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]),
+			'invalid_snapshot_token'
+		);
 	});
 
 	it('bounds stale tokens per workspace and globally without affecting current owner links', () => {
