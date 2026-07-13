@@ -81,16 +81,20 @@ function externalSession(
 	}> = {}
 ): Record<string, unknown> {
 	return {
-		externalSessionId: Object.hasOwn(overrides, 'externalSessionId')
+		externalSessionId: Object.prototype.hasOwnProperty.call(overrides, 'externalSessionId')
 			? overrides.externalSessionId
 			: externalSessionId,
-		title: Object.hasOwn(overrides, 'title') ? overrides.title : `Session ${externalSessionId}`,
-		status: Object.hasOwn(overrides, 'status') ? overrides.status : 'idle',
-		unread: Object.hasOwn(overrides, 'unread') ? overrides.unread : 0,
-		pendingApproval: Object.hasOwn(overrides, 'pendingApproval')
+		title: Object.prototype.hasOwnProperty.call(overrides, 'title')
+			? overrides.title
+			: `Session ${externalSessionId}`,
+		status: Object.prototype.hasOwnProperty.call(overrides, 'status') ? overrides.status : 'idle',
+		unread: Object.prototype.hasOwnProperty.call(overrides, 'unread') ? overrides.unread : 0,
+		pendingApproval: Object.prototype.hasOwnProperty.call(overrides, 'pendingApproval')
 			? overrides.pendingApproval
 			: false,
-		updatedAt: Object.hasOwn(overrides, 'updatedAt') ? overrides.updatedAt : 1_000,
+		updatedAt: Object.prototype.hasOwnProperty.call(overrides, 'updatedAt')
+			? overrides.updatedAt
+			: 1_000,
 	};
 }
 
@@ -562,8 +566,14 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 		input.title = 'Mutated input';
 		input.unread = 9_999;
 		const mutablePublished = published[0] as unknown as Record<string, unknown>;
-		mutablePublished.title = 'Mutated output';
+		mutablePublished.title = 'Mutated publish return';
 		mutablePublished.unread = 9_999;
+		const mutableGetterSession = publishedSessions(harness, capability)[0] as unknown as Record<
+			string,
+			unknown
+		>;
+		mutableGetterSession.title = 'Mutated getter return';
+		mutableGetterSession.unread = 9_999;
 
 		expect(publishedSessions(harness, capability)).toMatchObject([
 			{ externalSessionId: 'session-1', title: 'Session session-1', unread: 0 },
