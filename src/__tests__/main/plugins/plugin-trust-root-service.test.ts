@@ -262,6 +262,24 @@ describe('OmpPluginTrustRootService', () => {
 		).toThrow('equivocation');
 	});
 
+
+	it('fails closed rather than preserving a tampered externally managed installation', () => {
+		const service = makeService();
+		expect(
+			service.installOrUpdateArchive({
+				...writeArchive(artifact('2.0.0')),
+				owner: 'external',
+			}).action
+		).toBe('installed');
+		fs.writeFileSync(
+			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'index.js'),
+			'module.exports = "tampered";'
+		);
+
+		expect(() => service.bootstrapBundledArchive(writeArchive(artifact('1.0.0')))).toThrow(
+			'bytes do not match'
+		);
+	});
 	it('preserves a user-managed OMP installation during bundled bootstrap', () => {
 		const service = makeService();
 		expect(

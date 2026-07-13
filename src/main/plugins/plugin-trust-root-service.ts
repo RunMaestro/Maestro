@@ -118,7 +118,6 @@ export class OmpPluginTrustRootService {
 			return { action: 'installed', manifest, artifactSha256 };
 		}
 
-		if (request.owner === 'bundle' && state.owner !== 'bundle') return preserved(manifest, artifactSha256);
 		const previousArchive = decodeStoredArtifact(state);
 		const previousArtifact = verifySignedPluginArtifact(
 			previousArchive,
@@ -131,6 +130,9 @@ export class OmpPluginTrustRootService {
 			throw new Error('managed OMP installation does not match its verified install state');
 		}
 		if (contentHashForDirectory(destination) !== contentHashForArtifact(previousArtifact)) {
+			if (request.owner === 'bundle' && state.owner !== 'bundle') {
+				throw new Error('externally managed OMP installation bytes do not match its verified signed artifact');
+			}
 			if (artifactSha256 !== state.artifactSha256) {
 				throw new Error('managed OMP installation bytes do not match its verified signed artifact');
 			}
@@ -142,6 +144,7 @@ export class OmpPluginTrustRootService {
 			);
 			return { action: 'updated', manifest, artifactSha256 };
 		}
+		if (request.owner === 'bundle' && state.owner !== 'bundle') return preserved(manifest, artifactSha256);
 		if (artifactSha256 === state.artifactSha256) return { action: 'unchanged', manifest, artifactSha256 };
 		if (!semver.valid(manifest.version) || !semver.valid(state.version)) {
 			throw new Error('OMP install state contains an invalid version');
