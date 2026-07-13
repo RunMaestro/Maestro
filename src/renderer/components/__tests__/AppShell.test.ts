@@ -1,15 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { resolveMainWorkspaceSurface } from '../AppShell';
+import { shouldRenderEmptyState, shouldRenderSessionNavigation } from '../AppShell';
 
-describe('resolveMainWorkspaceSurface', () => {
-	it('keeps a selected plugin workspace reachable when there are no native sessions', () => {
+describe('AppShell plugin workspace navigation', () => {
+	it('keeps the existing session navigation mounted for a generic plugin host with zero native sessions', () => {
 		expect(
-			resolveMainWorkspaceSurface({
+			shouldRenderSessionNavigation({
 				hasNativeSessions: false,
-				hasActiveGroupChat: false,
-				isLogViewerOpen: false,
+				hasPluginWorkspaceHost: true,
+			})
+		).toBe(true);
+	});
+
+	it('replaces the zero-session empty state after a plugin workspace destination is selected', () => {
+		expect(
+			shouldRenderEmptyState({
+				hasNativeSessions: false,
+				sessionsLoaded: true,
+				isMobileLandscape: false,
 				hasActivePluginWorkspace: true,
 			})
-		).toBe('plugin');
+		).toBe(false);
 	});
 });

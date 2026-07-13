@@ -32,10 +32,12 @@ export function createInteractivePanelHostBinder(
 		bind: ({
 			panel,
 			webview,
+			onFailure,
 		}: {
 			panel: CanonicalInteractivePanelContribution;
 			webview: InteractivePanelWebviewElement;
-		}): (() => void) => bindPanel(api, panel, webview),
+			onFailure?: (error: unknown) => void;
+		}): (() => void) => bindPanel(api, panel, webview, onFailure),
 	};
 	return Object.freeze(binder);
 }
@@ -43,35 +45,54 @@ export function createInteractivePanelHostBinder(
 function bindPanel(
 	api: PluginWorkspacesApi,
 	panel: CanonicalInteractivePanelContribution,
-	webview: InteractivePanelWebviewElement
+	webview: InteractivePanelWebviewElement,
+	onFailure?: (error: unknown) => void
 ): () => void {
 	let active = true;
 	let instanceId: string | null = null;
 	const webviewWithContents = webview as InteractivePanelWebviewElement & {
 		getWebContentsId?: () => number;
 	};
+	const unmountSilently = (currentInstanceId: string): void => {
+		void api.unmountPanel({ instanceId: currentInstanceId }).catch(() => undefined);
+	};
+	const reportFailure = (error: unknown): void => {
+		if (active) onFailure?.(error);
+	};
 	const mount = async (): Promise<void> => {
-		const guestWebContentsId = webviewWithContents.getWebContentsId?.();
-		if (!active || !Number.isSafeInteger(guestWebContentsId) || (guestWebContentsId ?? 0) < 1)
-			return;
-		const snapshot = await api.getSnapshot();
-		if (!active) return;
-		const workspace = snapshot.workspaces.find(
-			(candidate) =>
-				candidate.ownerPluginId === panel.ownerPluginId && candidate.panelLocalId === panel.localId
-		);
-		if (!workspace) return;
-		const mounted = await api.mountPanel({
-			ownerPluginId: workspace.ownerPluginId,
-			workspaceLocalId: workspace.workspaceLocalId,
-			generation: workspace.generation,
-			guestWebContentsId: guestWebContentsId!,
-		});
-		if (!active) {
-			await api.unmountPanel({ instanceId: mounted.instanceId });
-			return;
+		try {
+			const guestWebContentsId = webviewWithContents.getWebContentsId?.();
+			if (
+				typeof guestWebContentsId !== 'number' ||
+				!Number.isSafeInteger(guestWebContentsId) ||
+				guestWebContentsId < 1
+			) {
+				throw new Error('Panel guest is unavailable.');
+			}
+			const snapshot = await api.getSnapshot();
+			if (!active) return;
+			const workspace = snapshot.workspaces.find(
+				(candidate) =>
+					candidate.ownerPluginId === panel.ownerPluginId &&
+					candidate.panelLocalId === panel.localId
+			);
+			if (!workspace) {
+				throw new Error('Panel workspace is unavailable.');
+			}
+			const mounted = await api.mountPanel({
+				ownerPluginId: workspace.ownerPluginId,
+				workspaceLocalId: workspace.workspaceLocalId,
+				generation: workspace.generation,
+				guestWebContentsId,
+			});
+			if (!active) {
+				unmountSilently(mounted.instanceId);
+				return;
+			}
+			instanceId = mounted.instanceId;
+		} catch (error) {
+			reportFailure(error);
 		}
-		instanceId = mounted.instanceId;
 	};
 	const onDomReady = (): void => {
 		void mount();
@@ -80,6 +101,6 @@ function bindPanel(
 	return (): void => {
 		active = false;
 		webview.removeEventListener('dom-ready', onDomReady);
-		if (instanceId) void api.unmountPanel({ instanceId });
+		if (instanceId) unmountSilently(instanceId);
 	};
 }

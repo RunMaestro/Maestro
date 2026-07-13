@@ -17,6 +17,7 @@ export interface InteractivePanelHostBinder {
 	bind(input: {
 		panel: CanonicalInteractivePanelContribution;
 		webview: InteractivePanelWebviewElement;
+		onFailure?: (error: unknown) => void;
 	}): () => void;
 }
 
@@ -32,19 +33,41 @@ export function PluginInteractivePanelFrame({
 	binder,
 }: PluginInteractivePanelFrameProps) {
 	const [failed, setFailed] = useState(false);
+	const [attempt, setAttempt] = useState(0);
 	const webviewRef = useRef<InteractivePanelWebviewElement | null>(null);
+	const retryRef = useRef<HTMLButtonElement | null>(null);
+
+	useEffect(() => {
+		if (failed) retryRef.current?.focus();
+	}, [failed]);
 
 	useEffect(() => {
 		const webview = webviewRef.current;
 		if (!webview) return;
-		const onFailLoad = (): void => setFailed(true);
-		webview.addEventListener('did-fail-load', onFailLoad);
-		const unbind = binder.bind({ panel, webview });
-		return () => {
-			unbind();
-			webview.removeEventListener('did-fail-load', onFailLoad);
+		let active = true;
+		let unbind: (() => void) | undefined;
+		const reportFailure = (): void => {
+			if (!active) return;
+			setFailed(true);
 		};
-	}, [binder, panel]);
+		const onFailLoad = reportFailure;
+		webview.addEventListener('did-fail-load', onFailLoad);
+		try {
+			unbind = binder.bind({ panel, webview, onFailure: reportFailure });
+		} catch {
+			reportFailure();
+		}
+		if (attempt > 0) webview.focus();
+		return () => {
+			active = false;
+			webview.removeEventListener('did-fail-load', onFailLoad);
+			try {
+				unbind?.();
+			} catch {
+				// A revoked guest must never prevent a later retry from mounting.
+			}
+		};
+	}, [attempt, binder, failed, panel]);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -58,11 +81,26 @@ export function PluginInteractivePanelFrame({
 			</div>
 			<div className="min-h-0 flex-1">
 				{failed ? (
-					<div className="p-4 text-sm" style={{ color: theme.colors.error }}>
-						Panel content could not be loaded.
+					<div className="p-4 text-sm" role="alert" style={{ color: theme.colors.error }}>
+						<p>Panel content could not be loaded.</p>
+						<button
+							ref={retryRef}
+							type="button"
+							aria-label="Retry panel"
+							className="mt-3 rounded px-3 py-1.5 text-sm font-medium"
+							style={{ border: `1px solid ${theme.colors.error}` }}
+							onClick={() => {
+								setFailed(false);
+								setAttempt((current) => current + 1);
+							}}
+						>
+							Retry
+						</button>
 					</div>
 				) : (
 					<webview
+						key={attempt}
+						tabIndex={0}
 						ref={(element) => {
 							webviewRef.current = element as unknown as InteractivePanelWebviewElement | null;
 						}}

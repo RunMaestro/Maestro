@@ -16,9 +16,7 @@ import { EmptyStateView } from './EmptyStateView';
 import { AgentsLoadingView } from './AgentsLoadingView';
 import { ErrorBoundary } from './ErrorBoundary';
 import { PluginPanelSlot } from './plugins/PluginPanelSlot';
-import {
-	PluginWorkspaces,
-} from './plugins/PluginWorkspaces';
+import { PluginWorkspaces } from './plugins/PluginWorkspaces';
 import type { InteractivePanelHostBinder } from './plugins/PluginInteractivePanelFrame';
 import { usePluginWorkspaceRoute } from './plugins/pluginWorkspaceNavigation';
 import type { PluginWorkspaceProjectionSource } from './plugins/pluginWorkspaceProjection';
@@ -50,6 +48,27 @@ export function resolveMainWorkspaceSurface(input: {
 	if (input.hasActiveGroupChat || input.isLogViewerOpen) return null;
 	if (input.hasActivePluginWorkspace) return 'plugin';
 	return input.hasNativeSessions ? 'native' : null;
+}
+
+export function shouldRenderSessionNavigation(input: {
+	hasNativeSessions: boolean;
+	hasPluginWorkspaceHost: boolean;
+}): boolean {
+	return input.hasNativeSessions || input.hasPluginWorkspaceHost;
+}
+
+export function shouldRenderEmptyState(input: {
+	hasNativeSessions: boolean;
+	sessionsLoaded: boolean;
+	isMobileLandscape: boolean;
+	hasActivePluginWorkspace: boolean;
+}): boolean {
+	return (
+		!input.hasNativeSessions &&
+		input.sessionsLoaded &&
+		!input.isMobileLandscape &&
+		!input.hasActivePluginWorkspace
+	);
 }
 
 export interface AppShellProps {
@@ -146,16 +165,19 @@ export function AppShell({
 
 	const pluginWorkspaceRoute = usePluginWorkspaceRoute();
 
+	const hasPluginWorkspaceHost =
+		interactivePanelHostBinder !== undefined && pluginWorkspaceProjectionSource !== undefined;
+	const hasActivePluginWorkspace = hasPluginWorkspaceHost && pluginWorkspaceRoute !== null;
 	const mainWorkspaceSurface = resolveMainWorkspaceSurface({
 		hasNativeSessions: sessions.length > 0,
 		hasActiveGroupChat: activeGroupChatId !== null,
 		isLogViewerOpen: logViewerOpen,
-		hasActivePluginWorkspace:
-			interactivePanelHostBinder !== undefined &&
-			pluginWorkspaceProjectionSource !== undefined &&
-			pluginWorkspaceRoute !== null,
+		hasActivePluginWorkspace,
 	});
-
+	const showSessionNavigation = shouldRenderSessionNavigation({
+		hasNativeSessions: sessions.length > 0,
+		hasPluginWorkspaceHost,
+	});
 
 	const showTitleBar =
 		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
@@ -234,11 +256,16 @@ export function AppShell({
 				<AgentsLoadingView theme={theme} />
 			) : null}
 
-			{sessions.length === 0 && sessionsLoaded && !isMobileLandscape ? (
+			{shouldRenderEmptyState({
+				hasNativeSessions: sessions.length > 0,
+				sessionsLoaded,
+				isMobileLandscape,
+				hasActivePluginWorkspace,
+			}) ? (
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 
-			{!isMobileLandscape && sessions.length > 0 && (
+			{!isMobileLandscape && showSessionNavigation && (
 				<ErrorBoundary>
 					<SessionList
 						{...sessionListProps}

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	PluginInteractivePanelFrame,
@@ -39,5 +39,42 @@ describe('PluginInteractivePanelFrame', () => {
 		expect(bind.mock.calls[0]?.[0]?.panel).toEqual(panel);
 		unmount();
 		expect(cleanup).toHaveBeenCalledOnce();
+	});
+
+	it('replaces a failed guest, restores focus, and gives keyboard users an accessible retry', async () => {
+		bind.mockReset();
+		const firstCleanup = vi.fn();
+		const secondCleanup = vi.fn();
+		bind.mockReturnValueOnce(firstCleanup).mockReturnValueOnce(secondCleanup);
+		const { container } = render(
+			<PluginInteractivePanelFrame theme={THEMES.dracula} panel={panel} binder={binder} />
+		);
+
+		const firstWebview = container.querySelector('webview');
+		expect(firstWebview).not.toBeNull();
+		fireEvent(firstWebview!, new Event('did-fail-load'));
+
+		const retry = await screen.findByRole('button', { name: 'Retry panel' });
+		expect(retry).toHaveFocus();
+		expect(screen.getByRole('alert')).toHaveTextContent('Panel content could not be loaded.');
+		expect(firstCleanup).toHaveBeenCalledOnce();
+
+		fireEvent.click(retry);
+		await waitFor(() => expect(bind).toHaveBeenCalledTimes(2));
+		const retryWebview = container.querySelector('webview');
+		expect(retryWebview).not.toBe(firstWebview);
+		expect(retryWebview).toHaveFocus();
+	});
+
+	it('surfaces a synchronous binder failure through the same retry control', async () => {
+		bind.mockReset();
+		bind.mockImplementationOnce(() => {
+			throw new Error('binding transport unavailable');
+		});
+		render(<PluginInteractivePanelFrame theme={THEMES.dracula} panel={panel} binder={binder} />);
+
+		const retry = await screen.findByRole('button', { name: 'Retry panel' });
+		expect(retry).toHaveFocus();
+		expect(screen.getByRole('alert')).toHaveTextContent('Panel content could not be loaded.');
 	});
 });
