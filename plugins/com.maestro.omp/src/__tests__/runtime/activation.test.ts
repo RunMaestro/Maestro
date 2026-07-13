@@ -173,6 +173,17 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 				},
 				onEvent: () => () => undefined,
 				stop: async () => undefined,
+				hostTools: {
+					catalog: async () => [
+						{
+							name: 'maestro.workspace.read',
+							description: 'Read a host-approved workspace file.',
+							parameters: { type: 'object', additionalProperties: false },
+						},
+					],
+					call: async () => ({ text: 'ok' }),
+					cancel: async () => undefined,
+				},
 			}),
 		},
 		interactivePanel: {
@@ -208,6 +219,14 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 			'get_available_models',
 		])
 	);
+	expect(writes.find((frame) => frame.type === 'set_host_tools')).toMatchObject({
+		tools: [
+			{
+				name: 'maestro.workspace.read',
+				parameters: { additionalProperties: false },
+			},
+		],
+	});
 	expect(sessions.at(-1)).toEqual([
 		expect.objectContaining({ externalSessionId: 'session-1', status: 'idle' }),
 	]);

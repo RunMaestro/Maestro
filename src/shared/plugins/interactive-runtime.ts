@@ -65,6 +65,21 @@ export interface RuntimeMessage {
 	readonly value: JsonValue;
 }
 
+/** Closed OMP callback bridge. Root/provenance remain host-owned. */
+export interface OmpHostToolDefinition {
+	readonly name: string;
+	readonly description: string;
+	readonly parameters: Readonly<Record<string, unknown>>;
+}
+export interface OmpHostToolBridge {
+	catalog(runtimeId: UUID): Promise<readonly OmpHostToolDefinition[]>;
+	call(
+		runtimeId: UUID,
+		request: { readonly id: string; readonly name: string; readonly arguments: unknown }
+	): Promise<unknown>;
+	cancel(runtimeId: UUID, id: string): Promise<void>;
+}
+
 /** A host-created runtime record, never a raw process, stream, or shell handle. */
 export interface InteractiveRuntimeHandle {
 	readonly runtimeId: UUID;
@@ -73,6 +88,7 @@ export interface InteractiveRuntimeHandle {
 	onEvent(listener: (event: RuntimeEvent) => void): () => void;
 	onMessage(listener: (message: RuntimeMessage) => void): () => void;
 	stop(reason: InteractiveStopReason): Promise<void>;
+	readonly hostTools?: OmpHostToolBridge;
 }
 
 /**

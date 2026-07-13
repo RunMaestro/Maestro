@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import * as crypto from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -7,6 +8,7 @@ import { tmpdir } from 'node:os';
  * deliberately contains no plugin, hook, MCP, skill, rule, or tool input.
  */
 export interface OmpRuntimeProfile {
+	/** OMP's restricted profile identifier, never an absolute path. */
 	readonly profile: string;
 	readonly config: string;
 	readonly sterileCwd: string;
@@ -53,7 +55,7 @@ const FORBIDDEN_AUTH_ENV: Readonly<Record<string, true>> = {
 	OMP_PROFILE: true,
 	PI_HOME: true,
 };
-const DEFAULT_MODEL = 'maestro-approved';
+const DEFAULT_MODEL = 'claude';
 
 /**
  * Creates and validates a sterile process cwd and OMP profile before *every*
@@ -63,6 +65,7 @@ const DEFAULT_MODEL = 'maestro-approved';
 export class OmpRuntimeProfileService {
 	private state: OmpRuntimeProfile | undefined;
 	private expectedConfig: string | undefined;
+	private privateDirectories: readonly string[] = [];
 
 	constructor(private readonly deps: OmpRuntimeProfileServiceDependencies = {}) {}
 
@@ -82,35 +85,65 @@ export class OmpRuntimeProfileService {
 		if (!isAbsolute(base)) throw new Error('OMP profile state root must be absolute');
 		if (this.deps.stateRoot) await filesystem.mkdir(base, { recursive: true, mode: 0o700 });
 
-		const profile = join(base, 'profile');
+		const profileDirectory = join(base, 'profile');
 		const sterileCwd = join(base, 'cwd');
-		const config = join(profile, PROFILE_CONFIG);
-		await filesystem.mkdir(profile, { recursive: true, mode: 0o700 });
-		await filesystem.mkdir(sterileCwd, { recursive: true, mode: 0o700 });
+		const home = join(base, 'home');
+		const configHome = join(base, 'config');
+		const appData = join(base, 'appdata');
+		const localAppData = join(base, 'localappdata');
+		const profile = `maestro-omp-${crypto.randomBytes(16).toString('hex')}`;
+		const config = join(profileDirectory, PROFILE_CONFIG);
+		for (const directory of [
+			profileDirectory,
+			sterileCwd,
+			home,
+			configHome,
+			appData,
+			localAppData,
+		]) {
+			await filesystem.mkdir(directory, { recursive: true, mode: 0o700 });
+		}
 		const model = this.deps.model ?? DEFAULT_MODEL;
 		if (!isSafeModel(model)) throw new Error('OMP model is not host-approved');
 		this.expectedConfig = configFor(model);
 		await filesystem.writeFile(config, this.expectedConfig, { mode: 0o600 });
 
-		const env = buildEnvironment(profile, this.deps.authEnvironment);
+		this.privateDirectories = [
+			profileDirectory,
+			sterileCwd,
+			home,
+			configHome,
+			appData,
+			localAppData,
+		];
+		const env = buildEnvironment(
+			profile,
+			home,
+			configHome,
+			appData,
+			localAppData,
+			this.deps.authEnvironment
+		);
 		this.state = Object.freeze({ profile, config, sterileCwd, env, model });
 	}
 
 	private async assertCurrent(profile: OmpRuntimeProfile): Promise<void> {
 		if (!this.expectedConfig) throw new Error('OMP profile state is unavailable');
-		await this.assertDirectory(profile.profile);
-		await this.assertDirectory(profile.sterileCwd);
+		const profileDirectory = this.privateDirectories[0];
+		if (!profileDirectory || this.privateDirectories.length !== 6) {
+			throw new Error('OMP profile state is unavailable');
+		}
+		await Promise.all(this.privateDirectories.map((directory) => this.assertDirectory(directory)));
 		await this.assertFile(profile.config);
-		const [entries, cwdEntries, config] = await Promise.all([
-			this.filesystem.readdir(profile.profile),
+		const [entries, cwdEntries] = await Promise.all([
+			this.filesystem.readdir(profileDirectory),
 			this.filesystem.readdir(profile.sterileCwd),
-			this.filesystem.readFile(profile.config, 'utf8'),
 		]);
 		if (
 			entries.length !== 1 ||
 			entries[0] !== PROFILE_CONFIG ||
 			cwdEntries.length !== 0 ||
-			config !== this.expectedConfig
+			(await this.filesystem.readFile(profile.config, 'utf8')) !== this.expectedConfig
 		) {
 			throw new Error('OMP profile contains unapproved discovery state');
 		}
@@ -200,10 +233,19 @@ function configFor(model: string): string {
 
 function buildEnvironment(
 	profile: string,
+	home: string,
+	configHome: string,
+	appData: string,
+	localAppData: string,
 	authEnvironment: Readonly<Record<string, string>> | undefined
 ): Readonly<Record<string, string>> {
 	const environment: Record<string, string> = {
 		OMP_PROFILE: profile,
+		HOME: home,
+		USERPROFILE: home,
+		XDG_CONFIG_HOME: configHome,
+		APPDATA: appData,
+		LOCALAPPDATA: localAppData,
 		PI_NO_PTY: '1',
 		PI_NO_TITLE: '1',
 		PI_NOTIFICATIONS: 'off',

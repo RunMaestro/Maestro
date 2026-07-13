@@ -23,6 +23,7 @@ import type {
 import {
 	createOmpSandboxHostHandlers,
 	type OmpSandboxHostHandlerDeps,
+	type OmpSandboxHostHandlerSeam,
 } from './omp-host-safety-brokers';
 import { NativeWorkspaceRootService } from './native-workspace-root-service';
 
@@ -71,6 +72,8 @@ export interface ProductionOmpBootstrap {
 	readonly runtimeResolver: ManagedRuntimeResolver;
 	readonly workspaceRoots: NativeWorkspaceRootService;
 	readonly managedRuntime: PluginManagedRuntimeService;
+	/** Closed host callback authority, absent unless production injects broker dependencies. */
+	readonly ompSandboxHandlers?: OmpSandboxHostHandlerSeam;
 	bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) => InstallResult;
 	installExternalArchive: (
 		manager: ProductionOmpArchiveBootstrapManager,
@@ -137,6 +140,7 @@ export function createProductionOmpBootstrap(
 		runtimeResolver,
 		workspaceRoots,
 		managedRuntime,
+		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
 		bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) =>
 			installRequired(manager, bundledRequest),
 		installExternalArchive: (

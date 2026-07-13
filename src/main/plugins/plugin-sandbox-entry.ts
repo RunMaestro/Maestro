@@ -431,7 +431,26 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 							},
 							stop: function (reason) {
 								return hostCall('interactiveRuntime.stop', { runtimeId: runtimeId, reason: reason });
-							}
+							},
+							hostTools: Object.freeze({
+								catalog: function () {
+									return hostCall('interactiveRuntime.hostTools', { runtimeId: runtimeId });
+								},
+								call: function (callRuntimeId, request) {
+									return hostCall('interactiveRuntime.callHostTool', {
+										runtimeId: callRuntimeId,
+										id: request && request.id,
+										name: request && request.name,
+										arguments: request && request.arguments
+									});
+								},
+								cancel: function (callRuntimeId, id) {
+									return hostCall('interactiveRuntime.cancelHostTool', {
+										runtimeId: callRuntimeId,
+										id: id
+									});
+								}
+							})
 						});
 					});
 				}

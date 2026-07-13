@@ -154,7 +154,7 @@ describe('managed OMP runtime service', () => {
 			'--mode',
 			'rpc',
 			'--profile',
-			expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]profile$/u),
+			expect.stringMatching(/^maestro-omp-[a-f0-9]{32}$/u),
 			'--cwd',
 			spawned?.cwd,
 			'--config',
@@ -168,10 +168,15 @@ describe('managed OMP runtime service', () => {
 			'--no-pty',
 			'--no-title',
 			'--model',
-			'maestro-approved',
+			'claude',
 		]);
-		expect(spawned?.env).toEqual({
+		expect(spawned?.env).toMatchObject({
 			OMP_PROFILE: spawned?.args[4],
+			HOME: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]home$/u),
+			USERPROFILE: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]home$/u),
+			XDG_CONFIG_HOME: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]config$/u),
+			APPDATA: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]appdata$/u),
+			LOCALAPPDATA: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]localappdata$/u),
 			PI_NO_PTY: '1',
 			PI_NO_TITLE: '1',
 			PI_NOTIFICATIONS: 'off',

@@ -2357,6 +2357,7 @@ app
 				chooseDirectory: chooseOmpDirectory,
 			});
 		const managedRuntime = productionOmpBootstrap?.managedRuntime;
+		const ompSandboxHandlers = productionOmpBootstrap?.ompSandboxHandlers;
 		const runtimeRoots = new Map<
 			string,
 			{ readonly ownerPluginId: string; readonly root: WorkspaceRootCapability }
@@ -2526,6 +2527,53 @@ app
 					const handle =
 						runtimeEvents.detach(pluginId, runtimeId, entry.generation) ?? entry.handle;
 					await handle.stop(reason as never);
+				},
+				hostTools: async (runtimeId: string) => {
+					const entry = runtimeHandles.get(runtimeId);
+					const current = workspaceLifecycle.getRegistrationForOwner(pluginId);
+					if (
+						!ompSandboxHandlers ||
+						!entry ||
+						entry.ownerPluginId !== pluginId ||
+						!current ||
+						current.context.generation !== entry.generation
+					) {
+						throw new Error('interactive runtime host tools unavailable');
+					}
+					return ompSandboxHandlers.tools.catalog();
+				},
+				callHostTool: async (
+					runtimeId: string,
+					id: string,
+					name: string,
+					argumentsValue: unknown
+				) => {
+					const entry = runtimeHandles.get(runtimeId);
+					const current = workspaceLifecycle.getRegistrationForOwner(pluginId);
+					if (
+						!ompSandboxHandlers ||
+						!entry ||
+						entry.ownerPluginId !== pluginId ||
+						!current ||
+						current.context.generation !== entry.generation
+					) {
+						throw new Error('interactive runtime host tools unavailable');
+					}
+					return ompSandboxHandlers.tools.call({ id, name, payload: argumentsValue });
+				},
+				cancelHostTool: async (runtimeId: string, id: string) => {
+					const entry = runtimeHandles.get(runtimeId);
+					const current = workspaceLifecycle.getRegistrationForOwner(pluginId);
+					if (
+						!ompSandboxHandlers ||
+						!entry ||
+						entry.ownerPluginId !== pluginId ||
+						!current ||
+						current.context.generation !== entry.generation
+					) {
+						throw new Error('interactive runtime host tools unavailable');
+					}
+					ompSandboxHandlers.tools.cancel(id);
 				},
 			};
 		};

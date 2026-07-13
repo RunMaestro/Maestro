@@ -745,6 +745,26 @@ export interface RuntimeMessage {
 	readonly sequence: number;
 	readonly value: JsonValue;
 }
+/** A closed host tool registered with a managed OMP RPC process after ready. */
+export interface OmpHostToolDefinition {
+	readonly name: string;
+	readonly description: string;
+	readonly parameters: Readonly<Record<string, unknown>>;
+}
+
+/** Host-correlated OMP tool invocation. The child supplies no root or provenance. */
+export interface OmpHostToolCall {
+	readonly id: string;
+	readonly name: string;
+	readonly arguments: unknown;
+}
+
+export interface OmpHostToolBridge {
+	catalog(runtimeId: UUID): Promise<readonly OmpHostToolDefinition[]>;
+	call(runtimeId: UUID, request: OmpHostToolCall): Promise<unknown>;
+	cancel(runtimeId: UUID, id: string): Promise<void>;
+}
+
 export interface InteractiveRuntimeHandle {
 	readonly runtimeId: UUID;
 	readonly generation: bigint;
@@ -752,6 +772,8 @@ export interface InteractiveRuntimeHandle {
 	onEvent(listener: (event: RuntimeEvent) => void): () => void;
 	onMessage(listener: (message: RuntimeMessage) => void): () => void;
 	stop(reason: InteractiveStopReason): Promise<void>;
+	/** Closed host bridge for OMP callbacks. Never exposes host paths or capabilities. */
+	readonly hostTools: OmpHostToolBridge;
 }
 export interface MaestroInteractiveRuntimeApi {
 	/**
@@ -1434,6 +1456,9 @@ export const HOST_API = {
 	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
 	'interactiveRuntime.write': { capability: 'process:interactive' },
 	'interactiveRuntime.stop': { capability: 'process:interactive' },
+	'interactiveRuntime.hostTools': { capability: 'process:interactive' },
+	'interactiveRuntime.callHostTool': { capability: 'process:interactive' },
+	'interactiveRuntime.cancelHostTool': { capability: 'process:interactive' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */

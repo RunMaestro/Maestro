@@ -109,6 +109,9 @@ export class OmpWorkspaceController {
 	}
 
 	command(command: OmpRpcCommand, options?: OmpCommandOptions): Promise<OmpRpcResponse> {
+		if (command.type === 'bash' || command.type === 'abort_bash') {
+			return Promise.reject(new OmpProtocolError('raw OMP bash RPC is unavailable'));
+		}
 		if (this.stateValue !== 'ready') {
 			return Promise.reject(
 				new OmpProtocolError(`OMP workspace is not ready (${this.stateValue})`)
@@ -285,9 +288,7 @@ function isHostToolCall(callback: OmpOutboundCallback): callback is OmpOutboundC
 	);
 }
 
-function isHostToolCancel(
-	callback: OmpOutboundCallback
-): callback is OmpOutboundCallback & {
+function isHostToolCancel(callback: OmpOutboundCallback): callback is OmpOutboundCallback & {
 	readonly type: 'host_tool_cancel';
 	readonly targetId: string;
 } {

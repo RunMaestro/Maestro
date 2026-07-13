@@ -163,12 +163,26 @@ async function startRuntime(
 		},
 	};
 	const client = new OmpRpcClient(transport);
+	const tools = await handle.hostTools.catalog(handle.runtimeId);
 	const controller = new OmpWorkspaceController(
 		`omp:${handle.runtimeId}:${handle.generation}`,
 		client,
 		{
-			tools: [],
+			tools,
 			uriSchemes: [],
+			brokers: {
+				tools: {
+					call: ({ toolCallId, toolName, arguments: argumentsValue }) =>
+						handle.hostTools.call(handle.runtimeId, {
+							id: toolCallId,
+							name: toolName,
+							arguments: argumentsValue,
+						}),
+					cancel: (toolCallId) => {
+						void handle.hostTools.cancel(handle.runtimeId, toolCallId).catch(() => undefined);
+					},
+				},
+			},
 		}
 	);
 	const activeRuntime: ActiveRuntime = {

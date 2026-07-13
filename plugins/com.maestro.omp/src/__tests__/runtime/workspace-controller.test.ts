@@ -160,4 +160,18 @@ describe('OmpWorkspaceController', () => {
 		await Promise.resolve();
 		expect(calls).toHaveLength(1);
 	});
+
+	it('rejects direct bash RPC even after the managed controller is ready', async () => {
+		const transport = new FakeTransport();
+		const controller = new OmpWorkspaceController('workspace-bash', new OmpRpcClient(transport), {
+			tools: [],
+			uriSchemes: [],
+		});
+		await initializeController(controller, transport);
+		const writesBefore = transport.writes.length;
+		await expect(controller.command({ type: 'bash', command: 'whoami' })).rejects.toThrow(
+			'raw OMP bash RPC is unavailable'
+		);
+		expect(transport.writes).toHaveLength(writesBefore);
+	});
 });

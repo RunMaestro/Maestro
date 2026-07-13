@@ -81,6 +81,9 @@ export const HOST_API = {
 	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
 	'interactiveRuntime.write': { capability: 'process:interactive' },
 	'interactiveRuntime.stop': { capability: 'process:interactive' },
+	'interactiveRuntime.hostTools': { capability: 'process:interactive' },
+	'interactiveRuntime.callHostTool': { capability: 'process:interactive' },
+	'interactiveRuntime.cancelHostTool': { capability: 'process:interactive' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */

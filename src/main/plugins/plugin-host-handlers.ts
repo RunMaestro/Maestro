@@ -134,6 +134,14 @@ export interface InteractiveRuntimeSurfaceEndpoint {
 	startOmpRuntime(input: unknown): Promise<unknown>;
 	write(runtimeId: string, request: unknown): Promise<void>;
 	stop(runtimeId: string, reason: unknown): Promise<void>;
+	hostTools(runtimeId: string): Promise<unknown>;
+	callHostTool(
+		runtimeId: string,
+		id: string,
+		name: string,
+		argumentsValue: unknown
+	): Promise<unknown>;
+	cancelHostTool(runtimeId: string, id: string): Promise<void>;
 }
 
 export interface HostHandlerDeps {
@@ -1424,6 +1432,47 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
 			if (!surface) throw new Error('interactive runtime capability unavailable');
 			await surface.stop(p.runtimeId, p.reason);
+			return null;
+		},
+		'interactiveRuntime.hostTools': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactiveRuntime.hostTools', p, { runtimeId: true });
+			if (typeof p.runtimeId !== 'string') throw new Error('invalid interactive runtime');
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.hostTools', p);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			return surface.hostTools(p.runtimeId);
+		},
+		'interactiveRuntime.callHostTool': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactiveRuntime.callHostTool', p, {
+				runtimeId: true,
+				id: true,
+				name: true,
+				arguments: true,
+			});
+			if (
+				typeof p.runtimeId !== 'string' ||
+				typeof p.id !== 'string' ||
+				typeof p.name !== 'string'
+			) {
+				throw new Error('invalid interactive runtime host tool');
+			}
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.callHostTool', p);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			return surface.callHostTool(p.runtimeId, p.id, p.name, p.arguments);
+		},
+		'interactiveRuntime.cancelHostTool': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactiveRuntime.cancelHostTool', p, { runtimeId: true, id: true });
+			if (typeof p.runtimeId !== 'string' || typeof p.id !== 'string') {
+				throw new Error('invalid interactive runtime host tool');
+			}
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.cancelHostTool', p);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			await surface.cancelHostTool(p.runtimeId, p.id);
 			return null;
 		},
 	};

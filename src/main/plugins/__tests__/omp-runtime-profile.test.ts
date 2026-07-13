@@ -29,14 +29,19 @@ describe('OMP sterile launch profile', () => {
 		});
 
 		const launch = await profile.prepareForLaunch();
-		expect(launch.profile).toBe(join(root, 'profile'));
+		expect(launch.profile).toMatch(/^maestro-omp-[a-f0-9]{32}$/u);
 		expect(launch.sterileCwd).toBe(join(root, 'cwd'));
-		expect(await fs.readdir(launch.profile)).toEqual(['maestro-omp.yaml']);
+		expect(await fs.readdir(join(root, 'profile'))).toEqual(['maestro-omp.yaml']);
 		expect(await fs.readdir(launch.sterileCwd)).toEqual([]);
 		expect(await fs.readFile(launch.config, 'utf8')).toContain('disabledExtensions: ["*"]');
 		expect(await fs.readFile(launch.config, 'utf8')).toContain('enableProjectConfig: false');
-		expect(launch.env).toEqual({
+		expect(launch.env).toMatchObject({
 			OMP_PROFILE: launch.profile,
+			HOME: join(root, 'home'),
+			USERPROFILE: join(root, 'home'),
+			XDG_CONFIG_HOME: join(root, 'config'),
+			APPDATA: join(root, 'appdata'),
+			LOCALAPPDATA: join(root, 'localappdata'),
 			PI_NO_PTY: '1',
 			PI_NO_TITLE: '1',
 			PI_NOTIFICATIONS: 'off',
@@ -47,12 +52,13 @@ describe('OMP sterile launch profile', () => {
 	it('rejects profile mutations that could register extensions, hooks, custom tools, MCP, or user config', async () => {
 		const root = await stateRoot();
 		const profile = new OmpRuntimeProfileService({ stateRoot: root });
-		const launch = await profile.prepareForLaunch();
+		await profile.prepareForLaunch();
 
 		for (const injected of ['.omp', 'hook.ts', 'custom-tool.js', 'mcp.json', 'settings.yaml']) {
-			await fs.writeFile(join(launch.profile, injected), 'export default {}');
+			const injectedPath = join(root, 'profile', injected);
+			await fs.writeFile(injectedPath, 'export default {}');
 			await expect(profile.prepareForLaunch()).rejects.toThrow('unapproved discovery state');
-			await fs.rm(join(launch.profile, injected));
+			await fs.rm(injectedPath);
 		}
 	});
 
