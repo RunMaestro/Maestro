@@ -138,8 +138,24 @@ export interface PluginManagerDeps {
 	verifyRecord?: (record: PluginRecord) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
 	onWatchError?: (error: unknown) => void;
-	/** Host-only proof for a discovered record's verified bundled ownership. */
-	resolveInstallOwner?: (record: Readonly<PluginRecord>) => 'bundle' | undefined;
+	/**
+	 * Host-only proof that the exact discovered record still matches the current
+	 * immutable bundled artifact snapshot. This is the sole exception to mutable
+	 * directory signature verification for the bundled first-party plugin.
+	 */
+	resolveBundledPluginTrust?: (
+		record: Readonly<PluginRecord>
+	) => BundledPluginTrustProjection | undefined;
+}
+
+/** Immutable-artifact trust projected into a materialized bundled record. */
+export interface BundledPluginTrustProjection {
+	readonly installOwner: 'bundle';
+	readonly signature: Readonly<{
+		readonly status: 'trusted';
+		readonly signerKey: string;
+		readonly detail: string;
+	}>;
 }
 
 export interface InstallResult {
@@ -278,8 +294,14 @@ export class PluginManager {
 				// Signature verification is non-fatal for listing. The resolver proves
 				// bundled provenance from the immutable bootstrap snapshot instead.
 			}
-			if (isProvidedPluginId(signed.id) && this.deps.resolveInstallOwner?.(signed) === 'bundle') {
-				signed = { ...signed, installOwner: 'bundle' };
+			const bundledTrust =
+				isProvidedPluginId(signed.id) && this.deps.resolveBundledPluginTrust?.(signed);
+			if (bundledTrust) {
+				signed = {
+					...signed,
+					installOwner: bundledTrust.installOwner,
+					signature: bundledTrust.signature,
+				};
 			}
 			// A disabled community runtime still exposes only host-provided records;
 			// it never activates them because getActiveRecords remains gate-controlled.

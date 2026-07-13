@@ -458,17 +458,65 @@ describe('OmpPluginTrustRootService', () => {
 	});
 });
 
-describe('verified bundled ownership proof', () => {
-	it('accepts only the current verified bundled destination and rejects spoofed or tampered records', () => {
+describe('verified bundled trust projection', () => {
+	it('projects only the current exact bundled snapshot as trusted without materializing signature.json', () => {
 		const service = makeService();
 		service.bootstrapBundledArchive(writeArchive(artifact('1.0.0')));
 		const source = path.join(workDir, 'plugins', OMP_PLUGIN_ID);
 
-		expect(service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source })).toBe(true);
+		expect(fs.existsSync(path.join(source, 'signature.json'))).toBe(false);
+		expect(service.getVerifiedBundledPluginTrust({ id: OMP_PLUGIN_ID, source })).toEqual({
+			installOwner: 'bundle',
+			signature: {
+				status: 'trusted',
+				signerKey: trustRoot.publicKey,
+				detail: `verified immutable bundled artifact (${trustRoot.keyId})`,
+			},
+		});
+	});
+
+	it('fails closed for a spoofed id, wrong path, or changed materialized bytes', () => {
+		const service = makeService();
+		service.bootstrapBundledArchive(writeArchive(artifact('1.0.0')));
+		const source = path.join(workDir, 'plugins', OMP_PLUGIN_ID);
+
 		expect(
-			service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source: path.join(workDir, 'spoofed') })
-		).toBe(false);
+			service.getVerifiedBundledPluginTrust({ id: 'com.maestro.omp.spoof', source })
+		).toBeUndefined();
+		expect(
+			service.getVerifiedBundledPluginTrust({
+				id: OMP_PLUGIN_ID,
+				source: path.join(workDir, 'plugins', 'spoofed'),
+			})
+		).toBeUndefined();
 		fs.writeFileSync(path.join(source, 'index.js'), 'module.exports = "attacker";');
-		expect(service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source })).toBe(false);
+		expect(service.getVerifiedBundledPluginTrust({ id: OMP_PLUGIN_ID, source })).toBeUndefined();
+	});
+
+	it('fails closed after the verified snapshot is released or external ownership replaces it', () => {
+		const releasedService = makeService();
+		releasedService.bootstrapBundledArchive(
+			writeArchive(artifact('1.0.0'), 'released.omp-plugin.json')
+		);
+		const releasedSource = path.join(workDir, 'plugins', OMP_PLUGIN_ID);
+		releasedService.getActiveSnapshot()!.release();
+
+		expect(
+			releasedService.getVerifiedBundledPluginTrust({ id: OMP_PLUGIN_ID, source: releasedSource })
+		).toBeUndefined();
+
+		const externalPluginsDir = path.join(workDir, 'external', 'plugins');
+		const externalService = makeService({
+			pluginsDir: externalPluginsDir,
+		});
+		const externalArchive = writeArchive(artifact('1.0.0'), 'external.omp-plugin.json');
+		externalService.installOrUpdateArchive({ ...externalArchive, owner: 'external' });
+
+		expect(
+			externalService.getVerifiedBundledPluginTrust({
+				id: OMP_PLUGIN_ID,
+				source: path.join(externalPluginsDir, OMP_PLUGIN_ID),
+			})
+		).toBeUndefined();
 	});
 });

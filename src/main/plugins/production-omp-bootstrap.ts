@@ -10,10 +10,14 @@ import type {
 	PluginArtifactSignatureVerifier,
 } from '../omp-distribution/plugin-artifact';
 import type { InteractiveStopReason } from '../../shared/plugins/interactive-runtime';
+import type { PluginRecord } from '../../shared/plugins/plugin-registry';
 import type { OmpArchiveInstallRequest } from './plugin-trust-root-service';
 import { OmpPluginTrustRootService } from './plugin-trust-root-service';
-import type { InstallResult, PluginExecutionSnapshot } from './plugin-manager';
-import type { PluginRecord } from '../../shared/plugins/plugin-registry';
+import type {
+	BundledPluginTrustProjection,
+	InstallResult,
+	PluginExecutionSnapshot,
+} from './plugin-manager';
 import type {
 	ManagedRuntimeResolver,
 	OmpRuntimeAuthResolver,
@@ -81,8 +85,10 @@ export interface ProductionOmpBootstrap {
 	/** Closed host callback authority, absent unless production injects broker dependencies. */
 	readonly ompSandboxHandlers?: OmpSandboxHostHandlerSeam;
 	bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) => InstallResult;
-	/** Host-only proof consumed by PluginManager during discovery. */
-	resolveInstallOwner: (record: Readonly<PluginRecord>) => 'bundle' | undefined;
+	/** Host-only immutable-artifact proof consumed by PluginManager during discovery. */
+	resolveBundledPluginTrust: (
+		record: Readonly<PluginRecord>
+	) => BundledPluginTrustProjection | undefined;
 	teardown: (ownerPluginId: string, reason?: InteractiveStopReason) => Promise<void>;
 }
 
@@ -150,8 +156,8 @@ export function createProductionOmpBootstrap(
 		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
 		bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) =>
 			installRequired(manager, bundledRequest),
-		resolveInstallOwner: (record: Readonly<PluginRecord>) =>
-			trustService.isVerifiedBundledRecord(record) ? 'bundle' : undefined,
+		resolveBundledPluginTrust: (record: Readonly<PluginRecord>) =>
+			trustService.getVerifiedBundledPluginTrust(record),
 		teardown: async (ownerPluginId: string, reason: InteractiveStopReason = 'shutdown') => {
 			workspaceRoots.revokeAll();
 			await managedRuntime.revokeOwner(ownerPluginId, reason);

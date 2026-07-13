@@ -50,6 +50,16 @@ export interface OmpArchiveInstallResult {
 	artifactSha256: string;
 }
 
+/** Host-minted trust projected only from the current immutable bundled snapshot. */
+export interface VerifiedBundledPluginTrust {
+	readonly installOwner: 'bundle';
+	readonly signature: Readonly<{
+		readonly status: 'trusted';
+		readonly signerKey: string;
+		readonly detail: string;
+	}>;
+}
+
 export interface OmpPluginTrustRootServiceDeps {
 	pluginsDir: string;
 	/** Compiled, security-reviewed signer metadata. There is deliberately no settings fallback. */
@@ -94,16 +104,40 @@ export class OmpPluginTrustRootService {
 	}
 
 	/**
+	 * Produces the record projection only after exact materialized-content proof.
+	 * Directory signature.json is intentionally irrelevant: the bundled artifact
+	 * was already signature-verified before materialization.
+	 */
+	getVerifiedBundledPluginTrust(
+		record: Pick<PluginRecord, 'id' | 'source'>
+	): VerifiedBundledPluginTrust | undefined {
+		if (!this.isVerifiedBundledRecord(record)) return undefined;
+		const snapshot = this.activeSnapshot;
+		if (snapshot === null) return undefined;
+		return Object.freeze({
+			installOwner: 'bundle',
+			signature: Object.freeze({
+				status: 'trusted' as const,
+				signerKey: snapshot.identity.authorizationSignerKey,
+				detail: `verified immutable bundled artifact (${snapshot.identity.signerKeyId})`,
+			}),
+		});
+	}
+
+	/**
 	 * Host-only provenance proof for discovery. The record must resolve to the
 	 * canonical managed destination and still match the verified snapshot's
 	 * materialized content; a manifest id alone can never satisfy this check.
 	 */
 	isVerifiedBundledRecord(record: Pick<PluginRecord, 'id' | 'source'>): boolean {
+		const snapshot = this.activeSnapshot;
 		if (
 			record.id !== OMP_PLUGIN_ID ||
 			this.activeOwner !== 'bundle' ||
-			this.activeSnapshot === null ||
-			this.activeContentHash === null
+			snapshot === null ||
+			this.activeContentHash === null ||
+			snapshot.identity.pluginId !== record.id ||
+			snapshot.text('plugin.json') === null
 		) {
 			return false;
 		}

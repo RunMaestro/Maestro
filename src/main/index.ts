@@ -2927,7 +2927,7 @@ app
 				? {
 						ompArchiveInstaller: productionOmpBootstrap.ompArchiveInstaller,
 						snapshotFor: productionOmpBootstrap.snapshotFor,
-						resolveInstallOwner: productionOmpBootstrap.resolveInstallOwner,
+						resolveBundledPluginTrust: productionOmpBootstrap.resolveBundledPluginTrust,
 					}
 				: {}),
 			trustedKeys: () => {
