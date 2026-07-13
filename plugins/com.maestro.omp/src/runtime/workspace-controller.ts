@@ -210,17 +210,17 @@ export class OmpWorkspaceController {
 		}
 		if (callback.type !== 'host_tool_call' || !isHostToolCall(callback)) return;
 		const broker = this.setup.brokers;
-		if (!broker || this.activeToolCalls.has(callback.toolCallId)) {
+		if (!broker || this.activeToolCalls.has(callback.id)) {
 			await this.respond({
 				type: 'host_tool_result',
 				id: callback.id,
-				result: { code: 'capability_unavailable' },
+				result: agentToolResult('capability_unavailable'),
 				isError: true,
 			}).catch(() => undefined);
 			return;
 		}
 		const abort = new AbortController();
-		this.activeToolCalls.set(callback.toolCallId, abort);
+		this.activeToolCalls.set(callback.id, abort);
 		try {
 			const result = await broker.tools.call({
 				id: callback.id,
@@ -229,20 +229,30 @@ export class OmpWorkspaceController {
 				arguments: callback.arguments,
 				signal: abort.signal,
 			});
-			await this.respond({ type: 'host_tool_result', id: callback.id, result }).catch(
-				() => undefined
-			);
+			await this.respond({
+				type: 'host_tool_result',
+				id: callback.id,
+				result: agentToolResult(result),
+			}).catch(() => undefined);
 		} catch {
 			await this.respond({
 				type: 'host_tool_result',
 				id: callback.id,
-				result: { code: 'policy_denied' },
+				result: agentToolResult('policy_denied'),
 				isError: true,
 			}).catch(() => undefined);
 		} finally {
-			this.activeToolCalls.delete(callback.toolCallId);
+			this.activeToolCalls.delete(callback.id);
 		}
 	}
+}
+
+function agentToolResult(value: unknown): {
+	readonly content: readonly { readonly type: 'text'; readonly text: string }[];
+	readonly isError?: boolean;
+} {
+	const text = typeof value === 'string' ? value : JSON.stringify(value);
+	return { content: [{ type: 'text', text: text ?? 'null' }] };
 }
 
 function isSelectionMutation(command: OmpRpcCommand['type']): boolean {

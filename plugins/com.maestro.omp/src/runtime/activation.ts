@@ -172,14 +172,14 @@ async function startRuntime(
 			uriSchemes: [],
 			brokers: {
 				tools: {
-					call: ({ toolCallId, toolName, arguments: argumentsValue }) =>
+					call: ({ id, toolName, arguments: argumentsValue }) =>
 						handle.hostTools.call(handle.runtimeId, {
-							id: toolCallId,
+							id,
 							name: toolName,
 							arguments: argumentsValue,
 						}),
-					cancel: (toolCallId) => {
-						void handle.hostTools.cancel(handle.runtimeId, toolCallId).catch(() => undefined);
+					cancel: (callbackId) => {
+						void handle.hostTools.cancel(handle.runtimeId, callbackId).catch(() => undefined);
 					},
 				},
 			},

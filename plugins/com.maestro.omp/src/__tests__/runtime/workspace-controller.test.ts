@@ -138,8 +138,10 @@ describe('OmpWorkspaceController', () => {
 				arguments: { path: 'README.md' },
 			}),
 		]);
-		transport.stdout('{"type":"host_tool_cancel","id":"callback-cancel","targetId":"tool-1"}\n');
-		expect(cancels).toEqual(['tool-1']);
+		transport.stdout(
+			'{"type":"host_tool_cancel","id":"callback-cancel","targetId":"callback-1"}\n'
+		);
+		expect(cancels).toEqual(['callback-1']);
 		expect(calls[0]?.signal?.aborted).toBe(true);
 		resolveTool({ text: 'contents' });
 		await Promise.resolve();
@@ -147,7 +149,9 @@ describe('OmpWorkspaceController', () => {
 		expect(JSON.parse(transport.writes.at(-1) ?? '')).toEqual({
 			type: 'host_tool_result',
 			id: 'callback-1',
-			result: { text: 'contents' },
+			result: {
+				content: [{ type: 'text', text: '{"text":"contents"}' }],
+			},
 		});
 
 		transport.stdout('{"type":"host_tool_call","id":"bad","toolCallId":"tool-2","name":"wrong"}\n');
