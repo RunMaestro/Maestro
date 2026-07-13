@@ -38,6 +38,12 @@ export interface VerifiedRuntimeExecutable {
 	readonly bunExecutable: string;
 	/** Authenticated absolute OMP CLI module executed as Bun's explicit first arg. */
 	readonly ompCliPath: string;
+	/** Immutable identity established while authenticating the Bun executable tree. */
+	readonly bunIdentity: string;
+	/** Immutable identity established while authenticating the OMP CLI tree. */
+	readonly ompCliIdentity: string;
+	/** Re-authenticates both identities immediately before spawn. */
+	readonly revalidateForLaunch: () => Promise<VerifiedRuntimeExecutable>;
 	readonly version: typeof OMP_RUNTIME_VERSION;
 	/** Provenance is established by the host distributor, never a PATH lookup. */
 	readonly provenance: 'verified';
@@ -118,9 +124,13 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		const key = activeKey(current.ownerPluginId, current.generation);
 		if (this.active.has(key)) throw new Error('interactive runtime is already active');
 
+		const launchRuntime = assertVerifiedRuntime(await executable.revalidateForLaunch());
+		if (!isSameAuthenticatedRuntime(executable, launchRuntime)) {
+			throw new Error('authenticated Bun or OMP CLI changed before runtime launch');
+		}
 		const runtimeId = this.runtimeId();
 		assertRuntimeId(runtimeId);
-		const child = this.spawn(launchFor(executable, currentRoot));
+		const child = this.spawn(launchFor(launchRuntime, currentRoot));
 		const process = new ManagedRuntimeProcess({
 			child,
 			killTree: this.killTree,
@@ -224,6 +234,11 @@ function assertVerifiedRuntime(value: VerifiedRuntimeExecutable): VerifiedRuntim
 		!isAbsolute(value.bunExecutable) ||
 		typeof value.ompCliPath !== 'string' ||
 		!isAbsolute(value.ompCliPath) ||
+		typeof value.bunIdentity !== 'string' ||
+		value.bunIdentity.length === 0 ||
+		typeof value.ompCliIdentity !== 'string' ||
+		value.ompCliIdentity.length === 0 ||
+		typeof value.revalidateForLaunch !== 'function' ||
 		value.version !== OMP_RUNTIME_VERSION ||
 		value.provenance !== 'verified'
 	) {
@@ -242,6 +257,18 @@ function launchFor(runtime: VerifiedRuntimeExecutable, root: string): ManagedRun
 		shell: false,
 		stdio,
 	});
+}
+
+function isSameAuthenticatedRuntime(
+	before: VerifiedRuntimeExecutable,
+	after: VerifiedRuntimeExecutable
+): boolean {
+	return (
+		before.bunExecutable === after.bunExecutable &&
+		before.ompCliPath === after.ompCliPath &&
+		before.bunIdentity === after.bunIdentity &&
+		before.ompCliIdentity === after.ompCliIdentity
+	);
 }
 
 const defaultSpawn: ManagedRuntimeSpawner = (launch) =>
