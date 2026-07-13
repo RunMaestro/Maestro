@@ -55,4 +55,18 @@ describe('OMP plugin activation', () => {
 		await expect(startFromExplicitPanelAction()).resolves.toBe(false);
 		expect(starts).toBe(0);
 	});
+
+	it('surfaces host rejection of a stale or revoked opaque root capability without accepting a path fallback', async () => {
+		await activate({
+			interactiveRuntime: {
+				requestWorkspaceRoot: async () => ({ opaqueHostCapability: true }),
+				startOmpRuntime: async () => {
+					throw new Error('workspace root capability is revoked');
+				},
+			},
+			workspace: {},
+		});
+
+		await expect(startFromExplicitPanelAction()).rejects.toThrow(/revoked/);
+	});
 });
