@@ -1,0 +1,286 @@
+import { OmpProtocolError, OmpRpcClient, type OmpCommandOptions } from './rpc-client';
+import type {
+	OmpHostToolDefinition,
+	OmpHostUriSchemeDefinition,
+	OmpInboundCallback,
+	OmpOutboundCallback,
+	OmpRpcCommand,
+	OmpRpcEvent,
+	OmpRpcResponse,
+	OmpSessionState,
+} from './types';
+
+export type OmpWorkspaceControllerState = 'starting' | 'ready' | 'stopping' | 'stopped' | 'crashed';
+
+/** Structural injection seam for host-owned authority; this plugin never imports host implementation. */
+export interface OmpOpaqueHostBrokers {
+	readonly tools: {
+		call(request: {
+			readonly id: string;
+			readonly name: unknown;
+			readonly payload: unknown;
+			readonly signal?: AbortSignal;
+		}): Promise<unknown>;
+		cancel(id: unknown): void;
+	};
+}
+
+export interface OmpWorkspaceControllerSetup {
+	readonly tools: readonly OmpHostToolDefinition[];
+	/** The v16.4.8 URI catalog is intentionally empty. */
+	/** The v16.4.8 URI catalog is intentionally empty. */
+	readonly uriSchemes: readonly OmpHostUriSchemeDefinition[];
+	readonly brokers?: OmpOpaqueHostBrokers;
+}
+
+/** One generation-bound OMP RPC process owner for exactly one Maestro workspace. */
+export class OmpWorkspaceController {
+	private stateValue: OmpWorkspaceControllerState = 'starting';
+	private latestState: OmpSessionState | undefined;
+	private availableCommandValues: readonly string[] = [];
+	private availableModelValues: readonly unknown[] = [];
+	private selectionTail: Promise<void> = Promise.resolve();
+	private readonly activeToolCalls = new Map<string, AbortController>();
+
+	constructor(
+		readonly workspaceKey: string,
+		private readonly client: OmpRpcClient,
+		private readonly setup: OmpWorkspaceControllerSetup
+	) {
+		if (setup.uriSchemes.length !== 0) {
+			throw new OmpProtocolError('OMP 16.4.8 URI catalog must be empty');
+		}
+		client.onCallback((callback) => {
+			this.acceptCallbackProjection(callback);
+			void this.handleHostCallback(callback);
+		});
+	}
+
+	get state(): OmpWorkspaceControllerState {
+		return this.stateValue;
+	}
+
+	get selectedSessionId(): string | undefined {
+		return this.latestState?.sessionId;
+	}
+
+	get availableCommands(): readonly string[] {
+		return this.availableCommandValues;
+	}
+
+	get availableModels(): readonly unknown[] {
+		return this.availableModelValues;
+	}
+
+	getState(): OmpSessionState | undefined {
+		return this.latestState;
+	}
+
+	onEvent(listener: (event: OmpRpcEvent) => void): () => void {
+		return this.client.onEvent(listener);
+	}
+
+	onCallback(listener: (callback: OmpOutboundCallback) => void): () => void {
+		return this.client.onCallback(listener);
+	}
+
+	onDiagnostic(listener: (diagnostic: string) => void): () => void {
+		return this.client.onDiagnostic(listener);
+	}
+
+	async initialize(): Promise<void> {
+		await this.client.waitForReady();
+		const [tools, uris, state, commands, models] = await Promise.all([
+			this.client.command({ type: 'set_host_tools', tools: this.setup.tools }),
+			this.client.command({ type: 'set_host_uri_schemes', schemes: this.setup.uriSchemes }),
+			this.client.command({ type: 'get_state' }),
+			this.client.command({ type: 'get_available_commands' }),
+			this.client.command({ type: 'get_available_models' }),
+		]);
+		if (!tools.success || !uris.success) {
+			throw new OmpProtocolError('OMP rejected mandatory host setup');
+		}
+		this.acceptState(state);
+		this.acceptAvailableCommands(commands);
+		this.acceptAvailableModels(models);
+		this.stateValue = 'ready';
+	}
+
+	command(command: OmpRpcCommand, options?: OmpCommandOptions): Promise<OmpRpcResponse> {
+		if (this.stateValue !== 'ready') {
+			return Promise.reject(
+				new OmpProtocolError(`OMP workspace is not ready (${this.stateValue})`)
+			);
+		}
+		if (
+			this.availableCommandValues.length > 0 &&
+			!this.availableCommandValues.includes(command.type) &&
+			command.type !== 'get_state' &&
+			command.type !== 'get_available_commands' &&
+			command.type !== 'get_available_models'
+		) {
+			return Promise.reject(new OmpProtocolError(`OMP command ${command.type} is unavailable`));
+		}
+		if (
+			isSelectionMutation(command.type) ||
+			command.type === 'prompt' ||
+			command.type === 'abort_and_prompt' ||
+			command.type === 'bash' ||
+			command.type === 'login'
+		) {
+			return this.enqueueSerialized(() => this.execute(command, options));
+		}
+		return this.execute(command, options);
+	}
+
+	respond(callback: OmpInboundCallback): void {
+		this.client.sendInbound(callback);
+	}
+
+	beginShutdown(): void {
+		if (this.stateValue === 'stopped') return;
+		this.stateValue = 'stopping';
+	}
+
+	markStopped(): void {
+		this.stateValue = 'stopped';
+		this.client.close();
+	}
+
+	private async execute(
+		command: OmpRpcCommand,
+		options?: OmpCommandOptions
+	): Promise<OmpRpcResponse> {
+		const response = await this.client.command(command, options);
+		if (command.type === 'get_state') this.acceptState(response);
+		if (command.type === 'get_available_commands') this.acceptAvailableCommands(response);
+		if (command.type === 'get_available_models') this.acceptAvailableModels(response);
+		return response;
+	}
+
+	private enqueueSerialized<T>(operation: () => Promise<T>): Promise<T> {
+		const next = this.selectionTail.then(operation, operation);
+		this.selectionTail = next.then(
+			() => undefined,
+			() => undefined
+		);
+		return next;
+	}
+
+	private acceptState(response: OmpRpcResponse): void {
+		if (!response.success || !isSessionState(response.data)) {
+			throw new OmpProtocolError('OMP get_state response did not contain a valid session state');
+		}
+		this.latestState = response.data;
+	}
+
+	private acceptAvailableCommands(response: OmpRpcResponse): void {
+		if (
+			!response.success ||
+			!isRecord(response.data) ||
+			!Array.isArray(response.data.commands) ||
+			!response.data.commands.every((value) => typeof value === 'string')
+		) {
+			throw new OmpProtocolError('OMP get_available_commands response was invalid');
+		}
+		this.availableCommandValues = Object.freeze([...response.data.commands]);
+	}
+
+	private acceptAvailableModels(response: OmpRpcResponse): void {
+		if (!response.success || !isRecord(response.data)) {
+			throw new OmpProtocolError('OMP get_available_models response was invalid');
+		}
+		const models = Array.isArray(response.data.models) ? response.data.models : [];
+		this.availableModelValues = Object.freeze([...models]);
+	}
+
+	private acceptCallbackProjection(callback: OmpOutboundCallback): void {
+		if (
+			callback.type !== 'available_commands_update' ||
+			!Array.isArray(callback.commands) ||
+			!callback.commands.every((value) => typeof value === 'string')
+		)
+			return;
+		this.availableCommandValues = Object.freeze([...callback.commands]);
+	}
+
+	private async handleHostCallback(callback: OmpOutboundCallback): Promise<void> {
+		if (callback.type === 'host_uri_request') {
+			if (typeof callback.id === 'string')
+				this.respond({
+					type: 'host_uri_result',
+					id: callback.id,
+					isError: true,
+					error: 'capability_unavailable',
+				});
+			return;
+		}
+		if (callback.type === 'host_uri_cancel') return;
+		if (callback.type === 'host_tool_cancel') {
+			if (typeof callback.id === 'string') {
+				this.activeToolCalls.get(callback.id)?.abort();
+				this.setup.brokers?.tools.cancel(callback.id);
+			}
+			return;
+		}
+		if (callback.type !== 'host_tool_call' || typeof callback.id !== 'string') return;
+		const broker = this.setup.brokers;
+		if (!broker || this.activeToolCalls.has(callback.id)) {
+			this.respond({
+				type: 'host_tool_result',
+				id: callback.id,
+				result: { code: 'capability_unavailable' },
+				isError: true,
+			});
+			return;
+		}
+		const abort = new AbortController();
+		this.activeToolCalls.set(callback.id, abort);
+		try {
+			const result = await broker.tools.call({
+				id: callback.id,
+				name: callback.name,
+				payload: callback.payload,
+				signal: abort.signal,
+			});
+			this.respond({ type: 'host_tool_result', id: callback.id, result });
+		} catch {
+			this.respond({
+				type: 'host_tool_result',
+				id: callback.id,
+				result: { code: 'policy_denied' },
+				isError: true,
+			});
+		} finally {
+			this.activeToolCalls.delete(callback.id);
+		}
+	}
+}
+
+function isSelectionMutation(command: OmpRpcCommand['type']): boolean {
+	return (
+		command === 'new_session' ||
+		command === 'switch_session' ||
+		command === 'branch' ||
+		command === 'handoff'
+	);
+}
+
+function isSessionState(value: unknown): value is OmpSessionState {
+	if (!isRecord(value) || typeof value.sessionId !== 'string') return false;
+	return (
+		typeof value.isStreaming === 'boolean' &&
+		typeof value.isCompacting === 'boolean' &&
+		typeof value.steeringMode === 'string' &&
+		typeof value.followUpMode === 'string' &&
+		typeof value.interruptMode === 'string' &&
+		typeof value.autoCompactionEnabled === 'boolean' &&
+		typeof value.messageCount === 'number' &&
+		typeof value.queuedMessageCount === 'number' &&
+		Array.isArray(value.todoPhases)
+	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

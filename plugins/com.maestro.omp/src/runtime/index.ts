@@ -8,13 +8,19 @@ export {
 	OMP_16_4_8_OUTBOUND_CALLBACK_TYPES,
 	assertOmpProtocolVersion,
 } from './compatibility';
+export type {
+	OmpCompatibilityDisposition,
+	OmpCompatibilityEntry,
+	OmpStableMember,
+	OmpTerminal,
+} from './compatibility';
 export {
 	OmpProtocolError,
 	OmpRpcClient,
 	OmpRuntimeClosedError,
 	redactOmpDiagnostic,
 } from './rpc-client';
-export { OmpSessionController } from './session-controller';
+export { OmpWorkspaceController } from './workspace-controller';
 export type {
 	OmpCommandType,
 	OmpExtensionUiMethod,
@@ -32,4 +38,8 @@ export type {
 	OmpSessionState,
 } from './types';
 export type { OmpCommandOptions, OmpRpcClientOptions, OmpRpcClientStatus } from './rpc-client';
-export type { OmpSessionControllerState } from './session-controller';
+export type {
+	OmpOpaqueHostBrokers,
+	OmpWorkspaceControllerSetup,
+	OmpWorkspaceControllerState,
+} from './workspace-controller';
