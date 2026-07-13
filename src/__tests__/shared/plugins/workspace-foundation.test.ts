@@ -47,6 +47,12 @@ const unsafeEntries = [
 	{ label: 'a Windows drive entry', entry: 'C:\\panel.html' },
 	{ label: 'a Windows UNC entry', entry: '\\\\server\\share\\panel.html' },
 ] as const;
+const invalidLocalIds = [
+	{ label: 'an empty local ID', value: '' },
+	{ label: 'a slash-containing local ID', value: 'omp/panel' },
+	{ label: 'a traversal-like local ID', value: '../omp-panel' },
+	{ label: 'a leading-numeric local ID', value: '1-omp-panel' },
+] as const;
 const forbiddenItemKeys = ['id', 'pluginId', 'ownerPluginId', 'canonicalId'] as const;
 const invalidOwnerPluginIds = [
 	{
@@ -368,6 +374,25 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
+	for (const { label, value } of invalidLocalIds) {
+		it(`rejects a workspace with ${label}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						workspaces: [{ ...rawContributes.workspaces[0], localId: value }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: ['workspaces[0].localId must be a valid local ID'],
+			});
+		});
+	}
+
 	for (const { label, item } of malformedPanelItems) {
 		it(`returns a structured error for ${label} without throwing`, () => {
 			const rawContributes = createRawContributes();
@@ -422,6 +447,25 @@ describe('parseWorkspaceFoundation', () => {
 			expect(parse()).toEqual({
 				ok: false,
 				errors: [`interactivePanels[0].${field} must be a string`],
+			});
+		});
+	}
+
+	for (const { label, value } of invalidLocalIds) {
+		it(`rejects an interactive panel with ${label}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						interactivePanels: [{ ...rawContributes.interactivePanels[0], localId: value }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: ['interactivePanels[0].localId must be a valid local ID'],
 			});
 		});
 	}
