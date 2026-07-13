@@ -18,6 +18,7 @@ import {
 	pluginPanelUrl,
 	panelIdFromPluginPanelUrl,
 	isAllowedPluginPanelAttachment,
+	interactivePanelKeyFromPluginPanelUrl,
 	withPanelCsp,
 } from '../../../shared/plugins/panel-host';
 
@@ -64,6 +65,29 @@ describe('panel document URLs', () => {
 		expect(panelIdFromPluginPanelUrl('plugin-panel://panel/a%2Fb?x=1')).toBeNull();
 		expect(panelIdFromPluginPanelUrl('plugin-panel://panel/a%2Fb#f')).toBeNull();
 		expect(panelIdFromPluginPanelUrl('plugin-panel://panel/%E0%A4%A')).toBeNull();
+	});
+});
+
+describe('interactive panel URL identity', () => {
+	it('parses only the canonical owner/local key emitted by pluginPanelUrl', () => {
+		expect(
+			interactivePanelKeyFromPluginPanelUrl(pluginPanelUrl('com.maestro.omp/omp-panel'))
+		).toEqual({ ownerPluginId: 'com.maestro.omp', panelLocalId: 'omp-panel' });
+	});
+
+	it('rejects traversal, ambiguous escaping, and non-canonical legacy identifiers', () => {
+		expect(
+			interactivePanelKeyFromPluginPanelUrl(
+				'plugin-panel://panel/com.maestro.omp%2F..%2Fother-panel'
+			)
+		).toBeNull();
+		expect(
+			interactivePanelKeyFromPluginPanelUrl('plugin-panel://panel/com%2Emaestro%2Eomp%2Fomp-panel')
+		).toBeNull();
+		expect(interactivePanelKeyFromPluginPanelUrl(pluginPanelUrl('com.maestro.omp/'))).toBeNull();
+		expect(
+			interactivePanelKeyFromPluginPanelUrl(pluginPanelUrl('com.maestro.omp/omp/panel'))
+		).toBeNull();
 	});
 });
 

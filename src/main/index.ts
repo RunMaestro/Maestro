@@ -73,6 +73,7 @@ import type {
 	InteractiveRuntimeHandle,
 	WorkspaceRootCapability,
 } from '../shared/plugins/interactive-runtime';
+import { PLUGIN_PANEL_SCHEME } from '../shared/plugins/panel-host';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
@@ -338,6 +339,13 @@ const IMAGE_SCHEME = 'maestro-image';
 		{
 			scheme: IMAGE_SCHEME,
 			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+		{
+			// Panel guests navigate to this opaque, per-session protocol. Do not
+			// make it a standard/CORS scheme: every response remains owner-bound
+			// and network egress stays denied by plugin-panel-host.
+			scheme: PLUGIN_PANEL_SCHEME,
+			privileges: { secure: true, supportFetchAPI: true },
 		},
 	];
 	if (!isDevelopment) {

@@ -191,12 +191,13 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return { result: await manager.invokeTool(toolId, args) };
 		}
 	);
-	// The render host (plugin-panel-host) serves panel documents over the
-	// per-plugin `plugin-panel://` protocol. The provider re-checks the Encore
-	// flag and the grant-gated contribution set (inside getPanelHtml) on EVERY
-	// document fetch, so disable/revoke takes effect on the next panel load.
-	setPanelHtmlProvider((panelId) =>
-		isPluginsEnabled(settingsStore) ? manager.getPanelHtml(panelId) : null
+	// The render host serves only canonical interactive panel URLs. The provider
+	// re-checks the feature flag, owner-bound active contributions, and the
+	// current verified snapshot on every document fetch.
+	setPanelHtmlProvider((ownerPluginId, panelLocalId) =>
+		isPluginsEnabled(settingsStore)
+			? manager.getInteractivePanelHtml(ownerPluginId, panelLocalId)
+			: null
 	);
 	const wrappedGetActivity = withIpcErrorLogging(
 		handlerOpts('getActivity'),

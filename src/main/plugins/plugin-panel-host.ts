@@ -40,14 +40,14 @@ import {
 	PLUGIN_PANEL_SCHEME,
 	PANEL_CSP_CONTENT,
 	pluginIdFromPanelPartition,
-	panelIdFromPluginPanelUrl,
+	interactivePanelKeyFromPluginPanelUrl,
 	withPanelCsp,
 } from '../../shared/plugins/panel-host';
 
 const LOG_CONTEXT = 'PluginPanelHost';
 
-/** Grant-gated panel HTML source; wired from the plugins IPC registration. */
-export type PanelHtmlProvider = (panelId: string) => string | null;
+/** Grant-gated interactive panel HTML source; wired from the plugins IPC registration. */
+export type PanelHtmlProvider = (ownerPluginId: string, panelLocalId: string) => string | null;
 
 /** Default-deny until the plugins subsystem wires the real provider. */
 let panelHtmlProvider: PanelHtmlProvider = () => null;
@@ -127,14 +127,14 @@ export function hardenPluginPanelSession(
 
 	// Serve ONLY this plugin's own panel documents on this session.
 	ses.protocol.handle(PLUGIN_PANEL_SCHEME, (request) => {
-		const panelId = panelIdFromPluginPanelUrl(request.url);
-		if (panelId === null || !panelId.startsWith(`${pluginId}/`)) {
+		const panelKey = interactivePanelKeyFromPluginPanelUrl(request.url);
+		if (panelKey === null || panelKey.ownerPluginId !== pluginId) {
 			logger.warn(`Refused foreign/malformed panel document: ${request.url}`, LOG_CONTEXT);
 			return new Response(null, { status: 404 });
 		}
-		const html = panelHtmlProvider(panelId);
+		const html = panelHtmlProvider(panelKey.ownerPluginId, panelKey.panelLocalId);
 		if (html === null) {
-			// Unknown panel, plugins flag off, or ui:panel not granted — deny.
+			// Unknown panel, plugins flag off, or ui:interactivePanel not granted — deny.
 			return new Response(null, { status: 404 });
 		}
 		return new Response(withPanelCsp(html), {

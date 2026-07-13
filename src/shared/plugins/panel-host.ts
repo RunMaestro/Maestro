@@ -114,6 +114,38 @@ export function panelIdFromPluginPanelUrl(rawUrl: string): string | null {
 	}
 }
 
+/** Canonical owner-bound identity carried by an interactive panel document URL. */
+export interface InteractivePanelUrlKey {
+	ownerPluginId: string;
+	panelLocalId: string;
+}
+
+/**
+ * Parse the exact canonical owner/local key used by closed interactive panels.
+ * Unlike the legacy opaque panel id parser, this rejects alternate escaping and
+ * every ambiguous multi-segment form before authority reaches a provider.
+ */
+export function interactivePanelKeyFromPluginPanelUrl(
+	rawUrl: string
+): InteractivePanelUrlKey | null {
+	const canonicalContributionId = panelIdFromPluginPanelUrl(rawUrl);
+	if (canonicalContributionId === null || pluginPanelUrl(canonicalContributionId) !== rawUrl) {
+		return null;
+	}
+	const separator = canonicalContributionId.indexOf('/');
+	if (
+		separator <= 0 ||
+		separator !== canonicalContributionId.lastIndexOf('/') ||
+		separator === canonicalContributionId.length - 1
+	) {
+		return null;
+	}
+	return {
+		ownerPluginId: canonicalContributionId.slice(0, separator),
+		panelLocalId: canonicalContributionId.slice(separator + 1),
+	};
+}
+
 /**
  * Attachment gate: may a webview with this partition load this src? True only
  * when the partition is a plugin-panel partition AND the src is a well-formed

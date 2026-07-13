@@ -111,14 +111,18 @@ describe('hardenPluginPanelSession', () => {
 	});
 
 	it("serves the plugin's own grant-gated document with the CSP header AND meta", async () => {
-		setPanelHtmlProvider((panelId) =>
-			panelId === 'acme.tools/board' ? '<html><head></head><body>hi</body></html>' : null
+		const provider = vi.fn((ownerPluginId: string, panelLocalId: string) =>
+			ownerPluginId === 'acme.tools' && panelLocalId === 'board'
+				? '<html><head></head><body>hi</body></html>'
+				: null
 		);
+		setPanelHtmlProvider(provider);
 		const ses = fakeSession();
 		hardenPluginPanelSession('plugin:acme.tools', () => ses);
 		const handler = ses.protocol.handle.mock.calls[0][1];
 
 		const response = handler({ url: pluginPanelUrl('acme.tools/board') });
+		expect(provider).toHaveBeenCalledWith('acme.tools', 'board');
 		expect(response.status).toBe(200);
 		expect(response.headers.get('Content-Security-Policy')).toBe(PANEL_CSP_CONTENT);
 		expect(response.headers.get('Content-Type')).toContain('text/html');
@@ -137,6 +141,7 @@ describe('hardenPluginPanelSession', () => {
 		expect(handler({ url: pluginPanelUrl('evil.corp/board') }).status).toBe(404);
 		expect(handler({ url: 'plugin-panel://panel/garbage%2F' }).status).toBe(404);
 		expect(handler({ url: 'plugin-panel://elsewhere/x' }).status).toBe(404);
+		expect(handler({ url: 'plugin-panel://panel/acme%2Etools%2Fboard' }).status).toBe(404);
 		expect(provider).not.toHaveBeenCalled();
 	});
 

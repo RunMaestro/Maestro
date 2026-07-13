@@ -75,6 +75,73 @@ function writePanelPlugin(id: string): void {
 	signPluginDir(dir, signingKeys);
 }
 
+function writeInteractivePanelPlugin(id: string, html = '<p>interactive-safe</p>'): void {
+	const dir = path.join(pluginsDir(), id);
+	fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
+	const manifest = {
+		id,
+		name: id,
+		version: '1.0.0',
+		tier: 1,
+		maestro: { minHostApi: '1.0.0' },
+		entry: 'main.js',
+		permissions: [
+			{ capability: 'ui:panel' },
+			{ capability: 'ui:workspace' },
+			{ capability: 'ui:interactivePanel' },
+		],
+		contributes: {
+			panels: [
+				{
+					id: 'omp-panel',
+					title: 'Legacy collision',
+					entry: 'legacy-panel.html',
+					placement: 'left',
+				},
+			],
+			workspaces: [
+				{
+					localId: 'omp-workspace',
+					title: 'OMP Workspace',
+					icon: 'sparkles',
+					interactivePanelLocalId: 'omp-panel',
+				},
+			],
+			interactivePanels: [
+				{
+					localId: 'omp-panel',
+					bridge: {
+						requestSchemas: {
+							ping: {
+								canonicalJsonSchema: { type: 'object', additionalProperties: false },
+							},
+						},
+						eventSchemas: {},
+						resultSchemas: {
+							ping: {
+								canonicalJsonSchema: { type: 'object', additionalProperties: false },
+							},
+						},
+						errorSchemas: {
+							ping: {
+								canonicalJsonSchema: { type: 'object', additionalProperties: false },
+							},
+						},
+					},
+					title: 'OMP Panel',
+					entry: 'dist/panel.html',
+					workspaceLocalId: 'omp-workspace',
+				},
+			],
+		},
+	};
+	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
+	fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
+	fs.writeFileSync(path.join(dir, 'legacy-panel.html'), '<p>legacy-safe</p>');
+	fs.writeFileSync(path.join(dir, 'dist', 'panel.html'), html);
+	signPluginDir(dir, signingKeys);
+}
+
 function tarOctal(value: number, length: number): string {
 	const octal = value.toString(8);
 	return `${octal.padStart(length - 1, '0')}\0`;
@@ -261,6 +328,50 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		m.refresh();
 		expect(recordOf(m, 'paneler')?.signature?.status).toBe('invalid');
 		expect(m.getPanelHtml('paneler/board')).toBeNull();
+	});
+
+	it('reads a signed interactive panel only from its owner-bound verified snapshot', () => {
+		const grants = new Map<string, PermissionGrant[]>();
+		const pluginId = 'com.maestro.omp';
+		const panelPath = path.join(pluginsDir(), pluginId, 'dist', 'panel.html');
+		const m = manager({ getGrants: (id) => grants.get(id) ?? [] });
+		writeInteractivePanelPlugin(pluginId);
+
+		m.refresh();
+		m.setEnabled(pluginId, true);
+		grants.set(pluginId, [
+			{ capability: 'ui:panel', grantedAt: 1 },
+			{ capability: 'ui:workspace', grantedAt: 1 },
+			{ capability: 'ui:interactivePanel', grantedAt: 1 },
+		]);
+		m.refresh();
+
+		// A legacy panel with the same canonical contribution id exists, but it
+		// must not be eligible to serve the interactive document.
+		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBe('<p>interactive-safe</p>');
+
+		// Changing installed bytes cannot replace the immutable verified artifact.
+		fs.writeFileSync(panelPath, '<p>attacker bytes</p>');
+		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBe('<p>interactive-safe</p>');
+
+		// Revocation/disable must immediately deny the current snapshot.
+		grants.set(pluginId, []);
+		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBeNull();
+		grants.set(pluginId, [
+			{ capability: 'ui:workspace', grantedAt: 1 },
+			{ capability: 'ui:interactivePanel', grantedAt: 1 },
+		]);
+		m.setEnabled(pluginId, false);
+		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBeNull();
+		m.setEnabled(pluginId, true);
+
+		// Only a newly signed, refreshed artifact may replace the served bytes.
+		fs.writeFileSync(panelPath, '<p>replacement-safe</p>');
+		signPluginDir(path.join(pluginsDir(), pluginId), signingKeys);
+		m.refresh();
+		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBe('<p>replacement-safe</p>');
+		expect(m.getInteractivePanelHtml('other.owner', 'omp-panel')).toBeNull();
+		expect(m.getInteractivePanelHtml(pluginId, '../omp-panel')).toBeNull();
 	});
 
 	it('installs and starts a CLI-packed plugin archive with nested runtime assets', async () => {
