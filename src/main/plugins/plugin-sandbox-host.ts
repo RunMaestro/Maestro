@@ -219,6 +219,7 @@ export class PluginSandboxHost {
 			identity.generation < 1 ||
 			!/^[a-f0-9]{64}$/i.test(identity.artifactDigest) ||
 			!/^[a-f0-9]{64}$/i.test(identity.authorizationContentHash) ||
+			identity.authorizationSignerKey.length === 0 ||
 			identity.signerKeyId.length === 0
 		) {
 			throw new Error('invalid plugin activation identity');

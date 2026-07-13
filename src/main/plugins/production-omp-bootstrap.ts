@@ -138,6 +138,7 @@ export function createProductionOmpBootstrap(
 				identity: {
 					artifactDigest: snapshot.identity.artifactSha256,
 					authorizationContentHash: snapshot.identity.authorizationContentHash,
+					authorizationSignerKey: snapshot.identity.authorizationSignerKey,
 					signerKeyId: snapshot.identity.signerKeyId,
 				},
 				text: (filePath: string) => snapshot.text(filePath),

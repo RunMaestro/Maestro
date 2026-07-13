@@ -40,6 +40,7 @@ export interface VerifiedPluginSourceIdentity {
 	pluginId: string;
 	artifactDigest: string;
 	authorizationContentHash: string;
+	authorizationSignerKey: string;
 	signerKeyId: string;
 }
 
@@ -306,6 +307,7 @@ export function captureVerifiedPluginSnapshot(
 			pluginId,
 			artifactDigest: createHash('sha256').update(raw, 'utf8').digest('hex'),
 			authorizationContentHash: computePluginContentHashFromFileHashes(hashes),
+			authorizationSignerKey: manifest.publicKey,
 			signerKeyId: manifest.publicKey,
 		},
 		textByPath,

@@ -61,6 +61,7 @@ describe('verifyPluginSignature', () => {
 	it('captures verified execution bytes that survive a post-verification file swap', () => {
 		signDir(dir, publicKeyB64, privateKey);
 		const snapshot = captureVerifiedPluginSnapshot(dir, [publicKeyB64]);
+		expect(snapshot?.identity.authorizationSignerKey).toBe(publicKeyB64);
 		expect(snapshot?.identity.signerKeyId).toBe(publicKeyB64);
 
 		fs.writeFileSync(path.join(dir, 'entry.js'), 'module.exports = { attacker: true }');

@@ -82,6 +82,7 @@ describe('PluginSandboxHost per-plugin observability', () => {
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
 			authorizationContentHash: 'c'.repeat(64),
+			authorizationSignerKey: 'test-authorization-signer',
 			signerKeyId: 'test-signer',
 		});
 	});
@@ -128,6 +129,7 @@ describe('PluginSandboxHost per-plugin observability', () => {
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
 			authorizationContentHash: 'c'.repeat(64),
+			authorizationSignerKey: 'trusted-authorization-signer',
 			signerKeyId: 'trusted-signer',
 		});
 
@@ -170,6 +172,7 @@ describe('PluginSandboxHost per-plugin observability', () => {
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
 			authorizationContentHash: 'c'.repeat(64),
+			authorizationSignerKey: 'test-authorization-signer',
 			signerKeyId: 'test-signer',
 		});
 

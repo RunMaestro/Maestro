@@ -78,6 +78,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
 			authorizationContentHash: 'c'.repeat(64),
+			authorizationSignerKey: 'test-authorization-signer',
 			signerKeyId: 'test-signer',
 		});
 	});

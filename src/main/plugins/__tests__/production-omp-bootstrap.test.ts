@@ -178,6 +178,8 @@ describe('production OMP bootstrap', () => {
 		expect(snapshot?.identity.authorizationContentHash).not.toBe(
 			snapshot?.identity.artifactDigest
 		);
+		expect(snapshot?.identity.authorizationSignerKey).toBe(input.trustRoot.publicKey);
+		expect(snapshot?.identity.authorizationSignerKey).not.toBe(snapshot?.identity.signerKeyId);
 	});
 
 	it('exposes workspace run in the production catalog only when a supervised process is injected', async () => {

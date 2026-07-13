@@ -25,6 +25,7 @@ function identity(
 		generation: 1,
 		artifactDigest: 'a'.repeat(64),
 		authorizationContentHash: 'c'.repeat(64),
+		authorizationSignerKey: 'trusted-authorization-signer',
 		signerKeyId: 'trusted-signer',
 		...overrides,
 	};
@@ -133,6 +134,7 @@ describe('PermissionBroker', () => {
 			expect(snapshot).not.toBeNull();
 			expect(snapshot?.identity.authorizationContentHash).toBe(current?.contentHash);
 			expect(snapshot?.identity.artifactDigest).not.toBe(current?.contentHash);
+			expect(snapshot?.identity.authorizationSignerKey).toBe(current?.signerKey);
 
 			const store = new AuthorizationStore({
 				seal: {
@@ -177,6 +179,7 @@ describe('PermissionBroker', () => {
 				generation: 1,
 				artifactDigest: snapshot!.identity.artifactDigest,
 				authorizationContentHash: snapshot!.identity.authorizationContentHash,
+				authorizationSignerKey: snapshot!.identity.authorizationSignerKey,
 				signerKeyId: snapshot!.identity.signerKeyId,
 			};
 			const broker = new PermissionBroker({
@@ -203,7 +206,7 @@ describe('PermissionBroker', () => {
 				pluginId === 'p'
 					? {
 							contentHash: current.authorizationContentHash,
-							signerKey: current.signerKeyId,
+							signerKey: current.authorizationSignerKey,
 						}
 					: null,
 		});
@@ -226,6 +229,13 @@ describe('PermissionBroker', () => {
 		expect(
 			broker.authorizeInvocation(identity({ signerKeyId: 'forged' }), 'notifications.toast', {})
 				.allowed
+		).toBe(false);
+		expect(
+			broker.authorizeInvocation(
+				identity({ authorizationSignerKey: 'forged-authorization-signer' }),
+				'notifications.toast',
+				{}
+			).allowed
 		).toBe(false);
 		expect(
 			broker.authorizeInvocation(identity({ generation: 2 }), 'notifications.toast', {}).allowed

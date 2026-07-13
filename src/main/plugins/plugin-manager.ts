@@ -71,6 +71,7 @@ export interface PluginExecutionSnapshot {
 	identity: Readonly<{
 		artifactDigest: string;
 		authorizationContentHash: string;
+		authorizationSignerKey: string;
 		signerKeyId: string;
 	}>;
 	text: (filePath: string) => string | null;
@@ -411,6 +412,7 @@ export class PluginManager {
 						generation,
 						artifactDigest: snapshot.identity.artifactDigest,
 						authorizationContentHash: snapshot.identity.authorizationContentHash,
+						authorizationSignerKey: snapshot.identity.authorizationSignerKey,
 						signerKeyId: snapshot.identity.signerKeyId,
 					});
 				} catch {

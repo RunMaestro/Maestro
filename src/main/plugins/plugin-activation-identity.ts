@@ -3,5 +3,6 @@ export interface PluginActivationIdentity {
 	generation: number;
 	artifactDigest: string;
 	authorizationContentHash: string;
+	authorizationSignerKey: string;
 	signerKeyId: string;
 }

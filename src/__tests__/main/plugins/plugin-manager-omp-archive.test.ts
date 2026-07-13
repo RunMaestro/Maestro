@@ -83,6 +83,7 @@ describe('PluginManager.installOrUpdateArchive', () => {
 			identity: {
 				artifactDigest: 'a'.repeat(64),
 				authorizationContentHash: 'c'.repeat(64),
+				authorizationSignerKey: 'omp-authorization-signer',
 				signerKeyId: 'omp-root',
 			},
 			text: vi.fn(() => 'verified source'),

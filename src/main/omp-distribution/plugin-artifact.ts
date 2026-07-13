@@ -64,6 +64,7 @@ export interface VerifiedPluginArtifactIdentity {
 	contractSha256: string;
 	artifactSha256: string;
 	authorizationContentHash: string;
+	authorizationSignerKey: string;
 	signerKeyId: string;
 }
 
@@ -104,6 +105,7 @@ export class VerifiedPluginArtifactSnapshot {
 			authorizationContentHash: createHash('sha256')
 				.update(buildPluginContentHashPayload(authorizationFiles), 'utf8')
 				.digest('hex'),
+			authorizationSignerKey: artifact.trustRoot.publicKey,
 			signerKeyId: artifact.trustRoot.keyId,
 		});
 		this.storedByteLength = byteLength;
