@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OMP_16_4_8_FIXTURE } from './fixtures/protocol-16.4.8';
+import { OMP_16_4_8_FIXTURE, OMP_16_4_8_TRANSCRIPT } from './fixtures/protocol-16.4.8';
 import {
 	OMP_16_4_8_COMPATIBILITY,
 	OMP_16_4_8_COMMAND_TYPES,
@@ -47,8 +47,32 @@ describe('OMP 16.4.8 compatibility table', () => {
 		});
 		expect(OMP_16_4_8_COMPATIBILITY.prompt).toMatchObject({
 			disposition: 'ui',
-			terminal: 'prompt_result',
+			terminal: 'response',
 		});
+	});
+
+	it('drift-checks real initialization and callback boundaries against the sanitized transcript', () => {
+		expect(OMP_16_4_8_TRANSCRIPT.initialization.availableCommands.commands[0]).toMatchObject({
+			name: expect.any(String),
+			description: expect.any(String),
+			aliases: expect.any(Array),
+		});
+		expect(OMP_16_4_8_TRANSCRIPT.callbacks.hostToolCall).toMatchObject({
+			id: expect.any(String),
+			toolCallId: expect.any(String),
+			toolName: expect.any(String),
+			arguments: expect.any(Object),
+		});
+		expect(OMP_16_4_8_TRANSCRIPT.callbacks.hostToolCancel).toMatchObject({
+			id: expect.any(String),
+			targetId: expect.any(String),
+		});
+		expect(OMP_16_4_8_TRANSCRIPT.callbacks.promptResult).toEqual({
+			type: 'prompt_result',
+			agentInvoked: true,
+		});
+		expect(OMP_16_4_8_COMPATIBILITY.prompt.terminal).toBe('response');
+		expect(OMP_16_4_8_COMPATIBILITY.abort_and_prompt.terminal).toBe('response');
 	});
 
 	it('fails closed for a version other than the pinned runtime', () => {

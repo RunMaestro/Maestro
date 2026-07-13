@@ -121,3 +121,34 @@ export const OMP_16_4_8_FIXTURE = {
 		'extension_ui.open_url',
 	],
 } as const;
+
+/**
+ * Sanitized official 16.4.8 transcript shapes. Every member remains in
+ * stableMembers above; this table records the non-obvious runtime payload
+ * boundaries that historically drifted in mocks.
+ */
+export const OMP_16_4_8_TRANSCRIPT = {
+	initialization: {
+		ready: { type: 'ready' },
+		state: OMP_16_4_8_FIXTURE.stateResponse.data,
+		availableCommands: {
+			commands: [{ name: 'help', description: 'Show available slash commands', aliases: ['h'] }],
+		},
+		availableModels: { models: [] },
+	},
+	callbacks: {
+		hostToolCall: {
+			type: 'host_tool_call',
+			id: 'callback-1',
+			toolCallId: 'tool-1',
+			toolName: 'read_file',
+			arguments: { path: 'README.md' },
+		},
+		hostToolCancel: { type: 'host_tool_cancel', id: 'callback-cancel', targetId: 'tool-1' },
+		promptResult: { type: 'prompt_result', agentInvoked: true },
+	},
+	terminalErrors: [
+		{ type: 'response', id: 'request-1', command: 'prompt', success: false, error: 'denied' },
+		{ type: 'extension_error', message: 'async prompt failed' },
+	],
+} as const;

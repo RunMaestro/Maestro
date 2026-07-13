@@ -174,7 +174,7 @@ function commandEntry(command: OmpCommandType): OmpCompatibilityEntry {
 	return {
 		version: '16.4.8',
 		disposition: COMMAND_DISPOSITIONS[command],
-		terminal: command === 'prompt' || command === 'abort_and_prompt' ? 'prompt_result' : 'response',
+		terminal: 'response',
 		sequence: 'correlated',
 	};
 }
