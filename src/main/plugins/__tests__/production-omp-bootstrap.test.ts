@@ -11,7 +11,7 @@ import { createProductionOmpBootstrap } from '../production-omp-bootstrap';
 import type { PinnedOmpRelease } from '../../omp-distribution/production-omp-runtime-resolver';
 import type {
 	ManagedRuntimeResolver,
-	VerifiedRuntimeExecutable,
+	VerifiedRuntimeLaunch,
 } from '../plugin-managed-runtime-service';
 import type { RuntimeActivationContext } from '../native-workspace-root-service';
 
@@ -93,7 +93,7 @@ describe('production OMP bootstrap', () => {
 		const resolver: ManagedRuntimeResolver = {
 			resolveSystem: vi.fn(async () => null),
 			managedInstallAllowed: vi.fn(() => false),
-			resolveManaged: vi.fn(async (): Promise<VerifiedRuntimeExecutable> => {
+			resolveManaged: vi.fn(async (): Promise<VerifiedRuntimeLaunch> => {
 				throw new Error('managed installation is disabled');
 			}),
 		};
@@ -148,13 +148,17 @@ describe('production OMP bootstrap', () => {
 		const resolver: ManagedRuntimeResolver = {
 			resolveSystem: vi.fn(async () => null),
 			managedInstallAllowed: vi.fn(() => true),
-			resolveManaged: vi.fn(
-				async (): Promise<VerifiedRuntimeExecutable> => ({
-					executable: '/verified/omp',
+			resolveManaged: vi.fn(async (): Promise<VerifiedRuntimeLaunch> => {
+				const launch: VerifiedRuntimeLaunch = {
+					executablePath: '/verified/omp',
+					prefixArgs: [],
+					fileIdentities: [{ canonicalPath: '/verified/omp', identity: 'verified-omp' }],
 					version: '16.4.8',
 					provenance: 'verified',
-				})
-			),
+					revalidateForLaunch: async () => launch,
+				};
+				return Object.freeze(launch);
+			}),
 		};
 		const bootstrap = createProductionOmpBootstrap({
 			pluginsDir: join(input.directory, 'plugins'),

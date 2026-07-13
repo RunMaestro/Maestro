@@ -172,7 +172,7 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		return activation;
 	}
 
-	private async resolveExecutable(): Promise<VerifiedRuntimeExecutable> {
+	private async resolveExecutable(): Promise<VerifiedRuntimeLaunch> {
 		const system = await this.deps.runtime.resolveSystem();
 		if (system) return assertVerifiedRuntime(system);
 		if (!this.deps.runtime.managedInstallAllowed()) {
