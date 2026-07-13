@@ -1,27 +1,38 @@
 import type { OmpPanelEventKind, OmpPanelRequestKind } from '../bridge/descriptor';
-import type { OmpComposerMode, OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from './types';
+import type { OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from './types';
 
 export type { OmpPanelEventKind, OmpPanelRequestKind } from '../bridge/descriptor';
 
 export interface OmpPanelResult {
-	kind: OmpPanelRequestKind;
-	requestId: string;
-	payload: unknown;
+	readonly kind: OmpPanelRequestKind;
+	readonly requestId: string;
+	readonly payload: unknown;
 }
 
 export interface OmpPanelEvent {
-	kind: OmpPanelEventKind;
-	eventSequence: bigint;
-	payload: unknown;
+	readonly kind: OmpPanelEventKind;
+	readonly eventSequence: bigint;
+	readonly payload: unknown;
 }
 
-/**
- * The panel's only runtime boundary. The host owns capability, instance, and
- * correlation routing; panel callers can issue only descriptor-declared kinds.
- */
+/** The panel's generation-capability-bound API; it never exposes raw runtime frames. */
 export interface OmpPanelPort {
 	request(kind: OmpPanelRequestKind, payload: Record<string, unknown>): Promise<OmpPanelResult>;
 	subscribe(kind: OmpPanelEventKind, listener: (event: OmpPanelEvent) => void): () => void;
+}
+
+export class OmpPanelCapabilityUnavailableError extends Error {
+	readonly code = 'capability_unavailable';
+
+	constructor(control: string) {
+		super(`OMP control ${control} is unavailable in this runtime.`);
+		this.name = 'OmpPanelCapabilityUnavailableError';
+	}
+}
+
+export interface OmpPanelControllerAdapter {
+	request(kind: OmpPanelRequestKind, payload: Record<string, unknown>): Promise<unknown>;
+	subscribe(kind: OmpPanelEventKind, listener: (payload: unknown) => void): () => void;
 }
 
 function isWorkspaceSnapshot(value: unknown): value is OmpWorkspaceSnapshot {
@@ -49,28 +60,40 @@ async function request(
 	return result.payload;
 }
 
-/** Adapts the frozen panel port to the workspace's intentionally narrow UI API. */
+/** Exposes all frozen named controls while keeping presentation callers off a generic transport. */
+export function createOmpPanelControllerAdapter(port: OmpPanelPort): OmpPanelControllerAdapter {
+	return {
+		request: (kind, payload) => request(port, kind, payload),
+		subscribe: (kind, listener) => port.subscribe(kind, (event) => listener(event.payload)),
+	};
+}
+
+/**
+ * Compatibility view used by the current presentation tree. Legacy UI concepts that
+ * have no §4.2 command intentionally reject with a typed visible-unavailable error.
+ */
 export function createOmpWorkspaceAdapter(port: OmpPanelPort): OmpWorkspaceAdapter {
+	const controller = createOmpPanelControllerAdapter(port);
 	return {
 		async getSnapshot() {
-			const payload = await request(port, 'omp.workspace.snapshot', {});
+			const payload = await controller.request('omp.commands.refresh', {});
 			if (!isWorkspaceSnapshot(payload))
-				throw new Error('OMP returned an invalid workspace snapshot.');
+				throw new Error('OMP returned an invalid workspace projection.');
 			return payload;
 		},
 		subscribe(listener) {
-			return port.subscribe('omp.workspace.snapshot', (event) => {
-				if (isWorkspaceSnapshot(event.payload)) listener(event.payload);
+			return controller.subscribe('omp.view.replace', (payload) => {
+				if (isWorkspaceSnapshot(payload)) listener(payload);
 			});
 		},
 		async selectSession(sessionId) {
-			await request(port, 'omp.session.select', { sessionId });
+			await controller.request('omp.session.select', { sessionId });
 		},
 		async createSession() {
-			await request(port, 'omp.session.create', {});
+			await controller.request('omp.session.create', {});
 		},
 		async sendMessage(sessionId, text, attachments) {
-			await request(port, 'omp.message.send', {
+			await controller.request('omp.prompt.send', {
 				sessionId,
 				text,
 				attachments: attachments.map((attachment) => ({
@@ -81,19 +104,26 @@ export function createOmpWorkspaceAdapter(port: OmpPanelPort): OmpWorkspaceAdapt
 			});
 		},
 		async abort(sessionId) {
-			await request(port, 'omp.session.abort', { sessionId });
+			await controller.request('omp.run.abort', { sessionId });
 		},
 		async setModel(sessionId, model) {
-			await request(port, 'omp.session.set-model', { sessionId, model });
+			const separator = model.indexOf('/');
+			if (separator <= 0 || separator === model.length - 1)
+				throw new OmpPanelCapabilityUnavailableError('omp.model.set');
+			await controller.request('omp.model.set', {
+				sessionId,
+				provider: model.slice(0, separator),
+				modelId: model.slice(separator + 1),
+			});
 		},
-		async setMode(sessionId, mode: OmpComposerMode) {
-			await request(port, 'omp.session.set-mode', { sessionId, mode });
+		async setMode() {
+			throw new OmpPanelCapabilityUnavailableError('composer mode');
 		},
-		async resolveApproval(sessionId, requestId, approved) {
-			await request(port, 'omp.approval.resolve', { sessionId, requestId, approved });
+		async resolveApproval() {
+			throw new OmpPanelCapabilityUnavailableError('approval resolution');
 		},
 		async retry() {
-			await request(port, 'omp.workspace.retry', {});
+			await controller.request('omp.commands.refresh', {});
 		},
 	};
 }
