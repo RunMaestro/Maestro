@@ -47,6 +47,7 @@ describe('OMP sterile launch profile', () => {
 			PI_NOTIFICATIONS: 'off',
 			ANTHROPIC_API_KEY: 'test-anthropic-key-12345',
 		});
+		expect(JSON.stringify(launch)).not.toContain('test-anthropic-key-12345');
 	});
 
 	it('rejects profile mutations that could register extensions, hooks, custom tools, MCP, or user config', async () => {
