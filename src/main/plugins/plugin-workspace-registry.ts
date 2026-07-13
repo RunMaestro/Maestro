@@ -11,6 +11,7 @@ import {
 	type WorkspaceContextChange,
 	type WorkspaceLinkResolution,
 	type WorkspaceLocalId,
+	type WorkspaceStatusSnapshot,
 } from '../../shared/plugins/workspace-foundation';
 import { captureException } from '../utils/sentry';
 
@@ -19,6 +20,7 @@ const TOKEN_SEED_PATTERN = /^[A-Za-z0-9_-]{22,60}$/;
 const INSTANCE_NONCE_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const MAX_TOKEN_EPOCH = 36 ** 8 - 1;
 const MAX_EXTERNAL_SESSION_TITLE_SCALARS = 160;
+const MAX_WORKSPACE_STATUS_LABEL_SCALARS = 160;
 const MAX_TOKEN_ATTEMPTS = 5;
 export const MAX_STALE_TOKENS_PER_WORKSPACE = 1_000;
 export const MAX_STALE_TOKENS_GLOBAL = 4_096;
@@ -37,6 +39,13 @@ const EXTERNAL_SESSION_STATUSES = new Set<ExternalSessionStatus>([
 	'failed',
 	'offline',
 ]);
+const WORKSPACE_STATUS_STATES: Record<WorkspaceStatusSnapshot['state'], true> = {
+	ready: true,
+	connecting: true,
+	degraded: true,
+	offline: true,
+	error: true,
+};
 
 declare const workspaceCapabilityBrand: unique symbol;
 
@@ -78,6 +87,8 @@ export type WorkspaceRegistryErrorCode =
 	| 'invalid_external_session'
 	| 'too_many_external_sessions'
 	| 'duplicate_external_session_id'
+	| 'invalid_workspace_status'
+	| 'invalid_workspace_badge'
 	| 'invalid_snapshot_token'
 	| 'token_collision'
 	| 'token_epoch_exhausted';
@@ -90,6 +101,33 @@ export class WorkspaceRegistryError extends Error {
 	}
 }
 
+export interface SelectedWorkspaceContext {
+	readonly ownerPluginId: string;
+	readonly workspaceLocalId: WorkspaceLocalId;
+	readonly snapshotToken: SnapshotToken;
+}
+
+export interface WorkspaceProjection {
+	readonly ownerPluginId: string;
+	readonly workspaceLocalId: WorkspaceLocalId;
+	readonly generation: bigint;
+	readonly projectionRevision: number;
+	readonly workspace: CanonicalWorkspaceFoundation['workspace'];
+	readonly panel: CanonicalWorkspaceFoundation['panel'];
+	readonly status: WorkspaceStatusSnapshot;
+	readonly badge: number | null;
+	readonly externalSessions: readonly PublishedExternalSession[];
+	readonly selectedSnapshotToken: SnapshotToken | null;
+	readonly selectedContext: SelectedWorkspaceContext | null;
+}
+
+export interface WorkspaceProjectionChange {
+	readonly ownerPluginId: string;
+	readonly workspaceLocalId: WorkspaceLocalId;
+	readonly projectionRevision: number;
+	readonly projection: WorkspaceProjection | null;
+}
+
 interface InternalWorkspace {
 	readonly key: string;
 	readonly ownerPluginId: string;
@@ -98,6 +136,9 @@ interface InternalWorkspace {
 	readonly workspace: CanonicalWorkspaceFoundation['workspace'];
 	readonly panel: CanonicalWorkspaceFoundation['panel'];
 	readonly revision: number;
+	readonly projectionRevision: number;
+	readonly status: WorkspaceStatusSnapshot;
+	readonly badge: number | null;
 	readonly sessions: readonly PublishedExternalSession[];
 	readonly selectedSnapshotToken: SnapshotToken | null;
 }
@@ -136,11 +177,13 @@ export class PluginWorkspaceRegistry {
 	private readonly capabilities = new WeakMap<object, CapabilityRecord>();
 	private readonly tokens = new Map<SnapshotToken, TokenRecord>();
 	private readonly contextListeners = new Set<(context: WorkspaceContextChange) => void>();
+	private readonly projectionListeners = new Set<(change: WorkspaceProjectionChange) => void>();
 	private readonly currentTokensByWorkspace = new Map<string, Set<SnapshotToken>>();
 	private readonly staleTokensByWorkspace = new Map<string, Map<SnapshotToken, true>>();
 	private readonly staleTokens = new Map<SnapshotToken, string>();
 	private readonly instanceNonce: string;
 	private tokenEpoch = 0;
+	private projectionRevision = 0;
 
 	constructor(private readonly options: PluginWorkspaceRegistryOptions) {
 		const instanceNonce = options.instanceNonce ?? randomBytes(12).toString('base64url');
@@ -159,16 +202,16 @@ export class PluginWorkspaceRegistry {
 		const key = workspaceKey(foundation.ownerPluginId, workspaceLocalId);
 		const existing = this.workspaces.get(key);
 		if (!existing) {
-			this.workspaces.set(key, createWorkspace(key, foundation, generation));
+			this.emitProjection(this.commitWorkspace(createWorkspace(key, foundation, generation)));
 			return;
 		}
 		if (generation < existing.generation) {
 			throw new WorkspaceRegistryError('stale_generation');
 		}
 		if (generation === existing.generation) {
-			this.workspaces.set(
-				key,
-				Object.freeze({
+			if (hasSameWorkspaceMetadata(existing, foundation)) return;
+			this.emitProjection(
+				this.commitWorkspace({
 					...existing,
 					workspace: freezeWorkspace(foundation.workspace),
 					panel: freezePanel(foundation.panel),
@@ -179,7 +222,8 @@ export class PluginWorkspaceRegistry {
 
 		const hadSelection = existing.selectedSnapshotToken !== null;
 		this.revokeWorkspaceTokens(existing);
-		this.workspaces.set(key, createWorkspace(key, foundation, generation));
+		const committed = this.commitWorkspace(createWorkspace(key, foundation, generation));
+		this.emitProjection(committed);
 		if (hadSelection) this.emitSelectionCleared(existing);
 	}
 
@@ -190,6 +234,13 @@ export class PluginWorkspaceRegistry {
 		const hadSelection = workspace.selectedSnapshotToken !== null;
 		this.revokeWorkspaceTokens(workspace);
 		this.workspaces.delete(workspace.key);
+		this.projectionRevision += 1;
+		this.emitProjectionChange(
+			workspace.ownerPluginId,
+			workspace.workspaceLocalId,
+			this.projectionRevision,
+			null
+		);
 		if (hadSelection) this.emitSelectionCleared(workspace);
 	}
 
@@ -234,7 +285,7 @@ export class PluginWorkspaceRegistry {
 			throw new WorkspaceRegistryError('too_many_external_sessions');
 		}
 
-		const nextSessions = this.mintPublishedSessions(workspace, validateSessions(snapshots));
+		const nextSessions = this.mintPublishedSessions(validateSessions(snapshots));
 		for (const prior of workspace.sessions) {
 			this.markTokenStale(prior.snapshotToken, 'expired');
 		}
@@ -255,15 +306,13 @@ export class PluginWorkspaceRegistry {
 		const selectionCleared =
 			workspace.selectedSnapshotToken !== null &&
 			!nextSessions.some((session) => session.snapshotToken === workspace.selectedSnapshotToken);
-		this.workspaces.set(
-			workspace.key,
-			Object.freeze({
-				...workspace,
-				revision,
-				sessions: nextSessions,
-				selectedSnapshotToken: selectionCleared ? null : workspace.selectedSnapshotToken,
-			})
-		);
+		const committed = this.commitWorkspace({
+			...workspace,
+			revision,
+			sessions: nextSessions,
+			selectedSnapshotToken: selectionCleared ? null : workspace.selectedSnapshotToken,
+		});
+		this.emitProjection(committed);
 		if (selectionCleared) this.emitSelectionCleared(workspace);
 		return cloneSessions(nextSessions);
 	}
@@ -271,17 +320,54 @@ export class PluginWorkspaceRegistry {
 	getWorkspace(ownerPluginId: string, workspaceLocalId: string): RegisteredWorkspace | null {
 		const workspace = this.workspaces.get(workspaceKey(ownerPluginId, workspaceLocalId));
 		if (!workspace) return null;
-		return {
+		return Object.freeze({
 			ownerPluginId: workspace.ownerPluginId,
 			workspaceLocalId: workspace.workspaceLocalId,
 			generation: workspace.generation,
-			workspace: { ...workspace.workspace },
-			panel: { ...workspace.panel },
-		};
+			workspace: freezeWorkspace(workspace.workspace),
+			panel: freezePanel(workspace.panel),
+		});
 	}
 
 	getExternalSessions(capability: WorkspaceCapability): readonly PublishedExternalSession[] {
 		return cloneSessions(this.resolveCapability(capability).sessions);
+	}
+
+	getProjection(ownerPluginId: string, workspaceLocalId: string): WorkspaceProjection | null {
+		const workspace = this.workspaces.get(workspaceKey(ownerPluginId, workspaceLocalId));
+		return workspace ? createWorkspaceProjection(workspace) : null;
+	}
+
+	getSelectedContext(
+		ownerPluginId: string,
+		workspaceLocalId: string
+	): SelectedWorkspaceContext | null {
+		const workspace = this.workspaces.get(workspaceKey(ownerPluginId, workspaceLocalId));
+		return workspace ? createSelectedWorkspaceContext(workspace) : null;
+	}
+
+	setStatus(capability: WorkspaceCapability, status: WorkspaceStatusSnapshot): void {
+		const workspace = this.resolveCapability(capability);
+		const nextStatus = validateWorkspaceStatus(status);
+		if (
+			workspace.status.state === nextStatus.state &&
+			workspace.status.label === nextStatus.label
+		) {
+			return;
+		}
+		this.emitProjection(this.commitWorkspace({ ...workspace, status: nextStatus }));
+	}
+
+	setBadge(capability: WorkspaceCapability, badge: number | null): void {
+		const workspace = this.resolveCapability(capability);
+		if (
+			badge !== null &&
+			(!Number.isFinite(badge) || !Number.isInteger(badge) || badge < 0 || badge > 9_999)
+		) {
+			throw new WorkspaceRegistryError('invalid_workspace_badge');
+		}
+		if (workspace.badge === badge) return;
+		this.emitProjection(this.commitWorkspace({ ...workspace, badge }));
 	}
 
 	setSelectedContext(capability: WorkspaceCapability, snapshotToken: string): void {
@@ -296,10 +382,12 @@ export class PluginWorkspaceRegistry {
 			return;
 		}
 
-		this.workspaces.set(
-			workspace.key,
-			Object.freeze({ ...workspace, selectedSnapshotToken: token.session.snapshotToken })
-		);
+		if (workspace.selectedSnapshotToken === token.session.snapshotToken) return;
+		const committed = this.commitWorkspace({
+			...workspace,
+			selectedSnapshotToken: token.session.snapshotToken,
+		});
+		this.emitProjection(committed);
 		this.emitContext(
 			Object.freeze({
 				kind: 'external-session-selected',
@@ -315,10 +403,23 @@ export class PluginWorkspaceRegistry {
 		return () => this.contextListeners.delete(listener);
 	}
 
+	onDidChangeProjection(listener: (change: WorkspaceProjectionChange) => void): () => void {
+		this.projectionListeners.add(listener);
+		return () => this.projectionListeners.delete(listener);
+	}
+
 	resolveWorkspaceLink(url: string): WorkspaceLinkResolution {
 		const parsed = parseWorkspaceLink(url);
 		if (!parsed) return { kind: 'syntax_invalid' };
 		return this.resolveParsedLink(parsed);
+	}
+
+	private commitWorkspace(workspace: InternalWorkspace): InternalWorkspace {
+		const projectionRevision = this.projectionRevision + 1;
+		this.projectionRevision = projectionRevision;
+		const committed = Object.freeze({ ...workspace, projectionRevision });
+		this.workspaces.set(committed.key, committed);
+		return committed;
 	}
 
 	private resolveCapability(capability: WorkspaceCapability): InternalWorkspace {
@@ -357,7 +458,6 @@ export class PluginWorkspaceRegistry {
 	}
 
 	private mintPublishedSessions(
-		workspace: InternalWorkspace,
 		validatedSessions: readonly ValidatedSession[]
 	): readonly PublishedExternalSession[] {
 		const stagedTokens = new Set<SnapshotToken>();
@@ -474,6 +574,39 @@ export class PluginWorkspaceRegistry {
 		);
 	}
 
+	private emitProjection(workspace: InternalWorkspace): void {
+		this.emitProjectionChange(
+			workspace.ownerPluginId,
+			workspace.workspaceLocalId,
+			workspace.projectionRevision,
+			createWorkspaceProjection(workspace)
+		);
+	}
+
+	private emitProjectionChange(
+		ownerPluginId: string,
+		workspaceLocalId: WorkspaceLocalId,
+		projectionRevision: number,
+		projection: WorkspaceProjection | null
+	): void {
+		const change = Object.freeze({
+			ownerPluginId,
+			workspaceLocalId,
+			projectionRevision,
+			projection,
+		});
+		const listeners = [...this.projectionListeners];
+		for (const listener of listeners) {
+			try {
+				listener(change);
+			} catch (error) {
+				void captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { scope: 'PluginWorkspaceRegistry.emitProjectionChange' },
+				});
+			}
+		}
+	}
+
 	private emitContext(context: WorkspaceContextChange): void {
 		const listeners = [...this.contextListeners];
 		for (const listener of listeners) {
@@ -528,6 +661,9 @@ function createWorkspace(
 		workspace: freezeWorkspace(foundation.workspace),
 		panel: freezePanel(foundation.panel),
 		revision: -1,
+		projectionRevision: 0,
+		status: Object.freeze({ state: 'ready', label: '' }),
+		badge: null,
 		sessions: Object.freeze([]),
 		selectedSnapshotToken: null,
 	});
@@ -543,6 +679,94 @@ function freezePanel(
 	panel: CanonicalWorkspaceFoundation['panel']
 ): CanonicalWorkspaceFoundation['panel'] {
 	return Object.freeze({ ...panel });
+}
+
+function hasSameWorkspaceMetadata(
+	workspace: InternalWorkspace,
+	foundation: CanonicalWorkspaceFoundation
+): boolean {
+	const nextWorkspace = foundation.workspace;
+	const nextPanel = foundation.panel;
+	return (
+		workspace.workspace.localId === nextWorkspace.localId &&
+		workspace.workspace.canonicalContributionId === nextWorkspace.canonicalContributionId &&
+		workspace.workspace.title === nextWorkspace.title &&
+		workspace.workspace.icon === nextWorkspace.icon &&
+		workspace.workspace.panelLocalId === nextWorkspace.panelLocalId &&
+		workspace.workspace.order === nextWorkspace.order &&
+		workspace.panel.localId === nextPanel.localId &&
+		workspace.panel.canonicalContributionId === nextPanel.canonicalContributionId &&
+		workspace.panel.title === nextPanel.title &&
+		workspace.panel.entry === nextPanel.entry
+	);
+}
+
+function createWorkspaceProjection(workspace: InternalWorkspace): WorkspaceProjection {
+	const selectedContext = createSelectedWorkspaceContext(workspace);
+	return Object.freeze({
+		ownerPluginId: workspace.ownerPluginId,
+		workspaceLocalId: workspace.workspaceLocalId,
+		generation: workspace.generation,
+		projectionRevision: workspace.projectionRevision,
+		workspace: freezeWorkspace(workspace.workspace),
+		panel: freezePanel(workspace.panel),
+		status: Object.freeze({ ...workspace.status }),
+		badge: workspace.badge,
+		externalSessions: Object.freeze(
+			workspace.sessions.map((session) => Object.freeze(cloneSession(session)))
+		),
+		selectedSnapshotToken: workspace.selectedSnapshotToken,
+		selectedContext,
+	});
+}
+
+function createSelectedWorkspaceContext(
+	workspace: InternalWorkspace
+): SelectedWorkspaceContext | null {
+	const snapshotToken = workspace.selectedSnapshotToken;
+	if (!snapshotToken) return null;
+	return Object.freeze({
+		ownerPluginId: workspace.ownerPluginId,
+		workspaceLocalId: workspace.workspaceLocalId,
+		snapshotToken,
+	});
+}
+
+function validateWorkspaceStatus(status: unknown): WorkspaceStatusSnapshot {
+	if (!isPlainObject(status)) throw new WorkspaceRegistryError('invalid_workspace_status');
+	const state = readOwnDataProperty(status, 'state');
+	const label = readOwnDataProperty(status, 'label');
+	if (
+		typeof state !== 'string' ||
+		!Object.prototype.hasOwnProperty.call(WORKSPACE_STATUS_STATES, state) ||
+		typeof label !== 'string' ||
+		!isValidWorkspaceStatusLabel(label)
+	) {
+		throw new WorkspaceRegistryError('invalid_workspace_status');
+	}
+	return Object.freeze({ state: state as WorkspaceStatusSnapshot['state'], label });
+}
+
+function isValidWorkspaceStatusLabel(label: string): boolean {
+	let scalarCount = 0;
+	for (let index = 0; index < label.length; index += 1) {
+		const codeUnit = label.charCodeAt(index);
+		if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+			if (
+				index + 1 >= label.length ||
+				label.charCodeAt(index + 1) < 0xdc00 ||
+				label.charCodeAt(index + 1) > 0xdfff
+			) {
+				return false;
+			}
+			index += 1;
+		} else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+			return false;
+		}
+		scalarCount += 1;
+		if (scalarCount > MAX_WORKSPACE_STATUS_LABEL_SCALARS) return false;
+	}
+	return true;
 }
 
 function validateSessions(snapshots: readonly unknown[]): readonly ValidatedSession[] {

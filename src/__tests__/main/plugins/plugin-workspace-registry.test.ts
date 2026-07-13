@@ -903,6 +903,153 @@ describe('PluginWorkspaceRegistry selected context', () => {
 	});
 });
 
+describe('PluginWorkspaceRegistry workspace projections', () => {
+	it('commits and emits frozen projections for status, badge, sessions, and selected context', () => {
+		const harness = createHarness();
+		const changes: Array<unknown> = [];
+		harness.registry.onDidChangeProjection((change) => {
+			changes.push(change);
+		});
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		const initialProjection = harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+		expect(initialProjection).not.toBeNull();
+		expect(changes).toHaveLength(1);
+
+		harness.registry.setStatus(capability, { state: 'connecting', label: 'Syncing OMP' });
+		harness.registry.setStatus(capability, { state: 'connecting', label: 'Syncing OMP' });
+		harness.registry.setBadge(capability, 3);
+		harness.registry.setBadge(capability, 3);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		harness.registry.setSelectedContext(capability, snapshotToken);
+		harness.registry.setSelectedContext(capability, snapshotToken);
+
+		const projection = harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+		expect(projection).toMatchObject({
+			ownerPluginId: OWNER_PLUGIN_ID,
+			workspaceLocalId: WORKSPACE_LOCAL_ID,
+			projectionRevision: 5,
+			status: { state: 'connecting', label: 'Syncing OMP' },
+			badge: 3,
+			selectedSnapshotToken: snapshotToken,
+			selectedContext: {
+				ownerPluginId: OWNER_PLUGIN_ID,
+				workspaceLocalId: WORKSPACE_LOCAL_ID,
+				snapshotToken,
+			},
+			externalSessions: [{ snapshotToken, externalSessionId: 'session-1' }],
+		});
+		expect(changes).toHaveLength(5);
+		expect(Object.isFrozen(projection)).toBe(true);
+		expect(Object.isFrozen(projection?.status)).toBe(true);
+		expect(Object.isFrozen(projection?.externalSessions)).toBe(true);
+		expect(Object.isFrozen(projection?.externalSessions[0])).toBe(true);
+		expect(Object.isFrozen(projection?.selectedContext)).toBe(true);
+		expect(harness.registry.getSelectedContext(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)).toEqual(
+			projection?.selectedContext
+		);
+	});
+
+	it('rejects invalid status labels and badges without changing the committed projection', () => {
+		const harness = createHarness();
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.setStatus(capability, { state: 'ready', label: 'Ready' });
+		harness.registry.setBadge(capability, 1);
+		const before = harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+
+		for (const status of [
+			{ state: 'unknown', label: 'Unknown' },
+			{ state: 'ready', label: 'x'.repeat(161) },
+			{ state: 'ready', label: '\ud800' },
+		]) {
+			expectRegistryError(
+				() => harness.registry.setStatus(capability, status as never),
+				'invalid_workspace_status'
+			);
+		}
+		for (const badge of [-1, 1.5, Number.POSITIVE_INFINITY, 10_000]) {
+			expectRegistryError(
+				() => harness.registry.setBadge(capability, badge),
+				'invalid_workspace_badge'
+			);
+		}
+
+		expect(harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)).toEqual(before);
+	});
+
+	it('notifies coherent post-commit snapshots for rotation, selection clearing, and unregister', () => {
+		const harness = createHarness();
+		const changes: Array<{
+			readonly ownerPluginId: string;
+			readonly workspaceLocalId: string;
+			readonly projectionRevision: number;
+			readonly projection: unknown;
+		}> = [];
+		harness.registry.onDidChangeProjection((change) => {
+			changes.push(change);
+			expect(harness.registry.getProjection(change.ownerPluginId, change.workspaceLocalId)).toEqual(
+				change.projection
+			);
+		});
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		harness.registry.setSelectedContext(capability, snapshotToken);
+		harness.registry.publishExternalSessions(capability, 2, [externalSession('session-2')]);
+		harness.registry.register(parsedFoundation(), 2n);
+		harness.registry.unregister(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+
+		expect(changes).toHaveLength(6);
+		expect(changes.at(-2)).toMatchObject({
+			projectionRevision: 5,
+			projection: { generation: 2n, externalSessions: [] },
+		});
+		expect(changes.at(-1)).toMatchObject({
+			ownerPluginId: OWNER_PLUGIN_ID,
+			workspaceLocalId: WORKSPACE_LOCAL_ID,
+			projectionRevision: 6,
+			projection: null,
+		});
+	});
+
+	it('isolates throwing projection listeners and permits reentrant mutations after commit', () => {
+		const harness = createHarness();
+		let laterListenerCalls = 0;
+		let reentered = false;
+		harness.registry.onDidChangeProjection(() => {
+			throw new Error('projection listener failure');
+		});
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.onDidChangeProjection((change) => {
+			laterListenerCalls += 1;
+			if (
+				!reentered &&
+				change.projection?.status.state === 'connecting' &&
+				harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)?.badge === null
+			) {
+				reentered = true;
+				harness.registry.setBadge(capability, 9);
+			}
+		});
+
+		expect(() =>
+			harness.registry.setStatus(capability, { state: 'connecting', label: 'Connecting' })
+		).not.toThrow();
+		expect(laterListenerCalls).toBe(2);
+		expect(harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)).toMatchObject({
+			projectionRevision: 3,
+			status: { state: 'connecting', label: 'Connecting' },
+			badge: 9,
+		});
+	});
+});
+
 describe('workspace link parsing and resolution', () => {
 	it('parses underscore and hyphen opaque tokens as syntax only', () => {
 		const underscoreToken = 'Ab9_KLMNopQRsTuvWxyZ12';
