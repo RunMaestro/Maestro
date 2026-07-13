@@ -49,6 +49,10 @@ import {
 	isPackedPluginArchivePath,
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
+import {
+	type OmpArchiveInstallRequest,
+	type OmpPluginTrustRootService,
+} from './plugin-trust-root-service';
 
 const MANIFEST_FILENAME = 'plugin.json';
 
@@ -84,6 +88,11 @@ export interface PluginManagerDeps {
 	/** Trusted publisher public keys (base64) for signature verification. */
 	trustedKeys?: () => string[];
 	/** Optional sandbox controller for running tier-1 plugin code. */
+	/**
+	 * The single verifier/promoter for signed first-party OMP archives. It is
+	 * injected only by bootstrap wiring after a compiled trust root is available.
+	 */
+	ompArchiveInstaller?: Pick<OmpPluginTrustRootService, 'installOrUpdateArchive'>;
 	sandbox?: PluginSandboxLifecycle;
 	/** Owner-bound workspace registrations revoked before runtime stop. */
 	workspaceRuntime?: PluginWorkspaceLifecycle;
@@ -518,9 +527,38 @@ export class PluginManager {
 	 * reject traversal/link entries before writing, then use the same directory
 	 * install path so manifest validation and symlink checks stay centralized.
 	 */
+	/**
+	 * Install or update the first-party OMP archive through the sole immutable
+	 * trust-root operation. The legacy path-based install API deliberately cannot
+	 * accept this artifact because it has no published digest argument.
+	 */
+	installOrUpdateArchive(request: OmpArchiveInstallRequest): InstallResult {
+		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+		if (!this.deps.ompArchiveInstaller) {
+			return {
+				success: false,
+				error: 'OMP archive installation is unavailable without immutable trust-root wiring',
+			};
+		}
+		try {
+			const result = this.deps.ompArchiveInstaller.installOrUpdateArchive(request);
+			this.refresh();
+			const record = this.registry.records.find((candidate) => candidate.id === result.manifest.id);
+			return { success: true, ...(record ? { record } : {}) };
+		} catch (error) {
+			return { success: false, error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
 	install(sourcePath: string): InstallResult {
 		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
 		const resolvedSource = path.resolve(sourcePath);
+		if (resolvedSource.endsWith('.omp-plugin.json')) {
+			return {
+				success: false,
+				error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
+			};
+		}
 		if (!isPackedPluginArchivePath(resolvedSource)) {
 			return this.installDirectory(resolvedSource);
 		}
