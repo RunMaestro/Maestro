@@ -80,6 +80,7 @@ export class OmpRpcClient {
 	private stdoutBuffer = Buffer.alloc(0);
 	private requestNumber = 0;
 	private readyTimer: ReturnType<typeof setTimeout> | undefined;
+	private lastRuntimeSequence: number | undefined;
 	private readonly detachTransportListeners: readonly (() => void)[];
 
 	constructor(
@@ -247,6 +248,7 @@ export class OmpRpcClient {
 			return;
 		}
 		if (hasOwn(eventTypeLookup, raw.type)) {
+			if (!this.acceptRuntimeSequence(raw)) return;
 			const event: OmpRpcEvent = { ...raw, type: raw.type };
 			for (const listener of this.eventListeners) listener(event);
 			return;
@@ -260,6 +262,23 @@ export class OmpRpcClient {
 		this.fail(
 			new OmpProtocolError(`OMP emitted unknown protocol frame type ${JSON.stringify(raw.type)}`)
 		);
+	}
+
+	private acceptRuntimeSequence(raw: Record<string, unknown>): boolean {
+		if (!('sequence' in raw)) return true;
+		if (!Number.isSafeInteger(raw.sequence) || (raw.sequence as number) < 0) {
+			this.fail(new OmpProtocolError('OMP emitted an invalid runtime event sequence'));
+			return false;
+		}
+		if (
+			this.lastRuntimeSequence !== undefined &&
+			(raw.sequence as number) <= this.lastRuntimeSequence
+		) {
+			this.fail(new OmpProtocolError('OMP emitted an out-of-order runtime event sequence'));
+			return false;
+		}
+		this.lastRuntimeSequence = raw.sequence as number;
+		return true;
 	}
 
 	private dispatchResponse(raw: Record<string, unknown>): void {

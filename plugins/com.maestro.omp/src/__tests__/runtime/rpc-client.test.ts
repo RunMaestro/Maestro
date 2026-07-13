@@ -102,6 +102,16 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 		expect(seen).toEqual(['agent_start', 'message_update']);
 	});
 
+	it('fails the generation for an out-of-order explicit runtime sequence', async () => {
+		const { client, transport, ready } = readyClient();
+		await ready;
+
+		transport.stdout('{"type":"agent_start","sequence":2}\n');
+		transport.stdout('{"type":"agent_end","sequence":1}\n');
+
+		expect(client.status).toBe('failed');
+	});
+
 	it('rejects a cancelled command and removes its pending correlation without killing the owned process', async () => {
 		const { client, ready } = readyClient();
 		await ready;
