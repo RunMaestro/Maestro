@@ -41,8 +41,8 @@ export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePlugi
 			readFile(resolve(root, 'plugin.json')),
 			readFile(resolve(root, DESCRIPTOR_METADATA_FILE)),
 			readDescriptor(root),
-			bundleEntry(resolve(root, RUNTIME_ENTRY), 'neutral', 'maestroOmpPlugin'),
-			bundleEntry(resolve(root, PANEL_ENTRY), 'browser'),
+			bundleEntry(resolve(root, RUNTIME_ENTRY), 'neutral', 'cjs'),
+			bundleEntry(resolve(root, PANEL_ENTRY), 'browser', 'iife'),
 		]);
 	const manifest = rewriteManifest(manifestBytes);
 	const metadata = parseArtifactBuildMetadata(metadataBytes);
@@ -81,13 +81,13 @@ async function readDescriptor(root: string): Promise<Buffer> {
 async function bundleEntry(
 	entryPoint: string,
 	platform: 'browser' | 'neutral',
-	globalName?: string
+	format: 'cjs' | 'iife'
 ): Promise<BundledEntry> {
 	const result = await build({
 		bundle: true,
 		entryNames: 'bundle',
 		entryPoints: [entryPoint],
-		globalName,
+		format,
 		legalComments: 'none',
 		minify: false,
 		outdir: 'dist',
@@ -101,7 +101,7 @@ async function bundleEntry(
 	const css = result.outputFiles.find((file) => file.path.endsWith('.css'));
 	return {
 		javaScript: Buffer.from(
-			(await transform(javaScript.contents, { format: 'iife', globalName, target: 'es2020' })).code
+			(await transform(javaScript.contents, { format, target: 'es2020' })).code
 		),
 		css: css ? Buffer.from(css.contents) : Buffer.alloc(0),
 	};

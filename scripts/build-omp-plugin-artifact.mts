@@ -6,6 +6,7 @@ import {
 	buildPluginArtifact,
 	type ImmutableTrustRoot,
 } from '../src/main/omp-distribution/plugin-artifact';
+import { assertPackerGate } from '../src/main/omp-distribution/production-packer-gate';
 
 interface BuiltManifestIdentity {
 	id: string;
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
 	const signature = requiredOption(options, 'signature');
 	const bundledOutput = resolve(requiredOption(options, 'bundled-output'));
 	const installableOutput = resolve(requiredOption(options, 'installable-output'));
+	const fixture = options.fixture === 'true';
 	const bundle = await bundleOmpPlugin(pluginRoot);
 	const manifest = parseBuiltManifest(
 		bundle.files.find((file) => file.path === 'plugin.json')?.content
@@ -43,9 +45,17 @@ async function main(): Promise<void> {
 	]);
 	if (!bundled.equals(installable))
 		throw new Error('bundled and installable plugin artifacts differ');
-	process.stdout.write(
-		`${JSON.stringify({ bytes: artifact.length, sha256: createHash('sha256').update(artifact).digest('hex') })}\n`
-	);
+	const sha256 = createHash('sha256').update(artifact).digest('hex');
+	assertPackerGate({
+		fixture,
+		trustRoot,
+		signature,
+		expectedSha256: options['expected-sha256'],
+		actualSha256: sha256,
+		outputPaths: [bundledOutput, installableOutput],
+		trustRootPath: requiredOption(options, 'trust-root'),
+	});
+	process.stdout.write(`${JSON.stringify({ bytes: artifact.length, sha256 })}\n`);
 }
 
 function parseOptions(args: string[]): Record<string, string> {

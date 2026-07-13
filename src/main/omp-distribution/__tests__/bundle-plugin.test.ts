@@ -32,16 +32,18 @@ describe('runnable OMP plugin package', () => {
 		);
 		const sandbox = {
 			console: { log() {}, error() {} },
-			maestroOmpPlugin: undefined as unknown,
+			module: { exports: {} as Record<string, unknown> },
+			exports: {} as Record<string, unknown>,
 		};
 		expect(() =>
 			new Script(
 				Buffer.from(filesByPath.get('dist/runtime.js') ?? '').toString('utf8')
 			).runInNewContext(sandbox)
 		).not.toThrow();
-		expect(sandbox.maestroOmpPlugin).toMatchObject({
+		expect(sandbox.module.exports).toMatchObject({
 			activate: expect.any(Function),
 			startFromExplicitPanelAction: expect.any(Function),
+			deactivate: expect.any(Function),
 		});
 		expect(Buffer.from(filesByPath.get('dist/panel.html') ?? '').toString('utf8')).toContain(
 			'src="./panel.js"'
