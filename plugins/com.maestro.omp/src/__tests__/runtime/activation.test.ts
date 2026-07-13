@@ -142,7 +142,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 							id: frame.id,
 							command: 'get_available_commands',
 							success: true,
-							data: { commands: ['new_session'] },
+							data: { commands: [{ name: 'help', description: 'Show slash commands' }] },
 						});
 					}
 					if (frame.type === 'get_available_models') {

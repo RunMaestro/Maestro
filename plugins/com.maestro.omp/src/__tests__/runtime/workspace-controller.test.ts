@@ -56,13 +56,24 @@ describe('OmpWorkspaceController', () => {
 		for (let index = 0; index < 5; index++) {
 			const frame = JSON.parse(transport.writes[index] ?? '') as { id: string; type: string };
 			transport.stdout(
-				`{"id":"${frame.id}","type":"response","command":"${frame.type}","success":true,"data":${frame.type === 'get_state' ? JSON.stringify(sessionState()) : frame.type === 'get_available_commands' ? '{"commands":["prompt","new_session"]}' : '{"models":[]}'}}\n`
+				`{"id":"${frame.id}","type":"response","command":"${frame.type}","success":true,"data":${frame.type === 'get_state' ? JSON.stringify(sessionState()) : frame.type === 'get_available_commands' ? '{"commands":[{"name":"help","description":"Show available slash commands","aliases":["h"]}]}' : '{"models":[]}'}}\n`
 			);
 		}
 
 		await initialized;
 		expect(controller.state).toBe('ready');
 		expect(controller.selectedSessionId).toBe('s-1');
-		expect(controller.availableCommands).toEqual(['prompt', 'new_session']);
+		expect(controller.availableCommands).toEqual([
+			{ name: 'help', description: 'Show available slash commands', aliases: ['h'] },
+		]);
+
+		const prompt = controller.command({ type: 'prompt', message: 'continue' });
+		await Promise.resolve();
+		const frame = JSON.parse(transport.writes[5] ?? '') as { id: string; type: string };
+		expect(frame.type).toBe('prompt');
+		transport.stdout(
+			`{"id":"${frame.id}","type":"prompt_result","success":true,"result":{"text":"done"}}\n`
+		);
+		await expect(prompt).resolves.toMatchObject({ command: 'prompt', success: true });
 	});
 });

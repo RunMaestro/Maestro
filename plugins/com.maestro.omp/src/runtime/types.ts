@@ -125,6 +125,13 @@ export interface OmpSessionState {
 	readonly [key: string]: unknown;
 }
 
+/** OMP slash-command metadata is presentation-only; it does not authorize RPC methods. */
+export interface OmpAvailableSlashCommand {
+	readonly name: string;
+	readonly description?: string;
+	readonly aliases?: readonly string[];
+}
+
 export type OmpRpcEventType =
 	| 'agent_start'
 	| 'agent_end'

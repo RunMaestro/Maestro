@@ -1,5 +1,6 @@
 import { OmpProtocolError, OmpRpcClient, type OmpCommandOptions } from './rpc-client';
 import type {
+	OmpAvailableSlashCommand,
 	OmpHostToolDefinition,
 	OmpHostUriSchemeDefinition,
 	OmpInboundCallback,
@@ -17,11 +18,12 @@ export interface OmpOpaqueHostBrokers {
 	readonly tools: {
 		call(request: {
 			readonly id: string;
-			readonly name: unknown;
-			readonly payload: unknown;
+			readonly toolCallId: string;
+			readonly toolName: string;
+			readonly arguments: unknown;
 			readonly signal?: AbortSignal;
 		}): Promise<unknown>;
-		cancel(id: unknown): void;
+		cancel(targetId: string): void;
 	};
 }
 
@@ -37,7 +39,7 @@ export interface OmpWorkspaceControllerSetup {
 export class OmpWorkspaceController {
 	private stateValue: OmpWorkspaceControllerState = 'starting';
 	private latestState: OmpSessionState | undefined;
-	private availableCommandValues: readonly string[] = [];
+	private availableCommandValues: readonly OmpAvailableSlashCommand[] = [];
 	private availableModelValues: readonly unknown[] = [];
 	private selectionTail: Promise<void> = Promise.resolve();
 	private readonly activeToolCalls = new Map<string, AbortController>();
@@ -64,7 +66,7 @@ export class OmpWorkspaceController {
 		return this.latestState?.sessionId;
 	}
 
-	get availableCommands(): readonly string[] {
+	get availableCommands(): readonly OmpAvailableSlashCommand[] {
 		return this.availableCommandValues;
 	}
 
@@ -111,15 +113,6 @@ export class OmpWorkspaceController {
 			return Promise.reject(
 				new OmpProtocolError(`OMP workspace is not ready (${this.stateValue})`)
 			);
-		}
-		if (
-			this.availableCommandValues.length > 0 &&
-			!this.availableCommandValues.includes(command.type) &&
-			command.type !== 'get_state' &&
-			command.type !== 'get_available_commands' &&
-			command.type !== 'get_available_models'
-		) {
-			return Promise.reject(new OmpProtocolError(`OMP command ${command.type} is unavailable`));
 		}
 		if (
 			isSelectionMutation(command.type) ||
@@ -175,15 +168,10 @@ export class OmpWorkspaceController {
 	}
 
 	private acceptAvailableCommands(response: OmpRpcResponse): void {
-		if (
-			!response.success ||
-			!isRecord(response.data) ||
-			!Array.isArray(response.data.commands) ||
-			!response.data.commands.every((value) => typeof value === 'string')
-		) {
+		if (!response.success || !isRecord(response.data) || !Array.isArray(response.data.commands)) {
 			throw new OmpProtocolError('OMP get_available_commands response was invalid');
 		}
-		this.availableCommandValues = Object.freeze([...response.data.commands]);
+		this.availableCommandValues = projectSlashCommands(response.data.commands);
 	}
 
 	private acceptAvailableModels(response: OmpRpcResponse): void {
@@ -195,13 +183,8 @@ export class OmpWorkspaceController {
 	}
 
 	private acceptCallbackProjection(callback: OmpOutboundCallback): void {
-		if (
-			callback.type !== 'available_commands_update' ||
-			!Array.isArray(callback.commands) ||
-			!callback.commands.every((value) => typeof value === 'string')
-		)
-			return;
-		this.availableCommandValues = Object.freeze([...callback.commands]);
+		if (callback.type !== 'available_commands_update' || !Array.isArray(callback.commands)) return;
+		this.availableCommandValues = projectSlashCommands(callback.commands);
 	}
 
 	private async handleHostCallback(callback: OmpOutboundCallback): Promise<void> {
@@ -217,15 +200,14 @@ export class OmpWorkspaceController {
 		}
 		if (callback.type === 'host_uri_cancel') return;
 		if (callback.type === 'host_tool_cancel') {
-			if (typeof callback.id === 'string') {
-				this.activeToolCalls.get(callback.id)?.abort();
-				this.setup.brokers?.tools.cancel(callback.id);
-			}
+			if (!isHostToolCancel(callback)) return;
+			this.activeToolCalls.get(callback.targetId)?.abort();
+			this.setup.brokers?.tools.cancel(callback.targetId);
 			return;
 		}
-		if (callback.type !== 'host_tool_call' || typeof callback.id !== 'string') return;
+		if (callback.type !== 'host_tool_call' || !isHostToolCall(callback)) return;
 		const broker = this.setup.brokers;
-		if (!broker || this.activeToolCalls.has(callback.id)) {
+		if (!broker || this.activeToolCalls.has(callback.toolCallId)) {
 			await this.respond({
 				type: 'host_tool_result',
 				id: callback.id,
@@ -235,12 +217,13 @@ export class OmpWorkspaceController {
 			return;
 		}
 		const abort = new AbortController();
-		this.activeToolCalls.set(callback.id, abort);
+		this.activeToolCalls.set(callback.toolCallId, abort);
 		try {
 			const result = await broker.tools.call({
 				id: callback.id,
-				name: callback.name,
-				payload: callback.payload,
+				toolCallId: callback.toolCallId,
+				toolName: callback.toolName,
+				arguments: callback.arguments,
 				signal: abort.signal,
 			});
 			await this.respond({ type: 'host_tool_result', id: callback.id, result }).catch(
@@ -254,7 +237,7 @@ export class OmpWorkspaceController {
 				isError: true,
 			}).catch(() => undefined);
 		} finally {
-			this.activeToolCalls.delete(callback.id);
+			this.activeToolCalls.delete(callback.toolCallId);
 		}
 	}
 }
@@ -285,4 +268,48 @@ function isSessionState(value: unknown): value is OmpSessionState {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isHostToolCall(callback: OmpOutboundCallback): callback is OmpOutboundCallback & {
+	readonly type: 'host_tool_call';
+	readonly id: string;
+	readonly toolCallId: string;
+	readonly toolName: string;
+	readonly arguments: unknown;
+} {
+	return (
+		typeof callback.id === 'string' &&
+		typeof callback.toolCallId === 'string' &&
+		typeof callback.toolName === 'string' &&
+		'arguments' in callback
+	);
+}
+
+function isHostToolCancel(
+	callback: OmpOutboundCallback
+): callback is OmpOutboundCallback & {
+	readonly type: 'host_tool_cancel';
+	readonly targetId: string;
+} {
+	return typeof callback.targetId === 'string';
+}
+
+function projectSlashCommands(values: readonly unknown[]): readonly OmpAvailableSlashCommand[] {
+	const projected = values.map((value) => {
+		if (!isRecord(value) || typeof value.name !== 'string' || value.name.length === 0)
+			throw new OmpProtocolError('OMP slash command metadata was invalid');
+		if (value.description !== undefined && typeof value.description !== 'string')
+			throw new OmpProtocolError('OMP slash command description was invalid');
+		if (
+			value.aliases !== undefined &&
+			(!Array.isArray(value.aliases) || !value.aliases.every((alias) => typeof alias === 'string'))
+		)
+			throw new OmpProtocolError('OMP slash command aliases were invalid');
+		return Object.freeze({
+			name: value.name,
+			...(typeof value.description === 'string' ? { description: value.description } : {}),
+			...(Array.isArray(value.aliases) ? { aliases: Object.freeze([...value.aliases]) } : {}),
+		});
+	});
+	return Object.freeze(projected);
 }

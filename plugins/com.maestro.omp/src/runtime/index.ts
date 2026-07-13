@@ -22,6 +22,7 @@ export {
 } from './rpc-client';
 export { OmpWorkspaceController } from './workspace-controller';
 export type {
+	OmpAvailableSlashCommand,
 	OmpCommandType,
 	OmpExtensionUiMethod,
 	OmpHostToolDefinition,
