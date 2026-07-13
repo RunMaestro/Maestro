@@ -388,7 +388,7 @@ function validateWorkspaces(
 				? {
 						localId: localId as string,
 						title: title as string,
-						icon,
+						icon: icon as WorkspaceIcon,
 						panelLocalId: panelLocalId as string,
 						order,
 					}
@@ -604,7 +604,7 @@ export function parseWorkspaceLink(url: string): ParsedWorkspaceLink | null {
 		return {
 			pluginId,
 			workspaceLocalId: workspaceLocalId as WorkspaceLocalId,
-			snapshotToken,
+			snapshotToken: snapshotToken as SnapshotToken,
 		};
 	} catch {
 		return null;

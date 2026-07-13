@@ -372,6 +372,19 @@ describe('PluginWorkspaceRegistry capability acquisition', () => {
 		expectRegistryError(() => harness.registry.acquire(context, localId), 'capability_unavailable');
 	});
 
+	it.each([null, undefined, {}, { ownerPluginId: OWNER_PLUGIN_ID }])(
+		'rejects malformed owner context without throwing a native error',
+		(context) => {
+			const harness = createHarness();
+			registerCurrent(harness);
+
+			expectRegistryError(
+				() => harness.registry.acquire(context as never, WORKSPACE_LOCAL_ID),
+				'capability_unavailable'
+			);
+		}
+	);
+
 	it('issues a capability only for the current trusted owner with both paired grants', () => {
 		const harness = createHarness();
 		registerCurrent(harness);
@@ -422,6 +435,7 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 				unread: 9_999,
 				pendingApproval: true,
 			}),
+			externalSession('fractional-updated-at', { updatedAt: 0.5 }),
 		]);
 
 		expect(publishedSessions(harness, capability)).toMatchObject([
@@ -432,6 +446,7 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 				unread: 9_999,
 				pendingApproval: true,
 			},
+			{ externalSessionId: 'fractional-updated-at', updatedAt: 0.5 },
 		]);
 	});
 
@@ -689,6 +704,28 @@ describe('PluginWorkspaceRegistry selected context', () => {
 			ownerPluginId: OWNER_PLUGIN_ID,
 			workspaceLocalId: WORKSPACE_LOCAL_ID,
 		});
+	});
+
+	it('clears a dropped selected snapshot once after committing a replacement revision', () => {
+		const harness = createHarness();
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		harness.registry.setSelectedContext(capability, snapshotToken);
+		const eventCount = harness.selectedContexts.length;
+
+		harness.registry.publishExternalSessions(capability, 2, [externalSession('session-2')]);
+
+		expect(harness.selectedContexts.slice(eventCount)).toEqual([
+			{
+				kind: 'selection-cleared',
+				ownerPluginId: OWNER_PLUGIN_ID,
+				workspaceLocalId: WORKSPACE_LOCAL_ID,
+			},
+		]);
+		expect(Object.isFrozen(harness.selectedContexts.at(-1))).toBe(true);
 	});
 
 	it('preserves selected context and emits no event for unknown or stale snapshot tokens', () => {

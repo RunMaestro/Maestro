@@ -2,7 +2,6 @@ import {
 	MAX_EXTERNAL_SESSIONS_PER_WORKSPACE,
 	parseWorkspaceLink,
 	type CanonicalWorkspaceFoundation,
-	type ExternalSessionSnapshot,
 	type ExternalSessionStatus,
 	type ParsedWorkspaceLink,
 	type PublishedExternalSession,
@@ -59,10 +58,22 @@ export interface RegisteredWorkspace {
 	readonly panel: CanonicalWorkspaceFoundation['panel'];
 }
 
+export type WorkspaceRegistryErrorCode =
+	| 'invalid_workspace'
+	| 'stale_generation'
+	| 'capability_unavailable'
+	| 'invalid_revision'
+	| 'revision_not_increasing'
+	| 'invalid_external_session'
+	| 'too_many_external_sessions'
+	| 'duplicate_external_session_id'
+	| 'invalid_snapshot_token'
+	| 'token_collision';
+
 export class WorkspaceRegistryError extends Error {
 	readonly name = 'WorkspaceRegistryError';
 
-	constructor(readonly code: string) {
+	constructor(readonly code: WorkspaceRegistryErrorCode) {
 		super(code);
 	}
 }
@@ -158,6 +169,9 @@ export class PluginWorkspaceRegistry {
 	}
 
 	acquire(context: WorkspaceRegistryOwnerContext, workspaceLocalId: string): WorkspaceCapability {
+		if (!isOwnerContext(context)) {
+			throw new WorkspaceRegistryError('capability_unavailable');
+		}
 		const workspace = this.workspaces.get(workspaceKey(context.ownerPluginId, workspaceLocalId));
 		if (!workspace || !this.isAcquireAuthorized(context, workspace)) {
 			throw new WorkspaceRegistryError('capability_unavailable');
@@ -215,19 +229,27 @@ export class PluginWorkspaceRegistry {
 				})
 			);
 		}
+		const selectionCleared =
+			workspace.selectedSnapshotToken !== null &&
+			!nextSessions.some((session) => session.snapshotToken === workspace.selectedSnapshotToken);
 		this.workspaces.set(
 			workspace.key,
 			Object.freeze({
 				...workspace,
 				revision,
 				sessions: nextSessions,
-				selectedSnapshotToken:
-					workspace.selectedSnapshotToken !== null &&
-					!nextSessions.some((session) => session.snapshotToken === workspace.selectedSnapshotToken)
-						? null
-						: workspace.selectedSnapshotToken,
+				selectedSnapshotToken: selectionCleared ? null : workspace.selectedSnapshotToken,
 			})
 		);
+		if (selectionCleared) {
+			this.emitContext(
+				Object.freeze({
+					kind: 'selection-cleared',
+					ownerPluginId: workspace.ownerPluginId,
+					workspaceLocalId: workspace.workspaceLocalId,
+				})
+			);
+		}
 		return cloneSessions(nextSessions);
 	}
 
@@ -472,7 +494,7 @@ function validateSession(snapshot: unknown): ValidatedSession {
 		unread > 9_999 ||
 		typeof pendingApproval !== 'boolean' ||
 		typeof updatedAt !== 'number' ||
-		!Number.isSafeInteger(updatedAt) ||
+		!Number.isFinite(updatedAt) ||
 		updatedAt < 0
 	) {
 		throw new WorkspaceRegistryError('invalid_external_session');
@@ -514,6 +536,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	if (value === null || typeof value !== 'object') return false;
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === Object.prototype || prototype === null;
+}
+
+function isOwnerContext(value: unknown): value is WorkspaceRegistryOwnerContext {
+	return (
+		isPlainObject(value) &&
+		typeof value.ownerPluginId === 'string' &&
+		typeof value.generation === 'bigint' &&
+		typeof value.trusted === 'boolean' &&
+		typeof value.enabled === 'boolean' &&
+		Array.isArray(value.grants) &&
+		value.grants.every((grant) => typeof grant === 'string')
+	);
 }
 
 function readOwnDataProperty(object: Record<string, unknown>, key: string): unknown {
