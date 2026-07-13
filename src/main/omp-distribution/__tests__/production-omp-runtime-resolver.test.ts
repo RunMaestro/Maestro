@@ -200,6 +200,7 @@ describe('ProductionOmpRuntimeResolver', () => {
 					canonicalPath: 'C:/Program Files/OMP/omp.exe',
 					fingerprintSha512: systemFingerprint,
 				}),
+				enrollmentVerifier: { verify: async () => true },
 				systemPackageLocator: {
 					locate: async () => [systemCandidate({ path: 'C:/shadow/omp.exe' })],
 				},
@@ -211,6 +212,20 @@ describe('ProductionOmpRuntimeResolver', () => {
 			provenance: 'verified',
 			version: '16.4.8',
 		});
+	});
+
+	it('rejects a configured enrollment whose immutable enrollment proof does not verify', async () => {
+		const resolver = createProductionOmpRuntimeResolver(
+			dependencies({
+				enrollment: Object.freeze({
+					canonicalPath: 'C:/Program Files/OMP/omp.exe',
+					fingerprintSha512: systemFingerprint,
+				}),
+				enrollmentVerifier: { verify: async () => false },
+				systemPackageLocator: { locate: async () => [] },
+			})
+		);
+		await expect(resolver.resolveSystem()).resolves.toBeNull();
 	});
 
 	it('rejects PATH shadows, writable/reparse candidates, and fingerprint mismatches without execution', async () => {

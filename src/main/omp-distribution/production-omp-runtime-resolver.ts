@@ -46,6 +46,11 @@ export interface ConfiguredOmpEnrollment {
 	readonly fingerprintSha512: string;
 }
 
+/** Verifies the immutable host enrollment record before the enrolled file is examined. */
+export interface ConfiguredOmpEnrollmentVerifier {
+	readonly verify: (enrollment: ConfiguredOmpEnrollment) => Promise<boolean>;
+}
+
 export interface SystemRuntimeCandidate {
 	readonly path: string;
 	readonly version: string;
@@ -95,6 +100,7 @@ export interface ProductionOmpRuntimeResolverDependencies {
 	/** Absence is valid but leaves every discovery/install path fail-closed. */
 	readonly pinnedRelease?: PinnedOmpRelease;
 	readonly enrollment?: ConfiguredOmpEnrollment;
+	readonly enrollmentVerifier?: ConfiguredOmpEnrollmentVerifier;
 	readonly systemPackageLocator?: SystemRuntimePackageLocator;
 	readonly pathInspector?: ManagedRuntimePathInspector;
 	readonly provenanceVerifier?: ProductionProvenanceVerifier;
@@ -161,8 +167,13 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 		}
 
 		const enrolled = this.deps.enrollment;
-		if (enrolled && isFrozenEnrollment(enrolled)) {
-			const verified = await this.verifyConfiguredEnrollment(enrolled, inspector);
+		const enrollmentVerifier = this.deps.enrollmentVerifier;
+		if (enrolled && enrollmentVerifier && isFrozenEnrollment(enrolled)) {
+			const verified = await this.verifyConfiguredEnrollment(
+				enrolled,
+				enrollmentVerifier,
+				inspector
+			);
 			if (verified) return verified;
 		}
 
@@ -229,9 +240,11 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 
 	private async verifyConfiguredEnrollment(
 		enrollment: ConfiguredOmpEnrollment,
+		verifier: ConfiguredOmpEnrollmentVerifier,
 		inspector: ManagedRuntimePathInspector
 	): Promise<VerifiedRuntimeExecutable | null> {
 		try {
+			if (!(await verifier.verify(enrollment))) return null;
 			const canonicalPath = await inspector.canonicalize(enrollment.canonicalPath);
 			if (canonicalPath !== enrollment.canonicalPath) return null;
 			if (!(await isAuthenticatedFile(canonicalPath, enrollment.fingerprintSha512, inspector)))
