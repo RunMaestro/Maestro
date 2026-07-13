@@ -81,15 +81,23 @@ export async function activate(sdk: ActivationSdk): Promise<void> {
 		generation: 0,
 		panelSequence: 0n,
 	};
+	active = candidate;
 	try {
-		await candidate.workspace.publishExternalSessions(1, []);
-		await candidate.workspace.setStatus({ state: 'offline', label: 'OMP setup required' });
-		await candidate.workspace.setBadge(null);
 		candidate.unsubscribePanel = candidate.panel.onRequest((request) => {
 			void handlePanelRequest(candidate, request);
 		});
-		active = candidate;
+		await candidate.workspace.publishExternalSessions(1, []);
+		await candidate.workspace.setStatus({ state: 'offline', label: 'OMP setup required' });
+		await candidate.workspace.setBadge(null);
 	} catch (error) {
+		if (active === candidate) active = undefined;
+		try {
+			candidate.unsubscribePanel();
+		} catch {
+			// Listener removal is best-effort; authority has already been revoked.
+		}
+		await candidate.starting?.catch(() => undefined);
+		await disposeRuntime(candidate, 'revoked');
 		await candidate.workspace.publishExternalSessions(2, []).catch(() => undefined);
 		await candidate.workspace
 			.setStatus({ state: 'error', label: 'OMP activation failed' })
@@ -119,7 +127,12 @@ export async function deactivate(): Promise<void> {
 	const current = active;
 	if (!current) return;
 	active = undefined;
-	current.unsubscribePanel();
+	try {
+		current.unsubscribePanel();
+	} catch {
+		// Authority has already been revoked; continue teardown if listener disposal fails.
+	}
+	await current.starting?.catch(() => undefined);
 	await disposeRuntime(current, 'workspace-deactivated');
 	await current.workspace.publishExternalSessions(++current.generation, []).catch(() => undefined);
 	await current.workspace

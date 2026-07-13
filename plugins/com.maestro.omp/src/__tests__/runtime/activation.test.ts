@@ -45,6 +45,89 @@ describe('OMP plugin activation', () => {
 		]);
 	});
 
+	it('registers the panel request listener before setup awaits and does not silently lose its initial snapshot request', async () => {
+		let listener:
+			| ((request: { kind: string; requestId: string; payload: Record<string, unknown> }) => void)
+			| undefined;
+		let releaseBadge!: () => void;
+		const badgePending = new Promise<void>((resolve) => {
+			releaseBadge = resolve;
+		});
+		const rejected = vi.fn(async () => undefined);
+		const activation = activate({
+			interactiveRuntime: {
+				requestWorkspaceRoot: async () => null,
+				startOmpRuntime: async () => {
+					throw new Error('unreachable');
+				},
+			},
+			interactivePanel: {
+				onRequest: (registered) => {
+					listener = registered as typeof listener;
+					return () => undefined;
+				},
+				resolve: async () => undefined,
+				reject: rejected,
+				emit: async () => undefined,
+				consumeResource: async () => {
+					throw new Error('unreachable');
+				},
+			},
+			workspace: {
+				publishExternalSessions: async () => undefined,
+				setStatus: async () => undefined,
+				setBadge: async () => {
+					expect(listener).toBeTypeOf('function');
+					listener?.({
+						kind: 'omp.commands.refresh',
+						requestId: 'initial-get-snapshot',
+						payload: {},
+					});
+					return badgePending;
+				},
+			},
+		});
+
+		await vi.waitFor(() =>
+			expect(rejected).toHaveBeenCalledWith('initial-get-snapshot', 'runtime_stopped')
+		);
+		releaseBadge();
+		await activation;
+	});
+
+	it('rolls back the panel listener and active authority when setup fails', async () => {
+		const unsubscribe = vi.fn();
+		await expect(
+			activate({
+				interactiveRuntime: {
+					requestWorkspaceRoot: async () => null,
+					startOmpRuntime: async () => {
+						throw new Error('unreachable');
+					},
+				},
+				interactivePanel: {
+					onRequest: () => unsubscribe,
+					resolve: async () => undefined,
+					reject: async () => undefined,
+					emit: async () => undefined,
+					consumeResource: async () => {
+						throw new Error('unreachable');
+					},
+				},
+				workspace: {
+					publishExternalSessions: async () => undefined,
+					setStatus: async () => undefined,
+					setBadge: async () => {
+						throw new Error('badge unavailable');
+					},
+				},
+			})
+		).rejects.toThrow('badge unavailable');
+		expect(unsubscribe).toHaveBeenCalledTimes(1);
+		await expect(startFromExplicitPanelAction()).rejects.toThrow('not active');
+		await expect(deactivate()).resolves.toBeUndefined();
+	});
+
 	it('leaves setup state unchanged when explicit root consent is cancelled', async () => {
 		let starts = 0;
 		await activate({

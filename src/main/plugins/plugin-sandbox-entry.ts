@@ -183,23 +183,89 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	// ---- plugin registries ---------------------------------------------------
 	var commandHandlers = new Map();
 	var eventHandlers = new Map();
+	var interactivePanelListenerRegistered = false;
+	var drainingInteractivePanelRequests = false;
+	// Panel ingress is already JSON-size-bounded by the host. This small count
+	// cap prevents the activation gap from becoming an unbounded retention path.
+	var preListenerInteractivePanelRequests = [];
+	var MAX_PRE_LISTENER_INTERACTIVE_PANEL_REQUESTS = 32;
+
+	function rejectInteractivePanelRequest(payload, code) {
+		var requestId =
+			payload && typeof payload === 'object' && typeof payload.requestId === 'string'
+				? payload.requestId
+				: null;
+		if (!requestId) {
+			safeLog('warn', 'discarded interactive panel request without a requestId');
+			return;
+		}
+		hostCall('interactivePanel.reject', { requestId: requestId, code: code }).catch(function (err) {
+			safeLog('warn', 'failed to reject interactive panel request: ' + String(err));
+		});
+	}
+
+	function queueInteractivePanelRequest(payload) {
+		if (preListenerInteractivePanelRequests.length >= MAX_PRE_LISTENER_INTERACTIVE_PANEL_REQUESTS) {
+			rejectInteractivePanelRequest(payload, 'backpressure');
+			return;
+		}
+		preListenerInteractivePanelRequests.push(payload);
+	}
+
+	function rejectQueuedInteractivePanelRequests(code) {
+		var queued = preListenerInteractivePanelRequests;
+		preListenerInteractivePanelRequests = [];
+		for (var index = 0; index < queued.length; index += 1) {
+			rejectInteractivePanelRequest(queued[index], code);
+		}
+	}
+
+	function dispatchEvent(topic, payload, at) {
+		var handlers = eventHandlers.get(topic);
+		if (!handlers || handlers.size === 0) return false;
+		var meta = Object.freeze({ topic: topic, at: typeof at === 'string' ? at : '' });
+		handlers.forEach(function (handler) {
+			try {
+				Promise.resolve(handler(payload, meta)).catch(function (err) {
+					safeLog('error', 'event "' + topic + '" handler threw: ' + String(err));
+				});
+			} catch (err) {
+				safeLog('error', 'event "' + topic + '" handler threw: ' + String(err));
+			}
+		});
+		return true;
+	}
+
+	function drainInteractivePanelRequests() {
+		if (drainingInteractivePanelRequests) return;
+		drainingInteractivePanelRequests = true;
+		try {
+			while (preListenerInteractivePanelRequests.length > 0) {
+				var payload = preListenerInteractivePanelRequests.shift();
+				if (!dispatchEvent('__interactivePanelRequest', payload, '')) {
+					rejectInteractivePanelRequest(payload, 'capability_unavailable');
+				}
+			}
+		} finally {
+			drainingInteractivePanelRequests = false;
+		}
+	}
 
 	function deliverEvent(json) {
 		var msg;
 		try { msg = JSON.parse(json); } catch (e) { return; }
 		if (!msg || typeof msg.topic !== 'string') return;
-		var handlers = eventHandlers.get(msg.topic);
-		if (!handlers) return;
-		var meta = Object.freeze({ topic: msg.topic, at: typeof msg.at === 'string' ? msg.at : '' });
-		handlers.forEach(function (handler) {
-			try {
-				Promise.resolve(handler(msg.payload, meta)).catch(function (err) {
-					safeLog('error', 'event "' + msg.topic + '" handler threw: ' + String(err));
-				});
-			} catch (err) {
-				safeLog('error', 'event "' + msg.topic + '" handler threw: ' + String(err));
+		if (msg.topic === '__interactivePanelRequest') {
+			if (!interactivePanelListenerRegistered || drainingInteractivePanelRequests) {
+				queueInteractivePanelRequest(msg.payload);
+				return;
 			}
-		});
+			if (!dispatchEvent(msg.topic, msg.payload, msg.at)) {
+				rejectInteractivePanelRequest(msg.payload, 'capability_unavailable');
+			}
+			return;
+		}
+		dispatchEvent(msg.topic, msg.payload, msg.at);
 	}
 
 	function invokeCommand(json) {
@@ -381,6 +447,10 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					var set = eventHandlers.get(topic);
 					if (!set) { set = new Set(); eventHandlers.set(topic, set); }
 					set.add(listener);
+					if (!interactivePanelListenerRegistered) {
+						interactivePanelListenerRegistered = true;
+						drainInteractivePanelRequests();
+					}
 					return function () { set.delete(listener); };
 				},
 				resolve: function (requestId, kind, payload) { return hostCall('interactivePanel.resolve', { requestId: requestId, kind: kind, payload: payload }); },
@@ -532,6 +602,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	}
 
 	function deactivate() {
+		rejectQueuedInteractivePanelRequests('capability_unavailable');
 		var ex = moduleShim.exports;
 		if (ex && typeof ex.deactivate === 'function') {
 			try {

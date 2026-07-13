@@ -363,6 +363,168 @@ describe('plugin sandbox realm — behavioral parity', () => {
 			expect(infos.map(([, m]) => String(m))).toContain('evt:agent.completed:s-1');
 		});
 	});
+	it('retains an initial interactive panel get_snapshot request until activation registers its listener', async () => {
+		const sent: Array<{ id: number; method: string; params: unknown }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(JSON.parse(json) as { id: number; method: string; params: unknown })
+			),
+		});
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-race', { workspace: true, interactivePanel: true });
+		realm.runScript(
+			String.raw`
+				module.exports = {
+					activate: async function (maestro) {
+						await maestro.workspace.setBadge(null);
+						maestro.interactivePanel.onRequest(function (request) {
+							return maestro.interactivePanel.resolve(request.requestId, request.kind, { ready: true });
+						});
+					}
+				};
+			`,
+			'panel-race.js'
+		);
+		const activation = realm.activate();
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({ method: 'workspace.setBadge', params: { value: null } });
+
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactivePanelRequest',
+				at: '2026-07-13T00:00:00.000Z',
+				payload: { requestId: 'request-1', kind: 'get_snapshot', payload: {} },
+			})
+		);
+		realm.deliverResponse(JSON.stringify({ id: sent[0]!.id, ok: true, result: null }));
+		await activation;
+
+		await vi.waitFor(() => expect(sent).toHaveLength(2));
+		expect(sent[1]).toMatchObject({
+			method: 'interactivePanel.resolve',
+			params: { requestId: 'request-1', kind: 'get_snapshot', payload: { ready: true } },
+		});
+	});
+
+	it('delivers pre-listener interactive panel requests once in FIFO order', async () => {
+		const bridge = makeBridge();
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-queue', { interactivePanel: true });
+		for (const requestId of ['request-1', 'request-2']) {
+			realm.deliverEvent(
+				JSON.stringify({
+					topic: '__interactivePanelRequest',
+					at: '2026-07-13T00:00:00.000Z',
+					payload: { requestId, kind: 'get_snapshot', payload: {} },
+				})
+			);
+		}
+		realm.runScript(
+			String.raw`
+				maestro.interactivePanel.onRequest(function (request) {
+					console.log('request:' + request.requestId);
+				});
+			`,
+			'panel-queue.js'
+		);
+		await vi.waitFor(() =>
+			expect(vi.mocked(bridge.log).mock.calls).toEqual(
+				expect.arrayContaining([
+					['info', 'request:request-1'],
+					['info', 'request:request-2'],
+				])
+			)
+		);
+		expect(vi.mocked(bridge.log).mock.calls.filter(([level]) => level === 'info')).toEqual([
+			['info', 'request:request-1'],
+			['info', 'request:request-2'],
+		]);
+	});
+
+	it('rejects overflowed pre-listener interactive panel requests instead of dropping them', async () => {
+		const sent: Array<{ id: number; method: string; params: Record<string, unknown> }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(
+					JSON.parse(json) as { id: number; method: string; params: Record<string, unknown> }
+				)
+			),
+		});
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-overflow', { interactivePanel: true });
+		for (let index = 1; index <= 33; index += 1) {
+			realm.deliverEvent(
+				JSON.stringify({
+					topic: '__interactivePanelRequest',
+					at: '2026-07-13T00:00:00.000Z',
+					payload: { requestId: `request-${index}`, kind: 'get_snapshot', payload: {} },
+				})
+			);
+		}
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({
+			method: 'interactivePanel.reject',
+			params: { requestId: 'request-33', code: 'backpressure' },
+		});
+	});
+
+	it('rejects panel requests after the first listener is revoked rather than retaining them again', async () => {
+		const sent: Array<{ id: number; method: string; params: Record<string, unknown> }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(
+					JSON.parse(json) as { id: number; method: string; params: Record<string, unknown> }
+				)
+			),
+		});
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-revoke', { interactivePanel: true });
+		realm.runScript(
+			String.raw`
+				var revoke = maestro.interactivePanel.onRequest(function () {});
+				revoke();
+			`,
+			'panel-revoke.js'
+		);
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactivePanelRequest',
+				at: '2026-07-13T00:00:00.000Z',
+				payload: { requestId: 'request-after-revoke', kind: 'get_snapshot', payload: {} },
+			})
+		);
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({
+			method: 'interactivePanel.reject',
+			params: { requestId: 'request-after-revoke', code: 'capability_unavailable' },
+		});
+	});
+
+	it('rejects retained interactive panel requests when the sandbox tears down', async () => {
+		const sent: Array<{ id: number; method: string; params: Record<string, unknown> }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(
+					JSON.parse(json) as { id: number; method: string; params: Record<string, unknown> }
+				)
+			),
+		});
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-teardown', { interactivePanel: true });
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactivePanelRequest',
+				at: '2026-07-13T00:00:00.000Z',
+				payload: { requestId: 'request-1', kind: 'get_snapshot', payload: {} },
+			})
+		);
+		await realm.deactivate();
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({
+			method: 'interactivePanel.reject',
+			params: { requestId: 'request-1', code: 'capability_unavailable' },
+		});
+	});
 
 	it('timers allocate numeric ids via the bridge and fire in-realm callbacks', () => {
 		const bridge = makeBridge();
