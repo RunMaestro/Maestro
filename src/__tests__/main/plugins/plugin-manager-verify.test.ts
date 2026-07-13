@@ -32,6 +32,7 @@ import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
+import { bundleOmpPlugin } from '../../../main/omp-distribution/bundle-plugin';
 
 // FC1 Option-B gate: code only RUNS with a trusted signature. Tests asserting a
 // sandbox START sign their fixture with this key and register it as trusted.
@@ -140,6 +141,35 @@ function writeInteractivePanelPlugin(id: string, html = '<p>interactive-safe</p>
 	fs.writeFileSync(path.join(dir, 'legacy-panel.html'), '<p>legacy-safe</p>');
 	fs.writeFileSync(path.join(dir, 'dist', 'panel.html'), html);
 	signPluginDir(dir, signingKeys);
+}
+
+async function installSignedBundledOmpPanelFixture(): Promise<{
+	readonly pluginId: string;
+	readonly panelLocalId: string;
+	readonly panelHtml: string;
+}> {
+	const bundle = await bundleOmpPlugin(path.join(process.cwd(), 'plugins', 'com.maestro.omp'));
+	const files = new Map(bundle.files.map((file) => [file.path, file.content]));
+	const manifest = JSON.parse(Buffer.from(files.get('plugin.json') ?? '').toString('utf8')) as {
+		readonly id: string;
+		readonly contributes: {
+			readonly interactivePanels: readonly { readonly localId: string; readonly entry: string }[];
+		};
+	};
+	const panel = manifest.contributes.interactivePanels[0];
+	if (!panel) throw new Error('bundled OMP fixture omitted its interactive panel');
+	const directory = path.join(pluginsDir(), manifest.id);
+	for (const file of bundle.files) {
+		const destination = path.join(directory, file.path);
+		fs.mkdirSync(path.dirname(destination), { recursive: true });
+		fs.writeFileSync(destination, file.content);
+	}
+	signPluginDir(directory, signingKeys);
+	return {
+		pluginId: manifest.id,
+		panelLocalId: panel.localId,
+		panelHtml: Buffer.from(files.get(panel.entry) ?? '').toString('utf8'),
+	};
 }
 
 function tarOctal(value: number, length: number): string {
@@ -372,6 +402,24 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		expect(m.getInteractivePanelHtml(pluginId, 'omp-panel')).toBe('<p>replacement-safe</p>');
 		expect(m.getInteractivePanelHtml('other.owner', 'omp-panel')).toBeNull();
 		expect(m.getInteractivePanelHtml(pluginId, '../omp-panel')).toBeNull();
+	});
+
+	it('serves the exact HTML from a built and signed OMP panel fixture', async () => {
+		const fixture = await installSignedBundledOmpPanelFixture();
+		const grants = new Map<string, PermissionGrant[]>();
+		const m = manager({ getGrants: (id) => grants.get(id) ?? [] });
+
+		m.refresh();
+		m.setEnabled(fixture.pluginId, true);
+		grants.set(fixture.pluginId, [
+			{ capability: 'ui:workspace', grantedAt: 1 },
+			{ capability: 'ui:interactivePanel', grantedAt: 1 },
+		]);
+		m.refresh();
+
+		expect(m.getInteractivePanelHtml(fixture.pluginId, fixture.panelLocalId)).toBe(
+			fixture.panelHtml
+		);
 	});
 
 	it('installs and starts a CLI-packed plugin archive with nested runtime assets', async () => {

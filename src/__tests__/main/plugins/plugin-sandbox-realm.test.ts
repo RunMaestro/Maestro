@@ -713,20 +713,28 @@ describe('signed OMP artifact sandbox smoke', () => {
 		realm.runScript(runtimeSource, 'omp-runtime.js');
 		const activation = realm.activate();
 
-		for (const [method, result] of [
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		const catalogLoad = sent[0];
+		expect(catalogLoad).toMatchObject({
+			method: 'storage.get',
+			params: { key: 'omp.session-catalog.v1' },
+		});
+		expect(JSON.stringify(catalogLoad)).not.toMatch(/(?:[\\/]|secret|token|authorization|cookie)/i);
+		realm.deliverResponse(JSON.stringify({ id: catalogLoad.id, ok: true, result: null }));
+
+		for (const [index, [method, result]] of [
 			['workspace.publishExternalSessions', null],
 			['workspace.setStatus', null],
 			['workspace.setBadge', null],
-		] as const) {
-			await vi.waitFor(() =>
-				expect(sent).toHaveLength(sent.findIndex((call) => call.method === method) + 1)
-			);
-			const call = sent[sent.length - 1];
+		].entries()) {
+			await vi.waitFor(() => expect(sent).toHaveLength(index + 2));
+			const call = sent[index + 1];
 			expect(call.method).toBe(method);
 			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result }));
 		}
 		await activation;
 		expect(sent.map((call) => call.method)).toEqual([
+			'storage.get',
 			'workspace.publishExternalSessions',
 			'workspace.setStatus',
 			'workspace.setBadge',
@@ -736,10 +744,10 @@ describe('signed OMP artifact sandbox smoke', () => {
 			'void module.exports.startFromExplicitPanelAction().then(function (started) { console.log(\"started:\" + started); });',
 			'omp-explicit-start.js'
 		);
-		await vi.waitFor(() => expect(sent).toHaveLength(4));
-		expect(sent[3]).toMatchObject({ method: 'interactiveRuntime.requestWorkspaceRoot' });
-		realm.deliverResponse(JSON.stringify({ id: sent[3].id, ok: true, result: { token: 'root' } }));
-		let nextCall = 4;
+		await vi.waitFor(() => expect(sent).toHaveLength(5));
+		expect(sent[4]).toMatchObject({ method: 'interactiveRuntime.requestWorkspaceRoot' });
+		realm.deliverResponse(JSON.stringify({ id: sent[4].id, ok: true, result: { token: 'root' } }));
+		let nextCall = 5;
 		let runtimeStartCall: (typeof sent)[number] | undefined;
 		await vi.waitFor(() => {
 			while (nextCall < sent.length) {
@@ -797,7 +805,7 @@ describe('signed OMP artifact sandbox smoke', () => {
 				},
 			})
 		);
-		for (let initialized = 0; initialized < 5; initialized++) {
+		for (let initialized = 0; initialized < 6; initialized++) {
 			await vi.waitFor(() => {
 				const call = sent[nextCall];
 				if (!call) throw new Error('waiting for controller initialization write');
@@ -827,6 +835,9 @@ describe('signed OMP artifact sandbox smoke', () => {
 					break;
 				case 'get_available_models':
 					data = { models: [] };
+					break;
+				case 'get_messages':
+					data = [];
 					break;
 				case 'set_host_tools':
 				case 'set_host_uri_schemes':

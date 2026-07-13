@@ -40,8 +40,8 @@ export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePlugi
 	const [manifestBytes, metadataBytes, runtimeOutput, panelOutput] = await Promise.all([
 		readFile(resolve(root, 'plugin.json')),
 		readFile(resolve(root, DESCRIPTOR_METADATA_FILE)),
-		bundleEntry(resolve(root, RUNTIME_ENTRY), 'neutral', 'cjs'),
-		bundleEntry(resolve(root, PANEL_ENTRY), 'browser', 'iife'),
+		bundleEntry(root, resolve(root, RUNTIME_ENTRY), 'neutral', 'cjs', 'runtime.cjs'),
+		bundleEntry(root, resolve(root, PANEL_ENTRY), 'browser', 'iife', 'panel.js'),
 	]);
 	const metadata = parseArtifactBuildMetadata(metadataBytes);
 	const descriptorPath = resolve(root, metadata.bridgeDescriptor);
@@ -64,7 +64,10 @@ export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePlugi
 		files: [
 			{ path: 'plugin.json', content: Buffer.from(JSON.stringify(manifest, null, '\t') + '\n') },
 			{ path: 'dist/runtime.js', content: runtimeOutput.javaScript },
-			{ path: 'dist/panel.html', content: Buffer.from(panelHtml(panelJavaScript, panelCss)) },
+			{
+				path: 'dist/panel.html',
+				content: Buffer.from(renderPanelDocument(panelJavaScript, panelCss)),
+			},
 		],
 	};
 }
@@ -96,25 +99,27 @@ async function evaluateBridgeDescriptor(descriptorPath: string): Promise<unknown
 }
 
 async function bundleEntry(
+	pluginRoot: string,
 	entryPoint: string,
 	platform: 'browser' | 'neutral',
-	format: 'cjs' | 'iife'
+	format: 'cjs' | 'iife',
+	outputName: string
 ): Promise<BundledEntry> {
+	const outputPath = resolve(pluginRoot, '.maestro-omp-bundle', outputName);
 	const result = await build({
 		bundle: true,
-		entryNames: 'bundle',
 		entryPoints: [entryPoint],
 		format,
 		...(platform === 'browser' ? { define: { 'process.env.NODE_ENV': '"production"' } } : {}),
 		legalComments: 'none',
 		minify: false,
-		outdir: 'dist',
+		outfile: outputPath,
 		platform,
 		sourcemap: false,
 		target: 'es2020',
 		write: false,
 	});
-	const javaScript = result.outputFiles.find((file) => file.path.endsWith('.js'));
+	const javaScript = result.outputFiles.find((file) => resolve(file.path) === outputPath);
 	if (!javaScript) throw new Error(`bundle emitted no JavaScript for ${entryPoint}`);
 	const css = result.outputFiles.find((file) => file.path.endsWith('.css'));
 	return {
@@ -178,12 +183,32 @@ function isWithinRoot(root: string, candidate: string): boolean {
 	return pathRelative.length > 0 && !pathRelative.startsWith('..') && !pathRelative.includes('../');
 }
 
-function panelHtml(javaScript: Buffer, css: Buffer): string {
-	const escapedJavaScript = javaScript.toString('utf8').replaceAll('</script', '<\\/script');
-	const escapedCss = css.toString('utf8').replaceAll('</style', '<\\/style');
+/**
+ * Produces the opaque-origin panel document from separate in-memory browser
+ * outputs; the runtime's CommonJS program never shares an output filename.
+ */
+export function renderPanelDocument(javaScript: Buffer, css: Buffer): string {
+	const escapedJavaScript = escapeInlineScript(javaScript);
+	const escapedCss = escapeInlineStyle(css);
 	const scriptHash = createHash('sha256').update(escapedJavaScript).digest('base64');
 	const styleHash = createHash('sha256').update(escapedCss).digest('base64');
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; connect-src 'none'; script-src 'sha256-${scriptHash}'; style-src 'sha256-${styleHash}'"><style>${escapedCss}</style></head><body><div id="root"></div><script>${escapedJavaScript}</script></body></html>
 `;
+}
+
+function escapeInlineScript(source: Buffer): string {
+	return source
+		.toString('utf8')
+		.replace(/<\/script/gi, '<\\/script')
+		.replaceAll('\u2028', '\\u2028')
+		.replaceAll('\u2029', '\\u2029');
+}
+
+function escapeInlineStyle(source: Buffer): string {
+	return source
+		.toString('utf8')
+		.replace(/<\/style/gi, '<\\/style')
+		.replaceAll('\u2028', '\\2028 ')
+		.replaceAll('\u2029', '\\2029 ');
 }
