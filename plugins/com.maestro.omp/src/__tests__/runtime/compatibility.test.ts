@@ -27,9 +27,28 @@ describe('OMP 16.4.8 compatibility table', () => {
 		expect(Object.keys(OMP_16_4_8_COMPATIBILITY).sort()).toEqual(
 			[...OMP_16_4_8_FIXTURE.stableMembers].sort()
 		);
-		expect(
-			Object.values(OMP_16_4_8_COMPATIBILITY).every((member) => member.disposition === 'supported')
-		).toBe(true);
+		const dispositions = Object.values(OMP_16_4_8_COMPATIBILITY);
+		expect(dispositions.every((member) => member.version === '16.4.8')).toBe(true);
+		expect(dispositions.every((member) => member.disposition !== undefined)).toBe(true);
+		expect(OMP_16_4_8_COMPATIBILITY.set_host_tools).toMatchObject({
+			disposition: 'host',
+			terminal: 'response',
+		});
+		expect(OMP_16_4_8_COMPATIBILITY.set_host_uri_schemes).toMatchObject({
+			disposition: 'host',
+			terminal: 'response',
+		});
+		expect(OMP_16_4_8_COMPATIBILITY.host_uri_request).toMatchObject({
+			disposition: 'unavailable',
+		});
+		expect(OMP_16_4_8_COMPATIBILITY.agent_start).toMatchObject({
+			disposition: 'projection',
+			sequence: 'strict',
+		});
+		expect(OMP_16_4_8_COMPATIBILITY.prompt).toMatchObject({
+			disposition: 'ui',
+			terminal: 'prompt_result',
+		});
 	});
 
 	it('fails closed for a version other than the pinned runtime', () => {

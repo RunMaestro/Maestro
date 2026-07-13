@@ -12,8 +12,9 @@ import type {
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_MAX_DIAGNOSTIC_BYTES = 32 * 1024;
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_READY_TIMEOUT_MS = 10_000;
+const MAX_IN_FLIGHT_COMMANDS = 32;
 
 const eventTypeLookup: Record<OmpRpcEventType, true> = Object.fromEntries(
 	OMP_16_4_8_EVENT_TYPES.map((type) => [type, true])
@@ -135,13 +136,20 @@ export class OmpRpcClient {
 			return Promise.reject(new OmpProtocolError(`OMP is not ready (status: ${this.statusValue})`));
 		}
 		if (options.signal?.aborted) return Promise.reject(abortError());
+		if (this.pending.size >= MAX_IN_FLIGHT_COMMANDS) {
+			return Promise.reject(
+				new OmpProtocolError(
+					`OMP controller allows at most ${MAX_IN_FLIGHT_COMMANDS} in-flight commands`
+				)
+			);
+		}
 
 		const id = `omp-${++this.requestNumber}`;
 		const frame = { ...command, id };
 		return new Promise<OmpRpcResponse>((resolve, reject) => {
 			const timeout = setTimeout(
 				() => this.rejectPending(id, new OmpProtocolError(`OMP command ${command.type} timed out`)),
-				options.timeoutMs ?? this.requestTimeoutMs
+				options.timeoutMs ?? deadlineFor(command.type, this.requestTimeoutMs)
 			);
 			const onAbort = () => this.rejectPending(id, abortError());
 			options.signal?.addEventListener('abort', onAbort, { once: true });
@@ -245,6 +253,7 @@ export class OmpRpcClient {
 		}
 		if (hasOwn(callbackTypeLookup, raw.type)) {
 			const callback: OmpOutboundCallback = { ...raw, type: raw.type };
+			if (callback.type === 'prompt_result') this.dispatchPromptResult(raw);
 			for (const listener of this.callbackListeners) listener(callback);
 			return;
 		}
@@ -273,6 +282,12 @@ export class OmpRpcClient {
 			this.fail(new OmpProtocolError(`OMP response command mismatch for ${response.id}`));
 			return;
 		}
+		if (
+			response.success &&
+			(pending.command === 'prompt' || pending.command === 'abort_and_prompt')
+		) {
+			return;
+		}
 		this.pending.delete(response.id);
 		pending.clear();
 		if (response.success) pending.resolve(response);
@@ -280,6 +295,31 @@ export class OmpRpcClient {
 			pending.reject(
 				new OmpProtocolError(response.error ?? `OMP command ${response.command} failed`)
 			);
+	}
+
+	private dispatchPromptResult(raw: Record<string, unknown>): void {
+		if (typeof raw.id !== 'string' || typeof raw.success !== 'boolean') {
+			this.fail(new OmpProtocolError('OMP emitted an invalid prompt_result frame'));
+			return;
+		}
+		const pending = this.pending.get(raw.id);
+		if (!pending) return;
+		if (pending.command !== 'prompt' && pending.command !== 'abort_and_prompt') {
+			this.fail(new OmpProtocolError(`OMP prompt_result does not match ${pending.command}`));
+			return;
+		}
+		this.pending.delete(raw.id);
+		pending.clear();
+		const response: OmpRpcResponse = {
+			type: 'response',
+			id: raw.id,
+			command: pending.command,
+			success: raw.success,
+			...('result' in raw ? { data: raw.result } : {}),
+			...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+		};
+		if (response.success) pending.resolve(response);
+		else pending.reject(new OmpProtocolError(response.error ?? `OMP ${pending.command} failed`));
 	}
 
 	private receiveStderr(chunk: Uint8Array | string): void {
@@ -335,6 +375,23 @@ export function redactOmpDiagnostic(diagnostic: string): string {
 	return diagnostic
 		.replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
 		.replace(/(api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,;]+/gi, '$1=[REDACTED]');
+}
+
+function deadlineFor(command: OmpRpcCommand['type'], defaultTimeout: number): number {
+	switch (command) {
+		case 'prompt':
+		case 'abort_and_prompt':
+			return 30 * 60 * 1_000;
+		case 'compact':
+		case 'export_html':
+			return 2 * 60 * 1_000;
+		case 'login':
+			return 15 * 60 * 1_000;
+		case 'bash':
+			return 30 * 1_000;
+		default:
+			return defaultTimeout;
+	}
 }
 
 function abortError(): Error {

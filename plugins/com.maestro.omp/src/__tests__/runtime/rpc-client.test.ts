@@ -73,6 +73,22 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 		await expect(first).resolves.toMatchObject({ command: 'get_state' });
 	});
 
+	it('keeps prompt operations pending after acknowledgement until their correlated prompt result', async () => {
+		const { client, transport, ready } = readyClient();
+		await ready;
+		const pending = client.command({ type: 'prompt', message: 'hello' });
+		const id = JSON.parse(transport.writes[0] ?? '').id as string;
+
+		transport.stdout(`{"id":"${id}","type":"response","command":"prompt","success":true}\n`);
+		expect(client.pendingRequestCount).toBe(1);
+		transport.stdout(
+			`{"id":"${id}","type":"prompt_result","success":true,"result":{"text":"done"}}\n`
+		);
+
+		await expect(pending).resolves.toMatchObject({ command: 'prompt', success: true });
+		expect(client.pendingRequestCount).toBe(0);
+	});
+
 	it('preserves stdout event order and does not treat events as command responses', async () => {
 		const { client, transport, ready } = readyClient();
 		await ready;
@@ -106,6 +122,16 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 			'{"type":"extension_ui_response","id":"approval-1","confirmed":true}\n',
 		]);
 		expect(client.pendingRequestCount).toBe(0);
+	});
+
+	it('limits a controller generation to thirty-two in-flight correlated commands', async () => {
+		const { client, ready } = readyClient();
+		await ready;
+
+		const pending = Array.from({ length: 32 }, () => client.command({ type: 'get_state' }));
+		await expect(client.command({ type: 'get_state' })).rejects.toThrow(/32.*in-flight/i);
+		client.close();
+		await Promise.allSettled(pending);
 	});
 
 	it.each([
