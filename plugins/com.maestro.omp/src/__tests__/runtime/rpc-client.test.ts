@@ -73,20 +73,20 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 		await expect(first).resolves.toMatchObject({ command: 'get_state' });
 	});
 
-	it('keeps prompt operations pending after acknowledgement until their correlated prompt result', async () => {
+	it('resolves prompt operations from their immediate correlated response and projects optional prompt notifications', async () => {
 		const { client, transport, ready } = readyClient();
 		await ready;
+		const callbacks: Array<{ type: string; agentInvoked?: boolean }> = [];
+		client.onCallback((callback) => callbacks.push(callback));
 		const pending = client.command({ type: 'prompt', message: 'hello' });
 		const id = JSON.parse(transport.writes[0] ?? '').id as string;
 
 		transport.stdout(`{"id":"${id}","type":"response","command":"prompt","success":true}\n`);
-		expect(client.pendingRequestCount).toBe(1);
-		transport.stdout(
-			`{"id":"${id}","type":"prompt_result","success":true,"result":{"text":"done"}}\n`
-		);
-
 		await expect(pending).resolves.toMatchObject({ command: 'prompt', success: true });
-		expect(client.pendingRequestCount).toBe(0);
+		transport.stdout('{"type":"prompt_result","agentInvoked":true}\n');
+
+		expect(callbacks).toEqual([{ type: 'prompt_result', agentInvoked: true }]);
+		expect(client.status).toBe('ready');
 	});
 
 	it('preserves stdout event order and does not treat events as command responses', async () => {

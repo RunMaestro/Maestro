@@ -347,12 +347,6 @@ export class OmpRpcClient {
 			this.fail(new OmpProtocolError(`OMP response command mismatch for ${response.id}`));
 			return;
 		}
-		if (
-			response.success &&
-			(pending.command === 'prompt' || pending.command === 'abort_and_prompt')
-		) {
-			return;
-		}
 		this.pending.delete(response.id);
 		pending.clear();
 		if (response.success) pending.resolve(response);
@@ -363,33 +357,9 @@ export class OmpRpcClient {
 	}
 
 	private dispatchPromptResult(raw: Record<string, unknown>): void {
-		if (typeof raw.id !== 'string' || typeof raw.success !== 'boolean') {
-			this.fail(new OmpProtocolError('OMP emitted an invalid prompt_result frame'));
-			return;
+		if (('id' in raw && typeof raw.id !== 'string') || typeof raw.agentInvoked !== 'boolean') {
+			this.fail(new OmpProtocolError('OMP emitted an invalid prompt_result projection'));
 		}
-		const pending = this.pending.get(raw.id);
-		if (!pending) {
-			this.fail(
-				new OmpProtocolError(`OMP prompt_result did not match an active request ${raw.id}`)
-			);
-			return;
-		}
-		if (pending.command !== 'prompt' && pending.command !== 'abort_and_prompt') {
-			this.fail(new OmpProtocolError(`OMP prompt_result does not match ${pending.command}`));
-			return;
-		}
-		this.pending.delete(raw.id);
-		pending.clear();
-		const response: OmpRpcResponse = {
-			type: 'response',
-			id: raw.id,
-			command: pending.command,
-			success: raw.success,
-			...('result' in raw ? { data: raw.result } : {}),
-			...(typeof raw.error === 'string' ? { error: raw.error } : {}),
-		};
-		if (response.success) pending.resolve(response);
-		else pending.reject(new OmpProtocolError(response.error ?? `OMP ${pending.command} failed`));
 	}
 
 	private receiveStderr(chunk: Uint8Array | string): void {

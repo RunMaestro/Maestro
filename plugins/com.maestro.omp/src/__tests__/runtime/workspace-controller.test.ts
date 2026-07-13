@@ -71,9 +71,7 @@ describe('OmpWorkspaceController', () => {
 		await Promise.resolve();
 		const frame = JSON.parse(transport.writes[5] ?? '') as { id: string; type: string };
 		expect(frame.type).toBe('prompt');
-		transport.stdout(
-			`{"id":"${frame.id}","type":"prompt_result","success":true,"result":{"text":"done"}}\n`
-		);
+		transport.stdout(`{"id":"${frame.id}","type":"response","command":"prompt","success":true}\n`);
 		await expect(prompt).resolves.toMatchObject({ command: 'prompt', success: true });
 	});
 });
