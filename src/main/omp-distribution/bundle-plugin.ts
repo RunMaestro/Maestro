@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
+import { Script } from 'node:vm';
 import { build, transform } from 'esbuild';
 import type { PluginArtifactFile } from './plugin-artifact';
 
@@ -19,7 +20,7 @@ interface MutablePluginManifest {
 	id?: unknown;
 	entry?: unknown;
 	contributes?: {
-		interactivePanels?: { entry?: unknown }[];
+		interactivePanels?: { entry?: unknown; bridge?: unknown }[];
 	};
 }
 
@@ -36,23 +37,25 @@ export interface RunnablePluginBundle {
 /** Bundles the real OMP source root into the only files the sandbox and panel host can execute. */
 export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePluginBundle> {
 	const root = resolve(pluginRoot);
-	const [manifestBytes, metadataBytes, descriptorBytes, runtimeOutput, panelOutput] =
-		await Promise.all([
-			readFile(resolve(root, 'plugin.json')),
-			readFile(resolve(root, DESCRIPTOR_METADATA_FILE)),
-			readDescriptor(root),
-			bundleEntry(resolve(root, RUNTIME_ENTRY), 'neutral', 'cjs'),
-			bundleEntry(resolve(root, PANEL_ENTRY), 'browser', 'iife'),
-		]);
-	const manifest = rewriteManifest(manifestBytes);
+	const [manifestBytes, metadataBytes, runtimeOutput, panelOutput] = await Promise.all([
+		readFile(resolve(root, 'plugin.json')),
+		readFile(resolve(root, DESCRIPTOR_METADATA_FILE)),
+		bundleEntry(resolve(root, RUNTIME_ENTRY), 'neutral', 'cjs'),
+		bundleEntry(resolve(root, PANEL_ENTRY), 'browser', 'iife'),
+	]);
 	const metadata = parseArtifactBuildMetadata(metadataBytes);
 	const descriptorPath = resolve(root, metadata.bridgeDescriptor);
 	if (!isWithinRoot(root, descriptorPath))
 		throw new Error('artifact bridge descriptor path escapes plugin root');
+	const [descriptorBytes, bridge] = await Promise.all([
+		readFile(descriptorPath),
+		evaluateBridgeDescriptor(descriptorPath),
+	]);
 	const expectedDescriptorBytes = await readFile(descriptorPath);
 	if (!expectedDescriptorBytes.equals(descriptorBytes))
 		throw new Error('artifact bridge descriptor changed during bundle');
 
+	const manifest = rewriteManifest(manifestBytes, bridge);
 	const panelJavaScript = panelOutput.javaScript;
 	const panelCss = panelOutput.css;
 	const contractSha256 = createHash('sha256').update(descriptorBytes).digest('hex');
@@ -66,14 +69,30 @@ export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePlugi
 	};
 }
 
-async function readDescriptor(root: string): Promise<Buffer> {
-	const metadata = parseArtifactBuildMetadata(
-		await readFile(resolve(root, DESCRIPTOR_METADATA_FILE))
-	);
-	const descriptorPath = resolve(root, metadata.bridgeDescriptor);
-	if (!isWithinRoot(root, descriptorPath))
-		throw new Error('artifact bridge descriptor path escapes plugin root');
-	return readFile(descriptorPath);
+async function evaluateBridgeDescriptor(descriptorPath: string): Promise<unknown> {
+	const result = await build({
+		bundle: true,
+		entryPoints: [descriptorPath],
+		format: 'cjs',
+		outdir: 'dist',
+		legalComments: 'none',
+		platform: 'node',
+		sourcemap: false,
+		target: 'es2020',
+		write: false,
+	});
+	const javaScript = result.outputFiles.find((file) => file.path.endsWith('.js'));
+	if (!javaScript) throw new Error('OMP bridge descriptor emitted no JavaScript');
+	const module = { exports: {} as Record<string, unknown> };
+	new Script(Buffer.from(javaScript.contents).toString('utf8')).runInNewContext({
+		module,
+		exports: module.exports,
+	});
+	const serialized = module.exports.OMP_PANEL_BRIDGE_DESCRIPTOR_JSON;
+	if (typeof serialized !== 'string') {
+		throw new Error('OMP bridge descriptor does not export OMP_PANEL_BRIDGE_DESCRIPTOR_JSON');
+	}
+	return parseJsonObject(serialized, 'invalid OMP bridge descriptor JSON');
 }
 
 async function bundleEntry(
@@ -105,7 +124,7 @@ async function bundleEntry(
 	};
 }
 
-function rewriteManifest(manifestBytes: Uint8Array): MutablePluginManifest {
+function rewriteManifest(manifestBytes: Uint8Array, bridge: unknown): MutablePluginManifest {
 	const manifest = parseJsonObject(
 		Buffer.from(manifestBytes).toString('utf8'),
 		'invalid plugin.json'
@@ -121,7 +140,7 @@ function rewriteManifest(manifestBytes: Uint8Array): MutablePluginManifest {
 		entry: 'dist/runtime.js',
 		contributes: {
 			...manifest.contributes,
-			interactivePanels: [{ ...panels[0], entry: 'dist/panel.html' }],
+			interactivePanels: [{ ...panels[0], entry: 'dist/panel.html', bridge }],
 		},
 	};
 }

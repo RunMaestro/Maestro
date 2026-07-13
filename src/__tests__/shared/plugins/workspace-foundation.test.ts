@@ -22,6 +22,7 @@ function createRawContributes() {
 				title: 'OMP',
 				entry: 'dist/panel.html',
 				workspaceLocalId: 'omp-workspace',
+				bridge: createClosedBridgeDescriptor(),
 			},
 		],
 	};
@@ -29,6 +30,51 @@ function createRawContributes() {
 
 function createRawPermissions() {
 	return [{ capability: 'ui:workspace' }, { capability: 'ui:interactivePanel' }];
+}
+
+function createClosedBridgeDescriptor() {
+	return {
+		requestSchemas: {
+			'omp.ping': {
+				canonicalJsonSchema: {
+					type: 'object',
+					additionalProperties: false,
+				},
+			},
+		},
+		eventSchemas: {
+			'omp.status': {
+				canonicalJsonSchema: {
+					type: 'object',
+					additionalProperties: false,
+				},
+			},
+		},
+		resultSchemas: {
+			'omp.ping': {
+				canonicalJsonSchema: {
+					type: 'object',
+					additionalProperties: false,
+				},
+			},
+		},
+		errorSchemas: {
+			'omp.ping': {
+				canonicalJsonSchema: {
+					type: 'object',
+					additionalProperties: false,
+				},
+			},
+		},
+	};
+}
+
+function withBridge(bridge: unknown) {
+	const raw = createRawContributes();
+	return {
+		...raw,
+		interactivePanels: [{ ...raw.interactivePanels[0], bridge }],
+	};
 }
 
 const malformedWorkspaceItems = [
@@ -142,6 +188,7 @@ describe('parseWorkspaceFoundation', () => {
 					canonicalContributionId: 'com.maestro.omp/omp-panel',
 					title: 'OMP',
 					entry: 'dist/panel.html',
+					bridge: createClosedBridgeDescriptor(),
 				},
 			},
 		});
@@ -849,6 +896,89 @@ describe('parseWorkspaceFoundation', () => {
 			ok: false,
 			errors: ['permissions[2].scope must equal "omp" for process:interactive'],
 		});
+	});
+	it('requires a complete, canonical, closed bridge descriptor and freezes its clone', () => {
+		const bridge = createClosedBridgeDescriptor();
+		const parsed = parseWorkspaceFoundation(
+			withBridge(bridge),
+			createRawPermissions(),
+			ownerPluginId
+		);
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: {
+				panel: { bridge },
+			},
+		});
+		if (!parsed.ok) throw new Error(parsed.errors.join(', '));
+		expect(Object.isFrozen(parsed.value.panel.bridge)).toBe(true);
+		expect(Object.isFrozen(parsed.value.panel.bridge.requestSchemas)).toBe(true);
+		expect(
+			Object.isFrozen(parsed.value.panel.bridge.requestSchemas['omp.ping']!.canonicalJsonSchema)
+		).toBe(true);
+
+		bridge.requestSchemas['omp.ping']!.canonicalJsonSchema.type = 'string';
+		expect(parsed.value.panel.bridge.requestSchemas['omp.ping']!.canonicalJsonSchema).toEqual({
+			type: 'object',
+			additionalProperties: false,
+		});
+	});
+
+	it('rejects a missing, malformed, or extra bridge descriptor shape', () => {
+		const raw = createRawContributes();
+		const panelWithoutBridge: Record<string, unknown> = { ...raw.interactivePanels[0] };
+		delete panelWithoutBridge.bridge;
+		expect(
+			parseWorkspaceFoundation(
+				{ ...raw, interactivePanels: [panelWithoutBridge] },
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toMatchObject({ ok: false });
+		expect(
+			parseWorkspaceFoundation(
+				withBridge({ ...createClosedBridgeDescriptor(), extra: true }),
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toMatchObject({ ok: false });
+		expect(
+			parseWorkspaceFoundation(
+				withBridge({ ...createClosedBridgeDescriptor(), requestSchemas: [] }),
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toMatchObject({ ok: false });
+	});
+
+	it('rejects invalid nested schemas, incomplete method pairings, and descriptor bombs', () => {
+		const invalidNested = createClosedBridgeDescriptor();
+		invalidNested.requestSchemas['omp.ping']!.canonicalJsonSchema = {
+			type: 'object',
+			properties: { payload: { type: 'executable' } },
+		};
+		expect(
+			parseWorkspaceFoundation(withBridge(invalidNested), createRawPermissions(), ownerPluginId)
+		).toMatchObject({ ok: false });
+
+		const unmatchedResult = createClosedBridgeDescriptor();
+		unmatchedResult.resultSchemas = {
+			'omp.other': unmatchedResult.resultSchemas['omp.ping']!,
+		};
+		expect(
+			parseWorkspaceFoundation(withBridge(unmatchedResult), createRawPermissions(), ownerPluginId)
+		).toMatchObject({ ok: false });
+
+		let bomb: Record<string, unknown> = { type: 'object' };
+		for (let index = 0; index < 40; index += 1) {
+			bomb = { type: 'object', properties: { nested: bomb } };
+		}
+		const oversized = createClosedBridgeDescriptor();
+		oversized.eventSchemas['omp.status']!.canonicalJsonSchema = bomb;
+		expect(
+			parseWorkspaceFoundation(withBridge(oversized), createRawPermissions(), ownerPluginId)
+		).toMatchObject({ ok: false });
 	});
 });
 

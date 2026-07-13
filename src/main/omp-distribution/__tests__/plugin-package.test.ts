@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
 
 const pluginRoot = join(process.cwd(), 'plugins', 'com.maestro.omp');
 const pluginJson = JSON.parse(readFileSync(join(pluginRoot, 'plugin.json'), 'utf8')) as Record<
@@ -13,11 +12,8 @@ const artifactBuild = JSON.parse(
 ) as Record<string, unknown>;
 
 describe('first-party OMP plugin package', () => {
-	it('uses the canonical plugin identity and valid paired workspace/panel declaration', () => {
-		const validated = validatePluginManifest(pluginJson);
-
-		expect(validated.errors).toEqual([]);
-		expect(validated.manifest).toMatchObject({ id: 'com.maestro.omp' });
+	it('uses the canonical plugin identity and declares the paired workspace/panel source entries', () => {
+		expect(pluginJson.id).toBe('com.maestro.omp');
 		expect(pluginJson.permissions).toEqual([
 			{ capability: 'ui:workspace' },
 			{ capability: 'ui:interactivePanel' },

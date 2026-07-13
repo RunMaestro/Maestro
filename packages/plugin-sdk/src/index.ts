@@ -589,6 +589,13 @@ export type LocalContributionId = string & { readonly __localContributionId: nev
 export type RelativePanelEntry = string & { readonly __relativePanelEntry: never };
 export type SnapshotToken = string & { readonly __snapshotToken: never };
 
+export type CanonicalClosedPanelBridge = ClosedPanelBridge<
+	JsonSchemaMap,
+	JsonSchemaMap,
+	JsonSchemaMap,
+	JsonSchemaMap
+>;
+
 export interface WorkspaceContribution {
 	readonly localId: LocalContributionId;
 	readonly title: string;
@@ -602,6 +609,7 @@ export interface InteractivePanelContribution {
 	readonly title: string;
 	readonly entry: RelativePanelEntry;
 	readonly workspaceLocalId: LocalContributionId;
+	readonly bridge: ClosedPanelBridge;
 }
 
 export interface CanonicalWorkspaceFoundation {
@@ -619,6 +627,7 @@ export interface CanonicalWorkspaceFoundation {
 		readonly canonicalContributionId: string;
 		readonly title: string;
 		readonly entry: string;
+		readonly bridge: CanonicalClosedPanelBridge;
 	};
 }
 
@@ -1407,6 +1416,17 @@ export const HOST_API = {
 	'background.list': { capability: 'background:service' },
 	'ui.groupingPublish': { capability: 'ui:grouping' },
 	'ui.groupingClear': { capability: 'ui:grouping' },
+	'workspace.publishExternalSessions': { capability: 'ui:workspace' },
+	'workspace.setStatus': { capability: 'ui:workspace' },
+	'workspace.setBadge': { capability: 'ui:workspace' },
+	'workspace.reveal': { capability: 'ui:workspace' },
+	'interactivePanel.resolve': { capability: 'ui:interactivePanel' },
+	'interactivePanel.reject': { capability: 'ui:interactivePanel' },
+	'interactivePanel.emit': { capability: 'ui:interactivePanel' },
+	'interactiveRuntime.requestWorkspaceRoot': { capability: 'process:interactive' },
+	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
+	'interactiveRuntime.write': { capability: 'process:interactive' },
+	'interactiveRuntime.stop': { capability: 'process:interactive' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */

@@ -27,6 +27,7 @@ import type {
 	InteractivePanelContribution,
 	CanonicalWorkspaceFoundation,
 	ClosedPanelBridge,
+	CanonicalClosedPanelBridge,
 	JsonValue,
 	MaestroInteractivePanelOwnerApi,
 	WorkspaceCapability,
@@ -57,6 +58,7 @@ import type {
 	WorkspaceContribution as SrcWorkspaceContribution,
 	InteractivePanelContribution as SrcInteractivePanelContribution,
 	CanonicalWorkspaceFoundation as SrcCanonicalWorkspaceFoundation,
+	CanonicalClosedPanelBridge as SrcCanonicalClosedPanelBridge,
 } from '../../../../src/shared/plugins/workspace-foundation';
 import type {
 	WorkspaceCapability as SrcWorkspaceCapability,
@@ -89,6 +91,7 @@ expectTypeOf<WorkspaceContribution>().toEqualTypeOf<SrcWorkspaceContribution>();
 expectTypeOf<InteractivePanelContribution>().toEqualTypeOf<SrcInteractivePanelContribution>();
 expectTypeOf<CanonicalWorkspaceFoundation>().toEqualTypeOf<SrcCanonicalWorkspaceFoundation>();
 expectTypeOf<ClosedPanelBridge>().toEqualTypeOf<SrcClosedPanelBridge>();
+expectTypeOf<CanonicalClosedPanelBridge>().toEqualTypeOf<SrcCanonicalClosedPanelBridge>();
 expectTypeOf<JsonValue>().toEqualTypeOf<SrcJsonValue>();
 expectTypeOf<WorkspaceCapability>().toEqualTypeOf<SrcWorkspaceCapability>();
 expectTypeOf<WorkspaceStatusSnapshot>().toEqualTypeOf<SrcWorkspaceStatusSnapshot>();

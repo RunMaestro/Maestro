@@ -24,6 +24,16 @@ function manifest(
 	};
 }
 
+function closedBridge() {
+	const schema = { canonicalJsonSchema: { type: 'object', additionalProperties: false } };
+	return {
+		requestSchemas: { 'omp.ping': schema },
+		eventSchemas: {},
+		resultSchemas: { 'omp.ping': schema },
+		errorSchemas: { 'omp.ping': schema },
+	};
+}
+
 describe('collectContributions', () => {
 	it('returns empty buckets when there is no contributes block', () => {
 		const c = collectContributions(manifest('com.a', undefined));
@@ -794,6 +804,7 @@ describe('workspace and interactive-panel contributions', () => {
 					localId: 'omp-panel',
 					title: 'OMP panel',
 					entry: 'dist/panel.html',
+					bridge: closedBridge(),
 					workspaceLocalId: 'omp-workspace',
 				},
 			],
@@ -828,6 +839,7 @@ describe('workspace and interactive-panel contributions', () => {
 				canonicalContributionId: 'com.maestro.omp/omp-panel',
 				title: 'OMP panel',
 				entry: 'dist/panel.html',
+				bridge: closedBridge(),
 			},
 		]);
 		expect(workspaceManifest).toEqual(expected);

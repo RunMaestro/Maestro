@@ -1,3 +1,6 @@
+import { compileCanonicalJsonSchema, isBoundedJsonValue } from './canonical-json-schema';
+import type { ClosedPanelBridge, JsonSchema, JsonSchemaMap, JsonValue } from './interactive-panel';
+
 const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const LOCAL_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const WORKSPACE_ICONS = ['sparkles', 'bot', 'workflow'] as const;
@@ -20,6 +23,14 @@ export type HostIconKeyword = WorkspaceIcon;
 export type LocalContributionId = string & { readonly __localContributionId: never };
 export type RelativePanelEntry = string & { readonly __relativePanelEntry: never };
 
+/** Manifest-authored closed panel descriptor. It contains data only, never code or paths. */
+export type CanonicalClosedPanelBridge = ClosedPanelBridge<
+	JsonSchemaMap,
+	JsonSchemaMap,
+	JsonSchemaMap,
+	JsonSchemaMap
+>;
+
 /** Plugin-authored declaration; the host derives its canonical contribution ID. */
 export interface WorkspaceContribution {
 	readonly localId: LocalContributionId;
@@ -34,6 +45,7 @@ export interface InteractivePanelContribution {
 	readonly localId: LocalContributionId;
 	readonly title: string;
 	readonly entry: RelativePanelEntry;
+	readonly bridge: ClosedPanelBridge;
 	readonly workspaceLocalId: LocalContributionId;
 }
 export const MAX_EXTERNAL_SESSIONS_PER_WORKSPACE = 500;
@@ -111,6 +123,7 @@ export interface RawInteractivePanelContribution {
 	readonly localId: string;
 	readonly title: string;
 	readonly entry: string;
+	readonly bridge: unknown;
 	readonly workspaceLocalId: string;
 }
 
@@ -140,6 +153,7 @@ export interface CanonicalWorkspaceFoundation {
 		readonly canonicalContributionId: string;
 		readonly title: string;
 		readonly entry: string;
+		readonly bridge: CanonicalClosedPanelBridge;
 	};
 }
 
@@ -178,6 +192,7 @@ interface ValidPanel {
 	readonly localId: string;
 	readonly title: string;
 	readonly entry: string;
+	readonly bridge: CanonicalClosedPanelBridge;
 	readonly workspaceLocalId: string;
 }
 
@@ -316,6 +331,7 @@ function parseFoundation(
 			canonicalContributionId: `${validOwnerPluginId}/${panel.localId}`,
 			title: panel.title,
 			entry: panel.entry,
+			bridge: panel.bridge,
 		}),
 	});
 	return Object.freeze({ ok: true as const, value: foundation });
@@ -488,12 +504,23 @@ function validatePanels(
 			continue;
 		}
 
-		validateClosedKeys(raw, ['localId', 'title', 'entry', 'workspaceLocalId'], path, addError);
+		validateClosedKeys(
+			raw,
+			['localId', 'title', 'entry', 'bridge', 'workspaceLocalId'],
+			path,
+			addError
+		);
 		const localId = readDataProperty(raw, 'localId');
 		const title = readDataProperty(raw, 'title');
 		const entry = readDataProperty(raw, 'entry');
+		const bridge = validateClosedPanelBridge(
+			readDataProperty(raw, 'bridge'),
+			`${path}.bridge`,
+			addError
+		);
 		const workspaceLocalId = readDataProperty(raw, 'workspaceLocalId');
 		let valid = true;
+		if (!bridge) valid = false;
 
 		if (typeof localId !== 'string') {
 			addError(`${path}.localId`, `${path}.localId must be a string`);
@@ -559,6 +586,7 @@ function validatePanels(
 						localId: localId as string,
 						title: title as string,
 						entry: entry as string,
+						bridge: bridge as CanonicalClosedPanelBridge,
 						workspaceLocalId: workspaceLocalId as string,
 					}
 				: null
@@ -566,6 +594,151 @@ function validatePanels(
 		complete &&= valid;
 	}
 	return { items, complete };
+}
+
+const BRIDGE_SCHEMA_MAP_KEYS = [
+	'requestSchemas',
+	'eventSchemas',
+	'resultSchemas',
+	'errorSchemas',
+] as const;
+const MAX_CLOSED_PANEL_METHODS = 64;
+
+function validateClosedPanelBridge(
+	raw: unknown,
+	path: string,
+	addError: (path: string, message: string) => void
+): CanonicalClosedPanelBridge | null {
+	if (!isPlainObject(raw)) {
+		addError(path, `${path} must be a plain object`);
+		return null;
+	}
+	if (!isBoundedJsonValue(raw)) {
+		addError(path, `${path} must be bounded JSON data`);
+		return null;
+	}
+	validateClosedKeys(raw, BRIDGE_SCHEMA_MAP_KEYS, path, addError);
+
+	const requestSchemas = validateClosedSchemaMap(
+		readDataProperty(raw, 'requestSchemas'),
+		`${path}.requestSchemas`,
+		true,
+		addError
+	);
+	const eventSchemas = validateClosedSchemaMap(
+		readDataProperty(raw, 'eventSchemas'),
+		`${path}.eventSchemas`,
+		false,
+		addError
+	);
+	const resultSchemas = validateClosedSchemaMap(
+		readDataProperty(raw, 'resultSchemas'),
+		`${path}.resultSchemas`,
+		true,
+		addError
+	);
+	const errorSchemas = validateClosedSchemaMap(
+		readDataProperty(raw, 'errorSchemas'),
+		`${path}.errorSchemas`,
+		true,
+		addError
+	);
+	if (!requestSchemas || !eventSchemas || !resultSchemas || !errorSchemas) return null;
+	if (!sameSchemaMethods(requestSchemas, resultSchemas)) {
+		addError(
+			`${path}.resultSchemas`,
+			`${path}.resultSchemas must declare exactly the requestSchemas methods`
+		);
+	}
+	if (!sameSchemaMethods(requestSchemas, errorSchemas)) {
+		addError(
+			`${path}.errorSchemas`,
+			`${path}.errorSchemas must declare exactly the requestSchemas methods`
+		);
+	}
+	if (
+		!sameSchemaMethods(requestSchemas, resultSchemas) ||
+		!sameSchemaMethods(requestSchemas, errorSchemas)
+	) {
+		return null;
+	}
+	return Object.freeze({
+		requestSchemas,
+		eventSchemas,
+		resultSchemas,
+		errorSchemas,
+	});
+}
+
+function validateClosedSchemaMap(
+	raw: unknown,
+	path: string,
+	requireMethods: boolean,
+	addError: (path: string, message: string) => void
+): JsonSchemaMap | null {
+	if (!isPlainObject(raw)) {
+		addError(path, `${path} must be a plain object`);
+		return null;
+	}
+	const keys = Object.keys(raw);
+	if (requireMethods && keys.length === 0) {
+		addError(path, `${path} must declare at least one method`);
+		return null;
+	}
+	if (keys.length > MAX_CLOSED_PANEL_METHODS) {
+		addError(path, `${path} must contain at most ${MAX_CLOSED_PANEL_METHODS} methods`);
+		return null;
+	}
+	const schemas: Record<string, JsonSchema> = {};
+	let valid = true;
+	for (const key of keys) {
+		if (key === '') {
+			addError(path, `${path} method names must be non-empty strings`);
+			valid = false;
+			continue;
+		}
+		const entry = readDataProperty(raw, key);
+		if (!isPlainObject(entry)) {
+			addError(`${path}.${key}`, `${path}.${key} must be a plain object`);
+			valid = false;
+			continue;
+		}
+		validateClosedKeys(entry, ['canonicalJsonSchema'], `${path}.${key}`, addError);
+		const canonicalJsonSchema = readDataProperty(entry, 'canonicalJsonSchema');
+		if (
+			!isBoundedJsonValue(canonicalJsonSchema) ||
+			!compileCanonicalJsonSchema(canonicalJsonSchema)
+		) {
+			addError(
+				`${path}.${key}.canonicalJsonSchema`,
+				`${path}.${key}.canonicalJsonSchema must be a canonical JSON schema`
+			);
+			valid = false;
+			continue;
+		}
+		schemas[key] = Object.freeze({
+			canonicalJsonSchema: freezeJson(structuredClone(canonicalJsonSchema)),
+		});
+	}
+	return valid ? Object.freeze(schemas) : null;
+}
+
+function sameSchemaMethods(left: JsonSchemaMap, right: JsonSchemaMap): boolean {
+	const leftKeys = Object.keys(left);
+	return leftKeys.length === Object.keys(right).length && leftKeys.every((key) => key in right);
+}
+
+function freezeJson(value: JsonValue): JsonValue {
+	if (Array.isArray(value)) {
+		value.forEach(freezeJson);
+		return Object.freeze(value);
+	}
+	if (typeof value === 'object' && value !== null) {
+		const record = value as { readonly [key: string]: JsonValue };
+		Object.keys(record).forEach((key) => freezeJson(record[key]!));
+		return Object.freeze(value);
+	}
+	return value;
 }
 
 function validatePermissions(

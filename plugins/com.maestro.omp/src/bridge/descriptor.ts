@@ -29,7 +29,6 @@ export type OmpPanelEventKind =
 	| 'omp.auth.progress'
 	| 'omp.panel.focusComposer'
 	| 'omp.panel.focusSession';
-export type OmpPanelErrorKind = 'omp.panel.error';
 
 type JsonSchema = Record<string, unknown>;
 type SchemaEntry = { readonly canonicalJsonSchema: JsonSchema };
@@ -38,7 +37,7 @@ export interface ClosedPanelBridge {
 	readonly requestSchemas: Readonly<Record<OmpPanelRequestKind, SchemaEntry>>;
 	readonly eventSchemas: Readonly<Record<OmpPanelEventKind, SchemaEntry>>;
 	readonly resultSchemas: Readonly<Record<OmpPanelRequestKind, SchemaEntry>>;
-	readonly errorSchemas: Readonly<Record<OmpPanelErrorKind, SchemaEntry>>;
+	readonly errorSchemas: Readonly<Record<OmpPanelRequestKind, SchemaEntry>>;
 }
 
 const emptyObjectSchema: JsonSchema = objectSchema({});
@@ -98,6 +97,23 @@ const branchSchema: JsonSchema = objectSchema(
 const loginSchema: JsonSchema = objectSchema({ providerId: stringSchema(1) }, ['providerId']);
 const exportSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
 const resultSchema: JsonSchema = objectSchema({});
+const errorSchema: JsonSchema = objectSchema(
+	{
+		code: {
+			enum: [
+				'backpressure',
+				'invalid_request',
+				'capability_unavailable',
+				'policy_denied',
+				'runtime_stopped',
+				'timeout',
+				'cancelled',
+			],
+		},
+		message: stringSchema(1),
+	},
+	['code', 'message']
+);
 
 /** §4.2 single source of truth. It exposes only named protocol actions, never a raw command tunnel. */
 export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
@@ -176,25 +192,28 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.export.request': { canonicalJsonSchema: resultSchema },
 	},
 	errorSchemas: {
-		'omp.panel.error': {
-			canonicalJsonSchema: objectSchema(
-				{
-					code: {
-						enum: [
-							'backpressure',
-							'invalid_request',
-							'capability_unavailable',
-							'policy_denied',
-							'runtime_stopped',
-							'timeout',
-							'cancelled',
-						],
-					},
-					message: stringSchema(1),
-				},
-				['code', 'message']
-			),
-		},
+		'omp.session.create': { canonicalJsonSchema: errorSchema },
+		'omp.session.select': { canonicalJsonSchema: errorSchema },
+		'omp.prompt.send': { canonicalJsonSchema: errorSchema },
+		'omp.steer.send': { canonicalJsonSchema: errorSchema },
+		'omp.followUp.send': { canonicalJsonSchema: errorSchema },
+		'omp.run.abort': { canonicalJsonSchema: errorSchema },
+		'omp.run.abortAndPrompt': { canonicalJsonSchema: errorSchema },
+		'omp.session.compact': { canonicalJsonSchema: errorSchema },
+		'omp.session.branch': { canonicalJsonSchema: errorSchema },
+		'omp.session.handoff': { canonicalJsonSchema: errorSchema },
+		'omp.model.set': { canonicalJsonSchema: errorSchema },
+		'omp.model.cycle': { canonicalJsonSchema: errorSchema },
+		'omp.thinking.set': { canonicalJsonSchema: errorSchema },
+		'omp.thinking.cycle': { canonicalJsonSchema: errorSchema },
+		'omp.settings.set': { canonicalJsonSchema: errorSchema },
+		'omp.commands.refresh': { canonicalJsonSchema: errorSchema },
+		'omp.messages.load': { canonicalJsonSchema: errorSchema },
+		'omp.stats.load': { canonicalJsonSchema: errorSchema },
+		'omp.subagents.load': { canonicalJsonSchema: errorSchema },
+		'omp.auth.providers': { canonicalJsonSchema: errorSchema },
+		'omp.auth.login': { canonicalJsonSchema: errorSchema },
+		'omp.export.request': { canonicalJsonSchema: errorSchema },
 	},
 };
 

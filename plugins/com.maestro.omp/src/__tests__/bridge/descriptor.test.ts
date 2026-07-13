@@ -40,6 +40,12 @@ describe('OMP closed bridge descriptor', () => {
 			'omp.panel.focusComposer',
 			'omp.panel.focusSession',
 		]);
+		expect(Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.resultSchemas)).toEqual(
+			Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas)
+		);
+		expect(Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.errorSchemas)).toEqual(
+			Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas)
+		);
 	});
 
 	it('accepts only exact fixed request names and canonical serializable inputs', () => {

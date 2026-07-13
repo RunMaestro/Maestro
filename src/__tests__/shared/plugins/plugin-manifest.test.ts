@@ -16,6 +16,16 @@ function validManifest(overrides: Record<string, unknown> = {}): Record<string, 
 	};
 }
 
+function closedBridge() {
+	const schema = { canonicalJsonSchema: { type: 'object', additionalProperties: false } };
+	return {
+		requestSchemas: { 'omp.ping': schema },
+		eventSchemas: {},
+		resultSchemas: { 'omp.ping': schema },
+		errorSchemas: { 'omp.ping': schema },
+	};
+}
+
 function workspaceContributes(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		workspaces: [
@@ -31,6 +41,7 @@ function workspaceContributes(overrides: Record<string, unknown> = {}): Record<s
 				localId: 'omp-panel',
 				title: 'OMP panel',
 				entry: 'dist/panel.html',
+				bridge: closedBridge(),
 				workspaceLocalId: 'omp-workspace',
 			},
 		],
@@ -150,6 +161,7 @@ describe('validatePluginManifest', () => {
 				canonicalContributionId: 'com.maestro.omp/omp-panel',
 				title: 'OMP panel',
 				entry: 'dist/panel.html',
+				bridge: closedBridge(),
 			},
 		});
 	});

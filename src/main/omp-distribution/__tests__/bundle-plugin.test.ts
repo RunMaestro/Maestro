@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
+import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { bundleOmpPlugin } from '../bundle-plugin';
 
 const pluginRoot = join(process.cwd(), 'plugins', 'com.maestro.omp');
@@ -14,7 +15,9 @@ describe('runnable OMP plugin package', () => {
 		const manifest = JSON.parse(
 			Buffer.from(filesByPath.get('plugin.json') ?? '').toString('utf8')
 		) as Record<string, unknown>;
-		const contributes = manifest.contributes as { interactivePanels: { entry: string }[] };
+		const contributes = manifest.contributes as {
+			interactivePanels: { entry: string; bridge: unknown }[];
+		};
 
 		expect([...filesByPath.keys()].sort()).toEqual([
 			'dist/panel.html',
@@ -22,6 +25,24 @@ describe('runnable OMP plugin package', () => {
 			'plugin.json',
 		]);
 		expect(manifest.entry).toBe('dist/runtime.js');
+		const artifactValidation = validatePluginManifest(manifest);
+		expect(artifactValidation.errors).toEqual([]);
+		expect(artifactValidation.manifest?.workspaceFoundation?.panel.bridge).toMatchObject({
+			requestSchemas: expect.any(Object),
+			eventSchemas: expect.any(Object),
+			resultSchemas: expect.any(Object),
+			errorSchemas: expect.any(Object),
+		});
+		const bridge = contributes.interactivePanels[0]?.bridge as {
+			requestSchemas: Record<string, unknown>;
+			eventSchemas: Record<string, unknown>;
+			resultSchemas: Record<string, unknown>;
+			errorSchemas: Record<string, unknown>;
+		};
+		expect(Object.keys(bridge.requestSchemas)).toHaveLength(22);
+		expect(Object.keys(bridge.eventSchemas)).toHaveLength(6);
+		expect(Object.keys(bridge.resultSchemas)).toEqual(Object.keys(bridge.requestSchemas));
+		expect(Object.keys(bridge.errorSchemas)).toEqual(Object.keys(bridge.requestSchemas));
 		expect(contributes.interactivePanels[0]?.entry).toBe('dist/panel.html');
 		expect(bundle.contractSha256).toBe(
 			createHash('sha256')
