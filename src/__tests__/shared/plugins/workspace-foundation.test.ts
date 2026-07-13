@@ -2,27 +2,69 @@ import { describe, expect, it } from 'vitest';
 import { parseWorkspaceFoundation } from '../../../shared/plugins/workspace-foundation';
 
 const ownerPluginId = 'com.maestro.omp';
-const rawContributes = {
-	workspaces: [
-		{
-			localId: 'omp-workspace',
-			title: 'OMP',
-			icon: 'sparkles',
-			interactivePanelLocalId: 'omp-panel',
-		},
-	],
-	interactivePanels: [
-		{
-			localId: 'omp-panel',
-			title: 'OMP',
-			entry: 'dist/panel.html',
-		},
-	],
-};
-const rawPermissions = [{ capability: 'ui:workspace' }, { capability: 'ui:interactivePanel' }];
+
+function createRawContributes() {
+	return {
+		workspaces: [
+			{
+				localId: 'omp-workspace',
+				title: 'OMP',
+				icon: 'sparkles',
+				interactivePanelLocalId: 'omp-panel',
+			},
+		],
+		interactivePanels: [
+			{
+				localId: 'omp-panel',
+				title: 'OMP',
+				entry: 'dist/panel.html',
+				workspaceLocalId: 'omp-workspace',
+			},
+		],
+	};
+}
+
+function createRawPermissions() {
+	return [{ capability: 'ui:workspace' }, { capability: 'ui:interactivePanel' }];
+}
+
+const malformedWorkspaceItems = [
+	{ label: 'a null workspace item', item: null },
+	{ label: 'a non-object workspace item', item: 'not-an-object' },
+] as const;
+const malformedPanelItems = [
+	{ label: 'a null interactive panel item', item: null },
+	{ label: 'a non-object interactive panel item', item: 'not-an-object' },
+] as const;
+const workspaceRequiredFields = ['localId', 'title', 'icon', 'interactivePanelLocalId'] as const;
+const panelRequiredFields = ['localId', 'title', 'entry', 'workspaceLocalId'] as const;
+const unsafeEntries = [
+	{ label: 'a traversal entry', entry: '../panel.html' },
+	{ label: 'an absolute entry', entry: '/panel.html' },
+	{ label: 'a Windows drive entry', entry: 'C:\\panel.html' },
+	{ label: 'a Windows UNC entry', entry: '\\\\server\\share\\panel.html' },
+] as const;
+const forbiddenItemKeys = ['id', 'pluginId', 'ownerPluginId', 'canonicalId'] as const;
+const invalidOwnerPluginIds = [
+	{
+		label: 'an empty owner plugin ID',
+		value: '',
+		error: 'ownerPluginId must be a non-empty string',
+	},
+	{
+		label: 'an invalid owner plugin ID',
+		value: '../com.maestro.omp',
+		error: 'ownerPluginId must be a valid plugin ID',
+	},
+] as const;
 
 describe('parseWorkspaceFoundation', () => {
-	it('accepts one paired workspace and interactive panel', () => {
+	it('accepts one paired workspace and interactive panel without mutating raw input', () => {
+		const rawContributes = createRawContributes();
+		const rawPermissions = createRawPermissions();
+		const expectedContributes = structuredClone(rawContributes);
+		const expectedPermissions = structuredClone(rawPermissions);
+
 		expect(parseWorkspaceFoundation(rawContributes, rawPermissions, ownerPluginId)).toEqual({
 			ok: true,
 			value: {
@@ -41,20 +83,41 @@ describe('parseWorkspaceFoundation', () => {
 				},
 			},
 		});
+		expect(rawContributes).toEqual(expectedContributes);
+		expect(rawPermissions).toEqual(expectedPermissions);
 	});
 
 	it('rejects a non-object contributes value', () => {
-		expect(parseWorkspaceFoundation(null, rawPermissions, ownerPluginId)).toEqual({
+		expect(parseWorkspaceFoundation(null, createRawPermissions(), ownerPluginId)).toEqual({
 			ok: false,
 			errors: ['contributes must be a plain object'],
 		});
 	});
 
+	it('rejects an array contributes value', () => {
+		expect(parseWorkspaceFoundation([], createRawPermissions(), ownerPluginId)).toEqual({
+			ok: false,
+			errors: ['contributes must be a plain object'],
+		});
+	});
+
+	for (const { label, value, error } of invalidOwnerPluginIds) {
+		it(`rejects ${label}`, () => {
+			expect(
+				parseWorkspaceFoundation(createRawContributes(), createRawPermissions(), value)
+			).toEqual({
+				ok: false,
+				errors: [error],
+			});
+		});
+	}
+
 	it('rejects an unknown contributes key', () => {
+		const rawContributes = createRawContributes();
 		expect(
 			parseWorkspaceFoundation(
 				{ ...rawContributes, unexpected: true },
-				rawPermissions,
+				createRawPermissions(),
 				ownerPluginId
 			)
 		).toEqual({
@@ -63,23 +126,198 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
+	for (const key of forbiddenItemKeys) {
+		it(`rejects workspace item key ${key}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						workspaces: [{ ...rawContributes.workspaces[0], [key]: 'forged' }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: [`workspaces[0].${key} is not allowed`],
+			});
+		});
+
+		it(`rejects interactive panel item key ${key}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						interactivePanels: [{ ...rawContributes.interactivePanels[0], [key]: 'forged' }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: [`interactivePanels[0].${key} is not allowed`],
+			});
+		});
+	}
+
 	it('rejects a non-array contribution list', () => {
+		const rawContributes = createRawContributes();
 		expect(
-			parseWorkspaceFoundation({ ...rawContributes, workspaces: {} }, rawPermissions, ownerPluginId)
+			parseWorkspaceFoundation(
+				{ ...rawContributes, workspaces: {} },
+				createRawPermissions(),
+				ownerPluginId
+			)
 		).toEqual({
 			ok: false,
 			errors: ['workspaces must be an array'],
 		});
 	});
 
+	for (const { label, item } of malformedWorkspaceItems) {
+		it(`returns a structured error for ${label} without throwing`, () => {
+			const rawContributes = createRawContributes();
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, workspaces: [item] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: ['workspaces[0] must be a plain object'],
+			});
+		});
+	}
+
+	for (const field of workspaceRequiredFields) {
+		it(`returns a structured error when workspace ${field} is missing`, () => {
+			const rawContributes = createRawContributes();
+			const workspace = { ...rawContributes.workspaces[0] } as Record<string, unknown>;
+			delete workspace[field];
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, workspaces: [workspace] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: [`workspaces[0].${field} must be a string`],
+			});
+		});
+
+		it(`returns a structured error when workspace ${field} is not a string`, () => {
+			const rawContributes = createRawContributes();
+			const workspace = {
+				...rawContributes.workspaces[0],
+				[field]: 1,
+			};
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, workspaces: [workspace] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: [`workspaces[0].${field} must be a string`],
+			});
+		});
+	}
+
+	it('rejects an unknown workspace icon', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{
+					...rawContributes,
+					workspaces: [{ ...rawContributes.workspaces[0], icon: 'unknown' }],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['workspaces[0].icon must be one of sparkles, bot, workflow'],
+		});
+	});
+
+	for (const { label, item } of malformedPanelItems) {
+		it(`returns a structured error for ${label} without throwing`, () => {
+			const rawContributes = createRawContributes();
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, interactivePanels: [item] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: ['interactivePanels[0] must be a plain object'],
+			});
+		});
+	}
+
+	for (const field of panelRequiredFields) {
+		it(`returns a structured error when interactive panel ${field} is missing`, () => {
+			const rawContributes = createRawContributes();
+			const panel = { ...rawContributes.interactivePanels[0] } as Record<string, unknown>;
+			delete panel[field];
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, interactivePanels: [panel] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: [`interactivePanels[0].${field} must be a string`],
+			});
+		});
+
+		it(`returns a structured error when interactive panel ${field} is not a string`, () => {
+			const rawContributes = createRawContributes();
+			const panel = {
+				...rawContributes.interactivePanels[0],
+				[field]: 1,
+			};
+			const parse = () =>
+				parseWorkspaceFoundation(
+					{ ...rawContributes, interactivePanels: [panel] },
+					createRawPermissions(),
+					ownerPluginId
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: [`interactivePanels[0].${field} must be a string`],
+			});
+		});
+	}
+
 	it('rejects duplicate workspace local IDs', () => {
+		const rawContributes = createRawContributes();
 		expect(
 			parseWorkspaceFoundation(
 				{
 					...rawContributes,
 					workspaces: [...rawContributes.workspaces, { ...rawContributes.workspaces[0] }],
 				},
-				rawPermissions,
+				createRawPermissions(),
 				ownerPluginId
 			)
 		).toEqual({
@@ -92,6 +330,7 @@ describe('parseWorkspaceFoundation', () => {
 	});
 
 	it('rejects duplicate interactive panel local IDs', () => {
+		const rawContributes = createRawContributes();
 		expect(
 			parseWorkspaceFoundation(
 				{
@@ -101,7 +340,7 @@ describe('parseWorkspaceFoundation', () => {
 						{ ...rawContributes.interactivePanels[0] },
 					],
 				},
-				rawPermissions,
+				createRawPermissions(),
 				ownerPluginId
 			)
 		).toEqual({
@@ -114,8 +353,13 @@ describe('parseWorkspaceFoundation', () => {
 	});
 
 	it('requires exactly one workspace', () => {
+		const rawContributes = createRawContributes();
 		expect(
-			parseWorkspaceFoundation({ ...rawContributes, workspaces: [] }, rawPermissions, ownerPluginId)
+			parseWorkspaceFoundation(
+				{ ...rawContributes, workspaces: [] },
+				createRawPermissions(),
+				ownerPluginId
+			)
 		).toEqual({
 			ok: false,
 			errors: ['workspaces must contain exactly one item'],
@@ -123,10 +367,11 @@ describe('parseWorkspaceFoundation', () => {
 	});
 
 	it('requires exactly one interactive panel', () => {
+		const rawContributes = createRawContributes();
 		expect(
 			parseWorkspaceFoundation(
 				{ ...rawContributes, interactivePanels: [] },
-				rawPermissions,
+				createRawPermissions(),
 				ownerPluginId
 			)
 		).toEqual({
@@ -135,30 +380,34 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
-	it('rejects an unsafe interactive panel entry', () => {
-		expect(
-			parseWorkspaceFoundation(
-				{
-					...rawContributes,
-					interactivePanels: [{ ...rawContributes.interactivePanels[0], entry: '../panel.html' }],
-				},
-				rawPermissions,
-				ownerPluginId
-			)
-		).toEqual({
-			ok: false,
-			errors: ['interactivePanels[0].entry must be a safe relative path'],
+	for (const { label, entry } of unsafeEntries) {
+		it(`rejects ${label}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						interactivePanels: [{ ...rawContributes.interactivePanels[0], entry }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: ['interactivePanels[0].entry must be a safe relative path'],
+			});
 		});
-	});
+	}
 
 	it('requires the workspace to reference its paired interactive panel', () => {
+		const rawContributes = createRawContributes();
 		expect(
 			parseWorkspaceFoundation(
 				{
 					...rawContributes,
 					workspaces: [{ ...rawContributes.workspaces[0], interactivePanelLocalId: 'missing' }],
 				},
-				rawPermissions,
+				createRawPermissions(),
 				ownerPluginId
 			)
 		).toEqual({
@@ -167,10 +416,29 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
+	it('requires the interactive panel to reference its paired workspace', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{
+					...rawContributes,
+					interactivePanels: [
+						{ ...rawContributes.interactivePanels[0], workspaceLocalId: 'missing' },
+					],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['interactivePanels[0].workspaceLocalId must reference workspaces[0].localId'],
+		});
+	});
+
 	it('requires ui:workspace', () => {
 		expect(
 			parseWorkspaceFoundation(
-				rawContributes,
+				createRawContributes(),
 				[{ capability: 'ui:interactivePanel' }],
 				ownerPluginId
 			)
@@ -182,7 +450,11 @@ describe('parseWorkspaceFoundation', () => {
 
 	it('requires ui:interactivePanel', () => {
 		expect(
-			parseWorkspaceFoundation(rawContributes, [{ capability: 'ui:workspace' }], ownerPluginId)
+			parseWorkspaceFoundation(
+				createRawContributes(),
+				[{ capability: 'ui:workspace' }],
+				ownerPluginId
+			)
 		).toEqual({
 			ok: false,
 			errors: ['interactivePanels requires ui:interactivePanel'],
