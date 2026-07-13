@@ -636,6 +636,7 @@ describe('PluginInteractivePanelHost', () => {
 			'omp.session.compact': { sessionId: 'session-1' },
 			'omp.session.branch': { sessionId: 'session-1', entryId: 'entry-1' },
 			'omp.session.handoff': { sessionId: 'session-1' },
+			'omp.session.rename': { sessionId: 'session-1', name: 'Renamed session' },
 			'omp.model.set': { sessionId: 'session-1', provider: 'openai', modelId: 'gpt' },
 			'omp.model.cycle': { sessionId: 'session-1' },
 			'omp.composer.mode.set': { sessionId: 'session-1', mode: 'build' },
@@ -662,6 +663,7 @@ describe('PluginInteractivePanelHost', () => {
 			'omp.session.compact': snapshot,
 			'omp.session.branch': snapshot,
 			'omp.session.handoff': snapshot,
+			'omp.session.rename': snapshot,
 			'omp.model.set': snapshot,
 			'omp.model.cycle': snapshot,
 			'omp.composer.mode.set': snapshot,
@@ -673,7 +675,6 @@ describe('PluginInteractivePanelHost', () => {
 			'omp.messages.load': { messages: [{ id: 'message-1', role: 'assistant', text: 'done' }] },
 			'omp.stats.load': { messageCount: 1, queuedMessageCount: 0 },
 			'omp.subagents.load': {
-				sessionFile: '',
 				fromByte: 0,
 				nextByte: 0,
 				reset: false,

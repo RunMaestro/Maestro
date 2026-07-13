@@ -11,6 +11,7 @@ export type OmpPanelRequestKind =
 	| 'omp.session.compact'
 	| 'omp.session.branch'
 	| 'omp.session.handoff'
+	| 'omp.session.rename'
 	| 'omp.model.set'
 	| 'omp.model.cycle'
 	| 'omp.composer.mode.set'
@@ -126,6 +127,10 @@ const branchSchema: JsonSchema = objectSchema(
 	{ sessionId: stringSchema(1), entryId: stringSchema(1) },
 	['sessionId', 'entryId']
 );
+const renameSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1, 4096), name: stringSchema(1, 4096) },
+	['sessionId', 'name']
+);
 const loginSchema: JsonSchema = objectSchema({ providerId: stringSchema(1) }, ['providerId']);
 const exportSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
 const ackSchema: JsonSchema = objectSchema({});
@@ -143,6 +148,14 @@ const todoPhaseSchema: JsonSchema = objectSchema({
 	label: stringSchema(0, 65536),
 	status: stringSchema(0, 128),
 });
+const treeNodeSchema: JsonSchema = objectSchema(
+	{
+		id: stringSchema(1, 256),
+		label: stringSchema(0, 65536),
+		children: { type: 'array', maxItems: 500 },
+	},
+	['id', 'label']
+);
 const workspaceSessionSchema: JsonSchema = objectSchema(
 	{
 		id: stringSchema(0, 4096),
@@ -152,7 +165,7 @@ const workspaceSessionSchema: JsonSchema = objectSchema(
 		model: stringSchema(0, 4096),
 		mode: { enum: ['build', 'plan', 'ask'] },
 		events: { type: 'array', maxItems: 0 },
-		tree: { type: 'array', maxItems: 0 },
+		tree: { type: 'array', maxItems: 500, items: treeNodeSchema },
 		subagents: { type: 'array', maxItems: 0 },
 		usage: objectSchema(
 			{ inputTokens: nonNegativeIntegerSchema, outputTokens: nonNegativeIntegerSchema },
@@ -181,7 +194,7 @@ const workspaceSnapshotSchema: JsonSchema = objectSchema(
 	{
 		connection: { enum: ['loading', 'ready', 'offline', 'error'] },
 		models: { type: 'array', maxItems: 100, items: stringSchema(1, 4096) },
-		sessions: { type: 'array', maxItems: 1, items: workspaceSessionSchema },
+		sessions: { type: 'array', maxItems: 100, items: workspaceSessionSchema },
 		activeSessionId: stringSchema(0, 4096),
 		error: stringSchema(0, 4096),
 	},
@@ -205,14 +218,13 @@ const subagentEntrySchema: JsonSchema = objectSchema(
 );
 const subagentMessagesResultSchema: JsonSchema = objectSchema(
 	{
-		sessionFile: stringSchema(0, 4096),
 		fromByte: nonNegativeIntegerSchema,
 		nextByte: nonNegativeIntegerSchema,
 		reset: { enum: [true, false] },
 		entries: { type: 'array', maxItems: 500, items: subagentEntrySchema },
 		messages: { type: 'array', maxItems: 500, items: messageSummarySchema },
 	},
-	['sessionFile', 'fromByte', 'nextByte', 'reset', 'entries', 'messages']
+	['fromByte', 'nextByte', 'reset', 'entries', 'messages']
 );
 const authProvidersResultSchema: JsonSchema = objectSchema(
 	{
@@ -267,6 +279,7 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.compact': { canonicalJsonSchema: instructionsSchema },
 		'omp.session.branch': { canonicalJsonSchema: branchSchema },
 		'omp.session.handoff': { canonicalJsonSchema: instructionsSchema },
+		'omp.session.rename': { canonicalJsonSchema: renameSchema },
 		'omp.model.set': { canonicalJsonSchema: modelSchema },
 		'omp.model.cycle': { canonicalJsonSchema: sessionIdSchema },
 		'omp.composer.mode.set': { canonicalJsonSchema: composerModeSchema },
@@ -323,6 +336,7 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.compact': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.session.branch': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.session.handoff': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.session.rename': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.model.set': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.model.cycle': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.composer.mode.set': { canonicalJsonSchema: workspaceSnapshotSchema },
@@ -349,6 +363,7 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.compact': { canonicalJsonSchema: errorSchema },
 		'omp.session.branch': { canonicalJsonSchema: errorSchema },
 		'omp.session.handoff': { canonicalJsonSchema: errorSchema },
+		'omp.session.rename': { canonicalJsonSchema: errorSchema },
 		'omp.model.set': { canonicalJsonSchema: errorSchema },
 		'omp.model.cycle': { canonicalJsonSchema: errorSchema },
 		'omp.composer.mode.set': { canonicalJsonSchema: errorSchema },

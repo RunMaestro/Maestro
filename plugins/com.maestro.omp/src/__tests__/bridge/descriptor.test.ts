@@ -3,7 +3,7 @@ import {
 	OMP_PANEL_BRIDGE_DESCRIPTOR,
 	OMP_PANEL_BRIDGE_DESCRIPTOR_JSON,
 	validateOmpBridgeEnvelope,
-} from '../../bridge/descriptor';
+} from '../../bridge/descriptor.ts';
 import { MAX_OMP_IMAGE_BYTES } from '../../runtime/byte-codec';
 
 describe('OMP closed bridge descriptor', () => {
@@ -20,6 +20,7 @@ describe('OMP closed bridge descriptor', () => {
 			'omp.session.compact',
 			'omp.session.branch',
 			'omp.session.handoff',
+			'omp.session.rename',
 			'omp.model.set',
 			'omp.model.cycle',
 			'omp.composer.mode.set',
