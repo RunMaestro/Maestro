@@ -539,12 +539,13 @@ function Composer({
 					className="cursor-pointer rounded border px-2 py-1.5 text-xs"
 					style={{ borderColor: theme.colors.border }}
 				>
-					Attach files
+					Attach images
 				</label>
 				<input
 					id="omp-attachments"
-					aria-label="Attach files"
+					aria-label="Attach images"
 					type="file"
+					accept="image/*"
 					multiple
 					className="sr-only"
 					onChange={(event) => onAttachmentsChange(Array.from(event.target.files ?? []))}

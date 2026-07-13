@@ -129,9 +129,11 @@ describe('OmpWorkspace', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Plan mode' }));
 		expect(adapter.setMode).toHaveBeenCalledWith('session-a', 'plan');
 
-		const file = new File(['diagram'], 'design.txt', { type: 'text/plain' });
-		fireEvent.change(screen.getByLabelText('Attach files'), { target: { files: [file] } });
-		expect(screen.getByText('design.txt')).toBeVisible();
+		const file = new File(['diagram'], 'diagram.png', { type: 'image/png' });
+		const imageInput = screen.getByLabelText('Attach images');
+		expect(imageInput).toHaveAttribute('accept', 'image/*');
+		fireEvent.change(imageInput, { target: { files: [file] } });
+		expect(screen.getByText('diagram.png')).toBeVisible();
 		fireEvent.change(screen.getByLabelText('OMP message'), {
 			target: { value: 'Run the focused test.' },
 		});

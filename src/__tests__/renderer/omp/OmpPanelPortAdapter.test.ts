@@ -105,7 +105,7 @@ describe('createOmpWorkspaceAdapter', () => {
 	it('encodes bounded attachment bytes before dispatching a prompt', async () => {
 		const request = vi.fn(async (kind: string) => ({ kind, requestId: 'r-1', payload: {} }));
 		const port: OmpPanelPort = { request, subscribe: vi.fn(() => () => {}) };
-		const attachment = Object.assign(new File(['diagram'], 'design.txt', { type: 'text/plain' }), {
+		const attachment = Object.assign(new File(['diagram'], 'diagram.png', { type: 'image/png' }), {
 			arrayBuffer: async () => new TextEncoder().encode('diagram').buffer,
 		});
 
@@ -116,13 +116,27 @@ describe('createOmpWorkspaceAdapter', () => {
 			text: 'Inspect this.',
 			attachments: [
 				{
-					name: 'design.txt',
-					mediaType: 'text/plain',
+					name: 'diagram.png',
+					mediaType: 'image/png',
 					size: 7,
 					dataBase64: 'ZGlhZ3JhbQ==',
 				},
 			],
 		});
+	});
+
+	it('rejects non-image attachments before requesting the panel capability', async () => {
+		const request = vi.fn();
+		const port: OmpPanelPort = { request, subscribe: vi.fn(() => () => {}) };
+		const text = Object.assign(new File(['text'], 'notes.txt', { type: 'text/plain' }), {
+			arrayBuffer: vi.fn(),
+		});
+
+		await expect(
+			createOmpWorkspaceAdapter(port).sendMessage('session-a', 'Inspect this.', [text])
+		).rejects.toThrow('unsupported image type');
+		expect(request).not.toHaveBeenCalled();
+		expect(text.arrayBuffer).not.toHaveBeenCalled();
 	});
 
 	it('rejects aggregate attachment overflow before requesting the panel capability', async () => {
@@ -132,8 +146,8 @@ describe('createOmpWorkspaceAdapter', () => {
 			{ length: 8 },
 			(_, index) =>
 				({
-					name: `${index}.txt`,
-					type: 'text/plain',
+					name: `${index}.png`,
+					type: 'image/png',
 					size: 128 * 1024,
 					arrayBuffer: vi.fn(),
 				}) as File

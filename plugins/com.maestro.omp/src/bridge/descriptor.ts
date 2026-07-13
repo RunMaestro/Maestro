@@ -47,10 +47,11 @@ const sessionIdSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) },
 const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
 const MAX_ATTACHMENT_TOTAL_BYTES = 512 * 1024;
 const MAX_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES_PER_FILE / 3) * 4;
+const SUPPORTED_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 const attachmentSchema: JsonSchema = objectSchema(
 	{
 		name: stringSchema(1, 255),
-		mediaType: stringSchema(3, 127),
+		mediaType: { enum: SUPPORTED_IMAGE_MEDIA_TYPES },
 		size: integerSchema(1, MAX_ATTACHMENT_BYTES_PER_FILE),
 		dataBase64: stringSchema(4, MAX_ATTACHMENT_BASE64_LENGTH),
 	},
@@ -298,7 +299,7 @@ function isValidPromptAttachments(payload: unknown): boolean {
 			name.includes('\\') ||
 			[...name].some((character) => character.charCodeAt(0) < 32) ||
 			typeof mediaType !== 'string' ||
-			!/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/.test(mediaType) ||
+			!(SUPPORTED_IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType) ||
 			typeof size !== 'number' ||
 			!Number.isInteger(size) ||
 			size < 1 ||

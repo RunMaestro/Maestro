@@ -82,6 +82,16 @@ describe('OMP closed bridge descriptor', () => {
 				payload: {
 					sessionId: 'session-1',
 					text: 'inspect',
+					attachments: [{ ...attachment, mediaType: 'text/plain' }],
+				},
+			})
+		).toMatchObject({ ok: false, code: 'invalid_envelope' });
+		expect(
+			validateOmpBridgeEnvelope({
+				kind: 'omp.prompt.send',
+				payload: {
+					sessionId: 'session-1',
+					text: 'inspect',
 					attachments: [{ ...attachment, dataBase64: 'not base64!' }],
 				},
 			})
@@ -94,8 +104,8 @@ describe('OMP closed bridge descriptor', () => {
 					sessionId: 'session-1',
 					text: 'inspect',
 					attachments: Array.from({ length: 8 }, (_, index) => ({
-						name: `${index}.txt`,
-						mediaType: 'text/plain',
+						name: `${index}.png`,
+						mediaType: 'image/png',
 						size: 128 * 1024,
 						dataBase64: maxAttachmentData,
 					})),

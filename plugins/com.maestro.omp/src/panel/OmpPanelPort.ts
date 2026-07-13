@@ -68,17 +68,16 @@ export function createOmpPanelControllerAdapter(port: OmpPanelPort): OmpPanelCon
 	};
 }
 
-/**
- * Compatibility view used by the current presentation tree. Legacy UI concepts that
- * have no §4.2 command intentionally reject with a typed visible-unavailable error.
- */
 const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
 const MAX_ATTACHMENT_WIRE_BYTES = 512 * 1024;
+const SUPPORTED_IMAGE_MEDIA_TYPES: Record<string, true> = {
+	'image/png': true,
+	'image/jpeg': true,
+	'image/webp': true,
+	'image/gif': true,
+};
 
-/**
- * Compatibility view used by the current presentation tree. All mutations remain
- * named, descriptor-validated requests; only presentation deltas are reduced locally.
- */
+/** All mutations remain named, descriptor-validated requests; presentation deltas reduce locally. */
 export function createOmpWorkspaceAdapter(port: OmpPanelPort): OmpWorkspaceAdapter {
 	const controller = createOmpPanelControllerAdapter(port);
 	let currentSnapshot: OmpWorkspaceSnapshot | null = null;
@@ -244,20 +243,23 @@ async function encodeAttachments(
 			attachment.size > MAX_ATTACHMENT_BYTES_PER_FILE
 		)
 			throw new Error(`Attachment ${attachment.name} exceeds the per-file size limit.`);
+		if (!SUPPORTED_IMAGE_MEDIA_TYPES[attachment.type])
+			throw new Error(
+				`Attachment ${attachment.name || '(unnamed)'} has an unsupported image type.`
+			);
 		wireBytes += attachment.size + Math.ceil(attachment.size / 3) * 4;
 		if (wireBytes > MAX_ATTACHMENT_WIRE_BYTES)
 			throw new Error('Attachments exceed the total size limit.');
 	}
 	return Promise.all(
 		attachments.map(async (attachment) => {
-			const mediaType = attachment.type || 'application/octet-stream';
+			const mediaType = attachment.type;
 			if (
 				attachment.name.length === 0 ||
 				attachment.name.length > 255 ||
 				attachment.name.includes('/') ||
 				attachment.name.includes('\\') ||
-				[...attachment.name].some((character) => character.charCodeAt(0) < 32) ||
-				!/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/.test(mediaType)
+				[...attachment.name].some((character) => character.charCodeAt(0) < 32)
 			)
 				throw new Error(
 					`Attachment ${attachment.name || '(unnamed)'} has an invalid name or media type.`
