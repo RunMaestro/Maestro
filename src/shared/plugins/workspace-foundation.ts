@@ -5,6 +5,8 @@ const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const LOCAL_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const WORKSPACE_ICONS = ['sparkles', 'bot', 'workflow'] as const;
 const REQUIRED_CAPABILITIES = ['ui:workspace', 'ui:interactivePanel'] as const;
+const SNAPSHOT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,86}$/;
+const MAX_WORKSPACE_LINK_BYTES = 512;
 
 type WorkspaceIcon = (typeof WORKSPACE_ICONS)[number];
 type ErrorEntry = { readonly path: string; readonly message: string; readonly order: number };
@@ -59,6 +61,12 @@ export interface CanonicalWorkspaceFoundation {
 export type WorkspaceFoundationParseResult =
 	| { readonly ok: true; readonly value: CanonicalWorkspaceFoundation }
 	| { readonly ok: false; readonly errors: readonly string[] };
+
+export interface ParsedWorkspaceLink {
+	readonly pluginId: string;
+	readonly workspaceLocalId: WorkspaceLocalId;
+	readonly snapshotToken: string;
+}
 
 interface ValidWorkspace {
 	readonly localId: string;
@@ -481,4 +489,89 @@ function sortErrors(errors: ErrorEntry[]): readonly string[] {
 			return left.order - right.order;
 		})
 		.map(({ message }) => message);
+}
+
+/**
+ * Parses only the wire syntax of a workspace snapshot link. Resolution and
+ * authorization remain registry responsibilities.
+ */
+export function parseWorkspaceLink(url: string): ParsedWorkspaceLink | null {
+	if (
+		typeof url !== 'string' ||
+		utf8ByteLength(url) > MAX_WORKSPACE_LINK_BYTES ||
+		!url.startsWith('maestro://workspace/') ||
+		url.includes('%') ||
+		url.includes('?') ||
+		url.includes('#') ||
+		/[\\\u0000-\u001F\u007F]/.test(url)
+	) {
+		return null;
+	}
+
+	try {
+		const parsed = new URL(url);
+		if (
+			parsed.protocol !== 'maestro:' ||
+			parsed.hostname !== 'workspace' ||
+			parsed.host !== 'workspace' ||
+			parsed.username !== '' ||
+			parsed.password !== '' ||
+			parsed.port !== '' ||
+			parsed.search !== '' ||
+			parsed.hash !== '' ||
+			parsed.pathname.includes('//')
+		) {
+			return null;
+		}
+
+		const segments = parsed.pathname.slice(1).split('/');
+		if (
+			segments.length !== 4 ||
+			segments.some((segment) => segment === '') ||
+			segments[2] !== 'session'
+		) {
+			return null;
+		}
+
+		const [pluginId, workspaceLocalId, , snapshotToken] = segments;
+		if (
+			!PLUGIN_ID_PATTERN.test(pluginId) ||
+			!LOCAL_ID_PATTERN.test(workspaceLocalId) ||
+			!SNAPSHOT_TOKEN_PATTERN.test(snapshotToken)
+		) {
+			return null;
+		}
+		return {
+			pluginId,
+			workspaceLocalId: workspaceLocalId as WorkspaceLocalId,
+			snapshotToken,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function utf8ByteLength(value: string): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codeUnit = value.charCodeAt(index);
+		if (codeUnit <= 0x7f) {
+			bytes += 1;
+		} else if (codeUnit <= 0x7ff) {
+			bytes += 2;
+		} else if (
+			codeUnit >= 0xd800 &&
+			codeUnit <= 0xdbff &&
+			index + 1 < value.length &&
+			value.charCodeAt(index + 1) >= 0xdc00 &&
+			value.charCodeAt(index + 1) <= 0xdfff
+		) {
+			bytes += 4;
+			index += 1;
+		} else {
+			bytes += 3;
+		}
+		if (bytes > MAX_WORKSPACE_LINK_BYTES) return bytes;
+	}
+	return bytes;
 }

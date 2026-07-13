@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorkspaceFoundation } from '../../../shared/plugins/workspace-foundation';
+import {
+	parseWorkspaceFoundation,
+	parseWorkspaceLink,
+} from '../../../shared/plugins/workspace-foundation';
 
 const ownerPluginId = 'com.maestro.omp';
 
@@ -733,5 +736,41 @@ describe('parseWorkspaceFoundation', () => {
 			ok: false,
 			errors: ['interactivePanels requires ui:interactivePanel'],
 		});
+	});
+});
+
+describe('parseWorkspaceLink', () => {
+	const workspaceLink = (token: string) =>
+		`maestro://workspace/com.maestro.omp/omp-workspace/session/${token}`;
+	const underscoreToken = 'Ab9_KLMNopQRsTuvWxyZ12';
+	const hyphenToken = 'Ab9-KLMNopQRsTuvWxyZ12';
+
+	it('parses valid underscore and hyphen snapshot tokens without resolving state', () => {
+		expect(parseWorkspaceLink(workspaceLink(underscoreToken))).toEqual({
+			pluginId: 'com.maestro.omp',
+			workspaceLocalId: 'omp-workspace',
+			snapshotToken: underscoreToken,
+		});
+		expect(parseWorkspaceLink(workspaceLink(hyphenToken))).toMatchObject({
+			snapshotToken: hyphenToken,
+		});
+	});
+
+	it.each([
+		'%%%',
+		'maestro://workspace/',
+		'maestro://workspace/com.maestro.omp/omp-workspace/session/short',
+		'maestro://workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12?',
+		'maestro://workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12#',
+		'maestro://workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12?query=true',
+		'maestro://workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12#fragment',
+		'maestro://workspace/com.maestro.omp//omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		'maestro://workspace/com.maestro.omp/omp%2Dworkspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		'maestro://user@workspace/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		'maestro://workspace:1/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		'maestro://other/com.maestro.omp/omp-workspace/session/Ab9_KLMNopQRsTuvWxyZ12',
+		workspaceLink(`${underscoreToken}${'a'.repeat(512)}`),
+	])('rejects malformed workspace-link syntax: %s', (url) => {
+		expect(parseWorkspaceLink(url)).toBeNull();
 	});
 });
