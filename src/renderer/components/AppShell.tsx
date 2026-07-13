@@ -16,6 +16,11 @@ import { EmptyStateView } from './EmptyStateView';
 import { AgentsLoadingView } from './AgentsLoadingView';
 import { ErrorBoundary } from './ErrorBoundary';
 import { PluginPanelSlot } from './plugins/PluginPanelSlot';
+import {
+	PluginWorkspaces,
+} from './plugins/PluginWorkspaces';
+import type { InteractivePanelHostBinder } from './plugins/PluginInteractivePanelFrame';
+import { usePluginWorkspaceRoute } from './plugins/pluginWorkspaceNavigation';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
@@ -73,6 +78,7 @@ export interface AppShellProps {
 	rightEdgeSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
 
 	onToastSessionClick: (sessionId: string, tabId?: string) => void;
+	interactivePanelHostBinder?: InteractivePanelHostBinder;
 }
 
 export function AppShell({
@@ -110,6 +116,7 @@ export function AppShell({
 	leftEdgeSwipeHandlers,
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
+	interactivePanelHostBinder,
 }: AppShellProps) {
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
@@ -119,6 +126,9 @@ export function AppShell({
 		useCadenzaStore.getState().clearCadenzas();
 		useMovementStore.getState().clearItems();
 	}, [concertoEnabled]);
+
+	const pluginWorkspaceRoute = usePluginWorkspaceRoute();
+
 
 	const showTitleBar =
 		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
@@ -203,7 +213,10 @@ export function AppShell({
 
 			{!isMobileLandscape && sessions.length > 0 && (
 				<ErrorBoundary>
-					<SessionList {...sessionListProps} />
+					<SessionList
+						{...sessionListProps}
+						interactivePanelHostBinder={interactivePanelHostBinder}
+					/>
 				</ErrorBoundary>
 			)}
 
@@ -242,7 +255,11 @@ export function AppShell({
 			{groupChatView}
 
 			{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+				interactivePanelHostBinder && pluginWorkspaceRoute ? (
+					<PluginWorkspaces theme={theme} binder={interactivePanelHostBinder} />
+				) : (
+					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+				)
 			)}
 
 			<PluginPanelSlot

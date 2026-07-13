@@ -1,0 +1,42 @@
+import '@testing-library/jest-dom';
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import {
+	PluginInteractivePanelFrame,
+	type InteractivePanelHostBinder,
+} from '../PluginInteractivePanelFrame';
+import { THEMES } from '../../../constants/themes';
+
+const panel = {
+	ownerPluginId: 'com.example.agent',
+	localId: 'agent-panel',
+	canonicalContributionId: 'com.example.agent/agent-panel',
+	title: 'Agent workspace panel',
+	entry: 'panel.html',
+};
+
+const bind = vi.fn(() => vi.fn());
+const binder: InteractivePanelHostBinder = { bind };
+
+describe('PluginInteractivePanelFrame', () => {
+	it('hosts the declared panel under its owner-bound partition and canonical panel URL', () => {
+		const cleanup = vi.fn();
+		bind.mockReturnValueOnce(cleanup);
+		const { container, unmount } = render(
+			<PluginInteractivePanelFrame theme={THEMES.dracula} panel={panel} binder={binder} />
+		);
+
+		expect(screen.getByText('from com.example.agent')).toBeVisible();
+		const webview = container.querySelector('webview');
+		expect(webview).not.toBeNull();
+		expect(webview?.getAttribute('partition')).toBe('plugin:com.example.agent');
+		expect(webview?.getAttribute('src')).toBe(
+			'plugin-panel://panel/com.example.agent%2Fagent-panel'
+		);
+		expect(webview?.getAttribute('srcdoc')).toBeNull();
+		expect(bind).toHaveBeenCalledOnce();
+		expect(bind.mock.calls[0]?.[0].panel).toEqual(panel);
+		unmount();
+		expect(cleanup).toHaveBeenCalledOnce();
+	});
+});

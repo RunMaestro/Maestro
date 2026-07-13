@@ -66,6 +66,7 @@ import type { StarredItem } from '../../hooks/session/useStarredItems';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
+import type { InteractivePanelHostBinder } from '../plugins/PluginInteractivePanelFrame';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -150,6 +151,7 @@ interface SessionListProps {
 	onDeleteGroupChat?: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
 	onDeleteAllArchivedGroupChats?: () => void;
+	interactivePanelHostBinder?: InteractivePanelHostBinder;
 }
 
 // Sentinel for the "ungrouped" drop zone in the drag-over highlight state.
@@ -2099,6 +2101,7 @@ function SessionListInner(props: SessionListProps) {
 					setActiveSessionId={setActiveSessionId}
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
+					interactivePanelHostBinder={props.interactivePanelHostBinder}
 				/>
 			)}
 

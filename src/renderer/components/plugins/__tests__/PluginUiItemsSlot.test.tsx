@@ -16,6 +16,8 @@ const EMPTY: AggregatedContributions = {
 	cueTriggers: [],
 	commands: [],
 	panels: [],
+	workspaces: [],
+	interactivePanels: [],
 	agents: [],
 	tools: [],
 	keybindings: [],
