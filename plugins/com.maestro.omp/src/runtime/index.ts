@@ -1,3 +1,4 @@
+export { activate, deactivate, startFromExplicitPanelAction } from './activation';
 export {
 	OMP_16_4_8_COMMAND_TYPES,
 	OMP_16_4_8_COMPATIBILITY,
