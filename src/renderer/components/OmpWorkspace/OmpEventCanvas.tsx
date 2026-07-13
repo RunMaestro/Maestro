@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, FileCode2, Wrench, X } from 'lucide-react';
 import type { OmpWorkspaceEvent } from './types';
 
@@ -11,6 +11,7 @@ interface OmpEventCanvasProps {
 	text: string;
 	textDim: string;
 	onResolveApproval: (requestId: string, approved: boolean) => void;
+	focusEventId?: string;
 }
 
 export function OmpEventCanvas({
@@ -20,6 +21,7 @@ export function OmpEventCanvas({
 	background,
 	text,
 	textDim,
+	focusEventId,
 	onResolveApproval,
 }: OmpEventCanvasProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -31,6 +33,11 @@ export function OmpEventCanvas({
 		overscan: 8,
 		initialRect: { width: 1, height: 720 },
 	});
+	useEffect(() => {
+		if (!focusEventId) return;
+		const focusedIndex = events.findIndex((event) => event.id === focusEventId);
+		if (focusedIndex >= 0) virtualizer.scrollToIndex(focusedIndex, { align: 'center' });
+	}, [events, focusEventId, virtualizer]);
 
 	if (events.length === 0) {
 		return (
@@ -61,7 +68,12 @@ export function OmpEventCanvas({
 								ref={virtualizer.measureElement}
 								data-index={virtualRow.index}
 								className="absolute left-0 w-full pb-3"
-								style={{ transform: `translateY(${virtualRow.start}px)` }}
+								data-testid={`omp-event-${event.id}`}
+								data-omp-focused={event.id === focusEventId ? 'true' : undefined}
+								style={{
+									transform: `translateY(${virtualRow.start}px)`,
+									outline: event.id === focusEventId ? `1px solid ${accent}` : undefined,
+								}}
 							>
 								<EventCard
 									event={event}

@@ -155,4 +155,11 @@ describe('OmpWorkspace', () => {
 		);
 		await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('OMP 16.4.8 required'));
 	});
+	it('marks a deep-linked event as the focused transcript target', async () => {
+		const adapter = new DeterministicOmpAdapter(snapshot());
+		render(<OmpWorkspace adapter={adapter} theme={theme} focusEventId="tool-1" />);
+
+		const target = await screen.findByTestId('omp-event-tool-1');
+		expect(target).toHaveAttribute('data-omp-focused', 'true');
+	});
 });

@@ -26,6 +26,8 @@ type WorkspaceTheme = {
 export interface OmpWorkspaceProps {
 	adapter: OmpWorkspaceAdapter;
 	theme: WorkspaceTheme;
+	/** Event id parsed from the workspace deep link, if the navigator supplied one. */
+	focusEventId?: string;
 }
 
 function loadInspectorWidth(): number {
@@ -44,7 +46,7 @@ function toErrorMessage(error: unknown): string {
  * The mountable OMP renderer surface. It consumes only an injected typed adapter;
  * no component reaches Electron or the runtime bridge directly.
  */
-export function OmpWorkspace({ adapter, theme }: OmpWorkspaceProps) {
+export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps) {
 	const { snapshot, phase, loadError, refresh } = useOmpWorkspace(adapter);
 	const [draft, setDraft] = useState('');
 	const [attachments, setAttachments] = useState<File[]>([]);
@@ -202,6 +204,7 @@ export function OmpWorkspace({ adapter, theme }: OmpWorkspaceProps) {
 						background={theme.colors.bgActivity}
 						text={theme.colors.textMain}
 						textDim={theme.colors.textDim}
+						focusEventId={focusEventId}
 						onResolveApproval={(requestId, approved) =>
 							invoke(() => adapter.resolveApproval(activeSession.id, requestId, approved))
 						}
