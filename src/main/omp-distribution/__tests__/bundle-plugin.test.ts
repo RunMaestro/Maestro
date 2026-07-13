@@ -5,6 +5,7 @@ import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { bundleOmpPlugin } from '../bundle-plugin';
+import { OMP_PANEL_BRIDGE_DESCRIPTOR } from '../../../../plugins/com.maestro.omp/src/bridge/descriptor';
 
 const pluginRoot = join(process.cwd(), 'plugins', 'com.maestro.omp');
 
@@ -39,8 +40,12 @@ describe('runnable OMP plugin package', () => {
 			resultSchemas: Record<string, unknown>;
 			errorSchemas: Record<string, unknown>;
 		};
-		expect(Object.keys(bridge.requestSchemas)).toHaveLength(22);
-		expect(Object.keys(bridge.eventSchemas)).toHaveLength(6);
+		expect(Object.keys(bridge.requestSchemas)).toEqual(
+			Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas)
+		);
+		expect(Object.keys(bridge.eventSchemas)).toEqual(
+			Object.keys(OMP_PANEL_BRIDGE_DESCRIPTOR.eventSchemas)
+		);
 		expect(Object.keys(bridge.resultSchemas)).toEqual(Object.keys(bridge.requestSchemas));
 		expect(Object.keys(bridge.errorSchemas)).toEqual(Object.keys(bridge.requestSchemas));
 		expect(contributes.interactivePanels[0]?.entry).toBe('dist/panel.html');
