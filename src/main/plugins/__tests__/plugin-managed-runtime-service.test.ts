@@ -8,7 +8,7 @@ import {
 	PluginManagedRuntimeService,
 	type ManagedRuntimeChild,
 	type ManagedRuntimeLaunch,
-	type VerifiedRuntimeExecutable,
+	type VerifiedRuntimeLaunch,
 } from '../plugin-managed-runtime-service';
 
 class FakeWritable extends EventEmitter {
@@ -73,14 +73,18 @@ function rootService(activationContext = () => activation()) {
 }
 
 function verifiedRuntime(
-	bunExecutable = '/bin/bun',
-	ompCliPath = '/bin/omp'
-): VerifiedRuntimeExecutable {
-	const runtime: VerifiedRuntimeExecutable = {
-		bunExecutable,
-		ompCliPath,
-		bunIdentity: `identity:${bunExecutable}`,
-		ompCliIdentity: `identity:${ompCliPath}`,
+	executablePath = '/bin/bun',
+	prefixArgs: readonly string[] = ['/bin/omp']
+): VerifiedRuntimeLaunch {
+	const runtime: VerifiedRuntimeLaunch = {
+		executablePath,
+		prefixArgs,
+		fileIdentities: [
+			{ canonicalPath: executablePath, identity: `identity:${executablePath}` },
+			...prefixArgs
+				.filter((arg) => arg.startsWith('/'))
+				.map((arg) => ({ canonicalPath: arg, identity: `identity:${arg}` })),
+		],
 		provenance: 'verified',
 		version: '16.4.8',
 		revalidateForLaunch: async () => runtime,
@@ -225,7 +229,7 @@ describe('managed OMP runtime service', () => {
 			runtime: {
 				resolveSystem: async () => null,
 				managedInstallAllowed: () => true,
-				resolveManaged: async () => verifiedRuntime('/managed/bun', '/managed/omp'),
+				resolveManaged: async () => verifiedRuntime('/managed/bun', ['/managed/omp']),
 			},
 			spawn: (next) => {
 				launched = next;
@@ -349,7 +353,10 @@ describe('managed OMP runtime service', () => {
 		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
 		const swapped = Object.freeze({
 			...verifiedRuntime(),
-			ompCliIdentity: 'identity:changed-after-resolution',
+			fileIdentities: [
+				{ canonicalPath: '/bin/bun', identity: 'identity:/bin/bun' },
+				{ canonicalPath: '/bin/omp', identity: 'identity:changed-after-resolution' },
+			],
 		});
 		const initial = Object.freeze({
 			...verifiedRuntime(),

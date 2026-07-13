@@ -33,19 +33,24 @@ export type { ManagedRuntimeChild, ManagedRuntimeLaunch } from './managed-runtim
 
 const OMP_RUNTIME_VERSION = '16.4.8' as const;
 
-export interface VerifiedRuntimeExecutable {
-	/** Authenticated absolute Bun executable; never discovered from PATH. */
-	readonly bunExecutable: string;
-	/** Authenticated absolute OMP CLI module executed as Bun's explicit first arg. */
-	readonly ompCliPath: string;
-	/** Immutable identity established while authenticating the Bun executable tree. */
-	readonly bunIdentity: string;
-	/** Immutable identity established while authenticating the OMP CLI tree. */
-	readonly ompCliIdentity: string;
-	/** Re-authenticates both identities immediately before spawn. */
-	readonly revalidateForLaunch: () => Promise<VerifiedRuntimeExecutable>;
+export interface AuthenticatedFileIdentity {
+	/** Canonical absolute path bound to the identity attested by the resolver. */
+	readonly canonicalPath: string;
+	/** Immutable resolver-issued identity (e.g. digest, file id, or signed handle id). */
+	readonly identity: string;
+}
+
+/**
+ * An authenticated native launch. A standalone OMP executable uses an empty
+ * prefixArgs array; Bun + an authenticated script uses the script as arg zero.
+ */
+export interface VerifiedRuntimeLaunch {
+	readonly executablePath: string;
+	readonly prefixArgs: readonly string[];
+	readonly fileIdentities: readonly AuthenticatedFileIdentity[];
+	/** Re-authenticates every identity immediately before spawn. */
+	readonly revalidateForLaunch: () => Promise<VerifiedRuntimeLaunch>;
 	readonly version: typeof OMP_RUNTIME_VERSION;
-	/** Provenance is established by the host distributor, never a PATH lookup. */
 	readonly provenance: 'verified';
 }
 
@@ -55,9 +60,9 @@ export interface VerifiedRuntimeExecutable {
  * notice preservation, and atomic installation) before it returns an executable.
  */
 export interface ManagedRuntimeResolver {
-	readonly resolveSystem: () => Promise<VerifiedRuntimeExecutable | null>;
+	readonly resolveSystem: () => Promise<VerifiedRuntimeLaunch | null>;
 	readonly managedInstallAllowed: () => boolean;
-	readonly resolveManaged: () => Promise<VerifiedRuntimeExecutable>;
+	readonly resolveManaged: () => Promise<VerifiedRuntimeLaunch>;
 }
 
 export type ManagedRuntimeSpawner = (launch: ManagedRuntimeLaunch) => ManagedRuntimeChild;
@@ -227,31 +232,37 @@ function assertSafeInput(input: unknown): asserts input is {
 	}
 }
 
-function assertVerifiedRuntime(value: VerifiedRuntimeExecutable): VerifiedRuntimeExecutable {
+function assertVerifiedRuntime(value: VerifiedRuntimeLaunch): VerifiedRuntimeLaunch {
 	if (
 		!value ||
-		typeof value.bunExecutable !== 'string' ||
-		!isAbsolute(value.bunExecutable) ||
-		typeof value.ompCliPath !== 'string' ||
-		!isAbsolute(value.ompCliPath) ||
-		typeof value.bunIdentity !== 'string' ||
-		value.bunIdentity.length === 0 ||
-		typeof value.ompCliIdentity !== 'string' ||
-		value.ompCliIdentity.length === 0 ||
+		typeof value.executablePath !== 'string' ||
+		!isAbsolute(value.executablePath) ||
+		!Array.isArray(value.prefixArgs) ||
+		!value.prefixArgs.every((arg) => typeof arg === 'string' && arg.length > 0) ||
+		!Array.isArray(value.fileIdentities) ||
+		value.fileIdentities.length === 0 ||
+		!value.fileIdentities.every(
+			(identity) =>
+				!!identity &&
+				typeof identity.canonicalPath === 'string' &&
+				isAbsolute(identity.canonicalPath) &&
+				typeof identity.identity === 'string' &&
+				identity.identity.length > 0
+		) ||
 		typeof value.revalidateForLaunch !== 'function' ||
 		value.version !== OMP_RUNTIME_VERSION ||
 		value.provenance !== 'verified'
 	) {
-		throw new Error('OMP runtime provenance or authenticated Bun launch verification failed');
+		throw new Error('OMP runtime provenance or authenticated launch verification failed');
 	}
 	return value;
 }
 
-function launchFor(runtime: VerifiedRuntimeExecutable, root: string): ManagedRuntimeLaunch {
+function launchFor(runtime: VerifiedRuntimeLaunch, root: string): ManagedRuntimeLaunch {
 	const stdio: ['pipe', 'pipe', 'pipe'] = ['pipe', 'pipe', 'pipe'];
 	return Object.freeze({
-		command: runtime.bunExecutable,
-		args: [runtime.ompCliPath, '--mode', 'rpc', '--cwd', root],
+		command: runtime.executablePath,
+		args: [...runtime.prefixArgs, '--mode', 'rpc', '--cwd', root],
 		cwd: root,
 		env: Object.freeze({}),
 		shell: false,
@@ -260,14 +271,19 @@ function launchFor(runtime: VerifiedRuntimeExecutable, root: string): ManagedRun
 }
 
 function isSameAuthenticatedRuntime(
-	before: VerifiedRuntimeExecutable,
-	after: VerifiedRuntimeExecutable
+	before: VerifiedRuntimeLaunch,
+	after: VerifiedRuntimeLaunch
 ): boolean {
 	return (
-		before.bunExecutable === after.bunExecutable &&
-		before.ompCliPath === after.ompCliPath &&
-		before.bunIdentity === after.bunIdentity &&
-		before.ompCliIdentity === after.ompCliIdentity
+		before.executablePath === after.executablePath &&
+		before.prefixArgs.length === after.prefixArgs.length &&
+		before.prefixArgs.every((arg, index) => arg === after.prefixArgs[index]) &&
+		before.fileIdentities.length === after.fileIdentities.length &&
+		before.fileIdentities.every(
+			(identity, index) =>
+				identity.canonicalPath === after.fileIdentities[index]?.canonicalPath &&
+				identity.identity === after.fileIdentities[index]?.identity
+		)
 	);
 }
 
