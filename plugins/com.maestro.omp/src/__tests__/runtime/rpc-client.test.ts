@@ -3,43 +3,32 @@ import {
 	OmpProtocolError,
 	OmpRpcClient,
 	redactOmpDiagnostic,
-	type OmpProcessTransport,
-} from '../../../main/omp';
+	type OmpRpcTransport,
+} from '../../runtime';
 
-class FakeTransport implements OmpProcessTransport {
-	readonly pid = 412;
+class FakeTransport implements OmpRpcTransport {
 	readonly writes: string[] = [];
-	readonly kills: Array<string | undefined> = [];
-	closedInput = false;
 	private readonly stdoutListeners: Array<(chunk: Uint8Array | string) => void> = [];
 	private readonly stderrListeners: Array<(chunk: Uint8Array | string) => void> = [];
-	private readonly exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+	private readonly closedListeners: Array<(reason?: string) => void> = [];
 
-	write(frame: string): void {
+	send(frame: string): void {
 		this.writes.push(frame);
 	}
 
-	closeInput(): void {
-		this.closedInput = true;
-	}
-
-	kill(signal?: string): void {
-		this.kills.push(signal);
-	}
-
-	onStdout(listener: (chunk: Uint8Array | string) => void): () => void {
+	onFrame(listener: (chunk: Uint8Array | string) => void): () => void {
 		this.stdoutListeners.push(listener);
 		return () => this.stdoutListeners.splice(this.stdoutListeners.indexOf(listener), 1);
 	}
 
-	onStderr(listener: (chunk: Uint8Array | string) => void): () => void {
+	onDiagnostic(listener: (chunk: Uint8Array | string) => void): () => void {
 		this.stderrListeners.push(listener);
 		return () => this.stderrListeners.splice(this.stderrListeners.indexOf(listener), 1);
 	}
 
-	onExit(listener: (code: number | null, signal: string | null) => void): () => void {
-		this.exitListeners.push(listener);
-		return () => this.exitListeners.splice(this.exitListeners.indexOf(listener), 1);
+	onClosed(listener: (reason?: string) => void): () => void {
+		this.closedListeners.push(listener);
+		return () => this.closedListeners.splice(this.closedListeners.indexOf(listener), 1);
 	}
 
 	stdout(frame: string): void {
@@ -50,8 +39,8 @@ class FakeTransport implements OmpProcessTransport {
 		for (const listener of this.stderrListeners) listener(frame);
 	}
 
-	exit(code: number | null = 0, signal: string | null = null): void {
-		for (const listener of this.exitListeners) listener(code, signal);
+	close(reason?: string): void {
+		for (const listener of this.closedListeners) listener(reason);
 	}
 }
 
@@ -98,7 +87,7 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 	});
 
 	it('rejects a cancelled command and removes its pending correlation without killing the owned process', async () => {
-		const { client, transport, ready } = readyClient();
+		const { client, ready } = readyClient();
 		await ready;
 		const controller = new AbortController();
 		const pending = client.command({ type: 'get_state' }, { signal: controller.signal });
@@ -106,7 +95,17 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(client.pendingRequestCount).toBe(0);
-		expect(transport.kills).toEqual([]);
+	});
+
+	it('writes stable inbound callback frames without creating a request correlation', async () => {
+		const { client, transport, ready } = readyClient();
+		await ready;
+		client.sendInbound({ type: 'extension_ui_response', id: 'approval-1', confirmed: true });
+
+		expect(transport.writes).toEqual([
+			'{"type":"extension_ui_response","id":"approval-1","confirmed":true}\n',
+		]);
+		expect(client.pendingRequestCount).toBe(0);
 	});
 
 	it.each([
@@ -138,9 +137,9 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 		const { client, transport, ready } = readyClient();
 		await ready;
 		const pending = client.command({ type: 'get_state' });
-		transport.exit(17);
+		transport.close('crashed');
 
-		await expect(pending).rejects.toMatchObject({ code: 'process_exit' });
+		await expect(pending).rejects.toMatchObject({ code: 'runtime_closed' });
 		expect(client.status).toBe('exited');
 	});
 });

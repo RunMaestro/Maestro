@@ -8,7 +8,7 @@ import {
 	OMP_16_4_8_OUTBOUND_CALLBACK_TYPES,
 	OMP_16_4_8_EXTENSION_UI_METHODS,
 	assertOmpProtocolVersion,
-} from '../../../main/omp';
+} from '../../runtime';
 
 describe('OMP 16.4.8 compatibility table', () => {
 	it('classifies every stable command, event, and callback member exactly once', () => {

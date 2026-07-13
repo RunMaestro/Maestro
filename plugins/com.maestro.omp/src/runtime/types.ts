@@ -242,30 +242,13 @@ export type OmpExtensionUiMethod =
 	| 'open_url';
 export type OmpRpcFrame = OmpRpcResponse | OmpRpcEvent | OmpOutboundCallback;
 
-export interface OmpProcessTransport {
-	readonly pid: number;
-	write(frame: string): void;
-	closeInput(): void;
-	kill(signal?: string): void;
-	onStdout(listener: (chunk: Uint8Array | string) => void): () => void;
-	onStderr(listener: (chunk: Uint8Array | string) => void): () => void;
-	onExit(listener: (code: number | null, signal: string | null) => void): () => void;
-}
-
-export interface OmpProcessFactory {
-	spawn(
-		executable: string,
-		args: readonly string[],
-		options: { readonly cwd: string }
-	): OmpProcessTransport;
-}
-
-export interface OmpBinaryDiscovery {
-	discover(): Promise<OmpDiscoveredBinary>;
-}
-
-export interface OmpDiscoveredBinary {
-	readonly path: string;
-	readonly version: typeof OMP_RPC_VERSION;
-	readonly provenance: 'system';
+/**
+ * Plugin-side endpoint supplied by the host's generic managed JSONL runtime broker.
+ * It is intentionally transport-only: plugins cannot inspect, spawn, or kill processes.
+ */
+export interface OmpRpcTransport {
+	send(frame: string): void;
+	onFrame(listener: (chunk: Uint8Array | string) => void): () => void;
+	onDiagnostic(listener: (chunk: Uint8Array | string) => void): () => void;
+	onClosed(listener: (reason?: string) => void): () => void;
 }

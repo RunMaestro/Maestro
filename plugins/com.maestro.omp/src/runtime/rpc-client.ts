@@ -1,8 +1,9 @@
 import { OMP_16_4_8_EVENT_TYPES, OMP_16_4_8_OUTBOUND_CALLBACK_TYPES } from './compatibility';
 import type {
+	OmpInboundCallback,
 	OmpOutboundCallback,
 	OmpOutboundCallbackType,
-	OmpProcessTransport,
+	OmpRpcTransport,
 	OmpRpcCommand,
 	OmpRpcEvent,
 	OmpRpcEventType,
@@ -47,12 +48,12 @@ export class OmpProtocolError extends Error {
 	}
 }
 
-export class OmpProcessError extends Error {
-	readonly code = 'process_exit';
+export class OmpRuntimeClosedError extends Error {
+	readonly code = 'runtime_closed';
 
-	constructor(code: number | null, signal: string | null) {
-		super(`OMP process exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`);
-		this.name = 'OmpProcessError';
+	constructor(reason?: string) {
+		super(reason ? `OMP runtime closed: ${reason}` : 'OMP runtime closed');
+		this.name = 'OmpRuntimeClosedError';
 	}
 }
 
@@ -81,7 +82,7 @@ export class OmpRpcClient {
 	private readonly detachTransportListeners: readonly (() => void)[];
 
 	constructor(
-		private readonly transport: OmpProcessTransport,
+		private readonly transport: OmpRpcTransport,
 		options: OmpRpcClientOptions = {}
 	) {
 		this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
@@ -92,9 +93,9 @@ export class OmpRpcClient {
 			this.rejectReady = reject;
 		});
 		this.detachTransportListeners = [
-			transport.onStdout((chunk) => this.receiveStdout(chunk)),
-			transport.onStderr((chunk) => this.receiveStderr(chunk)),
-			transport.onExit((code, signal) => this.receiveExit(code, signal)),
+			transport.onFrame((chunk) => this.receiveStdout(chunk)),
+			transport.onDiagnostic((chunk) => this.receiveStderr(chunk)),
+			transport.onClosed((reason) => this.receiveClosed(reason)),
 		];
 		this.readyTimer = setTimeout(
 			() => this.fail(new OmpProtocolError('OMP readiness timed out')),
@@ -154,7 +155,7 @@ export class OmpRpcClient {
 				},
 			});
 			try {
-				this.transport.write(`${JSON.stringify(frame)}\n`);
+				this.transport.send(`${JSON.stringify(frame)}\n`);
 			} catch (error) {
 				this.rejectPending(
 					id,
@@ -162,6 +163,13 @@ export class OmpRpcClient {
 				);
 			}
 		});
+	}
+
+	sendInbound(callback: OmpInboundCallback): void {
+		if (this.statusValue !== 'ready') {
+			throw new OmpProtocolError(`OMP is not ready (status: ${this.statusValue})`);
+		}
+		this.transport.send(`${JSON.stringify(callback)}\n`);
 	}
 
 	close(): void {
@@ -283,12 +291,11 @@ export class OmpRpcClient {
 		for (const listener of this.diagnosticListeners) listener(diagnostic);
 	}
 
-	private receiveExit(code: number | null, signal: string | null): void {
-		if (this.statusValue === 'closed') return;
-		if (this.statusValue === 'failed') return;
+	private receiveClosed(reason?: string): void {
+		if (this.statusValue === 'closed' || this.statusValue === 'failed') return;
 		this.statusValue = 'exited';
 		this.clearReadyTimer();
-		const error = new OmpProcessError(code, signal);
+		const error = new OmpRuntimeClosedError(reason);
 		this.rejectReady(error);
 		this.rejectOutstanding(error);
 	}

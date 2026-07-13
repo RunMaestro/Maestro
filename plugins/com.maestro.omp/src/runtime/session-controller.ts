@@ -1,7 +1,7 @@
 import { OmpProtocolError, OmpRpcClient, type OmpCommandOptions } from './rpc-client';
 import type {
+	OmpInboundCallback,
 	OmpOutboundCallback,
-	OmpProcessTransport,
 	OmpRpcCommand,
 	OmpRpcEvent,
 	OmpRpcResponse,
@@ -13,22 +13,10 @@ export type OmpSessionControllerState = 'starting' | 'ready' | 'stopping' | 'sto
 export class OmpSessionController {
 	private stateValue: OmpSessionControllerState = 'starting';
 	private latestState: OmpSessionState | undefined;
-	private exitResolve!: () => void;
-	private readonly exitedPromise = new Promise<void>((resolve) => {
-		this.exitResolve = resolve;
-	});
-
 	constructor(
 		readonly sessionKey: string,
-		readonly transport: OmpProcessTransport,
 		private readonly client: OmpRpcClient
-	) {
-		transport.onExit(() => {
-			if (this.stateValue !== 'stopping' && this.stateValue !== 'stopped')
-				this.stateValue = 'crashed';
-			this.exitResolve();
-		});
-	}
+	) {}
 
 	get state(): OmpSessionControllerState {
 		return this.stateValue;
@@ -56,6 +44,10 @@ export class OmpSessionController {
 		return response;
 	}
 
+	respond(callback: OmpInboundCallback): void {
+		this.client.sendInbound(callback);
+	}
+
 	async initialize(): Promise<void> {
 		await this.client.waitForReady();
 		const response = await this.command({ type: 'get_state' });
@@ -71,10 +63,6 @@ export class OmpSessionController {
 	markStopped(): void {
 		this.stateValue = 'stopped';
 		this.client.close();
-	}
-
-	waitForExit(): Promise<void> {
-		return this.exitedPromise;
 	}
 
 	private acceptState(response: OmpRpcResponse): void {
