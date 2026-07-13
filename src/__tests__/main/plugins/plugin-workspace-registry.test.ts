@@ -952,6 +952,115 @@ describe('PluginWorkspaceRegistry workspace projections', () => {
 		);
 	});
 
+	it('lists frozen cloned projections in deterministic canonical-key order', () => {
+		const harness = createHarness();
+		const otherOwnerPluginId = 'com.example.alpha';
+		harness.enabledOwners.add(otherOwnerPluginId);
+		registerCurrent(harness, 1n, otherOwnerPluginId);
+		registerCurrent(harness);
+
+		const projections = harness.registry.listProjections();
+		const nextProjections = harness.registry.listProjections();
+
+		expect(projections.map((projection) => projection.ownerPluginId)).toEqual([
+			otherOwnerPluginId,
+			OWNER_PLUGIN_ID,
+		]);
+		expect(projections.map((projection) => projection.projectionRevision)).toEqual([1, 2]);
+		expect(Object.isFrozen(projections)).toBe(true);
+		expect(Object.isFrozen(projections[0])).toBe(true);
+		expect(Object.isFrozen(projections[0]?.workspace)).toBe(true);
+		expect(projections).not.toBe(nextProjections);
+		expect(projections[0]).not.toBe(nextProjections[0]);
+		expect(projections[0]?.workspace).not.toBe(nextProjections[0]?.workspace);
+		expect(projections[0]).not.toHaveProperty('capability');
+	});
+
+	it('selects a current snapshot token after committing its projection and context', () => {
+		const harness = createHarness();
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		const projectedSelections: Array<unknown> = [];
+		harness.registry.onDidChangeProjection((change) => {
+			if (change.projection?.selectedSnapshotToken === snapshotToken) {
+				projectedSelections.push(
+					harness.registry.getSelectedContext(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)
+				);
+			}
+		});
+
+		expect(harness.registry.selectBySnapshotToken(snapshotToken)).toMatchObject({
+			kind: 'resolved',
+			ownerPluginId: OWNER_PLUGIN_ID,
+			workspaceLocalId: WORKSPACE_LOCAL_ID,
+			externalSession: { snapshotToken, externalSessionId: 'session-1' },
+		});
+		expect(projectedSelections).toEqual([
+			{
+				ownerPluginId: OWNER_PLUGIN_ID,
+				workspaceLocalId: WORKSPACE_LOCAL_ID,
+				snapshotToken,
+			},
+		]);
+		expect(harness.selectedContexts.at(-1)).toEqual({
+			kind: 'external-session-selected',
+			ownerPluginId: OWNER_PLUGIN_ID,
+			workspaceLocalId: WORKSPACE_LOCAL_ID,
+			snapshotToken,
+		});
+	});
+
+	it('does not mutate selection for disabled, expired, revoked, or unknown snapshot tokens', () => {
+		const harness = createHarness();
+		const otherOwnerPluginId = 'com.example.disabled';
+		harness.enabledOwners.add(otherOwnerPluginId);
+		registerCurrent(harness, 1n, otherOwnerPluginId);
+		const otherCapability = acquireCurrent(harness, 1n, otherOwnerPluginId);
+		harness.registry.publishExternalSessions(otherCapability, 1, [externalSession('disabled')]);
+		const disabledToken = publishedSessions(harness, otherCapability)[0]?.snapshotToken;
+		if (!disabledToken) throw new Error('expected a disabled token');
+		harness.enabledOwners.delete(otherOwnerPluginId);
+
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('expired')]);
+		const expiredToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!expiredToken) throw new Error('expected an expired token');
+		harness.registry.publishExternalSessions(capability, 2, [externalSession('revoked')]);
+		const revokedToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!revokedToken) throw new Error('expected a revoked token');
+		expect(harness.registry.selectBySnapshotToken(disabledToken)).toEqual({
+			kind: 'disabled_owner',
+		});
+		expect(harness.registry.selectBySnapshotToken(expiredToken)).toEqual({ kind: 'expired' });
+		harness.registry.unregister(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+		expect(harness.registry.selectBySnapshotToken(revokedToken)).toEqual({ kind: 'revoked' });
+		expect(harness.registry.selectBySnapshotToken(token(99))).toEqual({ kind: 'unknown_token' });
+		expect(harness.registry.getSelectedContext(otherOwnerPluginId, WORKSPACE_LOCAL_ID)).toBeNull();
+	});
+
+	it('remains coherent when a selected-token projection listener reenters', () => {
+		const harness = createHarness();
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		harness.registry.onDidChangeProjection((change) => {
+			if (change.projection?.selectedSnapshotToken === snapshotToken) {
+				harness.registry.unregister(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+			}
+		});
+
+		expect(harness.registry.selectBySnapshotToken(snapshotToken)).toMatchObject({
+			kind: 'resolved',
+		});
+		expect(harness.registry.getProjection(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)).toBeNull();
+	});
+
 	it('rejects invalid status labels and badges without changing the committed projection', () => {
 		const harness = createHarness();
 		registerCurrent(harness);

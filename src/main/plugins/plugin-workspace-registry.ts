@@ -338,6 +338,46 @@ export class PluginWorkspaceRegistry {
 		return workspace ? createWorkspaceProjection(workspace) : null;
 	}
 
+	listProjections(): readonly WorkspaceProjection[] {
+		return Object.freeze(
+			[...this.workspaces.values()]
+				.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+				.map(createWorkspaceProjection)
+		);
+	}
+
+	selectBySnapshotToken(snapshotToken: SnapshotToken): WorkspaceLinkResolution {
+		const token = this.tokens.get(snapshotToken);
+		if (!token) return { kind: 'unknown_token' };
+		if (token.state === 'revoked') return { kind: 'revoked' };
+		if (token.state === 'expired') return { kind: 'expired' };
+		if (!this.options.isOwnerEnabled(token.ownerPluginId)) return { kind: 'disabled_owner' };
+
+		const workspace = this.workspaces.get(token.workspaceKey);
+		if (!workspace || workspace.generation !== token.generation) return { kind: 'revoked' };
+		if (workspace.selectedSnapshotToken !== token.session.snapshotToken) {
+			const committed = this.commitWorkspace({
+				...workspace,
+				selectedSnapshotToken: token.session.snapshotToken,
+			});
+			this.emitProjection(committed);
+			this.emitContext(
+				Object.freeze({
+					kind: 'external-session-selected',
+					ownerPluginId: workspace.ownerPluginId,
+					workspaceLocalId: workspace.workspaceLocalId,
+					snapshotToken: token.session.snapshotToken,
+				})
+			);
+		}
+		return {
+			kind: 'resolved',
+			ownerPluginId: token.ownerPluginId,
+			workspaceLocalId: token.workspaceLocalId,
+			externalSession: cloneSession(token.session),
+		};
+	}
+
 	getSelectedContext(
 		ownerPluginId: string,
 		workspaceLocalId: string
