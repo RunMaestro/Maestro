@@ -1678,6 +1678,14 @@ app
 
 		const pluginBroker = new PermissionBroker({
 			getGrants: (pluginId) => grantsOf(pluginId),
+			getActivationIdentity: (pluginId) =>
+				pluginSandboxHost?.getActivationIdentity(pluginId) ?? null,
+			getGrantedIdentity: (pluginId) => {
+				const identity = authStore.entryIdentity(pluginId);
+				return identity
+					? { contentHash: identity.contentHash, signerKey: identity.signerKey }
+					: null;
+			},
 			// Structurally exclude the entire Maestro userData/config tree (grants,
 			// enable-state, encoreFeatures + every setting, agent-configs,
 			// cli-server.json token, the plugins dir, plugin KV, supervisor targets,
@@ -2724,7 +2732,10 @@ app
 				return ef.plugins === true;
 			},
 			...(productionOmpBootstrap
-				? { ompArchiveInstaller: productionOmpBootstrap.ompArchiveInstaller }
+				? {
+						ompArchiveInstaller: productionOmpBootstrap.ompArchiveInstaller,
+						snapshotFor: productionOmpBootstrap.snapshotFor,
+					}
 				: {}),
 			trustedKeys: () => {
 				const keys = store.get('pluginTrustedKeys', []) as unknown;

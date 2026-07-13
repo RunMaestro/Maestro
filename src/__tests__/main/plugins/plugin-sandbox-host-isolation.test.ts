@@ -35,7 +35,10 @@ vi.mock('../../../main/utils/logger', () => ({
 import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
 import type { PermissionBroker } from '../../../main/plugins/permission-broker';
 
-const allowAll = { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker;
+const allowAll = {
+	authorize: () => ({ allowed: true }),
+	authorizeInvocation: () => ({ allowed: true }),
+} as unknown as PermissionBroker;
 
 describe('PluginSandboxHost child isolation', () => {
 	beforeEach(() => {
@@ -47,7 +50,12 @@ describe('PluginSandboxHost child isolation', () => {
 		fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
 		try {
 			const host = new PluginSandboxHost({ broker: allowAll, handlers: {} });
-			host.start('p', dir, 'entry.js');
+			host.start('p', '// entry', {
+				ownerPluginId: 'p',
+				generation: 1,
+				artifactDigest: 'a'.repeat(64),
+				signerKeyId: 'test-signer',
+			});
 			expect(forkMock).toHaveBeenCalledTimes(1);
 			const args = forkMock.mock.calls[0] as unknown[];
 			const opts = args[2] as { env?: unknown; serviceName?: unknown };

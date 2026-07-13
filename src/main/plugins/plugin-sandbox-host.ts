@@ -13,10 +13,10 @@
  */
 
 import { utilityProcess, type UtilityProcess } from 'electron';
-import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../utils/logger';
 import { PermissionBroker } from './permission-broker';
+import type { PluginActivationIdentity } from './plugin-activation-identity';
 import {
 	isHostMethod,
 	type HostMethod,
@@ -108,6 +108,7 @@ interface PendingTool {
 
 interface RunningPlugin {
 	proc: UtilityProcess;
+	identity: PluginActivationIdentity;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
 	windowStart: number;
@@ -157,6 +158,11 @@ export class PluginSandboxHost {
 		return [...this.running.keys()];
 	}
 
+	getActivationIdentity(pluginId: string): PluginActivationIdentity | null {
+		const identity = this.running.get(pluginId)?.identity;
+		return identity ? { ...identity } : null;
+	}
+
 	/**
 	 * Read-only observability for plugins (running tier-1). With no argument,
 	 * returns a snapshot map keyed by plugin id; with an id, returns that
@@ -202,22 +208,20 @@ export class PluginSandboxHost {
 	}
 
 	/**
-	 * Start a plugin: read its entry code from disk and fork the confined sandbox
-	 * child with that code. No-op if already running. Throws if the entry file
-	 * cannot be read (caller decides how to surface it).
+	 * Start a plugin from a manager-captured verified source snapshot. No mutable
+	 * installed path is accepted or read after signature verification.
 	 */
-	start(pluginId: string, pluginDir: string, entryRelPath: string): void {
+	start(pluginId: string, entryCode: string, identity: PluginActivationIdentity): void {
 		if (this.running.has(pluginId)) return;
-
-		// Resolve and confine the entry path inside the plugin dir (defense in
-		// depth; the manifest validator already rejects traversal).
-		const resolvedDir = path.resolve(pluginDir);
-		const entryAbs = path.resolve(resolvedDir, entryRelPath);
-		if (entryAbs !== resolvedDir && !entryAbs.startsWith(resolvedDir + path.sep)) {
-			throw new Error(`entry path escapes plugin directory: ${entryRelPath}`);
+		if (
+			identity.ownerPluginId !== pluginId ||
+			!Number.isSafeInteger(identity.generation) ||
+			identity.generation < 1 ||
+			!/^[a-f0-9]{64}$/i.test(identity.artifactDigest) ||
+			identity.signerKeyId.length === 0
+		) {
+			throw new Error('invalid plugin activation identity');
 		}
-		const entryCode = fs.readFileSync(entryAbs, 'utf-8');
-
 		const sandboxModule = path.join(__dirname, 'plugin-sandbox-entry.js');
 		const proc = utilityProcess.fork(sandboxModule, [], {
 			serviceName: `maestro-plugin-${pluginId}`,
@@ -227,6 +231,7 @@ export class PluginSandboxHost {
 
 		const record: RunningPlugin = {
 			proc,
+			identity: Object.freeze({ ...identity }),
 			inFlight: 0,
 			windowStart: Date.now(),
 			windowCount: 0,
@@ -468,7 +473,11 @@ export class PluginSandboxHost {
 		}
 
 		const method = request.method;
-		const decision = this.deps.broker.authorize(pluginId, method, request.params);
+		if (!record) {
+			respond({ ok: false, error: 'plugin activation is no longer current' });
+			return;
+		}
+		const decision = this.deps.broker.authorizeInvocation(record.identity, method, request.params);
 		if (!decision.allowed) {
 			respond({ ok: false, error: decision.reason ?? 'permission denied' });
 			return;

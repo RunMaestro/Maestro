@@ -77,4 +77,20 @@ describe('PluginManager.installOrUpdateArchive', () => {
 			fs.rmSync(userData, { recursive: true, force: true });
 		}
 	});
+
+	it('exposes an injected immutable execution snapshot without disk fallback', () => {
+		const snapshot = {
+			identity: { artifactDigest: 'a'.repeat(64), signerKeyId: 'omp-root' },
+			text: vi.fn(() => 'verified source'),
+			release: vi.fn(),
+		};
+		const snapshotFor = vi.fn(() => snapshot);
+		const manager = new PluginManager({ isEnabled: () => true, snapshotFor });
+
+		expect(manager.getExecutionSnapshot('com.maestro.omp')).toBe(snapshot);
+		expect(snapshotFor).toHaveBeenCalledWith('com.maestro.omp');
+		expect(
+			new PluginManager({ isEnabled: () => true }).getExecutionSnapshot('com.maestro.omp')
+		).toBeNull();
+	});
 });

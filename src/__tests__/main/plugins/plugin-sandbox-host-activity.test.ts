@@ -51,7 +51,10 @@ interface HostInternals {
 	handleChildMessage(pluginId: string, child: unknown, data: unknown): Promise<void>;
 }
 
-const allowAll = { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker;
+const allowAll = {
+	authorize: () => ({ allowed: true }),
+	authorizeInvocation: () => ({ allowed: true }),
+} as unknown as PermissionBroker;
 
 function emit(event: string, ...args: unknown[]): void {
 	const cb = listeners.get(event);
@@ -74,7 +77,12 @@ describe('PluginSandboxHost per-plugin observability', () => {
 			handlers: { 'storage.get': async () => 'ok' },
 		});
 		internal = host as unknown as HostInternals;
-		host.start('p', dir, 'entry.js');
+		host.start('p', '// entry', {
+			ownerPluginId: 'p',
+			generation: 1,
+			artifactDigest: 'a'.repeat(64),
+			signerKeyId: 'test-signer',
+		});
 	});
 
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -104,6 +112,45 @@ describe('PluginSandboxHost per-plugin observability', () => {
 		expect(snap?.inFlight).toBe(0);
 	});
 
+	it('ignores forged guest snapshot identity fields and uses only the running host identity', async () => {
+		const authorizeInvocation = vi.fn(() => ({ allowed: true }));
+		host = new PluginSandboxHost({
+			broker: {
+				authorize: () => ({ allowed: true }),
+				authorizeInvocation,
+			} as unknown as PermissionBroker,
+			handlers: { 'storage.get': async () => 'ok' },
+		});
+		internal = host as unknown as HostInternals;
+		host.start('p', '// entry', {
+			ownerPluginId: 'p',
+			generation: 1,
+			artifactDigest: 'a'.repeat(64),
+			signerKeyId: 'trusted-signer',
+		});
+
+		await internal.handleChildMessage('p', proc, {
+			id: 2,
+			method: 'storage.get',
+			params: {
+				key: 'k',
+				artifactDigest: 'b'.repeat(64),
+				signerKeyId: 'forged-signer',
+				generation: 999,
+			},
+		});
+
+		expect(authorizeInvocation).toHaveBeenCalledWith(
+			expect.objectContaining({
+				artifactDigest: 'a'.repeat(64),
+				signerKeyId: 'trusted-signer',
+				generation: 1,
+			}),
+			'storage.get',
+			expect.anything()
+		);
+	});
+
 	it('tracks peak in-flight across overlapping calls', async () => {
 		const gate = Promise.withResolvers<void>();
 		host = new PluginSandboxHost({
@@ -116,7 +163,12 @@ describe('PluginSandboxHost per-plugin observability', () => {
 			},
 		});
 		internal = host as unknown as HostInternals;
-		host.start('p', dir, 'entry.js');
+		host.start('p', '// entry', {
+			ownerPluginId: 'p',
+			generation: 1,
+			artifactDigest: 'a'.repeat(64),
+			signerKeyId: 'test-signer',
+		});
 
 		const c1 = internal.handleChildMessage('p', proc, { id: 1, method: 'storage.get', params: {} });
 		const c2 = internal.handleChildMessage('p', proc, { id: 2, method: 'storage.get', params: {} });

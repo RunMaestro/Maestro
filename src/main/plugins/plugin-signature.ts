@@ -28,6 +28,57 @@ import {
 
 export type { SignatureCheck };
 
+/** Bounded memory reserved for one verified in-process plugin execution image. */
+export const PLUGIN_SOURCE_SNAPSHOT_LIMITS = Object.freeze({
+	maxFiles: 128,
+	maxFileBytes: 2 * 1024 * 1024,
+	maxBytes: 8 * 1024 * 1024,
+});
+
+export interface VerifiedPluginSourceIdentity {
+	pluginId: string;
+	artifactDigest: string;
+	signerKeyId: string;
+}
+
+/**
+ * Private in-memory bytes captured during the same reads that are hash-checked
+ * against the detached signature. Runtime consumers get text only, never a
+ * mutable file path or Buffer reference.
+ */
+export class VerifiedPluginSourceSnapshot {
+	readonly identity: Readonly<VerifiedPluginSourceIdentity>;
+	private readonly textByPath: Map<string, string>;
+	private storedByteLength: number;
+
+	constructor(
+		identity: VerifiedPluginSourceIdentity,
+		textByPath: Map<string, string>,
+		byteLength: number
+	) {
+		this.identity = Object.freeze({ ...identity });
+		this.textByPath = textByPath;
+		this.storedByteLength = byteLength;
+	}
+
+	get fileCount(): number {
+		return this.textByPath.size;
+	}
+
+	get byteLength(): number {
+		return this.storedByteLength;
+	}
+
+	text(filePath: string): string | null {
+		return this.textByPath.get(filePath) ?? null;
+	}
+
+	release(): void {
+		this.textByPath.clear();
+		this.storedByteLength = 0;
+	}
+}
+
 /** SHA-256 (lowercase hex) of a file's bytes. */
 function hashFile(absPath: string): string {
 	const buf = fs.readFileSync(absPath);
@@ -120,6 +171,8 @@ function verifyEd25519(payload: string, publicKeyB64: string, signatureB64: stri
  *
  * - 'unsigned'  : no signature.json present.
  * - 'invalid'   : signature.json malformed, file set/hashes mismatch, or the
+
+
  *                 ed25519 signature does not verify (tampered or corrupt).
  * - 'untrusted' : signature verifies (integrity ok) but the signer key is not
  *                 in the trusted set (unknown publisher).
@@ -178,4 +231,78 @@ export function verifyPluginSignature(
 		status: isTrustedKey(manifest.publicKey, trustedKeys) ? 'trusted' : 'untrusted',
 		signerKey: manifest.publicKey,
 	};
+}
+
+/**
+ * Capture a signed plugin's exact verified bytes into a bounded in-memory
+ * snapshot. A mutable installed path is read once per file, hashed from those
+ * exact bytes, then never used by execution/panel consumers again.
+ */
+export function captureVerifiedPluginSnapshot(
+	pluginDir: string,
+	trustedKeys: readonly string[],
+	pluginId = path.basename(pluginDir)
+): VerifiedPluginSourceSnapshot | null {
+	const sigPath = path.join(pluginDir, SIGNATURE_FILENAME);
+	let raw: string;
+	try {
+		raw = fs.readFileSync(sigPath, 'utf-8');
+	} catch {
+		return null;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	const { manifest } = validateSignatureManifest(parsed);
+	if (!manifest || !isTrustedKey(manifest.publicKey, trustedKeys)) return null;
+
+	const hashes: Record<string, string> = {};
+	const textByPath = new Map<string, string>();
+	let byteLength = 0;
+	try {
+		const visit = (current: string): void => {
+			for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+				const absolute = path.join(current, entry.name);
+				if (entry.isSymbolicLink()) throw new Error('plugin contains a symlink');
+				if (entry.isDirectory()) {
+					if (!SIGNATURE_EXCLUDED_DIRS.has(entry.name)) visit(absolute);
+					continue;
+				}
+				if (!entry.isFile()) continue;
+				const relativePath = normalizeRelPath(path.relative(pluginDir, absolute));
+				if (relativePath === SIGNATURE_FILENAME || isExcludedSignaturePath(relativePath)) continue;
+				if (textByPath.size >= PLUGIN_SOURCE_SNAPSHOT_LIMITS.maxFiles) {
+					throw new Error('plugin snapshot exceeds file count limit');
+				}
+				const bytes = fs.readFileSync(absolute);
+				if (bytes.byteLength > PLUGIN_SOURCE_SNAPSHOT_LIMITS.maxFileBytes) {
+					throw new Error('plugin snapshot file exceeds byte limit');
+				}
+				byteLength += bytes.byteLength;
+				if (byteLength > PLUGIN_SOURCE_SNAPSHOT_LIMITS.maxBytes) {
+					throw new Error('plugin snapshot exceeds byte limit');
+				}
+				hashes[relativePath] = createHash('sha256').update(bytes).digest('hex');
+				textByPath.set(relativePath, bytes.toString('utf8'));
+			}
+		};
+		visit(pluginDir);
+	} catch {
+		return null;
+	}
+	if (!fileSetsMatch(hashes, manifest.files)) return null;
+	const payload = buildSigningPayload(manifest.files);
+	if (!verifyEd25519(payload, manifest.publicKey, manifest.signature)) return null;
+	return new VerifiedPluginSourceSnapshot(
+		{
+			pluginId,
+			artifactDigest: createHash('sha256').update(payload, 'utf8').digest('hex'),
+			signerKeyId: manifest.publicKey,
+		},
+		textByPath,
+		byteLength
+	);
 }

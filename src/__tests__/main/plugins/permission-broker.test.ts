@@ -1,9 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PermissionBroker } from '../../../main/plugins/permission-broker';
+import {
+	PermissionBroker,
+	type PluginAuthorizationIdentity,
+} from '../../../main/plugins/permission-broker';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 function grant(capability: string, scope?: string): PermissionGrant {
 	return { capability, ...(scope ? { scope } : {}), grantedAt: 1 } as PermissionGrant;
+}
+
+function identity(
+	overrides: Partial<PluginAuthorizationIdentity> = {}
+): PluginAuthorizationIdentity {
+	return {
+		ownerPluginId: 'p',
+		generation: 1,
+		artifactDigest: 'a'.repeat(64),
+		signerKeyId: 'trusted-signer',
+		...overrides,
+	};
 }
 
 describe('PermissionBroker', () => {
@@ -81,5 +96,33 @@ describe('PermissionBroker', () => {
 		});
 		expect(broker.authorize('trusted', 'fs.read', { path: '/x' }).allowed).toBe(true);
 		expect(broker.authorize('other', 'fs.read', { path: '/x' }).allowed).toBe(false);
+	});
+
+	it('rejects stale or forged snapshot provenance before consulting grants', () => {
+		const current = identity();
+		const broker = new PermissionBroker({
+			getGrants: () => [grant('notifications:toast')],
+			getActivationIdentity: (pluginId) => (pluginId === 'p' ? current : null),
+			getGrantedIdentity: (pluginId) =>
+				pluginId === 'p'
+					? { contentHash: current.artifactDigest, signerKey: current.signerKeyId }
+					: null,
+		});
+
+		expect(broker.authorizeInvocation(current, 'notifications.toast', {}).allowed).toBe(true);
+		expect(
+			broker.authorizeInvocation(
+				identity({ artifactDigest: 'b'.repeat(64) }),
+				'notifications.toast',
+				{}
+			).allowed
+		).toBe(false);
+		expect(
+			broker.authorizeInvocation(identity({ signerKeyId: 'forged' }), 'notifications.toast', {})
+				.allowed
+		).toBe(false);
+		expect(
+			broker.authorizeInvocation(identity({ generation: 2 }), 'notifications.toast', {}).allowed
+		).toBe(false);
 	});
 });

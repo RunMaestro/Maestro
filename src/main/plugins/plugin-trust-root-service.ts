@@ -6,11 +6,14 @@ import { isHostApiCompatible, HOST_API_VERSION } from '../../shared/plugins/host
 import { validatePluginManifest, type PluginManifest } from '../../shared/plugins/plugin-manifest';
 import type { PermissionRequest } from '../../shared/plugins/permissions';
 import {
+	createVerifiedPluginArtifactSnapshot,
 	parsePluginArtifact,
+	PLUGIN_ARTIFACT_LIMITS,
 	verifySignedPluginArtifact,
 	type ImmutableTrustRoot,
 	type ParsedPluginArtifact,
 	type PluginArtifactSignatureVerifier,
+	type VerifiedPluginArtifactSnapshot,
 } from '../omp-distribution/plugin-artifact';
 
 export const OMP_PLUGIN_ID = 'com.maestro.omp';
@@ -67,6 +70,7 @@ export interface OmpPluginTrustRootServiceDeps {
 export class OmpPluginTrustRootService {
 	private readonly trustRoot: ImmutableTrustRoot;
 	private readonly trustRootFingerprint: string;
+	private activeSnapshot: VerifiedPluginArtifactSnapshot | null = null;
 	private readonly renameSync: (oldPath: string, newPath: string) => void;
 
 	constructor(private readonly deps: OmpPluginTrustRootServiceDeps) {
@@ -82,18 +86,32 @@ export class OmpPluginTrustRootService {
 		return this.installOrUpdateArchive({ ...request, owner: 'bundle' });
 	}
 
+	getActiveSnapshot(): VerifiedPluginArtifactSnapshot | null {
+		return this.activeSnapshot;
+	}
+
 	installOrUpdateArchive(request: OmpArchiveInstallRequest): OmpArchiveInstallResult {
-		const archive = fs.readFileSync(path.resolve(request.archivePath));
+		const archive = readBoundedArchive(request.archivePath);
 		const artifactSha256 = sha256(archive);
-		if (!isSha256(request.expectedSha256) || artifactSha256 !== request.expectedSha256.toLowerCase()) {
+		if (
+			!isSha256(request.expectedSha256) ||
+			artifactSha256 !== request.expectedSha256.toLowerCase()
+		) {
 			throw new Error('OMP archive digest verification failed');
 		}
 
-		// Validate names before signature verification so unsafe entries are never
-		// normalized, materialized, or obscured by a signature failure.
-		const parsed = parsePluginArtifact(archive, this.trustRoot);
+		let parsed: ParsedPluginArtifact;
+		try {
+			parsed = parsePluginArtifact(archive, this.trustRoot);
+		} catch (error) {
+			if (error instanceof Error && error.message === 'unsafe plugin artifact path') {
+				throw new Error('unsafe OMP archive entry');
+			}
+			throw error;
+		}
 		assertSafeArtifactFiles(parsed);
 		const artifact = verifySignedPluginArtifact(archive, this.trustRoot, this.deps.verifySignature);
+		const snapshot = createVerifiedPluginArtifactSnapshot(artifact, archive);
 		const manifest = validateArtifactManifest(artifact);
 		const destination = path.join(this.deps.pluginsDir, OMP_PLUGIN_ID);
 		const statePath = path.join(path.dirname(this.deps.pluginsDir), INSTALL_STATE_FILENAME);
@@ -113,6 +131,7 @@ export class OmpPluginTrustRootService {
 				artifact,
 				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
+			this.activateSnapshot(snapshot);
 			return { action: 'installed', manifest, artifactSha256 };
 		}
 
@@ -137,17 +156,28 @@ export class OmpPluginTrustRootService {
 				artifact,
 				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
+			this.activateSnapshot(snapshot);
 			return { action: 'updated', manifest, artifactSha256 };
 		}
-		if (artifactSha256 === state.artifactSha256) return { action: 'unchanged', manifest, artifactSha256 };
+		if (artifactSha256 === state.artifactSha256) {
+			this.activateSnapshot(snapshot);
+			return { action: 'unchanged', manifest, artifactSha256 };
+		}
 		if (!semver.valid(manifest.version) || !semver.valid(state.version)) {
 			throw new Error('OMP install state contains an invalid version');
 		}
 		if (semver.lt(manifest.version, state.version)) {
-			if (request.owner === 'bundle') return preserved(manifest, artifactSha256);
+			snapshot.release();
+			if (request.owner === 'bundle') {
+				this.activateSnapshot(
+					createVerifiedPluginArtifactSnapshot(previousArtifact, previousArchive)
+				);
+				return preserved(manifest, artifactSha256);
+			}
 			throw new Error('OMP archive downgrade refused');
 		}
-		if (semver.eq(manifest.version, state.version)) throw new Error('OMP archive equivocation detected');
+		if (semver.eq(manifest.version, state.version))
+			throw new Error('OMP archive equivocation detected');
 
 		const added = capabilityDelta(previousManifest.permissions ?? [], manifest.permissions ?? []);
 		if (added.length > 0 && !request.requestCapabilityConsent?.({ added })) {
@@ -159,6 +189,7 @@ export class OmpPluginTrustRootService {
 			artifact,
 			managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 		);
+		this.activateSnapshot(snapshot);
 		return { action: 'updated', manifest, artifactSha256 };
 	}
 
@@ -174,7 +205,10 @@ export class OmpPluginTrustRootService {
 		const stagedPlugin = path.join(staging, OMP_PLUGIN_ID);
 		const stagedState = path.join(staging, INSTALL_STATE_FILENAME);
 		const backup = path.join(staging, `${OMP_PLUGIN_ID}.old`);
-		const stateTemp = path.join(path.dirname(statePath), `.${INSTALL_STATE_FILENAME}.${process.pid}.${Date.now()}`);
+		const stateTemp = path.join(
+			path.dirname(statePath),
+			`.${INSTALL_STATE_FILENAME}.${process.pid}.${Date.now()}`
+		);
 		const hadDestination = fs.existsSync(destination);
 		const previousState = readFileIfExists(statePath);
 		let movedOld = false;
@@ -182,7 +216,10 @@ export class OmpPluginTrustRootService {
 		let replacedState = false;
 		try {
 			materializeArtifact(stagedPlugin, artifact);
-			fs.writeFileSync(stagedState, `${JSON.stringify(nextState)}\n`, { encoding: 'utf8', flag: 'wx' });
+			fs.writeFileSync(stagedState, `${JSON.stringify(nextState)}\n`, {
+				encoding: 'utf8',
+				flag: 'wx',
+			});
 			if (hadDestination) {
 				this.renameSync(destination, backup);
 				movedOld = true;
@@ -206,6 +243,11 @@ export class OmpPluginTrustRootService {
 			fs.rmSync(staging, { recursive: true, force: true });
 		}
 	}
+
+	private activateSnapshot(snapshot: VerifiedPluginArtifactSnapshot): void {
+		this.activeSnapshot?.release();
+		this.activeSnapshot = snapshot;
+	}
 }
 
 function validateArtifactManifest(artifact: ParsedPluginArtifact): PluginManifest {
@@ -219,12 +261,14 @@ function validateArtifactManifest(artifact: ParsedPluginArtifact): PluginManifes
 		throw new Error('OMP artifact plugin.json is invalid JSON');
 	}
 	const { manifest, errors } = validatePluginManifest(rawManifest);
+
 	if (!manifest) throw new Error(`invalid OMP plugin.json: ${errors.join('; ')}`);
 	if (manifest.id !== OMP_PLUGIN_ID || manifest.version !== artifact.version) {
 		throw new Error('OMP artifact identity does not match plugin.json');
 	}
 	const compatibility = isHostApiCompatible(manifest.maestro.minHostApi, HOST_API_VERSION);
-	if (!compatibility.compatible) throw new Error(`OMP host compatibility failed: ${compatibility.reason}`);
+	if (!compatibility.compatible)
+		throw new Error(`OMP host compatibility failed: ${compatibility.reason}`);
 	return manifest;
 }
 
@@ -257,7 +301,10 @@ function materializeArtifact(destination: string, artifact: ParsedPluginArtifact
 	}
 }
 
-function readManagedState(statePath: string, trustRootFingerprint: string): ManagedInstallState | null {
+function readManagedState(
+	statePath: string,
+	trustRootFingerprint: string
+): ManagedInstallState | null {
 	const content = readFileIfExists(statePath);
 	if (content === null) return null;
 	let parsed: unknown;
@@ -280,10 +327,11 @@ function decodeStoredArtifact(state: ManagedInstallState): Buffer {
 	return archive;
 }
 
-
 function contentHashForArtifact(artifact: ParsedPluginArtifact): string {
 	const hash = createHash('sha256');
-	for (const file of [...artifact.files].sort((left, right) => left.path.localeCompare(right.path))) {
+	for (const file of [...artifact.files].sort((left, right) =>
+		left.path.localeCompare(right.path)
+	)) {
 		hash.update(file.path);
 		hash.update('\0');
 		hash.update(decodeArtifactFile(file.content));
@@ -301,7 +349,8 @@ function contentHashForDirectory(directory: string): string {
 				visit(absolute);
 				continue;
 			}
-			if (!entry.isFile()) throw new Error('managed OMP installation contains an unsupported entry');
+			if (!entry.isFile())
+				throw new Error('managed OMP installation contains an unsupported entry');
 			files.push(path.relative(directory, absolute).split(path.sep).join('/'));
 		}
 	};
@@ -315,7 +364,10 @@ function contentHashForDirectory(directory: string): string {
 	return hash.digest('hex');
 }
 
-function capabilityDelta(previous: readonly PermissionRequest[], next: readonly PermissionRequest[]): PermissionRequest[] {
+function capabilityDelta(
+	previous: readonly PermissionRequest[],
+	next: readonly PermissionRequest[]
+): PermissionRequest[] {
 	const previousKeys = new Set(previous.map(permissionKey));
 	return next.filter((permission) => !previousKeys.has(permissionKey(permission)));
 }
@@ -344,7 +396,8 @@ function preserved(manifest: PluginManifest, artifactSha256: string): OmpArchive
 }
 
 function assertImmutableTrustRoot(trustRoot: ImmutableTrustRoot): void {
-	if (!Object.isFrozen(trustRoot)) throw new Error('OMP trust root must be immutable compiled metadata');
+	if (!Object.isFrozen(trustRoot))
+		throw new Error('OMP trust root must be immutable compiled metadata');
 	if (
 		trustRoot.keyId.trim() === '' ||
 		trustRoot.algorithm.trim() === '' ||
@@ -362,6 +415,38 @@ function decodeArtifactFile(content: string): Buffer {
 	const decoded = Buffer.from(content, 'base64');
 	if (decoded.toString('base64') !== content) throw new Error('invalid OMP archive file encoding');
 	return decoded;
+}
+
+function readBoundedArchive(archivePath: string): Buffer {
+	const resolvedPath = path.resolve(archivePath);
+	const preflight = fs.statSync(resolvedPath);
+	if (!preflight.isFile()) throw new Error('OMP archive is not a regular file');
+	if (preflight.size > PLUGIN_ARTIFACT_LIMITS.maxArtifactBytes) {
+		throw new Error('OMP archive exceeds byte limit');
+	}
+
+	const descriptor = fs.openSync(resolvedPath, 'r');
+	try {
+		const opened = fs.fstatSync(descriptor);
+		if (!opened.isFile()) throw new Error('OMP archive is not a regular file');
+		if (opened.size > PLUGIN_ARTIFACT_LIMITS.maxArtifactBytes) {
+			throw new Error('OMP archive exceeds byte limit');
+		}
+		const archive = Buffer.allocUnsafe(opened.size);
+		let offset = 0;
+		while (offset < archive.byteLength) {
+			const read = fs.readSync(descriptor, archive, offset, archive.byteLength - offset, null);
+			if (read === 0) throw new Error('OMP archive changed while reading');
+			offset += read;
+		}
+		const overflow = Buffer.allocUnsafe(1);
+		if (fs.readSync(descriptor, overflow, 0, overflow.byteLength, null) > 0) {
+			throw new Error('OMP archive exceeds byte limit');
+		}
+		return archive;
+	} finally {
+		fs.closeSync(descriptor);
+	}
 }
 
 function sha256(value: Uint8Array): string {

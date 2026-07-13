@@ -5,6 +5,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	buildPluginArtifact,
+	PLUGIN_ARTIFACT_LIMITS,
 	type ImmutableTrustRoot,
 } from '../../../main/omp-distribution/plugin-artifact';
 import {
@@ -34,7 +35,11 @@ function manifest(version: string, permissions: unknown[] = []): Record<string, 
 	};
 }
 
-function artifact(version: string, permissions: unknown[] = [], extraFiles: Record<string, string> = {}): Buffer {
+function artifact(
+	version: string,
+	permissions: unknown[] = [],
+	extraFiles: Record<string, string> = {}
+): Buffer {
 	return buildPluginArtifact({
 		pluginId: 'com.maestro.omp',
 		version,
@@ -52,7 +57,10 @@ function artifact(version: string, permissions: unknown[] = [], extraFiles: Reco
 	});
 }
 
-function writeArchive(bytes: Buffer, name = 'com.maestro.omp.omp-plugin.json'): {
+function writeArchive(
+	bytes: Buffer,
+	name = 'com.maestro.omp.omp-plugin.json'
+): {
 	archivePath: string;
 	expectedSha256: string;
 } {
@@ -125,9 +133,34 @@ describe('OmpPluginTrustRootService', () => {
 		});
 
 		expect(result.action).toBe('installed');
-		expect(fs.readFileSync(path.join(workDir, 'plugins', 'com.maestro.omp', 'index.js'), 'utf8')).toBe(
+		expect(
+			fs.readFileSync(path.join(workDir, 'plugins', 'com.maestro.omp', 'index.js'), 'utf8')
+		).toBe('module.exports = "omp";');
+	});
+
+	it('retains verified runtime bytes and releases replaced snapshot authority', () => {
+		const service = makeService();
+		const initial = writeArchive(artifact('1.0.0'));
+		service.bootstrapBundledArchive(initial);
+		const initialSnapshot = service.getActiveSnapshot();
+		expect(initialSnapshot?.text('index.js')).toBe('module.exports = "omp";');
+
+		fs.writeFileSync(
+			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'index.js'),
+			'module.exports = "attacker";'
+		);
+		expect(initialSnapshot?.text('index.js')).toBe('module.exports = "omp";');
+		fs.writeFileSync(
+			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'index.js'),
 			'module.exports = "omp";'
 		);
+		service.installOrUpdateArchive({
+			...writeArchive(artifact('1.1.0'), 'omp-1.1.0.omp-plugin.json'),
+			owner: 'external',
+		});
+
+		expect(initialSnapshot?.text('index.js')).toBeNull();
+		expect(service.getActiveSnapshot()?.identity.artifactSha256).not.toBe(initial.expectedSha256);
 	});
 
 	it('rejects a digest mismatch before installing any bytes', () => {
@@ -141,6 +174,23 @@ describe('OmpPluginTrustRootService', () => {
 			})
 		).toThrow('digest');
 		expect(fs.existsSync(path.join(workDir, 'plugins', OMP_PLUGIN_ID))).toBe(false);
+	});
+
+	it('rejects an oversized archive before digesting, parsing, or verifying its signature', () => {
+		const archivePath = path.join(workDir, 'oversized.omp-plugin.json');
+		fs.writeFileSync(archivePath, Buffer.alloc(PLUGIN_ARTIFACT_LIMITS.maxArtifactBytes + 1));
+		const service = makeService({
+			verifySignature: () => {
+				throw new Error('signature verifier must not receive oversized archives');
+			},
+		});
+
+		expect(() =>
+			service.bootstrapBundledArchive({
+				archivePath,
+				expectedSha256: 'a'.repeat(64),
+			})
+		).toThrow('OMP archive exceeds byte limit');
 	});
 
 	it('rejects an invalid signature even when the archive digest matches', () => {
@@ -194,7 +244,9 @@ describe('OmpPluginTrustRootService', () => {
 
 	it('updates a managed archive only when the immutable signer and version advance', () => {
 		const service = makeService();
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'installed'
+		);
 
 		const update = writeArchive(artifact('1.1.0'), 'omp-1.1.0.omp-plugin.json');
 		expect(
@@ -227,7 +279,9 @@ describe('OmpPluginTrustRootService', () => {
 
 	it('does not derive capability consent from a mutable installed plugin.json', () => {
 		const service = makeService();
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'installed'
+		);
 		fs.writeFileSync(
 			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'plugin.json'),
 			JSON.stringify(manifest('1.0.0', [{ capability: 'net:fetch', scope: 'api.maestro.test' }]))
@@ -246,7 +300,9 @@ describe('OmpPluginTrustRootService', () => {
 
 	it('refuses downgrade and equal-version equivocation after a verified installation', () => {
 		const service = makeService();
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.1.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.1.0'))).action).toBe(
+			'installed'
+		);
 
 		expect(() =>
 			service.installOrUpdateArchive({
@@ -256,12 +312,14 @@ describe('OmpPluginTrustRootService', () => {
 		).toThrow('downgrade');
 		expect(() =>
 			service.installOrUpdateArchive({
-				...writeArchive(artifact('1.1.0', [], { 'different.txt': 'different' }), 'omp-equivocal.omp-plugin.json'),
+				...writeArchive(
+					artifact('1.1.0', [], { 'different.txt': 'different' }),
+					'omp-equivocal.omp-plugin.json'
+				),
 				owner: 'external',
 			})
 		).toThrow('equivocation');
 	});
-
 
 	it('fails closed rather than preserving a tampered externally managed installation', () => {
 		const service = makeService();
@@ -297,7 +355,9 @@ describe('OmpPluginTrustRootService', () => {
 
 	it('does not let mutable ownership metadata suppress a verified bundled upgrade', () => {
 		const service = makeService();
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'installed'
+		);
 		const statePath = path.join(workDir, '.maestro-omp-install.json');
 		const state = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
 		state.owner = 'external';
@@ -314,7 +374,9 @@ describe('OmpPluginTrustRootService', () => {
 			}).action
 		).toBe('installed');
 
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('preserved');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'preserved'
+		);
 		expect(
 			JSON.parse(
 				fs.readFileSync(path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'plugin.json'), 'utf8')
@@ -324,7 +386,9 @@ describe('OmpPluginTrustRootService', () => {
 
 	it('requires explicit consent for a capability delta before promotion', () => {
 		const service = makeService();
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'installed'
+		);
 		const update = writeArchive(
 			artifact('1.1.0', [{ capability: 'net:fetch', scope: 'api.maestro.test' }]),
 			'omp-capability.omp-plugin.json'
@@ -360,7 +424,9 @@ describe('OmpPluginTrustRootService', () => {
 				fs.renameSync(oldPath, newPath);
 			},
 		});
-		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe(
+			'installed'
+		);
 		failPromotion = true;
 
 		expect(() =>

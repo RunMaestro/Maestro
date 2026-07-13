@@ -12,7 +12,7 @@ import type {
 import type { InteractiveStopReason } from '../../shared/plugins/interactive-runtime';
 import type { OmpArchiveInstallRequest } from './plugin-trust-root-service';
 import { OmpPluginTrustRootService } from './plugin-trust-root-service';
-import type { InstallResult } from './plugin-manager';
+import type { InstallResult, PluginExecutionSnapshot } from './plugin-manager';
 import type { ManagedRuntimeResolver } from './plugin-managed-runtime-service';
 import { PluginManagedRuntimeService } from './plugin-managed-runtime-service';
 import type {
@@ -64,6 +64,7 @@ export interface ProductionOmpArchiveBootstrapManager {
 
 export interface ProductionOmpBootstrap {
 	readonly ompArchiveInstaller: Pick<OmpPluginTrustRootService, 'installOrUpdateArchive'>;
+	readonly snapshotFor: (pluginId: string) => PluginExecutionSnapshot | null;
 	readonly runtimeResolver: ManagedRuntimeResolver;
 	readonly workspaceRoots: NativeWorkspaceRootService;
 	readonly managedRuntime: PluginManagedRuntimeService;
@@ -116,6 +117,19 @@ export function createProductionOmpBootstrap(
 
 	return Object.freeze({
 		ompArchiveInstaller: trustService,
+		snapshotFor: (pluginId: string): PluginExecutionSnapshot | null => {
+			if (pluginId !== 'com.maestro.omp') return null;
+			const snapshot = trustService.getActiveSnapshot();
+			if (!snapshot) return null;
+			return {
+				identity: {
+					artifactDigest: snapshot.identity.artifactSha256,
+					signerKeyId: snapshot.identity.signerKeyId,
+				},
+				text: (filePath: string) => snapshot.text(filePath),
+				release: () => undefined,
+			};
+		},
 		runtimeResolver,
 		workspaceRoots,
 		managedRuntime,

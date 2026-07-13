@@ -35,7 +35,12 @@ describe('PluginSandboxHost.invokeCommand payload cap', () => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sbx-'));
 		fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
 		host = new PluginSandboxHost({ broker: {} as unknown as PermissionBroker, handlers: {} });
-		host.start('p', dir, 'entry.js');
+		host.start('p', '// entry', {
+			ownerPluginId: 'p',
+			generation: 1,
+			artifactDigest: 'a'.repeat(64),
+			signerKeyId: 'test-signer',
+		});
 		// Drop the 'init' message posted by start().
 		postMessage.mockClear();
 	});
@@ -93,7 +98,12 @@ describe('PluginSandboxHost.stop onStop hook', () => {
 			handlers: {},
 			onStop,
 		});
-		host.start('p', dir, 'entry.js');
+		host.start('p', '// entry', {
+			ownerPluginId: 'p',
+			generation: 1,
+			artifactDigest: 'a'.repeat(64),
+			signerKeyId: 'test-signer',
+		});
 
 		host.stop('p');
 		expect(onStop).toHaveBeenCalledWith('p');

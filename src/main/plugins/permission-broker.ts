@@ -31,20 +31,42 @@ export interface BrokerDecision {
 	reason?: string;
 }
 
+/**
+ * Host-only provenance for a running plugin activation. It is captured from the
+ * verified snapshot when the host starts a sandbox; guest RPC payloads never
+ * supply or override these fields.
+ */
+export interface PluginAuthorizationIdentity {
+	ownerPluginId: string;
+	generation: number;
+	artifactDigest: string;
+	signerKeyId: string;
+}
+
+export interface GrantedPluginIdentity {
+	contentHash: string;
+	signerKey: string | null;
+}
+
 export interface PermissionBrokerDeps {
 	/** Returns the live grants for a plugin (re-read each call so a revoked grant
 	 * takes effect immediately, mirroring the Encore-flag re-read pattern). */
 	getGrants: (pluginId: string) => PermissionGrant[];
+	/** Current host-owned activation provenance. Production MUST supply this for
+	 * sandbox calls; no guest-controlled value can satisfy this check. */
+	getActivationIdentity?: (pluginId: string) => PluginAuthorizationIdentity | null;
+	/** Identity sealed into the authorization ledger at consent time. */
+	getGrantedIdentity?: (pluginId: string) => GrantedPluginIdentity | null;
 	/** Optional audit sink for every decision (allow and deny). */
 	onDecision?: (pluginId: string, method: HostMethod, decision: BrokerDecision) => void;
 	/** Absolute directory prefixes that fs:read AND fs:write must NEVER touch -
 	 * the userData/config tree (grants, enable-state, encoreFeatures settings,
 	 * agent-configs, cli-server.json, the plugins dir, plugin KV, supervisor
-	 * targets, transcripts). Re-read each call. The integrator passes the real,
-	 * resolved userData path(s). Enforced AFTER the grant check, so a broad fs
-	 * grant can never reach into the data dir; because the fs handlers re-call
-	 * authorize() with the symlink-resolved REAL path, the exclusion also holds
-	 * post-resolution (a symlink inside a granted scope cannot escape into it). */
+	 * targets, transcripts). Re-read each call. Enforced AFTER the grant check, so a
+	 * broad fs grant can never reach into the data dir; because the fs handlers
+	 * re-call authorize() with the symlink-resolved REAL path, the exclusion also
+	 * holds post-resolution (a symlink inside a granted scope cannot escape into
+	 * it). */
 	protectedPaths?: () => readonly string[];
 }
 
@@ -69,8 +91,51 @@ function isUnderProtectedPath(target: string, prefixes: readonly string[]): bool
 	return false;
 }
 
+function sameAuthorizationIdentity(
+	left: PluginAuthorizationIdentity,
+	right: PluginAuthorizationIdentity
+): boolean {
+	return (
+		left.ownerPluginId === right.ownerPluginId &&
+		left.generation === right.generation &&
+		left.artifactDigest === right.artifactDigest &&
+		left.signerKeyId === right.signerKeyId
+	);
+}
+
 export class PermissionBroker {
 	constructor(private readonly deps: PermissionBrokerDeps) {}
+
+	/**
+	 * Authorize a sandbox-originated call with host-injected snapshot provenance.
+	 * This is intentionally distinct from `authorize`: callers must close over a
+	 * RunningPlugin identity, not accept any provenance object from guest data.
+	 */
+	authorizeInvocation(
+		identity: PluginAuthorizationIdentity,
+		method: HostMethod,
+		params: unknown
+	): BrokerDecision {
+		const capability = HOST_METHOD_CAPABILITY[method];
+		const active = this.deps.getActivationIdentity?.(identity.ownerPluginId);
+		const granted = this.deps.getGrantedIdentity?.(identity.ownerPluginId);
+		if (
+			!active ||
+			!sameAuthorizationIdentity(active, identity) ||
+			!granted ||
+			granted.contentHash !== identity.artifactDigest ||
+			granted.signerKey !== identity.signerKeyId
+		) {
+			const decision: BrokerDecision = {
+				allowed: false,
+				capability,
+				reason: 'authorization identity mismatch',
+			};
+			this.deps.onDecision?.(identity.ownerPluginId, method, decision);
+			return decision;
+		}
+		return this.authorize(identity.ownerPluginId, method, params);
+	}
 
 	/**
 	 * Authorize one host call. Default deny: returns allowed only when a matching

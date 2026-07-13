@@ -43,7 +43,9 @@ import {
 	isSafePluginFolderName,
 	readGrants,
 } from './plugin-store-main';
-import { verifyPluginSignature } from './plugin-signature';
+import { captureVerifiedPluginSnapshot, verifyPluginSignature } from './plugin-signature';
+import type { PluginActivationIdentity } from './plugin-activation-identity';
+export type { PluginActivationIdentity } from './plugin-activation-identity';
 import {
 	extractPluginArchive,
 	isPackedPluginArchivePath,
@@ -64,8 +66,18 @@ const HOT_RELOAD_DEBOUNCE_MS = 150;
  * structurally; it is injected (optional) so the manager stays testable and the
  * heavy Electron wiring lives in main/index.ts.
  */
+
+export interface PluginExecutionSnapshot {
+	identity: Readonly<{
+		artifactDigest: string;
+		signerKeyId: string;
+	}>;
+	text: (filePath: string) => string | null;
+	release: () => void;
+}
+
 export interface PluginSandboxLifecycle {
-	start: (pluginId: string, pluginDir: string, entryRelPath: string) => void;
+	start: (pluginId: string, entryCode: string, identity: PluginActivationIdentity) => void;
 	stop: (pluginId: string) => void;
 	stopAll: () => void;
 	isRunning: (pluginId: string) => boolean;
@@ -94,6 +106,8 @@ export interface PluginManagerDeps {
 	 * injected only by bootstrap wiring after a compiled trust root is available.
 	 */
 	ompArchiveInstaller?: Pick<OmpPluginTrustRootService, 'installOrUpdateArchive'>;
+	/** Immutable verified bytes for a plugin activation; absent means no disk fallback. */
+	snapshotFor?: (pluginId: string) => PluginExecutionSnapshot | null;
 	sandbox?: PluginSandboxLifecycle;
 	/** Owner-bound workspace registrations revoked before runtime stop. */
 	workspaceRuntime?: PluginWorkspaceLifecycle;
@@ -137,6 +151,8 @@ export interface InstallResult {
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
 	private pluginFingerprints = new Map<string, string>();
+	private snapshots = new Map<string, PluginExecutionSnapshot>();
+	private activationGenerations = new Map<string, number>();
 	private watchRoot: fs.FSWatcher | null = null;
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
 	private watchRefreshTimer: NodeJS.Timeout | undefined;
@@ -147,6 +163,11 @@ export class PluginManager {
 	/** The last discovered registry (call refresh() to rebuild from disk). */
 	getRegistry(): PluginRegistry {
 		return this.registry;
+	}
+
+	/** Returns a verified source snapshot. Installed paths are never a fallback. */
+	getExecutionSnapshot(pluginId: string): PluginExecutionSnapshot | null {
+		return this.deps.snapshotFor?.(pluginId) ?? this.snapshots.get(pluginId) ?? null;
 	}
 
 	/** Records the host should activate (enabled AND loadable). Empty when the
@@ -198,6 +219,7 @@ export class PluginManager {
 	 */
 	refresh(): PluginRegistry {
 		if (!this.deps.isEnabled()) {
+			this.replaceSnapshots(new Map());
 			return this.commitRegistry(emptyRegistry(), this.pluginFingerprints, new Map());
 		}
 
@@ -211,6 +233,7 @@ export class PluginManager {
 				.filter(isSafePluginFolderName);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				this.replaceSnapshots(new Map());
 				return this.commitRegistry(emptyRegistry(), this.pluginFingerprints, new Map());
 			}
 			throw error;
@@ -221,6 +244,7 @@ export class PluginManager {
 		let next = emptyRegistry();
 		const previousFingerprints = this.pluginFingerprints;
 		const nextFingerprints = new Map<string, string>();
+		const nextSnapshots = new Map<string, PluginExecutionSnapshot>();
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
 			const rawManifest = this.readManifest(source);
@@ -255,6 +279,10 @@ export class PluginManager {
 			} catch {
 				// Verification failure is non-fatal for listing; leave signature unset.
 			}
+			if (signed.signature?.status === 'trusted' && !this.deps.snapshotFor?.(signed.id)) {
+				const snapshot = captureVerifiedPluginSnapshot(source, trustedKeys, signed.id);
+				if (snapshot) nextSnapshots.set(signed.id, snapshot);
+			}
 			// Refresh-time LEDGER authorization gate: a code plugin eligible to be
 			// active (enabled, loadable, tier>=1, has entry) is force-DISABLED when the
 			// injected gate rejects it (consented identity no longer matches the bytes
@@ -277,6 +305,7 @@ export class PluginManager {
 			next = upsertRecord(next, gated);
 			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
 		}
+		this.replaceSnapshots(nextSnapshots);
 
 		return this.commitRegistry(next, previousFingerprints, nextFingerprints);
 	}
@@ -365,15 +394,23 @@ export class PluginManager {
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
 			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
+			const snapshot = this.getExecutionSnapshot(record.id);
+			const entryCode = snapshot?.text(record.manifest.entry);
+			if (snapshot === null || entryCode === null || entryCode === undefined) continue;
 			shouldRun.add(record.id);
 			const fingerprintChanged =
 				previousFingerprints.get(record.id) !== nextFingerprints.get(record.id);
-			if (sandbox.isRunning(record.id) && fingerprintChanged) {
-				sandbox.stop(record.id);
-			}
+			if (sandbox.isRunning(record.id) && fingerprintChanged) sandbox.stop(record.id);
 			if (!sandbox.isRunning(record.id)) {
+				const generation = (this.activationGenerations.get(record.id) ?? 0) + 1;
+				this.activationGenerations.set(record.id, generation);
 				try {
-					sandbox.start(record.id, record.source, record.manifest.entry);
+					sandbox.start(record.id, entryCode, {
+						ownerPluginId: record.id,
+						generation,
+						artifactDigest: snapshot.identity.artifactDigest,
+						signerKeyId: snapshot.identity.signerKeyId,
+					});
 				} catch {
 					// A failed start is isolated to that plugin; leave it stopped.
 				}
@@ -382,7 +419,10 @@ export class PluginManager {
 		// Stop anything running that should no longer run (disabled, uninstalled,
 		// or now-invalid), using the sandbox's own view of what is alive.
 		for (const id of sandbox.runningIds()) {
-			if (!shouldRun.has(id)) sandbox.stop(id);
+			if (!shouldRun.has(id)) {
+				sandbox.stop(id);
+				this.activationGenerations.delete(id);
+			}
 		}
 	}
 
@@ -781,31 +821,14 @@ export class PluginManager {
 	}
 
 	/**
-	 * Read a contributed panel's HTML, for rendering in a sandboxed iframe. Reads
-	 * the panel entry file from inside the (active) plugin's directory, with a
-	 * containment check. Returns null if the panel id is unknown or unreadable.
+	 * Return panel HTML from the verified activation snapshot. Mutable installed
+	 * files are never re-read after the signature/artifact check.
 	 */
 	getPanelHtml(panelId: string): string | null {
 		const contributions = this.getContributions();
 		const panel = contributions.panels.find((p) => p.id === panelId);
 		if (!panel) return null;
-		const record = this.registry.records.find((r) => r.id === panel.pluginId);
-		if (!record) return null;
-		const dir = path.resolve(record.source);
-		const entryAbs = path.resolve(dir, panel.entry);
-		if (entryAbs !== dir && !entryAbs.startsWith(dir + path.sep)) return null;
-		try {
-			// Re-resolve symlinks and re-check containment against the REAL path: the
-			// string check above is necessary but not sufficient (a symlink placed
-			// inside the plugin dir could resolve outside it). Mirrors the fs broker's
-			// realpath re-authorization; install()/update() also reject symlinked trees.
-			const realDir = fs.realpathSync(dir);
-			const realEntry = fs.realpathSync(entryAbs);
-			if (realEntry !== realDir && !realEntry.startsWith(realDir + path.sep)) return null;
-			return fs.readFileSync(realEntry, 'utf-8');
-		} catch {
-			return null;
-		}
+		return this.getExecutionSnapshot(panel.pluginId)?.text(panel.entry) ?? null;
 	}
 
 	/** Read and JSON-parse a plugin's manifest, or null when absent/unreadable. */
@@ -816,6 +839,13 @@ export class PluginManager {
 		} catch {
 			return null;
 		}
+	}
+
+	private replaceSnapshots(next: Map<string, PluginExecutionSnapshot>): void {
+		for (const [pluginId, snapshot] of this.snapshots) {
+			if (next.get(pluginId) !== snapshot) snapshot.release();
+		}
+		this.snapshots = next;
 	}
 }
 

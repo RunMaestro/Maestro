@@ -3,7 +3,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { generateKeyPairSync, createHash, sign as cryptoSign } from 'crypto';
-import { verifyPluginSignature } from '../../../main/plugins/plugin-signature';
+import {
+	captureVerifiedPluginSnapshot,
+	verifyPluginSignature,
+} from '../../../main/plugins/plugin-signature';
 import { buildSigningPayload, SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
 
 function sha256(buf: Buffer): string {
@@ -52,6 +55,17 @@ describe('verifyPluginSignature', () => {
 		const check = verifyPluginSignature(dir, [publicKeyB64]);
 		expect(check.status).toBe('trusted');
 		expect(check.signerKey).toBe(publicKeyB64);
+	});
+
+	it('captures verified execution bytes that survive a post-verification file swap', () => {
+		signDir(dir, publicKeyB64, privateKey);
+		const snapshot = captureVerifiedPluginSnapshot(dir, [publicKeyB64]);
+		expect(snapshot?.identity.signerKeyId).toBe(publicKeyB64);
+
+		fs.writeFileSync(path.join(dir, 'entry.js'), 'module.exports = { attacker: true }');
+		expect(snapshot?.text('entry.js')).toBe('module.exports = {}');
+		snapshot?.release();
+		expect(snapshot?.text('entry.js')).toBeNull();
 	});
 
 	it('reports untrusted for a valid signature from an unknown key', () => {

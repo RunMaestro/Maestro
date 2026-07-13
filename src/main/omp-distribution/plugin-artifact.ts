@@ -1,5 +1,16 @@
 import { createHash } from 'crypto';
 
+/** Hard caps keep hostile archives bounded before JSON parsing, decoding, or signature work. */
+export const PLUGIN_ARTIFACT_LIMITS = Object.freeze({
+	maxArtifactBytes: 16 * 1024 * 1024,
+	maxFiles: 128,
+	maxFileBytes: 2 * 1024 * 1024,
+	maxDecodedBytes: 8 * 1024 * 1024,
+	maxEncodedFileBytes: Math.ceil((2 * 1024 * 1024) / 3) * 4,
+	maxPathLength: 240,
+	maxPathDepth: 16,
+});
+
 export interface ImmutableTrustRoot {
 	keyId: string;
 	algorithm: string;
@@ -41,6 +52,74 @@ export interface PluginArtifactState {
 	artifactSha256: string;
 }
 
+/** Immutable identity that an activation and its grants bind to. */
+export interface VerifiedPluginArtifactIdentity {
+	pluginId: string;
+	version: string;
+	contractSha256: string;
+	artifactSha256: string;
+	signerKeyId: string;
+}
+
+/**
+ * Bounded execution/resource bytes copied from a verified artifact. The only
+ * data exposed to runtime consumers is immutable text, never an installed path
+ * or mutable Buffer reference.
+ */
+export class VerifiedPluginArtifactSnapshot {
+	readonly identity: Readonly<VerifiedPluginArtifactIdentity>;
+	private readonly textByPath: Map<string, string>;
+	private storedByteLength: number;
+
+	constructor(artifact: ParsedPluginArtifact, sourceArtifact: Uint8Array) {
+		if (sourceArtifact.byteLength > PLUGIN_ARTIFACT_LIMITS.maxArtifactBytes) {
+			throw new Error('plugin artifact exceeds byte limit');
+		}
+		assertArtifactBounds(artifact);
+		const textByPath = new Map<string, string>();
+		let byteLength = 0;
+		for (const file of artifact.files) {
+			const bytes = Buffer.from(file.content, 'base64');
+			byteLength += bytes.byteLength;
+			textByPath.set(file.path, bytes.toString('utf8'));
+		}
+		this.identity = Object.freeze({
+			pluginId: artifact.pluginId,
+			version: artifact.version,
+			contractSha256: artifact.contractSha256,
+			artifactSha256: createHash('sha256').update(sourceArtifact).digest('hex'),
+			signerKeyId: artifact.trustRoot.keyId,
+		});
+		this.storedByteLength = byteLength;
+		this.textByPath = textByPath;
+	}
+
+	get fileCount(): number {
+		return this.textByPath.size;
+	}
+
+	get byteLength(): number {
+		return this.storedByteLength;
+	}
+
+	text(filePath: string): string | null {
+		return this.textByPath.get(filePath) ?? null;
+	}
+
+	/** Drop every decoded byte when activation authority is revoked or replaced. */
+	release(): void {
+		this.textByPath.clear();
+		this.storedByteLength = 0;
+	}
+}
+
+export function createVerifiedPluginArtifactSnapshot(
+	artifact: ParsedPluginArtifact,
+	sourceArtifact: Uint8Array
+): VerifiedPluginArtifactSnapshot {
+	return new VerifiedPluginArtifactSnapshot(artifact, sourceArtifact);
+}
+
 /** Builds a canonical byte stream, so embedded and installable channels can assert byte equality. */
 export function buildPluginArtifact(input: PluginArtifactInput): Buffer {
 	validateArtifactInput(input);
@@ -61,6 +140,9 @@ export function parsePluginArtifact(
 	artifact: Uint8Array,
 	expectedTrustRoot?: ImmutableTrustRoot
 ): ParsedPluginArtifact {
+	if (artifact.byteLength > PLUGIN_ARTIFACT_LIMITS.maxArtifactBytes) {
+		throw new Error('plugin artifact exceeds byte limit');
+	}
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(Buffer.from(artifact).toString('utf8'));
@@ -68,6 +150,7 @@ export function parsePluginArtifact(
 		throw new Error('invalid plugin artifact JSON');
 	}
 	if (!isArtifact(parsed)) throw new Error('invalid plugin artifact shape');
+	assertArtifactBounds(parsed);
 	if (expectedTrustRoot && canonicalJson(parsed.trustRoot) !== canonicalJson(expectedTrustRoot)) {
 		throw new Error('plugin artifact trust root mismatch');
 	}
@@ -128,11 +211,23 @@ function validateArtifactInput(input: PluginArtifactInput): void {
 		throw new Error('invalid trust root metadata');
 	}
 	const paths = new Set<string>();
+	if (input.files.length === 0) throw new Error('plugin artifact has no files');
+	if (input.files.length > PLUGIN_ARTIFACT_LIMITS.maxFiles) {
+		throw new Error('plugin artifact exceeds file count limit');
+	}
+	let totalBytes = 0;
 	for (const file of input.files) {
 		validateArtifactPath(file.path);
-		if (!paths.add(file.path)) throw new Error(`duplicate plugin artifact path: ${file.path}`);
+		if (file.content.byteLength > PLUGIN_ARTIFACT_LIMITS.maxFileBytes) {
+			throw new Error('plugin artifact file exceeds byte limit');
+		}
+		totalBytes += file.content.byteLength;
+		if (totalBytes > PLUGIN_ARTIFACT_LIMITS.maxDecodedBytes) {
+			throw new Error('plugin artifact exceeds decoded byte limit');
+		}
+		if (paths.has(file.path)) throw new Error(`duplicate plugin artifact path: ${file.path}`);
+		paths.add(file.path);
 	}
-	if (input.files.length === 0) throw new Error('plugin artifact has no files');
 }
 
 function canonicalFiles(files: readonly PluginArtifactFile[]): { path: string; content: string }[] {
@@ -142,8 +237,12 @@ function canonicalFiles(files: readonly PluginArtifactFile[]): { path: string; c
 }
 
 function validateArtifactPath(filePath: string): void {
+	const pathBytes = Buffer.byteLength(filePath, 'utf8');
+	const pathDepth = filePath.split('/').length;
 	if (
 		filePath.length === 0 ||
+		pathBytes > PLUGIN_ARTIFACT_LIMITS.maxPathLength ||
+		pathDepth > PLUGIN_ARTIFACT_LIMITS.maxPathDepth ||
 		filePath.startsWith('/') ||
 		filePath.includes('\\') ||
 		filePath.split('/').some((part) => part.length === 0 || part === '.' || part === '..')
@@ -158,6 +257,41 @@ function copyTrustRoot(trustRoot: ImmutableTrustRoot): ImmutableTrustRoot {
 		algorithm: trustRoot.algorithm,
 		publicKey: trustRoot.publicKey,
 	});
+}
+
+function assertArtifactBounds(artifact: ParsedPluginArtifact): void {
+	if (artifact.files.length === 0) throw new Error('plugin artifact has no files');
+	if (artifact.files.length > PLUGIN_ARTIFACT_LIMITS.maxFiles) {
+		throw new Error('plugin artifact exceeds file count limit');
+	}
+	const paths = new Set<string>();
+	let totalDecodedBytes = 0;
+	for (const file of artifact.files) {
+		validateArtifactPath(file.path);
+		if (paths.has(file.path)) throw new Error(`duplicate plugin artifact path: ${file.path}`);
+		paths.add(file.path);
+		const decodedBytes = base64DecodedByteLength(file.content);
+		if (decodedBytes > PLUGIN_ARTIFACT_LIMITS.maxFileBytes) {
+			throw new Error('plugin artifact file exceeds byte limit');
+		}
+		totalDecodedBytes += decodedBytes;
+		if (totalDecodedBytes > PLUGIN_ARTIFACT_LIMITS.maxDecodedBytes) {
+			throw new Error('plugin artifact exceeds decoded byte limit');
+		}
+	}
+}
+
+function base64DecodedByteLength(content: string): number {
+	if (
+		content.length === 0 ||
+		content.length > PLUGIN_ARTIFACT_LIMITS.maxEncodedFileBytes ||
+		content.length % 4 !== 0 ||
+		!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)
+	) {
+		throw new Error('invalid plugin artifact file encoding');
+	}
+	const padding = content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0;
+	return (content.length / 4) * 3 - padding;
 }
 
 function isArtifact(value: unknown): value is ParsedPluginArtifact {

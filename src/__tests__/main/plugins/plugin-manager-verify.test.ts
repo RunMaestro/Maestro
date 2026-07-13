@@ -72,6 +72,7 @@ function writePanelPlugin(id: string): void {
 	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
 	fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
 	fs.writeFileSync(path.join(dir, 'panel.html'), '<p>panel-safe</p>');
+	signPluginDir(dir, signingKeys);
 }
 
 function tarOctal(value: number, length: number): string {
@@ -118,7 +119,11 @@ function writeTgzArchive(
 }
 
 function manager(deps: Partial<PluginManagerDeps> = {}): PluginManager {
-	return new PluginManager({ isEnabled: () => true, ...deps });
+	return new PluginManager({
+		isEnabled: () => true,
+		trustedKeys: () => [signingKeys.publicKeyB64],
+		...deps,
+	});
 }
 
 function recordOf(m: PluginManager, id: string): PluginRecord | undefined {
@@ -312,9 +317,17 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 			fs.readFileSync(path.join(installedRoot, 'assets', 'nested', 'runtime.txt'), 'utf8')
 		).toBe('runtime-asset');
 		expect(fs.existsSync(path.join(installedRoot, 'node_modules'))).toBe(false);
-
 		m.setEnabled('packed.archive', true);
-		expect(starts).toEqual([{ id: 'packed.archive', pluginDir: installedRoot, entry: 'main.js' }]);
+		expect(starts).toEqual([
+			{
+				id: 'packed.archive',
+				pluginDir: expect.any(String),
+				entry: expect.objectContaining({
+					ownerPluginId: 'packed.archive',
+					generation: 1,
+				}),
+			},
+		]);
 	});
 
 	it('rejects unsafe packed plugin archives and cleans extraction staging', () => {
