@@ -11,6 +11,8 @@ export type OmpPanelRequestKind =
 	| 'omp.session.handoff'
 	| 'omp.model.set'
 	| 'omp.model.cycle'
+	| 'omp.composer.mode.set'
+	| 'omp.approval.resolve'
 	| 'omp.thinking.set'
 	| 'omp.thinking.cycle'
 	| 'omp.settings.set'
@@ -42,11 +44,23 @@ export interface ClosedPanelBridge {
 
 const emptyObjectSchema: JsonSchema = objectSchema({});
 const sessionIdSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
+const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
+const MAX_ATTACHMENT_TOTAL_BYTES = 512 * 1024;
+const MAX_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES_PER_FILE / 3) * 4;
+const attachmentSchema: JsonSchema = objectSchema(
+	{
+		name: stringSchema(1, 255),
+		mediaType: stringSchema(3, 127),
+		size: integerSchema(1, MAX_ATTACHMENT_BYTES_PER_FILE),
+		dataBase64: stringSchema(4, MAX_ATTACHMENT_BASE64_LENGTH),
+	},
+	['name', 'mediaType', 'size', 'dataBase64']
+);
 const promptSchema: JsonSchema = objectSchema(
 	{
 		sessionId: stringSchema(1),
 		text: stringSchema(1, 65536),
-		attachments: { type: 'array', maxItems: 8, items: { type: 'object' } },
+		attachments: { type: 'array', maxItems: 8, items: attachmentSchema },
 	},
 	['sessionId', 'text', 'attachments']
 );
@@ -82,6 +96,21 @@ const subagentLoadSchema: JsonSchema = objectSchema(
 const modelSchema: JsonSchema = objectSchema(
 	{ sessionId: stringSchema(1), provider: stringSchema(1), modelId: stringSchema(1) },
 	['sessionId', 'provider', 'modelId']
+);
+const composerModeSchema: JsonSchema = objectSchema(
+	{
+		sessionId: stringSchema(1),
+		mode: { enum: ['build', 'plan', 'ask'] },
+	},
+	['sessionId', 'mode']
+);
+const approvalResolutionSchema: JsonSchema = objectSchema(
+	{
+		sessionId: stringSchema(1),
+		requestId: stringSchema(1),
+		approved: { enum: [true, false] },
+	},
+	['sessionId', 'requestId', 'approved']
 );
 const thinkingSchema: JsonSchema = objectSchema(
 	{
@@ -130,6 +159,8 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.handoff': { canonicalJsonSchema: instructionsSchema },
 		'omp.model.set': { canonicalJsonSchema: modelSchema },
 		'omp.model.cycle': { canonicalJsonSchema: sessionIdSchema },
+		'omp.composer.mode.set': { canonicalJsonSchema: composerModeSchema },
+		'omp.approval.resolve': { canonicalJsonSchema: approvalResolutionSchema },
 		'omp.thinking.set': { canonicalJsonSchema: thinkingSchema },
 		'omp.thinking.cycle': { canonicalJsonSchema: sessionIdSchema },
 		'omp.settings.set': { canonicalJsonSchema: settingsSchema },
@@ -151,7 +182,11 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		},
 		'omp.approval.required': {
 			canonicalJsonSchema: objectSchema(
-				{ sessionId: stringSchema(1), requestId: stringSchema(1) },
+				{
+					sessionId: stringSchema(1),
+					requestId: stringSchema(1),
+					description: stringSchema(1, 65536),
+				},
 				['sessionId', 'requestId']
 			),
 		},
@@ -180,6 +215,8 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.handoff': { canonicalJsonSchema: resultSchema },
 		'omp.model.set': { canonicalJsonSchema: resultSchema },
 		'omp.model.cycle': { canonicalJsonSchema: resultSchema },
+		'omp.composer.mode.set': { canonicalJsonSchema: resultSchema },
+		'omp.approval.resolve': { canonicalJsonSchema: resultSchema },
 		'omp.thinking.set': { canonicalJsonSchema: resultSchema },
 		'omp.thinking.cycle': { canonicalJsonSchema: resultSchema },
 		'omp.settings.set': { canonicalJsonSchema: resultSchema },
@@ -204,6 +241,8 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.session.handoff': { canonicalJsonSchema: errorSchema },
 		'omp.model.set': { canonicalJsonSchema: errorSchema },
 		'omp.model.cycle': { canonicalJsonSchema: errorSchema },
+		'omp.composer.mode.set': { canonicalJsonSchema: errorSchema },
+		'omp.approval.resolve': { canonicalJsonSchema: errorSchema },
 		'omp.thinking.set': { canonicalJsonSchema: errorSchema },
 		'omp.thinking.cycle': { canonicalJsonSchema: errorSchema },
 		'omp.settings.set': { canonicalJsonSchema: errorSchema },
@@ -231,13 +270,57 @@ export function validateOmpBridgeEnvelope(value: unknown): OmpBridgeValidation {
 	if (!hasOwn(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas, value.kind)) {
 		return { ok: false, code: 'unknown_kind' };
 	}
-	return validateSchema(
-		OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas[value.kind as OmpPanelRequestKind]
-			.canonicalJsonSchema,
-		value.payload
-	)
-		? { ok: true }
-		: { ok: false, code: 'invalid_envelope' };
+	const kind = value.kind as OmpPanelRequestKind;
+	const valid =
+		validateSchema(
+			OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas[kind].canonicalJsonSchema,
+			value.payload
+		) &&
+		(kind !== 'omp.prompt.send' &&
+		kind !== 'omp.steer.send' &&
+		kind !== 'omp.followUp.send' &&
+		kind !== 'omp.run.abortAndPrompt'
+			? true
+			: isValidPromptAttachments(value.payload));
+	return valid ? { ok: true } : { ok: false, code: 'invalid_envelope' };
+}
+
+function isValidPromptAttachments(payload: unknown): boolean {
+	if (!isRecord(payload) || !Array.isArray(payload.attachments)) return false;
+	let totalBytes = 0;
+	for (const attachment of payload.attachments) {
+		if (!isRecord(attachment)) return false;
+		const { name, mediaType, size, dataBase64 } = attachment;
+		if (
+			typeof name !== 'string' ||
+			name.length === 0 ||
+			name.includes('/') ||
+			name.includes('\\') ||
+			[...name].some((character) => character.charCodeAt(0) < 32) ||
+			typeof mediaType !== 'string' ||
+			!/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/.test(mediaType) ||
+			typeof size !== 'number' ||
+			!Number.isInteger(size) ||
+			size < 1 ||
+			size > MAX_ATTACHMENT_BYTES_PER_FILE ||
+			typeof dataBase64 !== 'string' ||
+			!isBase64(dataBase64) ||
+			decodedBase64Length(dataBase64) !== size
+		)
+			return false;
+		totalBytes += size + dataBase64.length;
+		if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) return false;
+	}
+	return true;
+}
+
+function isBase64(value: string): boolean {
+	return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
+}
+
+function decodedBase64Length(value: string): number {
+	const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+	return (value.length / 4) * 3 - padding;
 }
 
 function objectSchema(

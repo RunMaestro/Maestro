@@ -1,8 +1,8 @@
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OmpWorkspace } from '../OmpWorkspace';
-import type { OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from '../types';
+import { OmpWorkspace } from '../../panel/OmpWorkspace';
+import type { OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from '../../panel/types';
 
 const theme = {
 	colors: {
@@ -80,6 +80,7 @@ class DeterministicOmpAdapter implements OmpWorkspaceAdapter {
 	public readonly sendMessage = vi.fn(async () => {});
 	public readonly abort = vi.fn(async () => {});
 	public readonly setModel = vi.fn(async () => {});
+	public readonly setThinkingLevel = vi.fn(async () => {});
 	public readonly setMode = vi.fn(async () => {});
 	public readonly resolveApproval = vi.fn(async () => {});
 	public readonly retry = vi.fn(async () => {});
@@ -155,11 +156,51 @@ describe('OmpWorkspace', () => {
 		);
 		await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('OMP 16.4.8 required'));
 	});
-	it('marks a deep-linked event as the focused transcript target', async () => {
+	it('focuses a deep-linked event after virtualized rendering', async () => {
 		const adapter = new DeterministicOmpAdapter(snapshot());
 		render(<OmpWorkspace adapter={adapter} theme={theme} focusEventId="tool-1" />);
 
 		const target = await screen.findByTestId('omp-event-tool-1');
 		expect(target).toHaveAttribute('data-omp-focused', 'true');
+		expect(document.activeElement).toBe(target);
+	});
+
+	it('exposes responsive session creation, inspector information, and keyboard resizing', async () => {
+		const adapter = new DeterministicOmpAdapter(
+			snapshot({
+				activeSessionId: null,
+				sessions: [],
+			})
+		);
+		render(<OmpWorkspace adapter={adapter} theme={theme} />);
+
+		fireEvent.click(await screen.findByRole('button', { name: 'New OMP session (mobile)' }));
+		expect(adapter.createSession).toHaveBeenCalledTimes(1);
+		expect(screen.getByLabelText('Mobile OMP sessions')).toBeVisible();
+	});
+
+	it('renders active thinking, queued work, todos, and a keyboard-operable inspector', async () => {
+		const adapter = new DeterministicOmpAdapter(
+			snapshot({
+				sessions: [
+					{
+						...snapshot().sessions[0]!,
+						thinkingLevel: 'high',
+						queuedMessageCount: 2,
+						todoPhases: [{ label: 'Verify focused tests', status: 'in_progress' }],
+					},
+				],
+			})
+		);
+		render(<OmpWorkspace adapter={adapter} theme={theme} />);
+
+		expect(await screen.findByText('High')).toBeVisible();
+		expect(screen.getByText('2 queued messages')).toBeVisible();
+		expect(screen.getByText('Verify focused tests')).toBeVisible();
+		const resize = screen.getByRole('separator', { name: 'Resize OMP inspector' });
+		expect(resize).toHaveAttribute('aria-valuemin', '220');
+		expect(resize).toHaveAttribute('aria-valuemax', '520');
+		fireEvent.keyDown(resize, { key: 'ArrowLeft' });
+		expect(resize).toHaveAttribute('aria-valuenow', '308');
 	});
 });

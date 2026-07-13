@@ -37,6 +37,7 @@ function unavailableAdapter(reason: string): OmpWorkspaceAdapter {
 		sendMessage: unavailable,
 		abort: unavailable,
 		setModel: unavailable,
+		setThinkingLevel: unavailable,
 		setMode: unavailable,
 		resolveApproval: unavailable,
 		retry: unavailable,

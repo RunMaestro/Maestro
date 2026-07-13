@@ -3,6 +3,7 @@ import { Activity, PlusCircle, RotateCw, Square } from 'lucide-react';
 import { OmpEventCanvas } from './OmpEventCanvas';
 import type {
 	OmpComposerMode,
+	OmpThinkingLevel,
 	OmpTreeNode,
 	OmpWorkspaceAdapter,
 	OmpWorkspaceSession,
@@ -11,6 +12,15 @@ import { useOmpWorkspace } from './useOmpWorkspace';
 
 const INSPECTOR_TABS = ['session', 'tree', 'subagents', 'approvals', 'usage'] as const;
 type InspectorTab = (typeof INSPECTOR_TABS)[number];
+const THINKING_LEVELS: readonly OmpThinkingLevel[] = [
+	'off',
+	'minimal',
+	'low',
+	'medium',
+	'high',
+	'xhigh',
+	'max',
+];
 type WorkspaceTheme = {
 	colors: {
 		accent: string;
@@ -53,6 +63,7 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 	const [inspectorTab, setInspectorTab] = useState<InspectorTab>('session');
 	const [inspectorWidth, setInspectorWidth] = useState(loadInspectorWidth);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [inspectorOpen, setInspectorOpen] = useState(false);
 
 	useEffect(() => {
 		const storage = typeof window === 'undefined' ? null : window.localStorage;
@@ -175,12 +186,25 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 			</nav>
 
 			<div className="flex min-w-0 flex-1 flex-col">
+				<MobileWorkspaceControls
+					sessions={snapshot.sessions}
+					activeSessionId={activeSession?.id ?? null}
+					theme={theme}
+					inspectorOpen={inspectorOpen}
+					hasActiveSession={activeSession !== null}
+					onCreate={() => invoke(adapter.createSession)}
+					onSelect={(sessionId) => invoke(() => adapter.selectSession(sessionId))}
+					onInspector={() => setInspectorOpen((open) => !open)}
+				/>
 				<WorkspaceToolbar
 					session={activeSession}
 					models={snapshot.models}
 					theme={theme}
 					onSetModel={(model) =>
 						activeSession && invoke(() => adapter.setModel(activeSession.id, model))
+					}
+					onSetThinkingLevel={(level) =>
+						activeSession && invoke(() => adapter.setThinkingLevel(activeSession.id, level))
 					}
 					onSetMode={(mode) =>
 						activeSession && invoke(() => adapter.setMode(activeSession.id, mode))
@@ -221,6 +245,14 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 					onAttachmentsChange={setAttachments}
 					onSubmit={handleSubmit}
 				/>
+				{activeSession && inspectorOpen && (
+					<MobileInspector
+						session={activeSession}
+						tab={inspectorTab}
+						theme={theme}
+						onTab={setInspectorTab}
+					/>
+				)}
 			</div>
 
 			{activeSession && (
@@ -291,7 +323,7 @@ function SessionButton({
 			type="button"
 			onClick={onSelect}
 			aria-current={active ? 'page' : undefined}
-			className="mb-1 w-full rounded border-l-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+			className="mb-1 w-full rounded border-l-2 px-3 py-2 text-left transition-col motion-reduce:transition-none hover:bg-white/5"
 			style={{ borderLeftColor: active ? accent : 'transparent', color: text }}
 		>
 			<span className="block truncate text-sm">{session.title}</span>
@@ -309,11 +341,75 @@ function SessionButton({
 	);
 }
 
+function MobileWorkspaceControls({
+	sessions,
+	activeSessionId,
+	theme,
+	inspectorOpen,
+	hasActiveSession,
+	onCreate,
+	onSelect,
+	onInspector,
+}: {
+	sessions: OmpWorkspaceSession[];
+	activeSessionId: string | null;
+	theme: WorkspaceTheme;
+	inspectorOpen: boolean;
+	hasActiveSession: boolean;
+	onCreate: () => void;
+	onSelect: (sessionId: string) => void;
+	onInspector: () => void;
+}) {
+	return (
+		<div
+			className="flex items-center gap-2 border-b px-3 py-2 md:hidden"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+		>
+			<select
+				aria-label="Mobile OMP sessions"
+				value={activeSessionId ?? ''}
+				onChange={(event) => event.target.value && onSelect(event.target.value)}
+				className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-xs"
+				style={{ borderColor: theme.colors.border }}
+			>
+				<option value="">Choose session</option>
+				{sessions.map((session) => (
+					<option key={session.id} value={session.id}>
+						{session.title}
+					</option>
+				))}
+			</select>
+			<button
+				type="button"
+				aria-label="New OMP session (mobile)"
+				onClick={onCreate}
+				className="rounded border px-2 py-1 text-xs"
+				style={{ borderColor: theme.colors.border }}
+			>
+				New
+			</button>
+			{hasActiveSession && (
+				<button
+					type="button"
+					aria-label="Open OMP inspector"
+					aria-expanded={inspectorOpen}
+					onClick={onInspector}
+					className="rounded border px-2 py-1 text-xs"
+					style={{ borderColor: theme.colors.border }}
+				>
+					Inspector
+				</button>
+			)}
+		</div>
+	);
+}
+
 function WorkspaceToolbar({
 	session,
 	models,
 	theme,
 	onSetModel,
+	onSetThinkingLevel,
 	onSetMode,
 	onAbort,
 }: {
@@ -321,6 +417,7 @@ function WorkspaceToolbar({
 	models: string[];
 	theme: WorkspaceTheme;
 	onSetModel: (model: string) => void;
+	onSetThinkingLevel: (level: OmpThinkingLevel) => void;
 	onSetMode: (mode: OmpComposerMode) => void;
 	onAbort: () => void;
 }) {
@@ -354,6 +451,20 @@ function WorkspaceToolbar({
 						{models.map((model) => (
 							<option key={model} value={model}>
 								{model}
+							</option>
+						))}
+					</select>
+					<select
+						aria-label="Thinking level"
+						value={session.thinkingLevel ?? 'off'}
+						onChange={(event) => onSetThinkingLevel(event.target.value as OmpThinkingLevel)}
+						className="max-w-24 rounded border bg-transparent px-2 py-1 text-xs"
+						style={{ borderColor: theme.colors.border }}
+					>
+						{THINKING_LEVELS.map((level) => (
+							<option key={level} value={level}>
+								{level[0].toUpperCase()}
+								{level.slice(1)}
 							</option>
 						))}
 					</select>
@@ -516,7 +627,20 @@ function Inspector({
 				role="separator"
 				aria-orientation="vertical"
 				aria-label="Resize OMP inspector"
-				className="absolute inset-y-0 left-0 w-1 cursor-col-resize hover:bg-white/20"
+				aria-valuemin={220}
+				aria-valuemax={520}
+				aria-valuenow={width}
+				aria-valuetext={`${width} pixels`}
+				tabIndex={0}
+				className="absolute inset-y-0 left-0 w-1 cursor-col-resize motion-reduce:transition-none hover:bg-white/20 focus:bg-white/20 focus:outline-none"
+				onKeyDown={(event) => {
+					if (event.key === 'ArrowLeft') onResize(Math.min(520, width + 20));
+					else if (event.key === 'ArrowRight') onResize(Math.max(220, width - 20));
+					else if (event.key === 'Home') onResize(220);
+					else if (event.key === 'End') onResize(520);
+					else return;
+					event.preventDefault();
+				}}
 				onPointerDown={(event) => {
 					const startX = event.clientX;
 					const startWidth = width;
@@ -555,6 +679,48 @@ function Inspector({
 	);
 }
 
+function MobileInspector({
+	session,
+	tab,
+	theme,
+	onTab,
+}: {
+	session: OmpWorkspaceSession;
+	tab: InspectorTab;
+	theme: WorkspaceTheme;
+	onTab: (tab: InspectorTab) => void;
+}) {
+	return (
+		<aside
+			aria-label="OMP inspector drawer"
+			className="border-t p-3 lg:hidden"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+		>
+			<div className="flex overflow-auto border-b p-1" style={{ borderColor: theme.colors.border }}>
+				{INSPECTOR_TABS.map((name) => (
+					<button
+						key={name}
+						type="button"
+						aria-pressed={tab === name}
+						onClick={() => onTab(name)}
+						className="rounded px-2 py-1 text-[10px] uppercase"
+						style={
+							tab === name
+								? { backgroundColor: theme.colors.accent, color: theme.colors.bgMain }
+								: { color: theme.colors.textDim }
+						}
+					>
+						{name}
+					</button>
+				))}
+			</div>
+			<div className="pt-3">
+				<InspectorContent session={session} tab={tab} textDim={theme.colors.textDim} />
+			</div>
+		</aside>
+	);
+}
+
 function InspectorContent({
 	session,
 	tab,
@@ -576,9 +742,35 @@ function InspectorContent({
 					<dd className="capitalize">{session.mode}</dd>
 				</div>
 				<div>
+					<dt style={{ color: textDim }}>Thinking</dt>
+					<dd className="capitalize">{session.thinkingLevel ?? 'off'}</dd>
+				</div>
+				<div>
+					<dt style={{ color: textDim }}>Queue</dt>
+					<dd>
+						{session.queuedMessageCount ?? 0} queued{' '}
+						{(session.queuedMessageCount ?? 0) === 1 ? 'message' : 'messages'}
+					</dd>
+				</div>
+				<div>
 					<dt style={{ color: textDim }}>Status</dt>
 					<dd className="capitalize">{session.status}</dd>
 				</div>
+				{session.todoPhases && session.todoPhases.length > 0 && (
+					<div>
+						<dt style={{ color: textDim }}>Todo phases</dt>
+						<dd>
+							<ul className="mt-1 space-y-1">
+								{session.todoPhases.map((phase, index) => (
+									<li key={phase.id ?? `${phase.label ?? 'phase'}-${index}`}>
+										<span>{phase.label ?? 'Untitled phase'}</span>
+										{phase.status && <span style={{ color: textDim }}> · {phase.status}</span>}
+									</li>
+								))}
+							</ul>
+						</dd>
+					</div>
+				)}
 			</dl>
 		);
 	if (tab === 'tree')

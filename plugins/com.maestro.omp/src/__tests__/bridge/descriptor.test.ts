@@ -21,6 +21,8 @@ describe('OMP closed bridge descriptor', () => {
 			'omp.session.handoff',
 			'omp.model.set',
 			'omp.model.cycle',
+			'omp.composer.mode.set',
+			'omp.approval.resolve',
 			'omp.thinking.set',
 			'omp.thinking.cycle',
 			'omp.settings.set',
@@ -59,6 +61,47 @@ describe('OMP closed bridge descriptor', () => {
 			ok: false,
 			code: 'unknown_kind',
 		});
+	});
+
+	it('accepts bounded usable attachment content and rejects invalid or aggregate-overflow payloads', () => {
+		const attachment = {
+			name: 'diagram.png',
+			mediaType: 'image/png',
+			size: 3,
+			dataBase64: 'YWJj',
+		};
+		expect(
+			validateOmpBridgeEnvelope({
+				kind: 'omp.prompt.send',
+				payload: { sessionId: 'session-1', text: 'inspect', attachments: [attachment] },
+			})
+		).toEqual({ ok: true });
+		expect(
+			validateOmpBridgeEnvelope({
+				kind: 'omp.prompt.send',
+				payload: {
+					sessionId: 'session-1',
+					text: 'inspect',
+					attachments: [{ ...attachment, dataBase64: 'not base64!' }],
+				},
+			})
+		).toMatchObject({ ok: false, code: 'invalid_envelope' });
+		const maxAttachmentData = btoa('a'.repeat(128 * 1024));
+		expect(
+			validateOmpBridgeEnvelope({
+				kind: 'omp.prompt.send',
+				payload: {
+					sessionId: 'session-1',
+					text: 'inspect',
+					attachments: Array.from({ length: 8 }, (_, index) => ({
+						name: `${index}.txt`,
+						mediaType: 'text/plain',
+						size: 128 * 1024,
+						dataBase64: maxAttachmentData,
+					})),
+				},
+			})
+		).toMatchObject({ ok: false, code: 'invalid_envelope' });
 	});
 
 	it('rejects malformed payloads fail-closed', () => {

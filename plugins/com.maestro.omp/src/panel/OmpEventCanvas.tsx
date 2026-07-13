@@ -25,6 +25,7 @@ export function OmpEventCanvas({
 	onResolveApproval,
 }: OmpEventCanvasProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const focusedEventRef = useRef<HTMLDivElement | null>(null);
 	const [expandedThinking, setExpandedThinking] = useState<Set<string>>(() => new Set());
 	const virtualizer = useVirtualizer({
 		count: events.length,
@@ -36,7 +37,10 @@ export function OmpEventCanvas({
 	useEffect(() => {
 		if (!focusEventId) return;
 		const focusedIndex = events.findIndex((event) => event.id === focusEventId);
-		if (focusedIndex >= 0) virtualizer.scrollToIndex(focusedIndex, { align: 'center' });
+		if (focusedIndex >= 0) {
+			virtualizer.scrollToIndex(focusedIndex, { align: 'center' });
+			focusedEventRef.current?.focus();
+		}
 	}, [events, focusEventId, virtualizer]);
 
 	if (events.length === 0) {
@@ -65,10 +69,19 @@ export function OmpEventCanvas({
 						return (
 							<div
 								key={event.id}
-								ref={virtualizer.measureElement}
+								ref={(element) => {
+									if (!element) return;
+									virtualizer.measureElement(element);
+									if (event.id === focusEventId) {
+										focusedEventRef.current = element;
+										element.focus();
+									}
+								}}
 								data-index={virtualRow.index}
 								className="absolute left-0 w-full pb-3"
 								data-testid={`omp-event-${event.id}`}
+								aria-label={event.id === focusEventId ? `Focused OMP event ${event.id}` : undefined}
+								tabIndex={event.id === focusEventId ? -1 : undefined}
 								data-omp-focused={event.id === focusEventId ? 'true' : undefined}
 								style={{
 									transform: `translateY(${virtualRow.start}px)`,

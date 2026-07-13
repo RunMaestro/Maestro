@@ -1,6 +1,13 @@
 export type OmpConnectionState = 'loading' | 'ready' | 'offline' | 'incompatible' | 'error';
 export type OmpSessionStatus = 'idle' | 'streaming' | 'queued' | 'waiting-approval' | 'error';
 export type OmpComposerMode = 'build' | 'plan' | 'ask';
+export type OmpThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface OmpTodoPhase {
+	id?: string;
+	label?: string;
+	status?: string;
+}
 
 export interface OmpAttachment {
 	id?: string;
@@ -55,6 +62,9 @@ export interface OmpWorkspaceSession {
 	tree: OmpTreeNode[];
 	subagents: OmpSubagent[];
 	usage: OmpUsage;
+	thinkingLevel?: OmpThinkingLevel;
+	queuedMessageCount?: number;
+	todoPhases?: OmpTodoPhase[];
 }
 
 export interface OmpWorkspaceSnapshot {
@@ -79,6 +89,7 @@ export interface OmpWorkspaceAdapter {
 	sendMessage(sessionId: string, text: string, attachments: File[]): Promise<void>;
 	abort(sessionId: string): Promise<void>;
 	setModel(sessionId: string, model: string): Promise<void>;
+	setThinkingLevel(sessionId: string, level: OmpThinkingLevel): Promise<void>;
 	setMode(sessionId: string, mode: OmpComposerMode): Promise<void>;
 	resolveApproval(sessionId: string, requestId: string, approved: boolean): Promise<void>;
 	retry(): Promise<void>;
