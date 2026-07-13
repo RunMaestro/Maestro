@@ -1,5 +1,6 @@
 const workspaceLocalIdBrand: unique symbol = Symbol('workspaceLocalId');
 const panelLocalIdBrand: unique symbol = Symbol('panelLocalId');
+const snapshotTokenBrand: unique symbol = Symbol('snapshotToken');
 
 const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const LOCAL_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
@@ -13,6 +14,47 @@ type ErrorEntry = { readonly path: string; readonly message: string; readonly or
 
 export type WorkspaceLocalId = string & { readonly [workspaceLocalIdBrand]: never };
 export type PanelLocalId = string & { readonly [panelLocalIdBrand]: never };
+
+export type SnapshotToken = string & { readonly [snapshotTokenBrand]: never };
+export const MAX_EXTERNAL_SESSIONS_PER_WORKSPACE = 500;
+
+export type ExternalSessionStatus =
+	| 'starting'
+	| 'idle'
+	| 'working'
+	| 'waiting_for_input'
+	| 'waiting_for_approval'
+	| 'retrying'
+	| 'completed'
+	| 'aborted'
+	| 'failed'
+	| 'offline';
+
+export interface ExternalSessionSnapshot {
+	readonly externalSessionId: string;
+	readonly title: string;
+	readonly status: ExternalSessionStatus;
+	readonly unread: number;
+	readonly pendingApproval: boolean;
+	readonly updatedAt: number;
+}
+
+export interface PublishedExternalSession extends ExternalSessionSnapshot {
+	readonly snapshotToken: SnapshotToken;
+}
+
+export type WorkspaceContextChange =
+	| {
+			readonly kind: 'external-session-selected';
+			readonly ownerPluginId: string;
+			readonly workspaceLocalId: WorkspaceLocalId;
+			readonly snapshotToken: SnapshotToken;
+	  }
+	| {
+			readonly kind: 'selection-cleared';
+			readonly ownerPluginId: string;
+			readonly workspaceLocalId: WorkspaceLocalId;
+	  };
 
 export interface RawWorkspaceContribution {
 	readonly localId: string;
@@ -65,8 +107,21 @@ export type WorkspaceFoundationParseResult =
 export interface ParsedWorkspaceLink {
 	readonly pluginId: string;
 	readonly workspaceLocalId: WorkspaceLocalId;
-	readonly snapshotToken: string;
+	readonly snapshotToken: SnapshotToken;
 }
+export type WorkspaceLinkResolution =
+	| { readonly kind: 'syntax_invalid' }
+	| { readonly kind: 'unknown_token' }
+	| { readonly kind: 'foreign_owner' }
+	| { readonly kind: 'expired' }
+	| { readonly kind: 'revoked' }
+	| { readonly kind: 'disabled_owner' }
+	| {
+			readonly kind: 'resolved';
+			readonly ownerPluginId: string;
+			readonly workspaceLocalId: WorkspaceLocalId;
+			readonly externalSession: PublishedExternalSession;
+	  };
 
 interface ValidWorkspace {
 	readonly localId: string;
