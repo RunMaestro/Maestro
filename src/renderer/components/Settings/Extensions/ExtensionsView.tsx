@@ -93,7 +93,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				>
 					<div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
 						<Puzzle className="w-4 h-4" />
-						The community plugin subsystem is off, so only built-in features are listed.
+						The community plugin runtime is off. Provided Maestro plugins stay visible but inactive.
 					</div>
 					<button
 						type="button"

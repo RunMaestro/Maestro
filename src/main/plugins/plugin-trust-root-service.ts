@@ -4,6 +4,7 @@ import * as path from 'path';
 import semver from 'semver';
 import { isHostApiCompatible, HOST_API_VERSION } from '../../shared/plugins/host-api';
 import { validatePluginManifest, type PluginManifest } from '../../shared/plugins/plugin-manifest';
+import type { PluginRecord } from '../../shared/plugins/plugin-registry';
 import type { PermissionRequest } from '../../shared/plugins/permissions';
 import {
 	createVerifiedPluginArtifactSnapshot,
@@ -71,6 +72,8 @@ export class OmpPluginTrustRootService {
 	private readonly trustRoot: ImmutableTrustRoot;
 	private readonly trustRootFingerprint: string;
 	private activeSnapshot: VerifiedPluginArtifactSnapshot | null = null;
+	private activeOwner: InstallOwner | null = null;
+	private activeContentHash: string | null = null;
 	private readonly renameSync: (oldPath: string, newPath: string) => void;
 
 	constructor(private readonly deps: OmpPluginTrustRootServiceDeps) {
@@ -88,6 +91,29 @@ export class OmpPluginTrustRootService {
 
 	getActiveSnapshot(): VerifiedPluginArtifactSnapshot | null {
 		return this.activeSnapshot;
+	}
+
+	/**
+	 * Host-only provenance proof for discovery. The record must resolve to the
+	 * canonical managed destination and still match the verified snapshot's
+	 * materialized content; a manifest id alone can never satisfy this check.
+	 */
+	isVerifiedBundledRecord(record: Pick<PluginRecord, 'id' | 'source'>): boolean {
+		if (
+			record.id !== OMP_PLUGIN_ID ||
+			this.activeOwner !== 'bundle' ||
+			this.activeSnapshot === null ||
+			this.activeContentHash === null
+		) {
+			return false;
+		}
+		const destination = path.resolve(this.deps.pluginsDir, OMP_PLUGIN_ID);
+		if (path.resolve(record.source) !== destination) return false;
+		try {
+			return contentHashForDirectory(destination) === this.activeContentHash;
+		} catch {
+			return false;
+		}
 	}
 
 	installOrUpdateArchive(request: OmpArchiveInstallRequest): OmpArchiveInstallResult {
@@ -131,7 +157,7 @@ export class OmpPluginTrustRootService {
 				artifact,
 				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
-			this.activateSnapshot(snapshot);
+			this.activateSnapshot(snapshot, request.owner, contentHashForArtifact(artifact));
 			return { action: 'installed', manifest, artifactSha256 };
 		}
 
@@ -156,11 +182,11 @@ export class OmpPluginTrustRootService {
 				artifact,
 				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
-			this.activateSnapshot(snapshot);
+			this.activateSnapshot(snapshot, request.owner, contentHashForArtifact(artifact));
 			return { action: 'updated', manifest, artifactSha256 };
 		}
 		if (artifactSha256 === state.artifactSha256) {
-			this.activateSnapshot(snapshot);
+			this.activateSnapshot(snapshot, request.owner, contentHashForArtifact(artifact));
 			return { action: 'unchanged', manifest, artifactSha256 };
 		}
 		if (!semver.valid(manifest.version) || !semver.valid(state.version)) {
@@ -170,7 +196,9 @@ export class OmpPluginTrustRootService {
 			snapshot.release();
 			if (request.owner === 'bundle') {
 				this.activateSnapshot(
-					createVerifiedPluginArtifactSnapshot(previousArtifact, previousArchive)
+					createVerifiedPluginArtifactSnapshot(previousArtifact, previousArchive),
+					'bundle',
+					contentHashForArtifact(previousArtifact)
 				);
 				return preserved(manifest, artifactSha256);
 			}
@@ -189,7 +217,7 @@ export class OmpPluginTrustRootService {
 			artifact,
 			managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 		);
-		this.activateSnapshot(snapshot);
+		this.activateSnapshot(snapshot, request.owner, contentHashForArtifact(artifact));
 		return { action: 'updated', manifest, artifactSha256 };
 	}
 
@@ -244,9 +272,15 @@ export class OmpPluginTrustRootService {
 		}
 	}
 
-	private activateSnapshot(snapshot: VerifiedPluginArtifactSnapshot): void {
+	private activateSnapshot(
+		snapshot: VerifiedPluginArtifactSnapshot,
+		owner: InstallOwner,
+		contentHash: string
+	): void {
 		this.activeSnapshot?.release();
 		this.activeSnapshot = snapshot;
+		this.activeOwner = owner;
+		this.activeContentHash = contentHash;
 	}
 }
 

@@ -19,6 +19,7 @@ import {
 } from '../../../../shared/plugins/first-party';
 import type { PluginRecord, PluginSignatureInfo } from '../../../../shared/plugins/plugin-registry';
 import { PLUGIN_CATEGORIES } from '../../../../shared/plugins/plugin-manifest';
+import { isProvidedPluginId } from '../../../../shared/plugins/provided';
 import type { EncoreFeatureFlags } from '../../../types';
 
 export type ExtensionKind = 'builtin' | 'plugin';
@@ -65,6 +66,8 @@ export interface UnifiedExtension {
 	state: ExtensionState;
 	beta?: boolean;
 	pluginBacked?: boolean;
+	/** Host-provided, verified bundled plugin (not manifest supplied). */
+	provided?: boolean;
 	firstParty?: boolean;
 	pluginId?: string;
 	permissions?: FirstPartyPluginDefinition['permissions'];
@@ -151,6 +154,7 @@ export function builtinExtension(
 /** Project a discovered plugin record onto a tile. */
 export function pluginExtension(record: PluginRecord): UnifiedExtension {
 	const m = record.manifest;
+	const provided = isProvidedPluginId(record.id) && record.installOwner === 'bundle';
 	return {
 		key: `plugin:${record.id}`,
 		kind: 'plugin',
@@ -159,6 +163,7 @@ export function pluginExtension(record: PluginRecord): UnifiedExtension {
 		description: m?.description ?? '',
 		category: m?.category ?? 'other',
 		state: record.enabled ? 'enabled' : 'installed',
+		...(provided ? { provided: true, firstParty: true, pluginId: record.id } : {}),
 		tier: m?.tier,
 		trust: record.signature?.status,
 		version: m?.version,

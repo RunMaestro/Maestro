@@ -130,6 +130,7 @@ import {
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import { pluginIdentity } from './plugins/plugin-identity';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
+import { enableProvidedPluginRuntimeForConsent } from './plugins/provided-plugin-runtime';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
 import {
 	openConsentWindow,
@@ -2926,6 +2927,7 @@ app
 				? {
 						ompArchiveInstaller: productionOmpBootstrap.ompArchiveInstaller,
 						snapshotFor: productionOmpBootstrap.snapshotFor,
+						resolveInstallOwner: productionOmpBootstrap.resolveInstallOwner,
 					}
 				: {}),
 			trustedKeys: () => {
@@ -3052,10 +3054,17 @@ app
 		// Open the consent window. Only the trusted main renderer may ask.
 		ipcMain.handle('plugins:request-consent', async (event, pluginId: unknown) => {
 			if (event.sender !== mainWindow?.webContents) throw new Error('UntrustedConsentRequester');
-			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-			if (ef.plugins !== true) throw new Error('PluginsDisabled');
 			if (typeof pluginId !== 'string' || !PLUGIN_ID_PATTERN.test(pluginId)) {
 				throw new Error('InvalidPluginId');
+			}
+			if (
+				!pluginManager ||
+				!enableProvidedPluginRuntimeForConsent(pluginId, {
+					settingsStore: store,
+					manager: pluginManager,
+				})
+			) {
+				throw new Error('PluginsDisabled');
 			}
 			await consentMinter.requestConsent(pluginId);
 			return { opened: true };

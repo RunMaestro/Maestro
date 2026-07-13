@@ -42,6 +42,8 @@ export interface PluginRecord {
 	 * verification (the pure builder cannot read files). Absent until verified.
 	 */
 	signature?: PluginSignatureInfo;
+	/** Host-minted provenance; never read from plugin.json. */
+	installOwner?: 'bundle' | 'external';
 }
 
 /** Minimal signature info carried on a record (decoupled from the verifier). */

@@ -139,6 +139,18 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 							>
 								{STATE_LABELS[ext.state]}
 							</span>
+							{ext.provided && (
+								<span
+									data-testid="extension-provided"
+									className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+									style={{
+										backgroundColor: theme.colors.success + '22',
+										color: theme.colors.success,
+									}}
+								>
+									Provided
+								</span>
+							)}
 							{ext.kind === 'plugin' && ext.tier !== undefined && (
 								<span
 									className="px-1.5 py-0.5 rounded text-[10px] font-medium"

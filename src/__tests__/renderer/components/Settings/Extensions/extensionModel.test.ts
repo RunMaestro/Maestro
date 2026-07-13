@@ -9,6 +9,7 @@ import {
 	buildExtensions,
 	builtinExtension,
 	BUILTIN_FEATURES,
+	pluginExtension,
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 
@@ -159,5 +160,22 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 		for (const ext of extensions) {
 			expect(ext.state).toBe('not-installed');
 		}
+	});
+});
+
+describe('extensionModel provided plugin projection', () => {
+	it('classifies OMP as first-party only when host bundle provenance is present', () => {
+		const bundled = pluginExtension({ ...pluginRecord('com.maestro.omp'), installOwner: 'bundle' });
+		const spoofed = pluginExtension(pluginRecord('com.maestro.omp'));
+		const community = pluginExtension(pluginRecord('com.example.demo'));
+
+		expect(bundled).toMatchObject({
+			firstParty: true,
+			provided: true,
+			pluginId: 'com.maestro.omp',
+		});
+		expect(spoofed.firstParty).toBeUndefined();
+		expect(spoofed.provided).toBeUndefined();
+		expect(community.firstParty).toBeUndefined();
 	});
 });

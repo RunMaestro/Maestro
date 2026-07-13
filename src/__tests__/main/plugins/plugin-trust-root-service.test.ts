@@ -457,3 +457,18 @@ describe('OmpPluginTrustRootService', () => {
 		).toThrow('immutable compiled metadata');
 	});
 });
+
+describe('verified bundled ownership proof', () => {
+	it('accepts only the current verified bundled destination and rejects spoofed or tampered records', () => {
+		const service = makeService();
+		service.bootstrapBundledArchive(writeArchive(artifact('1.0.0')));
+		const source = path.join(workDir, 'plugins', OMP_PLUGIN_ID);
+
+		expect(service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source })).toBe(true);
+		expect(
+			service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source: path.join(workDir, 'spoofed') })
+		).toBe(false);
+		fs.writeFileSync(path.join(source, 'index.js'), 'module.exports = "attacker";');
+		expect(service.isVerifiedBundledRecord({ id: OMP_PLUGIN_ID, source })).toBe(false);
+	});
+});

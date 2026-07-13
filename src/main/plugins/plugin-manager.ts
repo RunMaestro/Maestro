@@ -51,13 +51,14 @@ import {
 	isPackedPluginArchivePath,
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
+import { isProvidedPluginId } from '../../shared/plugins/provided';
 import {
-	OMP_PLUGIN_ID,
 	type OmpArchiveInstallRequest,
 	type OmpPluginTrustRootService,
 } from './plugin-trust-root-service';
 
 const MANIFEST_FILENAME = 'plugin.json';
+const RESERVED_PROVIDED_PLUGIN_ERROR = 'reserved host-provided plugin';
 
 const HOT_RELOAD_DEBOUNCE_MS = 150;
 
@@ -137,6 +138,8 @@ export interface PluginManagerDeps {
 	verifyRecord?: (record: PluginRecord) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
 	onWatchError?: (error: unknown) => void;
+	/** Host-only proof for a discovered record's verified bundled ownership. */
+	resolveInstallOwner?: (record: Readonly<PluginRecord>) => 'bundle' | undefined;
 }
 
 export interface InstallResult {
@@ -220,11 +223,7 @@ export class PluginManager {
 	 * Encore flag is off this returns an empty registry without touching disk.
 	 */
 	refresh(): PluginRegistry {
-		if (!this.deps.isEnabled()) {
-			this.replaceSnapshots(new Map());
-			return this.commitRegistry(emptyRegistry(), this.pluginFingerprints, new Map());
-		}
-
+		const communityRuntimeEnabled = this.deps.isEnabled();
 		const dir = pluginsDir();
 		let folders: string[];
 		try {
@@ -250,15 +249,13 @@ export class PluginManager {
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
 			const rawManifest = this.readManifest(source);
-			// A folder without a readable manifest still gets a record so the user
-			// can see (and uninstall) it; buildRecord marks it invalid.
 			const parsed = validatePluginManifest(rawManifest);
 			const id = parsed.manifest?.id;
 			const tier = parsed.manifest?.tier ?? 0;
-			// Default: tier 0 (data-only) auto-enables on discovery; tier >= 1 runs
-			// code, so it stays DISABLED until the user explicitly enables it (the
-			// consent gate). A stored toggle always wins over the default.
-			const enabled = id && id in state.plugins ? state.plugins[id].enabled : tier === 0;
+			const enabled =
+				communityRuntimeEnabled && id && id in state.plugins
+					? state.plugins[id].enabled
+					: communityRuntimeEnabled && tier === 0;
 			const record = buildRecord({
 				source,
 				folderName: folder,
@@ -266,7 +263,6 @@ export class PluginManager {
 				enabled,
 				hostVersion: HOST_API_VERSION,
 			});
-			// Attach signature trust (the pure builder cannot read files).
 			let signed = record;
 			try {
 				const check = verifyPluginSignature(source, trustedKeys);
@@ -279,21 +275,21 @@ export class PluginManager {
 					},
 				};
 			} catch {
-				// Verification failure is non-fatal for listing; leave signature unset.
+				// Signature verification is non-fatal for listing. The resolver proves
+				// bundled provenance from the immutable bootstrap snapshot instead.
 			}
+			if (isProvidedPluginId(signed.id) && this.deps.resolveInstallOwner?.(signed) === 'bundle') {
+				signed = { ...signed, installOwner: 'bundle' };
+			}
+			// A disabled community runtime still exposes only host-provided records;
+			// it never activates them because getActiveRecords remains gate-controlled.
+			if (!communityRuntimeEnabled && signed.installOwner !== 'bundle') continue;
 			if (signed.signature?.status === 'trusted' && !this.deps.snapshotFor?.(signed.id)) {
 				const snapshot = captureVerifiedPluginSnapshot(source, trustedKeys, signed.id);
 				if (snapshot) nextSnapshots.set(signed.id, snapshot);
 			}
-			// Refresh-time LEDGER authorization gate: a code plugin eligible to be
-			// active (enabled, loadable, tier>=1, has entry) is force-DISABLED when the
-			// injected gate rejects it (consented identity no longer matches the bytes
-			// on disk, or it was removed). Absent by default. Signature trust is
-			// enforced separately and centrally: tampered code (`invalid`) is inert via
-			// getActiveRecords(), and CODE EXECUTION additionally requires `trusted`
-			// via isRunnable() — regardless of this gate or the enable toggle.
 			let gated = signed;
-			if (this.deps.verifyRecord) {
+			if (communityRuntimeEnabled && this.deps.verifyRecord) {
 				const eligibleCode =
 					signed.enabled &&
 					signed.loadStatus === 'ok' &&
@@ -308,7 +304,6 @@ export class PluginManager {
 			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
 		}
 		this.replaceSnapshots(nextSnapshots);
-
 		return this.commitRegistry(next, previousFingerprints, nextFingerprints);
 	}
 
@@ -569,11 +564,8 @@ export class PluginManager {
 		if (!manifest) {
 			return { success: false, error: `invalid plugin.json: ${errors.join('; ')}` };
 		}
-		if (manifest.id === OMP_PLUGIN_ID) {
-			return {
-				success: false,
-				error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
-			};
+		if (isProvidedPluginId(manifest.id)) {
+			return { success: false, error: RESERVED_PROVIDED_PLUGIN_ERROR };
 		}
 		if (!isSafePluginFolderName(manifest.id)) {
 			return { success: false, error: `plugin id "${manifest.id}" is not a safe folder name` };
@@ -607,7 +599,9 @@ export class PluginManager {
 	 * accept this artifact because it has no published digest argument.
 	 */
 	installOrUpdateArchive(request: OmpArchiveInstallRequest): InstallResult {
-		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+		if (request.owner !== 'bundle') {
+			return { success: false, error: RESERVED_PROVIDED_PLUGIN_ERROR };
+		}
 		if (!this.deps.ompArchiveInstaller) {
 			return {
 				success: false,
@@ -679,10 +673,8 @@ export class PluginManager {
 		if (!manifest) {
 			throw new Error(`invalid plugin.json: ${errors.join('; ')}`);
 		}
-		if (manifest.id === OMP_PLUGIN_ID) {
-			throw new Error(
-				'OMP archives require installOrUpdateArchive with immutable trust verification'
-			);
+		if (isProvidedPluginId(manifest.id)) {
+			throw new Error(RESERVED_PROVIDED_PLUGIN_ERROR);
 		}
 		const id = manifest.id;
 		if (!isSafePluginFolderName(id)) {
@@ -751,6 +743,7 @@ export class PluginManager {
 	 * No-op (success:false) when the id is unknown.
 	 */
 	uninstall(id: string): { success: boolean; error?: string } {
+		if (isProvidedPluginId(id)) return { success: false, error: RESERVED_PROVIDED_PLUGIN_ERROR };
 		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
 		const record = this.registry.records.find((r) => r.id === id);
 		if (!record) return { success: false, error: `plugin "${id}" is not installed` };

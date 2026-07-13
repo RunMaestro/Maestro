@@ -113,3 +113,36 @@ describe('ExtensionDetails trust-gate surfacing (FC1)', () => {
 		expect(screen.queryByTestId('extension-code-disabled')).toBeNull();
 	});
 });
+
+describe('ExtensionDetails provided plugin actions', () => {
+	it('keeps enable, disable, and revoke for bundled OMP while omitting Uninstall', () => {
+		const omp = {
+			...ext('trusted'),
+			key: 'plugin:com.maestro.omp',
+			id: 'com.maestro.omp',
+			name: 'OMP',
+			firstParty: true,
+			provided: true,
+			record: { ...record('com.maestro.omp'), installOwner: 'bundle' },
+		} as UnifiedExtension;
+		render(
+			<ExtensionDetails
+				theme={theme}
+				ext={omp}
+				contributions={null}
+				busy={false}
+				onBack={vi.fn()}
+				onTogglePlugin={vi.fn()}
+				onToggleBuiltin={vi.fn()}
+				onUninstall={vi.fn()}
+				onRevoke={vi.fn()}
+				getGrants={vi.fn(async () => ({ requested: [], granted: [] }))}
+			/>
+		);
+
+		expect(screen.getByText('Provided by Maestro')).toBeTruthy();
+		expect(screen.getByTestId('extension-enable-toggle')).toBeTruthy();
+		expect(screen.getByTestId('extension-revoke')).toBeTruthy();
+		expect(screen.queryByTestId('extension-uninstall')).toBeNull();
+	});
+});

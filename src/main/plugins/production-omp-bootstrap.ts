@@ -13,6 +13,7 @@ import type { InteractiveStopReason } from '../../shared/plugins/interactive-run
 import type { OmpArchiveInstallRequest } from './plugin-trust-root-service';
 import { OmpPluginTrustRootService } from './plugin-trust-root-service';
 import type { InstallResult, PluginExecutionSnapshot } from './plugin-manager';
+import type { PluginRecord } from '../../shared/plugins/plugin-registry';
 import type {
 	ManagedRuntimeResolver,
 	OmpRuntimeAuthResolver,
@@ -80,10 +81,8 @@ export interface ProductionOmpBootstrap {
 	/** Closed host callback authority, absent unless production injects broker dependencies. */
 	readonly ompSandboxHandlers?: OmpSandboxHostHandlerSeam;
 	bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) => InstallResult;
-	installExternalArchive: (
-		manager: ProductionOmpArchiveBootstrapManager,
-		request: Omit<OmpArchiveInstallRequest, 'owner'>
-	) => InstallResult;
+	/** Host-only proof consumed by PluginManager during discovery. */
+	resolveInstallOwner: (record: Readonly<PluginRecord>) => 'bundle' | undefined;
 	teardown: (ownerPluginId: string, reason?: InteractiveStopReason) => Promise<void>;
 }
 
@@ -151,10 +150,8 @@ export function createProductionOmpBootstrap(
 		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
 		bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) =>
 			installRequired(manager, bundledRequest),
-		installExternalArchive: (
-			manager: ProductionOmpArchiveBootstrapManager,
-			request: Omit<OmpArchiveInstallRequest, 'owner'>
-		) => installRequired(manager, Object.freeze({ ...request, owner: 'external' as const })),
+		resolveInstallOwner: (record: Readonly<PluginRecord>) =>
+			trustService.isVerifiedBundledRecord(record) ? 'bundle' : undefined,
 		teardown: async (ownerPluginId: string, reason: InteractiveStopReason = 'shutdown') => {
 			workspaceRoots.revokeAll();
 			await managedRuntime.revokeOwner(ownerPluginId, reason);

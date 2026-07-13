@@ -78,10 +78,15 @@ export function useExtensions(): UseExtensionsResult {
 		try {
 			const snap: PluginListSnapshot = await window.maestro.plugins.list();
 			setPlugins(snap.plugins);
-			setPluginsSubsystemEnabled(true);
-			try {
-				setContributions(await window.maestro.plugins.contributions());
-			} catch {
+			const runtimeEnabled = encoreFeatures.plugins === true;
+			setPluginsSubsystemEnabled(runtimeEnabled);
+			if (runtimeEnabled) {
+				try {
+					setContributions(await window.maestro.plugins.contributions());
+				} catch {
+					setContributions(null);
+				}
+			} else {
 				setContributions(null);
 			}
 		} catch (err) {
@@ -100,7 +105,7 @@ export function useExtensions(): UseExtensionsResult {
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [encoreFeatures.plugins]);
 
 	// Reload on mount and whenever the plugin subsystem flag flips (enabling it
 	// unblocks plugins:list, which otherwise rejects with 'PluginsDisabled').
@@ -189,38 +194,47 @@ export function useExtensions(): UseExtensionsResult {
 		setEncoreFeatures({ ...encoreFeatures, plugins: true });
 	}, [encoreFeatures, setEncoreFeatures]);
 
-	const togglePlugin = useCallback(async (record: PluginRecord) => {
-		if (record.loadStatus !== 'ok') return;
-		// Disabling is always immediate; enabling a tier-0 (data) plugin applies
-		// directly. Enabling a code-tier plugin routes through the host-owned
-		// consent window, which mints the grant and enables the plugin itself.
-		const isCodeTier = (record.manifest?.tier ?? 0) >= 1;
-		if (record.enabled || !isCodeTier) {
-			setBusyId(record.id);
+	const togglePlugin = useCallback(
+		async (record: PluginRecord) => {
+			if (record.loadStatus !== 'ok') return;
+			// Disabling is always immediate; enabling a tier-0 (data) plugin applies
+			// directly. Enabling a code-tier plugin routes through the host-owned
+			// consent window, which mints the grant and enables the plugin itself.
+			const isCodeTier = (record.manifest?.tier ?? 0) >= 1;
+			if (record.enabled || !isCodeTier) {
+				setBusyId(record.id);
+				try {
+					const snap = await window.maestro.plugins.setEnabled(record.id, !record.enabled);
+					setPlugins(snap.plugins);
+				} catch (err) {
+					notifyToast({
+						color: 'red',
+						title: 'Extensions',
+						message: `Toggle failed: ${String(err)}`,
+					});
+				} finally {
+					setBusyId(null);
+				}
+				return;
+			}
 			try {
-				const snap = await window.maestro.plugins.setEnabled(record.id, !record.enabled);
-				setPlugins(snap.plugins);
+				await window.maestro.plugins.requestConsent(record.id);
+				if (record.installOwner === 'bundle' && !encoreFeatures.plugins) {
+					// Main has already verified bundle provenance and enabled the runtime
+					// gate atomically before opening consent; mirror that settled setting.
+					setEncoreFeatures({ ...encoreFeatures, plugins: true });
+					setPluginsSubsystemEnabled(true);
+				}
 			} catch (err) {
 				notifyToast({
 					color: 'red',
 					title: 'Extensions',
-					message: `Toggle failed: ${String(err)}`,
+					message: `Could not open the permission prompt: ${String(err)}`,
 				});
-			} finally {
-				setBusyId(null);
 			}
-			return;
-		}
-		try {
-			await window.maestro.plugins.requestConsent(record.id);
-		} catch (err) {
-			notifyToast({
-				color: 'red',
-				title: 'Extensions',
-				message: `Could not open the permission prompt: ${String(err)}`,
-			});
-		}
-	}, []);
+		},
+		[encoreFeatures, setEncoreFeatures]
+	);
 
 	const installPlugin = useCallback(async () => {
 		const dir = await window.maestro.dialog.selectFolder();

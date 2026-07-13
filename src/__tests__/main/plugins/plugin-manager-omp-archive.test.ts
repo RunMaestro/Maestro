@@ -10,7 +10,7 @@ import { PluginManager } from '../../../main/plugins/plugin-manager';
 const request = {
 	archivePath: '/verified/com.maestro.omp.omp-plugin.json',
 	expectedSha256: 'a'.repeat(64),
-	owner: 'external' as const,
+	owner: 'bundle' as const,
 };
 
 describe('PluginManager.installOrUpdateArchive', () => {
@@ -36,6 +36,20 @@ describe('PluginManager.installOrUpdateArchive', () => {
 
 		expect(result.success).toBe(true);
 		expect(installOrUpdateArchive).toHaveBeenCalledWith(request);
+	});
+
+	it('rejects an external OMP archive request before calling the installer', () => {
+		const installOrUpdateArchive = vi.fn();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			ompArchiveInstaller: { installOrUpdateArchive },
+		});
+
+		expect(manager.installOrUpdateArchive({ ...request, owner: 'external' })).toEqual({
+			success: false,
+			error: 'reserved host-provided plugin',
+		});
+		expect(installOrUpdateArchive).not.toHaveBeenCalled();
 	});
 
 	it('does not let the legacy path install an OMP artifact without published digest verification', () => {
@@ -69,7 +83,7 @@ describe('PluginManager.installOrUpdateArchive', () => {
 
 			expect(new PluginManager({ isEnabled: () => true }).install(source)).toEqual({
 				success: false,
-				error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
+				error: 'reserved host-provided plugin',
 			});
 		} finally {
 			if (previousUserData === undefined) delete process.env.MAESTRO_USER_DATA;

@@ -21,6 +21,7 @@ import type { PluginManager, InstallResult } from '../../plugins/plugin-manager'
 import type { ActivitySnapshot } from '../../plugins/plugin-sandbox-host';
 import type { PluginPublishedGrouping } from '../../plugins/plugin-grouping-registry';
 import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
+import { isProvidedPluginId } from '../../../shared/plugins/provided';
 import { setPanelHtmlProvider } from '../../plugins/plugin-panel-host';
 import { getFirstPartyBridge, type FirstPartyBridgeState } from '../../plugins/first-party-bridge';
 import {
@@ -132,6 +133,9 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			const result = manager.uninstall(id);
+			// Provided identities are never user-uninstalled; do not revoke their
+			// grants or create a tombstone when renderer IPC is bypassed.
+			if (isProvidedPluginId(id)) return result;
 			// Authoritative removal in the ledger too (tombstone), so a restored folder
 			// is recognized as removed-by-user and cannot silently re-enable.
 			authStore.uninstall(id);
@@ -224,10 +228,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		}
 	);
 
-	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => {
-		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
-		return wrappedList(event);
-	});
+	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => wrappedList(event));
 
 	ipcMain.handle(
 		'plugins:set-enabled',

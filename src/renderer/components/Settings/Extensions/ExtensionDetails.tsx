@@ -83,6 +83,7 @@ export function ExtensionDetails({
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
 
 	const isPlugin = ext.kind === 'plugin';
+	const isProvidedPlugin = isPlugin && ext.provided === true;
 	const record = ext.record;
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
@@ -198,6 +199,18 @@ export function ExtensionDetails({
 						style={{ color: theme.colors.textMain }}
 					>
 						{ext.name}
+						{isProvidedPlugin && (
+							<span
+								data-testid="extension-details-provided"
+								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+								style={{
+									backgroundColor: theme.colors.success + '22',
+									color: theme.colors.success,
+								}}
+							>
+								Provided by Maestro
+							</span>
+						)}
 						{ext.beta && (
 							<span
 								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
@@ -294,7 +307,7 @@ export function ExtensionDetails({
 					</button>
 				)}
 
-				{isPlugin && record && (
+				{isPlugin && !isProvidedPlugin && record && (
 					<button
 						type="button"
 						data-testid="extension-uninstall"

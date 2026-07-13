@@ -120,6 +120,18 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		expect(manager.refresh).not.toHaveBeenCalled();
 	});
 
+	it('plugins:list remains available while the community runtime is off', async () => {
+		const manager = register(false);
+		const handler = handlers.get('plugins:list');
+		expect(handler).toBeDefined();
+
+		await expect(handler!(event)).resolves.toEqual({
+			hostApiVersion: expect.any(String),
+			plugins: [],
+		});
+		expect(manager.getRegistry).toHaveBeenCalledTimes(1);
+	});
+
 	it('plugins:set-enabled (a mutation) still drives manager.setEnabled', async () => {
 		const manager = register(true);
 		const handler = handlers.get('plugins:set-enabled');
