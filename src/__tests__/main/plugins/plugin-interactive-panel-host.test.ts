@@ -76,6 +76,39 @@ function validPayload() {
 }
 
 describe('PluginInteractivePanelHost', () => {
+	it('returns the instance before INIT and activates exactly once before synchronous guest ingress', () => {
+		const host = new PluginInteractivePanelHost();
+		const guest = createMount();
+		const mounted = host.mount({
+			ownerPluginId: 'com.example.plugin',
+			workspaceLocalId: 'workspace',
+			panelLocalId: 'panel',
+			generation: 1n,
+			descriptor,
+			sender: guest.sender,
+		});
+		const listener = vi.fn();
+		host.ownerApi('com.example.plugin', 1n).onRequest(listener);
+		guest.send.mockImplementation((channel) => {
+			if (channel === 'maestro:panel-init') {
+				host.receive(guest.sender, 'maestro:panel-request', {
+					instanceId: mounted.instanceId,
+					requestId: 1,
+					kind: 'ping',
+					payload: validPayload(),
+				});
+			}
+		});
+
+		expect(guest.send).not.toHaveBeenCalled();
+		expect(mounted.activate()).toBe(true);
+		expect(listener).toHaveBeenCalledOnce();
+		expect(mounted.activate()).toBe(false);
+		expect(guest.send).toHaveBeenCalledTimes(1);
+		mounted.dispose();
+		expect(mounted.activate()).toBe(false);
+	});
+
 	it('routes a declared guest request to only its current owner and correlates the reply', async () => {
 		const host = new PluginInteractivePanelHost();
 		const first = createMount();

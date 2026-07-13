@@ -1,5 +1,6 @@
 import type {
 	PluginWorkspaceMountPanelInput,
+	PluginWorkspaceActivatePanelInput,
 	PluginWorkspaceMountPanelResult,
 	PluginWorkspaceRevealOrSelectInput,
 	PluginWorkspaceRevealOrSelectResult,
@@ -51,6 +52,8 @@ interface PluginWorkspaceIpcMain {
 interface ActivePanelMount {
 	readonly ownerPluginId: string;
 	readonly workspaceLocalId: string;
+	readonly guestWebContentsId: number;
+	readonly guest: GuestWebContents;
 	readonly generation: bigint;
 	readonly handle: InteractivePanelMountHandle;
 }
@@ -106,10 +109,14 @@ export function registerPluginWorkspaceIpc(
 		const mainWindow = requireTrustedRenderer(event);
 		const relay = parsePanelRelay(input, channel);
 		if (!relay) throw new Error('InvalidPluginWorkspacePanelIngress');
+		const instanceId = relay.payload.instanceId;
+		const mount = typeof instanceId === 'string' ? panelMounts.get(instanceId) : undefined;
+		if (!mount || mount.guestWebContentsId !== relay.guestWebContentsId)
+			throw new Error('UnavailablePluginWorkspacePanelIngress');
 		const guest = options.getGuestWebContents(relay.guestWebContentsId);
 		if (!isTrustedGuest(guest, mainWindow.webContents))
 			throw new Error('InvalidPluginWorkspaceGuest');
-		options.panelHost.receive(guest, channel, relay.payload);
+		options.panelHost.receive(mount.guest, channel, relay.payload);
 	};
 
 	const stagePanelResource = (
@@ -119,10 +126,13 @@ export function registerPluginWorkspaceIpc(
 		const mainWindow = requireTrustedRenderer(event);
 		const relay = parsePanelResourceRelay(input);
 		if (!relay) throw new Error('InvalidPluginWorkspacePanelResourceIngress');
+		const mount = panelMounts.get(relay.payload.instanceId);
+		if (!mount || mount.guestWebContentsId !== relay.guestWebContentsId)
+			throw new Error('UnavailablePluginWorkspacePanelResourceIngress');
 		const guest = options.getGuestWebContents(relay.guestWebContentsId);
 		if (!isTrustedGuest(guest, mainWindow.webContents))
 			throw new Error('InvalidPluginWorkspaceGuest');
-		return options.panelHost.stageResource(guest, relay.payload);
+		return options.panelHost.stageResource(mount.guest, relay.payload);
 	};
 
 	const unmount = (instanceId: string): void => {
@@ -209,11 +219,13 @@ export function registerPluginWorkspaceIpc(
 			panelLocalId: projection.panel.localId,
 			generation: projection.generation,
 			descriptor,
-			sender: { send: (channel, payload): void => guest.send(channel, payload) },
+			sender: guest,
 		});
 		panelMounts.set(handle.instanceId, {
 			ownerPluginId: projection.ownerPluginId,
 			workspaceLocalId: projection.workspaceLocalId,
+			guestWebContentsId: mountInput.guestWebContentsId,
+			guest,
 			generation: projection.generation,
 			handle,
 		});
@@ -221,6 +233,30 @@ export function registerPluginWorkspaceIpc(
 		return Object.freeze({
 			instanceId: handle.instanceId,
 		} satisfies PluginWorkspaceMountPanelResult);
+	});
+
+	options.ipcMain.handle('plugin-workspaces:activate-panel', async (event, input) => {
+		const mainWindow = requireTrustedRenderer(event);
+		const activateInput = parseActivatePanelInput(input);
+		if (!activateInput) throw new Error('InvalidPluginWorkspacePanelActivation');
+		const guest = options.getGuestWebContents(activateInput.guestWebContentsId);
+		if (!isTrustedGuest(guest, mainWindow.webContents))
+			throw new Error('InvalidPluginWorkspaceGuest');
+		const mount = panelMounts.get(activateInput.instanceId);
+		if (!mount || mount.guestWebContentsId !== activateInput.guestWebContentsId)
+			throw new Error('UnavailablePluginWorkspacePanelActivation');
+		if (mount.generation.toString(10) !== activateInput.generation)
+			throw new Error('StalePluginWorkspaceGeneration');
+		const projection = options.registry
+			.listProjections()
+			.find(
+				(candidate) =>
+					candidate.ownerPluginId === mount.ownerPluginId &&
+					candidate.workspaceLocalId === mount.workspaceLocalId
+			);
+		if (!projection || projection.generation !== mount.generation)
+			throw new Error('StalePluginWorkspaceGeneration');
+		if (!mount.handle.activate()) throw new Error('UnavailablePluginWorkspacePanelActivation');
 	});
 
 	options.ipcMain.handle('plugin-workspaces:unmount-panel', async (event, input) => {
@@ -259,6 +295,7 @@ export function registerPluginWorkspaceIpc(
 			'plugin-workspaces:get-snapshot',
 			'plugin-workspaces:reveal-or-select',
 			'plugin-workspaces:mount-panel',
+			'plugin-workspaces:activate-panel',
 			'plugin-workspaces:unmount-panel',
 			'plugin-workspaces:panel-request',
 			'plugin-workspaces:panel-stage-resource',
@@ -326,6 +363,22 @@ function parseMountPanelInput(input: unknown): PluginWorkspaceMountPanelInput | 
 		return null;
 	}
 	return input as unknown as PluginWorkspaceMountPanelInput;
+}
+
+function parseActivatePanelInput(input: unknown): PluginWorkspaceActivatePanelInput | null {
+	if (
+		!isRecord(input) ||
+		!Number.isSafeInteger(input.guestWebContentsId) ||
+		(input.guestWebContentsId as number) < 1 ||
+		typeof input.instanceId !== 'string' ||
+		input.instanceId.length < 16 ||
+		input.instanceId.length > 128 ||
+		typeof input.generation !== 'string' ||
+		!/^[1-9][0-9]{0,19}$/.test(input.generation)
+	) {
+		return null;
+	}
+	return input as unknown as PluginWorkspaceActivatePanelInput;
 }
 
 function isRevealOrSelectInput(input: unknown): input is PluginWorkspaceRevealOrSelectInput {

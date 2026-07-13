@@ -59,6 +59,7 @@ function bindPanel(
 ): () => void {
 	let active = true;
 	let instanceId: string | null = null;
+	let mountInFlight = false;
 	const webviewWithContents = webview as InteractivePanelWebviewElement & {
 		getWebContentsId?: () => number;
 	};
@@ -68,16 +69,20 @@ function bindPanel(
 	const reportFailure = (error: unknown): void => {
 		if (active) onFailure?.(error);
 	};
-	const mount = async (): Promise<void> => {
+	const mount = async (reportUnavailable: boolean): Promise<void> => {
+		if (!active || instanceId !== null || mountInFlight) return;
+		const guestWebContentsId = webviewWithContents.getWebContentsId?.();
+		if (
+			typeof guestWebContentsId !== 'number' ||
+			!Number.isSafeInteger(guestWebContentsId) ||
+			guestWebContentsId < 1
+		) {
+			if (reportUnavailable) reportFailure(new Error('Panel guest is unavailable.'));
+			return;
+		}
+		mountInFlight = true;
+		let mountedInstanceId: string | null = null;
 		try {
-			const guestWebContentsId = webviewWithContents.getWebContentsId?.();
-			if (
-				typeof guestWebContentsId !== 'number' ||
-				!Number.isSafeInteger(guestWebContentsId) ||
-				guestWebContentsId < 1
-			) {
-				throw new Error('Panel guest is unavailable.');
-			}
 			const snapshot = await api.getSnapshot();
 			if (!active) return;
 			const workspace = snapshot.workspaces.find(
@@ -85,22 +90,37 @@ function bindPanel(
 					candidate.ownerPluginId === panel.ownerPluginId &&
 					candidate.panelLocalId === panel.localId
 			);
-			if (!workspace) {
-				throw new Error('Panel workspace is unavailable.');
-			}
+			if (!workspace) throw new Error('Panel workspace is unavailable.');
 			const mounted = await api.mountPanel({
 				ownerPluginId: workspace.ownerPluginId,
 				workspaceLocalId: workspace.workspaceLocalId,
 				generation: workspace.generation,
 				guestWebContentsId,
 			});
+			mountedInstanceId = mounted.instanceId;
 			if (!active) {
 				unmountSilently(mounted.instanceId);
 				return;
 			}
+			// Must happen before activation: INIT can synchronously flush guest IPC.
 			instanceId = mounted.instanceId;
+			await api.activatePanel({
+				guestWebContentsId,
+				instanceId: mounted.instanceId,
+				generation: workspace.generation,
+			});
+			if (!active && instanceId === mounted.instanceId) {
+				instanceId = null;
+				unmountSilently(mounted.instanceId);
+			}
 		} catch (error) {
+			if (mountedInstanceId !== null && instanceId === mountedInstanceId) {
+				instanceId = null;
+				unmountSilently(mountedInstanceId);
+			}
 			reportFailure(error);
+		} finally {
+			mountInFlight = false;
 		}
 	};
 	const onIpcMessage = (event: Event): void => {
@@ -176,14 +196,17 @@ function bindPanel(
 		}
 	};
 	const onDomReady = (): void => {
-		void mount();
+		void mount(true);
 	};
 	webview.addEventListener('ipc-message', onIpcMessage);
 	webview.addEventListener('dom-ready', onDomReady);
+	void mount(false);
 	return (): void => {
 		active = false;
 		webview.removeEventListener('dom-ready', onDomReady);
 		webview.removeEventListener('ipc-message', onIpcMessage);
-		if (instanceId) unmountSilently(instanceId);
+		const mountedInstanceId = instanceId;
+		instanceId = null;
+		if (mountedInstanceId) unmountSilently(mountedInstanceId);
 	};
 }

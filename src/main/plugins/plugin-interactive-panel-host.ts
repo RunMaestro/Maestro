@@ -61,6 +61,8 @@ export interface InteractivePanelMount {
 
 export interface InteractivePanelMountHandle {
 	readonly instanceId: string;
+	/** Sends INIT once only after the trusted renderer has stored instanceId. */
+	activate(): boolean;
 	dispose(): void;
 }
 
@@ -139,6 +141,7 @@ interface MountRecord {
 	readonly egressRate: RateWindow;
 	ingressQueuedBytes: number;
 	egressQueuedBytes: number;
+	activated: boolean;
 	resourceBytes: number;
 	lastEventSequence: bigint | undefined;
 	egressTimer: PanelTimer | undefined;
@@ -298,17 +301,18 @@ export class PluginInteractivePanelHost {
 			ingressRate: { startedAt: now, count: 0, bytes: 0 },
 			egressRate: { startedAt: now, count: 0, bytes: 0 },
 			ingressQueuedBytes: 0,
+			activated: false,
 			egressQueuedBytes: 0,
 			resourceBytes: 0,
 			lastEventSequence: undefined,
 			egressTimer: undefined,
 		};
 		this.mounts.set(instanceId, record);
-		this.sendControl(record, 'maestro:panel-init', {
+		return Object.freeze({
 			instanceId,
-			generation: mount.generation.toString(10),
+			activate: (): boolean => this.activate(instanceId),
+			dispose: () => this.unmount(instanceId),
 		});
-		return Object.freeze({ instanceId, dispose: () => this.unmount(instanceId) });
 	}
 
 	/**
@@ -435,6 +439,18 @@ export class PluginInteractivePanelHost {
 			consumeResource: async (ref: string): Promise<PluginPanelConsumedResource> =>
 				this.consumeResource(ownerPluginId, generation, ref),
 		});
+	}
+
+	private activate(instanceId: string): boolean {
+		const record = this.mounts.get(instanceId);
+		if (!record || record.activated) return false;
+		// Set before send: guest IPC can synchronously re-enter through the renderer.
+		record.activated = true;
+		this.sendControl(record, 'maestro:panel-init', {
+			instanceId: record.instanceId,
+			generation: record.mount.generation.toString(10),
+		});
+		return true;
 	}
 
 	unmount(instanceId: string): void {

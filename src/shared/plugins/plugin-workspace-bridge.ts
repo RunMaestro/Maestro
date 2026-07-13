@@ -63,6 +63,12 @@ export interface PluginWorkspaceMountPanelInput {
 export interface PluginWorkspaceMountPanelResult {
 	readonly instanceId: string;
 }
+/** Renderer acknowledgement that it has stored the host-issued instance capability. */
+export interface PluginWorkspaceActivatePanelInput {
+	readonly guestWebContentsId: number;
+	readonly instanceId: string;
+	readonly generation: string;
+}
 
 export interface PluginWorkspaceUnmountPanelInput {
 	readonly instanceId: string;
@@ -117,6 +123,7 @@ export interface PluginWorkspacesApi {
 		input: PluginWorkspaceRevealOrSelectInput
 	): Promise<PluginWorkspaceRevealOrSelectResult | null>;
 	mountPanel(input: PluginWorkspaceMountPanelInput): Promise<PluginWorkspaceMountPanelResult>;
+	activatePanel(input: PluginWorkspaceActivatePanelInput): Promise<void>;
 	unmountPanel(input: PluginWorkspaceUnmountPanelInput): Promise<void>;
 	panelRequest(input: PluginWorkspacePanelRequestInput): Promise<void>;
 	panelStageResource(

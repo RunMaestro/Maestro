@@ -47,9 +47,11 @@ describe('plugin workspace preload bridge', () => {
 
 		expect(Object.isFrozen(api)).toBe(true);
 		expect(Object.keys(api).sort()).toEqual([
+			'activatePanel',
 			'getSnapshot',
 			'mountPanel',
 			'panelRequest',
+			'panelStageResource',
 			'panelSubscribe',
 			'panelUnsubscribe',
 			'panelUnsubscribeAll',
@@ -80,11 +82,21 @@ describe('plugin workspace preload bridge', () => {
 
 		await api.revealOrSelect(reveal);
 		await api.mountPanel(mount);
+		await api.activatePanel({
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			generation: '1',
+		});
 		await api.unmountPanel({ instanceId: 'panel-instance' });
 
 		expect(invoke).toHaveBeenNthCalledWith(1, 'plugin-workspaces:reveal-or-select', reveal);
 		expect(invoke).toHaveBeenNthCalledWith(2, 'plugin-workspaces:mount-panel', mount);
-		expect(invoke).toHaveBeenNthCalledWith(3, 'plugin-workspaces:unmount-panel', {
+		expect(invoke).toHaveBeenNthCalledWith(3, 'plugin-workspaces:activate-panel', {
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			generation: '1',
+		});
+		expect(invoke).toHaveBeenNthCalledWith(4, 'plugin-workspaces:unmount-panel', {
 			instanceId: 'panel-instance',
 		});
 	});

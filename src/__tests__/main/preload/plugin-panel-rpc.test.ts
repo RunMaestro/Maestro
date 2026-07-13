@@ -118,21 +118,17 @@ describe('closed plugin panel guest API', () => {
 		});
 	});
 
-	it('accepts a bounded decimal generation but ignores malformed, overflowing, and stale init messages', () => {
+	it('fails closed when malformed, overflowing, or stale INIT invalidates its authority', async () => {
 		const api = guestApi();
+		const pending = api.request('ping', {});
+		sendToHost.mockClear();
 		fromHost('maestro:panel-init', { instanceId: 'malformed-instance-0001', generation: '02' });
+		await expect(pending).rejects.toThrow('panel init rejected');
 		fromHost('maestro:panel-init', {
 			instanceId: 'overflow-instance-0001',
 			generation: '18446744073709551616',
 		});
 		fromHost('maestro:panel-init', { instanceId: 'stale-instance-0001', generation: '1' });
-
-		void api.request('ping', {});
-		expect(sendToHost).toHaveBeenLastCalledWith('maestro:panel-request', {
-			instanceId: INSTANCE,
-			requestId: 1,
-			kind: 'ping',
-			payload: {},
-		});
+		expect(sendToHost).not.toHaveBeenCalled();
 	});
 });

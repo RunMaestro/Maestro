@@ -86,9 +86,15 @@ function harness() {
 		hostWebContents: mainContents,
 		send: vi.fn(),
 	};
+	const otherGuest = { ...guest, send: vi.fn() };
 	const panelDispose = vi.fn();
+	const panelActivate = vi.fn(() => true);
 	const panelHost = {
-		mount: vi.fn(() => ({ instanceId: 'panel-instance', dispose: panelDispose })),
+		mount: vi.fn(() => ({
+			instanceId: 'panel-instance-0001',
+			activate: panelActivate,
+			dispose: panelDispose,
+		})),
 		receive: vi.fn(),
 		stageResource: vi.fn(() => ({
 			ref: 'opaque-resource-ref',
@@ -104,7 +110,7 @@ function harness() {
 		getMainWindow: () => mainWindow,
 		registry: registry as never,
 		panelHost: panelHost as unknown as PluginInteractivePanelHost,
-		getGuestWebContents: (id) => (id === 42 ? guest : null),
+		getGuestWebContents: (id) => (id === 42 ? guest : id === 43 ? otherGuest : null),
 		getPanelDescriptor: () => ({
 			requestSchemas: {},
 			eventSchemas: {},
@@ -119,6 +125,7 @@ function harness() {
 		guest,
 		panelHost,
 		panelDispose,
+		panelActivate,
 		registration,
 		sent,
 		unsubscribe,
@@ -179,6 +186,79 @@ describe('plugin workspace main registration', () => {
 		).rejects.toThrow('InvalidPluginWorkspaceGuest');
 	});
 
+	it('activates only the currently mounted trusted guest with its exact generation', async () => {
+		const h = harness();
+		const mount = h.handlers.get('plugin-workspaces:mount-panel');
+		const activate = h.handlers.get('plugin-workspaces:activate-panel');
+		await mount(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
+
+		await expect(
+			activate(
+				{ sender: {} },
+				{ guestWebContentsId: 42, instanceId: 'panel-instance-0001', generation: '2' }
+			)
+		).rejects.toThrow('UntrustedPluginWorkspaceRequester');
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 9, instanceId: 'panel-instance-0001', generation: '2' }
+			)
+		).rejects.toThrow('InvalidPluginWorkspaceGuest');
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 43, instanceId: 'panel-instance-0001', generation: '2' }
+			)
+		).rejects.toThrow('UnavailablePluginWorkspacePanelActivation');
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 42, instanceId: 'other-panel-instance-0001', generation: '2' }
+			)
+		).rejects.toThrow('UnavailablePluginWorkspacePanelActivation');
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 42, instanceId: 'panel-instance-0001', generation: '1' }
+			)
+		).rejects.toThrow('StalePluginWorkspaceGeneration');
+
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 42, instanceId: 'panel-instance-0001', generation: '2' }
+			)
+		).resolves.toBeUndefined();
+		expect(h.panelActivate).toHaveBeenCalledOnce();
+	});
+
+	it('refuses activation after its projection is revoked', async () => {
+		const h = harness();
+		const mount = h.handlers.get('plugin-workspaces:mount-panel');
+		const activate = h.handlers.get('plugin-workspaces:activate-panel');
+		await mount(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
+		h.getProjectionListener()?.({
+			ownerPluginId: OWNER,
+			workspaceLocalId: WORKSPACE,
+			projectionRevision: 5,
+			projection: null,
+		});
+
+		await expect(
+			activate(
+				{ sender: h.mainContents },
+				{ guestWebContentsId: 42, instanceId: 'panel-instance-0001', generation: '2' }
+			)
+		).rejects.toThrow('UnavailablePluginWorkspacePanelActivation');
+		expect(h.panelActivate).not.toHaveBeenCalled();
+	});
+
 	it('cleans registry and panel subscriptions on window destruction', () => {
 		const h = harness();
 		const mount = h.handlers.get('plugin-workspaces:mount-panel');
@@ -219,6 +299,10 @@ describe('plugin workspace main registration', () => {
 
 	it('forwards only named panel ingress from the trusted renderer with the exact guest sender', async () => {
 		const h = harness();
+		await h.handlers.get('plugin-workspaces:mount-panel')(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
 		const request = h.handlers.get('plugin-workspaces:panel-request');
 		const subscribe = h.handlers.get('plugin-workspaces:panel-subscribe');
 		const panelRequest = {
@@ -258,6 +342,10 @@ describe('plugin workspace main registration', () => {
 
 	it('forwards staged binary bytes only from the mounted trusted guest', async () => {
 		const h = harness();
+		await h.handlers.get('plugin-workspaces:mount-panel')(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
 		const stage = h.handlers.get('plugin-workspaces:panel-stage-resource');
 		const input = {
 			guestWebContentsId: 42,

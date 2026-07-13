@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 declare const window: {
 	addEventListener(type: 'unload', listener: () => void): void;
+	addEventListener(type: 'message', listener: (event: MessageEvent) => void): void;
 };
 
 const REQUEST_CHANNEL = 'maestro:panel-request';
@@ -22,11 +23,19 @@ const MAX_RESOURCE_BYTES = 2 * 1024 * 1024;
 
 let instanceId: string | null = null;
 let generation = '';
+let highestGeneration = '';
+let initialized = false;
 let nextRequestId = 1;
 let nextStageId = 1;
 let windowStartedAt = 0;
 let windowCount = 0;
-const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+interface PendingRequest {
+	readonly kind: string;
+	readonly payload: unknown;
+	readonly resolve: (value: unknown) => void;
+	readonly reject: (error: Error) => void;
+}
+const pending = new Map<number, PendingRequest>();
 const pendingStages = new Map<
 	number,
 	{ resolve(value: unknown): void; reject(error: Error): void }
@@ -60,34 +69,75 @@ function isBoundedGenerationDecimal(value: unknown): value is string {
 
 function isStaleGeneration(nextGeneration: string): boolean {
 	return (
-		generation !== '' &&
-		(nextGeneration.length < generation.length ||
-			(nextGeneration.length === generation.length && nextGeneration < generation))
+		highestGeneration !== '' &&
+		(nextGeneration.length < highestGeneration.length ||
+			(nextGeneration.length === highestGeneration.length && nextGeneration < highestGeneration))
 	);
 }
 
-function resetInstance(nextInstanceId: string, nextGeneration: string): void {
-	for (const entry of pending.values()) entry.reject(new Error('panel instance replaced'));
-	for (const entry of pendingStages.values()) entry.reject(new Error('panel instance replaced'));
+function failClosed(reason: string): void {
+	for (const entry of pending.values()) entry.reject(new Error(reason));
+	for (const entry of pendingStages.values()) entry.reject(new Error(reason));
 	pending.clear();
 	pendingStages.clear();
 	subscriptions.clear();
-	instanceId = nextInstanceId;
-	generation = nextGeneration;
+	instanceId = null;
+	generation = '';
+	initialized = false;
 	nextRequestId = 1;
 	nextStageId = 1;
 	windowStartedAt = 0;
 	windowCount = 0;
 }
 
+function flushPreInitState(): void {
+	if (!initialized || instanceId === null) return;
+	for (const [requestId, entry] of pending) {
+		ipcRenderer.sendToHost(REQUEST_CHANNEL, {
+			instanceId,
+			requestId,
+			kind: entry.kind,
+			payload: entry.payload,
+		});
+	}
+	for (const kind of subscriptions.keys()) {
+		ipcRenderer.sendToHost(SUBSCRIBE_CHANNEL, { instanceId, kind });
+	}
+}
+
+function initializeInstance(nextInstanceId: string, nextGeneration: string): void {
+	if (initialized && instanceId === nextInstanceId && generation === nextGeneration) return;
+	if (initialized) failClosed('panel instance replaced');
+	instanceId = nextInstanceId;
+	generation = nextGeneration;
+	highestGeneration = nextGeneration;
+	initialized = true;
+	flushPreInitState();
+}
+
+function isLegacyInvokeCommand(value: unknown): value is {
+	readonly type: 'maestro:invokeCommand';
+	readonly commandId: string;
+	readonly args?: unknown;
+} {
+	if (
+		!isRecord(value) ||
+		value.type !== 'maestro:invokeCommand' ||
+		typeof value.commandId !== 'string' ||
+		value.commandId.length === 0 ||
+		value.commandId.length > 256
+	) {
+		return false;
+	}
+	const keys = Object.keys(value);
+	return (
+		keys.every((key) => key === 'type' || key === 'commandId' || key === 'args') &&
+		hasBoundedJson({ commandId: value.commandId, args: value.args })
+	);
+}
 const maestroInteractivePanel = Object.freeze({
 	request(kind: string, payload: unknown): Promise<unknown> {
-		if (
-			instanceId === null ||
-			typeof kind !== 'string' ||
-			kind.length === 0 ||
-			!hasBoundedJson(payload)
-		) {
+		if (typeof kind !== 'string' || kind.length === 0 || !hasBoundedJson(payload)) {
 			return Promise.reject(new Error('interactive panel capability unavailable'));
 		}
 		if (pending.size >= MAX_PENDING_REQUESTS)
@@ -102,8 +152,10 @@ const maestroInteractivePanel = Object.freeze({
 		windowCount += 1;
 		const requestId = nextRequestId++;
 		return new Promise<unknown>((resolve, reject) => {
-			pending.set(requestId, { resolve, reject });
-			ipcRenderer.sendToHost(REQUEST_CHANNEL, { instanceId, requestId, kind, payload });
+			pending.set(requestId, { kind, payload, resolve, reject });
+			if (initialized && instanceId !== null) {
+				ipcRenderer.sendToHost(REQUEST_CHANNEL, { instanceId, requestId, kind, payload });
+			}
 		});
 	},
 
@@ -131,12 +183,7 @@ const maestroInteractivePanel = Object.freeze({
 	},
 
 	subscribe(kind: string, listener: (payload: unknown) => void): () => void {
-		if (
-			instanceId === null ||
-			typeof kind !== 'string' ||
-			kind.length === 0 ||
-			typeof listener !== 'function'
-		) {
+		if (typeof kind !== 'string' || kind.length === 0 || typeof listener !== 'function') {
 			return () => undefined;
 		}
 		let listeners = subscriptions.get(kind);
@@ -146,7 +193,9 @@ const maestroInteractivePanel = Object.freeze({
 			subscriptions.set(kind, listeners);
 		}
 		listeners.add(listener);
-		if (first) ipcRenderer.sendToHost(SUBSCRIBE_CHANNEL, { instanceId, kind });
+		if (first && initialized && instanceId !== null) {
+			ipcRenderer.sendToHost(SUBSCRIBE_CHANNEL, { instanceId, kind });
+		}
 		return () => {
 			const current = subscriptions.get(kind);
 			if (!current || !current.delete(listener) || current.size > 0) return;
@@ -158,6 +207,14 @@ const maestroInteractivePanel = Object.freeze({
 
 contextBridge.exposeInMainWorld('maestroInteractivePanel', maestroInteractivePanel);
 
+window.addEventListener('message', (event) => {
+	if (event.source !== (window as unknown) || !isLegacyInvokeCommand(event.data)) return;
+	ipcRenderer.sendToHost('maestro:invokeCommand', {
+		commandId: event.data.commandId,
+		args: event.data.args,
+	});
+});
+
 ipcRenderer.on(INIT_CHANNEL, (_event, payload: unknown) => {
 	if (
 		!isRecord(payload) ||
@@ -166,9 +223,11 @@ ipcRenderer.on(INIT_CHANNEL, (_event, payload: unknown) => {
 		payload.instanceId.length > 128 ||
 		!isBoundedGenerationDecimal(payload.generation) ||
 		isStaleGeneration(payload.generation)
-	)
+	) {
+		failClosed('panel init rejected');
 		return;
-	resetInstance(payload.instanceId, payload.generation);
+	}
+	initializeInstance(payload.instanceId, payload.generation);
 });
 
 ipcRenderer.on(RESULT_CHANNEL, (_event, payload: unknown) => {
@@ -257,12 +316,8 @@ ipcRenderer.on(EVENT_CHANNEL, (_event, payload: unknown) => {
 });
 
 window.addEventListener('unload', () => {
-	if (instanceId !== null) ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId });
-	for (const entry of pending.values()) entry.reject(new Error('panel unloaded'));
-	for (const entry of pendingStages.values()) entry.reject(new Error('panel unloaded'));
-	pending.clear();
-	pendingStages.clear();
-	subscriptions.clear();
-	instanceId = null;
-	generation = '';
+	if (initialized && instanceId !== null) {
+		ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId });
+	}
+	failClosed('panel unloaded');
 });

@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type {
 	PluginWorkspaceMountPanelInput,
+	PluginWorkspaceActivatePanelInput,
 	PluginWorkspaceMountPanelResult,
 	PluginWorkspaceRevealOrSelectInput,
 	PluginWorkspaceRevealOrSelectResult,
@@ -39,6 +40,8 @@ export function createPluginWorkspacesApi(): PluginWorkspacesApi {
 			ipcRenderer.invoke('plugin-workspaces:reveal-or-select', input),
 		mountPanel: (input: PluginWorkspaceMountPanelInput): Promise<PluginWorkspaceMountPanelResult> =>
 			ipcRenderer.invoke('plugin-workspaces:mount-panel', input),
+		activatePanel: (input: PluginWorkspaceActivatePanelInput): Promise<void> =>
+			ipcRenderer.invoke('plugin-workspaces:activate-panel', input),
 		unmountPanel: (input: PluginWorkspaceUnmountPanelInput): Promise<void> =>
 			ipcRenderer.invoke('plugin-workspaces:unmount-panel', input),
 		panelRequest: (input: PluginWorkspacePanelRequestInput): Promise<void> =>

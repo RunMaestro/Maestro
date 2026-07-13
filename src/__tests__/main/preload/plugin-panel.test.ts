@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { sendToHost } = vi.hoisted(() => ({ sendToHost: vi.fn() }));
 vi.mock('electron', () => ({
-	ipcRenderer: { sendToHost },
+	ipcRenderer: { sendToHost, on: vi.fn() },
 	contextBridge: { exposeInMainWorld: vi.fn() },
 }));
 

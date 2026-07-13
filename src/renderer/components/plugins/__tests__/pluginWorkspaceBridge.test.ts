@@ -32,6 +32,7 @@ function api(): PluginWorkspacesApi {
 		subscribe: vi.fn(() => vi.fn()),
 		revealOrSelect: vi.fn(async () => null),
 		mountPanel: vi.fn(async () => ({ instanceId: 'panel-instance' })),
+		activatePanel: vi.fn(async () => undefined),
 		unmountPanel: vi.fn(async () => undefined),
 		panelRequest: vi.fn(async () => undefined),
 		panelStageResource: vi.fn(async () => ({
@@ -90,7 +91,53 @@ describe('plugin workspace renderer adapters', () => {
 			generation: '2',
 			guestWebContentsId: 42,
 		});
+		expect(bridge.activatePanel).toHaveBeenCalledWith({
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			generation: '2',
+		});
 		unbind();
+		expect(bridge.unmountPanel).toHaveBeenCalledWith({ instanceId: 'panel-instance' });
+	});
+
+	it('mounts immediately when guest identity already exists, coalesces dom-ready, and revokes an in-flight result on cleanup', async () => {
+		const bridge = api();
+		let resolveMount: ((value: { instanceId: string }) => void) | undefined;
+		bridge.mountPanel = vi.fn(
+			() =>
+				new Promise<{ instanceId: string }>((resolve) => {
+					resolveMount = resolve;
+				})
+		);
+		const binder = createInteractivePanelHostBinder(bridge);
+		const listeners = new Map<string, () => void>();
+		const unbind = binder.bind({
+			panel: {
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'main-panel',
+				canonicalContributionId: 'com.maestro.omp/main-panel',
+				title: 'OMP',
+				entry: 'panel.html',
+			} as unknown as CanonicalInteractivePanelContribution,
+			webview: {
+				addEventListener: vi.fn((event: string, listener: () => void) =>
+					listeners.set(event, listener)
+				),
+				removeEventListener: vi.fn(),
+				getWebContentsId: () => 42,
+			} as never,
+		});
+
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(bridge.mountPanel).toHaveBeenCalledOnce();
+		listeners.get('dom-ready')?.();
+		expect(bridge.mountPanel).toHaveBeenCalledOnce();
+		unbind();
+		resolveMount?.({ instanceId: 'panel-instance' });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(bridge.activatePanel).not.toHaveBeenCalled();
 		expect(bridge.unmountPanel).toHaveBeenCalledWith({ instanceId: 'panel-instance' });
 	});
 
