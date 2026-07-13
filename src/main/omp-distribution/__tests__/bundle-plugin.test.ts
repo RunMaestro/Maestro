@@ -17,9 +17,7 @@ describe('runnable OMP plugin package', () => {
 		const contributes = manifest.contributes as { interactivePanels: { entry: string }[] };
 
 		expect([...filesByPath.keys()].sort()).toEqual([
-			'dist/panel.css',
 			'dist/panel.html',
-			'dist/panel.js',
 			'dist/runtime.js',
 			'plugin.json',
 		]);
@@ -45,9 +43,10 @@ describe('runnable OMP plugin package', () => {
 			startFromExplicitPanelAction: expect.any(Function),
 			deactivate: expect.any(Function),
 		});
-		expect(Buffer.from(filesByPath.get('dist/panel.html') ?? '').toString('utf8')).toContain(
-			'src="./panel.js"'
-		);
-		expect(Buffer.from(filesByPath.get('dist/panel.js') ?? '').length).toBeGreaterThan(0);
+		const panelHtml = Buffer.from(filesByPath.get('dist/panel.html') ?? '').toString('utf8');
+		expect(panelHtml).toContain('Content-Security-Policy');
+		expect(panelHtml).toContain("script-src 'sha256-");
+		expect(panelHtml).toContain('<script>');
+		expect(panelHtml).not.toMatch(/(?:src|href)=/);
 	});
 });

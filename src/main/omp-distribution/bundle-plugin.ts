@@ -61,9 +61,7 @@ export async function bundleOmpPlugin(pluginRoot: string): Promise<RunnablePlugi
 		files: [
 			{ path: 'plugin.json', content: Buffer.from(JSON.stringify(manifest, null, '\t') + '\n') },
 			{ path: 'dist/runtime.js', content: runtimeOutput.javaScript },
-			{ path: 'dist/panel.js', content: panelJavaScript },
-			{ path: 'dist/panel.css', content: panelCss },
-			{ path: 'dist/panel.html', content: Buffer.from(panelHtml()) },
+			{ path: 'dist/panel.html', content: Buffer.from(panelHtml(panelJavaScript, panelCss)) },
 		],
 	};
 }
@@ -160,6 +158,12 @@ function isWithinRoot(root: string, candidate: string): boolean {
 	return pathRelative.length > 0 && !pathRelative.startsWith('..') && !pathRelative.includes('../');
 }
 
-function panelHtml(): string {
-	return '<!doctype html>\n<html><head><meta charset="utf-8"><link rel="stylesheet" href="./panel.css"></head><body><div id="root"></div><script src="./panel.js"></script></body></html>\n';
+function panelHtml(javaScript: Buffer, css: Buffer): string {
+	const escapedJavaScript = javaScript.toString('utf8').replaceAll('</script', '<\\/script');
+	const escapedCss = css.toString('utf8').replaceAll('</style', '<\\/style');
+	const scriptHash = createHash('sha256').update(escapedJavaScript).digest('base64');
+	const styleHash = createHash('sha256').update(escapedCss).digest('base64');
+	return `<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; connect-src 'none'; script-src 'sha256-${scriptHash}'; style-src 'sha256-${styleHash}'"><style>${escapedCss}</style></head><body><div id="root"></div><script>${escapedJavaScript}</script></body></html>
+`;
 }
