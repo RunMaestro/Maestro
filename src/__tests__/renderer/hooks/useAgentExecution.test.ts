@@ -4,6 +4,7 @@ import { useAgentExecution } from '../../../renderer/hooks';
 import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -200,6 +201,49 @@ describe('useAgentExecution', () => {
 		expect(spawnConfig.appendSystemPrompt).toBeDefined();
 		expect(typeof spawnConfig.appendSystemPrompt).toBe('string');
 		expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+
+		// Clean up
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
+	});
+
+	it('spawns Auto Run batches with full-access permissionMode', async () => {
+		// Auto Run runs unattended in --print mode and must have the same
+		// permission level as an interactive "Full Access" tab. Without an
+		// explicit permissionMode: 'full', agents whose bypass is gated on full
+		// access (e.g. Claude Code) fall back to the default permission model,
+		// can't get non-interactive tool approvals, and deadlock the run.
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.permissionMode).toBe('full');
+		expect(spawnConfig.readOnlyMode).toBe(false);
 
 		// Clean up
 		const targetSessionId = spawnConfig.sessionId as string;
@@ -531,5 +575,155 @@ describe('useAgentExecution', () => {
 
 		// Should not have called kill
 		expect(mockKill).not.toHaveBeenCalled();
+	});
+
+	// ========================================================================
+	// Auto Run batch watchdog (inactivity + absolute max-duration)
+	// ========================================================================
+	//
+	// Regression for the multi-document Auto Run hang: a stuck-but-chatty agent
+	// keeps emitting output (resetting the silence timer) but never finishes, so
+	// the silence-based inactivity watchdog never fires and the per-document loop
+	// (which only advances once processTask resolves) hangs forever. The
+	// absolute max-duration cap resolves the task regardless of output so the
+	// batch loop can terminate the document and move on.
+	describe('batch watchdog', () => {
+		function renderForWatchdog(session: Session) {
+			return renderHook(() =>
+				useAgentExecution({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					setSessions: vi.fn(),
+					processQueuedItemRef: { current: null },
+					setFlashNotification: vi.fn(),
+					setSuccessFlashNotification: vi.fn(),
+				})
+			);
+		}
+
+		it('force-kills a chatty-but-stuck task once the absolute max-duration cap is exceeded, even while output keeps arriving', async () => {
+			vi.useFakeTimers();
+			const mockKill = vi.fn().mockResolvedValue(true);
+			window.maestro.process.kill = mockKill;
+			// Inactivity is generous; cap is short. Output keeps flowing so the
+			// silence watchdog can NEVER fire, only the absolute cap can.
+			useSettingsStore.setState({
+				autoRunInactivityTimeoutMin: 10,
+				autoRunMaxTaskDurationMin: 1,
+			} as any);
+
+			const session = createMockSession({ state: 'busy' });
+			const { result } = renderForWatchdog(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			// Flush the async spawn setup so the process spawns and the watchdog
+			// interval is registered under fake timers.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			// Emit output at 30s, keeps the silence timer well under the 10-min
+			// inactivity threshold for the rest of the run.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30 * 1000);
+				onDataHandler?.(targetSessionId, 'still working...');
+			});
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Cross the 1-minute absolute cap.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(45 * 1000);
+			});
+
+			const res = await spawnPromise;
+			expect(mockKill).toHaveBeenCalledWith(targetSessionId);
+			expect(res.success).toBe(false);
+			expect(res.errorKind).toBe('watchdog-timeout');
+		});
+
+		it('still force-kills on silence via the inactivity watchdog when no max-duration cap is set', async () => {
+			vi.useFakeTimers();
+			const mockKill = vi.fn().mockResolvedValue(true);
+			window.maestro.process.kill = mockKill;
+			useSettingsStore.setState({
+				autoRunInactivityTimeoutMin: 1,
+				autoRunMaxTaskDurationMin: 0, // unlimited (absolute cap disabled)
+			} as any);
+
+			const session = createMockSession({ state: 'busy' });
+			const { result } = renderForWatchdog(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			// No output at all → silence crosses the 1-minute inactivity threshold.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(75 * 1000);
+			});
+
+			const res = await spawnPromise;
+			expect(mockKill).toHaveBeenCalledWith(targetSessionId);
+			expect(res.errorKind).toBe('watchdog-stalled');
+		});
+
+		it('never starts a watchdog when both inactivity and max-duration are unlimited (0)', async () => {
+			vi.useFakeTimers();
+			const mockKill = vi.fn().mockResolvedValue(true);
+			window.maestro.process.kill = mockKill;
+			useSettingsStore.setState({
+				autoRunInactivityTimeoutMin: 0,
+				autoRunMaxTaskDurationMin: 0,
+			} as any);
+
+			const session = createMockSession({ state: 'busy' });
+			const { result } = renderForWatchdog(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			// Advance well past any plausible cap; nothing should kill the task.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(13 * 60 * 60 * 1000);
+			});
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Clean up: exit so the promise resolves.
+			act(() => {
+				onExitHandler?.(targetSessionId);
+			});
+			await spawnPromise;
+		});
 	});
 });

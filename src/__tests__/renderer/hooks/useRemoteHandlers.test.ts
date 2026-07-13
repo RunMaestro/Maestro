@@ -1257,6 +1257,43 @@ describe('useRemoteHandlers', () => {
 			expect(spawnCall.permissionMode).toBe('readonly');
 		});
 
+		it('sends permissionMode "full" for a remote AI command on a tab with no permissionMode set', async () => {
+			// Same queued/non-interactive drift as the input path: a fresh tab shows
+			// Full Access in the toolbar, so the remote spawn must resolve to 'full'
+			// too or Claude Code loses --dangerously-skip-permissions and deadlocks.
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						data: [],
+						logs: [],
+						stagedImages: [],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(false);
+			expect(spawnCall.permissionMode).toBe('full');
+		});
+
 		it('sets session state to busy with busySource=ai for AI commands', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);

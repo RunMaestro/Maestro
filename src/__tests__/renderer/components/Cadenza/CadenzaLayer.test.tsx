@@ -29,4 +29,18 @@ describe('CadenzaLayer', () => {
 		expect(image).toHaveAttribute('src', dataUrl);
 		expect(image).toHaveAttribute('draggable', 'false');
 	});
+
+	it('labels plugin-namespaced host views with their provenance', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'com.acme.metrics/release-summary',
+			viewType: 'view',
+			title: 'Release summary',
+			body: JSON.stringify({ blocks: [] }),
+			sourcePlugin: 'Acme Metrics',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+
+		expect(screen.getByText('from Acme Metrics')).toHaveAttribute('title', 'from Acme Metrics');
+	});
 });

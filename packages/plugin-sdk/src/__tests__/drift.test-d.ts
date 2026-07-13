@@ -15,6 +15,8 @@
 import { expectTypeOf } from 'vitest';
 import type {
 	UiItemContribution,
+	HostViewContribution,
+	HostViewBlocks,
 	PluginContributions,
 	AggregatedContributions,
 	PluginEventPayloads,
@@ -24,6 +26,8 @@ import type {
 } from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
+	HostViewContribution as SrcHostViewContribution,
+	HostViewBlocks as SrcHostViewBlocks,
 	PluginContributions as SrcPluginContributions,
 	AggregatedContributions as SrcAggregatedContributions,
 } from '../../../../src/shared/plugins/contributions';
@@ -34,6 +38,8 @@ import type {
 	ManifestValidationResult as SrcManifestValidationResult,
 } from '../../../../src/shared/plugins/plugin-manifest';
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
+expectTypeOf<HostViewContribution>().toEqualTypeOf<SrcHostViewContribution>();
+expectTypeOf<HostViewBlocks>().toEqualTypeOf<SrcHostViewBlocks>();
 expectTypeOf<PluginContributions>().toEqualTypeOf<SrcPluginContributions>();
 expectTypeOf<AggregatedContributions>().toEqualTypeOf<SrcAggregatedContributions>();
 expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();

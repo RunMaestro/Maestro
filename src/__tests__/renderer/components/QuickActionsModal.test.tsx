@@ -151,6 +151,8 @@ const createDefaultProps = (
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 	setCreateGroupModalOpen: vi.fn(),
 	setLeftSidebarOpen: vi.fn(),
 	setRightPanelOpen: vi.fn(),
@@ -1253,6 +1255,8 @@ describe('QuickActionsModal', () => {
 			expect(props.setRenameGroupId).toHaveBeenCalledWith('group-1');
 			expect(props.setRenameGroupValue).toHaveBeenCalledWith('Test Group');
 			expect(props.setRenameGroupEmoji).toHaveBeenCalledWith('📁');
+			expect(props.setRenameGroupIcon).toHaveBeenCalledWith(undefined);
+			expect(props.setRenameGroupColor).toHaveBeenCalledWith(undefined);
 			expect(props.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});

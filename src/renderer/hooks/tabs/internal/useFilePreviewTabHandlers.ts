@@ -4,6 +4,7 @@ import type { FilePreviewTab, Session, UnifiedTabRef } from '../../../types';
 import {
 	closeFileTab as closeFileTabHelper,
 	ensureInUnifiedTabOrder,
+	findGroupPaneForTab,
 } from '../../../utils/tabHelpers';
 import { generateId } from '../../../utils/ids';
 import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
@@ -48,6 +49,28 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 									}
 								: tab
 						);
+						// The file may already be open but tiled INSIDE a group (it lives only as
+						// a leaf in tabGroups[].layout, with no standalone chip). In that case,
+						// re-opening it must activate its group and focus that pane - not clear
+						// activeGroupId and set activeFileTabId, which would strand focus because
+						// buildUnifiedTabs excludes group members from the standalone strip.
+						// Mirrors the group branch in setActiveTab for AI tabs.
+						const groupPane = findGroupPaneForTab(s, 'file', existingTab.id);
+						if (groupPane) {
+							return {
+								...s,
+								filePreviewTabs: updatedTabs,
+								tabGroups: s.tabGroups.map((g) =>
+									g.id === groupPane.groupId ? { ...g, focusedPaneId: groupPane.leafId } : g
+								),
+								activeGroupId: groupPane.groupId,
+								activeFileTabId: existingTab.id,
+								activeBrowserTabId: null,
+								activeTerminalTabId: null,
+								inputMode: 'ai' as const,
+								activeTabId: s.activeTabId,
+							};
+						}
 						return {
 							...s,
 							filePreviewTabs: updatedTabs,
@@ -56,7 +79,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							activeTerminalTabId: null,
 							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
-							// Opening a file takes over the panel, so leave any active tiled group.
+							// Opening a standalone file takes over the panel, so leave any active
+							// tiled group.
 							activeGroupId: null,
 							unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
 						};

@@ -20,6 +20,7 @@ import {
 	hasWizardInteraction,
 	restoreOrphanedTab,
 	setActiveTab,
+	toggleReadOnlyModeFields,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
@@ -318,7 +319,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		if (!currentActiveTab) return;
 		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
 			...tab,
-			readOnlyMode: !tab.readOnlyMode,
+			...toggleReadOnlyModeFields(tab),
 		}));
 	}, []);
 

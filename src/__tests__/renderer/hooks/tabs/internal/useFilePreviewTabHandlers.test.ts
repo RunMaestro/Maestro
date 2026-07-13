@@ -73,6 +73,58 @@ describe('useFilePreviewTabHandlers', () => {
 		expect(getSession().activeFileTabId).toBe('file-1');
 	});
 
+	// A file already open but tiled INSIDE a group has no standalone chip (it lives
+	// only as a leaf in the group layout). Re-opening it (e.g. double-clicking it in
+	// the file explorer) must activate its group and focus that pane, NOT clear
+	// activeGroupId - otherwise focus is stranded and nothing appears to happen.
+	it('focuses the group pane when re-opening a file already tiled into a group', () => {
+		const tiled = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
+		setupSession({
+			filePreviewTabs: [tiled],
+			activeGroupId: null,
+			activeTabId: 'ai-1',
+			// The file lives only inside the group; its standalone ref is not in the order.
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'group', id: 'g1' },
+			],
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Group',
+					createdAt: 0,
+					focusedPaneId: 'leaf-ai',
+					layout: {
+						kind: 'split',
+						id: 'split-1',
+						direction: 'row',
+						sizes: [0.5, 0.5],
+						children: [
+							{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'ai-1' } },
+							{ kind: 'leaf', id: 'leaf-file', tab: { type: 'file', id: 'file-1' } },
+						],
+					},
+				},
+			] as never,
+		});
+		const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+		act(() => {
+			result.current.handleOpenFileTab({ path: '/repo/a.ts', name: 'a.ts', content: 'a2' });
+		});
+
+		const s = getSession();
+		// Group is activated and its focused pane points at the file's leaf.
+		expect(s.activeGroupId).toBe('g1');
+		expect(s.tabGroups[0].focusedPaneId).toBe('leaf-file');
+		expect(s.activeFileTabId).toBe('file-1');
+		expect(s.inputMode).toBe('ai');
+		// The file must NOT be resurrected as a standalone ref in the strip order.
+		expect(s.unifiedTabOrder.some((ref) => ref.type === 'file' && ref.id === 'file-1')).toBe(false);
+		// Content is still refreshed on the tiled tab.
+		expect(s.filePreviewTabs.find((t) => t.id === 'file-1')?.content).toBe('a2');
+	});
+
 	it('leaves an active tiled group when replacing the current file tab in place', () => {
 		const existing = createMockFileTab({ id: 'file-1', path: '/repo/a.ts', name: 'a' });
 		setupSession({

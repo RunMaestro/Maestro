@@ -17,7 +17,11 @@ import {
 	formatEnterToSendTooltip,
 	formatShortcutKeys,
 } from '../../../utils/shortcutFormatter';
-import { getPermissionModeLabel, getPermissionModeTooltip } from '../../../../shared/agentMetadata';
+import {
+	getPermissionModeLabel,
+	getPermissionModeTooltip,
+	resolveTabPermissionMode,
+} from '../../../../shared/agentMetadata';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -113,8 +117,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
-	const rawPermissionMode: 'full' | 'standard' | 'readonly' =
-		activeTab?.permissionMode ?? (activeTab?.readOnlyMode ? 'readonly' : 'full');
+	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
 	// non-functional mode.

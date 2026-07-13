@@ -797,6 +797,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 240,
 		category: 'advanced',
 	},
+	autoRunMaxTaskDurationMin: {
+		description:
+			'Maximum total minutes a single Auto Run task may run before it is force-killed, regardless of output. Catches a stuck-but-chatty agent that keeps emitting output yet never finishes, which would otherwise hang the whole multi-document run. Set to 0 to disable (unlimited).',
+		type: 'number',
+		default: 480,
+		category: 'advanced',
+	},
 
 	// --- Built-in AI Command Bundles ---
 	speckitEnabled: {
@@ -1035,6 +1042,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			coworking: false,
 			opencodeServer: false,
 			concerto: false,
+			groupsPlus: false,
 		},
 		category: 'advanced',
 	},

@@ -352,6 +352,19 @@ export function deliverCadenzaToHud(
 	return true;
 }
 
+/** Deliver only when the HUD already exists. Unlike {@link deliverCadenzaToHud},
+ * this NEVER creates a window, so lifecycle cleanup cannot surface empty UI. */
+export function deliverCadenzaToExistingHud(payload: CadenzaPayload): boolean {
+	const win = getCadenzaHudWindow();
+	if (!win) return false;
+	if (hudReady) {
+		win.webContents.send('remote:cadenza', payload);
+	} else {
+		pendingPayloads.push(payload);
+	}
+	return true;
+}
+
 /** Close the cadenza HUD window if it's open. The `'closed'` handler owns all
  *  teardown (nulling refs, clearing the hover-poll interval, resetting state);
  *  nulling `hudWindow` here would make its `hudWindow === win` guard fail and

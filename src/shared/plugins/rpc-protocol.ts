@@ -27,6 +27,9 @@ export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'net.fetch': { capability: 'net:fetch' },
+	'net.connect': { capability: 'net:connect' },
+	'net.send': { capability: 'net:connect' },
+	'net.close': { capability: 'net:connect' },
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
@@ -49,6 +52,8 @@ export const HOST_API = {
 	'storage.sql': { capability: 'storage:sql' },
 	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'ui.hostViewUpdate': { capability: 'ui:hostView' },
+	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -63,6 +68,8 @@ export const HOST_API = {
 	'background.register': { capability: 'background:service' },
 	'background.unregister': { capability: 'background:service' },
 	'background.list': { capability: 'background:service' },
+	'ui.groupingPublish': { capability: 'ui:grouping' },
+	'ui.groupingClear': { capability: 'ui:grouping' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -78,6 +85,22 @@ export const HOST_METHOD_CAPABILITY: Record<HostMethod, PluginCapability> = Obje
 export function isHostMethod(value: unknown): value is HostMethod {
 	return typeof value === 'string' && (HOST_METHODS as readonly string[]).includes(value);
 }
+
+/**
+ * Methods that reference an already-open host resource by an opaque id (a
+ * socketId), not by a URL/path the broker can inspect. `extractTarget` returns
+ * undefined for them, so the broker CANNOT do its usual scope match - a scoped
+ * grant would be wrongly denied. For these the broker confirms only that the
+ * capability is held at all; the host handler then re-authorizes the resource's
+ * REAL origin (the stored socket URL) against the live grant on every call, so
+ * the scope is still enforced (and a mid-stream revoke still denies). Keeping
+ * this list here, next to the method table, keeps the broker free of per-method
+ * special-casing.
+ */
+export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>([
+	'net.send',
+	'net.close',
+]);
 
 /** A request from the sandbox to the host. */
 export interface HostRequest {
@@ -138,6 +161,18 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			if (!url) return undefined;
 			return hostnameOf(url);
 		}
+		case 'net.connect': {
+			// Mirror net.fetch: the scope target is the connect URL's hostname.
+			const url = typeof p.url === 'string' ? p.url : undefined;
+			if (!url) return undefined;
+			return hostnameOf(url);
+		}
+		case 'net.send':
+		case 'net.close':
+			// These params carry only a socketId (no URL); the host handler
+			// re-authorizes the origin host of the referenced socket itself, so
+			// there is no scope target to extract here.
+			return undefined;
 		case 'shell.openExternal': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;

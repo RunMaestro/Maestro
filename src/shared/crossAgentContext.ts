@@ -155,6 +155,23 @@ function stripMentions(message: string): string {
 	return result;
 }
 
+/**
+ * Derive a short, human-readable subject line from the user's consult message,
+ * for the target's History entry + its consult attribution pill. Strips the
+ * `@mention` tokens (so "@rc which branch?" becomes "which branch?"), collapses
+ * whitespace, and truncates to `maxLen` with an ellipsis. Returns '' when the
+ * message carries no prose beyond the mention - callers fall back to the source
+ * agent's name so the entry is never left blank.
+ */
+export function deriveConsultSubject(userPrompt: string, maxLen = 60): string {
+	let subject = stripMentions(userPrompt).replace(/\s+/g, ' ').trim();
+	if (!subject) return '';
+	if (subject.length > maxLen) {
+		subject = `${subject.slice(0, maxLen - 1).trimEnd()}…`;
+	}
+	return subject;
+}
+
 // ============================================================================
 // CONTEXT STRATEGY INFERENCE
 // ============================================================================

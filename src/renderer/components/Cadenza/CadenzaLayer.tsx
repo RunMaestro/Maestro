@@ -202,6 +202,15 @@ const CadenzaCard = memo(function CadenzaCard({
 				>
 					{view.title}
 				</div>
+				{view.sourcePlugin && (
+					<span
+						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+						style={{ maxWidth: 120, backgroundColor: `${accent}1f`, color: accent }}
+						title={`from ${view.sourcePlugin}`}
+					>
+						from {view.sourcePlugin}
+					</span>
+				)}
 				{view.sourceAgent && (
 					<span
 						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"

@@ -480,6 +480,7 @@ export async function* runPlaybook(
 								customModel: session.customModel,
 								customEffort: session.customEffort,
 								customArgs: session.customArgs,
+								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
@@ -540,6 +541,7 @@ export async function* runPlaybook(
 										customModel: session.customModel,
 										customEffort: session.customEffort,
 										customArgs: session.customArgs,
+										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
 										// Honor the token source for the Auto Run synopsis turn too.

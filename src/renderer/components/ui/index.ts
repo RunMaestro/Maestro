@@ -11,8 +11,8 @@ export type { ModalProps, ModalFooterProps } from './Modal';
 export { FormInput } from './FormInput';
 export type { FormInputProps } from './FormInput';
 
-export { EmojiPickerField } from './EmojiPickerField';
-export type { EmojiPickerFieldProps } from './EmojiPickerField';
+export { EmojiPickerField, GroupAppearancePicker } from './EmojiPickerField';
+export type { EmojiPickerFieldProps, GroupAppearancePickerProps } from './EmojiPickerField';
 
 export { ToggleSwitch } from './ToggleSwitch';
 export type { ToggleSwitchProps } from './ToggleSwitch';

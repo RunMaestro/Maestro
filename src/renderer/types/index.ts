@@ -9,6 +9,7 @@ export { isValidThemeId } from '../../shared/theme-types';
 
 // Re-export types from shared location
 export type {
+	AdditionalDirectory,
 	AgentError,
 	AgentErrorType,
 	AgentErrorRecovery,
@@ -36,6 +37,7 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
 // Import for extension in this file
 import type {
+	AdditionalDirectory,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
 	BatchDocumentEntry,
@@ -785,6 +787,10 @@ export interface Session {
 	cwd: string;
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	// Extra directories the agent may read from and/or write to beyond its
+	// working directory. Prompt-level grants: rendered into the Maestro system
+	// prompt as {{ADDITIONAL_DIRECTORIES}}, not enforced by a sandbox.
+	additionalDirectories?: AdditionalDirectory[];
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs — terminal tabs use xterm.js with direct PTY streaming
@@ -1089,6 +1095,10 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Session's Additional Directories. Providers that declare
+	// `supportsAdditionalDirectories` turn these into native grant flags
+	// (e.g. --add-dir); every agent also gets them via the system prompt.
+	sessionAdditionalDirectories?: AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -1245,6 +1255,9 @@ export interface EncoreFeatureFlags {
 	// Off by default. Optional so existing literals (older test fixtures, persisted
 	// settings without the key) continue to type-check.
 	concerto?: boolean;
+	// Groups+ - nested groups, standard folder icons, and label colors.
+	// Off by default. Optional so older fixtures and persisted settings remain valid.
+	groupsPlus?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

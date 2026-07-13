@@ -65,6 +65,9 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Session's Additional Directories. Providers that support it get native grant
+	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
+	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -176,6 +179,7 @@ import type {
 	PluginListSnapshot,
 	PluginGrantsSnapshot,
 	PluginActivityMap,
+	PluginGroupingSnapshot,
 } from '../main/ipc/handlers/plugins';
 import type { InstallResult as PluginInstallResult } from '../main/plugins/plugin-manager';
 import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
@@ -633,7 +637,12 @@ interface MaestroAPI {
 			result: { success: boolean; error?: string }
 		) => void;
 		onRemoteCreateGroup: (
-			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
+			callback: (
+				name: string,
+				emoji: string | undefined,
+				parentGroupId: string | undefined,
+				responseChannel: string
+			) => void
 		) => () => void;
 		sendRemoteCreateGroupResponse: (responseChannel: string, result: { id: string } | null) => void;
 		onRemoteRenameGroup: (
@@ -728,6 +737,7 @@ interface MaestroAPI {
 			sshRemoteEnabled?: boolean;
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
+			performanceTracePath?: string;
 		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
@@ -852,6 +862,31 @@ interface MaestroAPI {
 				};
 			}>;
 			delete: (id: string) => Promise<Record<string, never>>;
+		};
+		issues: {
+			list: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
+			delete: (issueNumber: number) => Promise<Record<string, never>>;
+			refreshStates: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
 		};
 	};
 	agentError: {
@@ -1283,6 +1318,7 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		getCustomEnvVars: (agentId: string) => Promise<Record<string, string> | null>;
 		getAllCustomEnvVars: () => Promise<Record<string, Record<string, string>>>;
+		getKnownAuthDirs: () => Promise<{ claudeConfigDirs: string[]; codexHomes: string[] }>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
 		getConfigOptions: (
 			agentId: string,
@@ -1984,7 +2020,12 @@ interface MaestroAPI {
 		delete: (entryId: string, sessionId?: string) => Promise<boolean>;
 		update: (
 			entryId: string,
-			updates: { validated?: boolean },
+			updates: {
+				validated?: boolean;
+				summary?: string;
+				fullResponse?: string;
+				sessionName?: string;
+			},
 			sessionId?: string
 		) => Promise<boolean>;
 		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
@@ -2435,6 +2476,17 @@ interface MaestroAPI {
 			durationMs: number;
 			error?: string;
 		}>;
+		// Stop + bundle to a temp .zip without a save dialog (for feedback attach)
+		stopProfilingToFile: () => Promise<{
+			success: boolean;
+			path: string;
+			bundleSizeBytes: number;
+			traceSizeBytes: number;
+			durationMs: number;
+			error?: string;
+		}>;
+		// Delete an abandoned temp trace zip from stopProfilingToFile
+		discardTrace: (filePath: string) => Promise<{ success: boolean }>;
 		onProfilingProgress: (
 			handler: (event: {
 				phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';
@@ -3803,7 +3855,9 @@ interface MaestroAPI {
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
+		getGroupings: () => Promise<PluginGroupingSnapshot>;
 		onChanged: (callback: () => void) => () => void;
+		onGroupingsChanged: (callback: () => void) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;

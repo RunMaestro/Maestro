@@ -14,7 +14,7 @@ import { useSessionStore, selectActiveSession } from '../../stores/sessionStore'
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { getActiveTab, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -165,7 +165,7 @@ export function usePromptComposerHandlers(
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+							tab.id === activeTab.id ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
 						),
 					};
 				})

@@ -710,4 +710,152 @@ describe('feedback drafts handlers', () => {
 		const clamped = await handler!({}, { ...sampleDraft, inputDraft: hugeInput });
 		expect(clamped.draft.inputDraft).toHaveLength(20000);
 	});
+
+	const sampleIssue = {
+		number: 101,
+		url: 'https://github.com/RunMaestro/Maestro/issues/101',
+		title: 'Bug: Feedback modal crashes',
+		category: 'bug_report' as const,
+		submittedAt: 1000,
+		state: 'open' as const,
+		lastCheckedAt: 1000,
+	};
+
+	it('registers the submitted-issue history handlers', () => {
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:issues:list', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('feedback:issues:delete', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith(
+			'feedback:issues:refresh-states',
+			expect.any(Function)
+		);
+	});
+
+	it('returns an empty issue history when the file is missing', async () => {
+		vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+
+		const handler = registeredHandlers.get('feedback:issues:list');
+		const result = await handler!({});
+
+		expect(result).toEqual({ issues: [] });
+	});
+
+	it('lists submitted issues sorted by submittedAt descending', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({
+				issues: [
+					{ ...sampleIssue, number: 1, submittedAt: 100 },
+					{ ...sampleIssue, number: 2, submittedAt: 900 },
+				],
+			}) as any
+		);
+
+		const handler = registeredHandlers.get('feedback:issues:list');
+		const result = await handler!({});
+
+		expect(result.issues.map((i: { number: number }) => i.number)).toEqual([2, 1]);
+	});
+
+	it('deletes a submitted issue by number and writes the remaining list', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({ issues: [sampleIssue, { ...sampleIssue, number: 202 }] }) as any
+		);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:issues:delete');
+		const result = await handler!({}, { number: 101 });
+
+		expect(result).toEqual({});
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues.map((i: { number: number }) => i.number)).toEqual([202]);
+	});
+
+	it('refresh-states updates open/closed from a gh GraphQL response', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [sampleIssue] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: JSON.stringify({ data: { repository: { i101: { number: 101, state: 'CLOSED' } } } }),
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:issues:refresh-states');
+		const result = await handler!({});
+
+		expect(result.issues[0].state).toBe('closed');
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues[0].state).toBe('closed');
+	});
+
+	it('refresh-states returns the cached list unchanged when gh fails', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [sampleIssue] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 1,
+			stdout: '',
+			stderr: 'gh: not authenticated',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:issues:refresh-states');
+		const result = await handler!({});
+
+		expect(result.issues[0].state).toBe('open');
+		// No persistence when the refresh could not resolve any state.
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		expect(writeCall).toBeUndefined();
+	});
+
+	it('records a submitted issue after a successful submit', async () => {
+		// The issue-history file starts empty; the submit path appends to it.
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ issues: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+		// Args-aware so the test does not depend on the exact pre-create gh call
+		// count: the issue-create call returns the URL, everything else succeeds.
+		vi.mocked(execFileNoThrow).mockImplementation((_cmd: any, args: any) => {
+			const argv: string[] = Array.isArray(args) ? args : [];
+			if (argv.includes('issue') && argv.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/456',
+					stderr: '',
+				} as any);
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' } as any);
+		});
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-1',
+				category: 'bug_report',
+				summary: 'Something broke',
+				expectedBehavior: 'It should work.',
+				details: 'It did not work.',
+				reproductionSteps: '1. Do the thing\n2. Watch it break',
+			}
+		);
+
+		expect(result.success).toBe(true);
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-submitted-issues.json'));
+		expect(writeCall).toBeDefined();
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.issues).toHaveLength(1);
+		expect(written.issues[0].number).toBe(456);
+		expect(written.issues[0].state).toBe('open');
+		expect(written.issues[0].url).toBe('https://github.com/RunMaestro/Maestro/issues/456');
+	});
 });

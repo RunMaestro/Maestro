@@ -218,6 +218,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	pianola: false,
 	plugins: false,
 	concerto: false,
+	groupsPlus: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
@@ -447,6 +448,7 @@ export interface SettingsStoreState {
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
 	autoRunInactivityTimeoutMin: number;
+	autoRunMaxTaskDurationMin: number;
 	speckitEnabled: boolean;
 	openspecEnabled: boolean;
 	bmadEnabled: boolean;
@@ -597,6 +599,7 @@ export interface SettingsStoreActions {
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	setAutoRunMaxTaskDurationMin: (value: number) => void;
 	setSpeckitEnabled: (value: boolean) => void;
 	setOpenspecEnabled: (value: boolean) => void;
 	setBmadEnabled: (value: boolean) => void;
@@ -673,6 +676,40 @@ export interface SettingsStoreActions {
 }
 
 export type SettingsStore = SettingsStoreState & SettingsStoreActions;
+
+/** Shared renderer selector for every Groups+ surface. */
+export const selectGroupsPlusEnabled = (state: SettingsStore) =>
+	state.encoreFeatures.groupsPlus === true;
+
+// ============================================================================
+// Auto Run watchdog helpers
+// ============================================================================
+
+/** Default absolute cap (minutes) on a single Auto Run task before force-kill. */
+export const DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN = 480;
+
+/**
+ * Clamp a user-entered max-task-duration to the persisted range. 0 is the
+ * explicit "unlimited" sentinel (no absolute cap); any positive value is rounded
+ * and clamped to [1, 1440] minutes.
+ */
+export function clampAutoRunMaxTaskDurationMin(value: number): number {
+	const rounded = Math.round(value);
+	return rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
+}
+
+/**
+ * Sanitize a persisted max-task-duration read back from disk. Only a finite,
+ * non-negative number is trustworthy: 0 stays "unlimited", a positive value is
+ * clamped. Anything else (NaN, Infinity, negative, wrong type) is corrupt and
+ * falls back to the default so a bad stored value can never silently DISABLE the
+ * watchdog and let a chatty-but-stuck task hang the whole Auto Run.
+ */
+export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
+	if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0)
+		return DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN;
+	return clampAutoRunMaxTaskDurationMin(raw);
+}
 
 // ============================================================================
 // Store Implementation
@@ -826,6 +863,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
+		autoRunMaxTaskDurationMin: DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
 		speckitEnabled: true,
 		openspecEnabled: true,
 		bmadEnabled: true,
@@ -1628,6 +1666,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
 			set({ autoRunInactivityTimeoutMin: clamped });
 			window.maestro.settings.set('autoRunInactivityTimeoutMin', clamped);
+		},
+
+		setAutoRunMaxTaskDurationMin: (value) => {
+			// 0 is a sentinel for "unlimited" (no absolute cap). Any positive value is clamped to a sane range.
+			const clamped = clampAutoRunMaxTaskDurationMin(value);
+			set({ autoRunMaxTaskDurationMin: clamped });
+			window.maestro.settings.set('autoRunMaxTaskDurationMin', clamped);
 		},
 
 		setLastSelectedPromptId: (value) => {
@@ -2959,6 +3004,27 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
+		if (allSettings['autoRunMaxTaskDurationMin'] !== undefined) {
+			// Sanitize on load so a corrupt persisted value can't silently disable the
+			// absolute cap (which would let a chatty-but-stuck task hang the run).
+			patch.autoRunMaxTaskDurationMin = sanitizeLoadedAutoRunMaxTaskDurationMin(
+				allSettings['autoRunMaxTaskDurationMin']
+			);
+		} else if (allSettings['autoRunInactivityTimeoutMin'] === 0) {
+			// Migration for installs that chose "Unlimited" inactivity (0) and never
+			// touched the new absolute cap: they had NO Auto Run watchdog, so the
+			// 480-min default would silently start killing their long tasks. Preserve
+			// their unlimited intent by defaulting the new cap to 0 (also unlimited).
+			//
+			// PERSIST it immediately so the migration is one-shot: without writing the
+			// key back, this branch would re-run on every load (the key stays absent),
+			// and a user who set the cap to a real value only in-memory this session
+			// would have it silently reset to 0 on the next restart. Writing the key
+			// makes the sanitize branch above own it from here on.
+			patch.autoRunMaxTaskDurationMin = 0;
+			window.maestro.settings.set('autoRunMaxTaskDurationMin', 0);
+		}
+
 		if (allSettings['speckitEnabled'] !== undefined)
 			patch.speckitEnabled = allSettings['speckitEnabled'] as boolean;
 
@@ -3161,6 +3227,7 @@ export function getSettingsActions() {
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
+		setAutoRunMaxTaskDurationMin: state.setAutoRunMaxTaskDurationMin,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
 		setAnnotatorPenColor: state.setAnnotatorPenColor,
 		setAnnotatorPenSize: state.setAnnotatorPenSize,

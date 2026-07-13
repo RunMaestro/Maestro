@@ -53,6 +53,7 @@ describe('create-group command', () => {
 			expect(sentPayload.type).toBe('create_group');
 			expect(sentPayload.name).toBe('My Group');
 			expect(sentPayload.emoji).toBeUndefined();
+			expect(sentPayload).not.toHaveProperty('parentGroupId');
 			expect(formatSuccess).toHaveBeenCalledWith('Created group "My Group"');
 			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('group-id-123'));
 			expect(processExitSpy).not.toHaveBeenCalled();
@@ -77,6 +78,27 @@ describe('create-group command', () => {
 			await createGroup('Team', { emoji: '🚀' });
 
 			expect(sentPayload.emoji).toBe('🚀');
+		});
+
+		it('should send parent group when provided', async () => {
+			let sentPayload: Record<string, unknown> = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_group_result',
+							success: true,
+							groupId: 'id-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createGroup('Project', { parent: 'company' });
+
+			expect(sentPayload.parentGroupId).toBe('company');
 		});
 
 		it('should output JSON when --json flag is set', async () => {

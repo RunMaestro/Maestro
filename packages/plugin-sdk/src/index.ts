@@ -21,6 +21,40 @@ function isNonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim() !== '';
 }
 
+/**
+ * Maximum UTF-8 size of one host view's serialized BlockView data. This pure
+ * contract matches the host declaration and runtime update limits.
+ */
+export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
+
+/** Size of JSON data as it crosses a UTF-8 message boundary. */
+export function serializedJsonByteLength(value: unknown): number | null {
+	let serialized: string | undefined;
+	try {
+		serialized = JSON.stringify(value);
+	} catch {
+		return null;
+	}
+	if (typeof serialized !== 'string') return null;
+
+	let bytes = 0;
+	for (let index = 0; index < serialized.length; index += 1) {
+		const codePoint = serialized.codePointAt(index);
+		if (codePoint === undefined) continue;
+		if (codePoint <= 0x7f) {
+			bytes += 1;
+		} else if (codePoint <= 0x7ff) {
+			bytes += 2;
+		} else if (codePoint <= 0xffff) {
+			bytes += 3;
+		} else {
+			bytes += 4;
+			index += 1;
+		}
+	}
+	return bytes;
+}
+
 // --- Permissions / capabilities (from shared/plugins/permissions.ts) --------
 
 /** The fixed vocabulary of things a sandboxed plugin can ask to do. Adding a
@@ -29,6 +63,7 @@ export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'net:fetch' // HTTP(S) fetch to a host scope
+	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -54,12 +89,15 @@ export type PluginCapability =
 	| 'background:service' // register supervised background service work
 	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
 	| 'ui:panel' // show its own sandboxed interactive panels
+	| 'ui:hostView' // contribute and update host-rendered BlockView data
+	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
 	'net:fetch',
+	'net:connect',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -85,6 +123,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'background:service',
 	'ui:contribute',
 	'ui:panel',
+	'ui:hostView',
+	'ui:grouping',
 	'ui:render-unsafe',
 ];
 
@@ -102,6 +142,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
+	'net:connect': 'high',
 	'sessions:read': 'medium',
 	'history:read': 'medium',
 	'events:subscribe': 'medium',
@@ -120,6 +161,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'background:service': 'high',
 	'ui:contribute': 'medium',
 	'ui:panel': 'medium',
+	'ui:hostView': 'medium',
+	'ui:grouping': 'low',
 	'ui:render-unsafe': 'high',
 };
 
@@ -138,6 +181,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:write': 'path',
 	'fs:watch': 'path',
 	'net:fetch': 'host',
+	'net:connect': 'host',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -169,6 +213,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'transcripts:write': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 	'ui:contribute': 'none',
 	'ui:panel': 'none',
+	'ui:hostView': 'none',
+	'ui:grouping': 'none',
 	'ui:render-unsafe': 'none',
 };
 
@@ -292,6 +338,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create and modify files';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
+		case 'net:connect':
+			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
@@ -342,6 +390,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
 		case 'ui:panel':
 			return 'Show its own panels inside Maestro';
+		case 'ui:hostView':
+			return 'Show and update host-rendered BlockView data in Maestro';
+		case 'ui:grouping':
+			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}
@@ -349,18 +401,26 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.8.0 for the
- * backward-compatible `background.list` host method (supervised background-
- * service health: state/restarts/services under the existing
- * `background:service` capability). (1.7.0 added history/session/tab/transcript
+/**
+ * The host API version this Maestro build implements. Bumped to 1.12.0 for the
+ * backward-compatible additive `net:connect` capability plus its `net.connect`
+ * / `net.send` / `net.close` host methods (hold an outbound persistent
+ * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
+ * 1.11.0 added virtual `groupings` contributions and the presentation-only
+ * `ui:grouping` publish/clear methods; 1.10.0 added the backward-compatible,
+ * data-only `iconPacks` contribution; 1.9.0 added host-rendered `hostViews`,
+ * their `ui:hostView` capability, and the `ui.hostViewUpdate` /
+ * `ui.hostViewRemove` RPC methods; 1.8.0 added `background.list`; 1.7.0 added
+ * history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
  * `agent.error` / `usage.updated` / `run.completed` + functional
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
- * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.8.0';
+ * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
+ */
+export const HOST_API_VERSION = '1.12.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -467,11 +527,19 @@ export type PluginTier = 0 | 1 | 2;
 export const PLUGIN_TIERS: readonly PluginTier[] = [0, 1, 2];
 
 /** Coarse marketplace category used to group/filter extensions. Absent => 'other'. */
-export type PluginCategory = 'automation' | 'agents' | 'ui' | 'data' | 'devtools' | 'other';
+export type PluginCategory =
+	| 'automation'
+	| 'agents'
+	| 'insights'
+	| 'ui'
+	| 'data'
+	| 'devtools'
+	| 'other';
 
 export const PLUGIN_CATEGORIES: readonly PluginCategory[] = [
 	'automation',
 	'agents',
+	'insights',
 	'ui',
 	'data',
 	'devtools',
@@ -692,6 +760,39 @@ export interface ThemeContribution {
 	colors: Record<string, string>;
 }
 
+/** A single safe SVG path within an icon pack. The host owns all SVG markup. */
+export interface IconPackIconContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated SVG path `d` data only; never arbitrary SVG markup. */
+	path: string;
+	/** Optional validated four-number SVG viewBox string. */
+	viewBox?: string;
+}
+
+/** A label color within an icon pack. */
+export interface IconPackColorContribution {
+	/** Namespaced id: `<pluginId>/<packId>/<localId>`. */
+	id: string;
+	localId: string;
+	label: string;
+	/** Validated `#rrggbb` color value. */
+	value: string;
+}
+
+/** A tier-0 pack of host-rendered group icons and label colors. */
+export interface IconPackContribution {
+	/** Namespaced id: `<pluginId>/<localId>`. */
+	id: string;
+	localId: string;
+	pluginId: string;
+	label: string;
+	icons: IconPackIconContribution[];
+	colors: IconPackColorContribution[];
+}
+
 /** A reusable prompt a plugin adds to the prompt catalog. */
 export interface PromptContribution {
 	id: string;
@@ -844,9 +945,60 @@ export interface UiItemContribution {
 	priority?: number;
 }
 
+/** The host-owned view surfaces that render only BlockView data. */
+export type HostViewSurface = 'movement' | 'cadenza';
+
+export const HOST_VIEW_SURFACES: readonly HostViewSurface[] = ['movement', 'cadenza'];
+
+/** Type guard for the two host-rendered view surfaces. */
+export function isHostViewSurface(value: unknown): value is HostViewSurface {
+	return typeof value === 'string' && (HOST_VIEW_SURFACES as readonly string[]).includes(value);
+}
+
+/** The only data accepted for a host view: the BlockView block array the host
+ * renders, never a cadenza command/prompt payload or plugin UI. */
+export type HostViewBlocks = unknown[];
+
+export function isHostViewBlocks(value: unknown): value is HostViewBlocks {
+	return Array.isArray(value);
+}
+
+/**
+ * A host-rendered view declared by a data-only or code plugin. The host owns its
+ * renderer; a code plugin may later update/remove that declared view through the
+ * brokered `ui:hostView` RPC methods.
+ */
+export interface HostViewContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	surface: HostViewSurface;
+	title: string;
+	description?: string;
+	blocks?: HostViewBlocks;
+}
+/** A metadata-only virtual grouping supplied by a plugin. Rules use a deliberately
+ * small `*` wildcard grammar; patterns are never compiled as user RegExp. */
+export interface GroupingRule {
+	match: { toolType?: string; cwdGlob?: string; namePattern?: string };
+	group: string;
+	parentGroup?: string;
+}
+
+export interface GroupingContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	pluginName: string;
+	label: string;
+	description?: string;
+	rules?: GroupingRule[];
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
@@ -857,12 +1009,15 @@ export interface PluginContributions {
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
 	uiItems: UiItemContribution[];
+	hostViews: HostViewContribution[];
+	groupings: GroupingContribution[];
 	errors: string[];
 }
 
 /** Contributions aggregated across every active plugin. */
 export interface AggregatedContributions {
 	themes: ThemeContribution[];
+	iconPacks: IconPackContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
@@ -873,6 +1028,8 @@ export interface AggregatedContributions {
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
 	uiItems: UiItemContribution[];
+	hostViews: HostViewContribution[];
+	groupings: GroupingContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -998,6 +1155,9 @@ export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'net.fetch': { capability: 'net:fetch' },
+	'net.connect': { capability: 'net:connect' },
+	'net.send': { capability: 'net:connect' },
+	'net.close': { capability: 'net:connect' },
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
@@ -1020,6 +1180,8 @@ export const HOST_API = {
 	'storage.sql': { capability: 'storage:sql' },
 	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'ui.hostViewUpdate': { capability: 'ui:hostView' },
+	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1034,6 +1196,8 @@ export const HOST_API = {
 	'background.register': { capability: 'background:service' },
 	'background.unregister': { capability: 'background:service' },
 	'background.list': { capability: 'background:service' },
+	'ui.groupingPublish': { capability: 'ui:grouping' },
+	'ui.groupingClear': { capability: 'ui:grouping' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -1126,9 +1290,20 @@ export interface MaestroFsApi {
 	watch(path: string, opts?: unknown): Promise<unknown>;
 }
 
-/** HTTP(S) fetch, gated by `net:fetch` host scopes. */
+/** HTTP(S) fetch (`net:fetch`) plus persistent outbound websockets
+ * (`net:connect`). `connect` opens a host-owned socket to the target and
+ * resolves to an opaque `socketId` handle; frames arrive as topic-string events
+ * on `net.connect:<socketId>`. `send` writes a frame and `close` tears the
+ * socket down. Both `send`/`close` reference the socket by its handle; the host
+ * re-authorizes the socket's origin host. */
 export interface MaestroNetApi {
 	fetch(url: string, init?: unknown): Promise<unknown>;
+	connect(
+		url: string,
+		opts?: { protocols?: string | readonly string[]; headers?: Record<string, string> }
+	): Promise<unknown>;
+	send(socketId: string, data: unknown): Promise<unknown>;
+	close(socketId: string, opts?: { code?: number; reason?: string }): Promise<unknown>;
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
@@ -1218,9 +1393,27 @@ export interface MaestroStorageApi {
 	): Promise<MaestroSqlResult<Row>>;
 }
 
-/** Invoke a registered command-palette command (`ui:command`). */
+/** Update or remove a previously declared host-rendered BlockView (`ui:hostView`). */
+export interface MaestroHostViewApi {
+	update(id: string, blocks: HostViewBlocks): Promise<void>;
+	remove(id: string): Promise<void>;
+}
+
+/** Invoke a registered command-palette command (`ui:command`) or access
+ * host-rendered BlockViews. */
+export interface MaestroGroupingApi {
+	publish(params: {
+		id: string;
+		groups: readonly { id: string; label: string; parentId?: string }[];
+		assignments: Record<string, string>;
+	}): Promise<void>;
+	clear(id: string): Promise<void>;
+}
+
 export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
+	readonly hostView: MaestroHostViewApi;
+	readonly grouping: MaestroGroupingApi;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

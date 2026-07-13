@@ -10,6 +10,7 @@ import {
 	messageStartsWithAgentMention,
 	inferContextStrategy,
 	selectContextWindow,
+	deriveConsultSubject,
 	DEFAULT_RECENT_TURNS,
 } from '../../shared/crossAgentContext';
 import type { LogEntry } from '../../renderer/types';
@@ -255,5 +256,30 @@ describe('selectContextWindow', () => {
 	it('returns [] for a non-positive count', () => {
 		const logs = [log('u1', 'user'), log('a1', 'ai')];
 		expect(selectContextWindow(logs, { kind: 'recent-messages', messages: 0 })).toEqual([]);
+	});
+});
+
+describe('deriveConsultSubject', () => {
+	it('strips a leading @mention and keeps the prose', () => {
+		expect(deriveConsultSubject('@rc which branch should I build the drafts feature on?')).toBe(
+			'which branch should I build the drafts feature on?'
+		);
+	});
+
+	it('strips mid-sentence mentions and collapses whitespace', () => {
+		expect(deriveConsultSubject('hey @Backend,   thoughts   on\nthe API?')).toBe(
+			'hey , thoughts on the API?'
+		);
+	});
+
+	it('truncates past maxLen with an ellipsis', () => {
+		const subject = deriveConsultSubject('@rc ' + 'a'.repeat(100), 10);
+		expect(subject).toBe('aaaaaaaaa…');
+		expect(subject.length).toBe(10);
+	});
+
+	it('returns empty string when only a mention with no prose', () => {
+		expect(deriveConsultSubject('@rc')).toBe('');
+		expect(deriveConsultSubject('   @rc   ')).toBe('');
 	});
 });

@@ -19,6 +19,7 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
+import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
 import { CadenzaLayer } from './Cadenza';
 import { MovementOverlay } from './Movement';
@@ -261,6 +262,8 @@ export function AppShell({
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
+			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
+			<ContextTimelinePanel theme={theme} />
 			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
 			<PermissionPrompt theme={theme} />
 			{concertoEnabled && (

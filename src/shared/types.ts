@@ -130,6 +130,18 @@ export interface AgentCapabilities {
 	supportsProjectMemory: boolean;
 
 	/**
+	 * Agent's CLI can grant access to directories outside the working directory
+	 * (e.g. `--add-dir`), so Maestro's Additional Directories are enforced by the
+	 * provider rather than by instructions alone.
+	 *
+	 * When true, the definition MUST also supply `additionalDirArgs` - the
+	 * completeness test fails otherwise. When false, the grants still reach the
+	 * agent through the `{{ADDITIONAL_DIRECTORIES}}` block in the system prompt;
+	 * they're just advisory. See `src/shared/additionalDirectories.ts`.
+	 */
+	supportsAdditionalDirectories: boolean;
+
+	/**
 	 * How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed).
@@ -167,6 +179,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	usesCombinedContextWindow: false,
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
+	supportsAdditionalDirectories: false,
 };
 
 // Session group
@@ -174,7 +187,15 @@ export interface Group {
 	id: string;
 	name: string;
 	emoji: string;
+	kind?: 'user' | 'worktree';
+	icon?: string;
+	color?: string;
+	parentGroupId?: string;
 	collapsed: boolean;
+}
+
+export function isWorktreeGroup(group: Group): boolean {
+	return group.kind === 'worktree' || group.emoji === '🌳';
 }
 
 /**
@@ -203,6 +224,8 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories?: AdditionalDirectory[];
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -257,6 +280,25 @@ export interface UsageStats {
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
+	/**
+	 * Pre-normalization absolute token totals, set ONLY for providers whose CLI
+	 * reports cumulative session usage that we delta-normalize before emitting
+	 * (currently Codex - see normalizeUsageToDelta in StdoutHandler). For those
+	 * providers the top-level fields above are per-turn DELTAS, which are correct
+	 * for token accumulation but wrong for context-fill display: the cumulative
+	 * total is what actually occupies the model window. Consumers that plot
+	 * context occupancy (the Context Timeline inspector) read from here when
+	 * present and fall back to the top-level fields otherwise. Undefined for
+	 * per-call providers (Claude, Copilot, OpenCode), whose top-level fields are
+	 * already absolute for the current turn.
+	 */
+	absoluteUsage?: {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		reasoningTokens: number;
+	};
 }
 
 // History entry types for the History panel
@@ -338,6 +380,24 @@ export interface BatchDocumentEntry {
 	resetOnCompletion: boolean;
 	isDuplicate: boolean;
 	isMissing?: boolean;
+}
+
+/**
+ * An extra directory an agent may touch beyond its working directory.
+ *
+ * Enforcement is prompt-level: the grants are rendered into the Maestro system
+ * prompt as {{ADDITIONAL_DIRECTORIES}} and the agent is instructed to honor
+ * them. Nothing sandboxes the agent process, so a grant is a statement of
+ * intent, not a hard boundary.
+ *
+ * `read` and `write` are independent - a directory can be read-only (reference
+ * material), write-only (a drop box the agent should never read back), or both.
+ * An entry with neither flag set is inert and is omitted from the prompt.
+ */
+export interface AdditionalDirectory {
+	path: string;
+	read: boolean;
+	write: boolean;
 }
 
 // Git worktree configuration for Auto Run

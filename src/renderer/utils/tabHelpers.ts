@@ -192,6 +192,72 @@ function resolveFocusedAiTabId(group: TabGroup): string | null {
 }
 
 /**
+ * Resolve a group's focused pane to its full tab ref (any kind), or null when the
+ * group has no focused pane or the leaf can't be found. Walks the layout locally to
+ * avoid a circular import with panelLayout (which imports from this module). Used by
+ * the Cmd+W close path so it targets the visible tile, not a stale standalone active
+ * id that may point elsewhere (e.g. a file-focused pane leaves activeTabId untouched).
+ */
+export function resolveFocusedPaneTabRef(group: TabGroup): UnifiedTabRef | null {
+	if (!group.focusedPaneId) return null;
+	let found: UnifiedTabRef | null = null;
+	const walk = (node: PanelLayoutNode): void => {
+		if (found) return;
+		if (node.kind === 'leaf') {
+			if (node.id === group.focusedPaneId) found = node.tab;
+			return;
+		}
+		node.children.forEach(walk);
+	};
+	walk(group.layout);
+	return found;
+}
+
+/**
+ * Locate the tiled group and leaf-pane id that hold a given tab (of any kind),
+ * or null when the tab isn't tiled into any group (i.e. it's a standalone tab).
+ * Walks each group's layout locally to avoid a circular import with panelLayout
+ * (which imports from this module). Used so selecting or opening a group-member
+ * tab activates its group and focuses its pane instead of trying to render it
+ * standalone - group members have no standalone chip and are excluded from
+ * buildUnifiedTabs, so the standalone path leaves focus stuck on whatever was
+ * already showing.
+ */
+export function findGroupPaneForTab(
+	session: Session,
+	type: UnifiedTabRef['type'],
+	tabId: string
+): { groupId: string; leafId: string } | null {
+	const groups = session.tabGroups;
+	if (!groups || groups.length === 0) return null;
+	for (const group of groups) {
+		let leafId: string | null = null;
+		const walk = (node: PanelLayoutNode): void => {
+			if (leafId) return;
+			if (node.kind === 'leaf') {
+				if (node.tab.type === type && node.tab.id === tabId) leafId = node.id;
+				return;
+			}
+			node.children.forEach(walk);
+		};
+		walk(group.layout);
+		if (leafId) return { groupId: group.id, leafId };
+	}
+	return null;
+}
+
+/**
+ * AI-tab shortcut for {@link findGroupPaneForTab}. Kept as a named wrapper so the
+ * AI-specific call sites read clearly.
+ */
+function findGroupPaneForAiTab(
+	session: Session,
+	tabId: string
+): { groupId: string; leafId: string } | null {
+	return findGroupPaneForTab(session, 'ai', tabId);
+}
+
+/**
  * Ensure a tab ID is present in unifiedTabOrder.
  * Returns the order unchanged if already present, or with the tab appended.
  */
@@ -240,6 +306,13 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 		const key = `${ref.type}:${ref.id}`;
 		if (seen.has(key)) return false;
 		seen.add(key);
+		// A tab tiled into a group is represented by the group ref, never its own
+		// standalone ref. buildUnifiedTabs filters these out at the end, so a lingering
+		// member ref in the order stays invisible in the strip - but navigation would
+		// still walk it, making Cmd+N / next-prev step through group members one by one
+		// instead of treating the group as a single stop. Drop member refs here so the
+		// navigable order matches exactly what the tab bar renders.
+		if (ref.type !== 'group' && groupMemberKeys.has(key)) return false;
 		if (ref.type === 'ai') return liveAiIds.has(ref.id);
 		if (ref.type === 'file') return liveFileIds.has(ref.id);
 		if (ref.type === 'browser') return liveBrowserIds.has(ref.id);
@@ -1908,6 +1981,28 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 }
 
 /**
+ * Field patch for flipping a tab's read-only state.
+ *
+ * Keeps the legacy `readOnlyMode` boolean and the 3-way `permissionMode` in
+ * lockstep, so the toolbar pill (resolved via resolveTabPermissionMode) and the
+ * spawn path can never drift: toggling read-only ON means `readonly`, OFF means
+ * full access. This mirrors what the toolbar's permission cycle already writes.
+ * Every read-only toggle entry point (keyboard shortcut, quick action, prompt
+ * composer, tab menu, tab store) spreads this instead of writing `readOnlyMode`
+ * alone - the old inline `readOnlyMode: !tab.readOnlyMode` left `permissionMode`
+ * stale, so a Full Access tab kept its pill after being switched to read-only.
+ * `standard` is reachable only through the toolbar cycle, so toggling read-only
+ * off lands on `full` (the non-readonly default).
+ */
+export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
+	readOnlyMode: boolean;
+	permissionMode: 'full' | 'readonly';
+} {
+	const nextReadOnly = !tab.readOnlyMode;
+	return { readOnlyMode: nextReadOnly, permissionMode: nextReadOnly ? 'readonly' : 'full' };
+}
+
+/**
  * Detects the "closed the last tab" transition produced by closeTab(): when the
  * sole remaining AI tab is closed, closeTab() replaces it with a brand-new empty
  * tab, so the session still has exactly one AI tab but its id changed. Callers use
@@ -1964,12 +2059,42 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		return null;
 	}
 
-	// If already active, no file/terminal tab is selected, and already in AI mode, return current state
+	// When the target AI tab is tiled inside a group, activate that group and focus
+	// its pane rather than falling through to the standalone path. A group member has
+	// no standalone chip and is excluded from buildUnifiedTabs, so the old behavior
+	// (clear activeGroupId + set activeTabId via aiTabFocusFields) left the panel stuck
+	// on whatever was showing. This mirrors the group branch in
+	// navigateToUnifiedTabByIndex: set activeGroupId, sync focusedPaneId to the leaf and
+	// activeTabId to the tab (so the shared input targets it), clear standalone ids.
+	const groupPane = findGroupPaneForAiTab(session, tabId);
+	if (groupPane) {
+		return {
+			tab: targetTab,
+			session: {
+				...session,
+				tabGroups: session.tabGroups.map((g) =>
+					g.id === groupPane.groupId ? { ...g, focusedPaneId: groupPane.leafId } : g
+				),
+				activeGroupId: groupPane.groupId,
+				activeTabId: tabId,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			},
+		};
+	}
+
+	// If already active, no file/terminal tab and no group is active, and already in
+	// AI mode, return current state. The activeGroupId guard mirrors
+	// navigateToUnifiedTabByIndex: without it, a stale active group could satisfy this
+	// no-op and leave the tiled view rendered instead of switching to the standalone tab.
 	if (
 		session.activeTabId === tabId &&
 		session.activeFileTabId === null &&
 		session.activeBrowserTabId === null &&
 		session.activeTerminalTabId === null &&
+		session.activeGroupId == null &&
 		session.inputMode === 'ai'
 	) {
 		return {

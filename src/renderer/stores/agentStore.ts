@@ -31,6 +31,7 @@ import type {
 	AgentCapabilitiesSnapshotMap,
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
+import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -384,7 +385,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.readOnlyMode === true ||
 				targetTab.readOnlyMode === true ||
 				targetTab.permissionMode === 'readonly';
-			const effectivePermissionMode = isReadOnly ? 'readonly' : targetTab.permissionMode;
+			const effectivePermissionMode = isReadOnly ? 'readonly' : resolveTabPermissionMode(targetTab);
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
 			const spawnArgs = isReadOnly
@@ -446,6 +447,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
+					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
 					sessionCustomModel: targetTab.customModel ?? session.customModel,
 					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
@@ -554,6 +556,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						permissionMode: effectivePermissionMode,
 						sessionCustomPath: session.customPath,
 						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
 						sessionCustomModel: targetTab.customModel ?? session.customModel,
 						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,

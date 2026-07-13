@@ -9,6 +9,7 @@
  *   - Startup recovery: sets session + target tab to busy state
  *   - Startup recovery: removes first item from executionQueue
  *   - Startup recovery: calls processQueuedItem for each eligible session
+ *   - Startup recovery: re-scans at timer fire for sessions that become idle during the delay
  *   - Startup recovery: on processing error, re-queues the item and resets to idle
  *   - Startup recovery: skips sessions when sessionsLoaded is false
  *   - Startup recovery: runs only once (ref guard prevents repeat runs)
@@ -766,6 +767,66 @@ describe('startup recovery — happy path', () => {
 		const calledSessionIds = mockAgentStoreProcessQueuedItem.mock.calls.map((call) => call[0]);
 		expect(calledSessionIds).toContain('sess-1');
 		expect(calledSessionIds).toContain('sess-2');
+	});
+
+	it('re-scans at timer fire so a session that becomes idle+runnable during the delay is recovered', async () => {
+		vi.useFakeTimers();
+
+		const tab1 = createTab({ id: 'tab-1' });
+		const item1 = createQueuedItem({ id: 'item-early', tabId: 'tab-1' });
+		const session1 = createSession({
+			id: 'sess-early',
+			state: 'idle',
+			aiTabs: [tab1],
+			activeTabId: 'tab-1',
+			executionQueue: [item1],
+		});
+
+		// Second session is busy at mount — not in the startup snapshot.
+		const tab2 = createTab({ id: 'tab-2' });
+		const item2 = createQueuedItem({ id: 'item-late', tabId: 'tab-2' });
+		const session2Busy = createSession({
+			id: 'sess-late',
+			state: 'busy',
+			aiTabs: [tab2],
+			activeTabId: 'tab-2',
+			executionQueue: [item2],
+		});
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [session1, session2Busy];
+		mockGetActiveTab.mockImplementation((session: Session) => session.aiTabs[0]);
+		mockSetSessions.mockImplementation(() => {});
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		// Mid-delay: late session becomes idle with a runnable item. Runtime
+		// recovery bails while startupRecoveryComplete is still false.
+		mockSessionStoreState.sessions = [
+			session1,
+			createSession({
+				id: 'sess-late',
+				state: 'idle',
+				aiTabs: [tab2],
+				activeTabId: 'tab-2',
+				executionQueue: [item2],
+			}),
+		];
+		act(() => {
+			rerender();
+		});
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+
+		await act(async () => {
+			vi.advanceTimersByTime(500);
+			await Promise.resolve();
+		});
+
+		// Timer re-scan must pick up both the original and the late session.
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledTimes(2);
+		const calledSessionIds = mockAgentStoreProcessQueuedItem.mock.calls.map((call) => call[0]);
+		expect(calledSessionIds).toContain('sess-early');
+		expect(calledSessionIds).toContain('sess-late');
 	});
 
 	it('does not touch sessions without queued items when others are processed', async () => {

@@ -19,12 +19,21 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 
 // Deep-cloned default autoRunStats captured from a fresh store (no longer exported).
 const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(useSettingsStore.getState().autoRunStats));
+const DEFAULT_ENCORE_FEATURES = { ...useSettingsStore.getState().encoreFeatures };
+
+const enableGroupsPlus = () =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, groupsPlus: true },
+	});
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { BatchRunState } from '../../../renderer/types';
+
+const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
 
 // Mock QRCodeSVG to avoid complex rendering
 vi.mock('qrcode.react', () => ({
@@ -32,7 +41,8 @@ vi.mock('qrcode.react', () => ({
 }));
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	Wand2: ({ className }: { className?: string }) => (
 		<span data-testid="icon-wand" className={className} />
 	),
@@ -49,7 +59,9 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
 	PanelLeftOpen: () => <span data-testid="icon-panel-left-open" />,
-	Folder: () => <span data-testid="icon-folder" />,
+	Folder: ({ style }: { style?: { color?: string } }) => (
+		<span data-testid="icon-folder" style={style} />
+	),
 	Info: () => <span data-testid="icon-info" />,
 	FileText: () => <span data-testid="icon-file-text" />,
 	GitBranch: () => <span data-testid="icon-git-branch" />,
@@ -138,6 +150,8 @@ const mockModalActions = {
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupIcon: vi.fn(),
+	setRenameGroupColor: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -167,8 +181,7 @@ const defaultTheme: Theme = {
 };
 
 // Default shortcuts
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const defaultShortcuts: Record<string, any> = {
+const defaultShortcuts = {
 	help: { keys: ['?'], description: 'Show help' },
 	settings: { keys: ['meta', ','], description: 'Settings' },
 	systemLogs: { keys: ['meta', 'shift', 'l'], description: 'System logs' },
@@ -176,6 +189,22 @@ const defaultShortcuts: Record<string, any> = {
 	usageDashboard: { keys: ['alt', 'meta', 'u'], description: 'Usage dashboard' },
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
 	filterUnreadAgents: { keys: ['alt', 'u'], description: 'Filter unread agents' },
+};
+
+const EMPTY_PLUGIN_CONTRIBUTIONS: AggregatedContributions = {
+	themes: [],
+	prompts: [],
+	settings: [],
+	commandMacros: [],
+	cueTriggers: [],
+	commands: [],
+	panels: [],
+	agents: [],
+	tools: [],
+	keybindings: [],
+	uiItems: [],
+	groupings: [],
+	errorsByPlugin: {},
 };
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
@@ -224,6 +253,7 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 	startRenamingSession: vi.fn(),
 	showConfirmation: vi.fn(),
 	createNewGroup: vi.fn(),
+	setGroupParent: vi.fn(),
 	onCreateGroupAndMove: vi.fn(),
 	addNewSession: vi.fn(),
 	onDeleteWorktreeGroup: vi.fn(),
@@ -247,6 +277,10 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
+		vi.mocked(window.maestro.plugins.onChanged).mockImplementation(() => () => {});
+		vi.mocked(window.maestro.plugins.onGroupingsChanged).mockImplementation(() => () => {});
 		// Reset all stores to clean test state
 		useUIStore.setState({
 			leftSidebarOpen: true,
@@ -258,6 +292,7 @@ describe('SessionList', () => {
 			draggingSessionId: null,
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
+			showUnreadAgentsOnly: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
@@ -270,6 +305,7 @@ describe('SessionList', () => {
 			ungroupedCollapsed: false,
 			groupChatsExpanded: false,
 			autoRunStats: { ...DEFAULT_AUTO_RUN_STATS },
+			encoreFeatures: { ...DEFAULT_ENCORE_FEATURES },
 		});
 		useBatchStore.setState({ batchRunStates: {} });
 		// Reset tunnel mock
@@ -776,6 +812,108 @@ describe('SessionList', () => {
 			expect(screen.getByText('Session in Group')).toBeInTheDocument();
 		});
 
+		it('renders a selected standard icon and label color', () => {
+			enableGroupsPlus();
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'My Group',
+				emoji: '',
+				icon: 'folder',
+				color: '#22C55E',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByTestId('icon-folder')).toHaveStyle({ color: '#22C55E' });
+			expect(screen.getByText('My Group')).toHaveStyle({ color: '#22C55E' });
+		});
+
+		it('flattens persisted nested groups and ignores stored appearance while Groups+ is off', () => {
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				emoji: '',
+				icon: 'folder',
+				color: '#22C55E',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project').closest('[data-group-depth="0"]')).not.toHaveClass('ml-4');
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-folder')).not.toHaveStyle({ color: '#22C55E' });
+			expect(screen.getByText('Project')).not.toHaveStyle({ color: '#22C55E' });
+		});
+
+		it('renders child groups indented beneath their parent', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company' });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project').closest('[data-group-depth="1"]')).toHaveClass('ml-4');
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+		});
+
+		it('hides child groups and their agents when the parent is collapsed', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [createMockSession({ id: 's1', name: 'Project Agent', groupId: 'project' })];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Company')).toBeInTheDocument();
+			expect(screen.queryByText('Project')).toBeNull();
+			expect(screen.queryByText('Project Agent')).toBeNull();
+		});
+
+		it('shows a child group with unread agents even when its parent is collapsed', () => {
+			enableGroupsPlus();
+			const parent = createMockGroup({ id: 'company', name: 'Company', collapsed: true });
+			const child = createMockGroup({
+				id: 'project',
+				name: 'Project',
+				parentGroupId: 'company',
+			});
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Project Agent',
+					groupId: 'project',
+					state: 'busy',
+				}),
+			];
+			useSessionStore.setState({ sessions, groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.getByText('Project')).toBeInTheDocument();
+			expect(screen.getByText('Project Agent')).toBeInTheDocument();
+		});
+
 		it('toggles group collapse on click', () => {
 			const toggleGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
@@ -898,6 +1036,118 @@ describe('SessionList', () => {
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
 		});
+
+		it('renders plugin virtual groups without persisted group controls and falls back to Manual', async () => {
+			let notifyPluginChange: (() => void) | undefined;
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+						rules: [
+							{
+								match: { toolType: 'claude-code' },
+								group: 'Claude',
+								parentGroup: 'AI Agents',
+							},
+						],
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.onChanged).mockImplementation((callback) => {
+				notifyPluginChange = callback;
+				return () => {};
+			});
+			const persistedGroup = createMockGroup({ id: 'persisted', name: 'Persisted Group' });
+			const sessions = [
+				createMockSession({
+					id: 'claude',
+					name: 'Claude Agent',
+					toolType: 'claude-code',
+					groupId: 'persisted',
+				}),
+				createMockSession({ id: 'codex', name: 'Codex Agent', toolType: 'codex' }),
+			];
+			useSessionStore.setState({ sessions, groups: [persistedGroup] });
+			useSettingsStore.setState({
+				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, groupsPlus: false },
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Claude').closest('.ml-4')).not.toBeNull();
+			expect(screen.getAllByText('from Agent Classifier')).toHaveLength(3);
+			expect(screen.queryByText('Persisted Group')).not.toBeInTheDocument();
+			expect(screen.queryByText('New Group')).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions[0].groupId).toBe('persisted');
+			expect(useSessionStore.getState().groups).toEqual([persistedGroup]);
+
+			fireEvent.contextMenu(screen.getByText('Claude Agent'), { clientX: 100, clientY: 100 });
+			expect(screen.queryByText('Move to Group')).not.toBeInTheDocument();
+
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
+			act(() => notifyPluginChange?.());
+			await waitFor(() => {
+				expect(screen.getByText('Persisted Group')).toBeInTheDocument();
+				expect(screen.getByText('New Group')).toBeInTheDocument();
+			});
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				'leftSidebarGroupingMode',
+				'manual'
+			);
+		});
+
+		it('renders every session from a sparse computed snapshot by placing extras in Other', async () => {
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				...EMPTY_PLUGIN_CONTRIBUTIONS,
+				groupings: [
+					{
+						id: 'com.acme/by-agent-type',
+						localId: 'by-agent-type',
+						pluginId: 'com.acme',
+						pluginName: 'Agent Classifier',
+						label: 'Group by agent type',
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([
+				{
+					id: 'com.acme/by-agent-type',
+					pluginId: 'com.acme',
+					localId: 'by-agent-type',
+					groups: [{ id: 'claude', label: 'Claude' }],
+					assignments: { claude: 'claude' },
+				},
+			]);
+			const sessions = [
+				createMockSession({ id: 'claude', name: 'Claude Agent' }),
+				createMockSession({ id: 'unassigned', name: 'Unassigned Agent' }),
+			];
+			useSessionStore.setState({ sessions });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const selector = await screen.findByRole('combobox', { name: 'Session grouping mode' });
+			fireEvent.change(selector, { target: { value: 'com.acme/by-agent-type' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude')).toBeInTheDocument();
+				expect(screen.getByText('Other')).toBeInTheDocument();
+				expect(screen.getByText('Claude Agent')).toBeInTheDocument();
+				expect(screen.getByText('Unassigned Agent')).toBeInTheDocument();
+			});
+		});
 	});
 
 	// ============================================================================
@@ -1008,7 +1258,11 @@ describe('SessionList', () => {
 		});
 
 		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
-			const group = createMockGroup({ id: 'g1', name: 'Worktree Group', emoji: '🌳' });
+			const group = createMockGroup({
+				id: 'g1',
+				name: 'Worktree Group',
+				emoji: LEGACY_WORKTREE_EMOJI,
+			});
 			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
 			useSessionStore.setState({ sessions, groups: [group] });
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -1592,6 +1846,25 @@ describe('SessionList', () => {
 			expect(handleDropOnGroup).toHaveBeenCalledWith('g1');
 		});
 
+		it('nests a dragged group header under another group header', () => {
+			enableGroupsPlus();
+			const setGroupParent = vi.fn();
+			const parent = createMockGroup({ id: 'company', name: 'Company' });
+			const child = createMockGroup({ id: 'project', name: 'Project' });
+			useSessionStore.setState({ sessions: [], groups: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ setGroupParent })} />);
+
+			const dataTransfer = { effectAllowed: '', setData: vi.fn() };
+			fireEvent.dragStart(screen.getByText('Project').closest('[draggable="true"]')!, {
+				dataTransfer,
+			});
+			fireEvent.drop(screen.getByText('Company'));
+
+			expect(setGroupParent).toHaveBeenCalledWith('project', 'company');
+		});
+
 		it('shows the compact ungroup drop-zone when dragging and all sessions are grouped', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
@@ -1842,6 +2115,22 @@ describe('SessionList', () => {
 
 			const input = screen.getByDisplayValue('Original Name');
 			expect(input).toBeInTheDocument();
+		});
+
+		it('does not make the group header draggable while renaming', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Original Name' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				editingGroupId: 'g1',
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [] })} />);
+
+			expect(screen.getByDisplayValue('Original Name').closest('[role="button"]')).toHaveAttribute(
+				'draggable',
+				'false'
+			);
 		});
 
 		it('calls finishRenamingGroup on blur', () => {
@@ -2335,7 +2624,7 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
@@ -2356,7 +2645,7 @@ describe('SessionList', () => {
 				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
 			});
 			const props = createDefaultProps({ sortedSessions: sessions });
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
 			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
 			// Border must NOT be the accent color (active styling suppressed).
@@ -3069,7 +3358,6 @@ describe('SessionList', () => {
 				activeFocus: 'sidebar',
 			});
 			const setGroups = vi.spyOn(useSessionStore.getState(), 'setGroups');
-			const setBookmarksCollapsed = vi.spyOn(useUIStore.getState(), 'setBookmarksCollapsed');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -3227,11 +3515,10 @@ describe('SessionList', () => {
 	describe('Resize Handle', () => {
 		it('saves sidebar width on mouseup', async () => {
 			const mockSettingsSet = vi.fn();
-			(window.maestro.settings.set as ReturnType<typeof vi.fn>).mockImplementation(mockSettingsSet);
+			vi.mocked(window.maestro.settings.set).mockImplementation(mockSettingsSet);
 
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({ leftSidebarWidth: 300 });
-			const setLeftSidebarWidthState = vi.spyOn(useSettingsStore.getState(), 'setLeftSidebarWidth');
 			const props = createDefaultProps({});
 			const { container } = render(<SessionList {...props} />);
 
@@ -3298,7 +3585,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
@@ -3328,7 +3614,6 @@ describe('SessionList', () => {
 				activeSessionId: 's1',
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
 			const setActiveSessionId = vi.spyOn(useSessionStore.getState(), 'setActiveSessionId');
 			const props = createDefaultProps({
 				sortedSessions: sessions,

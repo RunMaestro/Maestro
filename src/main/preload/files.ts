@@ -111,7 +111,7 @@ export function createHistoryApi() {
 		delete: (entryId: string, sessionId?: string) =>
 			ipcRenderer.invoke('history:delete', entryId, sessionId),
 
-		update: (entryId: string, updates: { validated?: boolean }, sessionId?: string) =>
+		update: (entryId: string, updates: Partial<HistoryEntry>, sessionId?: string) =>
 			ipcRenderer.invoke('history:update', entryId, updates, sessionId),
 
 		updateSessionName: (agentSessionId: string, sessionName: string) =>

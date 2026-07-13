@@ -135,6 +135,7 @@ export async function handleProcessSpawn(
 		yoloMode: config.yoloMode,
 		permissionMode: config.permissionMode,
 		agentSessionId: config.agentSessionId,
+		additionalDirectories: config.sessionAdditionalDirectories,
 	});
 
 	// ========================================================================
@@ -822,6 +823,7 @@ export async function handleProcessSpawn(
 					yoloMode: originalConfig.yoloMode,
 					permissionMode: originalConfig.permissionMode,
 					agentSessionId: freshAgentSessionId,
+					additionalDirectories: originalConfig.sessionAdditionalDirectories,
 				});
 
 				const replayEnv = originalCustomEnvVars ? { ...originalCustomEnvVars } : undefined;

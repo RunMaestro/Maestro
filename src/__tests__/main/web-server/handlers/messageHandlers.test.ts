@@ -2865,6 +2865,32 @@ describe('WebSocketMessageHandler', () => {
 			expect(payload.message).toContain('branchName');
 		});
 	});
+
+	describe('Group hierarchy forwarding', () => {
+		it('forwards parentGroupId when creating a nested group', async () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				emoji: '📁',
+				parentGroupId: 'company',
+				requestId: 'request-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGroup).toHaveBeenCalledWith('Project', '📁', 'company');
+			});
+		});
+
+		it('rejects non-string parentGroupId values instead of creating a root group', () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				parentGroupId: 42,
+			});
+
+			expect(callbacks.createGroup).not.toHaveBeenCalled();
+		});
+	});
 });
 
 describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {

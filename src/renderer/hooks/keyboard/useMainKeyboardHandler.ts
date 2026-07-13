@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
+import {
+	getInitialRenameValue,
+	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
+} from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -670,6 +674,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// open, the hotkey cycles between windowed and full-screen instead of
 				// being a no-op.
 				if (ctx.activeSession?.inputMode === 'ai') {
+					const composerOpen = useModalStore.getState().modals.get('promptComposer')?.open === true;
+					if (ctx.activeGroupChatId && !composerOpen) ctx.flushGroupChatDraft?.();
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}
@@ -1111,7 +1117,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 								return {
 									...s,
 									aiTabs: s.aiTabs.map((tab: AITab) =>
-										tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+										tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
 									),
 								};
 							})

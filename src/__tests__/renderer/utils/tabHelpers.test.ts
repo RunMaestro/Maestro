@@ -61,6 +61,7 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
+	toggleReadOnlyModeFields,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
@@ -68,6 +69,7 @@ import {
 	groupHasUnreadTabs,
 	computeUnreadGroupIds,
 } from '../../../renderer/utils/tabHelpers';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
 import type {
 	Session,
@@ -1021,6 +1023,91 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeBrowserTabId).toBeNull();
 			expect(result!.session.activeTabId).toBe('tab-1');
 		});
+
+		it('activates the group and focuses the pane when selecting a tiled AI tab', () => {
+			// The Tab Switcher lists group-member AI tabs (they stay in aiTabs), but they
+			// have no standalone chip and are excluded from buildUnifiedTabs. Selecting one
+			// must open its group and focus its pane, not fall through to the standalone path.
+			const standalone = createMockTab({ id: 'tab-1' });
+			const grouped = createMockTab({ id: 'grouped-ai' });
+			const session = createMockSession({
+				aiTabs: [standalone, grouped],
+				activeTabId: 'tab-1',
+				activeGroupId: null,
+				inputMode: 'ai',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'group', id: 'g1' },
+				],
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						// Focused elsewhere so we can prove selection moves it to leaf-b.
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'other-grouped' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'grouped-ai' } },
+							],
+						},
+					},
+				] as never,
+			});
+
+			const result = setActiveTab(session, 'grouped-ai');
+
+			expect(result!.tab).toBe(grouped);
+			// The group takes over the panel and its focused pane moves to the selected tab.
+			expect(result!.session.activeGroupId).toBe('g1');
+			expect(result!.session.tabGroups[0].focusedPaneId).toBe('leaf-b');
+			// activeTabId is synced so the shared input targets the selected pane; standalone
+			// ids clear and we stay in AI mode.
+			expect(result!.session.activeTabId).toBe('grouped-ai');
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeTerminalTabId).toBeNull();
+			expect(result!.session.inputMode).toBe('ai');
+		});
+
+		it('clears activeGroupId when selecting a standalone AI tab while a group is active', () => {
+			// Regression: the standalone "already active" no-op must not fire while a group
+			// is active, or the tiled view stays rendered instead of switching to the tab.
+			const standalone = createMockTab({ id: 'tab-1' });
+			const grouped = createMockTab({ id: 'grouped-ai' });
+			const session = createMockSession({
+				aiTabs: [standalone, grouped],
+				activeTabId: 'tab-1',
+				activeGroupId: 'g1',
+				inputMode: 'ai',
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [1],
+							children: [{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'grouped-ai' } }],
+						},
+					},
+				] as never,
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.activeGroupId).toBeNull();
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
 	});
 
 	describe('aiTabFocusFields', () => {
@@ -1772,8 +1859,9 @@ describe('tabHelpers', () => {
 		it('navigates to a group by unified index (sets activeGroupId, syncs focused AI pane)', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const grouped = createMockTab({ id: 'grouped-ai' });
+			const groupedB = createMockTab({ id: 'grouped-ai-b' });
 			const session = createMockSession({
-				aiTabs: [tab1, grouped],
+				aiTabs: [tab1, grouped, groupedB],
 				activeTabId: 'tab-1',
 				activeFileTabId: null,
 				unifiedTabOrder: [
@@ -1793,7 +1881,7 @@ describe('tabHelpers', () => {
 							sizes: [0.5, 0.5],
 							children: [
 								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'grouped-ai' } },
-								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'grouped-ai-b' } },
 							],
 						},
 					},
@@ -1816,8 +1904,9 @@ describe('tabHelpers', () => {
 		it('clears activeGroupId when navigating from a group to a standalone tab', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const grouped = createMockTab({ id: 'grouped-ai' });
+			const groupedB = createMockTab({ id: 'grouped-ai-b' });
 			const session = createMockSession({
-				aiTabs: [tab1, grouped],
+				aiTabs: [tab1, grouped, groupedB],
 				activeTabId: 'grouped-ai',
 				activeFileTabId: null,
 				unifiedTabOrder: [
@@ -1837,7 +1926,7 @@ describe('tabHelpers', () => {
 							sizes: [0.5, 0.5],
 							children: [
 								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'grouped-ai' } },
-								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'grouped-ai-b' } },
 							],
 						},
 					},
@@ -4095,6 +4184,51 @@ describe('tabHelpers', () => {
 			expect(result[0]).toEqual({ type: 'ai', id: 'tab-1' });
 			expect(result[1]).toEqual({ type: 'ai', id: 'tab-2' });
 		});
+
+		it('drops a lingering member ref for a tab tiled into a group so navigation matches the strip', () => {
+			// A tab that is tiled into a group is represented by the group ref, never its own
+			// standalone ref. buildUnifiedTabs filters such member refs out of the rendered
+			// strip; the repaired order (which drives Cmd+N / next-prev) must do the same, or
+			// navigation would step through group members individually instead of treating the
+			// group as a single stop.
+			const standalone = createMockTab({ id: 'tab-1' });
+			const groupedA = createMockTab({ id: 'grouped-a' });
+			const groupedB = createMockTab({ id: 'grouped-b' });
+			const session = createMockSession({
+				aiTabs: [standalone, groupedA, groupedB],
+				// A stale member ref (grouped-a) lingers in the order alongside the group ref.
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'ai', id: 'grouped-a' },
+					{ type: 'group', id: 'g1' },
+				],
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'grouped-a' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'ai', id: 'grouped-b' } },
+							],
+						},
+					},
+				] as never,
+			});
+
+			const result = getRepairedUnifiedTabOrder(session);
+			// Only the standalone tab and the group remain — no individual member refs.
+			expect(result).toEqual([
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'group', id: 'g1' },
+			]);
+		});
 	});
 
 	describe('navigation with orphaned tabs', () => {
@@ -5029,6 +5163,39 @@ describe('tabHelpers', () => {
 				activeTabId: 'a1',
 			});
 			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
+		});
+	});
+
+	describe('toggleReadOnlyModeFields', () => {
+		it('toggles a non-read-only tab to readonly on both fields', () => {
+			expect(toggleReadOnlyModeFields({ readOnlyMode: false })).toEqual({
+				readOnlyMode: true,
+				permissionMode: 'readonly',
+			});
+		});
+
+		it('toggles a read-only tab back to full access on both fields', () => {
+			expect(toggleReadOnlyModeFields({ readOnlyMode: true })).toEqual({
+				readOnlyMode: false,
+				permissionMode: 'full',
+			});
+		});
+
+		it('treats an unset readOnlyMode as not-read-only', () => {
+			expect(toggleReadOnlyModeFields({})).toEqual({
+				readOnlyMode: true,
+				permissionMode: 'readonly',
+			});
+		});
+
+		it('keeps permissionMode coherent so resolveTabPermissionMode agrees after a toggle', () => {
+			// The invariant this fix protects: the toolbar pill and the spawn path
+			// both resolve through resolveTabPermissionMode, so after toggling a Full
+			// Access tab to read-only the pill can no longer keep saying "Full Access".
+			const afterOn = toggleReadOnlyModeFields({ readOnlyMode: false });
+			expect(resolveTabPermissionMode(afterOn)).toBe('readonly');
+			const afterOff = toggleReadOnlyModeFields(afterOn);
+			expect(resolveTabPermissionMode(afterOff)).toBe('full');
 		});
 	});
 });

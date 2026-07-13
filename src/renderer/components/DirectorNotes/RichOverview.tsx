@@ -212,24 +212,27 @@ export function RichOverview({
 				</ChartErrorBoundary>
 			</SectionCard>
 
-			{/* Success vs failure */}
-			<SectionCard theme={theme} title="Success vs Failure" icon={CheckCircle2}>
-				<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
-					<SuccessFailureWidget
-						theme={theme}
-						successCount={successCount}
-						failureCount={failureCount}
-						colors={{ success: successColor, failure: failureColor }}
-					/>
-				</ChartErrorBoundary>
-			</SectionCard>
+			{/* Success vs failure + source breakdown share a row: both are narrow
+			    (a split bar and a 132px donut), so stacking them wasted a screen of
+			    vertical space. Collapses to one column on a narrow modal. */}
+			<div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
+				<SectionCard theme={theme} title="Success vs Failure" icon={CheckCircle2}>
+					<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
+						<SuccessFailureWidget
+							theme={theme}
+							successCount={successCount}
+							failureCount={failureCount}
+							colors={{ success: successColor, failure: failureColor }}
+						/>
+					</ChartErrorBoundary>
+				</SectionCard>
 
-			{/* Source / type breakdown */}
-			<SectionCard theme={theme} title="Source Breakdown" icon={PieChart}>
-				<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
-					<TypeBreakdown theme={theme} slices={slices} />
-				</ChartErrorBoundary>
-			</SectionCard>
+				<SectionCard theme={theme} title="Source Breakdown" icon={PieChart}>
+					<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
+						<TypeBreakdown theme={theme} slices={slices} />
+					</ChartErrorBoundary>
+				</SectionCard>
+			</div>
 
 			{/* Per-agent activity */}
 			<SectionCard theme={theme} title="Agent Activity" icon={Users}>
@@ -251,7 +254,9 @@ export function RichOverview({
 					<SectionCard theme={theme} title="AI Narrative" icon={FileText}>
 						{/* Content-driven AI output: opt back into text selection under
 						    the modal's select-none (see CLAUDE.md modal text rules). */}
-						<div className="director-notes-content select-text">
+						{/* Charts use the modal's full width, but long-form prose keeps a
+						    readable measure rather than running edge to edge. */}
+						<div className="director-notes-content select-text max-w-[1050px]">
 							<style>{proseStyles}</style>
 							<MarkdownRenderer
 								content={synopsis}

@@ -17,6 +17,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
@@ -414,7 +415,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const tabAgentSessionId = targetTab?.agentSessionId;
 				const isReadOnly =
 					targetTab?.readOnlyMode === true || targetTab?.permissionMode === 'readonly';
-				const effectivePermissionMode = isReadOnly ? 'readonly' : targetTab?.permissionMode;
+				const effectivePermissionMode = isReadOnly
+					? 'readonly'
+					: resolveTabPermissionMode(targetTab);
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
@@ -521,6 +524,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
+					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,

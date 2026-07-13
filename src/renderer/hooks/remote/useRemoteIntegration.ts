@@ -1180,10 +1180,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		const unsubscribeCreateGroup = window.maestro.process.onRemoteCreateGroup(
-			(name: string, emoji: string | undefined, responseChannel: string) => {
+			(
+				name: string,
+				emoji: string | undefined,
+				parentGroupId: string | undefined,
+				responseChannel: string
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateGroup', {
-						detail: { name, emoji, responseChannel },
+						detail: { name, emoji, parentGroupId, responseChannel },
 					})
 				);
 			}

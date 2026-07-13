@@ -1434,6 +1434,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				id: g.id,
 				name: g.name,
 				emoji: g.emoji || null,
+				parentGroupId: g.parentGroupId,
 				sessionIds: sessions.filter((s) => s.groupId === g.id).map((s) => s.id),
 			}));
 		});
@@ -1753,7 +1754,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to create a group
 		// Uses IPC request-response pattern
-		server.setCreateGroupCallback(async (name: string, emoji?: string) => {
+		server.setCreateGroupCallback(async (name: string, emoji?: string, parentGroupId?: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for createGroup', 'WebServer');
@@ -1778,7 +1779,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolve(null);
 					return;
 				}
-				mainWindow.webContents.send('remote:createGroup', name, emoji, responseChannel);
+				mainWindow.webContents.send(
+					'remote:createGroup',
+					name,
+					emoji,
+					parentGroupId,
+					responseChannel
+				);
 
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;

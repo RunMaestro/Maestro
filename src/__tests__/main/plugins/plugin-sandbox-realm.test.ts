@@ -349,4 +349,24 @@ describe('plugin sandbox realm — behavioral parity', () => {
 		expect(sent).toHaveLength(1);
 		expect(JSON.parse(sent[0]).method).toBe('background.list');
 	});
+
+	it('maestro.ui.hostView exposes frozen update/remove forwarders', () => {
+		const sent: string[] = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			String.raw`
+				void maestro.ui.hostView.update('status', [{ kind: 'text', text: 'Ready' }]);
+				void maestro.ui.hostView.remove('status');
+			`,
+			'host-view-probe'
+		);
+		expect(sent.map((json) => JSON.parse(json))).toMatchObject([
+			{
+				method: 'ui.hostViewUpdate',
+				params: { id: 'status', blocks: [{ kind: 'text', text: 'Ready' }] },
+			},
+			{ method: 'ui.hostViewRemove', params: { id: 'status' } },
+		]);
+	});
 });

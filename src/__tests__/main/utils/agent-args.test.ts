@@ -347,6 +347,32 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--dangerously-bypass');
 	});
 
+	// -- real claude-code definition: full access is what grants the bypass --
+	it("claude-code with permissionMode 'full' adds --dangerously-skip-permissions", () => {
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: 'full',
+		});
+		expect(result).toContain('--dangerously-skip-permissions');
+	});
+
+	it('claude-code with an unset permissionMode (no yoloMode) does NOT add --dangerously-skip-permissions', () => {
+		// Resolution of an unset permissionMode -> full access now happens in the
+		// renderer (resolveTabPermissionMode), NOT here. buildAgentArgs still
+		// treats a literal undefined as non-full, so callers MUST resolve first.
+		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
+		expect(claude).toBeDefined();
+		const result = buildAgentArgs(claude!, {
+			baseArgs: ['--print'],
+			prompt: 'do the thing',
+			permissionMode: undefined,
+		});
+		expect(result).not.toContain('--dangerously-skip-permissions');
+	});
+
 	it('deduplicates Codex bypass flag when batch and yolo args both include it', () => {
 		const agent = makeAgent({
 			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
@@ -962,6 +988,68 @@ describe('applyAgentConfigOverrides', () => {
 		expect(r3.modelSource).toBe('session');
 	});
 
+	// -- effort precedence --
+	// Effort follows the same rules as model, which is also what the effort pill
+	// shows (tab > agent override > agent config). An empty session override means
+	// "cleared", not "no effort at all".
+	it('effort precedence: session overrides agent config, empty falls back', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'effort',
+					type: 'select',
+					label: 'Effort',
+					description: 'Effort',
+					options: ['', 'low', 'high', 'max'],
+					default: '',
+					argBuilder: (val: any) => (val ? ['--effort', String(val)] : []),
+				},
+			],
+		});
+
+		// agent config value is used when the session has no override
+		const r1 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+		});
+		expect(r1.args).toEqual(['--effort', 'high']);
+
+		// session override wins
+		const r2 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: 'max',
+		});
+		expect(r2.args).toEqual(['--effort', 'max']);
+
+		// cleared session override falls back to the agent config
+		const r3 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: '',
+		});
+		expect(r3.args).toEqual(['--effort', 'high']);
+	});
+
+	it('reasoningEffort honors the session override (Codex-style agents)', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'reasoningEffort',
+					type: 'select',
+					label: 'Reasoning Effort',
+					description: 'Reasoning Effort',
+					options: ['low', 'high'],
+					default: 'low',
+					argBuilder: (val: any) => (val ? ['-c', `model_reasoning_effort="${val}"`] : []),
+				},
+			],
+		});
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { reasoningEffort: 'low' },
+			sessionCustomEffort: 'high',
+		});
+		expect(result.args).toEqual(['-c', 'model_reasoning_effort="high"']);
+	});
+
 	it('uses agentConfigValues for non-model config options', () => {
 		const agent = makeAgent({
 			configOptions: [
@@ -1248,5 +1336,62 @@ describe('getContextWindowValue', () => {
 
 		const result = getContextWindowValue(agent, { contextWindow: 50000 }, undefined);
 		expect(result).toBe(50000);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Additional Directories -> native provider grant flags
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs: additionalDirectories', () => {
+	const RO = { path: '/ref/docs', read: true, write: false };
+	const WO = { path: '/out/drop', read: false, write: true };
+	const RW = { path: '/shared/src', read: true, write: true };
+	const INERT = { path: '/ignored', read: false, write: false };
+
+	/** Stand-in for a provider whose flag means "allow access" (Claude, Copilot). */
+	const accessAgent = makeAgent({
+		additionalDirArgs: (dirs) =>
+			dirs.filter((d) => d.read || d.write).flatMap((d) => ['--add-dir', d.path]),
+	});
+
+	it('emits nothing for a provider with no native mechanism', () => {
+		const agent = makeAgent(); // no additionalDirArgs
+		expect(buildAgentArgs(agent, { baseArgs: [], additionalDirectories: [RW] })).toEqual([]);
+	});
+
+	it('emits nothing when the session has no grants', () => {
+		expect(buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [] })).toEqual([]);
+		expect(buildAgentArgs(accessAgent, { baseArgs: [] })).toEqual([]);
+	});
+
+	it('lets the provider decide which grants its flag can express', () => {
+		expect(
+			buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [RO, WO, RW, INERT] })
+		).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/out/drop', '--add-dir', '/shared/src']);
+	});
+
+	it('survives the repeated-flag dedupe', () => {
+		// buildAgentArgs dedupes repeated flag tokens, which would keep the first
+		// --add-dir, drop the second, and leave the orphaned path behind as a stray
+		// positional the CLI would read as the prompt. Regression guard.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: [],
+			additionalDirectories: [RO, RW],
+		});
+
+		expect(args.filter((a) => a === '--add-dir')).toHaveLength(2);
+		expect(args).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/shared/src']);
+	});
+
+	it('keeps the grant flags ahead of a trailing prompt positional', () => {
+		// Callers append the prompt AFTER buildAgentArgs returns, so the last thing
+		// we emit must still be a flag/value pair, never a dangling flag.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: ['--print'],
+			additionalDirectories: [RW],
+		});
+
+		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
+		expect(args[args.length - 1]).not.toMatch(/^-/);
 	});
 });

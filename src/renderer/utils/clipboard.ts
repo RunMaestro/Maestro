@@ -18,8 +18,58 @@
 import { isWebDesktop } from './runtimeContext';
 
 /**
+ * Legacy clipboard write via a hidden textarea + document.execCommand('copy').
+ * The async Clipboard API (navigator.clipboard) is gated to secure contexts,
+ * so it is undefined when web-desktop is served over plain HTTP (e.g. a
+ * Tailscale/LAN IP without TLS). execCommand is deprecated but still works in
+ * insecure contexts and is the only browser-side path left there.
+ * Returns true on success.
+ */
+function legacyExecCommandCopy(text: string): boolean {
+	// Remember what had focus so we can hand it back; selecting the hidden
+	// textarea steals focus from the control that initiated the copy.
+	const previouslyFocused = document.activeElement as HTMLElement | null;
+	const textarea = document.createElement('textarea');
+	textarea.value = text;
+	// Keep it out of view and from scrolling/zooming the page.
+	textarea.style.position = 'fixed';
+	textarea.style.top = '0';
+	textarea.style.left = '0';
+	textarea.style.width = '1px';
+	textarea.style.height = '1px';
+	textarea.style.padding = '0';
+	textarea.style.border = 'none';
+	textarea.style.outline = 'none';
+	textarea.style.boxShadow = 'none';
+	textarea.style.background = 'transparent';
+	textarea.setAttribute('readonly', '');
+	document.body.appendChild(textarea);
+	try {
+		textarea.focus();
+		textarea.select();
+		return document.execCommand('copy');
+	} catch {
+		return false;
+	} finally {
+		document.body.removeChild(textarea);
+		// Restore focus to whatever held it before the copy so the next
+		// keystroke returns to the originating control.
+		if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+			previouslyFocused.focus();
+		}
+	}
+}
+
+/**
  * Safely write text to the clipboard.
  * Returns true on success, false if the document is not focused or clipboard is unavailable.
+ *
+ * In web-desktop mode the Electron IPC clipboard writes to the HOST machine
+ * (where the Electron app runs), not the browser the user is on. Skip the IPC
+ * path there and use the browser Clipboard API so the copy lands on the user's
+ * own machine. When that browser API is unavailable (insecure context, e.g.
+ * web-desktop over a plain-HTTP Tailscale/LAN IP), fall back to the legacy
+ * execCommand copy so the copy still lands on the user's machine.
  */
 export async function safeClipboardWrite(text: string): Promise<boolean> {
 	if (isWebDesktop()) {
@@ -27,20 +77,27 @@ export async function safeClipboardWrite(text: string): Promise<boolean> {
 			await navigator.clipboard.writeText(text);
 			return true;
 		} catch {
-			// Browser clipboard unavailable/denied - fall back to the host bridge below.
+			// Browser clipboard unavailable/denied - fall back below. In web-desktop
+			// we keep the copy on the user's own machine via the legacy path rather
+			// than routing to the host bridge.
 		}
 	}
 	try {
-		if (window.maestro?.shell?.copyTextToClipboard) {
+		if (!isWebDesktop() && window.maestro?.shell?.copyTextToClipboard) {
 			await window.maestro.shell.copyTextToClipboard(text);
 			return true;
 		}
-		await navigator.clipboard.writeText(text);
-		return true;
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+		// Insecure context: navigator.clipboard is undefined. Use the legacy path.
+		return legacyExecCommandCopy(text);
 	} catch {
-		// NotAllowedError when document not focused, or other clipboard failures.
-		// Not actionable - the user can retry when the window is focused.
-		return false;
+		// NotAllowedError when document not focused, or async API blocked in an
+		// insecure context. Try the legacy path before giving up; the user can
+		// retry when the window is focused if even that fails.
+		return legacyExecCommandCopy(text);
 	}
 }
 

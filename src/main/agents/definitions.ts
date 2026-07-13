@@ -5,8 +5,17 @@
  * This includes CLI arguments, configuration options, and default settings.
  */
 
-import type { AgentCapabilities, AgentConfig as BaseAgentConfig } from '../../shared/types';
+import type {
+	AdditionalDirectory,
+	AgentCapabilities,
+	AgentConfig as BaseAgentConfig,
+} from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+import {
+	dirsWithAnyAccess,
+	dirsWithWriteAccess,
+	repeatDirFlag,
+} from '../../shared/additionalDirectories';
 export type { AgentCapabilities } from '../../shared/types';
 
 // ============ Configuration Types ============
@@ -97,6 +106,23 @@ export interface AgentConfig extends BaseAgentConfig {
 	noToolsArgs?: string[]; // Args that disable ALL tool use, forcing a pure text response (e.g., ['--tools', ''] for Claude). Used by tab naming so a task-like first message produces a name instead of triggering a real agentic investigation.
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
+	/**
+	 * Build the CLI args that grant the agent access to directories outside its
+	 * working directory (Maestro's "Additional Directories").
+	 *
+	 * The provider owns the whole mapping, not just one path, because the CLIs do
+	 * NOT agree on what a grant means:
+	 *   - Claude Code / Copilot-CLI: `--add-dir` allows tool ACCESS to the dir (read + write).
+	 *   - Codex: `--add-dir` adds a WRITABLE root to the sandbox; reads are governed separately.
+	 * Handing each provider the full `AdditionalDirectory[]` lets it decide which
+	 * grants its flag can actually express and drop the rest.
+	 *
+	 * Set this iff `capabilities.supportsAdditionalDirectories` is true - the
+	 * agent-completeness test enforces both directions. Agents that leave it
+	 * undefined fall back to prompt-only enforcement via
+	 * `{{ADDITIONAL_DIRECTORIES}}`, which every agent gets regardless.
+	 */
+	additionalDirArgs?: (dirs: AdditionalDirectory[]) => string[];
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
@@ -178,6 +204,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		// `--add-dir` allows tool access to a dir (read AND write), so it maps to
+		// every grant the user made. It cannot express "write but never read" -
+		// the {{ADDITIONAL_DIRECTORIES}} prompt block carries that rule.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
 		noToolsArgs: ['--tools', ''], // `--tools ""` disables every built-in tool (used by tab naming)
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet
 		// Disable Claude Code's background-task feature across every spawn path (desktop UI, CLI batch, --live, SSH).
@@ -248,6 +278,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'--skip-git-repo-check',
 		], // Read-only/plan mode — includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
+		// Codex's `--add-dir` is narrower than Claude's: it adds a WRITABLE root to
+		// the sandbox ("Additional directories that should be writable alongside the
+		// primary workspace"). So only write grants map to it. Read-only grants are
+		// left to the sandbox's read policy plus the prompt block.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithWriteAccess(dirs)),
 		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
 		workingDirArgs: (dir: string) => ['-C', dir], // Set working directory
 		imageArgs: (imagePath: string) => ['-i', imagePath], // Image attachment: codex exec -i /path/to/image.png
@@ -653,6 +688,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'--no-ask-user',
 		], // Enforce read-only by denying write/shell/memory/github actions at the Copilot CLI layer
 		readOnlyCliEnforced: true, // CLI-enforced via explicit tool permission rules
+		// `--add-dir <directory>` adds a dir to Copilot's allowed list (read + write),
+		// repeatable. Same coarseness caveat as Claude Code.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
 		yoloModeArgs: ['--allow-all'], // Full permissions (same as batchModeArgs; Copilot treats --yolo as an alias)
 		imagePromptBuilder: (imagePaths: string[]) =>

@@ -38,6 +38,7 @@ import { app } from 'electron';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { getCommitHash } from '../../utils/build-info';
 import {
 	startProfiling,
 	stopProfiling,
@@ -297,7 +298,11 @@ export interface MessageHandlerCallbacks {
 	getSettings: () => WebSettings;
 	setSetting: (key: string, value: SettingValue) => Promise<boolean>;
 	getGroups: () => GroupData[];
-	createGroup: (name: string, emoji?: string) => Promise<{ id: string } | null>;
+	createGroup: (
+		name: string,
+		emoji?: string,
+		parentGroupId?: string
+	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
@@ -492,6 +497,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_sessions':
 				this.handleGetSessions(client);
+				break;
+
+			case 'get_app_info':
+				this.handleGetAppInfo(client, message);
 				break;
 
 			case 'select_tab':
@@ -1157,6 +1166,21 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle get_sessions message - request updated sessions list
 	 */
+	/**
+	 * Handle get_app_info message - report the running desktop app's version and the
+	 * git commit hash it was built from (for `maestro-cli version`). commitHash is ''
+	 * when the build couldn't determine it (see utils/build-info.ts).
+	 */
+	private handleGetAppInfo(client: WebClient, message: WebClientMessage): void {
+		this.send(client, {
+			type: 'app_info',
+			requestId: message.requestId,
+			version: app.getVersion(),
+			commitHash: getCommitHash(),
+			platform: process.platform,
+		});
+	}
+
 	private handleGetSessions(client: WebClient): void {
 		if (
 			this.callbacks.getSessions &&
@@ -3247,6 +3271,17 @@ export class WebSocketMessageHandler {
 	private handleCreateGroup(client: WebClient, message: WebClientMessage): void {
 		const name = message.name as string;
 		const emoji = message.emoji as string | undefined;
+		const requestedParentGroupId = message.parentGroupId;
+
+		if (
+			requestedParentGroupId !== undefined &&
+			(typeof requestedParentGroupId !== 'string' || !requestedParentGroupId.trim())
+		) {
+			this.sendError(client, 'Invalid parentGroupId');
+			return;
+		}
+
+		const parentGroupId = requestedParentGroupId?.trim();
 
 		if (!name || typeof name !== 'string') {
 			this.sendError(client, 'Missing or invalid group name');
@@ -3259,7 +3294,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.createGroup(name, emoji)
+			.createGroup(name, emoji, parentGroupId)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_group_result',

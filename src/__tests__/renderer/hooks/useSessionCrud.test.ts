@@ -738,6 +738,37 @@ describe('useSessionCrud', () => {
 			expect(groups[0].id).toBe('grp-2');
 		});
 
+		it('promotes child groups without deleting their sessions', async () => {
+			const childSession = createSession({ id: 'child-session', groupId: 'child' });
+			useSessionStore.setState({
+				groups: [
+					{ id: 'parent', name: 'Parent' },
+					{ id: 'child', name: 'Child', parentGroupId: 'parent' },
+				],
+				sessions: [createSession({ id: 'parent-session', groupId: 'parent' }), childSession],
+			});
+
+			let onConfirm: () => void = () => {};
+			const deps = createDeps({
+				showConfirmation: (_message, callback) => {
+					onConfirm = callback;
+				},
+			});
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.deleteWorktreeGroup('parent');
+			});
+			await act(async () => {
+				await onConfirm();
+			});
+
+			const groups = useSessionStore.getState().groups;
+			expect(groups).toEqual([expect.objectContaining({ id: 'child' })]);
+			expect(groups[0].parentGroupId).toBeUndefined();
+			expect(useSessionStore.getState().sessions).toEqual([childSession]);
+		});
+
 		it('flushes session persistence on confirm', async () => {
 			vi.useFakeTimers();
 			useSessionStore.setState({
@@ -1170,6 +1201,20 @@ describe('useSessionCrud', () => {
 			});
 
 			expect(result.current.pendingMoveToGroupSessionId).toBe('sess-move');
+		});
+
+		it('clears a pending move when group creation is cancelled', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.handleCreateGroupAndMove('sess-move');
+			});
+			act(() => {
+				result.current.clearPendingMoveToGroup();
+			});
+
+			expect(result.current.pendingMoveToGroupSessionId).toBeNull();
 		});
 	});
 

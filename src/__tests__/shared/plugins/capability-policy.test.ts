@@ -28,6 +28,21 @@ describe('transcriptReadEgressConflict', () => {
 		).toMatch(/process:spawn/);
 	});
 
+	it('blocks transcripts:read + net:connect for an untrusted plugin', () => {
+		const reason = transcriptReadEgressConflict(hold('transcripts:read', 'net:connect'), {
+			trusted: false,
+		});
+		expect(reason).not.toBeNull();
+		expect(reason).toMatch(/net:connect/);
+		expect(reason).toMatch(/transcripts:read/);
+	});
+
+	it('allows transcripts:read + net:connect for a TRUSTED plugin', () => {
+		expect(
+			transcriptReadEgressConflict(hold('transcripts:read', 'net:connect'), { trusted: true })
+		).toBeNull();
+	});
+
 	it('allows transcripts:read alone, or egress alone, for an untrusted plugin', () => {
 		expect(transcriptReadEgressConflict(hold('transcripts:read'), { trusted: false })).toBeNull();
 		expect(

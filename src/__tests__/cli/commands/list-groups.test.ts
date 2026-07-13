@@ -131,6 +131,24 @@ describe('list-groups command', () => {
 			]);
 		});
 
+		it('includes parentGroupId for nested groups', () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{ id: 'company', name: 'Company', emoji: '🏢', collapsed: false },
+				{
+					id: 'project',
+					name: 'Project',
+					emoji: '📁',
+					collapsed: false,
+					parentGroupId: 'company',
+				},
+			]);
+
+			listGroups({ json: true });
+
+			const output = consoleSpy.mock.calls[0][0];
+			expect(JSON.parse(output)[1]).toMatchObject({ parentGroupId: 'company' });
+		});
+
 		it('should output empty JSON array for no groups', () => {
 			vi.mocked(readGroups).mockReturnValue([]);
 

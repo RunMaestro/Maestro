@@ -23,7 +23,8 @@ export function useContextMenuPosition(
 	menuRef: RefObject<HTMLElement | null>,
 	x: number,
 	y: number,
-	padding = 8
+	padding = 8,
+	contentKey?: unknown
 ): ContextMenuPosition {
 	const [position, setPosition] = useState<ContextMenuPosition>({
 		left: x,
@@ -44,7 +45,7 @@ export function useContextMenuPosition(
 			top: Math.max(padding, Math.min(y, maxTop)),
 			ready: true,
 		});
-	}, [menuRef, x, y, padding]);
+	}, [menuRef, x, y, padding, contentKey]);
 
 	return position;
 }

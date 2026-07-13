@@ -1480,14 +1480,22 @@ export function createProcessApi() {
 		 * Uses request-response pattern with a unique responseChannel
 		 */
 		onRemoteCreateGroup: (
-			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
+			callback: (
+				name: string,
+				emoji: string | undefined,
+				parentGroupId: string | undefined,
+				responseChannel: string
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				name: string,
 				emoji: string | undefined,
+				parentGroupId: string | undefined,
 				responseChannel: string
-			) => callback(name, emoji, responseChannel);
+			) => {
+				callback(name, emoji, parentGroupId, responseChannel);
+			};
 			ipcRenderer.on('remote:createGroup', handler);
 			return () => ipcRenderer.removeListener('remote:createGroup', handler);
 		},

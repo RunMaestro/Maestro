@@ -66,6 +66,8 @@ export interface AppUtilityModalsProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValue: (value: string) => void;
 	setRenameGroupEmoji: (emoji: string) => void;
+	setRenameGroupIcon: (icon: string | undefined) => void;
+	setRenameGroupColor: (color: string | undefined) => void;
 	setRenameGroupModalOpen: (open: boolean) => void;
 	setCreateGroupModalOpen: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -327,6 +329,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setRenameGroupId,
 	setRenameGroupValue,
 	setRenameGroupEmoji,
+	setRenameGroupIcon,
+	setRenameGroupColor,
 	setRenameGroupModalOpen,
 	setCreateGroupModalOpen,
 	setLeftSidebarOpen,
@@ -532,6 +536,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setRenameGroupId={setRenameGroupId}
 					setRenameGroupValue={setRenameGroupValue}
 					setRenameGroupEmoji={setRenameGroupEmoji}
+					setRenameGroupIcon={setRenameGroupIcon}
+					setRenameGroupColor={setRenameGroupColor}
 					setRenameGroupModalOpen={setRenameGroupModalOpen}
 					setCreateGroupModalOpen={setCreateGroupModalOpen}
 					setLeftSidebarOpen={setLeftSidebarOpen}

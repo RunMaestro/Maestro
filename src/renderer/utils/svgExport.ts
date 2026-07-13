@@ -3,28 +3,12 @@
  * markdown to the clipboard (as a raster PNG) or to disk (as a standalone .svg
  * file).
  *
- * Used by SvgContextMenu (right-click on AI-generated SVG diagrams). Kept as a
- * shared util so the same serialize/rasterize logic can be reused by any future
- * surface that needs to export an SVG.
+ * Used by SvgContextMenu (right-click on AI-generated SVG diagrams and Mermaid
+ * charts). Kept as a shared util so the same serialize/rasterize logic can be
+ * reused by any future surface that needs to export an SVG.
  */
 
 import { safeClipboardWrite, safeClipboardWriteImage } from './clipboard';
-
-/**
- * Serialize an SVG DOM element to a standalone, namespaced SVG string that opens
- * on its own in a browser or image editor.
- */
-export function serializeSvg(svg: SVGSVGElement): string {
-	const clone = svg.cloneNode(true) as SVGSVGElement;
-	// Ensure the namespaces are present so the file is a valid standalone SVG.
-	if (!clone.getAttribute('xmlns')) {
-		clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-	}
-	if (!clone.getAttribute('xmlns:xlink')) {
-		clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-	}
-	return new XMLSerializer().serializeToString(clone);
-}
 
 /** Intrinsic pixel dimensions of an SVG, from its rendered box or viewBox. */
 function svgDimensions(svg: SVGSVGElement): { width: number; height: number } {
@@ -37,6 +21,49 @@ function svgDimensions(svg: SVGSVGElement): { width: number; height: number } {
 		return { width: vb.width, height: vb.height };
 	}
 	return { width: 512, height: 512 };
+}
+
+/** True when an attribute is missing or sized in CSS-relative units (e.g. "100%"). */
+function lacksIntrinsicSize(value: string | null): boolean {
+	return !value || value.trim().endsWith('%');
+}
+
+/**
+ * Serialize an SVG DOM element to a standalone, namespaced SVG string that opens
+ * on its own in a browser or image editor.
+ *
+ * Mermaid sizes its charts with CSS (`width="100%"` plus a `max-width` style) and
+ * agent-authored SVG often carries only a viewBox, so the serialized markup can
+ * have no intrinsic size. A browser renders that at its 300x150 default and an
+ * <img> rasterization comes out cropped, so stamp the measured size onto the
+ * clone.
+ */
+export function serializeSvg(svg: SVGSVGElement): string {
+	const clone = svg.cloneNode(true) as SVGSVGElement;
+	// Ensure the namespaces are present so the file is a valid standalone SVG.
+	if (!clone.getAttribute('xmlns')) {
+		clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+	}
+	if (!clone.getAttribute('xmlns:xlink')) {
+		clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+	}
+
+	if (
+		lacksIntrinsicSize(clone.getAttribute('width')) ||
+		lacksIntrinsicSize(clone.getAttribute('height'))
+	) {
+		const { width, height } = svgDimensions(svg);
+		clone.setAttribute('width', String(Math.round(width)));
+		clone.setAttribute('height', String(Math.round(height)));
+		// A viewBox is what makes the stamped size a scale rather than a crop.
+		if (!clone.getAttribute('viewBox')) {
+			clone.setAttribute('viewBox', `0 0 ${Math.round(width)} ${Math.round(height)}`);
+		}
+	}
+	// A CSS max-width from the host page would shrink the standalone render.
+	clone.style.removeProperty('max-width');
+
+	return new XMLSerializer().serializeToString(clone);
 }
 
 /**
@@ -65,19 +92,22 @@ export async function svgToPngDataUrl(svg: SVGSVGElement, scale = 2): Promise<st
 	return canvas.toDataURL('image/png');
 }
 
+/** What actually landed on the clipboard, so the caller can be honest about it. */
+export type SvgCopyResult = 'image' | 'markup' | 'failed';
+
 /**
  * Copy an SVG to the clipboard as a raster PNG image so it can be pasted into
  * other apps. Falls back to copying the raw SVG markup as text if rasterization
- * fails. Returns true on success.
+ * fails (e.g. a tainted canvas, or an <img> that refuses the source).
  */
-export async function copySvgToClipboard(svg: SVGSVGElement): Promise<boolean> {
+export async function copySvgToClipboard(svg: SVGSVGElement): Promise<SvgCopyResult> {
 	try {
 		const png = await svgToPngDataUrl(svg);
-		if (await safeClipboardWriteImage(png)) return true;
+		if (await safeClipboardWriteImage(png)) return 'image';
 	} catch {
-		// Rasterization failed (e.g. tainted canvas) - fall through to text copy.
+		// Rasterization failed - fall through to the markup copy below.
 	}
-	return safeClipboardWrite(serializeSvg(svg));
+	return (await safeClipboardWrite(serializeSvg(svg))) ? 'markup' : 'failed';
 }
 
 /** Trigger a browser download of an SVG element as a standalone .svg file. */

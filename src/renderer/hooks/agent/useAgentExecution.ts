@@ -529,25 +529,57 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						})
 					);
 
-					// Watchdog for hung Auto Run batch tasks: detect long silence and force-kill.
-					// A value of 0 means "unlimited" — skip the watchdog entirely.
+					// Watchdog for hung Auto Run batch tasks. Two independent triggers,
+					// each with a 0 = "unlimited" sentinel that disables it:
+					//   1. Inactivity: force-kill after a stretch of NO output. Catches a
+					//      truly silent/hung agent.
+					//   2. Max duration: force-kill once total wall-clock runtime exceeds a
+					//      cap, regardless of output. Catches a stuck-but-chatty agent that
+					//      keeps emitting (resetting lastOutputAt) yet never finishes the
+					//      task, which would otherwise defeat the inactivity watchdog and
+					//      hang the whole multi-document Auto Run loop forever, since the
+					//      per-document loop only advances once processTask resolves.
+					// Both resolve the task as a failure so the batch loop terminates this
+					// document (see isWatchdogFailure handling in useBatchRunner).
 					if (isBatchProcess) {
-						const inactivityTimeoutMin = useSettingsStore.getState().autoRunInactivityTimeoutMin;
-						if (inactivityTimeoutMin > 0) {
-							const inactivityTimeoutMs = inactivityTimeoutMin * 60 * 1000;
+						const { autoRunInactivityTimeoutMin, autoRunMaxTaskDurationMin } =
+							useSettingsStore.getState();
+						const inactivityTimeoutMs =
+							autoRunInactivityTimeoutMin > 0 ? autoRunInactivityTimeoutMin * 60 * 1000 : 0;
+						const maxDurationMs =
+							autoRunMaxTaskDurationMin > 0 ? autoRunMaxTaskDurationMin * 60 * 1000 : 0;
 
+						if (inactivityTimeoutMs > 0 || maxDurationMs > 0) {
 							inactivityTimer = setInterval(() => {
 								if (settled) return;
-								if (Date.now() - lastOutputAt <= inactivityTimeoutMs) return;
-								window.maestro.process.kill(targetSessionId).catch(() => {});
-								resolveOnce({
-									success: false,
-									error: `Agent task stalled: no output for ${inactivityTimeoutMin} minutes`,
-									errorKind: 'watchdog-stalled',
-									response: responseText,
-									agentSessionId,
-									usageStats: taskUsageStats,
-								});
+								const now = Date.now();
+
+								// Absolute wall-clock cap (activity-independent).
+								if (maxDurationMs > 0 && now - queryStartTime > maxDurationMs) {
+									window.maestro.process.kill(targetSessionId).catch(() => {});
+									resolveOnce({
+										success: false,
+										error: `Agent task exceeded the maximum duration of ${autoRunMaxTaskDurationMin} minutes`,
+										errorKind: 'watchdog-timeout',
+										response: responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+									return;
+								}
+
+								// Silence-based inactivity watchdog.
+								if (inactivityTimeoutMs > 0 && now - lastOutputAt > inactivityTimeoutMs) {
+									window.maestro.process.kill(targetSessionId).catch(() => {});
+									resolveOnce({
+										success: false,
+										error: `Agent task stalled: no output for ${autoRunInactivityTimeoutMin} minutes`,
+										errorKind: 'watchdog-stalled',
+										response: responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+								}
 							}, BATCH_WATCHDOG_CHECK_MS);
 						}
 					}
@@ -571,9 +603,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							prompt,
 							appendSystemPrompt,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
+							// Auto Run runs unattended in --print mode, so it must have full
+							// access - the same permission level as an interactive tab set to
+							// "full". Without this, agents whose bypass is gated on full access
+							// (e.g. Claude Code's --dangerously-skip-permissions in fullAccessArgs)
+							// fall back to the default permission model, can't get tool approvals
+							// non-interactively, and deadlock the run.
+							permissionMode: 'full',
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,
+							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
 							sessionCustomModel: session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort

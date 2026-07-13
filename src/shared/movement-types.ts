@@ -40,6 +40,8 @@ export interface MovementPayload {
 	title?: string;
 	/** The item's BlockView spec, as a JSON string (parsed by the renderer). */
 	body?: string;
+	/** Host-stamped plugin display name for a plugin-contributed view. */
+	sourcePlugin?: string;
 }
 
 /** One item's geometry as returned by the `state` read (for agent awareness). */

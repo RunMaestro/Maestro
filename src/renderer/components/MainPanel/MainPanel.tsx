@@ -34,6 +34,7 @@ import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegi
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
+import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -462,7 +463,7 @@ export const MainPanel = React.memo(
 				.then((config) => {
 					if (stale) return;
 					setAgentDefaultModel(config?.model || '');
-					setAgentDefaultEffort(config?.effort || config?.reasoningEffort || '');
+					setAgentDefaultEffort(readEffortFromConfig(config) ?? '');
 				})
 				.catch(() => {
 					if (stale) return;

@@ -8,7 +8,7 @@
  * - Handling agent-specific initialization
  */
 
-import type { Session, ToolType, ProcessConfig } from '../types';
+import type { AdditionalDirectory, Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from './spawnHelpers';
 import { logger } from './logger';
@@ -78,6 +78,12 @@ export interface BuildSpawnConfigOptions {
 	sessionCustomEffort?: string;
 	/** Per-session custom context window */
 	sessionCustomContextWindow?: number;
+	/**
+	 * Session's Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` receive these as native grant flags
+	 * (e.g. `--add-dir`); every agent also gets them via the system prompt.
+	 */
+	sessionAdditionalDirectories?: AdditionalDirectory[];
 	/** Per-session SSH remote config (takes precedence over agent-level SSH config) */
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -130,6 +136,7 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomModel,
 		sessionCustomEffort,
 		sessionCustomContextWindow,
+		sessionAdditionalDirectories,
 		sessionSshRemoteConfig,
 		hasImages = false,
 		appendSystemPrompt,
@@ -187,6 +194,7 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomModel,
 		sessionCustomEffort,
 		sessionCustomContextWindow,
+		sessionAdditionalDirectories,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
 		// Windows stdin handling - send prompt via stdin to avoid command line length limits
@@ -261,7 +269,7 @@ export async function createSessionForAgent(
 	});
 
 	// Prepare Maestro system prompt for new sessions
-	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session });
+	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session, activeTabId: tabId });
 
 	// Build the spawn configuration
 	const spawnConfig = await buildSpawnConfigForAgent({

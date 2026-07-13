@@ -1366,6 +1366,43 @@ describe('Session & Group loading effect', () => {
 		expect(groups).toHaveLength(1);
 	});
 
+	it('repairs invalid persisted group parent relationships on load', async () => {
+		mockGetAll.mockResolvedValueOnce([]);
+		mockGroupsGetAll.mockResolvedValueOnce([
+			{ id: 'company', name: 'Company', emoji: '📁', collapsed: false },
+			{
+				id: 'project',
+				name: 'Project',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'company',
+			},
+			{
+				id: 'orphan',
+				name: 'Orphan',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'missing',
+			},
+			{
+				id: 'grandchild',
+				name: 'Grandchild',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'project',
+			},
+		]);
+
+		renderHook(() => useSessionRestoration());
+
+		await vi.waitFor(() => {
+			const groups = useSessionStore.getState().groups;
+			expect(groups.find((group) => group.id === 'project')?.parentGroupId).toBe('company');
+			expect(groups.find((group) => group.id === 'orphan')?.parentGroupId).toBeUndefined();
+			expect(groups.find((group) => group.id === 'grandchild')?.parentGroupId).toBeUndefined();
+		});
+	});
+
 	it('loads group chats from IPC on mount', async () => {
 		mockGetAll.mockResolvedValueOnce([]);
 		mockGroupsGetAll.mockResolvedValueOnce([]);

@@ -176,11 +176,8 @@ export function DirectorNotesModal({
 	}, [navigateTab]);
 	const resizableModal = useResizableModal({
 		resizeKey: 'director-notes',
-		defaultSize: { width: 1050, height: 760 },
+		defaultSize: { width: 1200, height: 820 },
 		minSize: { width: 720, height: 480 },
-		// Preserves the previous fixed 60vw/1050px readability-width cap for this
-		// notes/markdown-reading surface.
-		maxSize: { width: 1050 },
 		externalRef: modalRef,
 	});
 

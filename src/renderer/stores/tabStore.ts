@@ -37,6 +37,7 @@ import {
 	navigateToPrevUnifiedTab as navigateToPrevHelper,
 	navigateToUnifiedTabByIndex as navigateToIndexHelper,
 	navigateToLastUnifiedTab as navigateToLastHelper,
+	toggleReadOnlyModeFields,
 	type CreateTabOptions,
 	type CreateTabResult,
 	type CloseTabOptions,
@@ -548,7 +549,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return;
-		updateAiTab(tabId, { readOnlyMode: !tab.readOnlyMode });
+		updateAiTab(tabId, toggleReadOnlyModeFields(tab));
 	},
 
 	toggleSaveToHistory: (tabId) => {

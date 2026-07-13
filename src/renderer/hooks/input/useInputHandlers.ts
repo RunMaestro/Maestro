@@ -32,7 +32,10 @@ import { useAtMentionCompletion } from './useAtMentionCompletion';
 import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
-import { useCrossAgentDispatch } from '../agent/useCrossAgentDispatch';
+import {
+	useCrossAgentDispatch,
+	type SpawnBackgroundSynopsisFn,
+} from '../agent/useCrossAgentDispatch';
 import {
 	resolveMentionedTargetSessionIds,
 	buildKnownMentionNameSet,
@@ -123,6 +126,12 @@ export interface UseInputHandlersDeps {
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Active session ID ref for non-reactive access */
 	activeSessionIdRef: React.MutableRefObject<string>;
+	/**
+	 * Background synopsis spawn (from useAgentExecution), forwarded to the
+	 * cross-agent consult so it can condense a finished consultation's response
+	 * into the History detail view.
+	 */
+	spawnBackgroundSynopsis: SpawnBackgroundSynopsisFn;
 }
 
 // ============================================================================
@@ -196,6 +205,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		allCustomCommands,
 		sessionsRef,
 		activeSessionIdRef,
+		spawnBackgroundSynopsis,
 	} = deps;
 
 	// --- Store subscriptions (reactive) ---
@@ -509,7 +519,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
 	// reuses the same agent/group resolution the `@` picker uses, so a typed
 	// `@name` dispatches identically to one chosen from the popover.
-	const { sendCrossAgentRequest } = useCrossAgentDispatch();
+	const { sendCrossAgentRequest } = useCrossAgentDispatch(spawnBackgroundSynopsis);
 	// Returns `true` when the source agent's own send should be SUPPRESSED - i.e.
 	// the message is addressed at the mentioned agent(s), so only they answer.
 	// That is the case when the message leads with an `@agent` mention and at

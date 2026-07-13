@@ -19,6 +19,12 @@ import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
+import {
+	normalizeGroupHierarchy,
+	removeGroupAndPromoteChildren,
+	setGroupParent as updateGroupParent,
+} from '../../shared/groupHierarchy';
+import { useContextTimelineStore } from './contextTimelineStore';
 
 // ============================================================================
 // Store Types
@@ -101,6 +107,9 @@ export interface SessionStoreActions {
 	/** Update a group by ID with a partial update. */
 	updateGroup: (id: string, updates: Partial<Group>) => void;
 
+	/** Move a group to the top level or below a valid root group. */
+	setGroupParent: (groupId: string, parentGroupId: string | undefined) => void;
+
 	/** Toggle a group's collapsed state. */
 	toggleGroupCollapsed: (id: string) => void;
 
@@ -177,6 +186,18 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const newSessions = resolve(v, s.sessions);
 			// Skip if same reference (no-op update)
 			if (newSessions === s.sessions) return s;
+			// Most delete flows (single-agent, group delete) filter the array and
+			// call setSessions directly rather than removeSession, so prune the
+			// context-timeline buffers of any agent that disappeared here. Guard on
+			// length so the common update path (same count) pays nothing.
+			if (newSessions.length < s.sessions.length) {
+				const liveIds = new Set(newSessions.map((sess) => sess.id));
+				for (const sess of s.sessions) {
+					if (!liveIds.has(sess.id)) {
+						useContextTimelineStore.getState().removeSession(sess.id);
+					}
+				}
+			}
 			return { sessions: newSessions };
 		}),
 
@@ -187,6 +208,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const filtered = s.sessions.filter((session) => session.id !== id);
 			// Skip if nothing was removed
 			if (filtered.length === s.sessions.length) return s;
+			// Drop the deleted agent's context-timeline buffer so it doesn't leak.
+			useContextTimelineStore.getState().removeSession(id);
 			return { sessions: filtered };
 		}),
 
@@ -228,32 +251,51 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// Groups
 	setGroups: (v) =>
 		set((s) => {
-			const newGroups = resolve(v, s.groups);
+			const newGroups = normalizeGroupHierarchy(resolve(v, s.groups));
 			if (newGroups === s.groups) return s;
 			return { groups: newGroups };
 		}),
 
-	addGroup: (group) => set((s) => ({ groups: [...s.groups, group] })),
+	addGroup: (group) =>
+		set((s) => ({
+			groups: normalizeGroupHierarchy([...s.groups, group]),
+		})),
 
 	removeGroup: (id) =>
 		set((s) => {
-			const filtered = s.groups.filter((g) => g.id !== id);
-			if (filtered.length === s.groups.length) return s;
-			return { groups: filtered };
+			const groups = removeGroupAndPromoteChildren(s.groups, id);
+			if (groups.length === s.groups.length) return s;
+			return { groups };
 		}),
 
 	updateGroup: (id, updates) =>
 		set((s) => {
+			const hasParentGroupUpdate = Object.prototype.hasOwnProperty.call(updates, 'parentGroupId');
+			const { parentGroupId, ...otherUpdates } = updates;
+			const groupsWithParentUpdate = hasParentGroupUpdate
+				? updateGroupParent(s.groups, id, parentGroupId)
+				: s.groups;
+
+			if (Object.keys(otherUpdates).length === 0) {
+				return groupsWithParentUpdate === s.groups ? s : { groups: groupsWithParentUpdate };
+			}
+
 			let found = false;
-			const newGroups = s.groups.map((g) => {
-				if (g.id === id) {
+			const groups = groupsWithParentUpdate.map((group) => {
+				if (group.id === id) {
 					found = true;
-					return { ...g, ...updates };
+					return { ...group, ...otherUpdates };
 				}
-				return g;
+				return group;
 			});
 			if (!found) return s;
-			return { groups: newGroups };
+			return { groups };
+		}),
+
+	setGroupParent: (groupId, parentGroupId) =>
+		set((s) => {
+			const groups = updateGroupParent(s.groups, groupId, parentGroupId);
+			return groups === s.groups ? s : { groups };
 		}),
 
 	toggleGroupCollapsed: (id) =>

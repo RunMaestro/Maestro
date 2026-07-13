@@ -17,6 +17,7 @@ import type {
 } from '../../../renderer/stores/groupChatStore';
 import type { GroupChat, GroupChatMessage, GroupChatState } from '../../../renderer/types';
 import type { QueuedItem } from '../../../renderer/types';
+import { resetStore } from '../../helpers';
 
 // ============================================================================
 // Helpers
@@ -62,32 +63,12 @@ function createMockError(overrides: Partial<GroupChatErrorState> = {}): GroupCha
 	} as GroupChatErrorState;
 }
 
-function resetStore() {
-	useGroupChatStore.setState({
-		groupChats: [],
-		activeGroupChatId: null,
-		groupChatMessages: [],
-		groupChatState: 'idle',
-		participantStates: new Map(),
-		moderatorUsage: null,
-		groupChatStates: new Map(),
-		allGroupChatParticipantStates: new Map(),
-		groupChatExecutionQueue: [],
-		groupChatReadOnlyMode: false,
-		groupChatRightTab: 'participants',
-		groupChatParticipantColors: {},
-		groupChatStagedImages: [],
-		groupChatError: null,
-		initiatorWindowId: null,
-	});
-}
-
 // ============================================================================
 // Setup
 // ============================================================================
 
 beforeEach(() => {
-	resetStore();
+	resetStore(useGroupChatStore);
 });
 
 // ============================================================================
@@ -587,7 +568,7 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setInitiatorWindowId('window-1');
 
 			// Reset
-			resetStore();
+			resetStore(useGroupChatStore);
 
 			// Verify all fields are at defaults
 			const state = useGroupChatStore.getState();

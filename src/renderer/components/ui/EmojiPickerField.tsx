@@ -28,6 +28,13 @@ import { X } from 'lucide-react';
 import data from '@emoji-mart/data';
 import Picker from '@emoji-mart/react';
 import type { Theme } from '../../types';
+import type { IconPackContribution } from '../../../shared/plugins/contributions';
+import { SafeSvgIcon } from './SafeSvgIcon';
+import {
+	GROUP_ICON_OPTIONS,
+	GROUP_LABEL_COLORS,
+	resolveGroupAppearance,
+} from './groupAppearanceOptions';
 
 export interface EmojiPickerFieldProps {
 	/** Theme object for styling */
@@ -50,6 +57,21 @@ export interface EmojiPickerFieldProps {
 	disabled?: boolean;
 	/** Data-testid for testing */
 	'data-testid'?: string;
+}
+
+export interface GroupAppearancePickerProps {
+	theme: Theme;
+	emoji: string;
+	icon?: string;
+	color?: string;
+	onEmojiChange: (emoji: string) => void;
+	onIconChange: (icon: string | undefined) => void;
+	onColorChange: (color: string | undefined) => void;
+	/** Enables the Groups+ icon and label-color controls. */
+	groupsPlusEnabled?: boolean;
+	/** Enabled tier-0 plugin icon packs to display after host-built-in options. */
+	iconPacks?: readonly IconPackContribution[];
+	restoreFocusRef?: React.RefObject<HTMLElement>;
 }
 
 export function EmojiPickerField({
@@ -196,6 +218,221 @@ export function EmojiPickerField({
 						/>
 					</div>
 				</div>
+			)}
+		</div>
+	);
+}
+
+export function GroupAppearancePicker({
+	theme,
+	emoji,
+	icon,
+	color,
+	onEmojiChange,
+	onIconChange,
+	onColorChange,
+	restoreFocusRef,
+	groupsPlusEnabled = false,
+	iconPacks = [],
+}: GroupAppearancePickerProps) {
+	const appearance = groupsPlusEnabled
+		? resolveGroupAppearance(icon, color, iconPacks)
+		: resolveGroupAppearance(undefined, undefined, []);
+	const previewColor = appearance.color || theme.colors.textDim;
+	const hasStoredColor = color !== undefined;
+	const hasUnavailableColor = hasStoredColor && appearance.color === undefined;
+	return (
+		<div className="space-y-4">
+			<div className="flex gap-4 items-start">
+				<EmojiPickerField
+					theme={theme}
+					value={emoji || '🙂'}
+					onChange={(nextEmoji) => {
+						onEmojiChange(nextEmoji);
+						onIconChange(undefined);
+					}}
+					label="Emoji"
+					restoreFocusRef={restoreFocusRef}
+				/>
+				{groupsPlusEnabled && appearance.icon && (
+					<div
+						className="w-16 flex flex-col gap-2 items-center"
+						aria-label="Selected group appearance preview"
+						style={{ color: previewColor }}
+					>
+						<span
+							className="text-xs font-bold opacity-70 uppercase"
+							style={{ color: theme.colors.textMain }}
+						>
+							Preview
+						</span>
+						<div
+							className="p-3 rounded border w-16 h-[52px] flex items-center justify-center"
+							style={{ borderColor: theme.colors.border }}
+						>
+							{appearance.icon.kind === 'plugin' ? (
+								<SafeSvgIcon
+									className="w-5 h-5"
+									path={appearance.icon.path}
+									viewBox={appearance.icon.viewBox}
+								/>
+							) : (
+								<appearance.icon.Icon className="w-5 h-5" />
+							)}
+						</div>
+					</div>
+				)}
+				{groupsPlusEnabled && (
+					<div className="flex-1">
+						<label
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Standard icon
+						</label>
+						<div className="grid grid-cols-8 gap-1">
+							{GROUP_ICON_OPTIONS.map((option) => {
+								const Icon = option.Icon;
+								const selected = icon === option.id;
+
+								return (
+									<button
+										key={option.id}
+										type="button"
+										className="p-1.5 rounded border hover:bg-white/5 transition-colors"
+										style={{
+											borderColor: selected ? theme.colors.accent : theme.colors.border,
+											backgroundColor: selected ? `${theme.colors.accent}1A` : 'transparent',
+											color: selected
+												? appearance.color || theme.colors.accent
+												: theme.colors.textDim,
+										}}
+										onClick={() => {
+											onIconChange(option.id);
+											onEmojiChange('');
+										}}
+										aria-label={`Use ${option.label} icon`}
+										aria-pressed={selected}
+										title={option.label}
+									>
+										{Icon && <Icon className="w-4 h-4" />}
+									</button>
+								);
+							})}
+						</div>
+					</div>
+				)}
+			</div>
+			{groupsPlusEnabled && (
+				<>
+					<label
+						className="block text-xs font-bold opacity-70 uppercase mb-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						Label color
+					</label>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							className="w-5 h-5 rounded border hover:bg-white/5 transition-colors"
+							style={{
+								borderColor: hasStoredColor ? theme.colors.border : theme.colors.accent,
+							}}
+							onClick={() => onColorChange(undefined)}
+							aria-label="Clear label color"
+							aria-pressed={!hasStoredColor}
+							title="No color"
+						/>
+						{hasUnavailableColor && (
+							<span
+								className="w-5 h-5 rounded-full border opacity-40"
+								aria-label="Stored label color unavailable"
+								role="img"
+								style={{
+									backgroundColor: theme.colors.textDim,
+									borderColor: theme.colors.border,
+								}}
+								title="Stored label color is unavailable because its icon pack is disabled"
+							/>
+						)}
+						{GROUP_LABEL_COLORS.map((option) => (
+							<button
+								key={option.value}
+								type="button"
+								className="w-5 h-5 rounded-full border-2 transition-colors"
+								style={{
+									backgroundColor: option.value,
+									borderColor: color === option.value ? theme.colors.textMain : 'transparent',
+								}}
+								onClick={() => onColorChange(option.value)}
+								aria-label={`Use ${option.label} label color`}
+								aria-pressed={color === option.value}
+								title={option.label}
+							/>
+						))}
+					</div>
+					{iconPacks.map((pack) => (
+						<section key={pack.id}>
+							<label
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								{pack.label}
+							</label>
+							{pack.icons.length > 0 && (
+								<div className="grid grid-cols-8 gap-1">
+									{pack.icons.map((option) => {
+										const selected = icon === option.id;
+										return (
+											<button
+												key={option.id}
+												type="button"
+												className="p-1.5 rounded border hover:bg-white/5 transition-colors"
+												style={{
+													borderColor: selected ? theme.colors.accent : theme.colors.border,
+													backgroundColor: selected ? `${theme.colors.accent}1A` : 'transparent',
+													color: selected ? previewColor : theme.colors.textDim,
+												}}
+												onClick={() => {
+													onIconChange(option.id);
+													onEmojiChange('');
+												}}
+												aria-label={`Use ${option.label} icon`}
+												aria-pressed={selected}
+												title={option.label}
+											>
+												<SafeSvgIcon
+													className="w-4 h-4"
+													path={option.path}
+													viewBox={option.viewBox}
+												/>
+											</button>
+										);
+									})}
+								</div>
+							)}
+							{pack.colors.length > 0 && (
+								<div className="flex items-center gap-2 mt-2">
+									{pack.colors.map((option) => (
+										<button
+											key={option.id}
+											type="button"
+											className="w-5 h-5 rounded-full border-2 transition-colors"
+											style={{
+												backgroundColor: option.value,
+												borderColor: color === option.id ? theme.colors.textMain : 'transparent',
+											}}
+											onClick={() => onColorChange(option.id)}
+											aria-label={`Use ${option.label} label color`}
+											aria-pressed={color === option.id}
+											title={option.label}
+										/>
+									))}
+								</div>
+							)}
+						</section>
+					))}
+				</>
 			)}
 		</div>
 	);

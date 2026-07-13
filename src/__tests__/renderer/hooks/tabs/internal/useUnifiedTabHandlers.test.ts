@@ -10,6 +10,30 @@ import {
 	resetTabHandlerStores,
 	setupSession,
 } from './testUtils';
+import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
+import type { PanelLayoutNode, TabGroup, UnifiedTabRef } from '../../../../../renderer/types';
+
+/** Find the leaf id whose tab ref matches, so a test can focus a specific pane. */
+function leafIdForTab(group: TabGroup, ref: UnifiedTabRef): string {
+	let id: string | null = null;
+	const walk = (node: PanelLayoutNode): void => {
+		if (id) return;
+		if (node.kind === 'leaf') {
+			if (node.tab.type === ref.type && node.tab.id === ref.id) id = node.id;
+			return;
+		}
+		node.children.forEach(walk);
+	};
+	walk(group.layout);
+	if (!id) throw new Error(`No leaf for ${ref.type}:${ref.id}`);
+	return id;
+}
+
+/** Build a two-pane group and focus the pane holding `focusOn`. */
+function groupFocusedOn(members: UnifiedTabRef[], focusOn: UnifiedTabRef): TabGroup {
+	const group = createGroupFromTabRefs(members, 'Group');
+	return { ...group, focusedPaneId: leafIdForTab(group, focusOn) };
+}
 
 const inlineWizardMocks = vi.hoisted(() => ({
 	endWizard: vi.fn(async () => null),
@@ -131,6 +155,117 @@ describe('useUnifiedTabHandlers', () => {
 		expect(window.maestro.process.kill).toHaveBeenCalledWith('test-session-terminal-term-1');
 		await vi.waitFor(() => {
 			expect(inlineWizardMocks.endWizard).toHaveBeenCalledWith('wizard-1');
+		});
+	});
+
+	describe('Cmd+W with an active tiled group closes only the focused pane', () => {
+		it('targets the focused AI pane, not a lingering standalone activeTabId', () => {
+			const paneA = createMockAITab({ id: 'ai-A', inputValue: 'draft' });
+			const paneB = createMockAITab({ id: 'ai-B' });
+			const standalone = createMockAITab({ id: 'ai-standalone' });
+			const group = groupFocusedOn(
+				[
+					{ type: 'ai', id: 'ai-A' },
+					{ type: 'ai', id: 'ai-B' },
+				],
+				{ type: 'ai', id: 'ai-A' }
+			);
+			setupSession({
+				aiTabs: [paneA, paneB, standalone],
+				tabGroups: [group],
+				activeGroupId: group.id,
+				// A stale standalone selection that the old code path would have closed instead.
+				activeTabId: 'ai-standalone',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-standalone' },
+					{ type: 'group', id: group.id },
+				],
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			expect(result.current.handleCloseCurrentTab()).toEqual({
+				type: 'ai',
+				tabId: 'ai-A',
+				isWizardTab: false,
+				hasWizardUserInteraction: false,
+				hasDraft: true,
+			});
+		});
+
+		it('delegates a focused file pane to the file close handler', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const aiPane = createMockAITab({ id: 'ai-1' });
+			const group = groupFocusedOn(
+				[
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+				{ type: 'file', id: 'file-1' }
+			);
+			setupSession({
+				aiTabs: [aiPane],
+				filePreviewTabs: [fileTab],
+				tabGroups: [group],
+				activeGroupId: group.id,
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [{ type: 'group', id: group.id }],
+			});
+			const handleCloseFileTab = vi.fn();
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab }));
+
+			expect(result.current.handleCloseCurrentTab()).toEqual({ type: 'file', tabId: 'file-1' });
+			expect(handleCloseFileTab).toHaveBeenCalledWith('file-1');
+		});
+
+		it('closes a focused browser pane immediately and returns the browser result', () => {
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const aiPane = createMockAITab({ id: 'ai-1' });
+			const group = groupFocusedOn(
+				[
+					{ type: 'browser', id: 'browser-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+				{ type: 'browser', id: 'browser-1' }
+			);
+			setupSession({
+				aiTabs: [aiPane],
+				browserTabs: [browserTab],
+				tabGroups: [group],
+				activeGroupId: group.id,
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [{ type: 'group', id: group.id }],
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			expect(result.current.handleCloseCurrentTab()).toEqual({
+				type: 'browser',
+				tabId: 'browser-1',
+			});
+			expect(getSession().browserTabs).toEqual([]);
+		});
+
+		it('returns the terminal result for a focused terminal pane (keyboard handler kills the PTY)', () => {
+			const terminalTab = createMockTerminalTab({ id: 'term-1' });
+			const aiPane = createMockAITab({ id: 'ai-1' });
+			const group = groupFocusedOn(
+				[
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+				{ type: 'terminal', id: 'term-1' }
+			);
+			setupSession({
+				aiTabs: [aiPane],
+				terminalTabs: [terminalTab],
+				tabGroups: [group],
+				activeGroupId: group.id,
+				// Group is active in AI input mode; the standalone terminal-mode guard must not fire.
+				inputMode: 'ai',
+				unifiedTabOrder: [{ type: 'group', id: group.id }],
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			expect(result.current.handleCloseCurrentTab()).toEqual({ type: 'terminal', tabId: 'term-1' });
 		});
 	});
 

@@ -43,6 +43,8 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	/** Hide persisted-group mutation controls in a virtual grouping mode. */
+	showGroupActions?: boolean;
 	onConfigureCue?: () => void;
 	/**
 	 * Multi-window: every window this agent can move into, labeled by number
@@ -140,6 +142,7 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	showGroupActions = true,
 	onConfigureCue,
 	windowTargets,
 	onMoveToNewWindow,
@@ -280,7 +283,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{!session.parentSessionId && !session.isPianola && (
+			{showGroupActions && !session.parentSessionId && !session.isPianola && (
 				<div
 					ref={moveToGroup.containerRef}
 					className="relative"

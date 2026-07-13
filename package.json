@@ -27,7 +27,7 @@
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
 		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:permission-relay-bridge",
-		"build:main": "tsc -p tsconfig.main.json",
+		"build:main": "tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",

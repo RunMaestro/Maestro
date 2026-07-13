@@ -94,6 +94,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'coworking',
 			'opencodeServer',
 			'concerto',
+			'groupsPlus',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
@@ -115,6 +116,21 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			expect(ext.permissions).toEqual(backing.permissions);
 			expect(ext.backgroundServiceId).toBe(backing.backgroundServices[0]?.id);
 		}
+	});
+
+	it('projects Groups+ as a disabled-by-default plugin-backed UI extension', () => {
+		const groupsPlus = BUILTIN_FEATURES.find((def) => def.flag === 'groupsPlus');
+		expect(groupsPlus).toBeDefined();
+
+		expect(builtinExtension(groupsPlus!, flags())).toMatchObject({
+			key: 'builtin:groupsPlus',
+			state: 'not-installed',
+			name: 'Groups+',
+			category: 'ui',
+			pluginId: 'com.maestro.groups-plus',
+			settingsNamespace: 'groupsPlus',
+		});
+		expect(builtinExtension(groupsPlus!, flags({ groupsPlus: true })).state).toBe('enabled');
 	});
 
 	it('surfaces the plan-table identities on the details pane fields', () => {

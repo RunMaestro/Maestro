@@ -7,7 +7,7 @@ import {
 	selectSessionById,
 } from '../../../renderer/stores/sessionStore';
 import type { Session, Group, FilePreviewTab } from '../../../renderer/types';
-import { createMockSession } from '../../helpers/mockSession';
+import { createMockSession, resetStore } from '../../helpers';
 
 // ============================================================================
 // Test Helpers
@@ -43,29 +43,13 @@ function createMockGroup(overrides: Partial<Group> = {}): Group {
 	};
 }
 
-/**
- * Reset the Zustand store to initial state between tests.
- * Zustand stores are singletons, so state persists across tests unless explicitly reset.
- */
-function resetStore() {
-	useSessionStore.setState({
-		sessions: [],
-		groups: [],
-		activeSessionId: '',
-		sessionsLoaded: false,
-		initialLoadComplete: false,
-		removedWorktreePaths: new Set(),
-		cyclePosition: -1,
-	});
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('sessionStore', () => {
 	beforeEach(() => {
-		resetStore();
+		resetStore(useSessionStore);
 	});
 
 	// ========================================================================
@@ -263,6 +247,16 @@ describe('sessionStore', () => {
 			expect(useSessionStore.getState().groups[0].name).toBe('My Group');
 		});
 
+		it('sets a root group parent through the store action', () => {
+			useSessionStore
+				.getState()
+				.setGroups([createMockGroup({ id: 'parent' }), createMockGroup({ id: 'child' })]);
+
+			useSessionStore.getState().setGroupParent('child', 'parent');
+
+			expect(useSessionStore.getState().groups[1].parentGroupId).toBe('parent');
+		});
+
 		it('removes a group by ID', () => {
 			useSessionStore
 				.getState()
@@ -272,6 +266,22 @@ describe('sessionStore', () => {
 
 			expect(useSessionStore.getState().groups).toHaveLength(1);
 			expect(useSessionStore.getState().groups[0].id).toBe('g2');
+		});
+
+		it('promotes child groups when removing their parent', () => {
+			useSessionStore
+				.getState()
+				.setGroups([
+					createMockGroup({ id: 'parent' }),
+					createMockGroup({ id: 'child', parentGroupId: 'parent' }),
+				]);
+
+			useSessionStore.getState().removeGroup('parent');
+
+			const groups = useSessionStore.getState().groups;
+			expect(groups).toHaveLength(1);
+			expect(groups[0].id).toBe('child');
+			expect(groups[0].parentGroupId).toBeUndefined();
 		});
 
 		it('skips removeGroup if ID not found', () => {

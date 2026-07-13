@@ -345,6 +345,7 @@ describe('agent-capabilities', () => {
 				'usesCombinedContextWindow',
 				'supportsAppendSystemPrompt',
 				'supportsProjectMemory',
+				'supportsAdditionalDirectories',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

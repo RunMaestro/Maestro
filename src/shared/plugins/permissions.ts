@@ -31,6 +31,7 @@ export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'net:fetch' // HTTP(S) fetch to a host scope
+	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -56,12 +57,15 @@ export type PluginCapability =
 	| 'background:service' // register supervised background service work
 	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
 	| 'ui:panel' // show its own sandboxed interactive panels
+	| 'ui:hostView' // contribute and update host-rendered BlockView data
+	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
 	'net:fetch',
+	'net:connect',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -87,6 +91,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'background:service',
 	'ui:contribute',
 	'ui:panel',
+	'ui:hostView',
+	'ui:grouping',
 	'ui:render-unsafe',
 ];
 
@@ -104,6 +110,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
+	'net:connect': 'high',
 	'sessions:read': 'medium',
 	'history:read': 'medium',
 	'events:subscribe': 'medium',
@@ -122,6 +129,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'background:service': 'high',
 	'ui:contribute': 'medium',
 	'ui:panel': 'medium',
+	'ui:hostView': 'medium',
+	'ui:grouping': 'low',
 	'ui:render-unsafe': 'high',
 };
 
@@ -140,6 +149,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:write': 'path',
 	'fs:watch': 'path',
 	'net:fetch': 'host',
+	'net:connect': 'host',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -172,6 +182,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'transcripts:write': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 	'ui:contribute': 'none',
 	'ui:panel': 'none',
+	'ui:hostView': 'none',
+	'ui:grouping': 'none',
 	'ui:render-unsafe': 'none',
 };
 
@@ -468,6 +480,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create and modify files';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
+		case 'net:connect':
+			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
@@ -518,6 +532,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
 		case 'ui:panel':
 			return 'Show its own panels inside Maestro';
+		case 'ui:hostView':
+			return 'Show and update host-rendered BlockView data in Maestro';
+		case 'ui:grouping':
+			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}

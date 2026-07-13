@@ -8,3 +8,4 @@
 export { createMockAITab, createMockFileTab } from './mockTab';
 export { createMockSession } from './mockSession';
 export { installLocalStorageMock } from './mockLocalStorage';
+export { ALL_RENDERER_STORES, resetAllStores, resetStore, resetStores } from './resetStores';

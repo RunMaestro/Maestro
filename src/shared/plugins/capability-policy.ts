@@ -18,7 +18,11 @@
 import type { PluginCapability } from './permissions';
 
 /** Capabilities that can move data off the machine. */
-export const EGRESS_CAPABILITIES: readonly PluginCapability[] = ['net:fetch', 'process:spawn'];
+export const EGRESS_CAPABILITIES: readonly PluginCapability[] = [
+	'net:fetch',
+	'net:connect',
+	'process:spawn',
+];
 
 /** Minimal shape shared by PermissionRequest and PermissionGrant. */
 interface CapabilityHolder {

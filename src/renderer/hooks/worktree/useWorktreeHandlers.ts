@@ -257,17 +257,28 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 							continue;
 						}
 
-						// Check if session already exists (read latest state each iteration)
+						// Skip a path spawnWorktreeAgentAndDispatch is still building the
+						// owning child for (mirrors the chokidar + rescan paths).
+						if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
+
+						// Check if session already exists (read latest state each iteration).
+						// Both checks are scoped to THIS parent: with per-parent ownership a
+						// same-repo sibling can hold its own child at the same cwd/branch, so
+						// a global match would wrongly skip this parent and leave it without a
+						// child until a later rescan (no chokidar add fires for an existing
+						// directory). Mirrors the per-parent dedup in scanWorktreeConfigs.
 						const latestSessions = useSessionStore.getState().sessions;
 						const existingByBranch = latestSessions.find(
 							(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
 						);
 						if (existingByBranch) continue;
 
-						// Also check by path (normalize for comparison)
+						// Also check by path (normalize for comparison), scoped to this parent.
 						const normalizedSubdirPath = normalizePath(subdir.path);
 						const existingByPath = latestSessions.find(
-							(s) => normalizePath(s.cwd) === normalizedSubdirPath
+							(s) =>
+								s.parentSessionId === activeSession.id &&
+								normalizePath(s.cwd) === normalizedSubdirPath
 						);
 						if (existingByPath) continue;
 
@@ -686,6 +697,15 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				for (const subdir of gitSubdirs) {
 					if (isSkippableBranch(subdir.branch)) continue;
 
+					// Skip a path that spawnWorktreeAgentAndDispatch just created and is
+					// still building the owning child for (mirrors the chokidar listener's
+					// guard). Without this, a startup/visibility rescan that lands inside
+					// that window would fan the Maestro-launched worktree out under every
+					// same-repo parent, re-creating the wrong-parent attribution - and it
+					// matters most on SSH, where chokidar is unavailable and the rescan is
+					// the only discovery path.
+					if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
+
 					// Repo-identity check: if we know both the parent's repo root and the
 					// subdir's repo root, skip subdirs that don't match. If either is
 					// missing (parent isn't a git repo, or git couldn't resolve the
@@ -709,17 +729,28 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					// the same path because the (about-to-be-removed) session still
 					// matches by cwd in the store.
 					const stalePending = new Set([...staleSessionIds, ...reassignedSessionIds]);
+					// Per-parent dedup (mirrors the chokidar watcher path): only THIS
+					// parent's own child at this path/branch blocks a re-add. A same-repo
+					// sibling's child at the same cwd must NOT stop this parent from
+					// getting its own child, otherwise a restart/visibility rescan would
+					// collapse the per-parent fan-out the live watcher produces.
 					const existingSession = latestSessions.find((s) => {
 						if (stalePending.has(s.id)) return false;
-						const normalizedCwd = normalizePath(s.cwd);
+						if (s.parentSessionId !== parentSession.id) return false;
 						return (
-							normalizedCwd === normalizedSubdirPath ||
-							(s.parentSessionId === parentSession.id && s.worktreeBranch === subdir.branch)
+							sessionMatchesWorktreeRoot(s, normalizedSubdirPath) ||
+							s.worktreeBranch === subdir.branch
 						);
 					});
 					if (existingSession) continue;
 
-					if (newWorktreeSessions.some((s) => normalizePath(s.cwd) === normalizedSubdirPath)) {
+					if (
+						newWorktreeSessions.some(
+							(s) =>
+								s.parentSessionId === parentSession.id &&
+								normalizePath(s.cwd) === normalizedSubdirPath
+						)
+					) {
 						continue;
 					}
 
@@ -835,8 +866,19 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 		if (newWorktreeSessions.length > 0) {
 			useSessionStore.getState().setSessions((prev) => {
-				const currentPaths = new Set(prev.map((s) => normalizePath(s.cwd)));
-				const trulyNew = newWorktreeSessions.filter((s) => !currentPaths.has(normalizePath(s.cwd)));
+				// Per-parent existing-path set: a worktree already owned by parent A must
+				// not block parent B's own child at the same cwd (matches the per-parent
+				// discovery model). Key on parentSessionId|cwd so only a true same-parent
+				// duplicate is dropped, guarding against a race between the check above
+				// and this commit.
+				const existingKeys = new Set(
+					prev
+						.filter((s) => s.parentSessionId)
+						.map((s) => `${s.parentSessionId}|${normalizePath(s.cwd)}`)
+				);
+				const trulyNew = newWorktreeSessions.filter(
+					(s) => !existingKeys.has(`${s.parentSessionId}|${normalizePath(s.cwd)}`)
+				);
 				if (trulyNew.length === 0) return prev;
 				return [...prev, ...trulyNew];
 			});
@@ -919,14 +961,19 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			if (!parentSession) return;
 
 			const normalizedWorktreePath = normalizePath(worktree.path);
-			const existingSession = latestSessions.find((s) => {
-				const normalizedCwd = normalizePath(s.cwd);
-				return (
-					normalizedCwd === normalizedWorktreePath ||
-					(s.parentSessionId === sessionId && s.worktreeBranch === worktree.branch)
-				);
-			});
-			if (existingSession) return;
+			// Per-parent dedup: only skip if THIS watching agent already owns a child
+			// for this worktree. Each agent in the repo runs its own watcher over the
+			// shared basePath and fires its own discovery event, so scoping the dedup
+			// to the firing parent lets every agent in the cwd pick up the new worktree
+			// as its own child, instead of the first watcher to fire claiming it
+			// globally and the others silently dropping it.
+			const existingForParent = latestSessions.find(
+				(s) =>
+					s.parentSessionId === sessionId &&
+					(sessionMatchesWorktreeRoot(s, normalizedWorktreePath) ||
+						s.worktreeBranch === worktree.branch)
+			);
+			if (existingForParent) return;
 
 			const sshRemoteId = getSshRemoteId(parentSession);
 
@@ -983,7 +1030,17 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			});
 
 			useSessionStore.getState().setSessions((prev) => {
-				if (prev.some((s) => normalizePath(s.cwd) === normalizedWorktreePath)) return prev;
+				// Per-parent guard (mirrors the existingForParent check above): another
+				// agent may already own a child at this cwd, but THIS parent should
+				// still get its own. Only collapse if this same parent raced to add a
+				// duplicate between the check above and here.
+				if (
+					prev.some(
+						(s) =>
+							s.parentSessionId === sessionId && normalizePath(s.cwd) === normalizedWorktreePath
+					)
+				)
+					return prev;
 				return [...prev, worktreeSession];
 			});
 
