@@ -196,7 +196,7 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,

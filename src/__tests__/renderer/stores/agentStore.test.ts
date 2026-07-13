@@ -174,9 +174,11 @@ describe('agentStore', () => {
 
 			await expect(useAgentStore.getState().refreshAgents()).rejects.toThrow('IPC failed');
 
-			// State unchanged on failure
+			// Agent list unchanged on failure...
 			expect(useAgentStore.getState().availableAgents).toEqual([]);
-			expect(useAgentStore.getState().agentsDetected).toBe(false);
+			// ...but detection is marked done so the pickers fall out of "Loading agents..."
+			// instead of spinning forever.
+			expect(useAgentStore.getState().agentsDetected).toBe(true);
 		});
 
 		it('refreshAgents with empty result sets agentsDetected true', async () => {
