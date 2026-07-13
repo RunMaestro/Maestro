@@ -29,6 +29,8 @@ import type {
 	ClosedPanelBridge,
 	CanonicalClosedPanelBridge,
 	JsonValue,
+	PanelResourceRef,
+	PanelConsumedResource,
 	MaestroInteractivePanelOwnerApi,
 	WorkspaceCapability,
 	WorkspaceStatusSnapshot,
@@ -78,6 +80,8 @@ import type {
 import type {
 	ClosedPanelBridge as SrcClosedPanelBridge,
 	JsonValue as SrcJsonValue,
+	PanelResourceRef as SrcPanelResourceRef,
+	PanelConsumedResource as SrcPanelConsumedResource,
 	MaestroInteractivePanelOwnerApi as SrcMaestroInteractivePanelOwnerApi,
 } from '../../../../src/shared/plugins/interactive-panel';
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
@@ -95,6 +99,8 @@ expectTypeOf<CanonicalWorkspaceFoundation>().toEqualTypeOf<SrcCanonicalWorkspace
 expectTypeOf<ClosedPanelBridge>().toEqualTypeOf<SrcClosedPanelBridge>();
 expectTypeOf<CanonicalClosedPanelBridge>().toEqualTypeOf<SrcCanonicalClosedPanelBridge>();
 expectTypeOf<JsonValue>().toEqualTypeOf<SrcJsonValue>();
+expectTypeOf<PanelResourceRef>().toEqualTypeOf<SrcPanelResourceRef>();
+expectTypeOf<PanelConsumedResource>().toEqualTypeOf<SrcPanelConsumedResource>();
 expectTypeOf<WorkspaceCapability>().toEqualTypeOf<SrcWorkspaceCapability>();
 expectTypeOf<WorkspaceStatusSnapshot>().toEqualTypeOf<SrcWorkspaceStatusSnapshot>();
 expectTypeOf<MaestroWorkspaceApi>().toEqualTypeOf<SrcMaestroWorkspaceApi>();
@@ -102,9 +108,15 @@ expectTypeOf<WorkspaceRootCapability>().toEqualTypeOf<SrcWorkspaceRootCapability
 expectTypeOf<OmpSafeStartupOptions>().toEqualTypeOf<SrcOmpSafeStartupOptions>();
 expectTypeOf<InteractiveStopReason>().toEqualTypeOf<SrcInteractiveStopReason>();
 expectTypeOf<InteractiveRuntimeHandle>().toEqualTypeOf<SrcInteractiveRuntimeHandle>();
+expectTypeOf<InteractiveRuntimeHandle['hostTools']>().toEqualTypeOf<
+	SrcInteractiveRuntimeHandle['hostTools']
+>();
 expectTypeOf<RuntimeEvent>().toEqualTypeOf<SrcRuntimeEvent>();
 expectTypeOf<RuntimeMessage>().toEqualTypeOf<SrcRuntimeMessage>();
 expectTypeOf<MaestroInteractiveRuntimeApi>().toEqualTypeOf<SrcMaestroInteractiveRuntimeApi>();
+expectTypeOf<MaestroInteractiveRuntimeApi['startOmpRuntime']>().toEqualTypeOf<
+	SrcMaestroInteractiveRuntimeApi['startOmpRuntime']
+>();
 expectTypeOf<MaestroSdk['interactiveRuntime']>().toEqualTypeOf<
 	MaestroInteractiveRuntimeApi | undefined
 >();

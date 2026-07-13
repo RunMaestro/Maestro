@@ -787,8 +787,8 @@ export interface InteractiveRuntimeHandle {
 	onEvent(listener: (event: RuntimeEvent) => void): () => void;
 	onMessage(listener: (message: RuntimeMessage) => void): () => void;
 	stop(reason: InteractiveStopReason): Promise<void>;
-	/** Closed host bridge for OMP callbacks. Never exposes host paths or capabilities. */
-	readonly hostTools: OmpHostToolBridge;
+	/** Closed host bridge for OMP callbacks when the runtime supports them. */
+	readonly hostTools?: OmpHostToolBridge;
 }
 export interface MaestroInteractiveRuntimeApi {
 	/**
