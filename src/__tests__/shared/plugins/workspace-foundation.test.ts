@@ -149,6 +149,56 @@ describe('parseWorkspaceFoundation', () => {
 		expect(rawPermissions).toEqual(expectedPermissions);
 	});
 
+	it('bounds workspace and panel titles by Unicode scalar count', () => {
+		const rawContributes = createRawContributes();
+		rawContributes.workspaces[0]!.title = '🙂'.repeat(160);
+		rawContributes.interactivePanels[0]!.title = '🙂'.repeat(160);
+		expect(
+			parseWorkspaceFoundation(rawContributes, createRawPermissions(), ownerPluginId)
+		).toMatchObject({
+			ok: true,
+		});
+
+		rawContributes.workspaces[0]!.title = '🙂'.repeat(161);
+		expect(parseWorkspaceFoundation(rawContributes, createRawPermissions(), ownerPluginId)).toEqual(
+			{
+				ok: false,
+				errors: ['workspaces[0].title must contain at most 160 Unicode scalars'],
+			}
+		);
+	});
+
+	it('bounds interactive panel entries before path validation', () => {
+		const rawContributes = createRawContributes();
+		rawContributes.interactivePanels[0]!.entry = 'a'.repeat(1_024);
+		expect(
+			parseWorkspaceFoundation(rawContributes, createRawPermissions(), ownerPluginId)
+		).toMatchObject({
+			ok: true,
+		});
+
+		rawContributes.interactivePanels[0]!.entry = 'a'.repeat(1_025);
+		expect(parseWorkspaceFoundation(rawContributes, createRawPermissions(), ownerPluginId)).toEqual(
+			{
+				ok: false,
+				errors: ['interactivePanels[0].entry must not exceed 1024 UTF-8 bytes'],
+			}
+		);
+	});
+
+	it('bounds the permission array before inspecting individual permissions', () => {
+		expect(
+			parseWorkspaceFoundation(
+				createRawContributes(),
+				Array.from({ length: 33 }, () => ({ capability: 'ui:workspace' })),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['permissions must contain at most 32 items'],
+		});
+	});
+
 	it('freezes canonical workspace foundation records', () => {
 		const result = parseWorkspaceFoundation(
 			createRawContributes(),

@@ -679,6 +679,52 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 		);
 		expect(publishedSessions(harness, capability)).toEqual([]);
 	});
+
+	it('bounds stale tokens per workspace and globally without affecting current owner links', () => {
+		const ownerPluginIds = Array.from({ length: 5 }, (_, index) => `com.example.owner-${index}`);
+		const harness = createHarness();
+		const firstTokens = new Map<string, string>();
+		const currentTokens = new Map<string, string>();
+
+		for (const ownerPluginId of ownerPluginIds) {
+			harness.enabledOwners.add(ownerPluginId);
+			registerCurrent(harness, 1n, ownerPluginId);
+			const capability = acquireCurrent(harness, 1n, ownerPluginId);
+			for (let revision = 1; revision <= 3; revision += 1) {
+				harness.registry.publishExternalSessions(
+					capability,
+					revision,
+					Array.from({ length: 500 }, (_, index) =>
+						externalSession(`${ownerPluginId}-${revision}-${index}`)
+					)
+				);
+				const sessions = publishedSessions(harness, capability);
+				if (revision === 1) firstTokens.set(ownerPluginId, sessions[0]!.snapshotToken);
+				if (revision === 3) currentTokens.set(ownerPluginId, sessions[0]!.snapshotToken);
+			}
+		}
+
+		expect(
+			harness.registry.resolveWorkspaceLink(
+				sessionLink(firstTokens.get(ownerPluginIds[0]!)!, ownerPluginIds[0])
+			)
+		).toEqual({ kind: 'unknown_token' });
+		expect(
+			harness.registry.resolveWorkspaceLink(
+				sessionLink(firstTokens.get(ownerPluginIds[4]!)!, ownerPluginIds[4])
+			)
+		).toEqual({ kind: 'expired' });
+		expect(
+			harness.registry.resolveWorkspaceLink(
+				sessionLink(currentTokens.get(ownerPluginIds[0]!)!, ownerPluginIds[0])
+			)
+		).toMatchObject({ kind: 'resolved' });
+		expect(
+			harness.registry.resolveWorkspaceLink(
+				sessionLink(currentTokens.get(ownerPluginIds[4]!)!, ownerPluginIds[4])
+			)
+		).toMatchObject({ kind: 'resolved' });
+	});
 });
 
 describe('PluginWorkspaceRegistry selected context', () => {
@@ -704,6 +750,44 @@ describe('PluginWorkspaceRegistry selected context', () => {
 			ownerPluginId: OWNER_PLUGIN_ID,
 			workspaceLocalId: WORKSPACE_LOCAL_ID,
 		});
+	});
+
+	it('commits generation rotation before notifying reentrant listeners', () => {
+		const harness = createHarness();
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+		harness.registry.setSelectedContext(capability, snapshotToken);
+		harness.registry.onDidChangeContext((context) => {
+			if (context.kind === 'selection-cleared') {
+				harness.registry.unregister(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID);
+			}
+		});
+
+		harness.registry.register(parsedFoundation(), 2n);
+
+		expect(harness.registry.getWorkspace(OWNER_PLUGIN_ID, WORKSPACE_LOCAL_ID)).toBeNull();
+	});
+
+	it('continues context dispatch when an earlier listener throws', () => {
+		const harness = createHarness();
+		let laterListenerCalls = 0;
+		harness.registry.onDidChangeContext(() => {
+			throw new Error('listener failure');
+		});
+		harness.registry.onDidChangeContext(() => {
+			laterListenerCalls += 1;
+		});
+		registerCurrent(harness);
+		const capability = acquireCurrent(harness);
+		harness.registry.publishExternalSessions(capability, 1, [externalSession('session-1')]);
+		const snapshotToken = publishedSessions(harness, capability)[0]?.snapshotToken;
+		if (!snapshotToken) throw new Error('expected a snapshot token');
+
+		expect(() => harness.registry.setSelectedContext(capability, snapshotToken)).not.toThrow();
+		expect(laterListenerCalls).toBe(1);
 	});
 
 	it('clears a dropped selected snapshot once after committing a replacement revision', () => {

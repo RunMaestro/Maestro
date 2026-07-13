@@ -10,10 +10,14 @@ import {
 	type WorkspaceLinkResolution,
 	type WorkspaceLocalId,
 } from '../../shared/plugins/workspace-foundation';
+import { captureException } from '../utils/sentry';
 
 const SNAPSHOT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,86}$/;
 const MAX_EXTERNAL_SESSION_TITLE_SCALARS = 160;
 const MAX_TOKEN_ATTEMPTS = 5;
+export const MAX_STALE_TOKENS_PER_WORKSPACE = 1_000;
+export const MAX_STALE_TOKENS_GLOBAL = 4_096;
+
 const REQUIRED_GRANTS = ['ui:workspace', 'ui:interactivePanel'] as const;
 const EXTERNAL_SESSION_STATUSES = new Set<ExternalSessionStatus>([
 	'starting',
@@ -124,6 +128,9 @@ export class PluginWorkspaceRegistry {
 	private readonly capabilities = new WeakMap<object, CapabilityRecord>();
 	private readonly tokens = new Map<SnapshotToken, TokenRecord>();
 	private readonly contextListeners = new Set<(context: WorkspaceContextChange) => void>();
+	private readonly currentTokensByWorkspace = new Map<string, Set<SnapshotToken>>();
+	private readonly staleTokensByWorkspace = new Map<string, Map<SnapshotToken, true>>();
+	private readonly staleTokens = new Map<SnapshotToken, string>();
 
 	constructor(private readonly options: PluginWorkspaceRegistryOptions) {}
 
@@ -154,18 +161,20 @@ export class PluginWorkspaceRegistry {
 			return;
 		}
 
-		this.clearSelection(existing);
+		const hadSelection = existing.selectedSnapshotToken !== null;
 		this.revokeWorkspaceTokens(existing);
 		this.workspaces.set(key, createWorkspace(key, foundation, generation));
+		if (hadSelection) this.emitSelectionCleared(existing);
 	}
 
 	unregister(ownerPluginId: string, workspaceLocalId: string): void {
 		const workspace = this.workspaces.get(workspaceKey(ownerPluginId, workspaceLocalId));
 		if (!workspace) return;
 
-		this.clearSelection(workspace);
+		const hadSelection = workspace.selectedSnapshotToken !== null;
 		this.revokeWorkspaceTokens(workspace);
 		this.workspaces.delete(workspace.key);
+		if (hadSelection) this.emitSelectionCleared(workspace);
 	}
 
 	acquire(context: WorkspaceRegistryOwnerContext, workspaceLocalId: string): WorkspaceCapability {
@@ -211,10 +220,7 @@ export class PluginWorkspaceRegistry {
 
 		const nextSessions = this.mintPublishedSessions(workspace, validateSessions(snapshots));
 		for (const prior of workspace.sessions) {
-			const token = this.tokens.get(prior.snapshotToken);
-			if (token?.state === 'current') {
-				this.tokens.set(prior.snapshotToken, Object.freeze({ ...token, state: 'expired' }));
-			}
+			this.markTokenStale(prior.snapshotToken, 'expired');
 		}
 		for (const session of nextSessions) {
 			this.tokens.set(
@@ -228,6 +234,7 @@ export class PluginWorkspaceRegistry {
 					state: 'current',
 				})
 			);
+			this.addActiveToken(workspace.key, session.snapshotToken);
 		}
 		const selectionCleared =
 			workspace.selectedSnapshotToken !== null &&
@@ -241,15 +248,7 @@ export class PluginWorkspaceRegistry {
 				selectedSnapshotToken: selectionCleared ? null : workspace.selectedSnapshotToken,
 			})
 		);
-		if (selectionCleared) {
-			this.emitContext(
-				Object.freeze({
-					kind: 'selection-cleared',
-					ownerPluginId: workspace.ownerPluginId,
-					workspaceLocalId: workspace.workspaceLocalId,
-				})
-			);
-		}
+		if (selectionCleared) this.emitSelectionCleared(workspace);
 		return cloneSessions(nextSessions);
 	}
 
@@ -374,20 +373,71 @@ export class PluginWorkspaceRegistry {
 		throw new WorkspaceRegistryError('token_collision');
 	}
 
+	private addActiveToken(workspaceKey: string, snapshotToken: SnapshotToken): void {
+		let currentTokens = this.currentTokensByWorkspace.get(workspaceKey);
+		if (!currentTokens) {
+			currentTokens = new Set<SnapshotToken>();
+			this.currentTokensByWorkspace.set(workspaceKey, currentTokens);
+		}
+		currentTokens.add(snapshotToken);
+	}
+
+	private markTokenStale(snapshotToken: SnapshotToken, state: 'expired' | 'revoked'): void {
+		const tokenRecord = this.tokens.get(snapshotToken);
+		if (!tokenRecord) return;
+		this.tokens.set(snapshotToken, Object.freeze({ ...tokenRecord, state }));
+		this.currentTokensByWorkspace.get(tokenRecord.workspaceKey)?.delete(snapshotToken);
+
+		let workspaceStaleTokens = this.staleTokensByWorkspace.get(tokenRecord.workspaceKey);
+		if (!workspaceStaleTokens) {
+			workspaceStaleTokens = new Map<SnapshotToken, true>();
+			this.staleTokensByWorkspace.set(tokenRecord.workspaceKey, workspaceStaleTokens);
+		}
+		workspaceStaleTokens.delete(snapshotToken);
+		workspaceStaleTokens.set(snapshotToken, true);
+		this.staleTokens.delete(snapshotToken);
+		this.staleTokens.set(snapshotToken, tokenRecord.workspaceKey);
+		this.pruneStaleTokens(tokenRecord.workspaceKey);
+	}
+
 	private revokeWorkspaceTokens(workspace: InternalWorkspace): void {
-		for (const [snapshotToken, tokenRecord] of this.tokens) {
-			if (tokenRecord.workspaceKey === workspace.key) {
-				this.tokens.set(snapshotToken, Object.freeze({ ...tokenRecord, state: 'revoked' }));
+		const currentTokens = this.currentTokensByWorkspace.get(workspace.key);
+		if (currentTokens) {
+			for (const snapshotToken of [...currentTokens]) {
+				this.markTokenStale(snapshotToken, 'revoked');
+			}
+		}
+		const staleTokens = this.staleTokensByWorkspace.get(workspace.key);
+		if (staleTokens) {
+			for (const snapshotToken of [...staleTokens.keys()]) {
+				this.markTokenStale(snapshotToken, 'revoked');
 			}
 		}
 	}
 
-	private clearSelection(workspace: InternalWorkspace): void {
-		if (workspace.selectedSnapshotToken === null) return;
-		this.workspaces.set(
-			workspace.key,
-			Object.freeze({ ...workspace, selectedSnapshotToken: null })
-		);
+	private pruneStaleTokens(workspaceKey: string): void {
+		const workspaceStaleTokens = this.staleTokensByWorkspace.get(workspaceKey);
+		while (workspaceStaleTokens && workspaceStaleTokens.size > MAX_STALE_TOKENS_PER_WORKSPACE) {
+			const oldest = workspaceStaleTokens.keys().next().value;
+			if (oldest === undefined) break;
+			this.deleteStaleToken(oldest, workspaceKey);
+		}
+		while (this.staleTokens.size > MAX_STALE_TOKENS_GLOBAL) {
+			const oldest = this.staleTokens.entries().next().value;
+			if (!oldest) break;
+			this.deleteStaleToken(oldest[0], oldest[1]);
+		}
+	}
+
+	private deleteStaleToken(snapshotToken: SnapshotToken, workspaceKey: string): void {
+		this.tokens.delete(snapshotToken);
+		this.staleTokens.delete(snapshotToken);
+		const workspaceStaleTokens = this.staleTokensByWorkspace.get(workspaceKey);
+		workspaceStaleTokens?.delete(snapshotToken);
+		if (workspaceStaleTokens?.size === 0) this.staleTokensByWorkspace.delete(workspaceKey);
+	}
+
+	private emitSelectionCleared(workspace: InternalWorkspace): void {
 		this.emitContext(
 			Object.freeze({
 				kind: 'selection-cleared',
@@ -398,7 +448,16 @@ export class PluginWorkspaceRegistry {
 	}
 
 	private emitContext(context: WorkspaceContextChange): void {
-		for (const listener of this.contextListeners) listener(context);
+		const listeners = [...this.contextListeners];
+		for (const listener of listeners) {
+			try {
+				listener(context);
+			} catch (error) {
+				void captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { scope: 'PluginWorkspaceRegistry.emitContext' },
+				});
+			}
+		}
 	}
 
 	private resolveParsedLink(parsed: ParsedWorkspaceLink): WorkspaceLinkResolution {

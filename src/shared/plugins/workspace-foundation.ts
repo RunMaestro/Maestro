@@ -8,6 +8,9 @@ const WORKSPACE_ICONS = ['sparkles', 'bot', 'workflow'] as const;
 const REQUIRED_CAPABILITIES = ['ui:workspace', 'ui:interactivePanel'] as const;
 const SNAPSHOT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,86}$/;
 const MAX_WORKSPACE_LINK_BYTES = 512;
+export const MAX_WORKSPACE_TITLE_SCALARS = 160;
+export const MAX_INTERACTIVE_PANEL_ENTRY_UTF8_BYTES = 1_024;
+export const MAX_WORKSPACE_FOUNDATION_PERMISSIONS = 32;
 
 type WorkspaceIcon = (typeof WORKSPACE_ICONS)[number];
 type ErrorEntry = { readonly path: string; readonly message: string; readonly order: number };
@@ -352,6 +355,12 @@ function validateWorkspaces(
 		if (typeof title !== 'string') {
 			addError(`${path}.title`, `${path}.title must be a string`);
 			valid = false;
+		} else if (!hasAtMostUnicodeScalars(title, MAX_WORKSPACE_TITLE_SCALARS)) {
+			addError(
+				`${path}.title`,
+				`${path}.title must contain at most ${MAX_WORKSPACE_TITLE_SCALARS} Unicode scalars`
+			);
+			valid = false;
 		}
 		if (typeof icon !== 'string') {
 			addError(`${path}.icon`, `${path}.icon must be a string`);
@@ -433,9 +442,24 @@ function validatePanels(
 		if (typeof title !== 'string') {
 			addError(`${path}.title`, `${path}.title must be a string`);
 			valid = false;
+		} else if (!hasAtMostUnicodeScalars(title, MAX_WORKSPACE_TITLE_SCALARS)) {
+			addError(
+				`${path}.title`,
+				`${path}.title must contain at most ${MAX_WORKSPACE_TITLE_SCALARS} Unicode scalars`
+			);
+			valid = false;
 		}
 		if (typeof entry !== 'string') {
 			addError(`${path}.entry`, `${path}.entry must be a string`);
+			valid = false;
+		} else if (
+			utf8ByteLength(entry, MAX_INTERACTIVE_PANEL_ENTRY_UTF8_BYTES) >
+			MAX_INTERACTIVE_PANEL_ENTRY_UTF8_BYTES
+		) {
+			addError(
+				`${path}.entry`,
+				`${path}.entry must not exceed ${MAX_INTERACTIVE_PANEL_ENTRY_UTF8_BYTES} UTF-8 bytes`
+			);
 			valid = false;
 		} else if (!isSafeRelativeEntry(entry)) {
 			addError(`${path}.entry`, `${path}.entry must be a safe relative path`);
@@ -470,6 +494,13 @@ function validatePermissions(
 ): Set<string> | null {
 	if (!Array.isArray(rawPermissions)) {
 		addError('permissions', 'permissions must be an array');
+		return null;
+	}
+	if (rawPermissions.length > MAX_WORKSPACE_FOUNDATION_PERMISSIONS) {
+		addError(
+			'permissions',
+			`permissions must contain at most ${MAX_WORKSPACE_FOUNDATION_PERMISSIONS} items`
+		);
 		return null;
 	}
 
@@ -532,8 +563,24 @@ function isSafeRelativeEntry(entry: string): boolean {
 	) {
 		return false;
 	}
-	const segments = entry.split(/[\\/]+/);
-	return !segments.includes('..') && !segments.includes('.') && !segments.includes('');
+	let segmentStart = 0;
+	for (let index = 0; index <= entry.length; index += 1) {
+		const isSeparator =
+			index === entry.length || entry.charCodeAt(index) === 47 || entry.charCodeAt(index) === 92;
+		if (!isSeparator) continue;
+		const segmentLength = index - segmentStart;
+		if (
+			segmentLength === 0 ||
+			(segmentLength === 1 && entry.charCodeAt(segmentStart) === 46) ||
+			(segmentLength === 2 &&
+				entry.charCodeAt(segmentStart) === 46 &&
+				entry.charCodeAt(segmentStart + 1) === 46)
+		) {
+			return false;
+		}
+		segmentStart = index + 1;
+	}
+	return true;
 }
 
 function sortErrors(errors: ErrorEntry[]): readonly string[] {
@@ -553,7 +600,7 @@ function sortErrors(errors: ErrorEntry[]): readonly string[] {
 export function parseWorkspaceLink(url: string): ParsedWorkspaceLink | null {
 	if (
 		typeof url !== 'string' ||
-		utf8ByteLength(url) > MAX_WORKSPACE_LINK_BYTES ||
+		utf8ByteLength(url, MAX_WORKSPACE_LINK_BYTES) > MAX_WORKSPACE_LINK_BYTES ||
 		!url.startsWith('maestro://workspace/') ||
 		url.includes('%') ||
 		url.includes('?') ||
@@ -611,7 +658,7 @@ export function parseWorkspaceLink(url: string): ParsedWorkspaceLink | null {
 	}
 }
 
-function utf8ByteLength(value: string): number {
+function utf8ByteLength(value: string, limit = Number.POSITIVE_INFINITY): number {
 	let bytes = 0;
 	for (let index = 0; index < value.length; index += 1) {
 		const codeUnit = value.charCodeAt(index);
@@ -631,7 +678,29 @@ function utf8ByteLength(value: string): number {
 		} else {
 			bytes += 3;
 		}
-		if (bytes > MAX_WORKSPACE_LINK_BYTES) return bytes;
+		if (bytes > limit) return bytes;
 	}
 	return bytes;
+}
+
+function hasAtMostUnicodeScalars(value: string, maximum: number): boolean {
+	let scalars = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codeUnit = value.charCodeAt(index);
+		if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+			if (
+				index + 1 >= value.length ||
+				value.charCodeAt(index + 1) < 0xdc00 ||
+				value.charCodeAt(index + 1) > 0xdfff
+			) {
+				return false;
+			}
+			index += 1;
+		} else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+			return false;
+		}
+		scalars += 1;
+		if (scalars > maximum) return false;
+	}
+	return true;
 }
