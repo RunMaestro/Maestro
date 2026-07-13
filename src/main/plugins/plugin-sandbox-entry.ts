@@ -406,8 +406,14 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 								if (typeof listener !== 'function') return function () {};
 								var set = eventHandlers.get(eventTopic);
 								if (!set) { set = new Set(); eventHandlers.set(eventTopic, set); }
-								set.add(listener);
-								return function () { set.delete(listener); };
+								var wrapped = function (event) {
+									if (event && typeof event === 'object' && typeof event.sequence === 'string' && /^[0-9]+$/.test(event.sequence)) {
+										event = Object.freeze({ kind: event.kind, sequence: BigInt(event.sequence), code: event.code, class: event.class });
+									}
+									listener(event);
+								};
+								set.add(wrapped);
+								return function () { set.delete(wrapped); };
 							},
 							stop: function (reason) {
 								return hostCall('interactiveRuntime.stop', { runtimeId: runtimeId, reason: reason });
