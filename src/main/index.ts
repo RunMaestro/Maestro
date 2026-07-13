@@ -62,6 +62,7 @@ import {
 	type ProductionOmpBootstrapConfiguration,
 } from './plugins/production-omp-bootstrap';
 import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
+import { createProductionOmpRuntimeDependencies } from './omp-distribution/production-omp-runtime-dependencies';
 import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
 import { InteractiveRuntimeSandboxEventForwarder } from './plugins/interactive-runtime-sandbox-events';
 import type {
@@ -2304,6 +2305,31 @@ app
 		const packagedOmpConfiguration = (() => {
 			if (!app.isPackaged) return undefined;
 			const resource = loadProductionOmpResource(path.join(process.resourcesPath, 'omp'));
+			const runtimeDependencies = createProductionOmpRuntimeDependencies({
+				resource,
+				confirmBundledRuntime: async () => {
+					const result = mainWindow
+						? await dialog.showMessageBox(mainWindow, {
+								type: 'question',
+								buttons: ['Use bundled OMP runtime', 'Cancel'],
+								defaultId: 1,
+								cancelId: 1,
+								message: 'OMP 16.4.8 requires Maestro’s verified bundled runtime.',
+								detail:
+									'No network download will occur. Continue only if you approve this local runtime.',
+							})
+						: await dialog.showMessageBox({
+								type: 'question',
+								buttons: ['Use bundled OMP runtime', 'Cancel'],
+								defaultId: 1,
+								cancelId: 1,
+								message: 'OMP 16.4.8 requires Maestro’s verified bundled runtime.',
+								detail:
+									'No network download will occur. Continue only if you approve this local runtime.',
+							});
+					return result.response === 0;
+				},
+			});
 			return {
 				pluginsDir: path.join(app.getPath('userData'), 'plugins'),
 				archivePath: resource.archivePath,
@@ -2311,7 +2337,8 @@ app
 				trustRoot: resource.trustRoot,
 				verifySignature: resource.verifySignature,
 				pinnedRelease: resource.pinnedRelease,
-				runtimeResolverDependencies: {},
+				runtimeResolverDependencies: runtimeDependencies.runtimeResolverDependencies,
+				managedInstallOptIn: runtimeDependencies.managedInstallOptIn,
 			} satisfies ProductionOmpBootstrapConfiguration;
 		})();
 		const productionOmpConfiguration =

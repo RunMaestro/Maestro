@@ -68,21 +68,28 @@ function verifiedFetcher(overrides: Partial<ManagedPackageFetcher> = {}): Manage
 			packageJson: JSON.stringify({
 				name: '@oh-my-pi/pi-coding-agent',
 				version: '16.4.8',
-				bin: { pi: 'dist/cli.js' },
+				bin: { omp: 'dist/cli.js' },
 			}),
 			integrity: tarballIntegrity,
 			provenance: {
-				signatures: [
-					{
-						keyid: 'SHA256:trusted-publisher',
-						sig: 'valid-signature',
-						integrity: tarballIntegrity,
-					},
-				],
+				signatures: [{ keyid: 'SHA256:trusted-publisher', sig: 'valid-signature' }],
 				attestations: [
 					{
 						predicateType: 'https://slsa.dev/provenance/v1',
-						subject: [{ name: '@oh-my-pi/pi-coding-agent', digest: { sha512: digest } }],
+						bundle: {
+							dsseEnvelope: {
+								payload: Buffer.from(
+									JSON.stringify({
+										subject: [
+											{
+												name: 'pkg:npm/%40oh-my-pi/pi-coding-agent@16.4.8',
+												digest: { sha512: Buffer.from(digest, 'base64').toString('hex') },
+											},
+										],
+									})
+								).toString('base64'),
+							},
+						},
 					},
 				],
 			},
@@ -207,8 +214,9 @@ describe('ProductionOmpRuntimeResolver', () => {
 			})
 		);
 
-		await expect(resolver.resolveSystem()).resolves.toEqual({
-			executable: 'C:/Program Files/OMP/omp.exe',
+		await expect(resolver.resolveSystem()).resolves.toMatchObject({
+			executablePath: 'C:/Program Files/OMP/omp.exe',
+			prefixArgs: [],
 			provenance: 'verified',
 			version: '16.4.8',
 		});
@@ -338,20 +346,16 @@ describe('ProductionOmpRuntimeResolver', () => {
 		const resolver = createProductionOmpRuntimeResolver(
 			dependencies({ managedPackageFetcher: fetcher, runtimeFileSystem: fs })
 		);
-		await expect(
-			Promise.all([resolver.resolveManaged(), resolver.resolveManaged()])
-		).resolves.toEqual([
-			{
-				executable: 'C:/ProgramData/Maestro/omp-runtime/16.4.8/dist/cli.js',
+		const resolved = await Promise.all([resolver.resolveManaged(), resolver.resolveManaged()]);
+		expect(resolved).toHaveLength(2);
+		for (const launch of resolved) {
+			expect(launch).toMatchObject({
+				executablePath: 'C:/ProgramData/Maestro/omp-runtime/16.4.8/dist/cli.js',
+				prefixArgs: [],
 				provenance: 'verified',
 				version: '16.4.8',
-			},
-			{
-				executable: 'C:/ProgramData/Maestro/omp-runtime/16.4.8/dist/cli.js',
-				provenance: 'verified',
-				version: '16.4.8',
-			},
-		]);
+			});
+		}
 		expect(fetches).toBe(1);
 		expect(fs.files.has('C:/ProgramData/Maestro/omp-runtime/16.4.8/maestro-runtime.json')).toBe(
 			true

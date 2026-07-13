@@ -41,7 +41,10 @@ export function verifyManagedPackageSource(
 		integrity: metadata.integrity,
 	};
 	const managedPackage = verifyManagedPackage(packageInput);
-	const provenance = parseNpmProvenance(metadata.provenance, verifyNpmSignature);
+	const provenance = parseNpmProvenance(
+		{ ...metadata.provenance, integrity: metadata.integrity },
+		verifyNpmSignature
+	);
 	const expectedDigest = metadata.integrity.slice('sha512-'.length);
 	if (provenance.digest !== expectedDigest)
 		throw new Error('npm provenance does not match the verified tarball digest');

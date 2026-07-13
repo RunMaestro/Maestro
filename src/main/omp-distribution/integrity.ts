@@ -12,7 +12,6 @@ interface PackageManifest {
 interface NpmSignature {
 	keyid?: unknown;
 	sig?: unknown;
-	integrity?: unknown;
 }
 
 interface NpmSubject {
@@ -22,10 +21,15 @@ interface NpmSubject {
 
 interface NpmAttestation {
 	predicateType?: unknown;
-	subject?: unknown;
+	bundle?: {
+		dsseEnvelope?: {
+			payload?: unknown;
+		};
+	};
 }
 
 export interface NpmProvenanceDocument {
+	integrity?: unknown;
 	signatures?: unknown;
 	attestations?: unknown;
 }
@@ -79,6 +83,11 @@ export function parseNpmProvenance(
 	document: NpmProvenanceDocument,
 	verifySignature?: NpmSignatureVerifier
 ): VerifiedProvenance {
+	const integrity = document.integrity;
+	const integrityMatch =
+		typeof integrity === 'string' ? /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(integrity) : null;
+	if (!integrityMatch) throw new Error('invalid npm signature integrity evidence');
+	const digest = integrityMatch[1];
 	const signatures = Array.isArray(document.signatures) ? document.signatures : [];
 	const validSignature = signatures
 		.filter((entry): entry is NpmSignature => isRecord(entry))
@@ -87,20 +96,16 @@ export function parseNpmProvenance(
 				typeof entry.keyid === 'string' &&
 				entry.keyid.length > 0 &&
 				typeof entry.sig === 'string' &&
-				entry.sig.length > 0 &&
-				typeof entry.integrity === 'string'
+				entry.sig.length > 0
 		);
 	if (!validSignature) throw new Error('missing npm signature evidence');
 
-	const integrityMatch = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(validSignature.integrity as string);
-	if (!integrityMatch) throw new Error('invalid npm signature integrity evidence');
-	const digest = integrityMatch[1];
 	if (
 		verifySignature &&
 		!verifySignature(
 			validSignature.keyid as string,
 			validSignature.sig as string,
-			validSignature.integrity as string
+			integrity as string
 		)
 	) {
 		throw new Error('npm signature verification failed');
@@ -110,16 +115,12 @@ export function parseNpmProvenance(
 	const hasMatchingAttestation = attestations
 		.filter((entry): entry is NpmAttestation => isRecord(entry))
 		.some((attestation) => {
-			if (
-				attestation.predicateType !== 'https://slsa.dev/provenance/v1' ||
-				!Array.isArray(attestation.subject)
-			)
-				return false;
-			return attestation.subject.some((subject) => {
-				if (!isRecord(subject)) return false;
-				const typedSubject = subject as NpmSubject;
-				return typedSubject.name === MANAGED_OMP_PACKAGE && typedSubject.digest?.sha512 === digest;
-			});
+			if (attestation.predicateType !== 'https://slsa.dev/provenance/v1') return false;
+			const subject = parseDsseSubject(attestation.bundle?.dsseEnvelope?.payload);
+			return (
+				subject?.name === `pkg:npm/%40oh-my-pi/pi-coding-agent@${MANAGED_OMP_VERSION}` &&
+				subject.digest?.sha512 === Buffer.from(digest, 'base64').toString('hex')
+			);
 		});
 	if (!hasMatchingAttestation) throw new Error('missing matching npm attestation evidence');
 
@@ -139,11 +140,10 @@ function parsePackageManifest(packageJson: string): PackageManifest {
 function selectPackageExecutable(bin: unknown): string {
 	if (typeof bin === 'string') return validateExecutable(bin);
 	if (!isRecord(bin)) throw new Error('managed package has no executable');
-	const candidate = bin.pi;
-	if (typeof candidate !== 'string') throw new Error('managed package has no pi executable');
+	const candidate = bin.omp;
+	if (typeof candidate !== 'string') throw new Error('managed package has no omp executable');
 	return validateExecutable(candidate);
 }
-
 function validateExecutable(candidate: string): string {
 	if (
 		candidate.length === 0 ||
@@ -154,6 +154,24 @@ function validateExecutable(candidate: string): string {
 		throw new Error('unsafe package executable');
 	}
 	return candidate;
+}
+
+function parseDsseSubject(payload: unknown): NpmSubject | null {
+	if (typeof payload !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) return null;
+	try {
+		const decoded: unknown = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+		if (!isRecord(decoded) || !Array.isArray(decoded.subject) || decoded.subject.length !== 1)
+			return null;
+		const subject = decoded.subject[0];
+		if (!isRecord(subject) || typeof subject.name !== 'string' || !isRecord(subject.digest))
+			return null;
+		return {
+			name: subject.name,
+			digest: typeof subject.digest.sha512 === 'string' ? { sha512: subject.digest.sha512 } : {},
+		};
+	} catch {
+		return null;
+	}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

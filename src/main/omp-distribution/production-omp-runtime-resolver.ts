@@ -6,7 +6,7 @@ import { dirname, isAbsolute } from 'node:path';
 
 import type {
 	ManagedRuntimeResolver,
-	VerifiedRuntimeExecutable,
+	VerifiedRuntimeLaunch,
 } from '../plugins/plugin-managed-runtime-service';
 import {
 	MANAGED_OMP_PACKAGE,
@@ -96,6 +96,11 @@ export type RuntimeResolverDiagnostic =
 	| 'managed-package-rejected'
 	| 'managed-install-failed';
 
+/** Build-time bundled fallback resolver. It never downloads or extracts at runtime. */
+export interface BundledOmpRuntimeFallback {
+	readonly resolve: () => Promise<VerifiedRuntimeLaunch>;
+}
+
 export interface ProductionOmpRuntimeResolverDependencies {
 	/** Absence is valid but leaves every discovery/install path fail-closed. */
 	readonly pinnedRelease?: PinnedOmpRelease;
@@ -105,6 +110,7 @@ export interface ProductionOmpRuntimeResolverDependencies {
 	readonly pathInspector?: ManagedRuntimePathInspector;
 	readonly provenanceVerifier?: ProductionProvenanceVerifier;
 	readonly managedInstallOptIn: () => boolean;
+	readonly bundledRuntimeFallback?: BundledOmpRuntimeFallback;
 	readonly managedPackageFetcher?: ManagedPackageFetcher;
 	readonly runtimeFileSystem?: RuntimeFileSystem;
 	readonly managedRuntimeRoot?: string;
@@ -153,12 +159,12 @@ interface ResolverManagedTrust {
  * and independent provenance records; this module intentionally contains no PATH lookup or child process call.
  */
 export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
-	private managedResolution: Promise<VerifiedRuntimeExecutable> | undefined;
+	private managedResolution: Promise<VerifiedRuntimeLaunch> | undefined;
 	private lastDiagnostic: RuntimeResolverDiagnostic = 'none';
 
 	constructor(private readonly deps: ProductionOmpRuntimeResolverDependencies) {}
 
-	async resolveSystem(): Promise<VerifiedRuntimeExecutable | null> {
+	async resolveSystem(): Promise<VerifiedRuntimeLaunch | null> {
 		const release = this.deps.pinnedRelease;
 		const inspector = this.deps.pathInspector;
 		if (!release || !inspector || !isValidRelease(release)) {
@@ -203,6 +209,13 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 	}
 
 	managedInstallAllowed(): boolean {
+		if (this.deps.bundledRuntimeFallback) {
+			if (!safeOptIn(this.deps.managedInstallOptIn)) {
+				this.lastDiagnostic = 'managed-install-disabled';
+				return false;
+			}
+			return true;
+		}
 		const trust = this.managedTrust();
 		if (!trust || !safeOptIn(this.deps.managedInstallOptIn)) {
 			this.lastDiagnostic = trust ? 'managed-install-disabled' : 'missing-trust-inputs';
@@ -211,7 +224,15 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 		return true;
 	}
 
-	async resolveManaged(): Promise<VerifiedRuntimeExecutable> {
+	async resolveManaged(): Promise<VerifiedRuntimeLaunch> {
+		const bundled = this.deps.bundledRuntimeFallback;
+		if (bundled) {
+			if (!safeOptIn(this.deps.managedInstallOptIn)) {
+				this.lastDiagnostic = 'managed-install-disabled';
+				throw new Error('managed OMP runtime installation is disabled');
+			}
+			return bundled.resolve();
+		}
 		const trust = this.managedTrust();
 		if (!trust) {
 			this.lastDiagnostic = 'missing-trust-inputs';
@@ -242,14 +263,14 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 		enrollment: ConfiguredOmpEnrollment,
 		verifier: ConfiguredOmpEnrollmentVerifier,
 		inspector: ManagedRuntimePathInspector
-	): Promise<VerifiedRuntimeExecutable | null> {
+	): Promise<VerifiedRuntimeLaunch | null> {
 		try {
 			if (!(await verifier.verify(enrollment))) return null;
 			const canonicalPath = await inspector.canonicalize(enrollment.canonicalPath);
 			if (canonicalPath !== enrollment.canonicalPath) return null;
 			if (!(await isAuthenticatedFile(canonicalPath, enrollment.fingerprintSha512, inspector)))
 				return null;
-			return verifiedRuntime(canonicalPath);
+			return verifiedRuntime(canonicalPath, enrollment.fingerprintSha512, inspector);
 		} catch {
 			return null;
 		}
@@ -260,7 +281,7 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 		release: PinnedOmpSystemRelease,
 		inspector: ManagedRuntimePathInspector,
 		verifier: ProductionProvenanceVerifier
-	): Promise<VerifiedRuntimeExecutable | null> {
+	): Promise<VerifiedRuntimeLaunch | null> {
 		try {
 			if (!isSystemCandidate(candidate) || candidate.version !== MANAGED_OMP_VERSION) return null;
 			if (candidate.publisher !== release.publisher) return null;
@@ -269,7 +290,7 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 			if (!(await isAuthenticatedFile(canonicalPath, release.fingerprintSha512, inspector)))
 				return null;
 			if (!(await verifier.verifySystemPublisherProof(candidate, release))) return null;
-			return verifiedRuntime(canonicalPath);
+			return verifiedRuntime(canonicalPath, release.fingerprintSha512, inspector);
 		} catch {
 			return null;
 		}
@@ -291,9 +312,7 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 		};
 	}
 
-	private async resolveManagedOnce(
-		trust: ResolverManagedTrust
-	): Promise<VerifiedRuntimeExecutable> {
+	private async resolveManagedOnce(trust: ResolverManagedTrust): Promise<VerifiedRuntimeLaunch> {
 		try {
 			let provenanceDocument: NpmProvenanceDocument | undefined;
 			const source = await fetchVerifiedManagedPackage({
@@ -322,7 +341,11 @@ export class ProductionOmpRuntimeResolver implements ManagedRuntimeResolver {
 				notices: source.notices,
 			});
 			this.lastDiagnostic = 'none';
-			return verifiedRuntime(installed.executable);
+			return verifiedRuntime(
+				installed.executable,
+				source.provenance.digest,
+				nodeManagedRuntimePathInspector
+			);
 		} catch (error) {
 			if (this.lastDiagnostic === 'none') this.lastDiagnostic = 'managed-install-failed';
 			throw error;
@@ -519,8 +542,29 @@ function isSystemCandidate(candidate: SystemRuntimeCandidate): boolean {
 	);
 }
 
-function verifiedRuntime(executable: string): VerifiedRuntimeExecutable {
-	return Object.freeze({ executable, provenance: 'verified', version: MANAGED_OMP_VERSION });
+function verifiedRuntime(
+	executablePath: string,
+	identity: string,
+	inspector: ManagedRuntimePathInspector
+): VerifiedRuntimeLaunch {
+	const revalidateForLaunch = async (): Promise<VerifiedRuntimeLaunch> => {
+		const canonicalPath = await inspector.canonicalize(executablePath);
+		if (
+			canonicalPath !== executablePath ||
+			!(await isAuthenticatedFile(canonicalPath, identity, inspector))
+		) {
+			throw new Error('OMP runtime bytes changed after authentication');
+		}
+		return verifiedRuntime(executablePath, identity, inspector);
+	};
+	return Object.freeze({
+		executablePath,
+		prefixArgs: Object.freeze([]),
+		fileIdentities: Object.freeze([Object.freeze({ canonicalPath: executablePath, identity })]),
+		revalidateForLaunch,
+		provenance: 'verified',
+		version: MANAGED_OMP_VERSION,
+	});
 }
 
 function safeOptIn(readOptIn: () => boolean): boolean {

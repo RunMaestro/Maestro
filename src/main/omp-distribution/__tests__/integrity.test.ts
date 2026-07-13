@@ -12,7 +12,7 @@ import { MANAGED_OMP_NOTICE_INPUT } from '../notice-inputs';
 const packageJson = JSON.stringify({
 	name: MANAGED_OMP_PACKAGE,
 	version: MANAGED_OMP_VERSION,
-	bin: { pi: 'dist/cli.js' },
+	bin: { omp: 'dist/cli.js' },
 });
 
 const integrityFor = (value: string): string =>
@@ -43,17 +43,29 @@ describe('managed OMP package verification', () => {
 		);
 	});
 
-	it('requires signature and attestation provenance for the pinned package digest', () => {
+	it('accepts the real npm 16.4.8 signature and DSSE provenance shape', () => {
 		const digest = createHash('sha512').update('fixture').digest('base64');
 		const provenance = parseNpmProvenance(
 			{
-				signatures: [
-					{ keyid: 'SHA256:publisher-key', sig: 'signature', integrity: `sha512-${digest}` },
-				],
+				integrity: `sha512-${digest}`,
+				signatures: [{ keyid: 'SHA256:publisher-key', sig: 'signature' }],
 				attestations: [
 					{
 						predicateType: 'https://slsa.dev/provenance/v1',
-						subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: digest } }],
+						bundle: {
+							dsseEnvelope: {
+								payload: Buffer.from(
+									JSON.stringify({
+										subject: [
+											{
+												name: 'pkg:npm/%40oh-my-pi/pi-coding-agent@16.4.8',
+												digest: { sha512: Buffer.from(digest, 'base64').toString('hex') },
+											},
+										],
+									})
+								).toString('base64'),
+							},
+						},
 					},
 				],
 			},
@@ -65,12 +77,13 @@ describe('managed OMP package verification', () => {
 
 	it('fails closed on missing or mismatched provenance', () => {
 		expect(() => parseNpmProvenance({ signatures: [], attestations: [] })).toThrow(
-			'missing npm signature evidence'
+			'invalid npm signature integrity evidence'
 		);
 		expect(() =>
 			parseNpmProvenance(
 				{
-					signatures: [{ keyid: 'key', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
+					integrity: 'sha512-ZmFrZQ==',
+					signatures: [{ keyid: 'key', sig: 'signature' }],
 					attestations: [{ predicateType: 'https://slsa.dev/provenance/v1', subject: [] }],
 				},
 				() => true
@@ -79,7 +92,8 @@ describe('managed OMP package verification', () => {
 		expect(() =>
 			parseNpmProvenance(
 				{
-					signatures: [{ keyid: 'key', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
+					integrity: 'sha512-ZmFrZQ==',
+					signatures: [{ keyid: 'key', sig: 'signature' }],
 					attestations: [
 						{
 							predicateType: 'https://slsa.dev/provenance/v1',

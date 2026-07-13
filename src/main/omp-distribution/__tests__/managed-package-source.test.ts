@@ -36,22 +36,41 @@ function packageTarball(): Buffer {
 
 const tarball = packageTarball();
 const digest = createHash('sha512').update(tarball).digest('base64');
+
+function realProvenance(integrityDigest: string) {
+	return {
+		signatures: [{ keyid: 'publisher', sig: 'signature' }],
+		attestations: [
+			{
+				predicateType: 'https://slsa.dev/provenance/v1',
+				bundle: {
+					dsseEnvelope: {
+						payload: Buffer.from(
+							JSON.stringify({
+								subject: [
+									{
+										name: 'pkg:npm/%40oh-my-pi/pi-coding-agent@16.4.8',
+										digest: {
+											sha512: Buffer.from(integrityDigest, 'base64').toString('hex'),
+										},
+									},
+								],
+							})
+						).toString('base64'),
+					},
+				},
+			},
+		],
+	};
+}
 const metadata = {
 	packageJson: JSON.stringify({
 		name: MANAGED_OMP_PACKAGE,
 		version: MANAGED_OMP_VERSION,
-		bin: { pi: 'dist/cli.js' },
+		bin: { omp: 'dist/cli.js' },
 	}),
 	integrity: `sha512-${digest}`,
-	provenance: {
-		signatures: [{ keyid: 'publisher', sig: 'signature', integrity: `sha512-${digest}` }],
-		attestations: [
-			{
-				predicateType: 'https://slsa.dev/provenance/v1',
-				subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: digest } }],
-			},
-		],
-	},
+	provenance: realProvenance(digest),
 };
 const verifyFixtureSignature = (keyId: string, signature: string): boolean =>
 	keyId === 'publisher' && signature === 'signature';
@@ -80,20 +99,12 @@ describe('managed package source', () => {
 			verifyManagedPackageSource(
 				{
 					...metadata,
-					provenance: {
-						signatures: [{ keyid: 'publisher', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
-						attestations: [
-							{
-								predicateType: 'https://slsa.dev/provenance/v1',
-								subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: 'ZmFrZQ==' } }],
-							},
-						],
-					},
+					provenance: realProvenance('ZmFrZQ=='),
 				},
 				tarball,
 				verifyFixtureSignature
 			)
-		).toThrow('provenance does not match');
+		).toThrow('missing matching npm attestation evidence');
 		expect(() =>
 			verifyManagedPackageSource(
 				metadata,
