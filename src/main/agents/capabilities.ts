@@ -455,6 +455,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified
 		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
 		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
 	},
 };
 
