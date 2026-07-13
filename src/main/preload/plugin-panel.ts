@@ -1,19 +1,12 @@
-/**
- * Broker-only preload for plugin panel guests.
- *
- * The legacy one-way `maestro:invokeCommand` bridge remains unchanged. The
- * additional interactive path is deliberately closed: it accepts one tool
- * invocation method and one host event topic, is bound to a host-issued panel
- * instance, and is relayed only through fixed `sendToHost` channels. No
- * Electron object, Node API, generic IPC channel, or host capability reaches
- * the panel's main world.
- */
+import { contextBridge, ipcRenderer } from 'electron';
 
-import { ipcRenderer } from 'electron';
+declare const window: {
+	addEventListener(type: 'unload', listener: () => void): void;
+};
 
-const LEGACY_BRIDGE_CHANNEL = 'maestro:invokeCommand';
 const REQUEST_CHANNEL = 'maestro:panel-request';
 const SUBSCRIBE_CHANNEL = 'maestro:panel-subscribe';
+const UNSUBSCRIBE_CHANNEL = 'maestro:panel-unsubscribe';
 const UNSUBSCRIBE_ALL_CHANNEL = 'maestro:panel-unsubscribe-all';
 const INIT_CHANNEL = 'maestro:panel-init';
 const RESULT_CHANNEL = 'maestro:panel-result';
@@ -22,48 +15,21 @@ const EVENT_CHANNEL = 'maestro:panel-event';
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_PENDING_REQUESTS = 32;
 const MAX_REQUESTS_PER_SECOND = 120;
-const ALLOWED_EVENT_TOPICS = new Set(['workspace.context']);
-
-interface PanelMessageEvent {
-	source: unknown;
-	data: unknown;
-}
-
-interface PanelWindow {
-	addEventListener(type: string, listener: (event: PanelMessageEvent) => void): void;
-	postMessage(message: unknown, targetOrigin: string): void;
-}
-
-declare const window: PanelWindow;
 
 let instanceId: string | null = null;
-let requestWindowStart = 0;
-let requestWindowCount = 0;
-const pendingRequestIds = new Set<number>();
-const subscribedTopics = new Set<string>();
+let nextRequestId = 1;
+let windowStartedAt = 0;
+let windowCount = 0;
+const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+const subscriptions = new Map<string, Set<(payload: unknown) => void>>();
 
-function isOwnObject(data: unknown): data is Record<string, unknown> {
-	return typeof data === 'object' && data !== null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function hasBoundedJson(value: unknown): boolean {
 	try {
-		const json = JSON.stringify(value);
-		let bytes = 0;
-		for (let index = 0; index < json.length; index += 1) {
-			const code = json.charCodeAt(index);
-			if (code < 0x80) bytes += 1;
-			else if (code < 0x800) bytes += 2;
-			else if (code >= 0xd800 && code <= 0xdbff && index + 1 < json.length) {
-				const next = json.charCodeAt(index + 1);
-				if (next >= 0xdc00 && next <= 0xdfff) {
-					bytes += 4;
-					index += 1;
-				} else bytes += 3;
-			} else bytes += 3;
-			if (bytes > MAX_PAYLOAD_BYTES) return false;
-		}
-		return true;
+		return new TextEncoder().encode(JSON.stringify(value)).byteLength <= MAX_PAYLOAD_BYTES;
 	} catch {
 		return false;
 	}
@@ -74,153 +40,132 @@ function isCurrentInstance(value: unknown): value is string {
 }
 
 function resetInstance(nextInstanceId: string): void {
+	for (const entry of pending.values()) entry.reject(new Error('panel instance replaced'));
+	pending.clear();
+	subscriptions.clear();
 	instanceId = nextInstanceId;
-	requestWindowStart = 0;
-	requestWindowCount = 0;
-	pendingRequestIds.clear();
-	subscribedTopics.clear();
+	nextRequestId = 1;
+	windowStartedAt = 0;
+	windowCount = 0;
 }
 
-function postIntoPanel(payload: Record<string, unknown>): void {
-	window.postMessage(payload, '*');
-}
-
-window.addEventListener('message', (event) => {
-	if (event.source !== window || !isOwnObject(event.data)) return;
-	const message = event.data;
-
-	// Legacy panels keep exactly their one-way bridge contract.
-	if (message.type === 'maestro:invokeCommand' && typeof message.commandId === 'string') {
-		ipcRenderer.sendToHost(LEGACY_BRIDGE_CHANNEL, {
-			commandId: message.commandId,
-			args: message.args,
-		});
-		return;
-	}
-
-	if (message.type === 'maestro:panel-request') {
-		const requestId = message.requestId;
-		const payload = message.payload;
+const maestroInteractivePanel = Object.freeze({
+	request(kind: string, payload: unknown): Promise<unknown> {
 		if (
-			!isCurrentInstance(message.instanceId) ||
-			!Number.isSafeInteger(requestId) ||
-			(requestId as number) < 1 ||
-			message.method !== 'tool.invoke' ||
-			!isOwnObject(payload) ||
-			typeof payload.localId !== 'string' ||
-			payload.localId.length === 0 ||
-			payload.localId.length > 64 ||
-			!hasBoundedJson(payload) ||
-			pendingRequestIds.has(requestId as number) ||
-			pendingRequestIds.size >= MAX_PENDING_REQUESTS
+			instanceId === null ||
+			typeof kind !== 'string' ||
+			kind.length === 0 ||
+			!hasBoundedJson(payload)
 		) {
-			return;
+			return Promise.reject(new Error('interactive panel capability unavailable'));
 		}
+		if (pending.size >= MAX_PENDING_REQUESTS)
+			return Promise.reject(new Error('interactive panel backpressure'));
 		const now = Date.now();
-		if (now - requestWindowStart >= 1000) {
-			requestWindowStart = now;
-			requestWindowCount = 0;
+		if (now - windowStartedAt >= 1_000) {
+			windowStartedAt = now;
+			windowCount = 0;
 		}
-		if (requestWindowCount >= MAX_REQUESTS_PER_SECOND) return;
-		requestWindowCount += 1;
-		pendingRequestIds.add(requestId as number);
-		ipcRenderer.sendToHost(REQUEST_CHANNEL, {
-			instanceId,
-			requestId,
-			method: 'tool.invoke',
-			payload,
+		if (windowCount >= MAX_REQUESTS_PER_SECOND)
+			return Promise.reject(new Error('interactive panel backpressure'));
+		windowCount += 1;
+		const requestId = nextRequestId++;
+		return new Promise<unknown>((resolve, reject) => {
+			pending.set(requestId, { resolve, reject });
+			ipcRenderer.sendToHost(REQUEST_CHANNEL, { instanceId, requestId, kind, payload });
 		});
-		return;
-	}
+	},
 
-	if (message.type === 'maestro:panel-subscribe' || message.type === 'maestro:panel-unsubscribe') {
-		if (!isCurrentInstance(message.instanceId) || typeof message.topic !== 'string') return;
-		if (!ALLOWED_EVENT_TOPICS.has(message.topic)) return;
-		if (message.type === 'maestro:panel-subscribe') {
-			subscribedTopics.add(message.topic);
-			ipcRenderer.sendToHost(SUBSCRIBE_CHANNEL, { instanceId, topic: message.topic });
-		} else {
-			subscribedTopics.delete(message.topic);
-			ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId, topic: message.topic });
+	subscribe(kind: string, listener: (payload: unknown) => void): () => void {
+		if (
+			instanceId === null ||
+			typeof kind !== 'string' ||
+			kind.length === 0 ||
+			typeof listener !== 'function'
+		) {
+			return () => undefined;
+		}
+		let listeners = subscriptions.get(kind);
+		const first = listeners === undefined;
+		if (!listeners) {
+			listeners = new Set();
+			subscriptions.set(kind, listeners);
+		}
+		listeners.add(listener);
+		if (first) ipcRenderer.sendToHost(SUBSCRIBE_CHANNEL, { instanceId, kind });
+		return () => {
+			const current = subscriptions.get(kind);
+			if (!current || !current.delete(listener) || current.size > 0) return;
+			subscriptions.delete(kind);
+			if (instanceId !== null) ipcRenderer.sendToHost(UNSUBSCRIBE_CHANNEL, { instanceId, kind });
+		};
+	},
+});
+
+contextBridge.exposeInMainWorld('maestroInteractivePanel', maestroInteractivePanel);
+
+ipcRenderer.on(INIT_CHANNEL, (_event, payload: unknown) => {
+	if (
+		!isRecord(payload) ||
+		typeof payload.instanceId !== 'string' ||
+		payload.instanceId.length < 16 ||
+		payload.instanceId.length > 128 ||
+		(typeof payload.generation !== 'bigint' &&
+			(typeof payload.generation !== 'number' || !Number.isSafeInteger(payload.generation)))
+	)
+		return;
+	resetInstance(payload.instanceId);
+});
+
+ipcRenderer.on(RESULT_CHANNEL, (_event, payload: unknown) => {
+	if (
+		!isRecord(payload) ||
+		!isCurrentInstance(payload.instanceId) ||
+		!Number.isSafeInteger(payload.requestId)
+	)
+		return;
+	const entry = pending.get(payload.requestId as number);
+	if (!entry || !hasBoundedJson(payload.payload)) return;
+	pending.delete(payload.requestId as number);
+	entry.resolve(payload.payload);
+});
+
+ipcRenderer.on(ERROR_CHANNEL, (_event, payload: unknown) => {
+	if (
+		!isRecord(payload) ||
+		!isCurrentInstance(payload.instanceId) ||
+		!Number.isSafeInteger(payload.requestId)
+	)
+		return;
+	const entry = pending.get(payload.requestId as number);
+	if (!entry || typeof payload.code !== 'string' || payload.code.length > 128) return;
+	pending.delete(payload.requestId as number);
+	entry.reject(new Error(payload.code));
+});
+
+ipcRenderer.on(EVENT_CHANNEL, (_event, payload: unknown) => {
+	if (
+		!isRecord(payload) ||
+		!isCurrentInstance(payload.instanceId) ||
+		typeof payload.kind !== 'string' ||
+		!hasBoundedJson(payload.payload)
+	)
+		return;
+	const listeners = subscriptions.get(payload.kind);
+	if (!listeners) return;
+	for (const listener of [...listeners]) {
+		try {
+			listener(payload.payload);
+		} catch {
+			// A guest listener cannot compromise host transport delivery.
 		}
 	}
 });
 
 window.addEventListener('unload', () => {
-	if (instanceId !== null && subscribedTopics.size > 0) {
-		ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId });
-	}
-	pendingRequestIds.clear();
-	subscribedTopics.clear();
+	if (instanceId !== null) ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId });
+	for (const entry of pending.values()) entry.reject(new Error('panel unloaded'));
+	pending.clear();
+	subscriptions.clear();
 	instanceId = null;
 });
-
-// Tests intentionally mock only the legacy sendToHost surface; the guard also
-// makes the preload inert in non-Electron analysis environments.
-if (typeof ipcRenderer.on === 'function') {
-	ipcRenderer.on(INIT_CHANNEL, (_event, payload: unknown) => {
-		if (!isOwnObject(payload)) return;
-		if (
-			typeof payload.instanceId !== 'string' ||
-			payload.instanceId.length < 16 ||
-			payload.instanceId.length > 128 ||
-			!Number.isSafeInteger(payload.generation) ||
-			(payload.generation as number) < 0
-		) {
-			return;
-		}
-		resetInstance(payload.instanceId);
-		postIntoPanel({
-			type: 'maestro:panel-init',
-			instanceId: payload.instanceId,
-			generation: payload.generation,
-		});
-	});
-
-	ipcRenderer.on(RESULT_CHANNEL, (_event, payload: unknown) => {
-		if (!isOwnObject(payload) || !isCurrentInstance(payload.instanceId)) return;
-		if (
-			!Number.isSafeInteger(payload.requestId) ||
-			!pendingRequestIds.delete(payload.requestId as number)
-		) {
-			return;
-		}
-		if (!hasBoundedJson(payload.result)) return;
-		postIntoPanel({
-			type: 'maestro:panel-result',
-			instanceId,
-			requestId: payload.requestId,
-			result: payload.result,
-		});
-	});
-
-	ipcRenderer.on(ERROR_CHANNEL, (_event, payload: unknown) => {
-		if (!isOwnObject(payload) || !isCurrentInstance(payload.instanceId)) return;
-		if (
-			!Number.isSafeInteger(payload.requestId) ||
-			!pendingRequestIds.delete(payload.requestId as number) ||
-			typeof payload.error !== 'string' ||
-			payload.error.length > 1024
-		) {
-			return;
-		}
-		postIntoPanel({
-			type: 'maestro:panel-error',
-			instanceId,
-			requestId: payload.requestId,
-			error: payload.error,
-		});
-	});
-
-	ipcRenderer.on(EVENT_CHANNEL, (_event, payload: unknown) => {
-		if (!isOwnObject(payload) || !isCurrentInstance(payload.instanceId)) return;
-		if (typeof payload.topic !== 'string' || !subscribedTopics.has(payload.topic)) return;
-		if (!hasBoundedJson(payload.payload)) return;
-		postIntoPanel({
-			type: 'maestro:panel-event',
-			instanceId,
-			topic: payload.topic,
-			payload: payload.payload,
-		});
-	});
-}

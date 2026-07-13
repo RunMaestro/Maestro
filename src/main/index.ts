@@ -7,7 +7,9 @@ import {
 	safeStorage,
 	shell,
 	ipcMain,
+	dialog,
 	type OpenExternalOptions,
+	type OpenDialogOptions,
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
@@ -47,6 +49,15 @@ import {
 	PluginWorkspaceManagerLifecycle,
 	PluginWorkspaceRuntime,
 } from './plugins/plugin-workspace-runtime';
+import {
+	PluginManagedRuntimeService,
+	NativeWorkspaceRootService,
+	type ManagedRuntimeResolver,
+} from './plugins/plugin-managed-runtime-service';
+import type {
+	InteractiveRuntimeHandle,
+	WorkspaceRootCapability,
+} from '../shared/plugins/interactive-runtime';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
@@ -507,6 +518,21 @@ let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
+
+/** Production startup may inject a resolver only after its provenance/trust
+ * material has been verified. Absent resolver means no interactive runtime
+ * surface is exposed (fail closed). */
+export interface PluginRuntimeStartupDependencies {
+	readonly managedRuntimeResolver?: ManagedRuntimeResolver;
+}
+
+let pluginRuntimeStartupDependencies: PluginRuntimeStartupDependencies = {};
+
+export function configurePluginRuntimeStartupDependencies(
+	dependencies: PluginRuntimeStartupDependencies
+): void {
+	pluginRuntimeStartupDependencies = Object.freeze({ ...dependencies });
+}
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2202,6 +2228,120 @@ app
 		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
 		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
 		pluginWorkspaceLifecycle = workspaceLifecycle;
+
+		const workspaceRoots = new NativeWorkspaceRootService({
+			activation: () => {
+				const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
+				if (!registration) return null;
+				return {
+					ownerPluginId: registration.context.ownerPluginId,
+					generation: registration.context.generation,
+					authorization: {
+						signatureTrusted: registration.context.trusted,
+						enabled: registration.context.enabled,
+						hostCompatible: true,
+						userConsented: registration.context.grants.includes('process:interactive'),
+						workspaceRootCurrent: true,
+						grants: grantsOf(registration.context.ownerPluginId),
+					},
+				};
+			},
+			chooseDirectory: async () => {
+				const options: OpenDialogOptions = { properties: ['openDirectory'] };
+				const result = mainWindow
+					? await dialog.showOpenDialog(mainWindow, options)
+					: await dialog.showOpenDialog(options);
+				return result.canceled ? null : (result.filePaths[0] ?? null);
+			},
+		});
+		const managedRuntimeResolver = pluginRuntimeStartupDependencies.managedRuntimeResolver;
+		const managedRuntime = managedRuntimeResolver
+			? new PluginManagedRuntimeService({
+					activation: () => {
+						const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
+						if (!registration) return null;
+						return {
+							ownerPluginId: registration.context.ownerPluginId,
+							generation: registration.context.generation,
+							authorization: {
+								signatureTrusted: registration.context.trusted,
+								enabled: registration.context.enabled,
+								hostCompatible: true,
+								userConsented: registration.context.grants.includes('process:interactive'),
+								workspaceRootCurrent: true,
+								grants: grantsOf(registration.context.ownerPluginId),
+							},
+						};
+					},
+					roots: workspaceRoots,
+					runtime: managedRuntimeResolver,
+				})
+			: undefined;
+		const runtimeRoots = new Map<string, WorkspaceRootCapability>();
+		const runtimeHandles = new Map<string, InteractiveRuntimeHandle>();
+		const workspaceSurfaceFor = (pluginId: string) => {
+			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
+			if (!registration) return null;
+			const capability = workspaceRuntime.acquire(
+				pluginId,
+				registration.foundation.workspace.localId,
+				registration.context.generation
+			);
+			return {
+				publishExternalSessions: async (revision: number, sessions: unknown) => {
+					workspaceRegistry.publishExternalSessions(capability, revision, sessions);
+				},
+				setStatus: async (status: unknown) => {
+					workspaceRegistry.setStatus(capability, status as never);
+				},
+				setBadge: async (value: unknown) => {
+					workspaceRegistry.setBadge(capability, value as number | null);
+				},
+				reveal: async (snapshotToken: string) => {
+					workspaceRegistry.setSelectedContext(capability, snapshotToken);
+				},
+			};
+		};
+		const interactiveRuntimeSurfaceFor = (pluginId: string) => {
+			if (!managedRuntime || pluginId !== 'com.maestro.omp') return null;
+			if (!workspaceLifecycle.getRegistrationForOwner(pluginId)) return null;
+			return {
+				requestWorkspaceRoot: async () => {
+					const root = await managedRuntime.requestWorkspaceRoot();
+					if (!root) return null;
+					const token = crypto.randomUUID();
+					runtimeRoots.set(token, root);
+					return { token };
+				},
+				startOmpRuntime: async (input: unknown) => {
+					const record = input as {
+						workspaceRoot?: { token?: string };
+						options?: { restore?: false };
+					};
+					const token = record?.workspaceRoot?.token;
+					const root = typeof token === 'string' ? runtimeRoots.get(token) : undefined;
+					if (!root || record.options?.restore !== false)
+						throw new Error('invalid interactive runtime request');
+					const handle = await managedRuntime.startOmpRuntime({
+						workspaceRoot: root,
+						options: { restore: false },
+					});
+					runtimeHandles.set(handle.runtimeId, handle);
+					return { runtimeId: handle.runtimeId, generation: handle.generation.toString(10) };
+				},
+				write: async (runtimeId: string, request: unknown) => {
+					const handle = runtimeHandles.get(runtimeId);
+					if (!handle) throw new Error('interactive runtime unavailable');
+					await handle.writeCanonicalJson(request as never);
+				},
+				stop: async (runtimeId: string, reason: unknown) => {
+					const handle = runtimeHandles.get(runtimeId);
+					if (!handle) return;
+					runtimeHandles.delete(runtimeId);
+					await handle.stop(reason as never);
+				},
+			};
+		};
 		workspaceRegistry.onDidChangeContext((context) => {
 			try {
 				mainWindow?.webContents.send('plugins:workspace-context', context);
@@ -2223,6 +2363,8 @@ app
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
 				broker: pluginBroker,
+				workspaceSurfaceFor,
+				interactiveRuntimeSurfaceFor,
 				actionGuard: pluginActionGuard,
 				kvStore: pluginKvStore,
 				eventBus,
@@ -2390,6 +2532,12 @@ app
 					pluginNetSocketRelease = release;
 				},
 			}),
+			surfaceFlagsFor: (pluginId) => {
+				const base = workspaceLifecycle.surfaceFlagsFor(pluginId);
+				return managedRuntime && base.workspace === true && base.interactivePanel === true
+					? { ...base, interactiveRuntime: true }
+					: base;
+			},
 			onLog: (pluginId, level, message) => {
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
@@ -2399,12 +2547,20 @@ app
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
+				workspaceRoots.revokeAll();
+				runtimeRoots.clear();
+				runtimeHandles.clear();
+				void managedRuntime?.revokeOwner(pluginId);
 			},
 			onStop: (pluginId) => {
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
+				workspaceRoots.revokeAll();
+				runtimeRoots.clear();
+				runtimeHandles.clear();
+				void managedRuntime?.revokeOwner(pluginId);
 			},
 		});
 		pluginSandboxHost = sandboxHost;

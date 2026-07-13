@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { sendToHost, listeners } = vi.hoisted(() => ({
+const { exposeInMainWorld, sendToHost, listeners } = vi.hoisted(() => ({
+	exposeInMainWorld: vi.fn(),
 	sendToHost: vi.fn(),
 	listeners: new Map<string, (event: unknown, payload: unknown) => void>(),
 }));
 vi.mock('electron', () => ({
+	contextBridge: { exposeInMainWorld },
 	ipcRenderer: {
 		sendToHost,
 		on: vi.fn((channel: string, listener: (event: unknown, payload: unknown) => void) => {
@@ -18,11 +20,10 @@ import '../../../main/preload/plugin-panel';
 
 const INSTANCE = 'instance-capability-0001';
 
-function fromPanel(data: unknown): void {
-	const event = new MessageEvent('message', { data });
-	Object.defineProperty(event, 'source', { value: window });
-	window.dispatchEvent(event);
-}
+type GuestApi = {
+	request(kind: string, payload: unknown): Promise<unknown>;
+	subscribe(kind: string, listener: (payload: unknown) => void): () => void;
+};
 
 function fromHost(channel: string, payload: unknown): void {
 	const listener = listeners.get(channel);
@@ -30,122 +31,56 @@ function fromHost(channel: string, payload: unknown): void {
 	listener({}, payload);
 }
 
+function guestApi(): GuestApi {
+	const call = exposeInMainWorld.mock.calls.find(([name]) => name === 'maestroInteractivePanel');
+	if (!call) throw new Error('guest API was not exposed');
+	return call[1] as GuestApi;
+}
+
 beforeEach(() => {
 	sendToHost.mockClear();
 	fromHost('maestro:panel-init', { instanceId: INSTANCE, generation: 1 });
 });
 
-describe('closed plugin panel RPC preload transport', () => {
-	it('forwards only a correlated allowlisted tool request for the current host-issued instance', () => {
-		fromPanel({
-			type: 'maestro:panel-request',
-			instanceId: INSTANCE,
-			requestId: 7,
-			method: 'tool.invoke',
-			payload: { localId: 'refresh', args: { limit: 3 } },
-		});
-
+describe('closed plugin panel guest API', () => {
+	it('exposes only frozen request/subscribe methods and correlates an exact request response', async () => {
+		const api = guestApi();
+		expect(Object.isFrozen(api)).toBe(true);
+		expect(Object.keys(api).sort()).toEqual(['request', 'subscribe']);
+		const result = api.request('ping', { value: 1 });
 		expect(sendToHost).toHaveBeenCalledWith('maestro:panel-request', {
 			instanceId: INSTANCE,
-			requestId: 7,
-			method: 'tool.invoke',
-			payload: { localId: 'refresh', args: { limit: 3 } },
-		});
-	});
-
-	it('drops stale instances, arbitrary methods, oversized payloads, and more than 32 pending requests', () => {
-		fromPanel({
-			type: 'maestro:panel-request',
-			instanceId: 'stale-instance',
 			requestId: 1,
-			method: 'tool.invoke',
-			payload: { localId: 'refresh' },
+			kind: 'ping',
+			payload: { value: 1 },
 		});
-		fromPanel({
-			type: 'maestro:panel-request',
+		fromHost('maestro:panel-result', {
 			instanceId: INSTANCE,
-			requestId: 2,
-			method: 'anything.forward',
-			payload: { localId: 'refresh' },
+			requestId: 1,
+			kind: 'ping',
+			payload: { ok: true },
 		});
-		fromPanel({
-			type: 'maestro:panel-request',
-			instanceId: INSTANCE,
-			requestId: 3,
-			method: 'tool.invoke',
-			payload: { localId: 'refresh', args: 'x'.repeat(65 * 1024) },
-		});
-		for (let requestId = 10; requestId < 43; requestId += 1) {
-			fromPanel({
-				type: 'maestro:panel-request',
-				instanceId: INSTANCE,
-				requestId,
-				method: 'tool.invoke',
-				payload: { localId: 'refresh' },
-			});
-		}
-
-		expect(sendToHost).toHaveBeenCalledTimes(32);
+		await expect(result).resolves.toEqual({ ok: true });
 	});
 
-	it('delivers only subscribed host events and releases pending requests on correlated result or error', async () => {
-		const observed: unknown[] = [];
-		window.addEventListener('message', (event) => observed.push(event.data), { once: false });
-		fromPanel({
-			type: 'maestro:panel-subscribe',
+	it('delivers only subscribed descriptor events and releases subscriptions on dispose', () => {
+		const api = guestApi();
+		const listener = vi.fn();
+		const dispose = api.subscribe('status', listener);
+		expect(sendToHost).toHaveBeenCalledWith('maestro:panel-subscribe', {
 			instanceId: INSTANCE,
-			topic: 'workspace.context',
-		});
-		for (const requestId of [10, 11]) {
-			fromPanel({
-				type: 'maestro:panel-request',
-				instanceId: INSTANCE,
-				requestId,
-				method: 'tool.invoke',
-				payload: { localId: 'refresh' },
-			});
-		}
-		fromHost('maestro:panel-event', {
-			instanceId: INSTANCE,
-			topic: 'workspace.context',
-			payload: { selected: 'a' },
+			kind: 'status',
 		});
 		fromHost('maestro:panel-event', {
 			instanceId: INSTANCE,
-			topic: 'arbitrary.topic',
-			payload: { selected: 'b' },
+			kind: 'status',
+			payload: { ready: true },
 		});
-		fromHost('maestro:panel-result', { instanceId: INSTANCE, requestId: 10, result: { ok: true } });
-		fromHost('maestro:panel-error', { instanceId: INSTANCE, requestId: 11, error: 'denied' });
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-		expect(observed).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ type: 'maestro:panel-event', topic: 'workspace.context' }),
-				expect.objectContaining({ type: 'maestro:panel-result', requestId: 10 }),
-				expect.objectContaining({ type: 'maestro:panel-error', requestId: 11 }),
-			])
-		);
-		expect(observed).not.toEqual(
-			expect.arrayContaining([expect.objectContaining({ topic: 'arbitrary.topic' })])
-		);
-	});
-
-	it('cleans subscriptions and pending requests when the panel unloads', () => {
-		fromPanel({
-			type: 'maestro:panel-subscribe',
+		expect(listener).toHaveBeenCalledWith({ ready: true });
+		dispose();
+		expect(sendToHost).toHaveBeenLastCalledWith('maestro:panel-unsubscribe', {
 			instanceId: INSTANCE,
-			topic: 'workspace.context',
-		});
-		window.dispatchEvent(new Event('unload'));
-		fromHost('maestro:panel-event', {
-			instanceId: INSTANCE,
-			topic: 'workspace.context',
-			payload: { selected: 'a' },
-		});
-
-		expect(sendToHost).toHaveBeenCalledWith('maestro:panel-unsubscribe-all', {
-			instanceId: INSTANCE,
+			kind: 'status',
 		});
 	});
 });

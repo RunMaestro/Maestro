@@ -70,6 +70,17 @@ export const HOST_API = {
 	'background.list': { capability: 'background:service' },
 	'ui.groupingPublish': { capability: 'ui:grouping' },
 	'ui.groupingClear': { capability: 'ui:grouping' },
+	'workspace.publishExternalSessions': { capability: 'ui:workspace' },
+	'workspace.setStatus': { capability: 'ui:workspace' },
+	'workspace.setBadge': { capability: 'ui:workspace' },
+	'workspace.reveal': { capability: 'ui:workspace' },
+	'interactivePanel.resolve': { capability: 'ui:interactivePanel' },
+	'interactivePanel.reject': { capability: 'ui:interactivePanel' },
+	'interactivePanel.emit': { capability: 'ui:interactivePanel' },
+	'interactiveRuntime.requestWorkspaceRoot': { capability: 'process:interactive' },
+	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
+	'interactiveRuntime.write': { capability: 'process:interactive' },
+	'interactiveRuntime.stop': { capability: 'process:interactive' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -118,9 +129,22 @@ export interface HostResponse {
 	error?: string;
 }
 
+/** Host-derived capability surfaces, intentionally data-only across the
+ * process boundary. The sandbox never infers authority from its manifest. */
+export interface SandboxSurfaceFlags {
+	readonly workspace?: boolean;
+	readonly interactivePanel?: boolean;
+	readonly interactiveRuntime?: boolean;
+}
+
 /** Control messages the host sends to the sandbox (not request/response). */
 export type HostControlMessage =
-	| { kind: 'init'; pluginId: string; entryCode?: string }
+	| {
+			kind: 'init';
+			pluginId: string;
+			entryCode?: string;
+			surfaceFlags?: SandboxSurfaceFlags;
+	  }
 	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
 	| { kind: 'invokeTool'; id: number; commandId: string; args?: unknown }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }

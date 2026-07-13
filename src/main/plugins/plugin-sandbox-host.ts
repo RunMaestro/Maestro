@@ -22,6 +22,7 @@ import {
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
+	type SandboxSurfaceFlags,
 	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
@@ -49,6 +50,9 @@ export interface PluginSandboxHostDeps {
 	 * be distinguished from crashes by exit-time observers (e.g. the background
 	 * supervisor clears registrations here and never restarts on the exit). */
 	onStop?: (pluginId: string) => void;
+	/** Host-authoritative startup posture. The sandbox receives only these
+	 * booleans and never derives optional capability surfaces from its manifest. */
+	surfaceFlagsFor?: (pluginId: string) => SandboxSurfaceFlags;
 }
 
 /** One bounded recent-log entry observed for a running plugin. */
@@ -254,7 +258,12 @@ export class PluginSandboxHost {
 			}
 		});
 
-		proc.postMessage({ kind: 'init', pluginId, entryCode });
+		proc.postMessage({
+			kind: 'init',
+			pluginId,
+			entryCode,
+			surfaceFlags: this.deps.surfaceFlagsFor?.(pluginId) ?? {},
+		});
 	}
 
 	/**

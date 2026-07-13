@@ -111,6 +111,31 @@ export interface PluginSessionMetadata {
 	projectPath?: string;
 }
 
+/** Host-derived, generation-bound workspace operations. The factory returns
+ * null when trust, enablement, compatibility, paired contributions, or grants
+ * are no longer current. Sandboxes never provide owner or generation data. */
+export interface WorkspaceSurfaceEndpoint {
+	publishExternalSessions(revision: number, sessions: unknown): Promise<void>;
+	setStatus(status: unknown): Promise<void>;
+	setBadge(value: unknown): Promise<void>;
+	reveal(snapshotToken: string): Promise<void>;
+}
+
+/** Host-derived owner endpoint for a currently mounted closed panel. */
+export interface InteractivePanelSurfaceEndpoint {
+	resolve(requestId: string, kind: string, payload: unknown): Promise<void>;
+	reject(requestId: string, code: string): Promise<void>;
+	emit(kind: string, payload: unknown, eventSequence: unknown): Promise<void>;
+}
+
+/** Opaque runtime proxy: root/handle records are host-kept, not child-owned. */
+export interface InteractiveRuntimeSurfaceEndpoint {
+	requestWorkspaceRoot(): Promise<unknown>;
+	startOmpRuntime(input: unknown): Promise<unknown>;
+	write(runtimeId: string, request: unknown): Promise<void>;
+	stop(runtimeId: string, reason: unknown): Promise<void>;
+}
+
 export interface HostHandlerDeps {
 	/** The broker, so fs handlers can RE-authorize the real (symlink-resolved)
 	 * path after the initial string-based authorization (TOCTOU/symlink defense
@@ -300,6 +325,11 @@ export interface HostHandlerDeps {
 	 * server-initiated close would leak a stale count and the plugin could hit the
 	 * socket cap after four normal reconnects. Mirrors `registerResourceCleanup`. */
 	registerNetSocketRelease?: (release: (pluginId: string, socketId: string) => void) => void;
+	/** Factories are invoked per call so revocation takes effect before every
+	 * operation. They are the only place that may derive owner/generation. */
+	workspaceSurfaceFor?: (pluginId: string) => WorkspaceSurfaceEndpoint | null;
+	interactivePanelSurfaceFor?: (pluginId: string) => InteractivePanelSurfaceEndpoint | null;
+	interactiveRuntimeSurfaceFor?: (pluginId: string) => InteractiveRuntimeSurfaceEndpoint | null;
 }
 
 /** What the spawn sink actually executes: everything except `args` is
@@ -1274,6 +1304,127 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'ui.groupingClear', p);
 			deps.groupingRegistry?.clear(pluginId, p.id);
 			return { ok: true };
+		},
+		'workspace.publishExternalSessions': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('workspace.publishExternalSessions', p, {
+				revision: true,
+				sessions: true,
+			});
+			if (!Number.isSafeInteger(p.revision) || !Array.isArray(p.sessions)) {
+				throw new Error('invalid workspace session projection');
+			}
+			assertBrokerAllowed(deps, pluginId, 'workspace.publishExternalSessions', p);
+			const surface = deps.workspaceSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('workspace capability unavailable');
+			await surface.publishExternalSessions(p.revision as number, p.sessions);
+			return null;
+		},
+		'workspace.setStatus': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('workspace.setStatus', p, { status: true });
+			assertBrokerAllowed(deps, pluginId, 'workspace.setStatus', p);
+			const surface = deps.workspaceSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('workspace capability unavailable');
+			await surface.setStatus(p.status);
+			return null;
+		},
+		'workspace.setBadge': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('workspace.setBadge', p, { value: true });
+			assertBrokerAllowed(deps, pluginId, 'workspace.setBadge', p);
+			const surface = deps.workspaceSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('workspace capability unavailable');
+			await surface.setBadge(p.value);
+			return null;
+		},
+		'workspace.reveal': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('workspace.reveal', p, { snapshotToken: true });
+			if (typeof p.snapshotToken !== 'string') throw new Error('invalid workspace snapshot token');
+			assertBrokerAllowed(deps, pluginId, 'workspace.reveal', p);
+			const surface = deps.workspaceSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('workspace capability unavailable');
+			await surface.reveal(p.snapshotToken);
+			return null;
+		},
+		'interactivePanel.resolve': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactivePanel.resolve', p, {
+				requestId: true,
+				kind: true,
+				payload: true,
+			});
+			if (typeof p.requestId !== 'string' || typeof p.kind !== 'string')
+				throw new Error('invalid panel result');
+			assertBrokerAllowed(deps, pluginId, 'interactivePanel.resolve', p);
+			const surface = deps.interactivePanelSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive panel capability unavailable');
+			await surface.resolve(p.requestId, p.kind, p.payload);
+			return null;
+		},
+		'interactivePanel.reject': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactivePanel.reject', p, { requestId: true, code: true });
+			if (typeof p.requestId !== 'string' || typeof p.code !== 'string')
+				throw new Error('invalid panel rejection');
+			assertBrokerAllowed(deps, pluginId, 'interactivePanel.reject', p);
+			const surface = deps.interactivePanelSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive panel capability unavailable');
+			await surface.reject(p.requestId, p.code);
+			return null;
+		},
+		'interactivePanel.emit': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactivePanel.emit', p, {
+				kind: true,
+				payload: true,
+				eventSequence: true,
+			});
+			if (typeof p.kind !== 'string') throw new Error('invalid panel event');
+			assertBrokerAllowed(deps, pluginId, 'interactivePanel.emit', p);
+			const surface = deps.interactivePanelSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive panel capability unavailable');
+			await surface.emit(p.kind, p.payload, p.eventSequence);
+			return null;
+		},
+		'interactiveRuntime.requestWorkspaceRoot': async (pluginId, params) => {
+			assertClosedSchema('interactiveRuntime.requestWorkspaceRoot', asObject(params), {});
+			assertBrokerAllowed(
+				deps,
+				pluginId,
+				'interactiveRuntime.requestWorkspaceRoot',
+				asObject(params)
+			);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			return surface.requestWorkspaceRoot();
+		},
+		'interactiveRuntime.startOmpRuntime': async (pluginId, params) => {
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.startOmpRuntime', asObject(params));
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			return surface.startOmpRuntime(params);
+		},
+		'interactiveRuntime.write': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactiveRuntime.write', p, { runtimeId: true, request: true });
+			if (typeof p.runtimeId !== 'string') throw new Error('invalid interactive runtime');
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.write', p);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			await surface.write(p.runtimeId, p.request);
+			return null;
+		},
+		'interactiveRuntime.stop': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactiveRuntime.stop', p, { runtimeId: true, reason: true });
+			if (typeof p.runtimeId !== 'string') throw new Error('invalid interactive runtime');
+			assertBrokerAllowed(deps, pluginId, 'interactiveRuntime.stop', p);
+			const surface = deps.interactiveRuntimeSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive runtime capability unavailable');
+			await surface.stop(p.runtimeId, p.reason);
+			return null;
 		},
 	};
 

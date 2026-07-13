@@ -112,6 +112,20 @@ export class PluginWorkspaceRuntime {
 		}
 		this.registrations.clear();
 	}
+
+	getRegistrationForOwner(pluginId: string): WorkspaceRuntimeRegistration | null {
+		for (const registration of this.registrations.values()) {
+			if (registration.context.ownerPluginId !== pluginId) continue;
+			return Object.freeze({
+				context: Object.freeze({
+					...registration.context,
+					grants: [...registration.context.grants],
+				}),
+				foundation: registration.foundation,
+			});
+		}
+		return null;
+	}
 }
 
 export class WorkspaceRuntimeError extends Error {
@@ -171,6 +185,12 @@ export class PluginWorkspaceManagerLifecycle {
 				prior && prior.fingerprint === fingerprint && prior.active
 					? prior.generation
 					: (prior?.generation ?? 0n) + 1n;
+			const grants = this.getGrants(record.id);
+			if (
+				!grants.some((grant) => grant.capability === 'ui:workspace') ||
+				!grants.some((grant) => grant.capability === 'ui:interactivePanel')
+			)
+				continue;
 			this.revisions.set(record.id, { fingerprint, generation, active: true });
 			nextActiveOwners.add(record.id);
 			registrations.push({
@@ -179,7 +199,7 @@ export class PluginWorkspaceManagerLifecycle {
 					generation,
 					trusted: true,
 					enabled: true,
-					grants: this.getGrants(record.id).map((grant) => grant.capability),
+					grants: grants.map((grant) => grant.capability),
 				},
 				foundation,
 			});
@@ -207,5 +227,14 @@ export class PluginWorkspaceManagerLifecycle {
 
 	isOwnerEnabled(pluginId: string): boolean {
 		return this.activeOwners.has(pluginId);
+	}
+
+	surfaceFlagsFor(pluginId: string): { workspace?: boolean; interactivePanel?: boolean } {
+		return this.activeOwners.has(pluginId) ? { workspace: true, interactivePanel: true } : {};
+	}
+
+	/** Current manager-owned authorization facts for one declared workspace. */
+	getRegistrationForOwner(pluginId: string): WorkspaceRuntimeRegistration | null {
+		return this.runtime.getRegistrationForOwner(pluginId);
 	}
 }

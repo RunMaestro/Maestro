@@ -19,6 +19,8 @@
  * from them (prototypes and property getters included).
  */
 import { describe, expect, it, vi } from 'vitest';
+import { resolve } from 'node:path';
+import { bundleOmpPlugin } from '../../../main/omp-distribution/bundle-plugin';
 import {
 	createSandboxRealm,
 	type RealmBridge,
@@ -190,6 +192,38 @@ describe('plugin sandbox realm — escape regression (FC1)', () => {
 			.filter(([level]) => level === 'info')
 			.map(([, message]) => String(message));
 		expect(JSON.parse(logged[0])).toEqual([]);
+	});
+
+	it('exposes each optional workspace surface only when host-derived flags allow it', () => {
+		const bridge = makeBridge();
+		const realm = createSandboxRealm(bridge);
+		realm.init('surface-probe', {
+			workspace: true,
+			interactivePanel: true,
+			interactiveRuntime: true,
+		});
+		realm.runScript(
+			String.raw`
+				console.log(JSON.stringify({
+					workspace: typeof maestro.workspace,
+					panel: typeof maestro.interactivePanel,
+					runtime: typeof maestro.interactiveRuntime,
+					frozen: Object.isFrozen(maestro.workspace) &&
+						Object.isFrozen(maestro.interactivePanel) &&
+						Object.isFrozen(maestro.interactiveRuntime)
+				}));
+			`,
+			'optional-surface-probe'
+		);
+		const logged = (bridge.log as ReturnType<typeof vi.fn>).mock.calls
+			.filter(([level]) => level === 'info')
+			.map(([, message]) => String(message));
+		expect(JSON.parse(logged[0])).toEqual({
+			workspace: 'object',
+			panel: 'object',
+			runtime: 'object',
+			frozen: true,
+		});
 	});
 });
 
@@ -368,5 +402,96 @@ describe('plugin sandbox realm — behavioral parity', () => {
 			},
 			{ method: 'ui.hostViewRemove', params: { id: 'status' } },
 		]);
+	});
+});
+
+describe('signed OMP artifact sandbox smoke', () => {
+	it('activates the packaged CJS runtime through derived surfaces and only starts after explicit action', async () => {
+		const sent: Array<{ id: number; method: string; params: unknown }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(JSON.parse(json) as { id: number; method: string; params: unknown })
+			),
+		});
+		const bundle = await bundleOmpPlugin(resolve(process.cwd(), 'plugins/com.maestro.omp'));
+		const runtime = bundle.files.find((file) => file.path === 'dist/runtime.js');
+		expect(runtime).toBeDefined();
+
+		const realm = createSandboxRealm(bridge);
+		realm.init('com.maestro.omp', {
+			workspace: true,
+			interactivePanel: true,
+			interactiveRuntime: true,
+		});
+		realm.runScript(Buffer.from(runtime!.content).toString('utf8'), 'omp-runtime.js');
+		const activation = realm.activate();
+
+		for (const [method, result] of [
+			['workspace.publishExternalSessions', null],
+			['workspace.setStatus', null],
+			['workspace.setBadge', null],
+		] as const) {
+			await vi.waitFor(() =>
+				expect(sent).toHaveLength(sent.findIndex((call) => call.method === method) + 1)
+			);
+			const call = sent[sent.length - 1];
+			expect(call.method).toBe(method);
+			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result }));
+		}
+		await activation;
+		expect(sent.map((call) => call.method)).toEqual([
+			'workspace.publishExternalSessions',
+			'workspace.setStatus',
+			'workspace.setBadge',
+		]);
+
+		realm.runScript(
+			'void module.exports.startFromExplicitPanelAction().then(function (started) { console.log(\"started:\" + started); });',
+			'omp-explicit-start.js'
+		);
+		await vi.waitFor(() => expect(sent).toHaveLength(4));
+		expect(sent[3]).toMatchObject({ method: 'interactiveRuntime.requestWorkspaceRoot' });
+		realm.deliverResponse(JSON.stringify({ id: sent[3].id, ok: true, result: { token: 'root' } }));
+		await vi.waitFor(() => expect(sent).toHaveLength(5));
+		expect(sent[4]).toMatchObject({
+			method: 'interactiveRuntime.startOmpRuntime',
+			params: { workspaceRoot: { token: 'root' }, options: { restore: false } },
+		});
+		realm.deliverResponse(
+			JSON.stringify({
+				id: sent[4].id,
+				ok: true,
+				result: { runtimeId: 'runtime-1', generation: '1' },
+			})
+		);
+		await vi.waitFor(() => expect(sent).toHaveLength(6));
+		expect(sent[5]).toMatchObject({
+			method: 'workspace.setStatus',
+			params: { status: { state: 'ready', label: 'OMP ready' } },
+		});
+		realm.deliverResponse(JSON.stringify({ id: sent[5].id, ok: true, result: null }));
+		await vi.waitFor(() => {
+			expect(vi.mocked(bridge.log).mock.calls).toContainEqual(['info', 'started:true']);
+		});
+
+		const deactivation = realm.deactivate();
+		await vi.waitFor(() => expect(sent).toHaveLength(7));
+		expect(sent[6]).toMatchObject({
+			method: 'interactiveRuntime.stop',
+			params: { runtimeId: 'runtime-1', reason: 'workspace-deactivated' },
+		});
+		realm.deliverResponse(JSON.stringify({ id: sent[6].id, ok: true, result: null }));
+		for (const expectedMethod of [
+			'workspace.publishExternalSessions',
+			'workspace.setStatus',
+			'workspace.setBadge',
+		]) {
+			const priorCount = sent.length;
+			await vi.waitFor(() => expect(sent).toHaveLength(priorCount + 1));
+			const call = sent[sent.length - 1];
+			expect(call.method).toBe(expectedMethod);
+			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
+		}
+		await deactivation;
 	});
 });

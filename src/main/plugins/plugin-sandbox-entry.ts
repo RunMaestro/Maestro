@@ -63,10 +63,17 @@ export interface RealmBridge {
 /** Context-realm entry points returned by the bootstrap factory. All `json`
  * parameters are serialized by the host and parsed INSIDE the context so the
  * data plugin handlers observe is context-realm. */
+/** Flags derived by the authoritative host at sandbox startup. A false or
+ * absent field means that optional surface is not installed in the realm. */
+export interface SandboxSurfaceFlags {
+	readonly workspace?: boolean;
+	readonly interactivePanel?: boolean;
+	readonly interactiveRuntime?: boolean;
+}
+
 export interface SandboxRealm {
 	/** Install the SDK + curated globals for `pluginId`. Call once, first. */
-	init(pluginId: string): void;
-	/** Compile + run code inside the realm (bootstrap-safe host helper). */
+	init(pluginId: string, surfaceFlags?: SandboxSurfaceFlags): void;
 	runScript(code: string, filename: string, timeoutMs?: number): void;
 	/** Resolve/reject a pending SDK call; `json` is a HostResponse. */
 	deliverResponse(json: string): void;
@@ -240,8 +247,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 
 	// ---- the maestro SDK (broker-gated RPC only; frozen with CONTEXT
 	// intrinsics so plugin code cannot mutate or extend the surface) ----------
-	function buildSdk(pluginId) {
-		return Object.freeze({
+	function buildSdk(pluginId, surfaceFlags) {
+		var sdk = {
 			pluginId: pluginId,
 			fs: Object.freeze({
 				read: function (path) { return hostCall('fs.read', { path: path }); },
@@ -347,15 +354,87 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				unregister: function (serviceId) { return hostCall('background.unregister', { serviceId: serviceId }); },
 				list: function () { return hostCall('background.list', {}); }
 			})
-		});
+		};
+		if (surfaceFlags.workspace === true) {
+			sdk.workspace = Object.freeze({
+				publishExternalSessions: function (revision, sessions) { return hostCall('workspace.publishExternalSessions', { revision: revision, sessions: sessions }); },
+				setStatus: function (status) { return hostCall('workspace.setStatus', { status: status }); },
+				setBadge: function (value) { return hostCall('workspace.setBadge', { value: value }); },
+				reveal: function (snapshotToken) { return hostCall('workspace.reveal', { snapshotToken: snapshotToken }); },
+				onDidChangeContext: function (listener) {
+					if (typeof listener !== 'function') return function () {};
+					var topic = '__workspaceContext';
+					var set = eventHandlers.get(topic);
+					if (!set) { set = new Set(); eventHandlers.set(topic, set); }
+					set.add(listener);
+					return function () { set.delete(listener); };
+				}
+			});
+		}
+		if (surfaceFlags.interactivePanel === true) {
+			sdk.interactivePanel = Object.freeze({
+				onRequest: function (listener) {
+					if (typeof listener !== 'function') return function () {};
+					var topic = '__interactivePanelRequest';
+					var set = eventHandlers.get(topic);
+					if (!set) { set = new Set(); eventHandlers.set(topic, set); }
+					set.add(listener);
+					return function () { set.delete(listener); };
+				},
+				resolve: function (requestId, kind, payload) { return hostCall('interactivePanel.resolve', { requestId: requestId, kind: kind, payload: payload }); },
+				reject: function (requestId, code) { return hostCall('interactivePanel.reject', { requestId: requestId, code: code }); },
+				emit: function (kind, payload, eventSequence) { return hostCall('interactivePanel.emit', { kind: kind, payload: payload, eventSequence: eventSequence }); }
+			});
+		}
+		if (surfaceFlags.interactiveRuntime === true) {
+			sdk.interactiveRuntime = Object.freeze({
+				requestWorkspaceRoot: function () { return hostCall('interactiveRuntime.requestWorkspaceRoot', {}); },
+				startOmpRuntime: function (input) {
+					return hostCall('interactiveRuntime.startOmpRuntime', input || {}).then(function (runtime) {
+						if (!runtime || typeof runtime.runtimeId !== 'string' || typeof runtime.generation !== 'string') {
+							throw new Error('malformed interactive runtime handle');
+						}
+						var runtimeId = runtime.runtimeId;
+						var eventTopic = '__interactiveRuntimeEvent:' + runtimeId;
+						return Object.freeze({
+							runtimeId: runtimeId,
+							generation: BigInt(runtime.generation),
+							writeCanonicalJson: function (request) {
+								return hostCall('interactiveRuntime.write', { runtimeId: runtimeId, request: request });
+							},
+							onEvent: function (listener) {
+								if (typeof listener !== 'function') return function () {};
+								var set = eventHandlers.get(eventTopic);
+								if (!set) { set = new Set(); eventHandlers.set(eventTopic, set); }
+								set.add(listener);
+								return function () { set.delete(listener); };
+							},
+							stop: function (reason) {
+								return hostCall('interactiveRuntime.stop', { runtimeId: runtimeId, reason: reason });
+							}
+						});
+					});
+				}
+			});
+		}
+		return Object.freeze(sdk);
 	}
 
 	// ---- lifecycle -------------------------------------------------------------
 	var moduleShim = { exports: {} };
 	var sdk = null;
 
-	function init(pluginId) {
-		sdk = buildSdk(String(pluginId));
+	function init(pluginId, surfaceFlagsJson) {
+		var surfaceFlags = {};
+		try {
+			var parsed = JSON.parse(typeof surfaceFlagsJson === 'string' ? surfaceFlagsJson : '{}');
+			if (parsed && typeof parsed === 'object') {
+				surfaceFlags.workspace = parsed.workspace === true;
+				surfaceFlags.interactivePanel = parsed.interactivePanel === true;
+				surfaceFlags.interactiveRuntime = parsed.interactiveRuntime === true;
+			}
+		} catch (e) {}
+		sdk = buildSdk(String(pluginId), surfaceFlags);
 		globalThis.maestro = sdk;
 		globalThis.module = moduleShim;
 		globalThis.exports = moduleShim.exports;
@@ -405,7 +484,10 @@ const bootstrapScript = new vm.Script(BOOTSTRAP_SOURCE, {
 });
 
 /** The factory shape the bootstrap script evaluates to inside the context. */
-type BootstrapFactory = (bridge: RealmBridge) => Omit<SandboxRealm, 'runScript'>;
+type BootstrapRealm = Omit<SandboxRealm, 'init' | 'runScript'> & {
+	init(pluginId: string, surfaceFlagsJson: string): void;
+};
+type BootstrapFactory = (bridge: RealmBridge) => BootstrapRealm;
 
 /**
  * Create a confined vm realm. Everything plugin code can reach is built inside
@@ -421,6 +503,9 @@ export function createSandboxRealm(bridge: RealmBridge): SandboxRealm {
 	const realm = factory(bridge);
 	return {
 		...realm,
+		init(pluginId: string, surfaceFlags: SandboxSurfaceFlags = {}): void {
+			realm.init(pluginId, JSON.stringify(surfaceFlags));
+		},
 		runScript(code: string, filename: string, timeoutMs = 5000): void {
 			const script = new vm.Script(code, { filename });
 			script.runInContext(context, { timeout: timeoutMs });
@@ -467,10 +552,14 @@ function makeParentPortBridge(): RealmBridge {
 }
 
 /** Boot the plugin: build the realm, install globals, run its code, activate. */
-function runPluginCode(pluginId: string, code: string): void {
+function runPluginCode(
+	pluginId: string,
+	code: string,
+	surfaceFlags: SandboxSurfaceFlags = {}
+): void {
 	const realm = createSandboxRealm(makeParentPortBridge());
 	activeRealm = realm;
-	realm.init(pluginId);
+	realm.init(pluginId, surfaceFlags);
 	realm.runScript(code, `plugin:${pluginId}`);
 	void realm.activate();
 }
@@ -483,10 +572,10 @@ if (parentPort) {
 
 		// Control messages from the host.
 		if (msg.kind === 'init') {
-			const control = msg as unknown as Extract<HostControlMessage, { kind: 'init' }>;
+			const control = msg as Extract<HostControlMessage, { kind: 'init' }>;
 			if (typeof control.entryCode === 'string') {
 				try {
-					runPluginCode(control.pluginId, control.entryCode);
+					runPluginCode(control.pluginId, control.entryCode, control.surfaceFlags);
 				} catch (err) {
 					log('error', `failed to start plugin: ${String(err)}`);
 				}
