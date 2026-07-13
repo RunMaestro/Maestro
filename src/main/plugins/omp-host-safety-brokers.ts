@@ -516,11 +516,14 @@ export interface OmpSandboxHostHandlerSeam {
 /** Backwards-compatible name for the fixed handler seam. */
 export type OmpSandboxHostHandlers = OmpSandboxHostHandlerSeam;
 
+/** Bootstrap-only constructor input: each authority remains host-owned and opaque. */
+export interface OmpSandboxHostHandlerDeps extends OmpRootToolPolicyBrokerDeps {
+	readonly auth: OmpAuthCallbackPkceRouterDeps;
+	readonly export: OmpNativeExportBrokerDeps;
+}
+
 export function createOmpSandboxHostHandlers(
-	deps: OmpRootToolPolicyBrokerDeps & {
-		readonly auth: OmpAuthCallbackPkceRouterDeps;
-		readonly export: OmpNativeExportBrokerDeps;
-	}
+	deps: OmpSandboxHostHandlerDeps
 ): OmpSandboxHostHandlerSeam {
 	const toolBroker = new OmpRootToolPolicyBroker(deps);
 	const uriBroker = new OmpUriBroker();
