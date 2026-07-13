@@ -52,3 +52,9 @@ describe('isHostApiCompatible', () => {
 		expect(isHostApiCompatible(HOST_API_VERSION).compatible).toBe(true);
 	});
 });
+
+describe('HOST_API_VERSION', () => {
+	it('publishes the additive workspace and interactive-panel API version', () => {
+		expect(HOST_API_VERSION).toBe('1.13.0');
+	});
+});

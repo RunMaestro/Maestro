@@ -65,6 +65,23 @@ describe('parsePermissions', () => {
 		expect(r.errors).toEqual([]);
 		expect(r.requests[0]).toEqual({ capability: 'fs:read', scope: '/data', reason: 'read config' });
 	});
+
+	it('accepts unscoped workspace and closed interactive-panel capabilities', () => {
+		const result = parsePermissions([
+			{ capability: 'ui:workspace' },
+			{ capability: 'ui:interactivePanel' },
+		]);
+
+		expect(result.errors).toEqual([]);
+		expect(result.requests).toEqual([
+			{ capability: 'ui:workspace' },
+			{ capability: 'ui:interactivePanel' },
+		]);
+		expect(PLUGIN_CAPABILITIES).toContain('ui:workspace');
+		expect(PLUGIN_CAPABILITIES).toContain('ui:interactivePanel');
+		expect(isPluginCapability('ui:workspace')).toBe(true);
+		expect(isPluginCapability('ui:interactivePanel')).toBe(true);
+	});
 });
 
 describe('isPermitted (default deny + scope matching)', () => {

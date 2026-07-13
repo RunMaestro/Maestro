@@ -97,7 +97,7 @@ describe('plugin init', () => {
 		const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8')) as {
 			devDependencies?: Record<string, string>;
 		};
-		expect(pkg.devDependencies?.['@maestro/plugin-sdk']).toBe('^0.2.0');
+		expect(pkg.devDependencies?.['@maestro/plugin-sdk']).toBe('^0.3.0');
 		expect(fs.existsSync(path.join(dir, 'tsconfig.json'))).toBe(true);
 
 		expect(lastJson().success).toBe(true);

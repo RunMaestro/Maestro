@@ -16,6 +16,28 @@ function validManifest(overrides: Record<string, unknown> = {}): Record<string, 
 	};
 }
 
+function workspaceContributes(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		workspaces: [
+			{
+				localId: 'omp-workspace',
+				title: 'OMP',
+				icon: 'sparkles',
+				interactivePanelLocalId: 'omp-panel',
+			},
+		],
+		interactivePanels: [
+			{
+				localId: 'omp-panel',
+				title: 'OMP panel',
+				entry: 'dist/panel.html',
+				workspaceLocalId: 'omp-workspace',
+			},
+		],
+		...overrides,
+	};
+}
+
 describe('validatePluginManifest', () => {
 	it('accepts a well-formed manifest and trims strings', () => {
 		const { manifest, errors } = validatePluginManifest(validManifest({ name: '  Hello  ' }));
@@ -100,6 +122,92 @@ describe('validatePluginManifest', () => {
 		expect(errors).toEqual([]);
 		expect(manifest).not.toBeNull();
 		expect(isManifestHostCompatible(manifest!, '1.0.0')).toBe(false);
+	});
+	it('validates a paired workspace and closed interactive panel into canonical owner-bound records', () => {
+		const result = validatePluginManifest(
+			validManifest({
+				id: 'com.maestro.omp',
+				tier: 2,
+				entry: 'dist/worker.js',
+				permissions: [{ capability: 'ui:workspace' }, { capability: 'ui:interactivePanel' }],
+				contributes: workspaceContributes(),
+			})
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.manifest?.workspaceFoundation).toEqual({
+			ownerPluginId: 'com.maestro.omp',
+			workspace: {
+				localId: 'omp-workspace',
+				canonicalContributionId: 'com.maestro.omp/omp-workspace',
+				title: 'OMP',
+				icon: 'sparkles',
+				panelLocalId: 'omp-panel',
+				order: 0,
+			},
+			panel: {
+				localId: 'omp-panel',
+				canonicalContributionId: 'com.maestro.omp/omp-panel',
+				title: 'OMP panel',
+				entry: 'dist/panel.html',
+			},
+		});
+	});
+
+	it('rejects workspace declarations missing either paired capability, a paired contribution, or a bounded field', () => {
+		const base = {
+			id: 'com.maestro.omp',
+			tier: 2,
+			entry: 'dist/worker.js',
+			permissions: [{ capability: 'ui:workspace' }, { capability: 'ui:interactivePanel' }],
+		};
+		const missingPanelPermission = validatePluginManifest({
+			...validManifest(base),
+			permissions: [{ capability: 'ui:workspace' }],
+			contributes: workspaceContributes(),
+		});
+		const orphanWorkspace = validatePluginManifest({
+			...validManifest(base),
+			contributes: workspaceContributes({ interactivePanels: [] }),
+		});
+		const overlongTitle = validatePluginManifest({
+			...validManifest(base),
+			contributes: workspaceContributes({
+				workspaces: [
+					{
+						localId: 'omp-workspace',
+						title: 'x'.repeat(161),
+						icon: 'sparkles',
+						interactivePanelLocalId: 'omp-panel',
+					},
+				],
+			}),
+		});
+
+		expect(missingPanelPermission.manifest).toBeNull();
+		expect(missingPanelPermission.errors.join(' ')).toContain('ui:interactivePanel');
+		expect(orphanWorkspace.manifest).toBeNull();
+		expect(orphanWorkspace.errors.join(' ')).toContain(
+			'interactivePanels must contain exactly one item'
+		);
+		expect(overlongTitle.manifest).toBeNull();
+		expect(overlongTitle.errors.join(' ')).toContain('at most 160 Unicode scalars');
+	});
+
+	it('preserves legacy panels that do not opt into the closed workspace contract', () => {
+		const result = validatePluginManifest(
+			validManifest({
+				tier: 1,
+				entry: 'dist/worker.js',
+				contributes: { panels: [{ id: 'legacy-panel', title: 'Legacy', entry: 'panel.html' }] },
+			})
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.manifest?.contributes).toEqual({
+			panels: [{ id: 'legacy-panel', title: 'Legacy', entry: 'panel.html' }],
+		});
+		expect(result.manifest?.workspaceFoundation).toBeUndefined();
 	});
 });
 

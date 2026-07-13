@@ -776,3 +776,80 @@ describe('combined contribution surfaces', () => {
 		expect(c.groupings).toHaveLength(1);
 	});
 });
+
+describe('workspace and interactive-panel contributions', () => {
+	const workspaceManifest = manifest(
+		'com.maestro.omp',
+		{
+			workspaces: [
+				{
+					localId: 'omp-workspace',
+					title: 'OMP',
+					icon: 'sparkles',
+					interactivePanelLocalId: 'omp-panel',
+				},
+			],
+			interactivePanels: [
+				{
+					localId: 'omp-panel',
+					title: 'OMP panel',
+					entry: 'dist/panel.html',
+					workspaceLocalId: 'omp-workspace',
+				},
+			],
+		},
+		2
+	);
+
+	it('aggregates only the paired canonical contributions without mutating the manifest', () => {
+		workspaceManifest.permissions = [
+			{ capability: 'ui:workspace' },
+			{ capability: 'ui:interactivePanel' },
+		];
+		const expected = structuredClone(workspaceManifest);
+
+		const aggregated = aggregateContributions([workspaceManifest]);
+
+		expect(aggregated.workspaces).toEqual([
+			{
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'omp-workspace',
+				canonicalContributionId: 'com.maestro.omp/omp-workspace',
+				title: 'OMP',
+				icon: 'sparkles',
+				panelLocalId: 'omp-panel',
+				order: 0,
+			},
+		]);
+		expect(aggregated.interactivePanels).toEqual([
+			{
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'omp-panel',
+				canonicalContributionId: 'com.maestro.omp/omp-panel',
+				title: 'OMP panel',
+				entry: 'dist/panel.html',
+			},
+		]);
+		expect(workspaceManifest).toEqual(expected);
+	});
+
+	it('requires both grants together when aggregation is capability-gated', () => {
+		workspaceManifest.permissions = [
+			{ capability: 'ui:workspace' },
+			{ capability: 'ui:interactivePanel' },
+		];
+
+		expect(
+			aggregateContributions(
+				[workspaceManifest],
+				(_pluginId, capability) => capability === 'ui:workspace'
+			).workspaces
+		).toEqual([]);
+		expect(
+			aggregateContributions(
+				[workspaceManifest],
+				(_pluginId, capability) => capability === 'ui:workspace'
+			).interactivePanels
+		).toEqual([]);
+	});
+});

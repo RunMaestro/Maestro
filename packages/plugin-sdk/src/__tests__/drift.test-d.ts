@@ -23,6 +23,11 @@ import type {
 	PluginCategory,
 	PluginManifest,
 	ManifestValidationResult,
+	WorkspaceContribution,
+	InteractivePanelContribution,
+	CanonicalWorkspaceFoundation,
+	ClosedPanelBridge,
+	JsonValue,
 } from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
@@ -37,6 +42,15 @@ import type {
 	PluginManifest as SrcPluginManifest,
 	ManifestValidationResult as SrcManifestValidationResult,
 } from '../../../../src/shared/plugins/plugin-manifest';
+import type {
+	WorkspaceContribution as SrcWorkspaceContribution,
+	InteractivePanelContribution as SrcInteractivePanelContribution,
+	CanonicalWorkspaceFoundation as SrcCanonicalWorkspaceFoundation,
+} from '../../../../src/shared/plugins/workspace-foundation';
+import type {
+	ClosedPanelBridge as SrcClosedPanelBridge,
+	JsonValue as SrcJsonValue,
+} from '../../../../src/shared/plugins/interactive-panel';
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
 expectTypeOf<HostViewContribution>().toEqualTypeOf<SrcHostViewContribution>();
 expectTypeOf<HostViewBlocks>().toEqualTypeOf<SrcHostViewBlocks>();
@@ -46,3 +60,8 @@ expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();
 expectTypeOf<PluginCategory>().toEqualTypeOf<SrcPluginCategory>();
 expectTypeOf<PluginManifest>().toEqualTypeOf<SrcPluginManifest>();
 expectTypeOf<ManifestValidationResult>().toEqualTypeOf<SrcManifestValidationResult>();
+expectTypeOf<WorkspaceContribution>().toEqualTypeOf<SrcWorkspaceContribution>();
+expectTypeOf<InteractivePanelContribution>().toEqualTypeOf<SrcInteractivePanelContribution>();
+expectTypeOf<CanonicalWorkspaceFoundation>().toEqualTypeOf<SrcCanonicalWorkspaceFoundation>();
+expectTypeOf<ClosedPanelBridge>().toEqualTypeOf<SrcClosedPanelBridge>();
+expectTypeOf<JsonValue>().toEqualTypeOf<SrcJsonValue>();
