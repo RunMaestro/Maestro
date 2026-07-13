@@ -50,10 +50,12 @@ import {
 	PluginWorkspaceRuntime,
 } from './plugins/plugin-workspace-runtime';
 import {
-	PluginManagedRuntimeService,
-	NativeWorkspaceRootService,
-	type ManagedRuntimeResolver,
-} from './plugins/plugin-managed-runtime-service';
+	createProductionOmpBootstrap,
+	type ProductionOmpBootstrap,
+	type ProductionOmpBootstrapConfiguration,
+} from './plugins/production-omp-bootstrap';
+import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
+import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
 import type {
 	InteractiveRuntimeHandle,
 	WorkspaceRootCapability,
@@ -514,27 +516,26 @@ let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginWorkspaceLifecycle: PluginWorkspaceManagerLifecycle | null = null;
+let pluginWorkspaceRegistry: PluginWorkspaceRegistry | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
-let pluginWorkspaceRegistry: PluginWorkspaceRegistry | null = null;
 let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
-let usageRefreshScheduler: UsageRefreshScheduler | null = null;
-let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 const workspaceDeepLinkHandlers: WorkspaceDeepLinkHandlers = {
 	resolveWorkspaceLink: (url) => pluginWorkspaceRegistry?.resolveWorkspaceLink(url) ?? null,
 	selectBySnapshotToken: (snapshotToken) =>
 		pluginWorkspaceRegistry?.selectBySnapshotToken(snapshotToken) ?? null,
 };
+let usageRefreshScheduler: UsageRefreshScheduler | null = null;
+let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
-/** Production startup may inject a resolver only after its provenance/trust
- * material has been verified. Absent resolver means no interactive runtime
- * surface is exposed (fail closed). */
+/** Production startup accepts only compiled release/trust inputs. Without them,
+ * the OMP plugin and interactive runtime remain absent (fail closed). */
 export interface PluginRuntimeStartupDependencies {
-	readonly managedRuntimeResolver?: ManagedRuntimeResolver;
+	readonly productionOmp?: ProductionOmpBootstrapConfiguration;
 }
 
 let pluginRuntimeStartupDependencies: PluginRuntimeStartupDependencies = {};
@@ -2236,61 +2237,75 @@ app
 			tokenSource: () => crypto.randomBytes(24).toString('base64url'),
 			isOwnerEnabled: (pluginId) => pluginWorkspaceLifecycle?.isOwnerEnabled(pluginId) ?? false,
 		});
-		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
 		pluginWorkspaceRegistry = workspaceRegistry;
+		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
 		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
 		pluginWorkspaceLifecycle = workspaceLifecycle;
 
-		const workspaceRoots = new NativeWorkspaceRootService({
-			activation: () => {
-				const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
-				if (!registration) return null;
-				return {
-					ownerPluginId: registration.context.ownerPluginId,
-					generation: registration.context.generation,
-					authorization: {
-						signatureTrusted: registration.context.trusted,
-						enabled: registration.context.enabled,
-						hostCompatible: true,
-						userConsented: registration.context.grants.includes('process:interactive'),
-						workspaceRootCurrent: true,
-						grants: grantsOf(registration.context.ownerPluginId),
-					},
-				};
-			},
-			chooseDirectory: async () => {
-				const options: OpenDialogOptions = { properties: ['openDirectory'] };
-				const result = mainWindow
-					? await dialog.showOpenDialog(mainWindow, options)
-					: await dialog.showOpenDialog(options);
-				return result.canceled ? null : (result.filePaths[0] ?? null);
-			},
-		});
-		const managedRuntimeResolver = pluginRuntimeStartupDependencies.managedRuntimeResolver;
-		const managedRuntime = managedRuntimeResolver
-			? new PluginManagedRuntimeService({
-					activation: () => {
-						const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
-						if (!registration) return null;
-						return {
-							ownerPluginId: registration.context.ownerPluginId,
-							generation: registration.context.generation,
-							authorization: {
-								signatureTrusted: registration.context.trusted,
-								enabled: registration.context.enabled,
-								hostCompatible: true,
-								userConsented: registration.context.grants.includes('process:interactive'),
-								workspaceRootCurrent: true,
-								grants: grantsOf(registration.context.ownerPluginId),
-							},
-						};
-					},
-					roots: workspaceRoots,
-					runtime: managedRuntimeResolver,
+		const ompRuntimeActivation = () => {
+			const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
+			if (!registration) return null;
+			return {
+				ownerPluginId: registration.context.ownerPluginId,
+				generation: registration.context.generation,
+				authorization: {
+					signatureTrusted: registration.context.trusted,
+					enabled: registration.context.enabled,
+					hostCompatible: true,
+					userConsented: registration.context.grants.includes('process:interactive'),
+					workspaceRootCurrent: true,
+					grants: grantsOf(registration.context.ownerPluginId),
+				},
+			};
+		};
+		const chooseOmpDirectory = async () => {
+			const options: OpenDialogOptions = { properties: ['openDirectory'] };
+			const result = mainWindow
+				? await dialog.showOpenDialog(mainWindow, options)
+				: await dialog.showOpenDialog(options);
+			return result.canceled ? null : (result.filePaths[0] ?? null);
+		};
+		const packagedOmpConfiguration = (() => {
+			if (!app.isPackaged) return undefined;
+			const resource = loadProductionOmpResource(path.join(process.resourcesPath, 'omp'));
+			return {
+				pluginsDir: path.join(app.getPath('userData'), 'plugins'),
+				archivePath: resource.archivePath,
+				expectedArchiveSha256: resource.expectedArchiveSha256,
+				trustRoot: resource.trustRoot,
+				verifySignature: resource.verifySignature,
+				pinnedRelease: resource.pinnedRelease,
+				runtimeResolverDependencies: {},
+			} satisfies ProductionOmpBootstrapConfiguration;
+		})();
+		const productionOmpConfiguration =
+			pluginRuntimeStartupDependencies.productionOmp ?? packagedOmpConfiguration;
+		const productionOmpBootstrap: ProductionOmpBootstrap | undefined = productionOmpConfiguration
+			? createProductionOmpBootstrap({
+					...productionOmpConfiguration,
+					activation: ompRuntimeActivation,
+					chooseDirectory: chooseOmpDirectory,
 				})
 			: undefined;
+		const workspaceRoots =
+			productionOmpBootstrap?.workspaceRoots ??
+			new NativeWorkspaceRootService({
+				activation: ompRuntimeActivation,
+				chooseDirectory: chooseOmpDirectory,
+			});
+		const managedRuntime = productionOmpBootstrap?.managedRuntime;
 		const runtimeRoots = new Map<string, WorkspaceRootCapability>();
 		const runtimeHandles = new Map<string, InteractiveRuntimeHandle>();
+		const revokeOmpRuntime = (pluginId: string, reason: 'revoked' | 'shutdown' = 'revoked') => {
+			runtimeRoots.clear();
+			runtimeHandles.clear();
+			if (productionOmpBootstrap) {
+				void productionOmpBootstrap.teardown(pluginId, reason);
+				return;
+			}
+			workspaceRoots.revokeAll();
+			void managedRuntime?.revokeOwner(pluginId, reason);
+		};
 		const workspaceSurfaceFor = (pluginId: string) => {
 			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
 			if (!registration) return null;
@@ -2559,20 +2574,14 @@ app
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
-				workspaceRoots.revokeAll();
-				runtimeRoots.clear();
-				runtimeHandles.clear();
-				void managedRuntime?.revokeOwner(pluginId);
+				revokeOmpRuntime(pluginId);
 			},
 			onStop: (pluginId) => {
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
-				workspaceRoots.revokeAll();
-				runtimeRoots.clear();
-				runtimeHandles.clear();
-				void managedRuntime?.revokeOwner(pluginId);
+				revokeOmpRuntime(pluginId);
 			},
 		});
 		pluginSandboxHost = sandboxHost;
@@ -2581,6 +2590,9 @@ app
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
 			},
+			...(productionOmpBootstrap
+				? { ompArchiveInstaller: productionOmpBootstrap.ompArchiveInstaller }
+				: {}),
 			trustedKeys: () => {
 				const keys = store.get('pluginTrustedKeys', []) as unknown;
 				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
@@ -2623,6 +2635,9 @@ app
 				}
 			},
 		});
+		if (productionOmpBootstrap && pluginManager) {
+			productionOmpBootstrap.bootstrapBundledArchive(pluginManager);
+		}
 
 		let consentWindowRef: OpenedConsentWindow | null = null;
 		const closeConsentWindow = (): void => {
@@ -3069,6 +3084,7 @@ app
 		});
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
+		app.on('will-quit', () => revokeOmpRuntime('com.maestro.omp', 'shutdown'));
 		app.on('will-quit', disposeGlobalHotkey);
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
