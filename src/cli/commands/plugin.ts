@@ -44,7 +44,7 @@ import type { SignatureManifest, SignatureStatus } from '../../shared/plugins/si
 import { collectPluginArchiveFiles, packPluginArchive } from '../../shared/plugins/plugin-archive';
 
 /** Version of @maestro/plugin-sdk the scaffold pins (kept in sync with the SDK). */
-const PLUGIN_SDK_VERSION = '0.2.0';
+const PLUGIN_SDK_VERSION = '0.3.0';
 
 export interface PluginInitOptions {
 	tier?: string;

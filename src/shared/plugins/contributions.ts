@@ -14,6 +14,10 @@
 
 import type { PluginManifest } from './plugin-manifest';
 import type { PluginCapability } from './permissions';
+import {
+	parseWorkspaceFoundation,
+	type CanonicalWorkspaceFoundation,
+} from './workspace-foundation';
 
 /**
  * Maximum UTF-8 size of one host view's serialized BlockView data. This pure
@@ -188,6 +192,18 @@ export interface PanelContribution {
 	/** Where the panel docks. Defaults to `modal`. */
 	placement: PanelPlacement;
 }
+
+/** Host-owned record derived from a valid workspace declaration. */
+export type CanonicalWorkspaceContribution = Readonly<{
+	readonly ownerPluginId: string;
+}> &
+	CanonicalWorkspaceFoundation['workspace'];
+
+/** Host-owned record derived from the closed panel paired with a workspace. */
+export type CanonicalInteractivePanelContribution = Readonly<{
+	readonly ownerPluginId: string;
+}> &
+	CanonicalWorkspaceFoundation['panel'];
 
 /**
  * A runtime agent a (tier-1) plugin registers - a new entry in the Left Bar
@@ -376,6 +392,8 @@ export interface PluginContributions {
 	uiItems: UiItemContribution[];
 	hostViews: HostViewContribution[];
 	groupings: GroupingContribution[];
+	workspaces: CanonicalWorkspaceContribution[];
+	interactivePanels: CanonicalInteractivePanelContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -396,6 +414,8 @@ export interface AggregatedContributions {
 	uiItems: UiItemContribution[];
 	hostViews: HostViewContribution[];
 	groupings: GroupingContribution[];
+	workspaces: CanonicalWorkspaceContribution[];
+	interactivePanels: CanonicalInteractivePanelContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -419,6 +439,32 @@ function asArray(value: unknown): unknown[] {
 	return Array.isArray(value) ? value : [];
 }
 
+function collectWorkspaceFoundation(
+	manifest: PluginManifest,
+	errors: string[]
+): CanonicalWorkspaceFoundation | undefined {
+	const contributes = manifest.contributes;
+	if (
+		!contributes ||
+		(!Object.prototype.hasOwnProperty.call(contributes, 'workspaces') &&
+			!Object.prototype.hasOwnProperty.call(contributes, 'interactivePanels'))
+	) {
+		return undefined;
+	}
+
+	const parsed = parseWorkspaceFoundation(
+		{
+			workspaces: contributes.workspaces,
+			interactivePanels: contributes.interactivePanels,
+		},
+		manifest.permissions ?? [],
+		manifest.id
+	);
+	if (parsed.ok) return parsed.value;
+	errors.push(...parsed.errors.map((error) => `[${manifest.id}] workspace foundation: ${error}`));
+	return undefined;
+}
+
 /**
  * Validate and collect one plugin's Tier 0 contributions. Invalid individual
  * items are dropped with an error message rather than failing the whole plugin -
@@ -440,6 +486,8 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		uiItems: [],
 		hostViews: [],
 		groupings: [],
+		workspaces: [],
+		interactivePanels: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
@@ -542,6 +590,17 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 			if (hostView) out.hostViews.push(hostView);
 		}
 	}
+	const workspaceFoundation = collectWorkspaceFoundation(manifest, out.errors);
+	if (workspaceFoundation) {
+		out.workspaces.push({
+			ownerPluginId: workspaceFoundation.ownerPluginId,
+			...workspaceFoundation.workspace,
+		});
+		out.interactivePanels.push({
+			ownerPluginId: workspaceFoundation.ownerPluginId,
+			...workspaceFoundation.panel,
+		});
+	}
 	return out;
 }
 
@@ -572,6 +631,8 @@ export function aggregateContributions(
 		uiItems: [],
 		hostViews: [],
 		groupings: [],
+		workspaces: [],
+		interactivePanels: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -591,6 +652,26 @@ export function aggregateContributions(
 			return;
 		}
 		seen.add(key);
+		list.push(item);
+	};
+	const pushCanonical = <
+		T extends {
+			ownerPluginId: string;
+			canonicalContributionId: string;
+		},
+	>(
+		bucket: 'workspaces' | 'interactivePanels',
+		list: T[],
+		item: T
+	): void => {
+		if (
+			list.some((existing) => existing.canonicalContributionId === item.canonicalContributionId)
+		) {
+			(agg.errorsByPlugin[item.ownerPluginId] ??= []).push(
+				`duplicate ${bucket} contribution id "${item.canonicalContributionId}"`
+			);
+			return;
+		}
 		list.push(item);
 	};
 
@@ -616,6 +697,10 @@ export function aggregateContributions(
 		c.uiItems.forEach((u) => pushUnique('uiItems', agg.uiItems, u));
 		c.hostViews.forEach((view) => pushUnique('hostViews', agg.hostViews, view));
 		c.groupings.forEach((grouping) => pushUnique('groupings', agg.groupings, grouping));
+		c.workspaces.forEach((workspace) => pushCanonical('workspaces', agg.workspaces, workspace));
+		c.interactivePanels.forEach((panel) =>
+			pushCanonical('interactivePanels', agg.interactivePanels, panel)
+		);
 	}
 	return agg;
 }
@@ -1282,6 +1367,14 @@ export function gateContributions(
 		...plugin,
 		uiItems: hasCapability('ui:contribute') ? plugin.uiItems : [],
 		panels: hasCapability('ui:panel') ? plugin.panels : [],
+		workspaces:
+			hasCapability('ui:workspace') && hasCapability('ui:interactivePanel')
+				? plugin.workspaces
+				: [],
+		interactivePanels:
+			hasCapability('ui:workspace') && hasCapability('ui:interactivePanel')
+				? plugin.interactivePanels
+				: [],
 	};
 }
 

@@ -91,6 +91,8 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
+	| 'ui:workspace' // publish a declared host-rendered workspace
+	| 'ui:interactivePanel' // mount a declared closed-schema interactive panel
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
@@ -125,6 +127,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'ui:panel',
 	'ui:hostView',
 	'ui:grouping',
+	'ui:workspace',
+	'ui:interactivePanel',
 	'ui:render-unsafe',
 ];
 
@@ -163,6 +167,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'ui:panel': 'medium',
 	'ui:hostView': 'medium',
 	'ui:grouping': 'low',
+	'ui:workspace': 'medium',
+	'ui:interactivePanel': 'medium',
 	'ui:render-unsafe': 'high',
 };
 
@@ -215,6 +221,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'ui:panel': 'none',
 	'ui:hostView': 'none',
 	'ui:grouping': 'none',
+	'ui:workspace': 'none',
+	'ui:interactivePanel': 'none',
 	'ui:render-unsafe': 'none',
 };
 
@@ -394,6 +402,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
+		case 'ui:workspace':
+			return 'Publish a declared workspace with host-rendered navigation';
+		case 'ui:interactivePanel':
+			return 'Mount its declared closed-schema interactive panel';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}
@@ -402,10 +414,12 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.12.0 for the
- * backward-compatible additive `net:connect` capability plus its `net.connect`
- * / `net.send` / `net.close` host methods (hold an outbound persistent
- * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
+ * The host API version this Maestro build implements. Bumped to 1.13.0 for the
+ * additive paired `ui:workspace` and `ui:interactivePanel` contribution
+ * contracts. 1.12.0 added the backward-compatible `net:connect` capability
+ * plus its `net.connect` / `net.send` / `net.close` host methods (hold an
+ * outbound persistent websocket to a host scope, e.g. a Discord/Slack gateway;
+ * egress-classified).
  * 1.11.0 added virtual `groupings` contributions and the presentation-only
  * `ui:grouping` publish/clear methods; 1.10.0 added the backward-compatible,
  * data-only `iconPacks` contribution; 1.9.0 added host-rendered `hostViews`,
@@ -420,7 +434,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.12.0';
+export const HOST_API_VERSION = '1.13.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -556,6 +570,78 @@ export interface PluginMaestroBlock {
 	minHostApi: string;
 }
 
+// --- Closed workspace / interactive-panel data contracts --------------------
+
+export type HostIconKeyword = 'sparkles' | 'bot' | 'workflow';
+export type WorkspaceLocalId = string & { readonly __workspaceLocalId: never };
+export type PanelLocalId = string & { readonly __panelLocalId: never };
+export type LocalContributionId = string & { readonly __localContributionId: never };
+export type RelativePanelEntry = string & { readonly __relativePanelEntry: never };
+export type SnapshotToken = string & { readonly __snapshotToken: never };
+
+export interface WorkspaceContribution {
+	readonly localId: LocalContributionId;
+	readonly title: string;
+	readonly icon: HostIconKeyword;
+	readonly interactivePanelLocalId: LocalContributionId;
+	readonly order?: number;
+}
+
+export interface InteractivePanelContribution {
+	readonly localId: LocalContributionId;
+	readonly title: string;
+	readonly entry: RelativePanelEntry;
+	readonly workspaceLocalId: LocalContributionId;
+}
+
+export interface CanonicalWorkspaceFoundation {
+	readonly ownerPluginId: string;
+	readonly workspace: {
+		readonly localId: WorkspaceLocalId;
+		readonly canonicalContributionId: string;
+		readonly title: string;
+		readonly icon: HostIconKeyword;
+		readonly panelLocalId: PanelLocalId;
+		readonly order: number;
+	};
+	readonly panel: {
+		readonly localId: PanelLocalId;
+		readonly canonicalContributionId: string;
+		readonly title: string;
+		readonly entry: string;
+	};
+}
+
+export type UUID = string & { readonly __uuid: never };
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue =
+	| JsonPrimitive
+	| readonly JsonValue[]
+	| { readonly [key: string]: JsonValue };
+export interface JsonSchema {
+	readonly canonicalJsonSchema: JsonValue;
+}
+export type JsonSchemaMap = Readonly<Record<string, JsonSchema>>;
+export type PanelErrorCode =
+	| 'backpressure'
+	| 'invalid_request'
+	| 'capability_unavailable'
+	| 'policy_denied'
+	| 'runtime_stopped'
+	| 'timeout'
+	| 'cancelled';
+export interface ClosedPanelBridge<
+	Requests extends JsonSchemaMap = JsonSchemaMap,
+	Events extends JsonSchemaMap = JsonSchemaMap,
+	Results extends JsonSchemaMap = JsonSchemaMap,
+	Errors extends JsonSchemaMap = JsonSchemaMap,
+> {
+	readonly requestSchemas: Requests;
+	readonly eventSchemas: Events;
+	readonly resultSchemas: Results;
+	readonly errorSchemas: Errors;
+}
+
 /** A parsed, validated plugin manifest. Unknown `contributes.*` keys round-trip. */
 export interface PluginManifest {
 	id: string;
@@ -571,6 +657,8 @@ export interface PluginManifest {
 	category?: PluginCategory;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
+	/** Host-derived paired workspace/panel record; absent for every legacy manifest. */
+	workspaceFoundation?: CanonicalWorkspaceFoundation;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
 	entry?: string;
 	/** Capabilities requested (tier >= 1). Validated against the fixed vocabulary. */
@@ -864,6 +952,16 @@ export interface PanelContribution {
 	placement: PanelPlacement;
 }
 
+export type CanonicalWorkspaceContribution = Readonly<{
+	readonly ownerPluginId: string;
+}> &
+	CanonicalWorkspaceFoundation['workspace'];
+
+export type CanonicalInteractivePanelContribution = Readonly<{
+	readonly ownerPluginId: string;
+}> &
+	CanonicalWorkspaceFoundation['panel'];
+
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
  * plugin-declared CLI. NOTE: actually SPAWNING it is a separate, security-
  * reviewed wiring step, not enabled by registration alone. */
@@ -1011,6 +1109,8 @@ export interface PluginContributions {
 	uiItems: UiItemContribution[];
 	hostViews: HostViewContribution[];
 	groupings: GroupingContribution[];
+	workspaces: CanonicalWorkspaceContribution[];
+	interactivePanels: CanonicalInteractivePanelContribution[];
 	errors: string[];
 }
 
@@ -1030,6 +1130,8 @@ export interface AggregatedContributions {
 	uiItems: UiItemContribution[];
 	hostViews: HostViewContribution[];
 	groupings: GroupingContribution[];
+	workspaces: CanonicalWorkspaceContribution[];
+	interactivePanels: CanonicalInteractivePanelContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }

@@ -59,6 +59,8 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
+	| 'ui:workspace' // publish a declared host-rendered workspace
+	| 'ui:interactivePanel' // mount a declared closed-schema interactive panel
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
@@ -93,6 +95,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'ui:panel',
 	'ui:hostView',
 	'ui:grouping',
+	'ui:workspace',
+	'ui:interactivePanel',
 	'ui:render-unsafe',
 ];
 
@@ -131,6 +135,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'ui:panel': 'medium',
 	'ui:hostView': 'medium',
 	'ui:grouping': 'low',
+	'ui:workspace': 'medium',
+	'ui:interactivePanel': 'medium',
 	'ui:render-unsafe': 'high',
 };
 
@@ -184,6 +190,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'ui:panel': 'none',
 	'ui:hostView': 'none',
 	'ui:grouping': 'none',
+	'ui:workspace': 'none',
+	'ui:interactivePanel': 'none',
 	'ui:render-unsafe': 'none',
 };
 
@@ -536,6 +544,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
+		case 'ui:workspace':
+			return 'Publish a declared workspace with host-rendered navigation';
+		case 'ui:interactivePanel':
+			return 'Mount its declared closed-schema interactive panel';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}

@@ -14,6 +14,10 @@
 
 import { isHostApiCompatible } from './host-api';
 import { parsePermissions, type PermissionRequest } from './permissions';
+import {
+	parseWorkspaceFoundation,
+	type CanonicalWorkspaceFoundation,
+} from './workspace-foundation';
 
 /**
  * Plugin trust/capability tier. Determines what the host will let a plugin do.
@@ -87,6 +91,8 @@ export interface PluginManifest {
 	category?: PluginCategory;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
+	/** Host-derived paired workspace/panel record; absent for every legacy manifest. */
+	workspaceFoundation?: CanonicalWorkspaceFoundation;
 	/**
 	 * Relative path (within the plugin dir) to the sandboxed code entrypoint.
 	 * Required for tier >= 1; forbidden for tier 0 (data-only plugins run no code).
@@ -254,6 +260,35 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('tier 0 plugins are data-only and must not request permissions');
 	}
 
+	// Workspaces are a closed paired declaration. Keep legacy contribution keys
+	// opaque, but validate this pair through its one pure parser so manifest
+	// validation and aggregation cannot diverge on IDs, bounds, entries, or
+	// required capabilities.
+	let workspaceFoundation: CanonicalWorkspaceFoundation | undefined;
+	if (
+		isPlainObject(contributes) &&
+		(Object.prototype.hasOwnProperty.call(contributes, 'workspaces') ||
+			Object.prototype.hasOwnProperty.call(contributes, 'interactivePanels')) &&
+		isNonEmptyString(id) &&
+		PLUGIN_ID_PATTERN.test(id)
+	) {
+		const parsedWorkspaceFoundation = parseWorkspaceFoundation(
+			{
+				workspaces: contributes.workspaces,
+				interactivePanels: contributes.interactivePanels,
+			},
+			permissions,
+			id.trim()
+		);
+		if (parsedWorkspaceFoundation.ok) {
+			workspaceFoundation = parsedWorkspaceFoundation.value;
+		} else {
+			for (const error of parsedWorkspaceFoundation.errors) {
+				errors.push(`contributes: ${error}`);
+			}
+		}
+	}
+
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -270,6 +305,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
+		...(workspaceFoundation ? { workspaceFoundation } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};

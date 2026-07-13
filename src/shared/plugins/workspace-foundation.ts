@@ -1,7 +1,3 @@
-const workspaceLocalIdBrand: unique symbol = Symbol('workspaceLocalId');
-const panelLocalIdBrand: unique symbol = Symbol('panelLocalId');
-const snapshotTokenBrand: unique symbol = Symbol('snapshotToken');
-
 const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const LOCAL_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 const WORKSPACE_ICONS = ['sparkles', 'bot', 'workflow'] as const;
@@ -17,10 +13,29 @@ export const MAX_FOUNDATION_LOCAL_ID_BYTES = 64;
 type WorkspaceIcon = (typeof WORKSPACE_ICONS)[number];
 type ErrorEntry = { readonly path: string; readonly message: string; readonly order: number };
 
-export type WorkspaceLocalId = string & { readonly [workspaceLocalIdBrand]: never };
-export type PanelLocalId = string & { readonly [panelLocalIdBrand]: never };
+export type WorkspaceLocalId = string & { readonly __workspaceLocalId: never };
+export type PanelLocalId = string & { readonly __panelLocalId: never };
+export type SnapshotToken = string & { readonly __snapshotToken: never };
+export type HostIconKeyword = WorkspaceIcon;
+export type LocalContributionId = string & { readonly __localContributionId: never };
+export type RelativePanelEntry = string & { readonly __relativePanelEntry: never };
 
-export type SnapshotToken = string & { readonly [snapshotTokenBrand]: never };
+/** Plugin-authored declaration; the host derives its canonical contribution ID. */
+export interface WorkspaceContribution {
+	readonly localId: LocalContributionId;
+	readonly title: string;
+	readonly icon: HostIconKeyword;
+	readonly interactivePanelLocalId: LocalContributionId;
+	readonly order?: number;
+}
+
+/** Plugin-authored declaration for the one panel paired with a workspace. */
+export interface InteractivePanelContribution {
+	readonly localId: LocalContributionId;
+	readonly title: string;
+	readonly entry: RelativePanelEntry;
+	readonly workspaceLocalId: LocalContributionId;
+}
 export const MAX_EXTERNAL_SESSIONS_PER_WORKSPACE = 500;
 
 export type ExternalSessionStatus =

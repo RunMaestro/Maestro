@@ -1,8 +1,8 @@
 {
 	"name": "@maestro/plugin-sdk",
-	"version": "0.7.0",
-	"description": "Typed authoring surface for Maestro plugins (manifest, contributions, permissions, events, and the sandbox runtime API).",
-	"//": "Self-contained, dependency-free. The vendored plugin contracts track the Maestro plugin HOST_API_VERSION (1.12.0) from src/shared/plugins/host-api.ts; a drift-guard test asserts parity with those sources. Bump in lockstep with that contract: MINOR when the host adds a backward-compatible capability/contribution/method, MAJOR when one changes meaning or is removed.",
+	"version": "0.3.0",
+	"description": "Typed authoring surface for Maestro plugins (manifest, contributions, permissions, events, and closed interactive-panel data contracts).",
+	"//": "Self-contained, dependency-free. The vendored plugin contracts track the Maestro plugin HOST_API_VERSION (1.13.0) from src/shared/plugins/host-api.ts; a drift-guard test asserts parity with those sources. Bump in lockstep with that contract: MINOR when the host adds a backward-compatible capability/contribution/method, MAJOR when one changes meaning or is removed.",
 	"type": "module",
 	"license": "AGPL-3.0-only",
 	"main": "dist/index.js",
