@@ -13,7 +13,10 @@ import type { InteractiveStopReason } from '../../shared/plugins/interactive-run
 import type { OmpArchiveInstallRequest } from './plugin-trust-root-service';
 import { OmpPluginTrustRootService } from './plugin-trust-root-service';
 import type { InstallResult, PluginExecutionSnapshot } from './plugin-manager';
-import type { ManagedRuntimeResolver } from './plugin-managed-runtime-service';
+import type {
+	ManagedRuntimeResolver,
+	OmpRuntimeAuthResolver,
+} from './plugin-managed-runtime-service';
 import { PluginManagedRuntimeService } from './plugin-managed-runtime-service';
 import { OmpRuntimeProfileService } from './omp-runtime-profile';
 import type {
@@ -54,6 +57,8 @@ export interface ProductionOmpBootstrapInput {
 	readonly filesystem?: NativeWorkspaceRootFilesystem;
 	/** App-owned sterile OMP launch profile; defaults to a new host-owned profile service. */
 	readonly ompRuntimeProfile?: OmpRuntimeProfileService;
+	/** Host-only explicit credential resolver; it never enters plugin or renderer IPC. */
+	readonly ompAuthResolver?: OmpRuntimeAuthResolver;
 }
 
 /** Immutable release/trust inputs compiled into a production host. */
@@ -108,6 +113,7 @@ export function createProductionOmpBootstrap(
 		activation: input.activation,
 		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
 		...(input.ompRuntimeProfile ? { profile: input.ompRuntimeProfile } : {}),
+		...(input.ompAuthResolver ? { authResolver: input.ompAuthResolver } : {}),
 		roots: workspaceRoots,
 		runtime: runtimeResolver,
 	});

@@ -25,6 +25,7 @@ import {
 } from './native-workspace-root-service';
 import type { OmpSandboxHostHandlerSeam } from './omp-host-safety-brokers';
 import { OmpRuntimeProfileService, type OmpRuntimeProfile } from './omp-runtime-profile';
+import type { OmpAuthPublicStatus, OmpAuthResolution } from './omp-provider-credential-store';
 
 /** The runtime service owns only teardown of this injected host safety seam. */
 export type OmpManagedRuntimeSandboxHandlers = Pick<OmpSandboxHostHandlerSeam, 'revoke'>;
@@ -33,6 +34,31 @@ export { NativeWorkspaceRootService } from './native-workspace-root-service';
 export type { ManagedRuntimeChild, ManagedRuntimeLaunch } from './managed-runtime-process';
 
 const OMP_RUNTIME_VERSION = '16.4.8' as const;
+
+/** Host-only credential resolver invoked immediately before every OMP child launch. */
+export interface OmpRuntimeAuthResolver {
+	readonly resolveForLaunch: () => OmpAuthResolution;
+}
+
+/** Typed, JSON-safe auth-required outcome. No credential material is retained here. */
+export class OmpRuntimeAuthRequiredError extends Error {
+	readonly status: OmpAuthPublicStatus;
+
+	constructor(status: OmpAuthPublicStatus) {
+		super('OMP authentication is required for the configured provider');
+		this.name = 'OmpRuntimeAuthRequiredError';
+		this.status = Object.freeze({
+			status: status.status,
+			providerIds: [...status.providerIds],
+			...(status.reason === undefined ? {} : { reason: status.reason }),
+			...(status.model === undefined ? {} : { model: status.model }),
+		});
+	}
+
+	toJSON(): OmpAuthPublicStatus {
+		return { ...this.status, providerIds: [...this.status.providerIds] };
+	}
+}
 
 export interface AuthenticatedFileIdentity {
 	/** Canonical absolute path bound to the identity attested by the resolver. */
@@ -81,6 +107,8 @@ export interface PluginManagedRuntimeServiceDependencies {
 	readonly ompSandboxHandlers?: OmpManagedRuntimeSandboxHandlers;
 	/** Host-owned sterile cwd/profile authority. Never receives a workspace path. */
 	readonly profile?: OmpRuntimeProfileService;
+	/** Explicit Maestro credentials only; absent preserves sterile unauthenticated runtime behavior. */
+	readonly authResolver?: OmpRuntimeAuthResolver;
 }
 
 /**
@@ -94,13 +122,13 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 	private readonly spawn: ManagedRuntimeSpawner;
 	private readonly killTree: ProcessTreeKiller;
 	private readonly runtimeId: () => UUID;
-	private readonly profile: OmpRuntimeProfileService;
+	private readonly profile: OmpRuntimeProfileService | undefined;
 
 	constructor(private readonly deps: PluginManagedRuntimeServiceDependencies) {
 		this.spawn = deps.spawn ?? defaultSpawn;
 		this.killTree = deps.killTree ?? defaultProcessTreeKiller;
 		this.runtimeId = deps.runtimeId ?? defaultRuntimeId;
-		this.profile = deps.profile ?? new OmpRuntimeProfileService();
+		this.profile = deps.profile;
 	}
 
 	requestWorkspaceRoot(): Promise<WorkspaceRootCapability | null> {
@@ -134,7 +162,7 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		if (!isSameAuthenticatedRuntime(executable, launchRuntime)) {
 			throw new Error('authenticated Bun or OMP CLI changed before runtime launch');
 		}
-		const profile = await this.profile.prepareForLaunch();
+		const profile = await this.prepareRuntimeProfile();
 		const launchActivation = this.requireAuthorizedActivation();
 		if (
 			launchActivation.ownerPluginId !== current.ownerPluginId ||
@@ -176,6 +204,24 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 			stops.push(active.process.stop(reason));
 		}
 		await Promise.all(stops);
+	}
+
+	private async prepareRuntimeProfile(): Promise<OmpRuntimeProfile> {
+		const resolver = this.deps.authResolver;
+		if (!resolver) {
+			return (this.profile ?? new OmpRuntimeProfileService()).prepareForLaunch();
+		}
+
+		const auth = resolver.resolveForLaunch();
+		if (auth.status !== 'ready') throw new OmpRuntimeAuthRequiredError(auth.toPublicStatus());
+		const authEnvironment = auth.authEnvironment.toChildEnvironment();
+		if (!Object.isFrozen(authEnvironment)) {
+			throw new Error('OMP auth environment must be immutable');
+		}
+		return new OmpRuntimeProfileService({
+			...(auth.model === undefined ? {} : { model: auth.model }),
+			authEnvironment,
+		}).prepareForLaunch();
 	}
 
 	private requireAuthorizedActivation(): RuntimeActivationContext {

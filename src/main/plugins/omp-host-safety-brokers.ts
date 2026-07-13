@@ -571,7 +571,10 @@ export interface OmpProviderMetadata {
 }
 
 export interface OmpAuthCallbackPkceRouterDeps {
-	readonly providers: readonly OmpProviderMetadata[];
+	/** OAuth callback providers. Omitted providers stay fail-closed. */
+	readonly providers?: readonly OmpProviderMetadata[];
+	/** Explicit credential providers projected to the panel; this alone never enables OAuth. */
+	readonly configuredProviderIds?: readonly string[];
 	readonly allowedOrigins: ReadonlySet<string>;
 	readonly openAuthorization: (url: string) => Promise<void>;
 	/** Token exchange and credential storage are host-owned; no result crosses this seam. */
@@ -596,16 +599,24 @@ interface AuthTransaction {
 /** Host-only PKCE transaction router. Sandbox adapters project phase only; URLs and secrets stay host-private. */
 export class OmpAuthCallbackPkceRouter {
 	private readonly providers = new Map<string, OmpProviderMetadata>();
+	private readonly configuredProviderIds = new Set<string>();
 	private readonly transactions = new Map<string, AuthTransaction>();
 	private readonly random: () => string;
 	private readonly clock: () => number;
 	private revoked = false;
 
 	constructor(private readonly deps: OmpAuthCallbackPkceRouterDeps) {
-		for (const provider of deps.providers) {
+		for (const providerId of deps.configuredProviderIds ?? []) {
+			if (!/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(providerId)) {
+				throw new Error('invalid OMP configured provider');
+			}
+			this.configuredProviderIds.add(providerId);
+		}
+		for (const provider of deps.providers ?? []) {
 			validateProvider(provider, deps.allowedOrigins);
 			if (this.providers.has(provider.id)) throw new Error('duplicate OMP auth provider');
 			this.providers.set(provider.id, provider);
+			this.configuredProviderIds.add(provider.id);
 		}
 		this.random = deps.random ?? randomOpaque;
 		this.clock = deps.clock ?? Date.now;
@@ -671,7 +682,7 @@ export class OmpAuthCallbackPkceRouter {
 	}
 
 	providerIds(): readonly string[] {
-		return Object.freeze([...this.providers.keys()]);
+		return Object.freeze([...this.configuredProviderIds]);
 	}
 	cancel(transactionId: unknown): void {
 		if (typeof transactionId !== 'string') throw unavailable();

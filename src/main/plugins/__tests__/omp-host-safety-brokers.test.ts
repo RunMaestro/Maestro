@@ -497,6 +497,22 @@ describe('OMP host safety brokers', () => {
 		router.revoke();
 	});
 
+	it('projects configured provider IDs without enabling OAuth for providers lacking an explicit callback configuration', async () => {
+		const router = new OmpAuthCallbackPkceRouter({
+			configuredProviderIds: ['anthropic', 'openai'],
+			allowedOrigins: new Set<string>(),
+			openAuthorization: async () => {
+				throw new Error('OAuth must not open without an explicit provider configuration');
+			},
+			exchangeCode: async () => {
+				throw new Error('OAuth must not exchange without an explicit provider configuration');
+			},
+		});
+
+		expect(router.providerIds()).toEqual(['anthropic', 'openai']);
+		await expect(router.begin('anthropic')).rejects.toThrow('unavailable');
+	});
+
 	it('keeps URI catalog empty and makes every URI request unavailable', async () => {
 		const broker = new OmpUriBroker();
 		expect(broker.catalog()).toEqual([]);

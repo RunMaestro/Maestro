@@ -60,6 +60,8 @@ export interface OmpSafeStorage {
 export interface OmpAuthPublicStatus {
 	status: OmpAuthStatus;
 	providerIds: OmpProviderId[];
+	/** Model selection is non-secret and may be projected to the host runtime. */
+	model?: string;
 	reason?: OmpAuthRequiredReason;
 }
 
@@ -131,13 +133,15 @@ function createResolution(
 	status: OmpAuthStatus,
 	providerIds: OmpProviderId[],
 	authEnvironment: OmpAuthEnvironment,
-	reason?: OmpAuthRequiredReason
+	reason?: OmpAuthRequiredReason,
+	model?: string
 ): OmpAuthResolution {
-	const publicStatus = Object.freeze(
-		reason === undefined
-			? { status, providerIds: [...providerIds] }
-			: { status, providerIds: [...providerIds], reason }
-	);
+	const publicStatus = Object.freeze({
+		status,
+		providerIds: [...providerIds],
+		...(reason === undefined ? {} : { reason }),
+		...(model === undefined ? {} : { model }),
+	});
 	return Object.freeze({
 		...publicStatus,
 		authEnvironment,
@@ -196,11 +200,12 @@ export class OmpProviderCredentialStore {
 		this.settingsStore.set(OMP_PROVIDER_CREDENTIALS_SETTING, entries);
 	}
 
-	/**
-	 * Build the host-only auth projection for one prompt/model. A qualified model
-	 * receives credentials for its exact recognized provider only; unqualified
-	 * models may use every explicitly configured recognized provider.
-	 */
+	/** Host runtime seam: resolve the current explicit configuration at launch time. */
+	resolveForLaunch(): OmpAuthResolution {
+		return this.resolveForPrompt();
+	}
+
+	/** Resolve one prompt/model. Qualified models receive only their matching provider key. */
 	resolveForPrompt(model?: string): OmpAuthResolution {
 		const configured = this.readConfiguredCredentials();
 		const providerIds = PROVIDER_IDS.filter((providerId) => configured.has(providerId));
@@ -215,7 +220,8 @@ export class OmpProviderCredentialStore {
 				'auth_required',
 				providerIds,
 				createAuthEnvironment({}),
-				'unknown_model_provider'
+				'unknown_model_provider',
+				effectiveModel
 			);
 		}
 
@@ -233,10 +239,17 @@ export class OmpProviderCredentialStore {
 				'auth_required',
 				providerIds,
 				createAuthEnvironment({}),
-				'no_compatible_credential'
+				'no_compatible_credential',
+				effectiveModel
 			);
 		}
-		return createResolution('ready', compatibleProviders, createAuthEnvironment(childEnvironment));
+		return createResolution(
+			'ready',
+			compatibleProviders,
+			createAuthEnvironment(childEnvironment),
+			undefined,
+			effectiveModel
+		);
 	}
 
 	private safeStorageAvailable(): boolean {

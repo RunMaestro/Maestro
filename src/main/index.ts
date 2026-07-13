@@ -64,6 +64,7 @@ import {
 	type ProductionOmpBootstrap,
 	type ProductionOmpBootstrapConfiguration,
 } from './plugins/production-omp-bootstrap';
+import { OmpProviderCredentialStore } from './plugins/omp-provider-credential-store';
 import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
 import { createProductionOmpRuntimeDependencies } from './omp-distribution/production-omp-runtime-dependencies';
 import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
@@ -2378,6 +2379,10 @@ app
 					});
 			return result.response === 0;
 		};
+		const ompCredentialResolver = new OmpProviderCredentialStore(store, safeStorage);
+		const ompConfiguredProviderIds = ompCredentialResolver
+			.resolveForLaunch()
+			.toPublicStatus().providerIds;
 		const packagedOmpConfiguration = (() => {
 			if (!app.isPackaged) return undefined;
 			const resource = loadProductionOmpResource(path.join(process.resourcesPath, 'omp'));
@@ -2424,11 +2429,12 @@ app
 					...productionOmpConfiguration,
 					activation: ompRuntimeActivation,
 					chooseDirectory: chooseOmpDirectory,
+					ompAuthResolver: ompCredentialResolver,
 					ompSandboxHandlerDeps: {
 						workspaceRoot: () => activeOmpWorkspaceRoot,
 						approve: approveOmpWorkspaceTool,
 						auth: {
-							providers: [],
+							configuredProviderIds: ompConfiguredProviderIds,
 							allowedOrigins: new Set<string>(),
 							openAuthorization: async () => {
 								throw new Error('OMP authorization providers are not configured');

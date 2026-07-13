@@ -5,11 +5,20 @@ import type { JsonValue, UUID } from '../../../shared/plugins/interactive-panel'
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 import {
 	NativeWorkspaceRootService,
+	OmpRuntimeAuthRequiredError,
 	PluginManagedRuntimeService,
 	type ManagedRuntimeChild,
 	type ManagedRuntimeLaunch,
+	type OmpRuntimeAuthResolver,
 	type VerifiedRuntimeLaunch,
 } from '../plugin-managed-runtime-service';
+import type {
+	OmpAuthPublicStatus,
+	OmpAuthResolution,
+	OmpProviderId,
+} from '../omp-provider-credential-store';
+
+const ANTHROPIC_PROVIDER_IDS: OmpProviderId[] = ['anthropic'];
 
 class FakeWritable extends EventEmitter {
 	readonly writes: string[] = [];
@@ -95,7 +104,8 @@ function verifiedRuntime(
 function buildService(
 	root: NativeWorkspaceRootService,
 	child = new FakeChild(),
-	ompSandboxHandlers?: { readonly revoke: () => void }
+	ompSandboxHandlers?: { readonly revoke: () => void },
+	authResolver?: OmpRuntimeAuthResolver
 ) {
 	let launch: ManagedRuntimeLaunch | undefined;
 	const service = new PluginManagedRuntimeService({
@@ -115,6 +125,7 @@ function buildService(
 		killTree: async () => undefined,
 		runtimeId: () => '00000000-0000-4000-8000-000000000001' as UUID,
 		ompSandboxHandlers,
+		...(authResolver ? { authResolver } : {}),
 	});
 	return { service, child, launch: () => launch };
 }
@@ -181,6 +192,81 @@ describe('managed OMP runtime service', () => {
 			PI_NO_TITLE: '1',
 			PI_NOTIFICATIONS: 'off',
 		});
+	});
+
+	it('injects only a frozen host-issued provider environment into the sterile child profile', async () => {
+		const roots = rootService();
+		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
+		const childEnvironment = Object.freeze({ ANTHROPIC_API_KEY: 'test-anthropic-key-12345' });
+		const authEnvironment = Object.freeze({
+			toChildEnvironment: () => childEnvironment,
+			toJSON: () => undefined,
+		});
+		const resolution: OmpAuthResolution = Object.freeze({
+			status: 'ready',
+			providerIds: [...ANTHROPIC_PROVIDER_IDS],
+			model: 'anthropic/claude-sonnet-4-5',
+			authEnvironment,
+			toPublicStatus: (): OmpAuthPublicStatus => ({
+				status: 'ready',
+				providerIds: [...ANTHROPIC_PROVIDER_IDS],
+				model: 'anthropic/claude-sonnet-4-5',
+			}),
+			toJSON: (): OmpAuthPublicStatus => ({
+				status: 'ready',
+				providerIds: [...ANTHROPIC_PROVIDER_IDS],
+				model: 'anthropic/claude-sonnet-4-5',
+			}),
+		});
+		const resolver: OmpRuntimeAuthResolver = { resolveForLaunch: () => resolution };
+		const { service, launch } = buildService(roots, new FakeChild(), undefined, resolver);
+
+		await service.startOmpRuntime({ workspaceRoot: root, options: { restore: false } });
+
+		const spawned = launch();
+		expect(spawned?.env).toMatchObject({ ANTHROPIC_API_KEY: 'test-anthropic-key-12345' });
+		expect(spawned?.env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
+		expect(spawned?.args.at(-1)).toBe('anthropic/claude-sonnet-4-5');
+		expect(Object.isFrozen(spawned?.env)).toBe(true);
+	});
+
+	it('fails before spawn with a typed public auth-required status when no compatible credential exists', async () => {
+		const roots = rootService();
+		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
+		const authEnvironment = Object.freeze({
+			toChildEnvironment: () => Object.freeze({}),
+			toJSON: () => undefined,
+		});
+		const resolution: OmpAuthResolution = Object.freeze({
+			status: 'auth_required',
+			providerIds: [...ANTHROPIC_PROVIDER_IDS],
+			reason: 'no_compatible_credential',
+			authEnvironment,
+			toPublicStatus: (): OmpAuthPublicStatus => ({
+				status: 'auth_required',
+				providerIds: [...ANTHROPIC_PROVIDER_IDS],
+				reason: 'no_compatible_credential',
+			}),
+			toJSON: (): OmpAuthPublicStatus => ({
+				status: 'auth_required',
+				providerIds: [...ANTHROPIC_PROVIDER_IDS],
+				reason: 'no_compatible_credential',
+			}),
+		});
+		const resolver: OmpRuntimeAuthResolver = { resolveForLaunch: () => resolution };
+		const { service, launch } = buildService(roots, new FakeChild(), undefined, resolver);
+
+		await expect(
+			service.startOmpRuntime({ workspaceRoot: root, options: { restore: false } })
+		).rejects.toMatchObject({
+			name: OmpRuntimeAuthRequiredError.name,
+			status: {
+				status: 'auth_required',
+				providerIds: ['anthropic'],
+				reason: 'no_compatible_credential',
+			},
+		});
+		expect(launch()).toBeUndefined();
 	});
 
 	it('relays only bounded validated stdout frames as frozen ordered messages and isolates callbacks', async () => {
