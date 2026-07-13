@@ -31,7 +31,24 @@ vi.mock('../../main/utils/safe-send', () => ({
 	isWebContentsAvailable: vi.fn().mockReturnValue(true),
 }));
 
-import { parseDeepLink } from '../../main/deep-links';
+vi.mock('../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
+import { app } from 'electron';
+import {
+	flushPendingDeepLink,
+	parseDeepLink,
+	setupDeepLinkHandling,
+	type WorkspaceDeepLinkHandlers,
+} from '../../main/deep-links';
+import { logger } from '../../main/utils/logger';
+import { captureException } from '../../main/utils/sentry';
+import type {
+	SnapshotToken,
+	WorkspaceLinkResolution,
+	WorkspaceLocalId,
+} from '../../shared/plugins/workspace-foundation';
 
 describe('parseDeepLink', () => {
 	describe('focus action', () => {
@@ -137,5 +154,176 @@ describe('parseDeepLink', () => {
 			// parseDeepLink is tolerant of most inputs, but unrecognized resources return null
 			expect(parseDeepLink('maestro://settings')).toBeNull();
 		});
+	});
+
+	describe('opaque input safety', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('does not send an unrecognized opaque URL to logs or Sentry', () => {
+			const opaqueUrl = 'maestro://unknown/opaque-token-value';
+
+			expect(parseDeepLink(opaqueUrl)).toBeNull();
+
+			for (const spy of [logger.info, logger.debug, logger.warn, logger.error, captureException]) {
+				expect(spy).not.toHaveBeenCalledWith(expect.stringContaining(opaqueUrl), expect.anything());
+				expect(JSON.stringify(vi.mocked(spy).mock.calls)).not.toContain(opaqueUrl);
+			}
+		});
+	});
+});
+
+describe('workspace deep link routing', () => {
+	const ownerPluginId = 'com.maestro.omp';
+	const workspaceLocalId = 'omp-workspace' as WorkspaceLocalId;
+	const snapshotToken = 'ABCD1234_efgh5678IJKL9012' as SnapshotToken;
+	const workspaceUrl = `maestro://workspace/${ownerPluginId}/${workspaceLocalId}/session/${snapshotToken}`;
+	const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+	const rendererSend = vi.fn();
+	const mainWindow = {
+		isMinimized: vi.fn(() => false),
+		show: vi.fn(),
+		focus: vi.fn(),
+		webContents: { send: rendererSend },
+	};
+
+	const resolved = (): WorkspaceLinkResolution => ({
+		kind: 'resolved',
+		ownerPluginId,
+		workspaceLocalId,
+		externalSession: {
+			externalSessionId: 'host-projection-session-1',
+			title: 'OMP session',
+			status: 'idle',
+			unread: 0,
+			pendingApproval: false,
+			updatedAt: 1,
+			snapshotToken,
+		},
+	});
+
+	const workspaceHandlers = (
+		resolveWorkspaceLink: (url: string) => WorkspaceLinkResolution | null = () => resolved(),
+		selectBySnapshotToken: (token: SnapshotToken) => WorkspaceLinkResolution | null = () =>
+			resolved()
+	): WorkspaceDeepLinkHandlers => ({
+		resolveWorkspaceLink,
+		selectBySnapshotToken,
+	});
+
+	const setup = (handlers: WorkspaceDeepLinkHandlers) => {
+		vi.stubEnv('ENFORCE_SINGLE_INSTANCE_IN_DEV', '1');
+		expect(setupDeepLinkHandling(() => mainWindow as never, handlers)).toBe(true);
+	};
+
+	const openUrl = (url: string) => {
+		const handler = eventHandlers.get('open-url');
+		if (!handler) throw new Error('open-url handler was not registered');
+		handler({ preventDefault: vi.fn() }, url);
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		eventHandlers.clear();
+		vi.mocked(app.on).mockImplementation((event, listener) => {
+			eventHandlers.set(event, listener as unknown as (...args: unknown[]) => void);
+			return app;
+		});
+	});
+
+	it('selects a valid current workspace snapshot and forwards only a safe DTO', () => {
+		const resolveWorkspaceLink = vi.fn(() => resolved());
+		const selectBySnapshotToken = vi.fn(() => resolved());
+		setup(workspaceHandlers(resolveWorkspaceLink, selectBySnapshotToken));
+
+		openUrl(workspaceUrl);
+
+		expect(resolveWorkspaceLink).toHaveBeenCalledWith(workspaceUrl);
+		expect(selectBySnapshotToken).toHaveBeenCalledWith(snapshotToken);
+		expect(selectBySnapshotToken.mock.invocationCallOrder[0]).toBeGreaterThan(
+			resolveWorkspaceLink.mock.invocationCallOrder[0]
+		);
+		expect(rendererSend).toHaveBeenCalledWith('app:deepLink', {
+			action: 'workspace',
+			ownerPluginId,
+			workspaceLocalId,
+			externalSessionId: 'host-projection-session-1',
+		});
+		expect(JSON.stringify(rendererSend.mock.calls)).not.toContain(snapshotToken);
+	});
+
+	it('rejects malformed workspace syntax without resolving or selecting a token', () => {
+		const resolveWorkspaceLink = vi.fn(() => resolved());
+		const selectBySnapshotToken = vi.fn(() => resolved());
+		setup(workspaceHandlers(resolveWorkspaceLink, selectBySnapshotToken));
+
+		openUrl(
+			`maestro://workspace/${ownerPluginId}/${workspaceLocalId}/session/${snapshotToken}?leak`
+		);
+
+		expect(resolveWorkspaceLink).not.toHaveBeenCalled();
+		expect(selectBySnapshotToken).not.toHaveBeenCalled();
+		expect(rendererSend).not.toHaveBeenCalled();
+	});
+
+	it.each<WorkspaceLinkResolution['kind']>([
+		'unknown_token',
+		'foreign_owner',
+		'expired',
+		'revoked',
+		'disabled_owner',
+	])('handles %s without selecting or forwarding an opaque token', (kind) => {
+		const opaqueUrl = `${workspaceUrl}-opaque`;
+		const resolveWorkspaceLink = vi.fn(() => ({ kind }) as WorkspaceLinkResolution);
+		const selectBySnapshotToken = vi.fn(() => resolved());
+		setup(workspaceHandlers(resolveWorkspaceLink, selectBySnapshotToken));
+
+		openUrl(opaqueUrl);
+
+		expect(selectBySnapshotToken).not.toHaveBeenCalled();
+		expect(rendererSend).not.toHaveBeenCalled();
+		for (const spy of [logger.info, logger.debug, logger.warn, logger.error, captureException]) {
+			expect(JSON.stringify(vi.mocked(spy).mock.calls)).not.toContain(opaqueUrl);
+			expect(JSON.stringify(vi.mocked(spy).mock.calls)).not.toContain(snapshotToken);
+		}
+	});
+
+	it('defers a cold-start workspace link until the registry resolver is ready', () => {
+		const resolveWorkspaceLink = vi.fn<WorkspaceLinkResolution | null, [string]>(() => null);
+		const selectBySnapshotToken = vi.fn(() => resolved());
+		const handlers = workspaceHandlers(resolveWorkspaceLink, selectBySnapshotToken);
+		setup(handlers);
+
+		openUrl(workspaceUrl);
+		expect(selectBySnapshotToken).not.toHaveBeenCalled();
+
+		resolveWorkspaceLink.mockReturnValue(resolved());
+		flushPendingDeepLink(() => mainWindow as never, handlers);
+
+		expect(selectBySnapshotToken).toHaveBeenCalledWith(snapshotToken);
+		expect(rendererSend).toHaveBeenCalledWith('app:deepLink', {
+			action: 'workspace',
+			ownerPluginId,
+			workspaceLocalId,
+			externalSessionId: 'host-projection-session-1',
+		});
+	});
+
+	it('re-resolves repeated workspace links through the registry without raw-token telemetry', () => {
+		const resolveWorkspaceLink = vi.fn(() => resolved());
+		const selectBySnapshotToken = vi.fn(() => resolved());
+		setup(workspaceHandlers(resolveWorkspaceLink, selectBySnapshotToken));
+
+		openUrl(workspaceUrl);
+		openUrl(workspaceUrl);
+
+		expect(resolveWorkspaceLink).toHaveBeenCalledTimes(2);
+		expect(selectBySnapshotToken).toHaveBeenCalledTimes(2);
+		expect(rendererSend).toHaveBeenCalledTimes(2);
+		for (const spy of [logger.info, logger.debug, logger.warn, logger.error, captureException]) {
+			expect(JSON.stringify(vi.mocked(spy).mock.calls)).not.toContain(workspaceUrl);
+			expect(JSON.stringify(vi.mocked(spy).mock.calls)).not.toContain(snapshotToken);
+		}
 	});
 });

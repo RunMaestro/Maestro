@@ -239,7 +239,11 @@ import {
 } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
-import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
+import {
+	flushPendingDeepLink,
+	setupDeepLinkHandling,
+	type WorkspaceDeepLinkHandlers,
+} from './deep-links';
 // Extracted modules (Phase 1 refactoring)
 import { parseParticipantSessionId } from './group-chat/session-parser';
 import { extractTextFromStreamJson } from './group-chat/output-parser';
@@ -512,12 +516,19 @@ let pluginManager: PluginManager | null = null;
 let pluginWorkspaceLifecycle: PluginWorkspaceManagerLifecycle | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
+let pluginWorkspaceRegistry: PluginWorkspaceRegistry | null = null;
 let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
+
+const workspaceDeepLinkHandlers: WorkspaceDeepLinkHandlers = {
+	resolveWorkspaceLink: (url) => pluginWorkspaceRegistry?.resolveWorkspaceLink(url) ?? null,
+	selectBySnapshotToken: (snapshotToken) =>
+		pluginWorkspaceRegistry?.selectBySnapshotToken(snapshotToken) ?? null,
+};
 
 /** Production startup may inject a resolver only after its provenance/trust
  * material has been verified. Absent resolver means no interactive runtime
@@ -911,7 +922,7 @@ function restoreWindows() {
 setupGlobalErrorHandlers();
 
 // Set up deep link protocol handling (must be before app.whenReady for requestSingleInstanceLock)
-const gotSingleInstanceLock = setupDeepLinkHandling(() => mainWindow);
+const gotSingleInstanceLock = setupDeepLinkHandling(() => mainWindow, workspaceDeepLinkHandlers);
 if (!gotSingleInstanceLock) {
 	app.quit();
 	process.exit(0);
@@ -2226,6 +2237,7 @@ app
 			isOwnerEnabled: (pluginId) => pluginWorkspaceLifecycle?.isOwnerEnabled(pluginId) ?? false,
 		});
 		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
+		pluginWorkspaceRegistry = workspaceRegistry;
 		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
 		pluginWorkspaceLifecycle = workspaceLifecycle;
 
@@ -3060,7 +3072,7 @@ app
 		app.on('will-quit', disposeGlobalHotkey);
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
-		flushPendingDeepLink(() => mainWindow);
+		flushPendingDeepLink(() => mainWindow, workspaceDeepLinkHandlers);
 
 		// Note: History file watching is handled by HistoryManager.startWatching() above
 		// which uses the new per-session file format in the history/ directory

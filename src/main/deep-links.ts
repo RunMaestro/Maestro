@@ -23,6 +23,12 @@ import { isWebContentsAvailable } from './utils/safe-send';
 import type { ParsedDeepLink } from '../shared/types';
 import { parseMaestroDeepLink } from '../shared/deep-link-urls';
 import { captureException } from './utils/sentry';
+import {
+	parseWorkspaceLink,
+	type SnapshotToken,
+	type WorkspaceLinkResolution,
+	type WorkspaceLocalId,
+} from '../shared/plugins/workspace-foundation';
 
 // ============================================================================
 // Constants
@@ -37,6 +43,18 @@ const IPC_CHANNEL = 'app:deepLink';
 
 /** URL received before the window was ready — flushed after createWindow() */
 let pendingDeepLinkUrl: string | null = null;
+
+export interface WorkspaceDeepLinkHandlers {
+	readonly resolveWorkspaceLink: (url: string) => WorkspaceLinkResolution | null;
+	readonly selectBySnapshotToken: (snapshotToken: SnapshotToken) => WorkspaceLinkResolution | null;
+}
+
+interface WorkspaceDeepLinkPayload {
+	readonly action: 'workspace';
+	readonly ownerPluginId: string;
+	readonly workspaceLocalId: WorkspaceLocalId;
+	readonly externalSessionId: string;
+}
 
 // ============================================================================
 // URL Parsing
@@ -53,12 +71,14 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
 	try {
 		const parsed = parseMaestroDeepLink(url);
 		if (!parsed) {
-			logger.warn(`Unrecognized deep link URL: ${url}`, 'DeepLink');
+			logger.warn('Unrecognized deep link route', 'DeepLink', { route: 'unknown' });
 		}
 		return parsed;
-	} catch (error) {
-		void captureException(error);
-		logger.error('Failed to parse deep link URL', 'DeepLink', { url, error: String(error) });
+	} catch {
+		void captureException(new Error('Deep link parsing failed'), {
+			extra: { route: 'unknown' },
+		});
+		logger.error('Failed to parse deep link route', 'DeepLink', { route: 'unknown' });
 		return null;
 	}
 }
@@ -67,32 +87,106 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
 // Deep Link Dispatch
 // ============================================================================
 
+function isWorkspaceDeepLink(url: string): boolean {
+	return url.startsWith(`${PROTOCOL}://workspace`);
+}
+
+function bufferDeepLink(url: string, route: 'maestro' | 'workspace', reason: string): void {
+	pendingDeepLinkUrl = url;
+	logger.debug('Deep link deferred', 'DeepLink', { route, reason });
+}
+
+function reportWorkspaceResolution(
+	outcome: WorkspaceLinkResolution['kind'] | 'registry_unavailable'
+): void {
+	logger.warn('Workspace deep link rejected', 'DeepLink', { route: 'workspace', outcome });
+}
+
+function processWorkspaceDeepLink(
+	url: string,
+	getMainWindow: () => BrowserWindow | null,
+	workspaceHandlers: WorkspaceDeepLinkHandlers | undefined
+): void {
+	const parsed = parseWorkspaceLink(url);
+	if (!parsed) {
+		reportWorkspaceResolution('syntax_invalid');
+		return;
+	}
+	if (!workspaceHandlers) {
+		reportWorkspaceResolution('registry_unavailable');
+		return;
+	}
+
+	const resolution = workspaceHandlers.resolveWorkspaceLink(url);
+	if (!resolution) {
+		bufferDeepLink(url, 'workspace', 'registry_unavailable');
+		return;
+	}
+	if (resolution.kind !== 'resolved') {
+		reportWorkspaceResolution(resolution.kind);
+		return;
+	}
+
+	const win = getMainWindow();
+	if (!win) {
+		bufferDeepLink(url, 'workspace', 'window_unavailable');
+		return;
+	}
+
+	const selected = workspaceHandlers.selectBySnapshotToken(parsed.snapshotToken);
+	if (!selected) {
+		bufferDeepLink(url, 'workspace', 'registry_unavailable');
+		return;
+	}
+	if (selected.kind !== 'resolved') {
+		reportWorkspaceResolution(selected.kind);
+		return;
+	}
+
+	const workspacePayload: WorkspaceDeepLinkPayload = {
+		action: 'workspace',
+		ownerPluginId: selected.ownerPluginId,
+		workspaceLocalId: selected.workspaceLocalId,
+		externalSessionId: selected.externalSession.externalSessionId,
+	};
+
+	if (win.isMinimized()) win.restore();
+	win.show();
+	win.focus();
+	if (isWebContentsAvailable(win)) {
+		win.webContents.send(IPC_CHANNEL, workspacePayload);
+	}
+}
+
 /**
  * Process a deep link URL: parse it, bring window to foreground, and send to renderer.
  */
-function processDeepLink(url: string, getMainWindow: () => BrowserWindow | null): void {
-	logger.info('Processing deep link', 'DeepLink', { url });
+function processDeepLink(
+	url: string,
+	getMainWindow: () => BrowserWindow | null,
+	workspaceHandlers?: WorkspaceDeepLinkHandlers
+): void {
+	if (isWorkspaceDeepLink(url)) {
+		processWorkspaceDeepLink(url, getMainWindow, workspaceHandlers);
+		return;
+	}
 
+	logger.info('Processing deep link', 'DeepLink', { route: 'maestro' });
 	const parsed = parseDeepLink(url);
 	if (!parsed) return;
 
 	const win = getMainWindow();
 	if (!win) {
-		// Window not ready yet — buffer for later
-		pendingDeepLinkUrl = url;
-		logger.debug('Window not ready, buffering deep link', 'DeepLink');
+		bufferDeepLink(url, 'maestro', 'window_unavailable');
 		return;
 	}
 
-	// Bring window to foreground
 	if (win.isMinimized()) win.restore();
 	win.show();
 	win.focus();
 
-	// For 'focus' action, bringing window to front is all we need
 	if (parsed.action === 'focus') return;
 
-	// Send parsed payload to renderer for navigation
 	if (isWebContentsAvailable(win)) {
 		win.webContents.send(IPC_CHANNEL, parsed);
 	}
@@ -110,7 +204,10 @@ function processDeepLink(url: string, getMainWindow: () => BrowserWindow | null)
  *
  * @returns false if another instance is already running (caller should app.quit())
  */
-export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null): boolean {
+export function setupDeepLinkHandling(
+	getMainWindow: () => BrowserWindow | null,
+	workspaceHandlers?: WorkspaceDeepLinkHandlers
+): boolean {
 	// Register as handler for maestro:// URLs
 	// In dev mode, skip registration to avoid clobbering the production app's registration
 	const isDev = !app.isPackaged;
@@ -160,7 +257,7 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 			(arg) => arg.startsWith(`${PROTOCOL}://`) || arg.startsWith(`${PROTOCOL}:`)
 		);
 		if (deepLinkUrl) {
-			processDeepLink(deepLinkUrl, getMainWindow);
+			processDeepLink(deepLinkUrl, getMainWindow, workspaceHandlers);
 		} else {
 			// No deep link, but user tried to open a second instance — bring existing window to front
 			const win = getMainWindow();
@@ -174,7 +271,7 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 	// Handle open-url event (macOS: OS delivers URL to running app)
 	app.on('open-url', (event, url) => {
 		event.preventDefault();
-		processDeepLink(url, getMainWindow);
+		processDeepLink(url, getMainWindow, workspaceHandlers);
 	});
 
 	// Check process.argv for cold-start deep link (Windows/Linux: app launched with URL as arg)
@@ -183,7 +280,9 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 	);
 	if (deepLinkArg) {
 		pendingDeepLinkUrl = deepLinkArg;
-		logger.info('Found deep link in process argv (cold start)', 'DeepLink', { url: deepLinkArg });
+		logger.info('Found deep link in process argv (cold start)', 'DeepLink', {
+			route: isWorkspaceDeepLink(deepLinkArg) ? 'workspace' : 'maestro',
+		});
 	}
 
 	return true;
@@ -193,13 +292,18 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
  * Flush any pending deep link URL that arrived before the window was ready.
  * Call this after createWindow() inside app.whenReady().
  */
-export function flushPendingDeepLink(getMainWindow: () => BrowserWindow | null): void {
+export function flushPendingDeepLink(
+	getMainWindow: () => BrowserWindow | null,
+	workspaceHandlers?: WorkspaceDeepLinkHandlers
+): void {
 	if (!pendingDeepLinkUrl) return;
 
 	const url = pendingDeepLinkUrl;
 	pendingDeepLinkUrl = null;
-	logger.info('Flushing pending deep link', 'DeepLink', { url });
-	processDeepLink(url, getMainWindow);
+	logger.info('Flushing pending deep link', 'DeepLink', {
+		route: isWorkspaceDeepLink(url) ? 'workspace' : 'maestro',
+	});
+	processDeepLink(url, getMainWindow, workspaceHandlers);
 }
 
 /**

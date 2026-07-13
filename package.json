@@ -34,6 +34,7 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:omp-plugin-artifact": "bun scripts/build-omp-plugin-artifact.mts",
+		"prepare:omp-production-resource": "bun scripts/prepare-omp-production-resource.mjs",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
@@ -96,6 +97,17 @@
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
 			"node_modules/file-uri-to-path/**/*"
+		],
+		"beforePack": "scripts/verify-omp-production-resource.mjs",
+		"extraResources": [
+			{
+				"from": "dist/omp-production",
+				"to": "omp",
+				"filter": [
+					"com.maestro.omp.omp",
+					"release.json"
+				]
+			}
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
