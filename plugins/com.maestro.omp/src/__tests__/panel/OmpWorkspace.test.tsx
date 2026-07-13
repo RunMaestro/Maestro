@@ -112,7 +112,7 @@ afterEach(() => {
 describe('OmpWorkspace', () => {
 	it('renders streamed events and dispatches session controls through its adapter', async () => {
 		const adapter = new DeterministicOmpAdapter(snapshot());
-		render(<OmpWorkspace adapter={adapter} theme={theme} />);
+		render(<OmpWorkspace adapter={adapter} theme={theme} focusEventId="think-1" />);
 
 		expect(await screen.findByRole('heading', { name: 'Refactor queue processing' })).toBeVisible();
 		expect(screen.queryByText('Inspecting ordering constraints.')).not.toBeInTheDocument();
