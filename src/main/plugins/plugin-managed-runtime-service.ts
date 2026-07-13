@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 
 import type { JsonValue, UUID } from '../../shared/plugins/interactive-panel';
 import {
@@ -33,7 +34,10 @@ export type { ManagedRuntimeChild, ManagedRuntimeLaunch } from './managed-runtim
 const OMP_RUNTIME_VERSION = '16.4.8' as const;
 
 export interface VerifiedRuntimeExecutable {
-	readonly executable: string;
+	/** Authenticated absolute Bun executable; never discovered from PATH. */
+	readonly bunExecutable: string;
+	/** Authenticated absolute OMP CLI module executed as Bun's explicit first arg. */
+	readonly ompCliPath: string;
 	readonly version: typeof OMP_RUNTIME_VERSION;
 	/** Provenance is established by the host distributor, never a PATH lookup. */
 	readonly provenance: 'verified';
@@ -216,12 +220,14 @@ function assertSafeInput(input: unknown): asserts input is {
 function assertVerifiedRuntime(value: VerifiedRuntimeExecutable): VerifiedRuntimeExecutable {
 	if (
 		!value ||
-		typeof value.executable !== 'string' ||
-		value.executable.length === 0 ||
+		typeof value.bunExecutable !== 'string' ||
+		!isAbsolute(value.bunExecutable) ||
+		typeof value.ompCliPath !== 'string' ||
+		!isAbsolute(value.ompCliPath) ||
 		value.version !== OMP_RUNTIME_VERSION ||
 		value.provenance !== 'verified'
 	) {
-		throw new Error('OMP runtime provenance or version verification failed');
+		throw new Error('OMP runtime provenance or authenticated Bun launch verification failed');
 	}
 	return value;
 }
@@ -229,8 +235,8 @@ function assertVerifiedRuntime(value: VerifiedRuntimeExecutable): VerifiedRuntim
 function launchFor(runtime: VerifiedRuntimeExecutable, root: string): ManagedRuntimeLaunch {
 	const stdio: ['pipe', 'pipe', 'pipe'] = ['pipe', 'pipe', 'pipe'];
 	return Object.freeze({
-		command: runtime.executable,
-		args: ['--mode', 'rpc', '--cwd', root],
+		command: runtime.bunExecutable,
+		args: [runtime.ompCliPath, '--mode', 'rpc', '--cwd', root],
 		cwd: root,
 		env: Object.freeze({}),
 		shell: false,

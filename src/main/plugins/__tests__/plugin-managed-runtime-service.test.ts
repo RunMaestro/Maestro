@@ -82,7 +82,8 @@ function buildService(
 		roots: root,
 		runtime: {
 			resolveSystem: async () => ({
-				executable: '/bin/omp',
+				bunExecutable: '/bin/bun',
+				ompCliPath: '/bin/omp',
 				provenance: 'verified',
 				version: '16.4.8',
 			}),
@@ -111,7 +112,7 @@ describe('managed OMP runtime service', () => {
 		expect(Object.isFrozen(root as object)).toBe(true);
 	});
 
-	it('starts only from a current authorized root with host-owned argv, env, cwd, and shell-free stdio', async () => {
+	it('starts only through authenticated Bun with the OMP CLI as the explicit first argument', async () => {
 		const roots = rootService();
 		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
 		const { service, launch } = buildService(roots);
@@ -125,8 +126,8 @@ describe('managed OMP runtime service', () => {
 			generation: 7n,
 		});
 		expect(launch()).toEqual({
-			command: '/bin/omp',
-			args: ['--mode', 'rpc', '--cwd', '/workspace'],
+			command: '/bin/bun',
+			args: ['/bin/omp', '--mode', 'rpc', '--cwd', '/workspace'],
 			cwd: '/workspace',
 			env: {},
 			shell: false,
@@ -213,7 +214,8 @@ describe('managed OMP runtime service', () => {
 				resolveSystem: async () => null,
 				managedInstallAllowed: () => true,
 				resolveManaged: async () => ({
-					executable: '/managed/omp',
+					bunExecutable: '/managed/bun',
+					ompCliPath: '/managed/omp',
 					provenance: 'verified',
 					version: '16.4.8',
 				}),
@@ -226,7 +228,8 @@ describe('managed OMP runtime service', () => {
 			runtimeId: () => '00000000-0000-4000-8000-000000000002' as UUID,
 		});
 		await runtime.startOmpRuntime({ workspaceRoot: root, options: { restore: false } });
-		expect(launched?.command).toBe('/managed/omp');
+		expect(launched?.command).toBe('/managed/bun');
+		expect(launched?.args[0]).toBe('/managed/omp');
 	});
 	it('fails closed when a child emits an oversized line before the delimiter', async () => {
 		const roots = rootService();
@@ -310,7 +313,7 @@ describe('managed OMP runtime service', () => {
 			roots,
 			runtime: {
 				resolveSystem: async () =>
-					({ executable: '/unknown/omp', provenance: 'unknown', version: '16.4.8' }) as never,
+					({ bunExecutable: '/unknown/bun', ompCliPath: '/unknown/omp', provenance: 'unknown', version: '16.4.8' }) as never,
 				managedInstallAllowed: () => false,
 				resolveManaged: async () => {
 					throw new Error('unreachable');
@@ -339,7 +342,8 @@ describe('managed OMP runtime service', () => {
 			roots,
 			runtime: {
 				resolveSystem: async () => ({
-					executable: '/bin/omp',
+					bunExecutable: '/bin/bun',
+					ompCliPath: '/bin/omp',
 					provenance: 'verified',
 					version: '16.4.8',
 				}),
@@ -393,7 +397,12 @@ describe('managed OMP runtime service', () => {
 						...current,
 						authorization: { ...current.authorization, enabled: false },
 					};
-					return { executable: '/bin/omp', provenance: 'verified', version: '16.4.8' };
+					return {
+						bunExecutable: '/bin/bun',
+						ompCliPath: '/bin/omp',
+						provenance: 'verified',
+						version: '16.4.8',
+					};
 				},
 				managedInstallAllowed: () => false,
 				resolveManaged: async () => {
