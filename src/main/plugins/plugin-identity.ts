@@ -15,6 +15,26 @@
 import { computePluginContentHash } from './plugin-signature';
 import { verifyPluginSignature } from './plugin-signature';
 import type { AuthIdentity } from './authorization-ledger';
+import { isProvidedPluginId } from '../../shared/plugins/provided';
+import type { PluginRecord } from '../../shared/plugins/plugin-registry';
+
+/**
+ * The immutable execution provenance that may authorize a materialized bundled
+ * record. The callback that supplies it must validate the record against the
+ * current canonical bundled artifact before returning a snapshot.
+ */
+export interface VerifiedBundledAuthorizationSnapshot {
+	readonly identity: Readonly<{
+		readonly artifactDigest: string;
+		readonly authorizationContentHash: string;
+		readonly authorizationSignerKey: string;
+		readonly signerKeyId: string;
+	}>;
+}
+
+export type VerifiedBundledAuthorizationSnapshotFor = (
+	record: Readonly<PluginRecord>
+) => VerifiedBundledAuthorizationSnapshot | null;
 
 /**
  * Compute a plugin directory's current `AuthIdentity` (content digest + signature
@@ -37,4 +57,42 @@ export function pluginIdentity(dir: string, trustedKeys: readonly string[]): Aut
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Resolve the only authorization identity that a record may mint or retain.
+ *
+ * Community records retain their directory identity. A host-provided record is
+ * different: its materialized directory deliberately has no signature.json, so
+ * it is authorized only from the current immutable bundled execution snapshot.
+ * Missing, stale, or invalid bundled provenance fails closed rather than falling
+ * back to directory identity or a manifest/plugin id.
+ */
+export function resolvePluginAuthorizationIdentity(
+	record: Readonly<PluginRecord>,
+	trustedKeys: readonly string[],
+	verifiedBundledSnapshotFor: VerifiedBundledAuthorizationSnapshotFor
+): AuthIdentity | null {
+	if (isProvidedPluginId(record.id) || record.installOwner === 'bundle') {
+		if (record.installOwner !== 'bundle') return null;
+		const snapshot = verifiedBundledSnapshotFor(record);
+		if (!snapshot || !isValidBundledSnapshot(snapshot)) return null;
+		return {
+			contentHash: snapshot.identity.authorizationContentHash,
+			signatureStatus: 'trusted',
+			signerKey: snapshot.identity.authorizationSignerKey,
+		};
+	}
+	return pluginIdentity(record.source, trustedKeys);
+}
+
+function isValidBundledSnapshot(snapshot: VerifiedBundledAuthorizationSnapshot): boolean {
+	const { artifactDigest, authorizationContentHash, authorizationSignerKey, signerKeyId } =
+		snapshot.identity;
+	return (
+		/^[a-f0-9]{64}$/i.test(artifactDigest) &&
+		/^[a-f0-9]{64}$/i.test(authorizationContentHash) &&
+		authorizationSignerKey.length > 0 &&
+		signerKeyId.length > 0
+	);
 }

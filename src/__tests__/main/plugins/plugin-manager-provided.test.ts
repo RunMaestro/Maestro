@@ -181,6 +181,36 @@ describe('provided OMP ownership', () => {
 		);
 	});
 
+	it('exposes a bundled authorization snapshot only while exact provenance remains verified', () => {
+		const bundledSource = writePlugin(OMP_PLUGIN_ID, OMP_PLUGIN_ID);
+		const snapshot = immutableSnapshot();
+		let provenanceIsCurrent = true;
+		const manager = new PluginManager({
+			isEnabled: () => false,
+			resolveBundledPluginTrust: (record) =>
+				provenanceIsCurrent && record.id === OMP_PLUGIN_ID && record.source === bundledSource
+					? {
+							installOwner: 'bundle',
+							signature: {
+								status: 'trusted',
+								signerKey: snapshot.identity.authorizationSignerKey,
+								detail: 'verified immutable bundled artifact',
+							},
+						}
+					: undefined,
+			snapshotFor: (pluginId) => (pluginId === OMP_PLUGIN_ID ? snapshot : null),
+		});
+
+		const record = manager.refresh().records[0];
+		expect(manager.getVerifiedBundledExecutionSnapshot(record!)).toBe(snapshot);
+
+		provenanceIsCurrent = false;
+		expect(manager.getVerifiedBundledExecutionSnapshot(record!)).toBeNull();
+		expect(
+			manager.getVerifiedBundledExecutionSnapshot({ ...record!, installOwner: 'external' })
+		).toBeNull();
+	});
+
 	it('rejects reserved OMP external install, update, and uninstall actions before writes', async () => {
 		const bundledSource = writePlugin(OMP_PLUGIN_ID, OMP_PLUGIN_ID);
 		const externalSource = path.join(userData, 'external-omp');

@@ -132,8 +132,9 @@ export interface PluginManagerDeps {
 	 * record, returns whether it must be force-DISABLED because its consented
 	 * authorization no longer matches the plugin on disk (identity changed) or the
 	 * plugin was removed/tombstoned. Production wires this to the sealed ledger's
-	 * `verify()` + `pluginIdentity()`; absent => no extra gate (the enable toggle and
-	 * consent govern). It only ever force-disables — never force-enables.
+	 * `verify()` plus the canonical authorization identity resolver; absent => no
+	 * extra gate (the enable toggle and consent govern). It only ever force-disables
+	 * — never force-enables.
 	 */
 	verifyRecord?: (record: PluginRecord) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
@@ -189,6 +190,39 @@ export class PluginManager {
 	/** Returns a verified source snapshot. Installed paths are never a fallback. */
 	getExecutionSnapshot(pluginId: string): PluginExecutionSnapshot | null {
 		return this.deps.snapshotFor?.(pluginId) ?? this.snapshots.get(pluginId) ?? null;
+	}
+
+	/**
+	 * Returns bundled execution provenance only after re-proving this exact
+	 * materialized record against the live immutable artifact. This is deliberately
+	 * stricter than getExecutionSnapshot(): a snapshot by plugin id never grants
+	 * authorization to a different owner, path, or changed directory.
+	 */
+	getVerifiedBundledExecutionSnapshot(
+		record: Readonly<PluginRecord>
+	): PluginExecutionSnapshot | null {
+		if (!isProvidedPluginId(record.id) || record.installOwner !== 'bundle') return null;
+		const trust = this.deps.resolveBundledPluginTrust?.(record);
+		if (
+			!trust ||
+			trust.installOwner !== 'bundle' ||
+			trust.signature.status !== 'trusted' ||
+			record.signature?.status !== 'trusted' ||
+			record.signature.signerKey !== trust.signature.signerKey
+		) {
+			return null;
+		}
+		const snapshot = this.getExecutionSnapshot(record.id);
+		if (
+			!snapshot ||
+			snapshot.identity.authorizationSignerKey !== trust.signature.signerKey ||
+			snapshot.identity.authorizationContentHash.length !== 64 ||
+			snapshot.identity.artifactDigest.length !== 64 ||
+			snapshot.identity.signerKeyId.length === 0
+		) {
+			return null;
+		}
+		return snapshot;
 	}
 
 	/** Records the host should activate (enabled AND loadable). Empty when the

@@ -128,7 +128,7 @@ import {
 	type FirstPartySupervisorHooks,
 } from './plugins/first-party-bridge';
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
-import { pluginIdentity } from './plugins/plugin-identity';
+import { resolvePluginAuthorizationIdentity } from './plugins/plugin-identity';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { enableProvidedPluginRuntimeForConsent } from './plugins/provided-plugin-runtime';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
@@ -2943,7 +2943,11 @@ app
 			// consented identity no longer matches the bytes on disk (tamper), or that
 			// was removed, by checking it against the sealed ledger.
 			verifyRecord: (record) => {
-				const identity = pluginIdentity(record.source, trustedKeysFor());
+				const identity = resolvePluginAuthorizationIdentity(
+					record,
+					trustedKeysFor(),
+					(candidate) => pluginManager?.getVerifiedBundledExecutionSnapshot(candidate) ?? null
+				);
 				if (!identity) return { disable: true };
 				const requested = (record.manifest?.permissions ?? []).map((p) => p.capability);
 				const result = authStore.verify(record.id, identity, requested);
@@ -2995,7 +2999,13 @@ app
 			requested: (pluginId) => pluginManager?.getRequestedPermissions(pluginId) ?? [],
 			identityOf: (pluginId) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
-				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
+				return record
+					? resolvePluginAuthorizationIdentity(
+							record,
+							trustedKeysFor(),
+							(candidate) => pluginManager?.getVerifiedBundledExecutionSnapshot(candidate) ?? null
+						)
+					: null;
 			},
 			openPrompt: async ({ pluginId, offered, nonce }) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
