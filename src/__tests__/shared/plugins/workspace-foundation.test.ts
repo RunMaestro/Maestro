@@ -52,9 +52,45 @@ const invalidOwnerPluginIds = [
 		error: 'ownerPluginId must be a non-empty string',
 	},
 	{
+		label: 'a null owner plugin ID',
+		value: null,
+		error: 'ownerPluginId must be a string',
+	},
+	{
+		label: 'a numeric owner plugin ID',
+		value: 1,
+		error: 'ownerPluginId must be a string',
+	},
+	{
 		label: 'an invalid owner plugin ID',
 		value: '../com.maestro.omp',
 		error: 'ownerPluginId must be a valid plugin ID',
+	},
+] as const;
+const malformedPermissionLists = [
+	{ label: 'a null permission list', value: null },
+	{ label: 'a non-array permission list', value: {} },
+] as const;
+const malformedPermissionItems = [
+	{
+		label: 'a null permission item',
+		item: null,
+		error: 'permissions[0] must be a plain object',
+	},
+	{
+		label: 'a non-object permission item',
+		item: 'not-an-object',
+		error: 'permissions[0] must be a plain object',
+	},
+	{
+		label: 'a permission item with a missing capability',
+		item: {},
+		error: 'permissions[0].capability must be a string',
+	},
+	{
+		label: 'a permission item with a non-string capability',
+		item: { capability: 1 },
+		error: 'permissions[0].capability must be a string',
 	},
 ] as const;
 
@@ -103,9 +139,15 @@ describe('parseWorkspaceFoundation', () => {
 
 	for (const { label, value, error } of invalidOwnerPluginIds) {
 		it(`rejects ${label}`, () => {
-			expect(
-				parseWorkspaceFoundation(createRawContributes(), createRawPermissions(), value)
-			).toEqual({
+			const parse = () =>
+				parseWorkspaceFoundation(
+					createRawContributes(),
+					createRawPermissions(),
+					value as unknown as string
+				);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
 				ok: false,
 				errors: [error],
 			});
@@ -175,6 +217,44 @@ describe('parseWorkspaceFoundation', () => {
 			errors: ['workspaces must be an array'],
 		});
 	});
+
+	it('rejects a non-array interactive panel list', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{ ...rawContributes, interactivePanels: {} },
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['interactivePanels must be an array'],
+		});
+	});
+
+	for (const { label, value } of malformedPermissionLists) {
+		it(`returns a structured error for ${label} without throwing`, () => {
+			const parse = () => parseWorkspaceFoundation(createRawContributes(), value, ownerPluginId);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: ['permissions must be an array'],
+			});
+		});
+	}
+
+	for (const { label, item, error } of malformedPermissionItems) {
+		it(`returns a structured error for ${label} without throwing`, () => {
+			const parse = () => parseWorkspaceFoundation(createRawContributes(), [item], ownerPluginId);
+
+			expect(parse).not.toThrow();
+			expect(parse()).toEqual({
+				ok: false,
+				errors: [error],
+			});
+		});
+	}
 
 	for (const { label, item } of malformedWorkspaceItems) {
 		it(`returns a structured error for ${label} without throwing`, () => {
