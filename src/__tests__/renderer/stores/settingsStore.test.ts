@@ -193,6 +193,10 @@ describe('settingsStore', () => {
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.showHiddenFiles).toBe(true);
 			expect(state.fileExplorerIconTheme).toBe('default');
+			expect(state.fileExplorerMaxDepth).toBe(10);
+			expect(state.fileExplorerMaxEntries).toBe(100_000);
+			expect(state.sshReduceEntryCapEnabled).toBe(false);
+			expect(state.sshReduceEntryCapFraction).toBe(0.1);
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
