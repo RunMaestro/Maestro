@@ -43,6 +43,18 @@ function bootRealm(bridge: RealmBridge = makeBridge()): SandboxRealm {
 	return realm;
 }
 
+function runtimeWriteRequest(params: unknown): { readonly id: string; readonly type: string } {
+	if (!isRecord(params) || !isRecord(params.request))
+		throw new Error('invalid runtime write request');
+	if (typeof params.request.id !== 'string' || typeof params.request.type !== 'string')
+		throw new Error('runtime write request lacks id or type');
+	return { id: params.request.id, type: params.request.type };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** Plugin-side graph walker. Records every escape success into
  * `globalThis.__findings` (an array of path strings); empty array = safe. */
 const WALKER_SOURCE = String.raw`
@@ -511,44 +523,148 @@ describe('signed OMP artifact sandbox smoke', () => {
 		await vi.waitFor(() => expect(sent).toHaveLength(4));
 		expect(sent[3]).toMatchObject({ method: 'interactiveRuntime.requestWorkspaceRoot' });
 		realm.deliverResponse(JSON.stringify({ id: sent[3].id, ok: true, result: { token: 'root' } }));
-		await vi.waitFor(() => expect(sent).toHaveLength(5));
-		expect(sent[4]).toMatchObject({
+		let nextCall = 4;
+		let runtimeStartCall: (typeof sent)[number] | undefined;
+		await vi.waitFor(() => {
+			while (nextCall < sent.length) {
+				const call = sent[nextCall++];
+				if (call?.method === 'interactiveRuntime.startOmpRuntime') {
+					runtimeStartCall = call;
+					return;
+				}
+				if (call?.method !== 'workspace.setStatus')
+					throw new Error('unexpected explicit-start call');
+				realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
+			}
+			throw new Error('waiting for runtime start');
+		});
+		if (!runtimeStartCall) throw new Error('missing runtime start');
+		expect(runtimeStartCall).toMatchObject({
 			method: 'interactiveRuntime.startOmpRuntime',
 			params: { workspaceRoot: { token: 'root' }, options: { restore: false } },
 		});
 		realm.deliverResponse(
 			JSON.stringify({
-				id: sent[4].id,
+				id: runtimeStartCall.id,
 				ok: true,
 				result: { runtimeId: 'runtime-1', generation: '1' },
 			})
 		);
-		await vi.waitFor(() => expect(sent).toHaveLength(6));
-		expect(sent[5]).toMatchObject({
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactiveRuntimeMessage:runtime-1',
+				at: '2026-01-01T00:00:00.000Z',
+				payload: {
+					runtimeId: 'runtime-1',
+					generation: '1',
+					message: { sequence: 1, value: { type: 'ready', version: '16.4.8' } },
+				},
+			})
+		);
+		let runtimeSequence = 1;
+		for (let initialized = 0; initialized < 5; initialized++) {
+			await vi.waitFor(() => {
+				const call = sent[nextCall];
+				if (!call) throw new Error('waiting for controller initialization write');
+				expect(call.method).toBe('interactiveRuntime.write');
+			});
+			const call = sent[nextCall++];
+			if (!call) throw new Error('missing controller initialization write');
+			const request = runtimeWriteRequest(call.params);
+			let data: unknown;
+			switch (request.type) {
+				case 'get_state':
+					data = {
+						sessionId: 'session-1',
+						isStreaming: false,
+						isCompacting: false,
+						steeringMode: 'all',
+						followUpMode: 'all',
+						interruptMode: 'immediate',
+						autoCompactionEnabled: false,
+						messageCount: 0,
+						queuedMessageCount: 0,
+						todoPhases: [],
+					};
+					break;
+				case 'get_available_commands':
+					data = { commands: [] };
+					break;
+				case 'get_available_models':
+					data = { models: [] };
+					break;
+				case 'set_host_tools':
+				case 'set_host_uri_schemes':
+					data = undefined;
+					break;
+				default:
+					throw new Error(`unexpected controller initialization command ${request.type}`);
+			}
+			realm.deliverEvent(
+				JSON.stringify({
+					topic: '__interactiveRuntimeMessage:runtime-1',
+					at: '2026-01-01T00:00:00.000Z',
+					payload: {
+						runtimeId: 'runtime-1',
+						generation: '1',
+						message: {
+							sequence: ++runtimeSequence,
+							value: {
+								type: 'response',
+								id: request.id,
+								command: request.type,
+								success: true,
+								...(data === undefined ? {} : { data }),
+							},
+						},
+					},
+				})
+			);
+			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
+		}
+		let readyStatusCall: (typeof sent)[number] | undefined;
+		await vi.waitFor(() => {
+			const call = sent
+				.slice(nextCall)
+				.find((candidate) => candidate.method === 'workspace.setStatus');
+			if (!call) throw new Error('waiting for ready status');
+			readyStatusCall = call;
+		});
+		if (!readyStatusCall) throw new Error('missing ready status');
+		expect(readyStatusCall).toMatchObject({
 			method: 'workspace.setStatus',
 			params: { status: { state: 'ready', label: 'OMP ready' } },
 		});
-		realm.deliverResponse(JSON.stringify({ id: sent[5].id, ok: true, result: null }));
+		realm.deliverResponse(JSON.stringify({ id: readyStatusCall.id, ok: true, result: null }));
 		await vi.waitFor(() => {
 			expect(vi.mocked(bridge.log).mock.calls).toContainEqual(['info', 'started:true']);
 		});
 
 		const deactivation = realm.deactivate();
-		await vi.waitFor(() => expect(sent).toHaveLength(7));
-		expect(sent[6]).toMatchObject({
+		let stopCall: (typeof sent)[number] | undefined;
+		await vi.waitFor(() => {
+			stopCall = sent.slice(nextCall).find((call) => call.method === 'interactiveRuntime.stop');
+			if (!stopCall) throw new Error('waiting for runtime stop');
+		});
+		if (!stopCall) throw new Error('missing runtime stop');
+		expect(stopCall).toMatchObject({
 			method: 'interactiveRuntime.stop',
 			params: { runtimeId: 'runtime-1', reason: 'workspace-deactivated' },
 		});
-		realm.deliverResponse(JSON.stringify({ id: sent[6].id, ok: true, result: null }));
+		realm.deliverResponse(JSON.stringify({ id: stopCall.id, ok: true, result: null }));
+		nextCall = sent.indexOf(stopCall) + 1;
 		for (const expectedMethod of [
 			'workspace.publishExternalSessions',
 			'workspace.setStatus',
 			'workspace.setBadge',
 		]) {
-			const priorCount = sent.length;
-			await vi.waitFor(() => expect(sent).toHaveLength(priorCount + 1));
-			const call = sent[sent.length - 1];
-			expect(call.method).toBe(expectedMethod);
+			await vi.waitFor(() => {
+				const call = sent[nextCall];
+				if (!call) throw new Error(`waiting for ${expectedMethod}`);
+				expect(call.method).toBe(expectedMethod);
+			});
+			const call = sent[nextCall++];
+			if (!call) throw new Error(`missing ${expectedMethod}`);
 			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
 		}
 		await deactivation;

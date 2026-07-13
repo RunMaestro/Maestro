@@ -133,8 +133,8 @@ export class OmpWorkspaceController {
 		return this.execute(command, options);
 	}
 
-	respond(callback: OmpInboundCallback): void {
-		this.client.sendInbound(callback);
+	respond(callback: OmpInboundCallback): Promise<void> {
+		return this.client.sendInbound(callback);
 	}
 
 	beginShutdown(): void {
@@ -207,12 +207,12 @@ export class OmpWorkspaceController {
 	private async handleHostCallback(callback: OmpOutboundCallback): Promise<void> {
 		if (callback.type === 'host_uri_request') {
 			if (typeof callback.id === 'string')
-				this.respond({
+				await this.respond({
 					type: 'host_uri_result',
 					id: callback.id,
 					isError: true,
 					error: 'capability_unavailable',
-				});
+				}).catch(() => undefined);
 			return;
 		}
 		if (callback.type === 'host_uri_cancel') return;
@@ -226,12 +226,12 @@ export class OmpWorkspaceController {
 		if (callback.type !== 'host_tool_call' || typeof callback.id !== 'string') return;
 		const broker = this.setup.brokers;
 		if (!broker || this.activeToolCalls.has(callback.id)) {
-			this.respond({
+			await this.respond({
 				type: 'host_tool_result',
 				id: callback.id,
 				result: { code: 'capability_unavailable' },
 				isError: true,
-			});
+			}).catch(() => undefined);
 			return;
 		}
 		const abort = new AbortController();
@@ -243,14 +243,16 @@ export class OmpWorkspaceController {
 				payload: callback.payload,
 				signal: abort.signal,
 			});
-			this.respond({ type: 'host_tool_result', id: callback.id, result });
+			await this.respond({ type: 'host_tool_result', id: callback.id, result }).catch(
+				() => undefined
+			);
 		} catch {
-			this.respond({
+			await this.respond({
 				type: 'host_tool_result',
 				id: callback.id,
 				result: { code: 'policy_denied' },
 				isError: true,
-			});
+			}).catch(() => undefined);
 		} finally {
 			this.activeToolCalls.delete(callback.id);
 		}

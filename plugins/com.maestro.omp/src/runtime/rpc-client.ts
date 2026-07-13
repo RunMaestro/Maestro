@@ -1,4 +1,5 @@
 import { OMP_16_4_8_EVENT_TYPES, OMP_16_4_8_OUTBOUND_CALLBACK_TYPES } from './compatibility';
+import { OMP_RPC_VERSION } from './types';
 import type {
 	OmpInboundCallback,
 	OmpOutboundCallback,
@@ -72,12 +73,13 @@ export class OmpRpcClient {
 	private readonly eventListeners: Array<(event: OmpRpcEvent) => void> = [];
 	private readonly callbackListeners: Array<(callback: OmpOutboundCallback) => void> = [];
 	private readonly diagnosticListeners: Array<(diagnostic: string) => void> = [];
+	private readonly failureListeners: Array<(error: OmpProtocolError) => void> = [];
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly readyPromise: Promise<void>;
 	private resolveReady!: () => void;
 	private rejectReady!: (error: Error) => void;
 	private statusValue: OmpRpcClientStatus = 'starting';
-	private stdoutBuffer = Buffer.alloc(0);
+	private stdoutBuffer = new Uint8Array(0);
 	private requestNumber = 0;
 	private readyTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastRuntimeSequence: number | undefined;
@@ -132,6 +134,11 @@ export class OmpRpcClient {
 		return () => this.diagnosticListeners.splice(this.diagnosticListeners.indexOf(listener), 1);
 	}
 
+	onFailure(listener: (error: OmpProtocolError) => void): () => void {
+		this.failureListeners.push(listener);
+		return () => this.failureListeners.splice(this.failureListeners.indexOf(listener), 1);
+	}
+
 	command(command: OmpRpcCommand, options: OmpCommandOptions = {}): Promise<OmpRpcResponse> {
 		if (this.statusValue !== 'ready') {
 			return Promise.reject(new OmpProtocolError(`OMP is not ready (status: ${this.statusValue})`));
@@ -164,7 +171,14 @@ export class OmpRpcClient {
 				},
 			});
 			try {
-				this.transport.send(`${JSON.stringify(frame)}\n`);
+				Promise.resolve(this.transport.send(`${JSON.stringify(frame)}\n`)).catch(
+					(error: unknown) => {
+						this.rejectPending(
+							id,
+							error instanceof Error ? error : new OmpProtocolError('OMP stdin write failed')
+						);
+					}
+				);
 			} catch (error) {
 				this.rejectPending(
 					id,
@@ -174,11 +188,17 @@ export class OmpRpcClient {
 		});
 	}
 
-	sendInbound(callback: OmpInboundCallback): void {
+	sendInbound(callback: OmpInboundCallback): Promise<void> {
 		if (this.statusValue !== 'ready') {
-			throw new OmpProtocolError(`OMP is not ready (status: ${this.statusValue})`);
+			return Promise.reject(new OmpProtocolError(`OMP is not ready (status: ${this.statusValue})`));
 		}
-		this.transport.send(`${JSON.stringify(callback)}\n`);
+		try {
+			return Promise.resolve(this.transport.send(`${JSON.stringify(callback)}\n`));
+		} catch (error) {
+			return Promise.reject(
+				error instanceof Error ? error : new OmpProtocolError('OMP stdin write failed')
+			);
+		}
 	}
 
 	close(): void {
@@ -196,21 +216,31 @@ export class OmpRpcClient {
 			this.statusValue === 'exited'
 		)
 			return;
-		this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, Buffer.from(chunk)]);
+		const bytes = typeof chunk === 'string' ? encodeUtf8(chunk) : chunk;
+		const buffered = new Uint8Array(this.stdoutBuffer.length + bytes.length);
+		buffered.set(this.stdoutBuffer);
+		buffered.set(bytes, this.stdoutBuffer.length);
+		this.stdoutBuffer = buffered;
 		if (this.stdoutBuffer.length > this.maxFrameBytes && !this.stdoutBuffer.includes(10)) {
 			this.fail(new OmpProtocolError(`OMP stdout frame exceeds ${this.maxFrameBytes} bytes`));
 			return;
 		}
 		let newline = this.stdoutBuffer.indexOf(10);
 		while (newline >= 0) {
-			const frameBuffer = this.stdoutBuffer.subarray(0, newline);
-			this.stdoutBuffer = this.stdoutBuffer.subarray(newline + 1);
-			if (frameBuffer.length > this.maxFrameBytes) {
+			const frame = this.stdoutBuffer.slice(0, newline);
+			this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
+			if (frame.length > this.maxFrameBytes) {
 				this.fail(new OmpProtocolError(`OMP stdout frame exceeds ${this.maxFrameBytes} bytes`));
 				return;
 			}
-			if (frameBuffer.length > 0)
-				this.decodeAndDispatch(frameBuffer.toString('utf8').replace(/\r$/, ''));
+			if (frame.length > 0) {
+				const text = decodeUtf8(frame);
+				if (text === undefined) {
+					this.fail(new OmpProtocolError('OMP emitted invalid UTF-8 JSONL'));
+					return;
+				}
+				this.decodeAndDispatch(text.replace(/\r$/, ''));
+			}
 			newline = this.stdoutBuffer.indexOf(10);
 		}
 	}
@@ -236,6 +266,14 @@ export class OmpRpcClient {
 		if (raw.type === 'ready') {
 			if (this.statusValue !== 'starting') {
 				this.fail(new OmpProtocolError('OMP emitted ready more than once'));
+				return;
+			}
+			if ('version' in raw && raw.version !== OMP_RPC_VERSION) {
+				this.fail(
+					new OmpProtocolError(
+						`OMP declared unsupported protocol version ${JSON.stringify(raw.version)}`
+					)
+				);
 				return;
 			}
 			this.statusValue = 'ready';
@@ -294,9 +332,17 @@ export class OmpRpcClient {
 			...('data' in raw ? { data: raw.data } : {}),
 			...(typeof raw.error === 'string' ? { error: raw.error } : {}),
 		};
-		if (!response.id) return;
+		if (!response.id) {
+			this.fail(new OmpProtocolError('OMP response is missing a correlation id'));
+			return;
+		}
 		const pending = this.pending.get(response.id);
-		if (!pending) return;
+		if (!pending) {
+			this.fail(
+				new OmpProtocolError(`OMP response did not match an active request ${response.id}`)
+			);
+			return;
+		}
 		if (pending.command !== response.command) {
 			this.fail(new OmpProtocolError(`OMP response command mismatch for ${response.id}`));
 			return;
@@ -322,7 +368,12 @@ export class OmpRpcClient {
 			return;
 		}
 		const pending = this.pending.get(raw.id);
-		if (!pending) return;
+		if (!pending) {
+			this.fail(
+				new OmpProtocolError(`OMP prompt_result did not match an active request ${raw.id}`)
+			);
+			return;
+		}
 		if (pending.command !== 'prompt' && pending.command !== 'abort_and_prompt') {
 			this.fail(new OmpProtocolError(`OMP prompt_result does not match ${pending.command}`));
 			return;
@@ -342,10 +393,8 @@ export class OmpRpcClient {
 	}
 
 	private receiveStderr(chunk: Uint8Array | string): void {
-		const diagnostic = redactOmpDiagnostic(Buffer.from(chunk).toString('utf8')).slice(
-			0,
-			this.maxDiagnosticBytes
-		);
+		const text = typeof chunk === 'string' ? chunk : (decodeUtf8(chunk) ?? '');
+		const diagnostic = redactOmpDiagnostic(text).slice(0, this.maxDiagnosticBytes);
 		if (diagnostic.length === 0) return;
 		for (const listener of this.diagnosticListeners) listener(diagnostic);
 	}
@@ -381,6 +430,7 @@ export class OmpRpcClient {
 		this.clearReadyTimer();
 		this.rejectReady(error);
 		this.rejectOutstanding(error);
+		for (const listener of this.failureListeners) listener(error);
 	}
 
 	private clearReadyTimer(): void {
@@ -417,6 +467,77 @@ function abortError(): Error {
 	const error = new Error('OMP command was cancelled');
 	error.name = 'AbortError';
 	return error;
+}
+
+function encodeUtf8(text: string): Uint8Array {
+	const bytes: number[] = [];
+	for (let index = 0; index < text.length; index++) {
+		let codePoint = text.charCodeAt(index);
+		if (codePoint >= 0xd800 && codePoint <= 0xdbff && index + 1 < text.length) {
+			const low = text.charCodeAt(index + 1);
+			if (low >= 0xdc00 && low <= 0xdfff) {
+				codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (low - 0xdc00);
+				index++;
+			}
+		}
+		if (codePoint <= 0x7f) bytes.push(codePoint);
+		else if (codePoint <= 0x7ff) bytes.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f));
+		else if (codePoint <= 0xffff)
+			bytes.push(
+				0xe0 | (codePoint >> 12),
+				0x80 | ((codePoint >> 6) & 0x3f),
+				0x80 | (codePoint & 0x3f)
+			);
+		else
+			bytes.push(
+				0xf0 | (codePoint >> 18),
+				0x80 | ((codePoint >> 12) & 0x3f),
+				0x80 | ((codePoint >> 6) & 0x3f),
+				0x80 | (codePoint & 0x3f)
+			);
+	}
+	return Uint8Array.from(bytes);
+}
+
+function decodeUtf8(bytes: Uint8Array): string | undefined {
+	let text = '';
+	for (let index = 0; index < bytes.length; index++) {
+		const first = bytes[index]!;
+		if (first <= 0x7f) {
+			text += String.fromCharCode(first);
+			continue;
+		}
+		const width =
+			first >= 0xf0 && first <= 0xf4
+				? 4
+				: first >= 0xe0 && first <= 0xef
+					? 3
+					: first >= 0xc2 && first <= 0xdf
+						? 2
+						: 0;
+		if (width === 0 || index + width > bytes.length) return undefined;
+		let codePoint = first & (width === 2 ? 0x1f : width === 3 ? 0x0f : 0x07);
+		for (let offset = 1; offset < width; offset++) {
+			const next = bytes[index + offset]!;
+			if ((next & 0xc0) !== 0x80) return undefined;
+			codePoint = (codePoint << 6) | (next & 0x3f);
+		}
+		if (
+			(width === 2 && codePoint < 0x80) ||
+			(width === 3 && codePoint < 0x800) ||
+			(width === 4 && (codePoint < 0x10000 || codePoint > 0x10ffff))
+		)
+			return undefined;
+		text +=
+			codePoint <= 0xffff
+				? String.fromCharCode(codePoint)
+				: String.fromCharCode(
+						0xd800 + ((codePoint - 0x10000) >> 10),
+						0xdc00 + ((codePoint - 0x10000) & 0x3ff)
+					);
+		index += width - 1;
+	}
+	return text;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -247,7 +247,7 @@ export type OmpRpcFrame = OmpRpcResponse | OmpRpcEvent | OmpOutboundCallback;
  * It is intentionally transport-only: plugins cannot inspect, spawn, or kill processes.
  */
 export interface OmpRpcTransport {
-	send(frame: string): void;
+	send(frame: string): void | Promise<void>;
 	onFrame(listener: (chunk: Uint8Array | string) => void): () => void;
 	onDiagnostic(listener: (chunk: Uint8Array | string) => void): () => void;
 	onClosed(listener: (reason?: string) => void): () => void;

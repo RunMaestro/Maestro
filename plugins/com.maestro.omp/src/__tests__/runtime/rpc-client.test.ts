@@ -112,6 +112,31 @@ describe('OmpRpcClient framing and protocol boundaries', () => {
 		expect(client.status).toBe('failed');
 	});
 
+	it('fails closed when a runtime emits an uncorrelated response', async () => {
+		const { client, transport, ready } = readyClient();
+		const failures: Error[] = [];
+		client.onFailure((error) => failures.push(error));
+		await ready;
+
+		transport.stdout(
+			'{"id":"unknown-request","type":"response","command":"get_state","success":true,"data":{}}\n'
+		);
+
+		expect(client.status).toBe('failed');
+		expect(failures).toEqual([expect.any(OmpProtocolError)]);
+	});
+
+	it('fails closed when readiness declares an unsupported protocol version', async () => {
+		const transport = new FakeTransport();
+		const client = new OmpRpcClient(transport);
+		const waiting = client.waitForReady();
+
+		transport.stdout('{"type":"ready","version":"17.0.0"}\n');
+
+		await expect(waiting).rejects.toBeInstanceOf(OmpProtocolError);
+		expect(client.status).toBe('failed');
+	});
+
 	it('rejects a cancelled command and removes its pending correlation without killing the owned process', async () => {
 		const { client, ready } = readyClient();
 		await ready;
