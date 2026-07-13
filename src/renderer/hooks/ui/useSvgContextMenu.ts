@@ -8,6 +8,9 @@
  *  - Mermaid diagrams, whose <svg> is injected imperatively into a container div
  *    and therefore never passes through React's element tree - those use
  *    `openSvgMenuFromContainer`, which resolves the <svg> out of the container.
+ *    The container may hold one diagram (MermaidRenderer) or many (the Fast
+ *    markdown tier renders every diagram in a document into one scroll root),
+ *    so the click target decides which <svg> the menu acts on.
  */
 
 import { useCallback, useState } from 'react';
@@ -34,7 +37,14 @@ export function useSvgContextMenu(): UseSvgContextMenu {
 	);
 
 	const openSvgMenuFromContainer = useCallback((e: React.MouseEvent<HTMLElement>) => {
-		const svg = e.currentTarget.querySelector('svg');
+		const target = e.target as Element | null;
+		// Prefer the <svg> the click actually landed in. Falling back to the
+		// container's only <svg> keeps a right-click on a single-diagram
+		// wrapper's padding working; a container with several diagrams (or none)
+		// gets no menu unless the click hit one.
+		const hit = target?.closest?.('svg') as SVGSVGElement | null;
+		const all = e.currentTarget.querySelectorAll('svg');
+		const svg = hit ?? (all.length === 1 ? (all[0] as SVGSVGElement) : null);
 		if (!svg) return;
 		e.preventDefault();
 		setSvgMenu({ x: e.clientX, y: e.clientY, svg });

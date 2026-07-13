@@ -55,7 +55,8 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Format duration (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake)
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
-- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()` in `src/shared/formatters.ts`
+- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts` (`joinPath` is the renderer-safe `path.join`: it uses whichever separator the base path speaks, so Windows and SSH-remote POSIX paths both survive)
+- **Saving a rendered diagram:** `saveSvgToProject()` in `src/renderer/utils/svgExport.ts` writes into the project's `.maestro/diagrams/` (`DIAGRAMS_DIR` in `src/shared/maestro-paths.ts`). Every SVG surface (chat inline `<svg>`, Mermaid, Fast-tier markdown) exports through the one `SvgContextMenu` + `useSvgContextMenu` pair. Do NOT add a new download path or a second save destination.
 - **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`

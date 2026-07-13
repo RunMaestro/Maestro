@@ -21,6 +21,7 @@ import {
 	abbreviateGroupName,
 	isAbsolutePath,
 	getBasename,
+	joinPath,
 	formatSshTarget,
 } from '../../shared/formatters';
 
@@ -658,6 +659,33 @@ describe('shared/formatters', () => {
 
 		it('handles empty input', () => {
 			expect(getBasename('')).toBe('');
+		});
+	});
+
+	// ==========================================================================
+	// joinPath tests
+	// ==========================================================================
+	describe('joinPath', () => {
+		it('joins segments onto a Unix base', () => {
+			expect(joinPath('/Users/name', 'a', 'b.svg')).toBe('/Users/name/a/b.svg');
+		});
+
+		it('uses backslashes for a Windows base', () => {
+			expect(joinPath('C:\\proj', '.maestro/diagrams', 'x.svg')).toBe(
+				'C:\\proj\\.maestro\\diagrams\\x.svg'
+			);
+		});
+
+		it('collapses duplicate separators at the seams', () => {
+			expect(joinPath('/proj/', '/a/', '/b')).toBe('/proj/a/b');
+		});
+
+		it('drops empty segments', () => {
+			expect(joinPath('/proj', '', 'a')).toBe('/proj/a');
+		});
+
+		it('returns the base when there is nothing to join', () => {
+			expect(joinPath('/proj/')).toBe('/proj');
 		});
 	});
 

@@ -412,6 +412,23 @@ export function getBasename(path: string): string {
 }
 
 /**
+ * Join path segments onto a base path, using whichever separator the base
+ * already speaks (backslash only when the base is Windows-style).
+ *
+ * Node's `path.join` is not available in the renderer, and a hardcoded `/`
+ * breaks Windows while a hardcoded `\` breaks SSH remotes (always POSIX), so
+ * the base path is the source of truth. Segments may use either separator.
+ */
+export function joinPath(base: string, ...segments: string[]): string {
+	const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+	const trimmedBase = base.replace(/[/\\]+$/, '');
+	const tail = segments
+		.map((s) => s.replace(/^[/\\]+|[/\\]+$/g, '').replace(/[/\\]+/g, sep))
+		.filter(Boolean);
+	return tail.length > 0 ? `${trimmedBase}${sep}${tail.join(sep)}` : trimmedBase;
+}
+
+/**
  * Format an SSH remote's connection target for display, e.g. "pedram@10.0.50.63:2222".
  *
  * The username prefix is omitted when none is set (SSH falls back to ~/.ssh/config or
