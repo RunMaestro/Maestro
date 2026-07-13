@@ -1,60 +1,54 @@
-type JsonValue =
-	| null
-	| boolean
-	| number
-	| string
-	| readonly JsonValue[]
-	| { readonly [key: string]: JsonValue };
+import type {
+	InteractiveRuntimeHandle,
+	MaestroSdk,
+	MaestroWorkspaceApi,
+} from '@maestro/plugin-sdk';
 
-interface InteractiveRuntimeHandle {
-	writeCanonicalJson(value: JsonValue): void;
-	onEvent(listener: (event: unknown) => void): () => void;
-	stop(reason: 'workspace-deactivated' | 'revoked' | 'shutdown'): Promise<void>;
-}
-
-interface ActivationSdk {
-	readonly interactiveRuntime?: {
-		requestWorkspaceRoot(): Promise<unknown | null>;
-		startOmpRuntime(input: {
-			readonly workspaceRoot: unknown;
-			readonly options: { readonly restore?: boolean };
-		}): Promise<InteractiveRuntimeHandle>;
-	};
-	readonly workspace?: {
-		publishExternalSessions?(sessions: readonly unknown[]): void;
-		setStatus?(status: string): void;
-		setBadge?(badge: unknown): void;
-	};
-}
+type ActivationSdk = Pick<MaestroSdk, 'workspace' | 'interactivePanel' | 'interactiveRuntime'>;
 
 let active:
-	| { readonly sdk: ActivationSdk; handle?: InteractiveRuntimeHandle; unsubscribe?: () => void }
+	| {
+			readonly sdk: ActivationSdk;
+			readonly workspace: MaestroWorkspaceApi;
+			handle?: InteractiveRuntimeHandle;
+			unsubscribe?: () => void;
+	  }
 	| undefined;
 
 /** Registers only a setup projection; filesystem-root consent is deferred to an explicit panel action. */
 export async function activate(sdk: ActivationSdk): Promise<void> {
 	if (active) throw new Error('OMP plugin is already active');
-	if (!sdk.interactiveRuntime || !sdk.workspace)
-		throw new Error('OMP interactive runtime capability is unavailable');
-	active = { sdk };
-	sdk.workspace.publishExternalSessions?.([]);
-	sdk.workspace.setStatus?.('offline');
-	sdk.workspace.setBadge?.(undefined);
+	if (!sdk.interactiveRuntime || !sdk.workspace || !sdk.interactivePanel) {
+		throw new Error('OMP workspace, panel, or interactive runtime capability is unavailable');
+	}
+	try {
+		await sdk.workspace.publishExternalSessions(1, []);
+		await sdk.workspace.setStatus({ state: 'offline', label: 'OMP setup required' });
+		await sdk.workspace.setBadge(null);
+		active = { sdk, workspace: sdk.workspace };
+	} catch (error) {
+		await sdk.workspace.publishExternalSessions(2, []).catch(() => undefined);
+		await sdk.workspace
+			.setStatus({ state: 'error', label: 'OMP activation failed' })
+			.catch(() => undefined);
+		throw error;
+	}
 }
 
 /** Called by the transport-owned panel endpoint for first explicit start/create action only. */
 export async function startFromExplicitPanelAction(): Promise<boolean> {
 	if (!active) throw new Error('OMP plugin is not active');
 	if (active.handle) return true;
-	const workspaceRoot = await active.sdk.interactiveRuntime?.requestWorkspaceRoot();
+	const runtime = active.sdk.interactiveRuntime;
+	if (!runtime) throw new Error('OMP interactive runtime capability is unavailable');
+	const workspaceRoot = await runtime.requestWorkspaceRoot();
 	if (!workspaceRoot) return false;
-	const handle = await active.sdk.interactiveRuntime?.startOmpRuntime({
+	const handle = await runtime.startOmpRuntime({
 		workspaceRoot,
 		options: { restore: false },
 	});
-	if (!handle) throw new Error('OMP interactive runtime capability is unavailable');
 	active = { ...active, handle, unsubscribe: handle.onEvent(() => undefined) };
-	active.sdk.workspace?.setStatus?.('ready');
+	await active.workspace.setStatus({ state: 'ready', label: 'OMP ready' });
 	return true;
 }
 
@@ -64,7 +58,7 @@ export async function deactivate(): Promise<void> {
 	active = undefined;
 	current.unsubscribe?.();
 	if (current.handle) await current.handle.stop('workspace-deactivated');
-	current.sdk.workspace?.publishExternalSessions?.([]);
-	current.sdk.workspace?.setStatus?.('offline');
-	current.sdk.workspace?.setBadge?.(undefined);
+	await current.workspace.publishExternalSessions(2, []);
+	await current.workspace.setStatus({ state: 'offline', label: 'OMP offline' });
+	await current.workspace.setBadge(null);
 }

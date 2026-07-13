@@ -8,7 +8,7 @@ describe('OMP plugin activation', () => {
 		let rootRequests = 0;
 		let starts = 0;
 		const stopped: string[] = [];
-		const statuses: string[] = [];
+		const statuses: Array<{ state: string; label: string }> = [];
 		await activate({
 			interactiveRuntime: {
 				requestWorkspaceRoot: async () => {
@@ -18,16 +18,26 @@ describe('OMP plugin activation', () => {
 				startOmpRuntime: async () => {
 					starts++;
 					return {
-						writeCanonicalJson: () => undefined,
+						runtimeId: 'runtime-1',
+						generation: 1n,
+						writeCanonicalJson: async () => undefined,
 						onEvent: () => () => undefined,
 						stop: async (reason) => stopped.push(reason),
 					};
 				},
 			},
+			interactivePanel: {
+				onRequest: () => () => undefined,
+				resolve: async () => undefined,
+				reject: async () => undefined,
+				emit: async () => undefined,
+			},
 			workspace: {
-				publishExternalSessions: () => undefined,
-				setStatus: (status) => statuses.push(status),
-				setBadge: () => undefined,
+				publishExternalSessions: async () => undefined,
+				setStatus: async (status) => {
+					statuses.push(status);
+				},
+				setBadge: async () => undefined,
 			},
 		});
 		expect(rootRequests).toBe(0);
@@ -37,7 +47,11 @@ describe('OMP plugin activation', () => {
 		expect(starts).toBe(1);
 		await deactivate();
 		expect(stopped).toEqual(['workspace-deactivated']);
-		expect(statuses).toEqual(['offline', 'ready', 'offline']);
+		expect(statuses).toEqual([
+			{ state: 'offline', label: 'OMP setup required' },
+			{ state: 'ready', label: 'OMP ready' },
+			{ state: 'offline', label: 'OMP offline' },
+		]);
 	});
 
 	it('leaves setup state unchanged when explicit root consent is cancelled', async () => {
@@ -50,7 +64,17 @@ describe('OMP plugin activation', () => {
 					throw new Error('unreachable');
 				},
 			},
-			workspace: {},
+			interactivePanel: {
+				onRequest: () => () => undefined,
+				resolve: async () => undefined,
+				reject: async () => undefined,
+				emit: async () => undefined,
+			},
+			workspace: {
+				publishExternalSessions: async () => undefined,
+				setStatus: async () => undefined,
+				setBadge: async () => undefined,
+			},
 		});
 		await expect(startFromExplicitPanelAction()).resolves.toBe(false);
 		expect(starts).toBe(0);
@@ -64,7 +88,17 @@ describe('OMP plugin activation', () => {
 					throw new Error('workspace root capability is revoked');
 				},
 			},
-			workspace: {},
+			interactivePanel: {
+				onRequest: () => () => undefined,
+				resolve: async () => undefined,
+				reject: async () => undefined,
+				emit: async () => undefined,
+			},
+			workspace: {
+				publishExternalSessions: async () => undefined,
+				setStatus: async () => undefined,
+				setBadge: async () => undefined,
+			},
 		});
 
 		await expect(startFromExplicitPanelAction()).rejects.toThrow(/revoked/);
