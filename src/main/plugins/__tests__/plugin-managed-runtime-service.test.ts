@@ -59,7 +59,13 @@ function rootService(activationContext = () => activation()) {
 			resolve: (value) => value,
 			isAbsolute: () => true,
 			realpath: (value) => value,
-			lstat: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+			lstat: () => ({
+				dev: 1,
+				ino: 1,
+				size: 0,
+				isDirectory: () => true,
+				isSymbolicLink: () => false,
+			}),
 			sep: '/',
 		},
 	});
@@ -128,6 +134,39 @@ describe('managed OMP runtime service', () => {
 		});
 	});
 
+	it('relays only bounded validated stdout frames as frozen ordered messages and isolates callbacks', async () => {
+		const roots = rootService();
+		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
+		const { service, child } = buildService(roots);
+		const handle = await service.startOmpRuntime({
+			workspaceRoot: root,
+			options: { restore: false },
+		});
+		const messages: Array<{ sequence: number; value: JsonValue }> = [];
+		handle.onMessage((message) => messages.push(message));
+		handle.onMessage(() => {
+			throw new Error('consumer failure');
+		});
+		child.stdout.emit('data', '{"response":{"ok":true}}\n{"event":"ready"}\n');
+		child.stderr.emit('data', '{"response":"must-not-leak"}\nplain diagnostic\n');
+
+		expect(messages).toEqual([
+			{ sequence: 1, value: { response: { ok: true } } },
+			{ sequence: 2, value: { event: 'ready' } },
+		]);
+		const firstValue = messages[0]?.value;
+		expect(Object.isFrozen(firstValue)).toBe(true);
+		if (
+			!firstValue ||
+			typeof firstValue !== 'object' ||
+			Array.isArray(firstValue) ||
+			!('response' in firstValue)
+		) {
+			throw new Error('expected object response frame');
+		}
+		expect(Object.isFrozen(firstValue.response)).toBe(true);
+	});
+
 	it('fails closed for malformed or oversized output and revokes an active handle', async () => {
 		const roots = rootService();
 		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
@@ -138,8 +177,11 @@ describe('managed OMP runtime service', () => {
 		});
 		const events: unknown[] = [];
 		handle.onEvent((event) => events.push(event));
+		const messages: unknown[] = [];
+		handle.onMessage((message) => messages.push(message));
 		child.stdout.emit('data', '{not json}\n');
 		expect(events).toContainEqual(expect.objectContaining({ kind: 'safe_error' }));
+		expect(messages).toEqual([]);
 		await expect(handle.writeCanonicalJson({ requestId: 'a' } as JsonValue)).rejects.toThrow(
 			'closed'
 		);
@@ -207,7 +249,13 @@ describe('managed OMP runtime service', () => {
 				resolve: (value) => value,
 				isAbsolute: () => true,
 				realpath: (value) => value,
-				lstat: () => ({ isDirectory: () => true, isSymbolicLink: () => reparse }),
+				lstat: () => ({
+					dev: 1,
+					ino: 1,
+					size: 0,
+					isDirectory: () => true,
+					isSymbolicLink: () => reparse,
+				}),
 				sep: '/',
 			},
 		});
@@ -217,6 +265,35 @@ describe('managed OMP runtime service', () => {
 		await expect(
 			service.startOmpRuntime({ workspaceRoot: root, options: { restore: false } })
 		).rejects.toThrow('reparse point');
+		expect(launch()).toBeUndefined();
+	});
+
+	it('rejects a root identity swap before spawn even when the canonical path is unchanged', async () => {
+		let redirected = false;
+		const roots = new NativeWorkspaceRootService({
+			chooseDirectory: async () => '/workspace',
+			activation: () => activation(),
+			filesystem: {
+				resolve: (value) => value,
+				isAbsolute: () => true,
+				realpath: (value) => value,
+				lstat: () => ({
+					dev: 1,
+					ino: redirected ? 22 : 11,
+					size: 0,
+					isDirectory: () => true,
+					isSymbolicLink: () => false,
+				}),
+				sep: '/',
+			},
+		});
+		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
+		redirected = true;
+		const { service, launch } = buildService(roots);
+
+		await expect(
+			service.startOmpRuntime({ workspaceRoot: root, options: { restore: false } })
+		).rejects.toThrow('workspace root changed after consent');
 		expect(launch()).toBeUndefined();
 	});
 
@@ -291,7 +368,13 @@ describe('managed OMP runtime service', () => {
 				resolve: (value) => value,
 				isAbsolute: () => true,
 				realpath: (value) => value,
-				lstat: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+				lstat: () => ({
+					dev: 1,
+					ino: 1,
+					size: 0,
+					isDirectory: () => true,
+					isSymbolicLink: () => false,
+				}),
 				sep: '/',
 			},
 		});

@@ -12,11 +12,19 @@ export interface RuntimeActivationContext {
 	readonly authorization: InteractiveRuntimeAuthorization;
 }
 
+export interface NativeWorkspaceRootStat {
+	readonly dev: number;
+	readonly ino: number;
+	readonly size: number;
+	isDirectory(): boolean;
+	isSymbolicLink(): boolean;
+}
+
 export interface NativeWorkspaceRootFilesystem {
 	readonly resolve: (value: string) => string;
 	readonly isAbsolute: (value: string) => boolean;
 	readonly realpath: (value: string) => string;
-	readonly lstat: (value: string) => { isDirectory(): boolean; isSymbolicLink(): boolean };
+	readonly lstat: (value: string) => NativeWorkspaceRootStat;
 	readonly sep: string;
 }
 
@@ -32,7 +40,16 @@ interface RootRecord {
 	readonly ownerPluginId: string;
 	readonly generation: bigint;
 	readonly canonicalRoot: string;
+	readonly identity: RootIdentity;
 	readonly epoch: bigint;
+}
+
+interface RootIdentity {
+	readonly dev: number;
+	readonly ino: number;
+	readonly size: number;
+	readonly isDirectory: boolean;
+	readonly isSymbolicLink: boolean;
 }
 
 /**
@@ -53,14 +70,15 @@ export class NativeWorkspaceRootService {
 		if (!context) throw new Error('interactive runtime owner is unavailable');
 		const chosen = await this.deps.chooseDirectory();
 		if (chosen === null) return null;
-		const canonicalRoot = this.canonicalizeDirectory(chosen);
+		const root = this.canonicalizeDirectory(chosen);
 		const capability = Object.freeze(Object.create(null)) as WorkspaceRootCapability;
 		this.records.set(
 			capability,
 			Object.freeze({
 				ownerPluginId: context.ownerPluginId,
 				generation: context.generation,
-				canonicalRoot,
+				canonicalRoot: root.canonicalRoot,
+				identity: root.identity,
 				epoch: this.epoch,
 			})
 		);
@@ -88,10 +106,17 @@ export class NativeWorkspaceRootService {
 			throw new Error('workspace root capability is unavailable');
 		}
 		const current = this.canonicalizeDirectory(record.canonicalRoot);
-		if (!samePath(current, record.canonicalRoot)) {
+		if (
+			!samePath(current.canonicalRoot, record.canonicalRoot) ||
+			current.identity.dev !== record.identity.dev ||
+			current.identity.ino !== record.identity.ino ||
+			current.identity.size !== record.identity.size ||
+			current.identity.isDirectory !== record.identity.isDirectory ||
+			current.identity.isSymbolicLink !== record.identity.isSymbolicLink
+		) {
 			throw new Error('workspace root changed after consent');
 		}
-		return current;
+		return current.canonicalRoot;
 	}
 
 	/** Revocation is monotonic and invalidates every previously-issued capability. */
@@ -99,7 +124,10 @@ export class NativeWorkspaceRootService {
 		this.epoch += 1n;
 	}
 
-	private canonicalizeDirectory(value: string): string {
+	private canonicalizeDirectory(value: string): {
+		readonly canonicalRoot: string;
+		readonly identity: RootIdentity;
+	} {
 		if (typeof value !== 'string' || value.length === 0 || !this.filesystem.isAbsolute(value)) {
 			throw new Error('workspace root must be an absolute directory');
 		}
@@ -108,11 +136,11 @@ export class NativeWorkspaceRootService {
 		const canonical = this.filesystem.realpath(resolved);
 		if (!this.filesystem.isAbsolute(canonical))
 			throw new Error('workspace root canonicalization failed');
-		this.assertNoFollowDirectory(canonical);
-		return canonical;
+		const identity = this.assertNoFollowDirectory(canonical);
+		return { canonicalRoot: canonical, identity };
 	}
 
-	private assertNoFollowDirectory(absolute: string): void {
+	private assertNoFollowDirectory(absolute: string): RootIdentity {
 		const parsed = path.parse(absolute);
 		let current = parsed.root;
 		for (const segment of absolute.slice(parsed.root.length).split(this.filesystem.sep)) {
@@ -126,6 +154,13 @@ export class NativeWorkspaceRootService {
 		if (root.isSymbolicLink() || !root.isDirectory()) {
 			throw new Error('workspace root is not a no-follow directory');
 		}
+		return {
+			dev: root.dev,
+			ino: root.ino,
+			size: root.size,
+			isDirectory: root.isDirectory(),
+			isSymbolicLink: root.isSymbolicLink(),
+		};
 	}
 }
 

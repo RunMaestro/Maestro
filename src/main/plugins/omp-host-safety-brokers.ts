@@ -25,16 +25,76 @@ export type OmpWorkspaceToolName = (typeof OMP_WORKSPACE_TOOLS)[number];
 export type OmpPanelPhase = 'pending' | 'completed' | 'cancelled' | 'failed';
 
 export interface OmpPathStat {
+	readonly dev: number;
+	readonly ino: number;
+	readonly size: number;
 	isDirectory(): boolean;
+	isFile(): boolean;
 	isSymbolicLink(): boolean;
+}
+
+/** An opened descriptor; all content I/O happens only through this authority. */
+export interface OmpToolFileHandle {
+	stat(): Promise<OmpPathStat>;
+	readFile(): Promise<Buffer>;
+	write(
+		buffer: Buffer,
+		offset: number,
+		length: number,
+		position: number
+	): Promise<{ readonly bytesWritten: number }>;
+	truncate(length?: number): Promise<void>;
+	sync(): Promise<void>;
+	close(): Promise<void>;
 }
 
 /** Every method receives host-internal absolute paths only; no plugin receives one. */
 export interface OmpToolFilesystem {
 	readonly lstat: (value: string) => Promise<OmpPathStat>;
 	readonly realpath: (value: string) => Promise<string>;
-	readonly readFileNoFollow: (value: string) => Promise<Buffer>;
-	readonly writeFileNoFollow: (value: string, content: Buffer) => Promise<void>;
+	readonly openExistingNoFollow: (value: string, writable: boolean) => Promise<OmpToolFileHandle>;
+}
+
+interface PathAuthorityEntry {
+	readonly path: string;
+	readonly canonical: string;
+	readonly stat: OmpPathStat;
+}
+
+interface PathAuthority {
+	readonly entries: readonly PathAuthorityEntry[];
+}
+
+function samePathIdentity(left: OmpPathStat | undefined, right: OmpPathStat): boolean {
+	return (
+		left !== undefined &&
+		left.dev === right.dev &&
+		left.ino === right.ino &&
+		left.size === right.size &&
+		left.isDirectory() === right.isDirectory() &&
+		left.isFile() === right.isFile() &&
+		left.isSymbolicLink() === right.isSymbolicLink()
+	);
+}
+
+function samePathAuthority(left: PathAuthority, right: PathAuthority): boolean {
+	return (
+		left.entries.length === right.entries.length &&
+		left.entries.every(
+			(entry, index) =>
+				samePath(entry.path, right.entries[index]?.path ?? '') &&
+				samePath(entry.canonical, right.entries[index]?.canonical ?? '') &&
+				samePathIdentity(entry.stat, right.entries[index]?.stat ?? entry.stat)
+		)
+	);
+}
+
+async function writeAll(file: OmpToolFileHandle, content: Buffer): Promise<void> {
+	for (let offset = 0; offset < content.byteLength; ) {
+		const { bytesWritten } = await file.write(content, offset, content.byteLength - offset, offset);
+		if (bytesWritten <= 0) throw new Error('workspace file handle write failed');
+		offset += bytesWritten;
+	}
 }
 
 export interface OmpToolApprovalRequest {
@@ -110,56 +170,132 @@ export class OmpRootToolPolicyBroker {
 		request: ParsedWorkspaceToolRequest
 	): Promise<OmpWorkspaceToolResult> {
 		if (tool === 'maestro.workspace.read') {
-			await this.assertNoFollowPath(root, request.path, false);
-			const content = await this.filesystem.readFileNoFollow(absolute);
+			const content = await this.withVerifiedExisting(root, request.path, absolute, false, (file) =>
+				file.readFile()
+			);
 			if (content.byteLength > MAX_TOOL_FILE_BYTES || content.byteLength > MAX_TOOL_OUTPUT_BYTES) {
 				throw new Error('workspace tool output exceeds limit');
 			}
-			await this.assertNoFollowPath(root, request.path, false);
 			this.assertCurrent();
 			return { text: content.toString('utf8') };
 		}
 
-		const text = tool === 'maestro.workspace.write' ? request.text : undefined;
-		const content = Buffer.from(
-			text ??
-				(await this.editContent(
-					root,
-					absolute,
-					request.path,
-					request.expectedText,
-					request.replacement
-				)),
-			'utf8'
-		);
-		if (content.byteLength > MAX_TOOL_INPUT_BYTES)
-			throw new Error('workspace tool input exceeds limit');
-		await this.assertNoFollowPath(root, request.path, true);
-		this.assertCurrent();
-		await this.filesystem.writeFileNoFollow(absolute, content);
-		await this.assertNoFollowPath(root, request.path, false);
-		this.assertCurrent();
+		if (tool === 'maestro.workspace.write') {
+			const text = request.text;
+			if (text === undefined) throw unavailable();
+			const content = Buffer.from(text, 'utf8');
+			if (content.byteLength > MAX_TOOL_INPUT_BYTES)
+				throw new Error('workspace tool input exceeds limit');
+			await this.replaceVerifiedExisting(root, request.path, absolute, async () => content);
+			return { phase: 'completed' };
+		}
+
+		const expectedText = request.expectedText;
+		const replacement = request.replacement;
+		if (expectedText === undefined || replacement === undefined) throw unavailable();
+		await this.replaceVerifiedExisting(root, request.path, absolute, async (file) => {
+			const current = await file.readFile();
+			if (current.byteLength > MAX_TOOL_FILE_BYTES)
+				throw new Error('workspace tool input exceeds limit');
+			const source = current.toString('utf8');
+			const index = source.indexOf(expectedText);
+			if (index < 0 || source.indexOf(expectedText, index + expectedText.length) >= 0) {
+				throw unavailable();
+			}
+			return Buffer.from(
+				`${source.slice(0, index)}${replacement}${source.slice(index + expectedText.length)}`,
+				'utf8'
+			);
+		});
 		return { phase: 'completed' };
 	}
 
-	private async editContent(
+	private async replaceVerifiedExisting(
 		root: string,
-		absolute: string,
 		relative: string,
-		expectedText: string | undefined,
-		replacement: string | undefined
-	): Promise<string> {
-		if (expectedText === undefined || replacement === undefined) throw unavailable();
-		await this.assertNoFollowPath(root, relative, false);
-		const current = await this.filesystem.readFileNoFollow(absolute);
-		if (current.byteLength > MAX_TOOL_FILE_BYTES)
-			throw new Error('workspace tool input exceeds limit');
-		const source = current.toString('utf8');
-		const index = source.indexOf(expectedText);
-		if (index < 0 || source.indexOf(expectedText, index + expectedText.length) >= 0) {
+		absolute: string,
+		createContent: (file: OmpToolFileHandle) => Promise<Buffer>
+	): Promise<void> {
+		await this.withVerifiedExisting(root, relative, absolute, true, async (file) => {
+			const content = await createContent(file);
+			if (content.byteLength > MAX_TOOL_INPUT_BYTES)
+				throw new Error('workspace tool input exceeds limit');
+			this.assertCurrent();
+			await file.truncate(0);
+			await writeAll(file, content);
+			await file.sync();
+			this.assertCurrent();
+		});
+	}
+
+	/**
+	 * Node has no cross-platform openat-style ancestor descriptor API. Existing
+	 * entries are therefore opened non-destructively, then the handle and every
+	 * path component are compared before a single content operation is allowed.
+	 * Missing targets deliberately fail closed instead of claiming safe creation.
+	 */
+	private async withVerifiedExisting<T>(
+		root: string,
+		relative: string,
+		absolute: string,
+		writable: boolean,
+		operation: (file: OmpToolFileHandle) => Promise<T>
+	): Promise<T> {
+		const before = await this.capturePathAuthority(root, relative);
+		this.assertCurrent();
+		let file: OmpToolFileHandle;
+		try {
+			file = await this.filesystem.openExistingNoFollow(absolute, writable);
+		} catch {
 			throw unavailable();
 		}
-		return `${source.slice(0, index)}${replacement}${source.slice(index + expectedText.length)}`;
+		try {
+			const opened = await file.stat();
+			if (opened.isDirectory() || !opened.isFile() || opened.isSymbolicLink()) throw unavailable();
+			const after = await this.capturePathAuthority(root, relative);
+			if (
+				!samePathAuthority(before, after) ||
+				!samePathIdentity(before.entries.at(-1)?.stat, opened) ||
+				!samePathIdentity(after.entries.at(-1)?.stat, opened)
+			) {
+				throw unavailable();
+			}
+			this.assertCurrent();
+			return await operation(file);
+		} finally {
+			await file.close().catch(() => undefined);
+		}
+	}
+
+	private async capturePathAuthority(root: string, relative: string): Promise<PathAuthority> {
+		try {
+			const rootStat = await this.filesystem.lstat(root);
+			if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw unavailable();
+			const canonicalRoot = await this.filesystem.realpath(root);
+			if (!samePath(canonicalRoot, root)) throw unavailable();
+			const entries: PathAuthorityEntry[] = [
+				{ path: root, canonical: canonicalRoot, stat: rootStat },
+			];
+			let current = root;
+			for (const [index, segment] of relative.split(/[\\/]/u).entries()) {
+				if (!segment) throw unavailable();
+				current = path.join(current, segment);
+				const stat = await this.filesystem.lstat(current);
+				if (
+					stat.isSymbolicLink() ||
+					(index < relative.split(/[\\/]/u).length - 1 && !stat.isDirectory()) ||
+					(index === relative.split(/[\\/]/u).length - 1 && !stat.isFile())
+				) {
+					throw unavailable();
+				}
+				const canonical = await this.filesystem.realpath(current);
+				if (!samePath(canonical, current)) throw unavailable();
+				entries.push({ path: current, canonical, stat });
+			}
+			return { entries };
+		} catch {
+			throw unavailable();
+		}
 	}
 
 	private resolveRoot(): string {
@@ -185,33 +321,6 @@ export class OmpRootToolPolicyBroker {
 			throw unavailable();
 		}
 		return resolved;
-	}
-
-	private async assertNoFollowPath(
-		root: string,
-		relative: string,
-		allowMissingFinal: boolean
-	): Promise<void> {
-		const rootStat = await this.filesystem.lstat(root);
-		if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw unavailable();
-		const canonicalRoot = await this.filesystem.realpath(root);
-		if (!samePath(canonicalRoot, root)) throw unavailable();
-		const segments = relative.split(/[\\/]/u);
-		let current = root;
-		for (let index = 0; index < segments.length; index += 1) {
-			const segment = segments[index];
-			if (!segment) throw unavailable();
-			current = path.join(current, segment);
-			try {
-				const entry = await this.filesystem.lstat(current);
-				if (entry.isSymbolicLink() || (index < segments.length - 1 && !entry.isDirectory())) {
-					throw unavailable();
-				}
-			} catch (error) {
-				if (isMissing(error) && allowMissingFinal && index === segments.length - 1) return;
-				throw error;
-			}
-		}
 	}
 
 	private assertRateLimit(): void {
@@ -375,7 +484,8 @@ export class OmpUriBroker {
 export interface OmpExportFilesystem {
 	readonly lstat: (value: string) => Promise<OmpPathStat>;
 	readonly realpath: (value: string) => Promise<string>;
-	readonly writeFile: (value: string, content: Buffer) => Promise<void>;
+	/** Opens a new exclusive temporary file without writing any content. */
+	readonly openTemporaryNoFollow: (value: string) => Promise<OmpToolFileHandle>;
 	readonly link: (from: string, to: string) => Promise<void>;
 	readonly unlink: (value: string) => Promise<void>;
 }
@@ -428,7 +538,27 @@ export class OmpNativeExportBroker {
 			await this.assertSafeDirectory(directory);
 			const target = path.join(directory, `${safeExportBaseName(suggestedName)}.html`);
 			const temporary = path.join(directory, `.${this.nextTemporaryName()}.tmp`);
-			await this.filesystem.writeFile(temporary, Buffer.from(html, 'utf8'));
+			let file: OmpToolFileHandle | undefined;
+			try {
+				file = await this.filesystem.openTemporaryNoFollow(temporary);
+				const opened = await file.stat();
+				const current = await this.filesystem.lstat(temporary);
+				if (
+					opened.isDirectory() ||
+					!opened.isFile() ||
+					opened.isSymbolicLink() ||
+					!samePathIdentity(current, opened) ||
+					!samePath(await this.filesystem.realpath(temporary), temporary)
+				) {
+					throw unavailable();
+				}
+				await this.assertSafeDirectory(directory);
+				await writeAll(file, Buffer.from(html, 'utf8'));
+				await file.sync();
+			} finally {
+				await file?.close().catch(() => undefined);
+			}
+			await this.assertSafeDirectory(directory);
 			try {
 				await this.filesystem.link(temporary, target);
 			} finally {
@@ -436,7 +566,7 @@ export class OmpNativeExportBroker {
 			}
 			if (this.revoked) throw unavailable();
 			return { phase: 'completed' };
-		} catch (error) {
+		} catch {
 			if (this.revoked) throw unavailable();
 			return { phase: 'failed' };
 		}
@@ -763,10 +893,6 @@ function timingSafeEqual(left: string, right: string): boolean {
 	);
 }
 
-function isMissing(value: unknown): boolean {
-	return value instanceof Error && 'code' in value && value.code === 'ENOENT';
-}
-
 function samePath(left: string, right: string): boolean {
 	return process.platform === 'win32'
 		? left.toLocaleLowerCase() === right.toLocaleLowerCase()
@@ -780,32 +906,22 @@ function unavailable(): Error {
 const defaultToolFilesystem: OmpToolFilesystem = {
 	lstat: fs.lstat,
 	realpath: fs.realpath,
-	readFileNoFollow: async (value) => {
-		const file = await fs.open(value, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-		try {
-			return await file.readFile();
-		} finally {
-			await file.close();
-		}
-	},
-	writeFileNoFollow: async (value, content) => {
-		const file = await fs.open(
+	openExistingNoFollow: (value, writable) =>
+		fs.open(
 			value,
-			fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
-			0o600
-		);
-		try {
-			await file.writeFile(content);
-		} finally {
-			await file.close();
-		}
-	},
+			(writable ? fs.constants.O_RDWR : fs.constants.O_RDONLY) | fs.constants.O_NOFOLLOW
+		),
 };
 
 const defaultExportFilesystem: OmpExportFilesystem = {
 	lstat: fs.lstat,
 	realpath: fs.realpath,
-	writeFile: (value, content) => fs.writeFile(value, content, { mode: 0o600, flag: 'wx' }),
+	openTemporaryNoFollow: (value) =>
+		fs.open(
+			value,
+			fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+			0o600
+		),
 	link: fs.link,
 	unlink: fs.unlink,
 };
