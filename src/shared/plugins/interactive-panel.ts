@@ -68,3 +68,15 @@ export interface PanelError<K extends string> {
 	readonly requestId: UUID;
 	readonly code: PanelErrorCode;
 }
+
+/**
+ * Owner endpoint injected only for the plugin's mounted declared panel. The
+ * host derives owner, contribution, descriptor, and instance from this endpoint;
+ * no operation accepts a panel or plugin ID.
+ */
+export interface MaestroInteractivePanelOwnerApi {
+	onRequest(listener: (request: PanelRequest<string, JsonValue>) => void): () => void;
+	resolve(requestId: UUID, kind: string, payload: JsonValue): Promise<void>;
+	reject(requestId: UUID, code: PanelErrorCode): Promise<void>;
+	emit(kind: string, payload: JsonValue, eventSequence: bigint): Promise<void>;
+}

@@ -52,6 +52,7 @@ export type PluginCapability =
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
 	| 'shell:openExternal' // ask the OS to open a URL with its default handler
 	| 'process:spawn' // run a shell command (highest risk)
+	| 'process:interactive' // start the host-owned interactive runtime for scope exactly omp
 	| 'decisions:write' // record brokered user/plugin decisions
 	| 'power:preventSleep' // request/release host wake locks while work is active
 	| 'background:service' // register supervised background service work
@@ -88,6 +89,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'events:subscribe',
 	'shell:openExternal',
 	'process:spawn',
+	'process:interactive',
 	'decisions:write',
 	'power:preventSleep',
 	'background:service',
@@ -124,6 +126,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
+	'process:interactive': 'high',
 	'shell:openExternal': 'high',
 	'sessions:create': 'high',
 	'sessions:write': 'high',
@@ -148,7 +151,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
  * DENIED — the opposite of path/host, where unscoped means broadest.
  */
-type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
+type ScopeKind = 'path' | 'host' | 'allowlist' | 'interactive' | 'none';
 
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
@@ -180,6 +183,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'events:subscribe': 'none',
 	// Phase-4 promotion: see agents:dispatch above.
 	'process:spawn': 'allowlist',
+	'process:interactive': 'interactive',
 	'shell:openExternal': 'host',
 	'decisions:write': 'none',
 	'power:preventSleep': 'none',
@@ -213,6 +217,7 @@ export function isPluginCapability(value: unknown): value is PluginCapability {
 export const HIGH_RISK_ACT_CAPABILITIES: readonly PluginCapability[] = [
 	'agents:dispatch',
 	'process:spawn',
+	'process:interactive',
 ];
 
 export function isHighRiskActCapability(value: unknown): value is PluginCapability {
@@ -298,6 +303,10 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 				out.errors.push(err);
 				continue;
 			}
+		}
+		if (scopeKind === 'interactive' && scope !== 'omp') {
+			out.errors.push(`capability "${capability}" requires scope exactly "omp"`);
+			continue;
 		}
 		if (reason !== undefined && typeof reason !== 'string') {
 			out.errors.push(`capability "${capability}" reason must be a string`);
@@ -452,6 +461,10 @@ export function isPermitted(
 			if (target !== undefined && allowlistScopeCovers(grant.scope, target)) return true;
 			continue;
 		}
+		if (scopeKind === 'interactive') {
+			if (grant.scope === 'omp') return true;
+			continue;
+		}
 		if (!grant.scope) return true; // unscoped grant = broadest
 		if (target === undefined) continue; // scoped grant needs a concrete target
 		if (scopeKind === 'path' && pathScopeCovers(grant.scope, target)) return true;
@@ -526,6 +539,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
 			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
+		case 'process:interactive':
+			return 'Start the host-owned OMP interactive runtime for the selected workspace';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':

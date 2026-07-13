@@ -84,6 +84,7 @@ export type PluginCapability =
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
 	| 'shell:openExternal' // ask the OS to open a URL with its default handler
 	| 'process:spawn' // run a shell command (highest risk)
+	| 'process:interactive' // start the host-owned interactive runtime for scope exactly omp
 	| 'decisions:write' // record brokered user/plugin decisions
 	| 'power:preventSleep' // request/release host wake locks while work is active
 	| 'background:service' // register supervised background service work
@@ -120,6 +121,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'events:subscribe',
 	'shell:openExternal',
 	'process:spawn',
+	'process:interactive',
 	'decisions:write',
 	'power:preventSleep',
 	'background:service',
@@ -156,6 +158,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
+	'process:interactive': 'high',
 	'shell:openExternal': 'high',
 	'sessions:create': 'high',
 	'sessions:write': 'high',
@@ -180,7 +183,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
  * DENIED — the opposite of path/host, where unscoped means broadest.
  */
-type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
+type ScopeKind = 'path' | 'host' | 'allowlist' | 'interactive' | 'none';
 
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
@@ -211,6 +214,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'events:subscribe': 'none',
 	// Phase-4 promotion: see agents:dispatch above.
 	'process:spawn': 'allowlist',
+	'process:interactive': 'interactive',
 	'shell:openExternal': 'host',
 	'decisions:write': 'none',
 	'power:preventSleep': 'none',
@@ -324,6 +328,10 @@ function parsePermissions(input: unknown): PermissionParseResult {
 				continue;
 			}
 		}
+		if (scopeKind === 'interactive' && scope !== 'omp') {
+			out.errors.push(`capability "${capability}" requires scope exactly "omp"`);
+			continue;
+		}
 		if (reason !== undefined && typeof reason !== 'string') {
 			out.errors.push(`capability "${capability}" reason must be a string`);
 			continue;
@@ -384,6 +392,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
 			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
+		case 'process:interactive':
+			return 'Start the host-owned OMP interactive runtime for the selected workspace';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':
@@ -640,6 +650,103 @@ export interface ClosedPanelBridge<
 	readonly eventSchemas: Events;
 	readonly resultSchemas: Results;
 	readonly errorSchemas: Errors;
+}
+
+export interface PanelRequest<K extends string, P extends JsonValue> {
+	readonly kind: K;
+	readonly requestId: UUID;
+	readonly payload: P;
+}
+export interface PanelEvent<K extends string, P extends JsonValue> {
+	readonly kind: K;
+	readonly payload: P;
+	readonly eventSequence: bigint;
+}
+export interface PanelResult<K extends string, P extends JsonValue> {
+	readonly kind: K;
+	readonly requestId: UUID;
+	readonly payload: P;
+}
+export interface PanelError<K extends string> {
+	readonly kind: K;
+	readonly requestId: UUID;
+	readonly code: PanelErrorCode;
+}
+export interface MaestroInteractivePanelOwnerApi {
+	onRequest(listener: (request: PanelRequest<string, JsonValue>) => void): () => void;
+	resolve(requestId: UUID, kind: string, payload: JsonValue): Promise<void>;
+	reject(requestId: UUID, code: PanelErrorCode): Promise<void>;
+	emit(kind: string, payload: JsonValue, eventSequence: bigint): Promise<void>;
+}
+
+export type WorkspaceCapability = { readonly __hostIssuedWorkspace: never };
+
+export interface ExternalSessionSnapshot {
+	readonly externalSessionId: string;
+	readonly title: string;
+	readonly status:
+		| 'starting'
+		| 'idle'
+		| 'working'
+		| 'waiting_for_input'
+		| 'waiting_for_approval'
+		| 'retrying'
+		| 'completed'
+		| 'aborted'
+		| 'failed'
+		| 'offline';
+	readonly unread: number;
+	readonly pendingApproval: boolean;
+	readonly updatedAt: number;
+}
+
+export interface WorkspaceStatusSnapshot {
+	readonly state: 'ready' | 'connecting' | 'degraded' | 'offline' | 'error';
+	readonly label: string;
+}
+
+export interface MaestroWorkspaceApi {
+	publishExternalSessions(
+		revision: number,
+		sessions: readonly ExternalSessionSnapshot[]
+	): Promise<void>;
+	setStatus(status: WorkspaceStatusSnapshot): Promise<void>;
+	setBadge(value: number | null): Promise<void>;
+	reveal(snapshotToken: SnapshotToken): Promise<void>;
+	onDidChangeContext(listener: () => void): () => void;
+}
+
+export type WorkspaceRootCapability = { readonly __hostIssuedRoot: never };
+export interface OmpSafeStartupOptions {
+	readonly restore?: false;
+}
+export type InteractiveStopReason =
+	| 'user'
+	| 'workspace-deactivated'
+	| 'plugin-disabled'
+	| 'shutdown'
+	| 'revoked';
+export type RuntimeEvent =
+	| { readonly kind: 'started'; readonly sequence: bigint }
+	| { readonly kind: 'exit'; readonly sequence: bigint; readonly code: number | null }
+	| { readonly kind: 'safe_error'; readonly sequence: bigint; readonly class: PanelErrorCode };
+export interface InteractiveRuntimeHandle {
+	readonly runtimeId: UUID;
+	readonly generation: bigint;
+	writeCanonicalJson(request: JsonValue): Promise<void>;
+	onEvent(listener: (event: RuntimeEvent) => void): () => void;
+	stop(reason: InteractiveStopReason): Promise<void>;
+}
+export interface MaestroInteractiveRuntimeApi {
+	/**
+	 * Explicit user-action path to the native chooser. A cancelled chooser
+	 * returns null; plugin activation never receives a root or triggers a prompt.
+	 */
+	requestWorkspaceRoot(): Promise<WorkspaceRootCapability | null>;
+	startOmpRuntime(input: {
+		readonly workspaceRoot: WorkspaceRootCapability;
+		readonly options: OmpSafeStartupOptions;
+	}): Promise<InteractiveRuntimeHandle>;
 }
 
 /** A parsed, validated plugin manifest. Unknown `contributes.*` keys round-trip. */
@@ -1620,6 +1727,15 @@ export interface MaestroSdk {
 	readonly decisions: MaestroDecisionsApi;
 	readonly power: MaestroPowerApi;
 	readonly background: MaestroBackgroundApi;
+	/** The host-derived API for this plugin's sole active declared workspace. */
+	readonly workspace?: MaestroWorkspaceApi;
+	/** The host-derived owner endpoint for this plugin's mounted declared panel. */
+	readonly interactivePanel?: MaestroInteractivePanelOwnerApi;
+	/**
+	 * Present only after the host establishes trusted, current user consent for
+	 * a declared interactive workspace. It never injects a filesystem path.
+	 */
+	readonly interactiveRuntime?: MaestroInteractiveRuntimeApi;
 }
 
 /** The default export shape a tier >= 1 plugin's entry module assigns. Both

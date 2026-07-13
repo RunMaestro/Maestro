@@ -76,6 +76,29 @@ export type WorkspaceContextChange =
 			readonly workspaceLocalId: WorkspaceLocalId;
 	  };
 
+/** Opaque host-minted authority for exactly one enabled workspace contribution. */
+export type WorkspaceCapability = { readonly __hostIssuedWorkspace: never };
+
+export interface WorkspaceStatusSnapshot {
+	readonly state: 'ready' | 'connecting' | 'degraded' | 'offline' | 'error';
+	readonly label: string;
+}
+
+/**
+ * Capability-bound workspace surface. Plugin code cannot select an owner,
+ * workspace, session, or deep-link token; those are all host-derived.
+ */
+export interface MaestroWorkspaceApi {
+	publishExternalSessions(
+		revision: number,
+		sessions: readonly ExternalSessionSnapshot[]
+	): Promise<void>;
+	setStatus(status: WorkspaceStatusSnapshot): Promise<void>;
+	setBadge(value: number | null): Promise<void>;
+	reveal(snapshotToken: SnapshotToken): Promise<void>;
+	onDidChangeContext(listener: () => void): () => void;
+}
+
 export interface RawWorkspaceContribution {
 	readonly localId: string;
 	readonly title: string;
@@ -571,12 +594,22 @@ function validatePermissions(
 			complete = false;
 			continue;
 		}
-		validateClosedKeys(raw, ['capability'], path, addError);
 		const capability = readDataProperty(raw, 'capability');
 		if (typeof capability !== 'string') {
+			validateClosedKeys(raw, ['capability'], path, addError);
 			addError(`${path}.capability`, `${path}.capability must be a string`);
 			complete = false;
 			continue;
+		}
+		if (capability === 'process:interactive') {
+			validateClosedKeys(raw, ['capability', 'scope'], path, addError);
+			if (readDataProperty(raw, 'scope') !== 'omp') {
+				addError(`${path}.scope`, `${path}.scope must equal "omp" for process:interactive`);
+				complete = false;
+				continue;
+			}
+		} else {
+			validateClosedKeys(raw, ['capability'], path, addError);
 		}
 		capabilities.add(capability);
 	}
