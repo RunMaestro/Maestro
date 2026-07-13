@@ -36,7 +36,7 @@ describe('OMP plugin activation', () => {
 		expect(rootRequests).toBe(1);
 		expect(starts).toBe(1);
 		await deactivate();
-		expect(stopped).toEqual(['deactivate']);
+		expect(stopped).toEqual(['workspace-deactivated']);
 		expect(statuses).toEqual(['offline', 'ready', 'offline']);
 	});
 

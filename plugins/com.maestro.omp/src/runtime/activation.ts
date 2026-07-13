@@ -9,7 +9,7 @@ type JsonValue =
 interface InteractiveRuntimeHandle {
 	writeCanonicalJson(value: JsonValue): void;
 	onEvent(listener: (event: unknown) => void): () => void;
-	stop(reason: 'deactivate' | 'revoked' | 'failed'): Promise<void>;
+	stop(reason: 'workspace-deactivated' | 'revoked' | 'shutdown'): Promise<void>;
 }
 
 interface ActivationSdk {
@@ -63,7 +63,7 @@ export async function deactivate(): Promise<void> {
 	const current = active;
 	active = undefined;
 	current.unsubscribe?.();
-	if (current.handle) await current.handle.stop('deactivate');
+	if (current.handle) await current.handle.stop('workspace-deactivated');
 	current.sdk.workspace?.publishExternalSessions?.([]);
 	current.sdk.workspace?.setStatus?.('offline');
 	current.sdk.workspace?.setBadge?.(undefined);
