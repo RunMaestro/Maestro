@@ -134,6 +134,26 @@ describe('InteractiveRuntimeSandboxEventForwarder', () => {
 		);
 	});
 
+	it('keeps OMP delivery live when an unrelated plugin owner is revoked', () => {
+		const sink = { pushEvent: vi.fn(() => true) };
+		const forwarder = new InteractiveRuntimeSandboxEventForwarder(sink);
+		const omp = makeHandle('omp-runtime', 4n);
+		const other = makeHandle('other-runtime', 1n);
+		forwarder.attach('com.maestro.omp', 4n, omp);
+		forwarder.attach('other-plugin', 1n, other);
+
+		forwarder.revokeOwner('other-plugin');
+		omp.emit({ kind: 'started', sequence: 1n });
+
+		expect(omp.listenerCount()).toBe(1);
+		expect(omp.messageListenerCount()).toBe(1);
+		expect(other.listenerCount()).toBe(0);
+		expect(sink.pushEvent).toHaveBeenCalledWith(
+			'com.maestro.omp',
+			expect.objectContaining({ topic: '__interactiveRuntimeEvent:omp-runtime' })
+		);
+	});
+
 	it('unsubscribes before stop or owner revoke so late events cannot reach a stopped sandbox', () => {
 		const sink = { pushEvent: vi.fn(() => true) };
 		const forwarder = new InteractiveRuntimeSandboxEventForwarder(sink);
