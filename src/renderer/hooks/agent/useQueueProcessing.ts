@@ -214,18 +214,28 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		startupRecoveryRan.current = true;
 
 		const sessions = useSessionStore.getState().sessions;
-		const sessionsWithQueuedItems = sessions.filter(
+		const hasStartupItems = sessions.some(
 			(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
 		);
 
-		if (sessionsWithQueuedItems.length > 0) {
+		if (hasStartupItems) {
 			logger.info(
-				`[QueueProcessing] Found ${sessionsWithQueuedItems.length} session(s) with leftover queued items from previous session`
+				`[QueueProcessing] Found idle session(s) with leftover queued items from previous session`
 			);
 
-			// Delay to ensure all refs and handlers are set up
+			// Delay to ensure all refs and handlers are set up. Re-scan at fire
+			// time (do not close over the mount-time list): a session can become
+			// idle+runnable during the 500ms window, and the runtime-recovery
+			// effect may have already bailed while startupRecoveryComplete was
+			// false with a settled signature, so it would never retry. The old
+			// full-sessions subscription masked that; the narrow signature does not.
 			const startupTimerId = setTimeout(() => {
-				sessionsWithQueuedItems.forEach((session) => {
+				const toRecover = useSessionStore
+					.getState()
+					.sessions.filter(
+						(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
+					);
+				toRecover.forEach((session) => {
 					logger.info(
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
 						undefined,
