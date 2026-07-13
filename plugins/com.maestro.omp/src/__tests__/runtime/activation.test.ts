@@ -45,7 +45,7 @@ describe('OMP plugin activation', () => {
 		]);
 	});
 
-	it('registers the panel request listener before setup awaits and does not silently lose its initial snapshot request', async () => {
+	it('resolves the first refresh with an actionable setup projection without requesting a root or starting OMP', async () => {
 		let listener:
 			| ((request: { kind: string; requestId: string; payload: Record<string, unknown> }) => void)
 			| undefined;
@@ -53,11 +53,18 @@ describe('OMP plugin activation', () => {
 		const badgePending = new Promise<void>((resolve) => {
 			releaseBadge = resolve;
 		});
+		let rootRequests = 0;
+		let starts = 0;
+		const resolved = vi.fn(async () => undefined);
 		const rejected = vi.fn(async () => undefined);
 		const activation = activate({
 			interactiveRuntime: {
-				requestWorkspaceRoot: async () => null,
+				requestWorkspaceRoot: async () => {
+					rootRequests++;
+					return { opaque: true };
+				},
 				startOmpRuntime: async () => {
+					starts++;
 					throw new Error('unreachable');
 				},
 			},
@@ -66,7 +73,7 @@ describe('OMP plugin activation', () => {
 					listener = registered as typeof listener;
 					return () => undefined;
 				},
-				resolve: async () => undefined,
+				resolve: resolved,
 				reject: rejected,
 				emit: async () => undefined,
 				consumeResource: async () => {
@@ -89,8 +96,17 @@ describe('OMP plugin activation', () => {
 		});
 
 		await vi.waitFor(() =>
-			expect(rejected).toHaveBeenCalledWith('initial-get-snapshot', 'runtime_stopped')
+			expect(resolved).toHaveBeenCalledWith('initial-get-snapshot', 'omp.commands.refresh', {
+				connection: 'offline',
+				models: [],
+				sessions: [],
+				activeSessionId: '',
+				error: 'OMP setup required. Create a new session to start OMP.',
+			})
 		);
+		expect(rejected).not.toHaveBeenCalled();
+		expect(rootRequests).toBe(0);
+		expect(starts).toBe(0);
 		releaseBadge();
 		await activation;
 	});
@@ -190,6 +206,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 	const sessions: Array<readonly unknown[]> = [];
 	const statuses: Array<{ state: string; label: string }> = [];
 	const panels: Array<{ kind: string; payload: unknown }> = [];
+	const panelResults: Array<{ requestId: string; kind: string; payload: unknown }> = [];
 	let receivePanelRequest:
 		| ((request: { kind: string; requestId: string; payload: Record<string, unknown> }) => void)
 		| undefined;
@@ -301,7 +318,8 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 				receivePanelRequest = listener as typeof receivePanelRequest;
 				return () => undefined;
 			},
-			resolve: async () => {
+			resolve: async (requestId, kind, payload) => {
+				panelResults.push({ requestId, kind, payload });
 				resolvePanelRequest?.();
 			},
 			reject: async (...args) => {
@@ -411,10 +429,52 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 		expect.objectContaining({ externalSessionId: 'session-1', status: 'idle' }),
 	]);
 	expect(statuses.at(-1)).toEqual({ state: 'ready', label: 'OMP ready' });
-	expect(panels.at(-1)).toEqual(
-		expect.objectContaining({
-			kind: 'omp.view.replace',
-			payload: expect.objectContaining({ sessionId: 'session-1' }),
+	expect(panels.at(-1)).toEqual({
+		kind: 'omp.view.replace',
+		payload: {
+			connection: 'ready',
+			models: [],
+			sessions: [
+				expect.objectContaining({
+					id: 'session-1',
+					title: 'First session',
+					status: 'idle',
+					model: 'OMP default',
+					mode: 'build',
+					events: [],
+					tree: [],
+					subagents: [],
+					usage: { inputTokens: 0, outputTokens: 0 },
+					queuedMessageCount: 0,
+					todoPhases: [],
+				}),
+			],
+			activeSessionId: 'session-1',
+		},
+	});
+	receivePanelRequest?.({
+		kind: 'omp.commands.refresh',
+		requestId: 'panel-refresh',
+		payload: {},
+	});
+	await vi.waitFor(() =>
+		expect(panelResults).toContainEqual({
+			requestId: 'panel-refresh',
+			kind: 'omp.commands.refresh',
+			payload: expect.objectContaining({
+				connection: 'ready',
+				models: [],
+				sessions: [
+					expect.objectContaining({
+						id: 'session-1',
+						events: [],
+						tree: [],
+						subagents: [],
+						usage: { inputTokens: 0, outputTokens: 0 },
+					}),
+				],
+				activeSessionId: 'session-1',
+			}),
 		})
 	);
 });

@@ -381,13 +381,23 @@ async function handlePanelRequest(
 	request: PanelRequest<string, JsonValue>
 ): Promise<void> {
 	try {
+		if (request.kind === 'omp.commands.refresh' && !current.runtime && active === current) {
+			await current.panel.resolve(request.requestId, request.kind, setupView());
+			return;
+		}
+
 		if (request.kind === 'omp.session.create' && !current.runtime) {
 			const started = await startFromExplicitPanelAction();
 			if (!started) {
 				await current.panel.reject(request.requestId, 'cancelled');
 				return;
 			}
-			await current.panel.resolve(request.requestId, request.kind, {});
+			const runtime = current.runtime;
+			if (!runtime || active !== current || runtime.controller.state !== 'ready') {
+				await current.panel.reject(request.requestId, 'runtime_stopped');
+				return;
+			}
+			await current.panel.resolve(request.requestId, request.kind, currentView(runtime));
 			return;
 		}
 		const runtime = current.runtime;
@@ -413,27 +423,12 @@ async function dispatchPanelRequest(
 	const command = await panelCommand(current.panel, request.kind, payload, sessionId);
 	if (command) {
 		const response = await runtime.controller.command(command);
-		if (request.kind === 'omp.commands.refresh') return currentView(runtime);
-		if (
-			command.type === 'new_session' ||
-			command.type === 'switch_session' ||
-			command.type === 'branch' ||
-			command.type === 'handoff' ||
-			command.type === 'set_session_name' ||
-			command.type === 'set_model' ||
-			command.type === 'cycle_model' ||
-			command.type === 'set_thinking_level' ||
-			command.type === 'cycle_thinking_level' ||
-			command.type === 'set_steering_mode' ||
-			command.type === 'set_follow_up_mode' ||
-			command.type === 'set_interrupt_mode' ||
-			command.type === 'set_auto_compaction' ||
-			command.type === 'set_auto_retry' ||
-			command.type === 'set_todos'
-		) {
-			await runtime.controller.command({ type: 'get_state' });
+		if (snapshotResult(request.kind)) {
+			if (request.kind !== 'omp.commands.refresh')
+				await runtime.controller.command({ type: 'get_state' });
+			return currentView(runtime);
 		}
-		return response.data === undefined ? {} : toJsonValue(response.data);
+		return projectCommandResult(request.kind, response.data, payload, runtime);
 	}
 	if (request.kind === 'omp.approval.resolve') {
 		const requestId = readString(payload, 'requestId');
@@ -453,9 +448,160 @@ async function dispatchPanelRequest(
 		if (mode !== 'build' && mode !== 'plan' && mode !== 'ask')
 			throw new OmpProtocolError('invalid composer mode');
 		runtime.composerMode = mode;
-		return {};
+		return currentView(runtime);
 	}
 	throw new OmpProtocolError(`unknown OMP panel request ${JSON.stringify(request.kind)}`);
+}
+
+function snapshotResult(kind: string): boolean {
+	switch (kind) {
+		case 'omp.session.create':
+		case 'omp.session.select':
+		case 'omp.session.compact':
+		case 'omp.session.branch':
+		case 'omp.session.handoff':
+		case 'omp.model.set':
+		case 'omp.model.cycle':
+		case 'omp.thinking.set':
+		case 'omp.thinking.cycle':
+		case 'omp.settings.set':
+		case 'omp.commands.refresh':
+			return true;
+		default:
+			return false;
+	}
+}
+
+function projectCommandResult(
+	kind: string,
+	data: unknown,
+	payload: Record<string, JsonValue>,
+	runtime: ActiveRuntime
+): JsonValue {
+	switch (kind) {
+		case 'omp.messages.load':
+			return Object.freeze({ messages: messageSummaries(data) });
+		case 'omp.stats.load': {
+			const state = runtime.controller.getState();
+			if (!state) throw new OmpProtocolError('OMP workspace has no session state');
+			return Object.freeze({
+				messageCount: boundedCount(state.messageCount),
+				queuedMessageCount: boundedCount(state.queuedMessageCount),
+			});
+		}
+		case 'omp.subagents.load':
+			return subagentMessages(data);
+		case 'omp.auth.providers':
+			return Object.freeze({ providers: loginProviders(data) });
+		case 'omp.auth.login':
+			return Object.freeze({ providerId: resultString(data, 'providerId', payload.providerId) });
+		case 'omp.export.request':
+			return Object.freeze({ path: resultString(data, 'path') });
+		default:
+			return Object.freeze({});
+	}
+}
+
+function messageSummaries(data: unknown): readonly JsonValue[] {
+	const messages = isRecord(data) && Array.isArray(data.messages) ? data.messages : [];
+	return Object.freeze(
+		messages.slice(0, 500).map((message, index) => messageSummary(message, index))
+	);
+}
+
+function messageSummary(value: unknown, index: number): JsonValue {
+	if (!isRecord(value)) return Object.freeze({ id: `message-${index}`, role: 'other', text: '' });
+	const rawRole = typeof value.role === 'string' ? value.role : 'other';
+	const role =
+		rawRole === 'user' || rawRole === 'assistant' || rawRole === 'system'
+			? rawRole
+			: rawRole === 'tool' || rawRole === 'toolResult'
+				? 'tool'
+				: 'other';
+	const text =
+		typeof value.text === 'string'
+			? value.text
+			: typeof value.content === 'string'
+				? value.content
+				: '';
+	return Object.freeze({
+		id: boundedString(typeof value.id === 'string' ? value.id : `message-${index}`, 256),
+		role,
+		text: boundedString(text, 65536),
+	});
+}
+
+function subagentMessages(data: unknown): JsonValue {
+	const result = isRecord(data) ? data : {};
+	const entries = Array.isArray(result.entries) ? result.entries : [];
+	return Object.freeze({
+		sessionFile: boundedString(
+			typeof result.sessionFile === 'string' ? result.sessionFile : '',
+			4096
+		),
+		fromByte: boundedCount(result.fromByte),
+		nextByte: boundedCount(result.nextByte),
+		reset: result.reset === true,
+		entries: Object.freeze(
+			entries.slice(0, 500).map((entry, index) => {
+				const value = isRecord(entry) ? entry : {};
+				return Object.freeze({
+					id: boundedString(typeof value.id === 'string' ? value.id : `entry-${index}`, 256),
+					label: boundedString(
+						typeof value.label === 'string'
+							? value.label
+							: typeof value.type === 'string'
+								? value.type
+								: '',
+						65536
+					),
+					status: boundedString(typeof value.status === 'string' ? value.status : '', 128),
+				});
+			})
+		),
+		messages: messageSummaries(data),
+	});
+}
+
+function loginProviders(data: unknown): readonly JsonValue[] {
+	const providers = isRecord(data) && Array.isArray(data.providers) ? data.providers : [];
+	return Object.freeze(
+		providers.slice(0, 100).flatMap((provider) => {
+			if (
+				!isRecord(provider) ||
+				typeof provider.id !== 'string' ||
+				typeof provider.name !== 'string' ||
+				typeof provider.available !== 'boolean' ||
+				typeof provider.authenticated !== 'boolean'
+			)
+				return [];
+			return [
+				Object.freeze({
+					id: boundedString(provider.id, 256),
+					name: boundedString(provider.name, 256),
+					available: provider.available,
+					authenticated: provider.authenticated,
+				}),
+			];
+		})
+	);
+}
+
+function resultString(data: unknown, key: string, fallback?: JsonValue): string {
+	const value = isRecord(data) ? data[key] : fallback;
+	if (typeof value !== 'string' || value.length === 0)
+		throw new OmpProtocolError(`OMP ${key} response was invalid`);
+	return boundedString(value, 4096);
+}
+
+function boundedCount(value: unknown): number {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+		? Math.min(value, Number.MAX_SAFE_INTEGER)
+		: 0;
+}
+
+function boundedString(value: string, maximum: number): string {
+	return value.slice(0, maximum);
 }
 
 async function panelCommand(
@@ -634,19 +780,95 @@ function workspaceStatus(status: ExternalSessionStatus) {
 	return { state: 'ready' as const, label: 'OMP ready' };
 }
 
+function setupView(): JsonValue {
+	return Object.freeze({
+		connection: 'offline',
+		models: Object.freeze([]),
+		sessions: Object.freeze([]),
+		activeSessionId: '',
+		error: 'OMP setup required. Create a new session to start OMP.',
+	});
+}
+
 function currentView(runtime: ActiveRuntime): JsonValue {
 	const state = runtime.controller.getState();
 	if (!state) throw new OmpProtocolError('OMP workspace has no session state');
+	const selectedModel = modelLabel(state.model);
+	const models = Object.freeze(
+		[...runtime.controller.availableModels.map(modelLabel), selectedModel].filter(
+			(value): value is string => value !== undefined
+		)
+	);
 	return Object.freeze({
-		sessionId: state.sessionId,
-		sessionName: state.sessionName ?? state.sessionId,
-		status: runtime.status,
-		pendingApproval: runtime.pendingApproval,
-		composerMode: runtime.composerMode,
-		state: toJsonValue(state),
-		availableCommands: Object.freeze([...runtime.controller.availableCommands]),
-		availableModels: toJsonValue(runtime.controller.availableModels),
+		connection: connectionState(runtime.status),
+		models: Object.freeze([...new Set(models)].slice(0, 100)),
+		sessions: Object.freeze([
+			Object.freeze({
+				id: boundedString(state.sessionId, 4096),
+				title: boundedString(state.sessionName ?? state.sessionId, 4096),
+				updatedAt: Date.now(),
+				status: sessionStatus(runtime, state),
+				model: boundedString(selectedModel ?? 'OMP default', 4096),
+				mode: runtime.composerMode,
+				events: Object.freeze([]),
+				tree: Object.freeze([]),
+				subagents: Object.freeze([]),
+				usage: Object.freeze({ inputTokens: 0, outputTokens: 0 }),
+				...(state.thinkingLevel === undefined ? {} : { thinkingLevel: state.thinkingLevel }),
+				queuedMessageCount: boundedCount(state.queuedMessageCount),
+				todoPhases: todoPhases(state.todoPhases),
+			}),
+		]),
+		activeSessionId: boundedString(state.sessionId, 4096),
 	});
+}
+
+function connectionState(status: ExternalSessionStatus): 'loading' | 'ready' | 'offline' | 'error' {
+	if (status === 'starting') return 'loading';
+	if (status === 'offline') return 'offline';
+	if (status === 'failed') return 'error';
+	return 'ready';
+}
+
+function sessionStatus(
+	runtime: ActiveRuntime,
+	state: OmpSessionState
+): 'idle' | 'streaming' | 'queued' | 'waiting-approval' | 'error' {
+	if (runtime.status === 'failed') return 'error';
+	if (runtime.pendingApproval) return 'waiting-approval';
+	if (state.isStreaming || runtime.status === 'working') return 'streaming';
+	if (runtime.status === 'starting' || runtime.status === 'retrying') return 'queued';
+	return 'idle';
+}
+
+function modelLabel(value: unknown): string | undefined {
+	if (typeof value === 'string' && value.length > 0) return value;
+	if (!isRecord(value)) return undefined;
+	const provider = typeof value.provider === 'string' ? value.provider : undefined;
+	const id =
+		typeof value.id === 'string'
+			? value.id
+			: typeof value.modelId === 'string'
+				? value.modelId
+				: typeof value.name === 'string'
+					? value.name
+					: undefined;
+	if (!id) return undefined;
+	return provider ? `${provider}/${id}` : id;
+}
+
+function todoPhases(values: readonly unknown[]): readonly JsonValue[] {
+	return Object.freeze(
+		values.slice(0, 500).flatMap((value) => {
+			if (!isRecord(value)) return [];
+			const phase = Object.freeze({
+				...(typeof value.id === 'string' ? { id: boundedString(value.id, 256) } : {}),
+				...(typeof value.label === 'string' ? { label: boundedString(value.label, 65536) } : {}),
+				...(typeof value.status === 'string' ? { status: boundedString(value.status, 128) } : {}),
+			});
+			return Object.keys(phase).length > 0 ? [phase] : [];
+		})
+	);
 }
 
 async function emitPanel(current: ActivePlugin, kind: string, payload: JsonValue): Promise<void> {
@@ -661,6 +883,10 @@ function parseCanonicalFrame(frame: string): JsonValue {
 	} catch {
 		throw new OmpProtocolError('OMP RPC write was not canonical JSON');
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function requireRecord(value: JsonValue): Record<string, JsonValue> {

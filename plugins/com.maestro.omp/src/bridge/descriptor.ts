@@ -128,7 +128,114 @@ const branchSchema: JsonSchema = objectSchema(
 );
 const loginSchema: JsonSchema = objectSchema({ providerId: stringSchema(1) }, ['providerId']);
 const exportSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
-const resultSchema: JsonSchema = objectSchema({});
+const ackSchema: JsonSchema = objectSchema({});
+const nonNegativeIntegerSchema: JsonSchema = integerSchema(0, Number.MAX_SAFE_INTEGER);
+const messageSummarySchema: JsonSchema = objectSchema(
+	{
+		id: stringSchema(1, 256),
+		role: { enum: ['user', 'assistant', 'system', 'tool', 'other'] },
+		text: stringSchema(0, 65536),
+	},
+	['id', 'role', 'text']
+);
+const todoPhaseSchema: JsonSchema = objectSchema({
+	id: stringSchema(0, 256),
+	label: stringSchema(0, 65536),
+	status: stringSchema(0, 128),
+});
+const workspaceSessionSchema: JsonSchema = objectSchema(
+	{
+		id: stringSchema(0, 4096),
+		title: stringSchema(0, 4096),
+		updatedAt: nonNegativeIntegerSchema,
+		status: { enum: ['idle', 'streaming', 'queued', 'waiting-approval', 'error'] },
+		model: stringSchema(0, 4096),
+		mode: { enum: ['build', 'plan', 'ask'] },
+		events: { type: 'array', maxItems: 0 },
+		tree: { type: 'array', maxItems: 0 },
+		subagents: { type: 'array', maxItems: 0 },
+		usage: objectSchema(
+			{ inputTokens: nonNegativeIntegerSchema, outputTokens: nonNegativeIntegerSchema },
+			['inputTokens', 'outputTokens']
+		),
+		thinkingLevel: { enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+		queuedMessageCount: nonNegativeIntegerSchema,
+		todoPhases: { type: 'array', maxItems: 500, items: todoPhaseSchema },
+	},
+	[
+		'id',
+		'title',
+		'updatedAt',
+		'status',
+		'model',
+		'mode',
+		'events',
+		'tree',
+		'subagents',
+		'usage',
+		'queuedMessageCount',
+		'todoPhases',
+	]
+);
+const workspaceSnapshotSchema: JsonSchema = objectSchema(
+	{
+		connection: { enum: ['loading', 'ready', 'offline', 'error'] },
+		models: { type: 'array', maxItems: 100, items: stringSchema(1, 4096) },
+		sessions: { type: 'array', maxItems: 1, items: workspaceSessionSchema },
+		activeSessionId: stringSchema(0, 4096),
+		error: stringSchema(0, 4096),
+	},
+	['connection', 'models', 'sessions', 'activeSessionId']
+);
+const messageLoadResultSchema: JsonSchema = objectSchema(
+	{ messages: { type: 'array', maxItems: 500, items: messageSummarySchema } },
+	['messages']
+);
+const statsResultSchema: JsonSchema = objectSchema(
+	{ messageCount: nonNegativeIntegerSchema, queuedMessageCount: nonNegativeIntegerSchema },
+	['messageCount', 'queuedMessageCount']
+);
+const subagentEntrySchema: JsonSchema = objectSchema(
+	{
+		id: stringSchema(1, 256),
+		label: stringSchema(0, 65536),
+		status: stringSchema(0, 128),
+	},
+	['id', 'label', 'status']
+);
+const subagentMessagesResultSchema: JsonSchema = objectSchema(
+	{
+		sessionFile: stringSchema(0, 4096),
+		fromByte: nonNegativeIntegerSchema,
+		nextByte: nonNegativeIntegerSchema,
+		reset: { enum: [true, false] },
+		entries: { type: 'array', maxItems: 500, items: subagentEntrySchema },
+		messages: { type: 'array', maxItems: 500, items: messageSummarySchema },
+	},
+	['sessionFile', 'fromByte', 'nextByte', 'reset', 'entries', 'messages']
+);
+const authProvidersResultSchema: JsonSchema = objectSchema(
+	{
+		providers: {
+			type: 'array',
+			maxItems: 100,
+			items: objectSchema(
+				{
+					id: stringSchema(1, 256),
+					name: stringSchema(1, 256),
+					available: { enum: [true, false] },
+					authenticated: { enum: [true, false] },
+				},
+				['id', 'name', 'available', 'authenticated']
+			),
+		},
+	},
+	['providers']
+);
+const authLoginResultSchema: JsonSchema = objectSchema({ providerId: stringSchema(1, 4096) }, [
+	'providerId',
+]);
+const exportResultSchema: JsonSchema = objectSchema({ path: stringSchema(1, 4096) }, ['path']);
 const errorSchema: JsonSchema = objectSchema(
 	{
 		code: {
@@ -176,7 +283,7 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.export.request': { canonicalJsonSchema: exportSchema },
 	},
 	eventSchemas: {
-		'omp.view.replace': { canonicalJsonSchema: { type: 'object' } },
+		'omp.view.replace': { canonicalJsonSchema: workspaceSnapshotSchema },
 		'omp.stream.delta': {
 			canonicalJsonSchema: objectSchema(
 				{ sessionId: stringSchema(1), delta: stringSchema(0, 65536) },
@@ -206,30 +313,30 @@ export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 		'omp.panel.focusSession': { canonicalJsonSchema: sessionIdSchema },
 	},
 	resultSchemas: {
-		'omp.session.create': { canonicalJsonSchema: resultSchema },
-		'omp.session.select': { canonicalJsonSchema: resultSchema },
-		'omp.prompt.send': { canonicalJsonSchema: resultSchema },
-		'omp.steer.send': { canonicalJsonSchema: resultSchema },
-		'omp.followUp.send': { canonicalJsonSchema: resultSchema },
-		'omp.run.abort': { canonicalJsonSchema: resultSchema },
-		'omp.run.abortAndPrompt': { canonicalJsonSchema: resultSchema },
-		'omp.session.compact': { canonicalJsonSchema: resultSchema },
-		'omp.session.branch': { canonicalJsonSchema: resultSchema },
-		'omp.session.handoff': { canonicalJsonSchema: resultSchema },
-		'omp.model.set': { canonicalJsonSchema: resultSchema },
-		'omp.model.cycle': { canonicalJsonSchema: resultSchema },
-		'omp.composer.mode.set': { canonicalJsonSchema: resultSchema },
-		'omp.approval.resolve': { canonicalJsonSchema: resultSchema },
-		'omp.thinking.set': { canonicalJsonSchema: resultSchema },
-		'omp.thinking.cycle': { canonicalJsonSchema: resultSchema },
-		'omp.settings.set': { canonicalJsonSchema: resultSchema },
-		'omp.commands.refresh': { canonicalJsonSchema: resultSchema },
-		'omp.messages.load': { canonicalJsonSchema: resultSchema },
-		'omp.stats.load': { canonicalJsonSchema: resultSchema },
-		'omp.subagents.load': { canonicalJsonSchema: resultSchema },
-		'omp.auth.providers': { canonicalJsonSchema: resultSchema },
-		'omp.auth.login': { canonicalJsonSchema: resultSchema },
-		'omp.export.request': { canonicalJsonSchema: resultSchema },
+		'omp.session.create': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.session.select': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.prompt.send': { canonicalJsonSchema: ackSchema },
+		'omp.steer.send': { canonicalJsonSchema: ackSchema },
+		'omp.followUp.send': { canonicalJsonSchema: ackSchema },
+		'omp.run.abort': { canonicalJsonSchema: ackSchema },
+		'omp.run.abortAndPrompt': { canonicalJsonSchema: ackSchema },
+		'omp.session.compact': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.session.branch': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.session.handoff': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.model.set': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.model.cycle': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.composer.mode.set': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.approval.resolve': { canonicalJsonSchema: ackSchema },
+		'omp.thinking.set': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.thinking.cycle': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.settings.set': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.commands.refresh': { canonicalJsonSchema: workspaceSnapshotSchema },
+		'omp.messages.load': { canonicalJsonSchema: messageLoadResultSchema },
+		'omp.stats.load': { canonicalJsonSchema: statsResultSchema },
+		'omp.subagents.load': { canonicalJsonSchema: subagentMessagesResultSchema },
+		'omp.auth.providers': { canonicalJsonSchema: authProvidersResultSchema },
+		'omp.auth.login': { canonicalJsonSchema: authLoginResultSchema },
+		'omp.export.request': { canonicalJsonSchema: exportResultSchema },
 	},
 	errorSchemas: {
 		'omp.session.create': { canonicalJsonSchema: errorSchema },
@@ -343,6 +450,9 @@ function integerSchema(minimum: number, maximum?: number): JsonSchema {
 }
 
 function validateSchema(schema: JsonSchema, value: unknown): boolean {
+	if (Array.isArray(schema.anyOf)) {
+		return schema.anyOf.some((entry) => validateSchema(entry as JsonSchema, value));
+	}
 	if (schema.type === 'object') {
 		if (!isRecord(value)) return false;
 		const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;

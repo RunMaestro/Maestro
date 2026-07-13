@@ -48,6 +48,7 @@ describe('runnable OMP plugin package', () => {
 		expect(Object.keys(bridge.requestSchemas)).toEqual(Object.keys(workspaceBridge.requestSchemas));
 		expect(Object.keys(bridge.eventSchemas)).toEqual(Object.keys(workspaceBridge.eventSchemas));
 		expect(Object.keys(bridge.resultSchemas)).toEqual(Object.keys(bridge.requestSchemas));
+		expect(Object.keys(bridge.requestSchemas)).toHaveLength(24);
 		expect(Object.keys(bridge.errorSchemas)).toEqual(Object.keys(bridge.requestSchemas));
 		for (const operation of [
 			'omp.prompt.send',

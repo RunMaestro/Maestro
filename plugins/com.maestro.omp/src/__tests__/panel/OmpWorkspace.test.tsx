@@ -158,6 +158,23 @@ describe('OmpWorkspace', () => {
 		);
 		await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('OMP 16.4.8 required'));
 	});
+
+	it('keeps the offline setup projection actionable with an explicit New Session control', async () => {
+		const adapter = new DeterministicOmpAdapter(
+			snapshot({
+				connection: 'offline',
+				models: [],
+				sessions: [],
+				activeSessionId: null,
+				error: 'OMP setup required. Create a new session to start OMP.',
+			})
+		);
+		render(<OmpWorkspace adapter={adapter} theme={theme} />);
+
+		expect(await screen.findByRole('status')).toHaveTextContent('OMP setup required');
+		fireEvent.click(screen.getByRole('button', { name: 'New OMP session' }));
+		expect(adapter.createSession).toHaveBeenCalledTimes(1);
+	});
 	it('focuses a deep-linked event after virtualized rendering', async () => {
 		const adapter = new DeterministicOmpAdapter(snapshot());
 		render(<OmpWorkspace adapter={adapter} theme={theme} focusEventId="tool-1" />);
