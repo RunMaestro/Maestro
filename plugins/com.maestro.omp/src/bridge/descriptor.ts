@@ -1,139 +1,199 @@
 export type OmpPanelRequestKind =
-	| 'omp.workspace.snapshot'
-	| 'omp.session.select'
 	| 'omp.session.create'
-	| 'omp.message.send'
-	| 'omp.session.abort'
-	| 'omp.session.set-model'
-	| 'omp.session.set-mode'
-	| 'omp.approval.resolve'
-	| 'omp.workspace.retry';
+	| 'omp.session.select'
+	| 'omp.prompt.send'
+	| 'omp.steer.send'
+	| 'omp.followUp.send'
+	| 'omp.run.abort'
+	| 'omp.run.abortAndPrompt'
+	| 'omp.session.compact'
+	| 'omp.session.branch'
+	| 'omp.session.handoff'
+	| 'omp.model.set'
+	| 'omp.model.cycle'
+	| 'omp.thinking.set'
+	| 'omp.thinking.cycle'
+	| 'omp.settings.set'
+	| 'omp.commands.refresh'
+	| 'omp.messages.load'
+	| 'omp.stats.load'
+	| 'omp.subagents.load'
+	| 'omp.auth.providers'
+	| 'omp.auth.login'
+	| 'omp.export.request';
 
-export type OmpPanelEventKind = 'omp.workspace.snapshot';
+export type OmpPanelEventKind =
+	| 'omp.view.replace'
+	| 'omp.stream.delta'
+	| 'omp.approval.required'
+	| 'omp.auth.progress'
+	| 'omp.panel.focusComposer'
+	| 'omp.panel.focusSession';
 export type OmpPanelErrorKind = 'omp.panel.error';
 
 type JsonSchema = Record<string, unknown>;
+type SchemaEntry = { readonly canonicalJsonSchema: JsonSchema };
 
 export interface ClosedPanelBridge {
-	readonly requestSchemas: Readonly<
-		Record<OmpPanelRequestKind, { readonly canonicalJsonSchema: JsonSchema }>
-	>;
-	readonly eventSchemas: Readonly<
-		Record<OmpPanelEventKind, { readonly canonicalJsonSchema: JsonSchema }>
-	>;
-	readonly resultSchemas: Readonly<
-		Record<OmpPanelRequestKind, { readonly canonicalJsonSchema: JsonSchema }>
-	>;
-	readonly errorSchemas: Readonly<
-		Record<OmpPanelErrorKind, { readonly canonicalJsonSchema: JsonSchema }>
-	>;
+	readonly requestSchemas: Readonly<Record<OmpPanelRequestKind, SchemaEntry>>;
+	readonly eventSchemas: Readonly<Record<OmpPanelEventKind, SchemaEntry>>;
+	readonly resultSchemas: Readonly<Record<OmpPanelRequestKind, SchemaEntry>>;
+	readonly errorSchemas: Readonly<Record<OmpPanelErrorKind, SchemaEntry>>;
 }
 
-const emptyObjectSchema: JsonSchema = {
-	type: 'object',
-	additionalProperties: false,
-	properties: {},
-};
-
-const sessionIdSchema: JsonSchema = {
-	type: 'object',
-	additionalProperties: false,
-	required: ['sessionId'],
-	properties: { sessionId: { type: 'string', minLength: 1 } },
-};
-
-const snapshotSchema: JsonSchema = {
-	type: 'object',
-	additionalProperties: false,
-	required: ['connection', 'models', 'sessions', 'activeSessionId'],
-	properties: {
-		connection: { enum: ['loading', 'ready', 'offline', 'incompatible', 'error'] },
-		models: { type: 'array', items: { type: 'string' } },
-		sessions: { type: 'array', items: { type: 'object' } },
-		activeSessionId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-		incompatibilityReason: { type: 'string' },
-		error: { type: 'string' },
+const emptyObjectSchema: JsonSchema = objectSchema({});
+const sessionIdSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
+const promptSchema: JsonSchema = objectSchema(
+	{
+		sessionId: stringSchema(1),
+		text: stringSchema(1, 65536),
+		attachments: { type: 'array', maxItems: 8, items: { type: 'object' } },
 	},
-};
+	['sessionId', 'text', 'attachments']
+);
+const instructionsSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1), customInstructions: stringSchema(0, 65536) },
+	['sessionId']
+);
+const settingsSchema: JsonSchema = objectSchema(
+	{
+		sessionId: stringSchema(1),
+		setting: {
+			enum: [
+				'steeringMode',
+				'followUpMode',
+				'interruptMode',
+				'autoCompaction',
+				'autoRetry',
+				'subagentSubscription',
+			],
+		},
+		value: {},
+	},
+	['sessionId', 'setting', 'value']
+);
+const messageLoadSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1), from: integerSchema(0), limit: integerSchema(1, 500) },
+	['sessionId']
+);
+const subagentLoadSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1), subagentId: stringSchema(1), fromByte: integerSchema(0) },
+	['sessionId']
+);
+const modelSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1), provider: stringSchema(1), modelId: stringSchema(1) },
+	['sessionId', 'provider', 'modelId']
+);
+const thinkingSchema: JsonSchema = objectSchema(
+	{
+		sessionId: stringSchema(1),
+		level: { enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+	},
+	['sessionId', 'level']
+);
+const branchSchema: JsonSchema = objectSchema(
+	{ sessionId: stringSchema(1), entryId: stringSchema(1) },
+	['sessionId', 'entryId']
+);
+const loginSchema: JsonSchema = objectSchema({ providerId: stringSchema(1) }, ['providerId']);
+const exportSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
+const resultSchema: JsonSchema = objectSchema({});
 
-/** §4.2 single source of truth, emitted verbatim by artifact packaging. */
+/** §4.2 single source of truth. It exposes only named protocol actions, never a raw command tunnel. */
 export const OMP_PANEL_BRIDGE_DESCRIPTOR: ClosedPanelBridge = {
 	requestSchemas: {
-		'omp.workspace.snapshot': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.session.create': { canonicalJsonSchema: emptyObjectSchema },
 		'omp.session.select': { canonicalJsonSchema: sessionIdSchema },
-		'omp.session.create': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.message.send': {
-			canonicalJsonSchema: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['sessionId', 'text', 'attachments'],
-				properties: {
-					sessionId: { type: 'string', minLength: 1 },
-					text: { type: 'string', maxLength: 65536 },
-					attachments: { type: 'array', maxItems: 8, items: { type: 'object' } },
-				},
-			},
-		},
-		'omp.session.abort': { canonicalJsonSchema: sessionIdSchema },
-		'omp.session.set-model': {
-			canonicalJsonSchema: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['sessionId', 'model'],
-				properties: {
-					sessionId: { type: 'string', minLength: 1 },
-					model: { type: 'string', minLength: 1 },
-				},
-			},
-		},
-		'omp.session.set-mode': {
-			canonicalJsonSchema: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['sessionId', 'mode'],
-				properties: {
-					sessionId: { type: 'string', minLength: 1 },
-					mode: { enum: ['build', 'plan', 'ask'] },
-				},
-			},
-		},
-		'omp.approval.resolve': {
-			canonicalJsonSchema: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['sessionId', 'requestId', 'approved'],
-				properties: {
-					sessionId: { type: 'string', minLength: 1 },
-					requestId: { type: 'string', minLength: 1 },
-					approved: { type: 'boolean' },
-				},
-			},
-		},
-		'omp.workspace.retry': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.prompt.send': { canonicalJsonSchema: promptSchema },
+		'omp.steer.send': { canonicalJsonSchema: promptSchema },
+		'omp.followUp.send': { canonicalJsonSchema: promptSchema },
+		'omp.run.abort': { canonicalJsonSchema: sessionIdSchema },
+		'omp.run.abortAndPrompt': { canonicalJsonSchema: promptSchema },
+		'omp.session.compact': { canonicalJsonSchema: instructionsSchema },
+		'omp.session.branch': { canonicalJsonSchema: branchSchema },
+		'omp.session.handoff': { canonicalJsonSchema: instructionsSchema },
+		'omp.model.set': { canonicalJsonSchema: modelSchema },
+		'omp.model.cycle': { canonicalJsonSchema: sessionIdSchema },
+		'omp.thinking.set': { canonicalJsonSchema: thinkingSchema },
+		'omp.thinking.cycle': { canonicalJsonSchema: sessionIdSchema },
+		'omp.settings.set': { canonicalJsonSchema: settingsSchema },
+		'omp.commands.refresh': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.messages.load': { canonicalJsonSchema: messageLoadSchema },
+		'omp.stats.load': { canonicalJsonSchema: sessionIdSchema },
+		'omp.subagents.load': { canonicalJsonSchema: subagentLoadSchema },
+		'omp.auth.providers': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.auth.login': { canonicalJsonSchema: loginSchema },
+		'omp.export.request': { canonicalJsonSchema: exportSchema },
 	},
-	eventSchemas: { 'omp.workspace.snapshot': { canonicalJsonSchema: snapshotSchema } },
+	eventSchemas: {
+		'omp.view.replace': { canonicalJsonSchema: { type: 'object' } },
+		'omp.stream.delta': {
+			canonicalJsonSchema: objectSchema(
+				{ sessionId: stringSchema(1), delta: stringSchema(0, 65536) },
+				['sessionId', 'delta']
+			),
+		},
+		'omp.approval.required': {
+			canonicalJsonSchema: objectSchema(
+				{ sessionId: stringSchema(1), requestId: stringSchema(1) },
+				['sessionId', 'requestId']
+			),
+		},
+		'omp.auth.progress': {
+			canonicalJsonSchema: objectSchema(
+				{
+					transactionId: stringSchema(1),
+					phase: { enum: ['opening', 'waiting', 'complete', 'failed'] },
+				},
+				['transactionId', 'phase']
+			),
+		},
+		'omp.panel.focusComposer': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.panel.focusSession': { canonicalJsonSchema: sessionIdSchema },
+	},
 	resultSchemas: {
-		'omp.workspace.snapshot': { canonicalJsonSchema: snapshotSchema },
-		'omp.session.select': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.session.create': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.message.send': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.session.abort': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.session.set-model': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.session.set-mode': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.approval.resolve': { canonicalJsonSchema: emptyObjectSchema },
-		'omp.workspace.retry': { canonicalJsonSchema: emptyObjectSchema },
+		'omp.session.create': { canonicalJsonSchema: resultSchema },
+		'omp.session.select': { canonicalJsonSchema: resultSchema },
+		'omp.prompt.send': { canonicalJsonSchema: resultSchema },
+		'omp.steer.send': { canonicalJsonSchema: resultSchema },
+		'omp.followUp.send': { canonicalJsonSchema: resultSchema },
+		'omp.run.abort': { canonicalJsonSchema: resultSchema },
+		'omp.run.abortAndPrompt': { canonicalJsonSchema: resultSchema },
+		'omp.session.compact': { canonicalJsonSchema: resultSchema },
+		'omp.session.branch': { canonicalJsonSchema: resultSchema },
+		'omp.session.handoff': { canonicalJsonSchema: resultSchema },
+		'omp.model.set': { canonicalJsonSchema: resultSchema },
+		'omp.model.cycle': { canonicalJsonSchema: resultSchema },
+		'omp.thinking.set': { canonicalJsonSchema: resultSchema },
+		'omp.thinking.cycle': { canonicalJsonSchema: resultSchema },
+		'omp.settings.set': { canonicalJsonSchema: resultSchema },
+		'omp.commands.refresh': { canonicalJsonSchema: resultSchema },
+		'omp.messages.load': { canonicalJsonSchema: resultSchema },
+		'omp.stats.load': { canonicalJsonSchema: resultSchema },
+		'omp.subagents.load': { canonicalJsonSchema: resultSchema },
+		'omp.auth.providers': { canonicalJsonSchema: resultSchema },
+		'omp.auth.login': { canonicalJsonSchema: resultSchema },
+		'omp.export.request': { canonicalJsonSchema: resultSchema },
 	},
 	errorSchemas: {
 		'omp.panel.error': {
-			canonicalJsonSchema: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['code', 'message'],
-				properties: {
-					code: { type: 'string', minLength: 1 },
-					message: { type: 'string', minLength: 1 },
+			canonicalJsonSchema: objectSchema(
+				{
+					code: {
+						enum: [
+							'backpressure',
+							'invalid_request',
+							'capability_unavailable',
+							'policy_denied',
+							'runtime_stopped',
+							'timeout',
+							'cancelled',
+						],
+					},
+					message: stringSchema(1),
 				},
-			},
+				['code', 'message']
+			),
 		},
 	},
 };
@@ -144,38 +204,90 @@ export type OmpBridgeValidation =
 	| { readonly ok: true }
 	| { readonly ok: false; readonly code: 'unknown_kind' | 'invalid_envelope' };
 
+/** Validates a closed request envelope without accepting coerced values or extra fields. */
 export function validateOmpBridgeEnvelope(value: unknown): OmpBridgeValidation {
-	if (
-		!value ||
-		typeof value !== 'object' ||
-		Array.isArray(value) ||
-		!('kind' in value) ||
-		!('payload' in value)
-	)
+	if (!isRecord(value) || typeof value.kind !== 'string' || !('payload' in value)) {
 		return { ok: false, code: 'invalid_envelope' };
-	const envelope = value as { kind: unknown; payload: unknown };
-	if (
-		typeof envelope.kind !== 'string' ||
-		!Object.prototype.hasOwnProperty.call(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas, envelope.kind)
-	)
+	}
+	if (!hasOwn(OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas, value.kind)) {
 		return { ok: false, code: 'unknown_kind' };
-	if (!envelope.payload || typeof envelope.payload !== 'object' || Array.isArray(envelope.payload))
-		return { ok: false, code: 'invalid_envelope' };
-	const schema =
-		OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas[envelope.kind as OmpPanelRequestKind]
-			.canonicalJsonSchema;
-	const properties = schema.properties as Record<string, unknown> | undefined;
-	const required = schema.required as readonly string[] | undefined;
-	if (!properties || !required)
-		return Object.keys(envelope.payload).length === 0
-			? { ok: true }
-			: { ok: false, code: 'invalid_envelope' };
-	if (
-		Object.keys(envelope.payload).some(
-			(key) => !Object.prototype.hasOwnProperty.call(properties, key)
-		) ||
-		required.some((key) => !(key in (envelope.payload as Record<string, unknown>)))
+	}
+	return validateSchema(
+		OMP_PANEL_BRIDGE_DESCRIPTOR.requestSchemas[value.kind as OmpPanelRequestKind]
+			.canonicalJsonSchema,
+		value.payload
 	)
-		return { ok: false, code: 'invalid_envelope' };
-	return { ok: true };
+		? { ok: true }
+		: { ok: false, code: 'invalid_envelope' };
+}
+
+function objectSchema(
+	properties: Record<string, unknown>,
+	required: readonly string[] = []
+): JsonSchema {
+	return {
+		type: 'object',
+		additionalProperties: false,
+		properties,
+		...(required.length > 0 ? { required } : {}),
+	};
+}
+
+function stringSchema(minLength: number, maxLength?: number): JsonSchema {
+	return { type: 'string', minLength, ...(maxLength === undefined ? {} : { maxLength }) };
+}
+
+function integerSchema(minimum: number, maximum?: number): JsonSchema {
+	return { type: 'integer', minimum, ...(maximum === undefined ? {} : { maximum }) };
+}
+
+function validateSchema(schema: JsonSchema, value: unknown): boolean {
+	if (schema.type === 'object') {
+		if (!isRecord(value)) return false;
+		const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+		const required = (schema.required ?? []) as readonly string[];
+		return (
+			required.every((key) => hasOwn(value, key)) &&
+			Object.entries(value).every(
+				([key, entry]) => hasOwn(properties, key) && validateSchema(properties[key], entry)
+			)
+		);
+	}
+	if (schema.type === 'array') {
+		const maxItems = schema.maxItems as number | undefined;
+		return (
+			Array.isArray(value) &&
+			(maxItems === undefined || value.length <= maxItems) &&
+			value.every((entry) => validateSchema(schema.items as JsonSchema, entry))
+		);
+	}
+	if (schema.type === 'string') {
+		const minLength = schema.minLength as number | undefined;
+		const maxLength = schema.maxLength as number | undefined;
+		return (
+			typeof value === 'string' &&
+			(minLength === undefined || value.length >= minLength) &&
+			(maxLength === undefined || value.length <= maxLength)
+		);
+	}
+	if (schema.type === 'integer') {
+		const minimum = schema.minimum as number;
+		const maximum = schema.maximum as number | undefined;
+		return (
+			Number.isInteger(value) &&
+			typeof value === 'number' &&
+			value >= minimum &&
+			(maximum === undefined || value <= maximum)
+		);
+	}
+	if (schema.enum) return (schema.enum as readonly unknown[]).includes(value);
+	return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: object, key: string): boolean {
+	return Object.prototype.hasOwnProperty.call(value, key);
 }
