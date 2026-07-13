@@ -34,7 +34,7 @@ interface TrustedMainWindow {
 interface GuestWebContents extends InteractivePanelGuestSender {
 	isDestroyed(): boolean;
 	getType?(): string;
-	readonly hostWebContents?: TrustedWebContents;
+	readonly hostWebContents?: TrustedWebContents | null;
 	once?(event: 'destroyed', listener: () => void): void;
 }
 

@@ -163,10 +163,12 @@ export class PluginWorkspaceManagerLifecycle {
 
 	constructor(
 		private readonly runtime: PluginWorkspaceRuntime,
-		private readonly getGrants: (pluginId: string) => readonly PermissionGrant[]
+		private readonly getGrants: (pluginId: string) => readonly PermissionGrant[],
+		private readonly beforeReconcile?: (records: readonly PluginRecord[]) => void
 	) {}
 
 	reconcile(records: readonly PluginRecord[]): void {
+		this.beforeReconcile?.(records);
 		const registrations: WorkspaceRuntimeRegistration[] = [];
 		const nextActiveOwners = new Set<string>();
 		for (const record of records) {

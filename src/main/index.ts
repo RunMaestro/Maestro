@@ -7,6 +7,7 @@ import {
 	safeStorage,
 	shell,
 	ipcMain,
+	webContents,
 	dialog,
 	type OpenExternalOptions,
 	type OpenDialogOptions,
@@ -49,6 +50,12 @@ import {
 	PluginWorkspaceManagerLifecycle,
 	PluginWorkspaceRuntime,
 } from './plugins/plugin-workspace-runtime';
+import { PluginInteractivePanelHost } from './plugins/plugin-interactive-panel-host';
+import { PluginPanelDescriptorRegistry } from './plugins/plugin-panel-descriptor-registry';
+import {
+	createPluginWorkspaceIpcLifecycle,
+	type PluginWorkspaceIpcLifecycle,
+} from './plugins/plugin-workspace-ipc-lifecycle';
 import {
 	createProductionOmpBootstrap,
 	type ProductionOmpBootstrap,
@@ -517,12 +524,29 @@ let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginWorkspaceLifecycle: PluginWorkspaceManagerLifecycle | null = null;
 let pluginWorkspaceRegistry: PluginWorkspaceRegistry | null = null;
+let pluginWorkspaceIpcLifecycle: PluginWorkspaceIpcLifecycle | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
 let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+
+function disposePluginWorkspaceIpc(): void {
+	const lifecycle = pluginWorkspaceIpcLifecycle;
+	pluginWorkspaceIpcLifecycle = null;
+	lifecycle?.dispose();
+}
+
+function disposePluginWorkspaceIpcBefore(teardown: () => void): void {
+	const lifecycle = pluginWorkspaceIpcLifecycle;
+	pluginWorkspaceIpcLifecycle = null;
+	if (lifecycle) {
+		lifecycle.disposeBefore(teardown);
+		return;
+	}
+	teardown();
+}
 
 const workspaceDeepLinkHandlers: WorkspaceDeepLinkHandlers = {
 	resolveWorkspaceLink: (url) => pluginWorkspaceRegistry?.resolveWorkspaceLink(url) ?? null,
@@ -2238,9 +2262,16 @@ app
 			isOwnerEnabled: (pluginId) => pluginWorkspaceLifecycle?.isOwnerEnabled(pluginId) ?? false,
 		});
 		pluginWorkspaceRegistry = workspaceRegistry;
+		const panelDescriptors = new PluginPanelDescriptorRegistry();
 		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
-		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
+		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(
+			workspaceRuntime,
+			grantsOf,
+			(records) => panelDescriptors.sync(records)
+		);
 		pluginWorkspaceLifecycle = workspaceLifecycle;
+
+		const panelHost = new PluginInteractivePanelHost();
 
 		const ompRuntimeActivation = () => {
 			const registration = workspaceLifecycle.getRegistrationForOwner('com.maestro.omp');
@@ -2569,6 +2600,7 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
+				panelDescriptors.remove(pluginId);
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
@@ -2577,6 +2609,7 @@ app
 				revokeOmpRuntime(pluginId);
 			},
 			onStop: (pluginId) => {
+				panelDescriptors.remove(pluginId);
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
@@ -2627,6 +2660,7 @@ app
 				backgroundSupervisor.teardown(id);
 			},
 			onChange: (registry) => {
+				panelDescriptors.sync(registry.records);
 				pluginHostViews.sync();
 				try {
 					mainWindow?.webContents.send('plugins:changed', registry);
@@ -3062,6 +3096,15 @@ app
 		logger.info('Restoring window layout', 'Startup');
 		restoreWindows();
 
+		pluginWorkspaceIpcLifecycle = createPluginWorkspaceIpcLifecycle({
+			ipcMain,
+			getMainWindow: () => mainWindow,
+			registry: workspaceRegistry,
+			panelHost,
+			getGuestWebContents: (id) => webContents.fromId(id) ?? null,
+			getPanelDescriptor: (projection) => panelDescriptors.get(projection),
+		});
+
 		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
 		// any) and re-register live when the setting changes from any source
 		// (settings UI, CLI, external file edit).
@@ -3084,6 +3127,7 @@ app
 		});
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
+		app.on('will-quit', disposePluginWorkspaceIpc);
 		app.on('will-quit', () => revokeOmpRuntime('com.maestro.omp', 'shutdown'));
 		app.on('will-quit', disposeGlobalHotkey);
 
@@ -3139,6 +3183,7 @@ app
 		// silently aborts initialization — historically the cause of the missing
 		// CLI discovery file. Log loudly and report to Sentry so we can actually
 		// diagnose future regressions instead of guessing.
+		disposePluginWorkspaceIpc();
 		logger.error(`Fatal error during app startup: ${err}`, 'Startup');
 		await captureException(err instanceof Error ? err : new Error(String(err)), {
 			operation: 'startup:whenReady',
@@ -3185,14 +3230,17 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
-		// Tear down plugin hot-reload watching and running sandboxes.
-		pluginManager?.stopWatching();
-		pluginManager?.stopAllSandboxes();
-		// Clear background-service supervision state + pending restart timers
-		// (after stopAllSandboxes so per-plugin onStop hooks fire first).
-		pluginBackgroundSupervisor?.stopAll();
-		// Stop the plugin scheduler poll loop.
-		pluginScheduler?.stop();
+		// The generic workspace IPC binder owns guest panel mounts and must go
+		// before sandbox and scheduler teardown can revoke their backing state.
+		disposePluginWorkspaceIpcBefore(() => {
+			pluginManager?.stopWatching();
+			pluginManager?.stopAllSandboxes();
+			// Clear background-service supervision state + pending restart timers
+			// (after stopAllSandboxes so per-plugin onStop hooks fire first).
+			pluginBackgroundSupervisor?.stopAll();
+			// Stop the plugin scheduler poll loop.
+			pluginScheduler?.stop();
+		});
 		// Stop the coworking bridge socket so the file/pipe doesn't outlive the app.
 		// Best-effort on quit, but capture unexpected failures so a stale socket on the
 		// next launch is at least observable in Sentry.
