@@ -143,6 +143,50 @@ describe('PluginWorkspaceActivityItems', () => {
 		expect(screen.queryByText('42')).toBeNull();
 	});
 
+	it('refreshes destinations after the workspace projection arrives after plugin consent', async () => {
+		let emitProjection: ((snapshot: PluginWorkspaceProjection) => void) | undefined;
+		const source: PluginWorkspaceProjectionSource = {
+			getSnapshot: vi.fn(async () => ({
+				connection: 'ready' as const,
+				selection: null,
+				workspaces: [],
+			})),
+			subscribe: vi.fn((listener) => {
+				emitProjection = listener;
+				return vi.fn();
+			}),
+			reveal: vi.fn(async () => {}),
+		};
+
+		render(<PluginWorkspaceActivityItems theme={THEMES.dracula} binder={binder} source={source} />);
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalledOnce());
+		expect(screen.queryByRole('button', { name: 'Open Agent workspace' })).toBeNull();
+
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			workspaces: [workspace],
+			interactivePanels: [interactivePanel],
+		});
+		emitProjection?.({
+			connection: 'ready',
+			selection: null,
+			workspaces: [
+				{
+					ownerPluginId: workspace.ownerPluginId,
+					workspaceLocalId: workspace.localId,
+					panelLocalId: workspace.panelLocalId,
+					generation: '1',
+					projectionRevision: 1,
+					status: { state: 'ready', label: 'Ready' },
+					badge: null,
+					sessions: [],
+				},
+			],
+		});
+
+		expect(await screen.findByRole('button', { name: 'Open Agent workspace' })).toBeVisible();
+	});
+
 	it('does not expose a route before the host binder is injected', async () => {
 		pluginBridge.contributions.mockResolvedValue({
 			...EMPTY,

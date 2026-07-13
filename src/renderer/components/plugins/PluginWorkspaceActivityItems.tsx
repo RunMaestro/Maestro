@@ -9,6 +9,7 @@ import {
 } from './pluginWorkspaceNavigation';
 import {
 	type PluginWorkspaceProjectionSource,
+	type PluginWorkspaceProjectionState,
 	usePluginWorkspaceProjection,
 } from './pluginWorkspaceProjection';
 
@@ -34,9 +35,28 @@ function PluginWorkspaceActivityItemsWithProjection({
 	theme,
 	source,
 }: Pick<PluginWorkspaceActivityItemsProps, 'theme'> & { source: PluginWorkspaceProjectionSource }) {
+	const projection = usePluginWorkspaceProjection(source);
+	const workspaceSignature =
+		projection.snapshot?.workspaces
+			.map((workspace) => `${workspace.ownerPluginId}/${workspace.workspaceLocalId}`)
+			.join('|') ?? '';
+	return (
+		<PluginWorkspaceActivityDestinations
+			key={workspaceSignature}
+			theme={theme}
+			projection={projection}
+		/>
+	);
+}
+
+function PluginWorkspaceActivityDestinations({
+	theme,
+	projection,
+}: Pick<PluginWorkspaceActivityItemsProps, 'theme'> & {
+	projection: PluginWorkspaceProjectionState;
+}) {
 	const contributions = usePluginContributions();
 	const route = usePluginWorkspaceRoute();
-	const projection = usePluginWorkspaceProjection(source);
 	const workspaces = getPluginWorkspaceDestinations(
 		contributions.workspaces,
 		contributions.interactivePanels
