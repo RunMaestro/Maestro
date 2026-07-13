@@ -7,7 +7,7 @@ import {
 	selectSessionById,
 } from '../../../renderer/stores/sessionStore';
 import type { Session, Group, FilePreviewTab } from '../../../renderer/types';
-import { createMockSession } from '../../helpers/mockSession';
+import { createMockSession, resetStore } from '../../helpers';
 
 // ============================================================================
 // Test Helpers
@@ -43,29 +43,13 @@ function createMockGroup(overrides: Partial<Group> = {}): Group {
 	};
 }
 
-/**
- * Reset the Zustand store to initial state between tests.
- * Zustand stores are singletons, so state persists across tests unless explicitly reset.
- */
-function resetStore() {
-	useSessionStore.setState({
-		sessions: [],
-		groups: [],
-		activeSessionId: '',
-		sessionsLoaded: false,
-		initialLoadComplete: false,
-		removedWorktreePaths: new Set(),
-		cyclePosition: -1,
-	});
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('sessionStore', () => {
 	beforeEach(() => {
-		resetStore();
+		resetStore(useSessionStore);
 	});
 
 	// ========================================================================
