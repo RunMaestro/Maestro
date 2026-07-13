@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	createBoundedNpmPackageFetcher,
 	createProductionOmpRuntimeResolver,
+	nodeBoundedHttpsRequester,
 	type BoundedHttpsRequester,
 	type ManagedRuntimePathInspection,
 	type ManagedRuntimePathInspector,
@@ -424,4 +425,28 @@ describe('bounded HTTPS npm fetcher', () => {
 		});
 		await expect(bounded.fetchMetadata()).rejects.toThrow('response exceeds');
 	});
+
+	it.skipIf(process.env.MAESTRO_OMP_LIVE_REGISTRY_SMOKE !== '1')(
+		'parses the live pinned 16.4.8 registry metadata and DSSE provenance without installing',
+		async () => {
+			const fetcher = createBoundedNpmPackageFetcher({
+				registryOrigin: 'https://registry.npmjs.org',
+				metadataUrl: 'https://registry.npmjs.org/@oh-my-pi%2Fpi-coding-agent/16.4.8',
+				provenanceUrl:
+					'https://registry.npmjs.org/-/npm/v1/attestations/@oh-my-pi%2Fpi-coding-agent@16.4.8',
+				requester: nodeBoundedHttpsRequester,
+				verifyNpmSignature: () => true,
+			});
+			const metadata = await fetcher.fetchMetadata();
+			expect(JSON.parse(metadata.packageJson)).toMatchObject({
+				name: '@oh-my-pi/pi-coding-agent',
+				version: '16.4.8',
+				bin: { omp: 'dist/cli.js' },
+			});
+			expect(metadata.integrity).toBe(
+				'sha512-z7sYIP1ZaDJXOmMRIDmr4wg+J14iOX0Na+rif68NAYPCZ+gglOMUHF7f+qQR7f1pyS2iQpG4pmqbyw+WE4Gsag=='
+			);
+			expect(metadata.provenance.attestations).toBeTruthy();
+		}
+	);
 });
