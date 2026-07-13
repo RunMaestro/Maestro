@@ -66,9 +66,13 @@ function harness() {
 		removeListener: vi.fn(),
 	};
 	const unsubscribe = vi.fn();
+	let projectionListener: ((change: Record<string, unknown>) => void) | null = null;
 	const registry = {
 		listProjections: vi.fn(() => [projection()]),
-		onDidChangeProjection: vi.fn(() => unsubscribe),
+		onDidChangeProjection: vi.fn((listener: (change: Record<string, unknown>) => void) => {
+			projectionListener = listener;
+			return unsubscribe;
+		}),
 		selectBySnapshotToken: vi.fn(() => ({
 			kind: 'resolved',
 			ownerPluginId: OWNER,
@@ -111,6 +115,7 @@ function harness() {
 		sent,
 		unsubscribe,
 		windowListeners,
+		getProjectionListener: () => projectionListener,
 	};
 }
 
@@ -177,5 +182,30 @@ describe('plugin workspace main registration', () => {
 		h.windowListeners.get('closed')?.();
 		expect(h.unsubscribe).toHaveBeenCalledOnce();
 		expect(h.panelDispose).toHaveBeenCalledOnce();
+	});
+
+	it('unmounts a guest on registry revocation and broadcasts the fresh revision snapshot', async () => {
+		const h = harness();
+		const mount = h.handlers.get('plugin-workspaces:mount-panel');
+		await mount(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
+		h.registry.listProjections.mockReturnValue([projection(9)]);
+
+		h.getProjectionListener()?.({
+			ownerPluginId: OWNER,
+			workspaceLocalId: WORKSPACE,
+			projectionRevision: 10,
+			projection: null,
+		});
+
+		expect(h.panelDispose).toHaveBeenCalledOnce();
+		expect(h.sent).toContainEqual({
+			channel: 'plugin-workspaces:changed',
+			payload: expect.objectContaining({
+				workspaces: [expect.objectContaining({ projectionRevision: 9 })],
+			}),
+		});
 	});
 });
