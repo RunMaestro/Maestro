@@ -205,4 +205,98 @@ describe('OmpWorkspace', () => {
 		fireEvent.keyDown(resize, { key: 'ArrowLeft' });
 		expect(resize).toHaveAttribute('aria-valuenow', '308');
 	});
+
+	it('mounts with the default inspector width when the localStorage getter is inaccessible', async () => {
+		vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+			throw new DOMException('The operation is insecure.', 'SecurityError');
+		});
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		expect(await screen.findByRole('separator', { name: 'Resize OMP inspector' })).toHaveAttribute(
+			'aria-valuenow',
+			'288'
+		);
+	});
+
+	it('mounts with the default inspector width when localStorage is absent', async () => {
+		vi.spyOn(window, 'localStorage', 'get').mockReturnValue(undefined as unknown as Storage);
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		expect(await screen.findByRole('separator', { name: 'Resize OMP inspector' })).toHaveAttribute(
+			'aria-valuenow',
+			'288'
+		);
+	});
+
+	it('mounts with the default inspector width when reading localStorage fails', async () => {
+		const storage = {
+			getItem: vi.fn(() => {
+				throw new DOMException('The operation is insecure.', 'SecurityError');
+			}),
+			setItem: vi.fn(),
+		};
+		vi.spyOn(window, 'localStorage', 'get').mockReturnValue(storage as unknown as Storage);
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		expect(await screen.findByRole('separator', { name: 'Resize OMP inspector' })).toHaveAttribute(
+			'aria-valuenow',
+			'288'
+		);
+	});
+
+	it.each([
+		new DOMException('The operation is insecure.', 'SecurityError'),
+		new DOMException('The quota has been exceeded.', 'QuotaExceededError'),
+	])('mounts when persisting the inspector width fails with %s', async (storageError) => {
+		const storage = {
+			getItem: vi.fn(() => '288'),
+			setItem: vi.fn(() => {
+				throw storageError;
+			}),
+		};
+		vi.spyOn(window, 'localStorage', 'get').mockReturnValue(storage as unknown as Storage);
+		const consoleError = vi.spyOn(console, 'error');
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		expect(await screen.findByRole('separator', { name: 'Resize OMP inspector' })).toHaveAttribute(
+			'aria-valuenow',
+			'288'
+		);
+		expect(consoleError).not.toHaveBeenCalled();
+	});
+
+	it('loads valid inspector widths and persists keyboard resizing when localStorage is available', async () => {
+		const storage = {
+			getItem: vi.fn(() => '420'),
+			setItem: vi.fn(),
+		};
+		vi.spyOn(window, 'localStorage', 'get').mockReturnValue(storage as unknown as Storage);
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		const resize = await screen.findByRole('separator', { name: 'Resize OMP inspector' });
+		expect(resize).toHaveAttribute('aria-valuenow', '420');
+		expect(storage.setItem).toHaveBeenCalledWith('omp.workspace.inspector-width', '420');
+		fireEvent.keyDown(resize, { key: 'ArrowRight' });
+		expect(storage.setItem).toHaveBeenLastCalledWith('omp.workspace.inspector-width', '400');
+	});
+
+	it('keeps the default inspector width for out-of-bounds localStorage values', async () => {
+		const storage = {
+			getItem: vi.fn(() => '521'),
+			setItem: vi.fn(),
+		};
+		vi.spyOn(window, 'localStorage', 'get').mockReturnValue(storage as unknown as Storage);
+
+		render(<OmpWorkspace adapter={new DeterministicOmpAdapter(snapshot())} theme={theme} />);
+
+		expect(await screen.findByRole('separator', { name: 'Resize OMP inspector' })).toHaveAttribute(
+			'aria-valuenow',
+			'288'
+		);
+	});
 });

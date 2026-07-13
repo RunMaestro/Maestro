@@ -21,6 +21,27 @@ const THINKING_LEVELS: readonly OmpThinkingLevel[] = [
 	'xhigh',
 	'max',
 ];
+const DEFAULT_INSPECTOR_WIDTH = 288;
+const INSPECTOR_WIDTH_STORAGE_KEY = 'omp.workspace.inspector-width';
+
+function readStoredInspectorWidth(): string | null {
+	if (typeof window === 'undefined') return null;
+	try {
+		return window.localStorage?.getItem(INSPECTOR_WIDTH_STORAGE_KEY) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function persistInspectorWidth(width: number): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage?.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(width));
+	} catch {
+		// Opaque plugin-panel origins cannot access Web Storage.
+	}
+}
+
 type WorkspaceTheme = {
 	colors: {
 		accent: string;
@@ -41,11 +62,10 @@ export interface OmpWorkspaceProps {
 }
 
 function loadInspectorWidth(): number {
-	if (typeof window === 'undefined') return 288;
-	const storage = window.localStorage;
-	if (typeof storage?.getItem !== 'function') return 288;
-	const stored = Number(storage.getItem('omp.workspace.inspector-width'));
-	return Number.isFinite(stored) && stored >= 220 && stored <= 520 ? stored : 288;
+	const stored = Number(readStoredInspectorWidth());
+	return Number.isFinite(stored) && stored >= 220 && stored <= 520
+		? stored
+		: DEFAULT_INSPECTOR_WIDTH;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -66,10 +86,7 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 	const [inspectorOpen, setInspectorOpen] = useState(false);
 
 	useEffect(() => {
-		const storage = typeof window === 'undefined' ? null : window.localStorage;
-		if (typeof storage?.setItem === 'function') {
-			storage.setItem('omp.workspace.inspector-width', String(inspectorWidth));
-		}
+		persistInspectorWidth(inspectorWidth);
 	}, [inspectorWidth]);
 
 	const activeSession = useMemo(
