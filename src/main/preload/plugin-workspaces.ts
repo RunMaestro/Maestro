@@ -6,6 +6,9 @@ import type {
 	PluginWorkspaceRevealOrSelectResult,
 	PluginWorkspacesApi,
 	PluginWorkspacesSnapshotDto,
+	PluginWorkspacePanelRequestInput,
+	PluginWorkspacePanelSubscriptionInput,
+	PluginWorkspacePanelUnsubscribeAllInput,
 	PluginWorkspaceUnmountPanelInput,
 } from '../../shared/plugins/plugin-workspace-bridge';
 
@@ -36,6 +39,14 @@ export function createPluginWorkspacesApi(): PluginWorkspacesApi {
 			ipcRenderer.invoke('plugin-workspaces:mount-panel', input),
 		unmountPanel: (input: PluginWorkspaceUnmountPanelInput): Promise<void> =>
 			ipcRenderer.invoke('plugin-workspaces:unmount-panel', input),
+		panelRequest: (input: PluginWorkspacePanelRequestInput): Promise<void> =>
+			ipcRenderer.invoke('plugin-workspaces:panel-request', input),
+		panelSubscribe: (input: PluginWorkspacePanelSubscriptionInput): Promise<void> =>
+			ipcRenderer.invoke('plugin-workspaces:panel-subscribe', input),
+		panelUnsubscribe: (input: PluginWorkspacePanelSubscriptionInput): Promise<void> =>
+			ipcRenderer.invoke('plugin-workspaces:panel-unsubscribe', input),
+		panelUnsubscribeAll: (input: PluginWorkspacePanelUnsubscribeAllInput): Promise<void> =>
+			ipcRenderer.invoke('plugin-workspaces:panel-unsubscribe-all', input),
 	};
 	return Object.freeze(api);
 }

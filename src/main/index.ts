@@ -2376,6 +2376,53 @@ app
 				},
 			};
 		};
+		const panelOwnerSubscriptions = new Map<
+			string,
+			{ readonly generation: bigint; readonly unsubscribe: () => void }
+		>();
+		const releasePanelOwnerSubscription = (pluginId: string): void => {
+			const subscription = panelOwnerSubscriptions.get(pluginId);
+			if (!subscription) return;
+			panelOwnerSubscriptions.delete(pluginId);
+			subscription.unsubscribe();
+		};
+		const ensurePanelOwnerSubscription = (pluginId: string): void => {
+			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
+			if (!registration) return;
+			const current = panelOwnerSubscriptions.get(pluginId);
+			if (current?.generation === registration.context.generation) return;
+			releasePanelOwnerSubscription(pluginId);
+			const owner = panelHost.ownerApi(pluginId, registration.context.generation);
+			const unsubscribe = owner.onRequest((request) => {
+				pluginSandboxHost?.pushEvent(pluginId, {
+					topic: '__interactivePanelRequest',
+					at: new Date().toISOString(),
+					payload: request,
+				});
+			});
+			panelOwnerSubscriptions.set(pluginId, {
+				generation: registration.context.generation,
+				unsubscribe,
+			});
+		};
+		const interactivePanelSurfaceFor = (pluginId: string) => {
+			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
+			if (!registration) return null;
+			const owner = panelHost.ownerApi(pluginId, registration.context.generation);
+			return {
+				resolve: async (requestId: string, kind: string, payload: unknown) => {
+					await owner.resolve(requestId as never, kind, payload as never);
+				},
+				reject: async (requestId: string, code: string) => {
+					await owner.reject(requestId as never, code as never);
+				},
+				emit: async (kind: string, payload: unknown, eventSequence: unknown) => {
+					if (typeof eventSequence !== 'bigint')
+						throw new Error('invalid interactive panel event sequence');
+					await owner.emit(kind, payload as never, eventSequence);
+				},
+			};
+		};
 		const interactiveRuntimeSurfaceFor = (pluginId: string) => {
 			if (!managedRuntime || pluginId !== 'com.maestro.omp') return null;
 			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
@@ -2470,6 +2517,7 @@ app
 				broker: pluginBroker,
 				workspaceSurfaceFor,
 				interactiveRuntimeSurfaceFor,
+				interactivePanelSurfaceFor,
 				actionGuard: pluginActionGuard,
 				kvStore: pluginKvStore,
 				eventBus,
@@ -2639,6 +2687,7 @@ app
 			}),
 			surfaceFlagsFor: (pluginId) => {
 				const base = workspaceLifecycle.surfaceFlagsFor(pluginId);
+				if (base.interactivePanel === true) ensurePanelOwnerSubscription(pluginId);
 				return managedRuntime && base.workspace === true && base.interactivePanel === true
 					? { ...base, interactiveRuntime: true }
 					: base;
@@ -2647,6 +2696,8 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
+				releasePanelOwnerSubscription(pluginId);
+				panelHost.revokeOwner(pluginId);
 				panelDescriptors.remove(pluginId);
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
@@ -2656,6 +2707,8 @@ app
 				revokeOmpRuntime(pluginId);
 			},
 			onStop: (pluginId) => {
+				releasePanelOwnerSubscription(pluginId);
+				panelHost.revokeOwner(pluginId);
 				panelDescriptors.remove(pluginId);
 				pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);

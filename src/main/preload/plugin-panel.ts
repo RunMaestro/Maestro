@@ -15,8 +15,10 @@ const EVENT_CHANNEL = 'maestro:panel-event';
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_PENDING_REQUESTS = 32;
 const MAX_REQUESTS_PER_SECOND = 120;
+const MAX_GENERATION_DECIMAL = '18446744073709551615';
 
 let instanceId: string | null = null;
+let generation = '';
 let nextRequestId = 1;
 let windowStartedAt = 0;
 let windowCount = 0;
@@ -39,11 +41,29 @@ function isCurrentInstance(value: unknown): value is string {
 	return typeof value === 'string' && instanceId !== null && value === instanceId;
 }
 
-function resetInstance(nextInstanceId: string): void {
+function isBoundedGenerationDecimal(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		/^[1-9][0-9]*$/.test(value) &&
+		(value.length < MAX_GENERATION_DECIMAL.length ||
+			(value.length === MAX_GENERATION_DECIMAL.length && value <= MAX_GENERATION_DECIMAL))
+	);
+}
+
+function isStaleGeneration(nextGeneration: string): boolean {
+	return (
+		generation !== '' &&
+		(nextGeneration.length < generation.length ||
+			(nextGeneration.length === generation.length && nextGeneration < generation))
+	);
+}
+
+function resetInstance(nextInstanceId: string, nextGeneration: string): void {
 	for (const entry of pending.values()) entry.reject(new Error('panel instance replaced'));
 	pending.clear();
 	subscriptions.clear();
 	instanceId = nextInstanceId;
+	generation = nextGeneration;
 	nextRequestId = 1;
 	windowStartedAt = 0;
 	windowCount = 0;
@@ -110,11 +130,11 @@ ipcRenderer.on(INIT_CHANNEL, (_event, payload: unknown) => {
 		typeof payload.instanceId !== 'string' ||
 		payload.instanceId.length < 16 ||
 		payload.instanceId.length > 128 ||
-		(typeof payload.generation !== 'bigint' &&
-			(typeof payload.generation !== 'number' || !Number.isSafeInteger(payload.generation)))
+		!isBoundedGenerationDecimal(payload.generation) ||
+		isStaleGeneration(payload.generation)
 	)
 		return;
-	resetInstance(payload.instanceId);
+	resetInstance(payload.instanceId, payload.generation);
 });
 
 ipcRenderer.on(RESULT_CHANNEL, (_event, payload: unknown) => {
@@ -168,4 +188,5 @@ window.addEventListener('unload', () => {
 	pending.clear();
 	subscriptions.clear();
 	instanceId = null;
+	generation = '';
 });

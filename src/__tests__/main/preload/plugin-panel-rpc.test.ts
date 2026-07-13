@@ -39,7 +39,7 @@ function guestApi(): GuestApi {
 
 beforeEach(() => {
 	sendToHost.mockClear();
-	fromHost('maestro:panel-init', { instanceId: INSTANCE, generation: 1 });
+	fromHost('maestro:panel-init', { instanceId: INSTANCE, generation: '2' });
 });
 
 describe('closed plugin panel guest API', () => {
@@ -81,6 +81,24 @@ describe('closed plugin panel guest API', () => {
 		expect(sendToHost).toHaveBeenLastCalledWith('maestro:panel-unsubscribe', {
 			instanceId: INSTANCE,
 			kind: 'status',
+		});
+	});
+
+	it('accepts a bounded decimal generation but ignores malformed, overflowing, and stale init messages', () => {
+		const api = guestApi();
+		fromHost('maestro:panel-init', { instanceId: 'malformed-instance-0001', generation: '02' });
+		fromHost('maestro:panel-init', {
+			instanceId: 'overflow-instance-0001',
+			generation: '18446744073709551616',
+		});
+		fromHost('maestro:panel-init', { instanceId: 'stale-instance-0001', generation: '1' });
+
+		void api.request('ping', {});
+		expect(sendToHost).toHaveBeenLastCalledWith('maestro:panel-request', {
+			instanceId: INSTANCE,
+			requestId: 1,
+			kind: 'ping',
+			payload: {},
 		});
 	});
 });

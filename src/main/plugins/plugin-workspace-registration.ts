@@ -92,6 +92,24 @@ export function registerPluginWorkspaceIpc(
 	const getSnapshot = (): PluginWorkspacesSnapshotDto =>
 		createSnapshot(options.registry.listProjections());
 
+	const relayPanelMessage = (
+		event: { readonly sender: unknown },
+		input: unknown,
+		channel:
+			| 'maestro:panel-request'
+			| 'maestro:panel-subscribe'
+			| 'maestro:panel-unsubscribe'
+			| 'maestro:panel-unsubscribe-all'
+	): void => {
+		const mainWindow = requireTrustedRenderer(event);
+		const relay = parsePanelRelay(input, channel);
+		if (!relay) throw new Error('InvalidPluginWorkspacePanelIngress');
+		const guest = options.getGuestWebContents(relay.guestWebContentsId);
+		if (!isTrustedGuest(guest, mainWindow.webContents))
+			throw new Error('InvalidPluginWorkspaceGuest');
+		options.panelHost.receive(guest, channel, relay.payload);
+	};
+
 	const unmount = (instanceId: string): void => {
 		const mount = panelMounts.get(instanceId);
 		if (!mount) return;
@@ -196,6 +214,22 @@ export function registerPluginWorkspaceIpc(
 		unmount(input.instanceId);
 	});
 
+	options.ipcMain.handle('plugin-workspaces:panel-request', async (event, input) => {
+		relayPanelMessage(event, input, 'maestro:panel-request');
+	});
+
+	options.ipcMain.handle('plugin-workspaces:panel-subscribe', async (event, input) => {
+		relayPanelMessage(event, input, 'maestro:panel-subscribe');
+	});
+
+	options.ipcMain.handle('plugin-workspaces:panel-unsubscribe', async (event, input) => {
+		relayPanelMessage(event, input, 'maestro:panel-unsubscribe');
+	});
+
+	options.ipcMain.handle('plugin-workspaces:panel-unsubscribe-all', async (event, input) => {
+		relayPanelMessage(event, input, 'maestro:panel-unsubscribe-all');
+	});
+
 	const dispose = (): void => {
 		if (disposed) return;
 		disposed = true;
@@ -207,6 +241,10 @@ export function registerPluginWorkspaceIpc(
 			'plugin-workspaces:reveal-or-select',
 			'plugin-workspaces:mount-panel',
 			'plugin-workspaces:unmount-panel',
+			'plugin-workspaces:panel-request',
+			'plugin-workspaces:panel-subscribe',
+			'plugin-workspaces:panel-unsubscribe',
+			'plugin-workspaces:panel-unsubscribe-all',
 		]) {
 			options.ipcMain.removeHandler(channel);
 		}
@@ -284,6 +322,62 @@ function isTrustedGuest(
 		guest.getType?.() === 'webview' &&
 		guest.hostWebContents === mainContents
 	);
+}
+
+interface PanelRelay {
+	readonly guestWebContentsId: number;
+	readonly payload: Readonly<Record<string, unknown>>;
+}
+
+function parsePanelRelay(
+	input: unknown,
+	channel:
+		| 'maestro:panel-request'
+		| 'maestro:panel-subscribe'
+		| 'maestro:panel-unsubscribe'
+		| 'maestro:panel-unsubscribe-all'
+): PanelRelay | null {
+	if (!isRecord(input)) return null;
+	const guestWebContentsId = ownValue(input, 'guestWebContentsId');
+	const instanceId = ownValue(input, 'instanceId');
+	if (
+		!Number.isSafeInteger(guestWebContentsId) ||
+		(guestWebContentsId as number) < 1 ||
+		typeof instanceId !== 'string' ||
+		instanceId.length < 16 ||
+		instanceId.length > 128
+	)
+		return null;
+	if (channel === 'maestro:panel-unsubscribe-all') {
+		return Object.freeze({
+			guestWebContentsId: guestWebContentsId as number,
+			payload: Object.freeze({ instanceId }),
+		});
+	}
+	const kind = ownValue(input, 'kind');
+	if (typeof kind !== 'string' || kind.length === 0 || kind.length > 256) return null;
+	if (channel === 'maestro:panel-request') {
+		const requestId = ownValue(input, 'requestId');
+		if (!Number.isSafeInteger(requestId) || (requestId as number) < 1) return null;
+		return Object.freeze({
+			guestWebContentsId: guestWebContentsId as number,
+			payload: Object.freeze({
+				instanceId,
+				requestId,
+				kind,
+				payload: ownValue(input, 'payload'),
+			}),
+		});
+	}
+	return Object.freeze({
+		guestWebContentsId: guestWebContentsId as number,
+		payload: Object.freeze({ instanceId, kind }),
+	});
+}
+
+function ownValue(record: Record<string, unknown>, key: string): unknown {
+	const descriptor = Object.getOwnPropertyDescriptor(record, key);
+	return descriptor && 'value' in descriptor ? descriptor.value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

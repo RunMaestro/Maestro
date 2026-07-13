@@ -49,6 +49,10 @@ describe('plugin workspace preload bridge', () => {
 		expect(Object.keys(api).sort()).toEqual([
 			'getSnapshot',
 			'mountPanel',
+			'panelRequest',
+			'panelSubscribe',
+			'panelUnsubscribe',
+			'panelUnsubscribeAll',
 			'revealOrSelect',
 			'subscribe',
 			'unmountPanel',
@@ -83,5 +87,32 @@ describe('plugin workspace preload bridge', () => {
 		expect(invoke).toHaveBeenNthCalledWith(3, 'plugin-workspaces:unmount-panel', {
 			instanceId: 'panel-instance',
 		});
+	});
+
+	it('forwards guest panel transport through fixed named ingress operations', async () => {
+		const api = createPluginWorkspacesApi();
+		const request = {
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			requestId: 1,
+			kind: 'ping',
+			payload: { state: 'ready' },
+		};
+		const subscription = {
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			kind: 'status',
+		};
+		const instance = { guestWebContentsId: 42, instanceId: 'panel-instance' };
+
+		await api.panelRequest(request);
+		await api.panelSubscribe(subscription);
+		await api.panelUnsubscribe(subscription);
+		await api.panelUnsubscribeAll(instance);
+
+		expect(invoke).toHaveBeenNthCalledWith(1, 'plugin-workspaces:panel-request', request);
+		expect(invoke).toHaveBeenNthCalledWith(2, 'plugin-workspaces:panel-subscribe', subscription);
+		expect(invoke).toHaveBeenNthCalledWith(3, 'plugin-workspaces:panel-unsubscribe', subscription);
+		expect(invoke).toHaveBeenNthCalledWith(4, 'plugin-workspaces:panel-unsubscribe-all', instance);
 	});
 });

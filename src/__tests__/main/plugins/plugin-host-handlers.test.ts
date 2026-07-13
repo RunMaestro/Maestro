@@ -354,6 +354,38 @@ describe('net.fetch egress + fs.write guarding', () => {
 	});
 });
 
+describe('interactive panel owner surface', () => {
+	it('routes closed resolve, reject, and event operations through the owner-bound surface', async () => {
+		const resolve = vi.fn(async () => undefined);
+		const reject = vi.fn(async () => undefined);
+		const emit = vi.fn(async () => undefined);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				interactivePanelSurfaceFor: () => ({ resolve, reject, emit }),
+			})
+		);
+
+		await h['interactivePanel.resolve']!('p', {
+			requestId: 'request-capability',
+			kind: 'ping',
+			payload: { ok: true },
+		});
+		await h['interactivePanel.reject']!('p', {
+			requestId: 'request-capability',
+			code: 'runtime_stopped',
+		});
+		await h['interactivePanel.emit']!('p', {
+			kind: 'status',
+			payload: { ready: true },
+			eventSequence: 1n,
+		});
+
+		expect(resolve).toHaveBeenCalledWith('request-capability', 'ping', { ok: true });
+		expect(reject).toHaveBeenCalledWith('request-capability', 'runtime_stopped');
+		expect(emit).toHaveBeenCalledWith('status', { ready: true }, 1n);
+	});
+});
+
 describe('purgePluginData', () => {
 	it('purges KV, namespaced settings, event subscriptions, and live host views', async () => {
 		kv.set('p', 'k', 'v');

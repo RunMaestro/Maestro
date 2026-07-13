@@ -9,6 +9,15 @@ import type {
 } from './PluginInteractivePanelFrame';
 import type { PluginWorkspaceProjectionSource } from './pluginWorkspaceProjection';
 
+interface PanelIpcMessageEvent extends Event {
+	readonly channel?: string;
+	readonly args?: unknown[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** Adapts the frozen trusted preload API to the renderer workspace projection contract. */
 export function createPluginWorkspaceProjectionSource(
 	api: PluginWorkspacesApi
@@ -94,13 +103,60 @@ function bindPanel(
 			reportFailure(error);
 		}
 	};
+	const onIpcMessage = (event: Event): void => {
+		if (!active || instanceId === null) return;
+		const message = event as PanelIpcMessageEvent;
+		const payload = message.args?.[0];
+		if (!isRecord(payload) || payload.instanceId !== instanceId) return;
+		const guestWebContentsId = webviewWithContents.getWebContentsId?.();
+		if (
+			typeof guestWebContentsId !== 'number' ||
+			!Number.isSafeInteger(guestWebContentsId) ||
+			guestWebContentsId < 1
+		)
+			return;
+		if (
+			message.channel === 'maestro:panel-request' &&
+			Number.isSafeInteger(payload.requestId) &&
+			typeof payload.kind === 'string'
+		) {
+			void api
+				.panelRequest({
+					guestWebContentsId,
+					instanceId,
+					requestId: payload.requestId as number,
+					kind: payload.kind,
+					payload: payload.payload,
+				})
+				.catch(reportFailure);
+			return;
+		}
+		if (
+			(message.channel === 'maestro:panel-subscribe' ||
+				message.channel === 'maestro:panel-unsubscribe') &&
+			typeof payload.kind === 'string'
+		) {
+			const input = { guestWebContentsId, instanceId, kind: payload.kind };
+			void (
+				message.channel === 'maestro:panel-subscribe'
+					? api.panelSubscribe(input)
+					: api.panelUnsubscribe(input)
+			).catch(reportFailure);
+			return;
+		}
+		if (message.channel === 'maestro:panel-unsubscribe-all') {
+			void api.panelUnsubscribeAll({ guestWebContentsId, instanceId }).catch(reportFailure);
+		}
+	};
 	const onDomReady = (): void => {
 		void mount();
 	};
+	webview.addEventListener('ipc-message', onIpcMessage);
 	webview.addEventListener('dom-ready', onDomReady);
 	return (): void => {
 		active = false;
 		webview.removeEventListener('dom-ready', onDomReady);
+		webview.removeEventListener('ipc-message', onIpcMessage);
 		if (instanceId) unmountSilently(instanceId);
 	};
 }

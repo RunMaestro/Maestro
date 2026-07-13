@@ -33,6 +33,10 @@ function api(): PluginWorkspacesApi {
 		revealOrSelect: vi.fn(async () => null),
 		mountPanel: vi.fn(async () => ({ instanceId: 'panel-instance' })),
 		unmountPanel: vi.fn(async () => undefined),
+		panelRequest: vi.fn(async () => undefined),
+		panelSubscribe: vi.fn(async () => undefined),
+		panelUnsubscribe: vi.fn(async () => undefined),
+		panelUnsubscribeAll: vi.fn(async () => undefined),
 	};
 }
 
@@ -81,6 +85,53 @@ describe('plugin workspace renderer adapters', () => {
 		});
 		unbind();
 		expect(bridge.unmountPanel).toHaveBeenCalledWith({ instanceId: 'panel-instance' });
+	});
+
+	it('relays only closed guest panel messages through their named sender-bound operations', async () => {
+		const bridge = api();
+		const binder = createInteractivePanelHostBinder(bridge);
+		const listeners = new Map<string, (event: Event) => void>();
+		const webview = {
+			addEventListener: vi.fn((event: string, listener: (event: Event) => void) =>
+				listeners.set(event, listener)
+			),
+			removeEventListener: vi.fn(),
+			getWebContentsId: () => 42,
+		};
+
+		binder.bind({
+			panel: {
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'main-panel',
+				canonicalContributionId: 'com.maestro.omp/main-panel',
+				title: 'OMP',
+				entry: 'panel.html',
+			} as unknown as CanonicalInteractivePanelContribution,
+			webview: webview as never,
+		});
+		listeners.get('dom-ready')?.(new Event('dom-ready'));
+		await Promise.resolve();
+		await Promise.resolve();
+		listeners.get('ipc-message')?.({
+			channel: 'maestro:panel-request',
+			args: [
+				{
+					instanceId: 'panel-instance',
+					requestId: 1,
+					kind: 'ping',
+					payload: { state: 'ready' },
+				},
+			],
+		} as unknown as Event);
+		await Promise.resolve();
+
+		expect(bridge.panelRequest).toHaveBeenCalledWith({
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			requestId: 1,
+			kind: 'ping',
+			payload: { state: 'ready' },
+		});
 	});
 
 	it('reports a rejected snapshot to the current binding without an unhandled rejection', async () => {

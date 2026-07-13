@@ -89,6 +89,7 @@ function harness() {
 	const panelDispose = vi.fn();
 	const panelHost = {
 		mount: vi.fn(() => ({ instanceId: 'panel-instance', dispose: panelDispose })),
+		receive: vi.fn(),
 		unmount: vi.fn(),
 	};
 	const registration = registerPluginWorkspaceIpc({
@@ -207,5 +208,44 @@ describe('plugin workspace main registration', () => {
 				workspaces: [expect.objectContaining({ projectionRevision: 9 })],
 			}),
 		});
+	});
+
+	it('forwards only named panel ingress from the trusted renderer with the exact guest sender', async () => {
+		const h = harness();
+		const request = h.handlers.get('plugin-workspaces:panel-request');
+		const subscribe = h.handlers.get('plugin-workspaces:panel-subscribe');
+		const panelRequest = {
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance-0001',
+			requestId: 1,
+			kind: 'ping',
+			payload: { state: 'ready' },
+		};
+
+		await request({ sender: h.mainContents }, panelRequest);
+		await subscribe(
+			{ sender: h.mainContents },
+			{
+				guestWebContentsId: 42,
+				instanceId: 'panel-instance-0001',
+				kind: 'status',
+			}
+		);
+
+		expect(h.panelHost.receive).toHaveBeenNthCalledWith(
+			1,
+			h.guest,
+			'maestro:panel-request',
+			expect.objectContaining({ instanceId: 'panel-instance-0001', requestId: 1, kind: 'ping' })
+		);
+		expect(h.panelHost.receive).toHaveBeenNthCalledWith(
+			2,
+			h.guest,
+			'maestro:panel-subscribe',
+			expect.objectContaining({ instanceId: 'panel-instance-0001', kind: 'status' })
+		);
+		await expect(request({ sender: {} }, panelRequest)).rejects.toThrow(
+			'UntrustedPluginWorkspaceRequester'
+		);
 	});
 });

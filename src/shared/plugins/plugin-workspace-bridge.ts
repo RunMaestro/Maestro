@@ -68,6 +68,29 @@ export interface PluginWorkspaceUnmountPanelInput {
 	readonly instanceId: string;
 }
 
+/** Renderer-to-main relay for one guest request. The main process rebinds the
+ * webContents id to the exact mounted sender before any panel host call. */
+export interface PluginWorkspacePanelRequestInput {
+	readonly guestWebContentsId: number;
+	readonly instanceId: string;
+	readonly requestId: number;
+	readonly kind: string;
+	readonly payload: unknown;
+}
+
+/** Renderer-to-main relay for a guest subscription mutation. */
+export interface PluginWorkspacePanelSubscriptionInput {
+	readonly guestWebContentsId: number;
+	readonly instanceId: string;
+	readonly kind: string;
+}
+
+/** Renderer-to-main relay for clearing all guest subscriptions. */
+export interface PluginWorkspacePanelUnsubscribeAllInput {
+	readonly guestWebContentsId: number;
+	readonly instanceId: string;
+}
+
 /** Narrow generic API exposed as `window.maestro.pluginWorkspaces`. */
 export interface PluginWorkspacesApi {
 	getSnapshot(): Promise<PluginWorkspacesSnapshotDto>;
@@ -77,4 +100,8 @@ export interface PluginWorkspacesApi {
 	): Promise<PluginWorkspaceRevealOrSelectResult | null>;
 	mountPanel(input: PluginWorkspaceMountPanelInput): Promise<PluginWorkspaceMountPanelResult>;
 	unmountPanel(input: PluginWorkspaceUnmountPanelInput): Promise<void>;
+	panelRequest(input: PluginWorkspacePanelRequestInput): Promise<void>;
+	panelSubscribe(input: PluginWorkspacePanelSubscriptionInput): Promise<void>;
+	panelUnsubscribe(input: PluginWorkspacePanelSubscriptionInput): Promise<void>;
+	panelUnsubscribeAll(input: PluginWorkspacePanelUnsubscribeAllInput): Promise<void>;
 }
