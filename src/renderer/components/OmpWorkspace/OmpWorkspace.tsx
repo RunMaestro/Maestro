@@ -1,0 +1,647 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, PlusCircle, RotateCw, Square } from 'lucide-react';
+import { OmpEventCanvas } from './OmpEventCanvas';
+import type {
+	OmpComposerMode,
+	OmpTreeNode,
+	OmpWorkspaceAdapter,
+	OmpWorkspaceSession,
+} from './types';
+import { useOmpWorkspace } from './useOmpWorkspace';
+
+const INSPECTOR_TABS = ['session', 'tree', 'subagents', 'approvals', 'usage'] as const;
+type InspectorTab = (typeof INSPECTOR_TABS)[number];
+type WorkspaceTheme = {
+	colors: {
+		accent: string;
+		border: string;
+		bgMain: string;
+		bgSidebar: string;
+		bgActivity: string;
+		textMain: string;
+		textDim: string;
+	};
+};
+
+export interface OmpWorkspaceProps {
+	adapter: OmpWorkspaceAdapter;
+	theme: WorkspaceTheme;
+}
+
+function loadInspectorWidth(): number {
+	if (typeof window === 'undefined') return 288;
+	const storage = window.localStorage;
+	if (typeof storage?.getItem !== 'function') return 288;
+	const stored = Number(storage.getItem('omp.workspace.inspector-width'));
+	return Number.isFinite(stored) && stored >= 220 && stored <= 520 ? stored : 288;
+}
+
+function toErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : 'OMP could not complete that action.';
+}
+
+/**
+ * The mountable OMP renderer surface. It consumes only an injected typed adapter;
+ * no component reaches Electron or the runtime bridge directly.
+ */
+export function OmpWorkspace({ adapter, theme }: OmpWorkspaceProps) {
+	const { snapshot, phase, loadError, refresh } = useOmpWorkspace(adapter);
+	const [draft, setDraft] = useState('');
+	const [attachments, setAttachments] = useState<File[]>([]);
+	const [inspectorTab, setInspectorTab] = useState<InspectorTab>('session');
+	const [inspectorWidth, setInspectorWidth] = useState(loadInspectorWidth);
+	const [actionError, setActionError] = useState<string | null>(null);
+
+	useEffect(() => {
+		const storage = typeof window === 'undefined' ? null : window.localStorage;
+		if (typeof storage?.setItem === 'function') {
+			storage.setItem('omp.workspace.inspector-width', String(inspectorWidth));
+		}
+	}, [inspectorWidth]);
+
+	const activeSession = useMemo(
+		() => snapshot?.sessions.find((session) => session.id === snapshot.activeSessionId) ?? null,
+		[snapshot]
+	);
+
+	const invoke = useCallback((operation: () => Promise<void>) => {
+		setActionError(null);
+		void operation().catch((error: unknown) => setActionError(toErrorMessage(error)));
+	}, []);
+
+	const handleSubmit = useCallback(() => {
+		if (!activeSession || draft.trim().length === 0) return;
+		const message = draft.trim();
+		invoke(async () => {
+			await adapter.sendMessage(activeSession.id, message, attachments);
+			setDraft('');
+			setAttachments([]);
+		});
+	}, [activeSession, adapter, attachments, draft, invoke]);
+
+	if (phase === 'loading') return <WorkspaceState label="Connecting to OMP…" theme={theme} />;
+	if (phase === 'error' || !snapshot) {
+		return (
+			<WorkspaceState
+				label={loadError ?? 'OMP workspace could not load.'}
+				theme={theme}
+				retry={refresh}
+				error
+			/>
+		);
+	}
+	if (snapshot.connection === 'offline') {
+		return (
+			<WorkspaceState
+				label="Offline — OMP is unavailable."
+				theme={theme}
+				retry={() => invoke(adapter.retry)}
+			/>
+		);
+	}
+	if (snapshot.connection === 'incompatible') {
+		return (
+			<WorkspaceState
+				label={snapshot.incompatibilityReason ?? 'Installed OMP is incompatible.'}
+				theme={theme}
+				retry={() => invoke(adapter.retry)}
+				error
+			/>
+		);
+	}
+	if (snapshot.connection === 'error') {
+		return (
+			<WorkspaceState
+				label={snapshot.error ?? 'OMP connection failed.'}
+				theme={theme}
+				retry={() => invoke(adapter.retry)}
+				error
+			/>
+		);
+	}
+
+	return (
+		<section
+			className="flex h-full min-h-0 w-full overflow-hidden"
+			aria-label="Oh My Pi workspace"
+			style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
+		>
+			<nav
+				className="hidden w-64 shrink-0 flex-col border-r md:flex"
+				aria-label="OMP sessions"
+				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+			>
+				<div
+					className="flex items-center justify-between border-b px-3 py-3"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<span
+						className="text-xs font-semibold uppercase tracking-[0.18em]"
+						style={{ color: theme.colors.textDim }}
+					>
+						OMP sessions
+					</span>
+					<button
+						type="button"
+						aria-label="New OMP session"
+						title="New OMP session"
+						className="rounded p-1 hover:bg-white/10"
+						onClick={() => invoke(adapter.createSession)}
+					>
+						<PlusCircle size={17} />
+					</button>
+				</div>
+				<div className="min-h-0 flex-1 overflow-auto p-2">
+					{snapshot.sessions.length === 0 ? (
+						<p className="p-3 text-sm" style={{ color: theme.colors.textDim }}>
+							No OMP sessions yet.
+						</p>
+					) : (
+						snapshot.sessions.map((session) => (
+							<SessionButton
+								key={session.id}
+								session={session}
+								active={session.id === activeSession?.id}
+								accent={theme.colors.accent}
+								text={theme.colors.textMain}
+								dim={theme.colors.textDim}
+								onSelect={() => invoke(() => adapter.selectSession(session.id))}
+							/>
+						))
+					)}
+				</div>
+			</nav>
+
+			<div className="flex min-w-0 flex-1 flex-col">
+				<WorkspaceToolbar
+					session={activeSession}
+					models={snapshot.models}
+					theme={theme}
+					onSetModel={(model) =>
+						activeSession && invoke(() => adapter.setModel(activeSession.id, model))
+					}
+					onSetMode={(mode) =>
+						activeSession && invoke(() => adapter.setMode(activeSession.id, mode))
+					}
+					onAbort={() => activeSession && invoke(() => adapter.abort(activeSession.id))}
+				/>
+				{actionError && (
+					<div
+						role="alert"
+						className="mx-4 mt-3 border px-3 py-2 text-sm"
+						style={{ borderColor: '#d86464' }}
+					>
+						{actionError}
+					</div>
+				)}
+				{activeSession ? (
+					<OmpEventCanvas
+						events={activeSession.events}
+						accent={theme.colors.accent}
+						border={theme.colors.border}
+						background={theme.colors.bgActivity}
+						text={theme.colors.textMain}
+						textDim={theme.colors.textDim}
+						onResolveApproval={(requestId, approved) =>
+							invoke(() => adapter.resolveApproval(activeSession.id, requestId, approved))
+						}
+					/>
+				) : (
+					<WorkspaceState label="Choose or create an OMP session." theme={theme} />
+				)}
+				<Composer
+					draft={draft}
+					attachments={attachments}
+					disabled={!activeSession}
+					theme={theme}
+					onDraftChange={setDraft}
+					onAttachmentsChange={setAttachments}
+					onSubmit={handleSubmit}
+				/>
+			</div>
+
+			{activeSession && (
+				<Inspector
+					session={activeSession}
+					tab={inspectorTab}
+					width={inspectorWidth}
+					theme={theme}
+					onTab={setInspectorTab}
+					onResize={setInspectorWidth}
+				/>
+			)}
+		</section>
+	);
+}
+
+function WorkspaceState({
+	label,
+	theme,
+	retry,
+	error = false,
+}: {
+	label: string;
+	theme: WorkspaceTheme;
+	retry?: () => void;
+	error?: boolean;
+}) {
+	return (
+		<section
+			className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
+			role={error ? 'alert' : 'status'}
+			style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
+		>
+			<Activity size={28} style={{ color: error ? '#d86464' : theme.colors.accent }} />
+			<p className="max-w-md text-sm">{label}</p>
+			{retry && (
+				<button
+					type="button"
+					aria-label="Retry OMP connection"
+					onClick={retry}
+					className="rounded border px-3 py-2 text-xs font-semibold"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<RotateCw className="mr-1 inline" size={14} /> Retry
+				</button>
+			)}
+		</section>
+	);
+}
+
+function SessionButton({
+	session,
+	active,
+	accent,
+	text,
+	dim,
+	onSelect,
+}: {
+	session: OmpWorkspaceSession;
+	active: boolean;
+	accent: string;
+	text: string;
+	dim: string;
+	onSelect: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onSelect}
+			aria-current={active ? 'page' : undefined}
+			className="mb-1 w-full rounded border-l-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+			style={{ borderLeftColor: active ? accent : 'transparent', color: text }}
+		>
+			<span className="block truncate text-sm">{session.title}</span>
+			<span
+				className="mt-1 flex items-center gap-1 text-[10px] uppercase tracking-wider"
+				style={{ color: dim }}
+			>
+				<span
+					className="h-1.5 w-1.5 rounded-full"
+					style={{ backgroundColor: session.status === 'streaming' ? accent : dim }}
+				/>
+				{session.branch ?? session.status}
+			</span>
+		</button>
+	);
+}
+
+function WorkspaceToolbar({
+	session,
+	models,
+	theme,
+	onSetModel,
+	onSetMode,
+	onAbort,
+}: {
+	session: OmpWorkspaceSession | null;
+	models: string[];
+	theme: WorkspaceTheme;
+	onSetModel: (model: string) => void;
+	onSetMode: (mode: OmpComposerMode) => void;
+	onAbort: () => void;
+}) {
+	return (
+		<header
+			className="flex min-h-14 items-center gap-2 border-b px-3"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+		>
+			<div className="min-w-0 flex-1">
+				<h1 className="truncate text-sm font-semibold">{session?.title ?? 'OMP workspace'}</h1>
+				<p
+					className="text-[10px] uppercase tracking-widest"
+					style={{ color: theme.colors.textDim }}
+				>
+					{session?.branch ?? 'No active branch'}
+				</p>
+			</div>
+			{session && (
+				<>
+					<label className="sr-only" htmlFor="omp-model">
+						Model
+					</label>
+					<select
+						id="omp-model"
+						aria-label="Model"
+						value={session.model}
+						onChange={(event) => onSetModel(event.target.value)}
+						className="max-w-48 rounded border bg-transparent px-2 py-1 text-xs"
+						style={{ borderColor: theme.colors.border }}
+					>
+						{models.map((model) => (
+							<option key={model} value={model}>
+								{model}
+							</option>
+						))}
+					</select>
+					<div
+						className="hidden rounded border p-0.5 sm:flex"
+						style={{ borderColor: theme.colors.border }}
+					>
+						{(['build', 'plan', 'ask'] as const).map((mode) => (
+							<button
+								key={mode}
+								type="button"
+								aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} mode`}
+								aria-pressed={session.mode === mode}
+								className="rounded px-2 py-1 text-xs capitalize"
+								style={
+									session.mode === mode
+										? { backgroundColor: theme.colors.accent, color: theme.colors.bgMain }
+										: undefined
+								}
+								onClick={() => onSetMode(mode)}
+							>
+								{mode}
+							</button>
+						))}
+					</div>
+					{session.status === 'streaming' && (
+						<button
+							type="button"
+							aria-label="Abort stream"
+							className="rounded border px-2 py-1 text-xs"
+							style={{ borderColor: theme.colors.border }}
+							onClick={onAbort}
+						>
+							<Square className="mr-1 inline" size={11} /> Abort
+						</button>
+					)}
+				</>
+			)}
+		</header>
+	);
+}
+
+function Composer({
+	draft,
+	attachments,
+	disabled,
+	theme,
+	onDraftChange,
+	onAttachmentsChange,
+	onSubmit,
+}: {
+	draft: string;
+	attachments: File[];
+	disabled: boolean;
+	theme: WorkspaceTheme;
+	onDraftChange: (value: string) => void;
+	onAttachmentsChange: (files: File[]) => void;
+	onSubmit: () => void;
+}) {
+	return (
+		<form
+			className="border-t p-3"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+			onSubmit={(event) => {
+				event.preventDefault();
+				onSubmit();
+			}}
+		>
+			<div className="flex items-end gap-2">
+				<label
+					htmlFor="omp-attachments"
+					className="cursor-pointer rounded border px-2 py-1.5 text-xs"
+					style={{ borderColor: theme.colors.border }}
+				>
+					Attach files
+				</label>
+				<input
+					id="omp-attachments"
+					aria-label="Attach files"
+					type="file"
+					multiple
+					className="sr-only"
+					onChange={(event) => onAttachmentsChange(Array.from(event.target.files ?? []))}
+				/>
+				<textarea
+					aria-label="OMP message"
+					value={draft}
+					disabled={disabled}
+					onChange={(event) => onDraftChange(event.target.value)}
+					onKeyDown={(event) => {
+						if (event.key === 'Enter' && !event.shiftKey) {
+							event.preventDefault();
+							onSubmit();
+						}
+					}}
+					rows={2}
+					className="min-h-12 flex-1 resize-none rounded border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1"
+					style={{ borderColor: theme.colors.border }}
+					placeholder={disabled ? 'Select a session to compose.' : 'Describe the next operation…'}
+				/>
+				<button
+					type="submit"
+					aria-label="Send message"
+					disabled={disabled || draft.trim().length === 0}
+					className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+				>
+					Send
+				</button>
+			</div>
+			{attachments.length > 0 && (
+				<ul className="mt-2 flex flex-wrap gap-2" aria-label="Attached files">
+					{attachments.map((file) => (
+						<li
+							key={`${file.name}-${file.size}`}
+							className="rounded border px-2 py-1 text-xs"
+							style={{ borderColor: theme.colors.border }}
+						>
+							{file.name}
+							<button
+								type="button"
+								aria-label={`Remove ${file.name}`}
+								className="ml-2"
+								onClick={() =>
+									onAttachmentsChange(attachments.filter((candidate) => candidate !== file))
+								}
+							>
+								×
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
+		</form>
+	);
+}
+
+function Inspector({
+	session,
+	tab,
+	width,
+	theme,
+	onTab,
+	onResize,
+}: {
+	session: OmpWorkspaceSession;
+	tab: InspectorTab;
+	width: number;
+	theme: WorkspaceTheme;
+	onTab: (tab: InspectorTab) => void;
+	onResize: (width: number) => void;
+}) {
+	return (
+		<aside
+			className="relative hidden shrink-0 border-l lg:flex lg:flex-col"
+			aria-label="OMP inspector"
+			style={{ width, borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+		>
+			<div
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize OMP inspector"
+				className="absolute inset-y-0 left-0 w-1 cursor-col-resize hover:bg-white/20"
+				onPointerDown={(event) => {
+					const startX = event.clientX;
+					const startWidth = width;
+					const resize = (move: PointerEvent) =>
+						onResize(Math.max(220, Math.min(520, startWidth + startX - move.clientX)));
+					const stop = () => {
+						document.removeEventListener('pointermove', resize);
+						document.removeEventListener('pointerup', stop);
+					};
+					document.addEventListener('pointermove', resize);
+					document.addEventListener('pointerup', stop, { once: true });
+				}}
+			/>
+			<div className="flex overflow-auto border-b p-1" style={{ borderColor: theme.colors.border }}>
+				{INSPECTOR_TABS.map((name) => (
+					<button
+						key={name}
+						type="button"
+						aria-pressed={tab === name}
+						onClick={() => onTab(name)}
+						className="rounded px-2 py-1 text-[10px] uppercase"
+						style={
+							tab === name
+								? { backgroundColor: theme.colors.accent, color: theme.colors.bgMain }
+								: { color: theme.colors.textDim }
+						}
+					>
+						{name}
+					</button>
+				))}
+			</div>
+			<div className="min-h-0 flex-1 overflow-auto p-3">
+				<InspectorContent session={session} tab={tab} textDim={theme.colors.textDim} />
+			</div>
+		</aside>
+	);
+}
+
+function InspectorContent({
+	session,
+	tab,
+	textDim,
+}: {
+	session: OmpWorkspaceSession;
+	tab: InspectorTab;
+	textDim: string;
+}) {
+	if (tab === 'session')
+		return (
+			<dl className="space-y-3 text-sm">
+				<div>
+					<dt style={{ color: textDim }}>Model</dt>
+					<dd>{session.model}</dd>
+				</div>
+				<div>
+					<dt style={{ color: textDim }}>Mode</dt>
+					<dd className="capitalize">{session.mode}</dd>
+				</div>
+				<div>
+					<dt style={{ color: textDim }}>Status</dt>
+					<dd className="capitalize">{session.status}</dd>
+				</div>
+			</dl>
+		);
+	if (tab === 'tree')
+		return (
+			<ul className="space-y-1 text-sm">
+				{session.tree.map((node) => (
+					<TreeItem key={node.id} node={node} />
+				))}
+			</ul>
+		);
+	if (tab === 'subagents')
+		return (
+			<ul className="space-y-2 text-sm">
+				{session.subagents.length === 0 ? (
+					<li style={{ color: textDim }}>No subagents.</li>
+				) : (
+					session.subagents.map((subagent) => (
+						<li key={subagent.id}>
+							{subagent.label}
+							<span className="ml-2 text-xs" style={{ color: textDim }}>
+								{subagent.status}
+							</span>
+						</li>
+					))
+				)}
+			</ul>
+		);
+	if (tab === 'approvals')
+		return (
+			<ul className="space-y-2 text-sm">
+				{session.events
+					.filter((event) => event.kind === 'approval')
+					.map((event) => event.kind === 'approval' && <li key={event.id}>{event.description}</li>)}
+			</ul>
+		);
+	return (
+		<dl className="space-y-3 text-sm">
+			<div>
+				<dt style={{ color: textDim }}>Input</dt>
+				<dd>{session.usage.inputTokens.toLocaleString()} tokens</dd>
+			</div>
+			<div>
+				<dt style={{ color: textDim }}>Output</dt>
+				<dd>{session.usage.outputTokens.toLocaleString()} tokens</dd>
+			</div>
+			{session.usage.costUsd !== undefined && (
+				<div>
+					<dt style={{ color: textDim }}>Cost</dt>
+					<dd>${session.usage.costUsd.toFixed(2)}</dd>
+				</div>
+			)}
+		</dl>
+	);
+}
+
+function TreeItem({ node }: { node: OmpTreeNode }) {
+	return (
+		<li>
+			<span>{node.label}</span>
+			{node.children && node.children.length > 0 && (
+				<ul className="ml-3 mt-1 border-l pl-2" style={{ borderColor: 'currentColor' }}>
+					{node.children.map((child) => (
+						<TreeItem key={child.id} node={child} />
+					))}
+				</ul>
+			)}
+		</li>
+	);
+}
