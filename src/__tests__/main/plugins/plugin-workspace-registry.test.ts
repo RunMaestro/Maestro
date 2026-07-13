@@ -320,7 +320,7 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 		]);
 	});
 
-	it('accepts title and unread boundaries', () => {
+	it('accepts title, unread, and pending-approval boundaries', () => {
 		const harness = createHarness();
 		registerCurrent(harness);
 		const capability = acquireCurrent(harness);
@@ -328,12 +328,21 @@ describe('PluginWorkspaceRegistry external session publication', () => {
 
 		harness.registry.publishExternalSessions(capability, 1, [
 			externalSession('minimum', { unread: 0, updatedAt: 0 }),
-			externalSession('maximum', { title: longestTitle, unread: 9_999 }),
+			externalSession('maximum', {
+				title: longestTitle,
+				unread: 9_999,
+				pendingApproval: true,
+			}),
 		]);
 
 		expect(publishedSessions(harness, capability)).toMatchObject([
 			{ externalSessionId: 'minimum', unread: 0, updatedAt: 0 },
-			{ externalSessionId: 'maximum', title: longestTitle, unread: 9_999 },
+			{
+				externalSessionId: 'maximum',
+				title: longestTitle,
+				unread: 9_999,
+				pendingApproval: true,
+			},
 		]);
 	});
 
