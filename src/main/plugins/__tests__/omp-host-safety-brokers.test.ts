@@ -11,6 +11,7 @@ import {
 	OmpUriBroker,
 	type OmpExportFilesystem,
 	type OmpToolFilesystem,
+	type OmpSupervisedWorkspaceProcess,
 } from '../omp-host-safety-brokers';
 import { NativeWorkspaceRootService } from '../native-workspace-root-service';
 
@@ -146,7 +147,10 @@ function toolFilesystem(contents = new Map<string, string>()): OmpToolFilesystem
 	};
 }
 
-async function toolBroker(files = new Map<string, string>()) {
+async function toolBroker(
+	files = new Map<string, string>(),
+	process?: OmpSupervisedWorkspaceProcess
+) {
 	const rootService = roots();
 	const root = (await rootService.requestWorkspaceRoot()) as WorkspaceRootCapability;
 	return {
@@ -157,6 +161,7 @@ async function toolBroker(files = new Map<string, string>()) {
 			filesystem: toolFilesystem(files),
 			approve: async () => true,
 			clock: () => 1_000,
+			...(process ? { process } : {}),
 		}),
 		files,
 	};
@@ -237,6 +242,7 @@ describe('OMP host safety brokers', () => {
 		const approval = new Promise<void>((resolve) => {
 			releaseApproval = resolve;
 		});
+
 		const broker = new OmpRootToolPolicyBroker({
 			roots: rootService,
 			workspaceRoot: () => root,
@@ -254,6 +260,30 @@ describe('OMP host safety brokers', () => {
 		broker.revoke();
 		releaseApproval();
 		await expect(pending).rejects.toThrow('unavailable');
+	});
+
+	it('runs only through an injected supervised process authority with bounded command and timeout', async () => {
+		const calls: Array<{ command: string; cwd: string; timeoutMs: number }> = [];
+		const process: OmpSupervisedWorkspaceProcess = {
+			run: async (request) => {
+				calls.push({ command: request.command, cwd: request.cwd, timeoutMs: request.timeoutMs });
+				return { stdout: 'ok', stderr: '', exitCode: 0 };
+			},
+			cancel: () => undefined,
+			revoke: () => undefined,
+		};
+		const { broker } = await toolBroker(new Map(), process);
+		await expect(
+			broker.invoke('maestro.workspace.run', { command: 'git status', timeoutMs: 30_000 })
+		).resolves.toEqual({ stdout: 'ok', stderr: '', exitCode: 0 });
+		expect(calls).toEqual([{ command: 'git status', cwd: testWorkspace, timeoutMs: 30_000 }]);
+		await expect(
+			broker.invoke('maestro.workspace.run', { command: 'git status', timeoutMs: 60_001 })
+		).rejects.toThrow('unavailable');
+		const { broker: unavailable } = await toolBroker();
+		await expect(
+			unavailable.invoke('maestro.workspace.run', { command: 'git status', timeoutMs: 30_000 })
+		).rejects.toThrow('unavailable');
 	});
 
 	it('enforces the per-minute workspace tool rate limit', async () => {

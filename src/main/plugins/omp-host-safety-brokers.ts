@@ -27,7 +27,7 @@ export const OMP_WORKSPACE_TOOLS = [
 	'maestro.workspace.delete',
 ] as const;
 
-export type OmpWorkspaceToolName = (typeof OMP_WORKSPACE_TOOLS)[number];
+export type OmpWorkspaceToolName = (typeof OMP_WORKSPACE_TOOLS)[number] | 'maestro.workspace.run';
 export type OmpPanelPhase = 'pending' | 'completed' | 'cancelled' | 'failed';
 
 export interface OmpPathStat {
@@ -112,6 +112,20 @@ export interface OmpToolApprovalRequest {
 	readonly path: string;
 	readonly target?: string;
 }
+export interface OmpSupervisedWorkspaceProcess {
+	run(request: {
+		readonly command: string;
+		readonly cwd: string;
+		readonly timeoutMs: number;
+		readonly signal: AbortSignal;
+	}): Promise<{
+		readonly stdout: string;
+		readonly stderr: string;
+		readonly exitCode: number | null;
+	}>;
+	cancel(): void;
+	revoke(): void;
+}
 
 export interface OmpRootToolPolicyBrokerDeps {
 	readonly roots: NativeWorkspaceRootService;
@@ -121,6 +135,8 @@ export interface OmpRootToolPolicyBrokerDeps {
 	readonly approve: (request: OmpToolApprovalRequest) => Promise<boolean>;
 	readonly filesystem?: OmpToolFilesystem;
 	readonly clock?: () => number;
+	/** Host-configured shell/process authority. Absent means run is not registered. */
+	readonly process?: OmpSupervisedWorkspaceProcess;
 }
 
 export type OmpWorkspaceToolResult =
@@ -128,12 +144,8 @@ export type OmpWorkspaceToolResult =
 	| { readonly phase: 'completed' }
 	| { readonly entries: readonly string[] }
 	| { readonly matches: readonly { readonly line: number; readonly text: string }[] }
-	| {
-			readonly stat: {
-				readonly kind: 'file' | 'directory';
-				readonly size: number;
-			};
-	  };
+	| { readonly stat: { readonly kind: 'file' | 'directory'; readonly size: number } }
+	| { readonly stdout: string; readonly stderr: string; readonly exitCode: number | null };
 
 /**
  * A root-constrained, closed tool broker. Its public request format contains a
@@ -168,7 +180,7 @@ export class OmpRootToolPolicyBroker {
 			if (
 				!(await this.deps.approve({
 					tool,
-					path: request.path,
+					path: tool === 'maestro.workspace.run' ? 'workspace' : request.path,
 					...(request.target ? { target: request.target } : {}),
 				}))
 			) {
@@ -176,7 +188,8 @@ export class OmpRootToolPolicyBroker {
 			}
 			this.assertCurrent();
 			const root = this.resolveRoot();
-			const absolute = this.resolveRelativePath(root, request.path);
+			const absolute =
+				tool === 'maestro.workspace.run' ? root : this.resolveRelativePath(root, request.path);
 			const result = await this.run(tool, root, absolute, request);
 			this.assertCurrent();
 			return result;
@@ -186,10 +199,15 @@ export class OmpRootToolPolicyBroker {
 		}
 	}
 
-	/** Rejects pending work at its next host boundary and forgets all rate state. */
+	/** Revocation kills any host-supervised process tree before releasing authority. */
 	revoke(): void {
 		this.revoked = true;
 		this.calls.length = 0;
+		this.deps.process?.revoke();
+	}
+
+	cancel(): void {
+		this.deps.process?.cancel();
 	}
 
 	private async run(
@@ -198,6 +216,24 @@ export class OmpRootToolPolicyBroker {
 		absolute: string,
 		request: ParsedWorkspaceToolRequest
 	): Promise<OmpWorkspaceToolResult> {
+		if (tool === 'maestro.workspace.run') {
+			if (!this.deps.process || request.command === undefined || request.timeoutMs === undefined) {
+				throw unavailable();
+			}
+			const result = await this.deps.process.run({
+				command: request.command,
+				cwd: root,
+				timeoutMs: request.timeoutMs,
+				signal: this.activeSignal ?? new AbortController().signal,
+			});
+			if (
+				Buffer.byteLength(result.stdout, 'utf8') + Buffer.byteLength(result.stderr, 'utf8') >
+				BASH_OUTPUT_BYTES
+			) {
+				throw new Error('workspace process output exceeds limit');
+			}
+			return result;
+		}
 		if (tool === 'maestro.workspace.read') {
 			const content = await this.withVerifiedExisting(root, request.path, absolute, false, (file) =>
 				file.readFile()
@@ -824,6 +860,19 @@ const OMP_WORKSPACE_TOOL_DEFINITIONS: Readonly<
 		description: 'Delete one approved workspace file.',
 		parameters: closedPathSchema(['path']),
 	},
+	'maestro.workspace.run': {
+		description:
+			'Run a host-configured shell command in the approved workspace after explicit approval.',
+		parameters: Object.freeze({
+			type: 'object',
+			additionalProperties: false,
+			required: Object.freeze(['command', 'timeoutMs']),
+			properties: Object.freeze({
+				command: Object.freeze({ type: 'string', minLength: 1, maxLength: MAX_TOOL_INPUT_BYTES }),
+				timeoutMs: Object.freeze({ type: 'integer', minimum: 1000, maximum: 60000 }),
+			}),
+		}),
+	},
 };
 
 export interface OmpSandboxToolCall {
@@ -891,8 +940,8 @@ export function createOmpSandboxHostHandlers(
 	const exportBroker = new OmpNativeExportBroker(deps.export);
 	const activeTools = new Map<string, AbortController>();
 	const toolDefinitions = Object.freeze(
-		OMP_WORKSPACE_TOOLS.map((name) =>
-			Object.freeze({ name, ...OMP_WORKSPACE_TOOL_DEFINITIONS[name] })
+		[...OMP_WORKSPACE_TOOLS, ...(deps.process ? (['maestro.workspace.run'] as const) : [])].map(
+			(name) => Object.freeze({ name, ...OMP_WORKSPACE_TOOL_DEFINITIONS[name] })
 		)
 	) as readonly OmpSandboxToolDefinition[];
 	const providerList = Object.freeze(
@@ -921,6 +970,7 @@ export function createOmpSandboxHostHandlers(
 				const controller = activeTools.get(id);
 				if (!controller) throw unavailable();
 				controller.abort();
+				toolBroker.cancel();
 			},
 		}),
 		uris: Object.freeze({
@@ -973,6 +1023,8 @@ interface ParsedWorkspaceToolRequest {
 	readonly replacement?: string;
 	readonly query?: string;
 	readonly target?: string;
+	readonly command?: string;
+	readonly timeoutMs?: number;
 }
 
 function parseWorkspaceToolRequest(
@@ -981,16 +1033,32 @@ function parseWorkspaceToolRequest(
 ): ParsedWorkspaceToolRequest {
 	if (!isPlainObject(params)) throw unavailable();
 	const allowed =
-		tool === 'maestro.workspace.write'
-			? ['path', 'text']
-			: tool === 'maestro.workspace.edit'
-				? ['path', 'expectedText', 'replacement']
-				: tool === 'maestro.workspace.search'
-					? ['path', 'query']
-					: tool === 'maestro.workspace.move'
-						? ['path', 'target']
-						: ['path'];
+		tool === 'maestro.workspace.run'
+			? ['command', 'timeoutMs']
+			: tool === 'maestro.workspace.write'
+				? ['path', 'text']
+				: tool === 'maestro.workspace.edit'
+					? ['path', 'expectedText', 'replacement']
+					: tool === 'maestro.workspace.search'
+						? ['path', 'query']
+						: tool === 'maestro.workspace.move'
+							? ['path', 'target']
+							: ['path'];
 	if (Object.keys(params).some((key) => !allowed.includes(key))) throw unavailable();
+	if (tool === 'maestro.workspace.run') {
+		if (
+			typeof params.command !== 'string' ||
+			params.command.length === 0 ||
+			Buffer.byteLength(params.command, 'utf8') > MAX_TOOL_INPUT_BYTES ||
+			typeof params.timeoutMs !== 'number' ||
+			!Number.isInteger(params.timeoutMs) ||
+			params.timeoutMs < 1_000 ||
+			params.timeoutMs > 60_000
+		) {
+			throw unavailable();
+		}
+		return { path: '', command: params.command, timeoutMs: params.timeoutMs };
+	}
 	const relative = params.path;
 	if (!isSafeRelativePath(relative)) throw unavailable();
 	if (
@@ -1020,7 +1088,11 @@ function parseWorkspaceToolRequest(
 }
 
 function isWorkspaceTool(value: unknown): value is OmpWorkspaceToolName {
-	return typeof value === 'string' && (OMP_WORKSPACE_TOOLS as readonly string[]).includes(value);
+	return (
+		typeof value === 'string' &&
+		((OMP_WORKSPACE_TOOLS as readonly string[]).includes(value) ||
+			value === 'maestro.workspace.run')
+	);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
