@@ -64,6 +64,14 @@ import {
 	type ProductionOmpBootstrap,
 	type ProductionOmpBootstrapConfiguration,
 } from './plugins/production-omp-bootstrap';
+import {
+	readPluginRuntimeStartupDependencies,
+	resolveProductionOmpStartupConfiguration,
+} from './plugins/plugin-runtime-startup-config';
+export {
+	configurePluginRuntimeStartupDependencies,
+	type PluginRuntimeStartupDependencies,
+} from './plugins/plugin-runtime-startup-config';
 import { OmpProviderCredentialStore } from './plugins/omp-provider-credential-store';
 import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
 import { createProductionOmpRuntimeDependencies } from './omp-distribution/production-omp-runtime-dependencies';
@@ -315,6 +323,11 @@ import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usa
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
+
+// This is intentionally the first startup configuration read. A custom host
+// entry must configure the side-effect-free module before requiring this main
+// module, so dependencies cannot change after main evaluation begins.
+const pluginRuntimeStartupDependencies = readPluginRuntimeStartupDependencies();
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -570,20 +583,6 @@ const workspaceDeepLinkHandlers: WorkspaceDeepLinkHandlers = {
 };
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
-
-/** Production startup accepts only compiled release/trust inputs. Without them,
- * the OMP plugin and interactive runtime remain absent (fail closed). */
-export interface PluginRuntimeStartupDependencies {
-	readonly productionOmp?: ProductionOmpBootstrapConfiguration;
-}
-
-let pluginRuntimeStartupDependencies: PluginRuntimeStartupDependencies = {};
-
-export function configurePluginRuntimeStartupDependencies(
-	dependencies: PluginRuntimeStartupDependencies
-): void {
-	pluginRuntimeStartupDependencies = Object.freeze({ ...dependencies });
-}
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2422,8 +2421,10 @@ app
 				managedInstallOptIn: runtimeDependencies.managedInstallOptIn,
 			} satisfies ProductionOmpBootstrapConfiguration;
 		})();
-		const productionOmpConfiguration =
-			pluginRuntimeStartupDependencies.productionOmp ?? packagedOmpConfiguration;
+		const productionOmpConfiguration = resolveProductionOmpStartupConfiguration(
+			pluginRuntimeStartupDependencies,
+			packagedOmpConfiguration
+		);
 		const productionOmpBootstrap: ProductionOmpBootstrap | undefined = productionOmpConfiguration
 			? createProductionOmpBootstrap({
 					...productionOmpConfiguration,
