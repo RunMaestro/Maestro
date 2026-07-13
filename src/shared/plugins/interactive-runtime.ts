@@ -57,12 +57,21 @@ export type RuntimeEvent =
 	| { readonly kind: 'exit'; readonly sequence: bigint; readonly code: number | null }
 	| { readonly kind: 'safe_error'; readonly sequence: bigint; readonly class: PanelErrorCode };
 
+/** A validated, bounded JSON frame emitted by the runtime's stdout data plane. */
+export interface RuntimeMessage {
+	/** Per-runtime, monotonically increasing safe-integer sequence. */
+	readonly sequence: number;
+	/** Deeply frozen canonical JSON data; never a raw stdio chunk. */
+	readonly value: JsonValue;
+}
+
 /** A host-created runtime record, never a raw process, stream, or shell handle. */
 export interface InteractiveRuntimeHandle {
 	readonly runtimeId: UUID;
 	readonly generation: bigint;
 	writeCanonicalJson(request: JsonValue): Promise<void>;
 	onEvent(listener: (event: RuntimeEvent) => void): () => void;
+	onMessage(listener: (message: RuntimeMessage) => void): () => void;
 	stop(reason: InteractiveStopReason): Promise<void>;
 }
 

@@ -8,6 +8,7 @@ import {
 	type MaestroInteractiveRuntimeApi,
 	type OmpSafeStartupOptions,
 	type RuntimeEvent,
+	type RuntimeMessage,
 	type WorkspaceRootCapability,
 } from '../../shared/plugins/interactive-runtime';
 import {
@@ -173,6 +174,8 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 			generation: active.generation,
 			writeCanonicalJson: (request: JsonValue) => active.process.writeCanonicalJson(request),
 			onEvent: (listener: (event: RuntimeEvent) => void) => active.process.onEvent(listener),
+			onMessage: (listener: (message: RuntimeMessage) => void) =>
+				active.process.onMessage(listener),
 			stop: async (reason: InteractiveStopReason) => {
 				if (this.active.get(key) !== active) return;
 				this.active.delete(key);

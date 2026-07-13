@@ -3,7 +3,11 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 
 import type { JsonValue, PanelErrorCode } from '../../shared/plugins/interactive-panel';
-import type { InteractiveStopReason, RuntimeEvent } from '../../shared/plugins/interactive-runtime';
+import type {
+	InteractiveStopReason,
+	RuntimeEvent,
+	RuntimeMessage,
+} from '../../shared/plugins/interactive-runtime';
 
 const MAX_FRAME_BYTES = 256 * 1024;
 const MAX_BUFFER_BYTES = 1024 * 1024;
@@ -57,11 +61,14 @@ export interface ManagedRuntimeProcessOptions {
  */
 export class ManagedRuntimeProcess {
 	private readonly listeners = new Set<(event: RuntimeEvent) => void>();
+	private readonly messageListeners = new Set<(message: RuntimeMessage) => void>();
 	private readonly now: () => number;
 	private readonly stopGraceMs: number;
 	private stdoutBuffer = Buffer.alloc(0);
 	private stderrBuffer = Buffer.alloc(0);
 	private sequence = 0n;
+	private messageSequence = 0;
+	private readonly startedEvent: Extract<RuntimeEvent, { kind: 'started' }>;
 	private closed = false;
 	private acceptingWrites = true;
 	private stopping: Promise<void> | undefined;
@@ -75,12 +82,23 @@ export class ManagedRuntimeProcess {
 		options.child.stderr?.on('data', (data) => this.consume(data, true));
 		options.child.on('exit', (code) => this.onExit(code));
 		options.child.on('error', () => this.fail('runtime_stopped'));
-		this.emit({ kind: 'started', sequence: this.nextSequence() });
+		this.startedEvent = { kind: 'started', sequence: this.nextSequence() };
+		this.emit(this.startedEvent);
 	}
 
 	onEvent(listener: (event: RuntimeEvent) => void): () => void {
 		this.listeners.add(listener);
+		try {
+			listener(this.startedEvent);
+		} catch {
+			// A lifecycle observer cannot crash the runtime process.
+		}
 		return () => this.listeners.delete(listener);
+	}
+
+	onMessage(listener: (message: RuntimeMessage) => void): () => void {
+		this.messageListeners.add(listener);
+		return () => this.messageListeners.delete(listener);
 	}
 
 	async writeCanonicalJson(value: JsonValue): Promise<void> {
@@ -113,13 +131,19 @@ export class ManagedRuntimeProcess {
 
 	private consume(data: Uint8Array | string, stderr: boolean): void {
 		if (this.closed) return;
-		const next = Buffer.concat([stderr ? this.stderrBuffer : this.stdoutBuffer, Buffer.from(data)]);
+		if (stderr) {
+			// stderr is diagnostics only: it is bounded independently and never
+			// interpreted as runtime protocol, even when it resembles JSON.
+			const next = Buffer.concat([this.stderrBuffer, Buffer.from(data)]);
+			this.stderrBuffer =
+				next.length <= MAX_BUFFER_BYTES ? next : next.subarray(next.length - MAX_BUFFER_BYTES);
+			return;
+		}
+		const next = Buffer.concat([this.stdoutBuffer, Buffer.from(data)]);
 		if (next.length > MAX_BUFFER_BYTES) {
 			this.fail('backpressure');
 			return;
 		}
-		if (stderr) this.stderrBuffer = next;
-		else this.stdoutBuffer = next;
 		let buffer = next;
 		let newline = buffer.indexOf(10);
 		while (newline >= 0) {
@@ -136,8 +160,7 @@ export class ManagedRuntimeProcess {
 			this.fail('invalid_request');
 			return;
 		}
-		if (stderr) this.stderrBuffer = buffer;
-		else this.stdoutBuffer = buffer;
+		this.stdoutBuffer = buffer;
 	}
 
 	private acceptFrame(line: Buffer): boolean {
@@ -151,13 +174,22 @@ export class ManagedRuntimeProcess {
 			this.fail('backpressure');
 			return false;
 		}
+		let parsed: unknown;
 		try {
-			const parsed: unknown = JSON.parse(line.toString('utf8').replace(/\r$/, ''));
-			if (!isJsonValue(parsed)) throw new Error('not JSON');
+			parsed = JSON.parse(line.toString('utf8').replace(/\r$/, ''));
 		} catch {
 			this.fail('invalid_request');
 			return false;
 		}
+		if (!isJsonValue(parsed) || this.messageSequence >= Number.MAX_SAFE_INTEGER) {
+			this.fail('invalid_request');
+			return false;
+		}
+		this.messageSequence += 1;
+		this.emitMessage({
+			sequence: this.messageSequence,
+			value: deepFreezeJson(parsed),
+		});
 		return true;
 	}
 
@@ -196,7 +228,23 @@ export class ManagedRuntimeProcess {
 	}
 
 	private emit(event: RuntimeEvent): void {
-		for (const listener of this.listeners) listener(event);
+		for (const listener of this.listeners) {
+			try {
+				listener(event);
+			} catch {
+				// Listener failures must not corrupt the owned runtime lifecycle.
+			}
+		}
+	}
+
+	private emitMessage(message: RuntimeMessage): void {
+		for (const listener of this.messageListeners) {
+			try {
+				listener(message);
+			} catch {
+				// A consumer cannot crash the runtime process with a callback fault.
+			}
+		}
 	}
 
 	private nextSequence(): bigint {
@@ -238,4 +286,14 @@ function isJsonValue(value: unknown): value is JsonValue {
 	if (Array.isArray(value)) return value.every(isJsonValue);
 	if (typeof value !== 'object') return false;
 	return Object.values(value as Record<string, unknown>).every(isJsonValue);
+}
+
+function deepFreezeJson(value: JsonValue): JsonValue {
+	if (value === null || typeof value !== 'object') return value;
+	if (Array.isArray(value)) {
+		for (const item of value) deepFreezeJson(item);
+		return Object.freeze(value);
+	}
+	for (const child of Object.values(value)) deepFreezeJson(child);
+	return Object.freeze(value);
 }

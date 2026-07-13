@@ -198,11 +198,7 @@ export class PluginManager {
 	 */
 	refresh(): PluginRegistry {
 		if (!this.deps.isEnabled()) {
-			this.registry = emptyRegistry();
-			this.pluginFingerprints.clear();
-			this.reconcileSandboxes();
-			this.syncPluginWatchers();
-			return this.registry;
+			return this.commitRegistry(emptyRegistry(), this.pluginFingerprints, new Map());
 		}
 
 		const dir = pluginsDir();
@@ -215,11 +211,7 @@ export class PluginManager {
 				.filter(isSafePluginFolderName);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-				this.registry = emptyRegistry();
-				this.pluginFingerprints.clear();
-				this.reconcileSandboxes();
-				this.syncPluginWatchers();
-				return this.registry;
+				return this.commitRegistry(emptyRegistry(), this.pluginFingerprints, new Map());
 			}
 			throw error;
 		}
@@ -286,12 +278,7 @@ export class PluginManager {
 			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
 		}
 
-		this.registry = next;
-		this.reconcileSandboxes(previousFingerprints, nextFingerprints);
-		this.pluginFingerprints = nextFingerprints;
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
-		return this.registry;
+		return this.commitRegistry(next, previousFingerprints, nextFingerprints);
 	}
 
 	/** Toggle a plugin on/off, persist, rebuild the registry, and reconcile the
@@ -299,9 +286,45 @@ export class PluginManager {
 	setEnabled(id: string, enabled: boolean): PluginRegistry {
 		if (!this.deps.isEnabled()) return this.registry;
 		setPluginEnabled(id, enabled);
-		this.registry = setEnabled(this.registry, id, enabled);
-		this.deps.workspaceRuntime?.reconcile(this.registry.records);
-		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
+		return this.commitRegistry(
+			setEnabled(this.registry, id, enabled),
+			this.pluginFingerprints,
+			this.pluginFingerprints
+		);
+	}
+	/**
+	 * Atomically project a registry transition into every host-owned runtime
+	 * before exposing it to renderer listeners. If that authoritative projection
+	 * rejects the candidate, fail closed: revoke every registration, stop every
+	 * sandbox, and publish only the empty registry. A partial runtime reconcile
+	 * can therefore never leave a plugin capability usable after its manager
+	 * transition failed.
+	 */
+	private commitRegistry(
+		next: PluginRegistry,
+		previousFingerprints: ReadonlyMap<string, string>,
+		nextFingerprints: Map<string, string>
+	): PluginRegistry {
+		try {
+			this.deps.workspaceRuntime?.reconcile(next.records);
+		} catch {
+			try {
+				this.deps.workspaceRuntime?.teardownAll();
+			} catch {
+				// Best effort only: never expose an un-reconciled candidate.
+			}
+			this.registry = emptyRegistry();
+			this.pluginFingerprints.clear();
+			this.deps.sandbox?.stopAll();
+			this.syncPluginWatchers();
+			this.deps.onChange?.(this.registry);
+			return this.registry;
+		}
+
+		this.registry = next;
+		this.reconcileSandboxes(previousFingerprints, nextFingerprints);
+		this.pluginFingerprints = nextFingerprints;
+		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
 		return this.registry;
 	}
@@ -334,8 +357,8 @@ export class PluginManager {
 	 * sandbox alive.
 	 */
 	private reconcileSandboxes(
-		previousFingerprints = this.pluginFingerprints,
-		nextFingerprints = this.pluginFingerprints
+		previousFingerprints: ReadonlyMap<string, string> = this.pluginFingerprints,
+		nextFingerprints: ReadonlyMap<string, string> = this.pluginFingerprints
 	): void {
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
@@ -613,7 +636,9 @@ export class PluginManager {
 			throw new Error(`invalid plugin.json: ${errors.join('; ')}`);
 		}
 		if (manifest.id === OMP_PLUGIN_ID) {
-			throw new Error('OMP archives require installOrUpdateArchive with immutable trust verification');
+			throw new Error(
+				'OMP archives require installOrUpdateArchive with immutable trust verification'
+			);
 		}
 		const id = manifest.id;
 		if (!isSafePluginFolderName(id)) {
@@ -703,10 +728,9 @@ export class PluginManager {
 		forgetPlugin(id);
 		forgetGrants(id);
 		this.deps.purgePluginData?.(id);
-		this.pluginFingerprints.delete(id);
-		this.registry = removeRecord(this.registry, id);
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
+		const nextFingerprints = new Map(this.pluginFingerprints);
+		nextFingerprints.delete(id);
+		this.commitRegistry(removeRecord(this.registry, id), this.pluginFingerprints, nextFingerprints);
 		return { success: true };
 	}
 

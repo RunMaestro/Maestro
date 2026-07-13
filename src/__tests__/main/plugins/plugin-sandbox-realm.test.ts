@@ -403,6 +403,65 @@ describe('plugin sandbox realm — behavioral parity', () => {
 			{ method: 'ui.hostViewRemove', params: { id: 'status' } },
 		]);
 	});
+	it('exposes owner-bound interactive runtime stdout messages without accepting a mismatched generation', async () => {
+		const sent: string[] = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+		const realm = createSandboxRealm(bridge);
+		realm.init('plugin-a', { interactiveRuntime: true });
+		realm.runScript(
+			[
+				'maestro.interactiveRuntime.startOmpRuntime({}).then(function (runtime) {',
+				'  runtime.onMessage(function (message) { console.log("message:" + message.sequence + ":" + message.value.result); });',
+				'});',
+			].join('\n'),
+			'interactive-runtime-message.js'
+		);
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		const rawStart: unknown = JSON.parse(sent[0] ?? '{}');
+		if (
+			!rawStart ||
+			typeof rawStart !== 'object' ||
+			!('id' in rawStart) ||
+			typeof rawStart.id !== 'number'
+		) {
+			throw new Error('missing runtime start request');
+		}
+		realm.deliverResponse(
+			JSON.stringify({
+				id: rawStart.id,
+				ok: true,
+				result: { runtimeId: 'runtime-1', generation: '5' },
+			})
+		);
+		await Promise.resolve();
+		await Promise.resolve();
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactiveRuntimeMessage:runtime-1',
+				at: '2026-01-01T00:00:00.000Z',
+				payload: {
+					runtimeId: 'runtime-1',
+					generation: '5',
+					message: { sequence: 1, value: { result: 'ok' } },
+				},
+			})
+		);
+		await vi.waitFor(() =>
+			expect(vi.mocked(bridge.log).mock.calls).toContainEqual(['info', 'message:1:ok'])
+		);
+		realm.deliverEvent(
+			JSON.stringify({
+				topic: '__interactiveRuntimeMessage:runtime-1',
+				at: '2026-01-01T00:00:00.000Z',
+				payload: {
+					runtimeId: 'runtime-1',
+					generation: '6',
+					message: { sequence: 2, value: { result: 'leak' } },
+				},
+			})
+		);
+		expect(vi.mocked(bridge.log).mock.calls).not.toContainEqual(['info', 'message:2:leak']);
+	});
 });
 
 describe('signed OMP artifact sandbox smoke', () => {

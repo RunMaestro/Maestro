@@ -63,6 +63,7 @@ import {
 } from './plugins/production-omp-bootstrap';
 import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
 import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
+import { InteractiveRuntimeSandboxEventForwarder } from './plugins/interactive-runtime-sandbox-events';
 import type {
 	InteractiveRuntimeHandle,
 	WorkspaceRootCapability,
@@ -2264,11 +2265,7 @@ app
 		pluginWorkspaceRegistry = workspaceRegistry;
 		const panelDescriptors = new PluginPanelDescriptorRegistry();
 		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
-		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(
-			workspaceRuntime,
-			grantsOf,
-			(records) => panelDescriptors.sync(records)
-		);
+		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
 		pluginWorkspaceLifecycle = workspaceLifecycle;
 
 		const panelHost = new PluginInteractivePanelHost();
@@ -2325,11 +2322,30 @@ app
 				chooseDirectory: chooseOmpDirectory,
 			});
 		const managedRuntime = productionOmpBootstrap?.managedRuntime;
-		const runtimeRoots = new Map<string, WorkspaceRootCapability>();
-		const runtimeHandles = new Map<string, InteractiveRuntimeHandle>();
+		const runtimeRoots = new Map<
+			string,
+			{ readonly ownerPluginId: string; readonly root: WorkspaceRootCapability }
+		>();
+		const runtimeHandles = new Map<
+			string,
+			{
+				readonly ownerPluginId: string;
+				readonly generation: bigint;
+				readonly handle: InteractiveRuntimeHandle;
+			}
+		>();
+		const runtimeEvents = new InteractiveRuntimeSandboxEventForwarder({
+			pushEvent: (pluginId, event) => pluginSandboxHost?.pushEvent(pluginId, event) ?? false,
+		});
 		const revokeOmpRuntime = (pluginId: string, reason: 'revoked' | 'shutdown' = 'revoked') => {
-			runtimeRoots.clear();
-			runtimeHandles.clear();
+			if (pluginId !== 'com.maestro.omp') return;
+			for (const [token, entry] of runtimeRoots) {
+				if (entry.ownerPluginId === pluginId) runtimeRoots.delete(token);
+			}
+			for (const [runtimeId, entry] of runtimeHandles) {
+				if (entry.ownerPluginId === pluginId) runtimeHandles.delete(runtimeId);
+			}
+			runtimeEvents.revokeOwner(pluginId);
 			if (productionOmpBootstrap) {
 				void productionOmpBootstrap.teardown(pluginId, reason);
 				return;
@@ -2362,13 +2378,14 @@ app
 		};
 		const interactiveRuntimeSurfaceFor = (pluginId: string) => {
 			if (!managedRuntime || pluginId !== 'com.maestro.omp') return null;
-			if (!workspaceLifecycle.getRegistrationForOwner(pluginId)) return null;
+			const registration = workspaceLifecycle.getRegistrationForOwner(pluginId);
+			if (!registration) return null;
 			return {
 				requestWorkspaceRoot: async () => {
 					const root = await managedRuntime.requestWorkspaceRoot();
 					if (!root) return null;
 					const token = crypto.randomUUID();
-					runtimeRoots.set(token, root);
+					runtimeRoots.set(token, { ownerPluginId: pluginId, root });
 					return { token };
 				},
 				startOmpRuntime: async (input: unknown) => {
@@ -2377,25 +2394,55 @@ app
 						options?: { restore?: false };
 					};
 					const token = record?.workspaceRoot?.token;
-					const root = typeof token === 'string' ? runtimeRoots.get(token) : undefined;
-					if (!root || record.options?.restore !== false)
+					const rootEntry = typeof token === 'string' ? runtimeRoots.get(token) : undefined;
+					if (
+						!rootEntry ||
+						rootEntry.ownerPluginId !== pluginId ||
+						record.options?.restore !== false
+					) {
 						throw new Error('invalid interactive runtime request');
+					}
+					const generation = registration.context.generation;
 					const handle = await managedRuntime.startOmpRuntime({
-						workspaceRoot: root,
+						workspaceRoot: rootEntry.root,
 						options: { restore: false },
 					});
-					runtimeHandles.set(handle.runtimeId, handle);
-					return { runtimeId: handle.runtimeId, generation: handle.generation.toString(10) };
+					const current = workspaceLifecycle.getRegistrationForOwner(pluginId);
+					if (
+						!current ||
+						current.context.generation !== generation ||
+						handle.generation !== generation ||
+						!runtimeEvents.attach(pluginId, generation, handle)
+					) {
+						await handle.stop('revoked');
+						throw new Error('interactive runtime capability is unavailable');
+					}
+					runtimeHandles.set(handle.runtimeId, {
+						ownerPluginId: pluginId,
+						generation,
+						handle,
+					});
+					return { runtimeId: handle.runtimeId, generation: generation.toString(10) };
 				},
 				write: async (runtimeId: string, request: unknown) => {
-					const handle = runtimeHandles.get(runtimeId);
-					if (!handle) throw new Error('interactive runtime unavailable');
-					await handle.writeCanonicalJson(request as never);
+					const entry = runtimeHandles.get(runtimeId);
+					const current = workspaceLifecycle.getRegistrationForOwner(pluginId);
+					if (
+						!entry ||
+						entry.ownerPluginId !== pluginId ||
+						!current ||
+						current.context.generation !== entry.generation
+					) {
+						throw new Error('interactive runtime unavailable');
+					}
+					await entry.handle.writeCanonicalJson(request as never);
 				},
 				stop: async (runtimeId: string, reason: unknown) => {
-					const handle = runtimeHandles.get(runtimeId);
-					if (!handle) return;
+					const entry = runtimeHandles.get(runtimeId);
+					if (!entry || entry.ownerPluginId !== pluginId) return;
 					runtimeHandles.delete(runtimeId);
+					const handle =
+						runtimeEvents.detach(pluginId, runtimeId, entry.generation) ?? entry.handle;
 					await handle.stop(reason as never);
 				},
 			};

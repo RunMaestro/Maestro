@@ -396,6 +396,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 						}
 						var runtimeId = runtime.runtimeId;
 						var eventTopic = '__interactiveRuntimeEvent:' + runtimeId;
+						var messageTopic = '__interactiveRuntimeMessage:' + runtimeId;
 						return Object.freeze({
 							runtimeId: runtimeId,
 							generation: BigInt(runtime.generation),
@@ -411,6 +412,19 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 										event = Object.freeze({ kind: event.kind, sequence: BigInt(event.sequence), code: event.code, class: event.class });
 									}
 									listener(event);
+								};
+								set.add(wrapped);
+								return function () { set.delete(wrapped); };
+							},
+							onMessage: function (listener) {
+								if (typeof listener !== 'function') return function () {};
+								var set = eventHandlers.get(messageTopic);
+								if (!set) { set = new Set(); eventHandlers.set(messageTopic, set); }
+								var wrapped = function (payload) {
+									if (!payload || typeof payload !== 'object' || payload.runtimeId !== runtimeId || payload.generation !== runtime.generation) return;
+									var message = payload.message;
+									if (!message || typeof message !== 'object' || !Number.isSafeInteger(message.sequence) || message.sequence <= 0) return;
+									listener(Object.freeze({ sequence: message.sequence, value: message.value }));
 								};
 								set.add(wrapped);
 								return function () { set.delete(wrapped); };
