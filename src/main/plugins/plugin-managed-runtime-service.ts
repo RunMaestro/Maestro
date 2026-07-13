@@ -220,9 +220,9 @@ function launchFor(runtime: VerifiedRuntimeExecutable, root: string): ManagedRun
 	const stdio: ['pipe', 'pipe', 'pipe'] = ['pipe', 'pipe', 'pipe'];
 	return Object.freeze({
 		command: runtime.executable,
-		args: ['--mode', 'rpc', '--protocol-version', OMP_RUNTIME_VERSION, '--restore', 'false'],
+		args: ['--mode', 'rpc', '--cwd', root],
 		cwd: root,
-		env: Object.freeze({ OMP_PROTOCOL_VERSION: OMP_RUNTIME_VERSION, OMP_RESTORE: '0' }),
+		env: Object.freeze({}),
 		shell: false,
 		stdio,
 	});

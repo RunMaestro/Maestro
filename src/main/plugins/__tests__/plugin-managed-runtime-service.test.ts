@@ -115,9 +115,9 @@ describe('managed OMP runtime service', () => {
 		});
 		expect(launch()).toEqual({
 			command: '/bin/omp',
-			args: ['--mode', 'rpc', '--protocol-version', '16.4.8', '--restore', 'false'],
+			args: ['--mode', 'rpc', '--cwd', '/workspace'],
 			cwd: '/workspace',
-			env: { OMP_PROTOCOL_VERSION: '16.4.8', OMP_RESTORE: '0' },
+			env: {},
 			shell: false,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
