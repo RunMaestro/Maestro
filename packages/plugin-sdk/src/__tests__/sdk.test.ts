@@ -28,6 +28,8 @@ import {
 	type KeybindingContribution,
 	type HostViewBlocks,
 	type HostViewContribution,
+	type WorkspaceRootCapability,
+	type MaestroInteractiveRuntimeApi,
 } from '../index';
 
 const sdkRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -148,6 +150,19 @@ describe('@maestro/plugin-sdk authoring surface', () => {
 		expectTypeOf<MaestroSdk>().toHaveProperty('decisions');
 		expectTypeOf<MaestroSdk>().toHaveProperty('power');
 		expectTypeOf<MaestroSdk>().toHaveProperty('background');
+	});
+
+	it('keeps activation root-free while exposing an optional explicit interactive runtime API', () => {
+		expectTypeOf<MaestroSdk['interactiveRuntime']>().toEqualTypeOf<
+			MaestroInteractiveRuntimeApi | undefined
+		>();
+		expectTypeOf<MaestroSdk['interactiveRuntime']>().toMatchTypeOf<
+			MaestroInteractiveRuntimeApi | undefined
+		>();
+		expectTypeOf<MaestroSdk>().not.toHaveProperty('workspaceRoot');
+		expectTypeOf<
+			MaestroInteractiveRuntimeApi['requestWorkspaceRoot']
+		>().returns.resolves.toEqualTypeOf<WorkspaceRootCapability | null>();
 	});
 
 	it('exports the new tool + keybinding contribution types', () => {

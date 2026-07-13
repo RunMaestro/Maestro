@@ -82,6 +82,20 @@ describe('parsePermissions', () => {
 		expect(isPluginCapability('ui:workspace')).toBe(true);
 		expect(isPluginCapability('ui:interactivePanel')).toBe(true);
 	});
+
+	it('accepts process:interactive only with the exact omp scope', () => {
+		expect(parsePermissions([{ capability: 'process:interactive', scope: 'omp' }])).toEqual({
+			requests: [{ capability: 'process:interactive', scope: 'omp' }],
+			errors: [],
+		});
+		for (const scope of [undefined, '', 'OMP', 'omp,other', 'other'] as const) {
+			const result = parsePermissions([
+				{ capability: 'process:interactive', ...(scope ? { scope } : {}) },
+			]);
+			expect(result.requests, `scope ${String(scope)}`).toEqual([]);
+			expect(result.errors.join(' '), `scope ${String(scope)}`).toContain('scope exactly "omp"');
+		}
+	});
 });
 
 describe('isPermitted (default deny + scope matching)', () => {

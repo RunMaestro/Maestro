@@ -28,6 +28,17 @@ import type {
 	CanonicalWorkspaceFoundation,
 	ClosedPanelBridge,
 	JsonValue,
+	MaestroInteractivePanelOwnerApi,
+	WorkspaceCapability,
+	WorkspaceStatusSnapshot,
+	MaestroWorkspaceApi,
+	WorkspaceRootCapability,
+	OmpSafeStartupOptions,
+	InteractiveStopReason,
+	InteractiveRuntimeHandle,
+	RuntimeEvent,
+	MaestroInteractiveRuntimeApi,
+	MaestroSdk,
 } from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
@@ -48,8 +59,22 @@ import type {
 	CanonicalWorkspaceFoundation as SrcCanonicalWorkspaceFoundation,
 } from '../../../../src/shared/plugins/workspace-foundation';
 import type {
+	WorkspaceCapability as SrcWorkspaceCapability,
+	WorkspaceStatusSnapshot as SrcWorkspaceStatusSnapshot,
+	MaestroWorkspaceApi as SrcMaestroWorkspaceApi,
+} from '../../../../src/shared/plugins/workspace-foundation';
+import type {
+	WorkspaceRootCapability as SrcWorkspaceRootCapability,
+	OmpSafeStartupOptions as SrcOmpSafeStartupOptions,
+	InteractiveStopReason as SrcInteractiveStopReason,
+	InteractiveRuntimeHandle as SrcInteractiveRuntimeHandle,
+	RuntimeEvent as SrcRuntimeEvent,
+	MaestroInteractiveRuntimeApi as SrcMaestroInteractiveRuntimeApi,
+} from '../../../../src/shared/plugins/interactive-runtime';
+import type {
 	ClosedPanelBridge as SrcClosedPanelBridge,
 	JsonValue as SrcJsonValue,
+	MaestroInteractivePanelOwnerApi as SrcMaestroInteractivePanelOwnerApi,
 } from '../../../../src/shared/plugins/interactive-panel';
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
 expectTypeOf<HostViewContribution>().toEqualTypeOf<SrcHostViewContribution>();
@@ -65,3 +90,25 @@ expectTypeOf<InteractivePanelContribution>().toEqualTypeOf<SrcInteractivePanelCo
 expectTypeOf<CanonicalWorkspaceFoundation>().toEqualTypeOf<SrcCanonicalWorkspaceFoundation>();
 expectTypeOf<ClosedPanelBridge>().toEqualTypeOf<SrcClosedPanelBridge>();
 expectTypeOf<JsonValue>().toEqualTypeOf<SrcJsonValue>();
+expectTypeOf<WorkspaceCapability>().toEqualTypeOf<SrcWorkspaceCapability>();
+expectTypeOf<WorkspaceStatusSnapshot>().toEqualTypeOf<SrcWorkspaceStatusSnapshot>();
+expectTypeOf<MaestroWorkspaceApi>().toEqualTypeOf<SrcMaestroWorkspaceApi>();
+expectTypeOf<WorkspaceRootCapability>().toEqualTypeOf<SrcWorkspaceRootCapability>();
+expectTypeOf<OmpSafeStartupOptions>().toEqualTypeOf<SrcOmpSafeStartupOptions>();
+expectTypeOf<InteractiveStopReason>().toEqualTypeOf<SrcInteractiveStopReason>();
+expectTypeOf<InteractiveRuntimeHandle>().toEqualTypeOf<SrcInteractiveRuntimeHandle>();
+expectTypeOf<RuntimeEvent>().toEqualTypeOf<SrcRuntimeEvent>();
+expectTypeOf<MaestroInteractiveRuntimeApi>().toEqualTypeOf<SrcMaestroInteractiveRuntimeApi>();
+expectTypeOf<MaestroSdk['interactiveRuntime']>().toEqualTypeOf<
+	MaestroInteractiveRuntimeApi | undefined
+>();
+expectTypeOf<
+	MaestroInteractiveRuntimeApi['requestWorkspaceRoot']
+>().returns.resolves.toEqualTypeOf<WorkspaceRootCapability | null>();
+type ActivationLeaksWorkspaceRoot = 'workspaceRoot' extends keyof MaestroSdk ? true : false;
+expectTypeOf<ActivationLeaksWorkspaceRoot>().toEqualTypeOf<false>();
+expectTypeOf<MaestroInteractivePanelOwnerApi>().toEqualTypeOf<SrcMaestroInteractivePanelOwnerApi>();
+expectTypeOf<MaestroSdk['workspace']>().toEqualTypeOf<MaestroWorkspaceApi | undefined>();
+expectTypeOf<MaestroSdk['interactivePanel']>().toEqualTypeOf<
+	MaestroInteractivePanelOwnerApi | undefined
+>();

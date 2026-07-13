@@ -194,6 +194,23 @@ describe('validatePluginManifest', () => {
 		expect(overlongTitle.errors.join(' ')).toContain('at most 160 Unicode scalars');
 	});
 
+	it('rejects process:interactive unless its manifest permission is scoped exactly to omp', () => {
+		const base = {
+			tier: 2,
+			entry: 'dist/worker.js',
+			permissions: [{ capability: 'process:interactive', scope: 'omp' }],
+		};
+		expect(validatePluginManifest(validManifest(base)).errors).toEqual([]);
+		const invalid = validatePluginManifest(
+			validManifest({
+				...base,
+				permissions: [{ capability: 'process:interactive', scope: 'other' }],
+			})
+		);
+		expect(invalid.manifest).toBeNull();
+		expect(invalid.errors.join(' ')).toContain('scope exactly "omp"');
+	});
+
 	it('preserves legacy panels that do not opt into the closed workspace contract', () => {
 		const result = validatePluginManifest(
 			validManifest({

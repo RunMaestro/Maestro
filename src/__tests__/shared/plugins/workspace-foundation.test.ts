@@ -822,6 +822,34 @@ describe('parseWorkspaceFoundation', () => {
 			errors: ['interactivePanels requires ui:interactivePanel'],
 		});
 	});
+
+	it('allows process:interactive only with its exact omp scope alongside the paired UI permissions', () => {
+		expect(
+			parseWorkspaceFoundation(
+				createRawContributes(),
+				[
+					{ capability: 'ui:workspace' },
+					{ capability: 'ui:interactivePanel' },
+					{ capability: 'process:interactive', scope: 'omp' },
+				],
+				ownerPluginId
+			)
+		).toMatchObject({ ok: true });
+		expect(
+			parseWorkspaceFoundation(
+				createRawContributes(),
+				[
+					{ capability: 'ui:workspace' },
+					{ capability: 'ui:interactivePanel' },
+					{ capability: 'process:interactive', scope: 'other' },
+				],
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['permissions[2].scope must equal "omp" for process:interactive'],
+		});
+	});
 });
 
 describe('parseWorkspaceLink', () => {
