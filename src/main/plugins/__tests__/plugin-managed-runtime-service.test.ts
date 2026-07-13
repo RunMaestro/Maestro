@@ -142,29 +142,33 @@ describe('managed OMP runtime service', () => {
 			workspaceRoot: root,
 			options: { restore: false },
 		});
+		// A fast child can emit ready/response before startOmpRuntime resolves to a
+		// consumer. The first listener receives that bounded queue in wire order.
+		child.stdout.emit('data', '{"event":"ready"}\n{"response":{"ok":true}}\n');
 		const messages: Array<{ sequence: number; value: JsonValue }> = [];
 		handle.onMessage((message) => messages.push(message));
 		handle.onMessage(() => {
 			throw new Error('consumer failure');
 		});
-		child.stdout.emit('data', '{"response":{"ok":true}}\n{"event":"ready"}\n');
+		child.stdout.emit('data', '{"event":"updated"}\n');
 		child.stderr.emit('data', '{"response":"must-not-leak"}\nplain diagnostic\n');
 
 		expect(messages).toEqual([
-			{ sequence: 1, value: { response: { ok: true } } },
-			{ sequence: 2, value: { event: 'ready' } },
+			{ sequence: 1, value: { event: 'ready' } },
+			{ sequence: 2, value: { response: { ok: true } } },
+			{ sequence: 3, value: { event: 'updated' } },
 		]);
-		const firstValue = messages[0]?.value;
-		expect(Object.isFrozen(firstValue)).toBe(true);
+		const responseValue = messages[1]?.value;
+		expect(Object.isFrozen(responseValue)).toBe(true);
 		if (
-			!firstValue ||
-			typeof firstValue !== 'object' ||
-			Array.isArray(firstValue) ||
-			!('response' in firstValue)
+			!responseValue ||
+			typeof responseValue !== 'object' ||
+			Array.isArray(responseValue) ||
+			!('response' in responseValue)
 		) {
 			throw new Error('expected object response frame');
 		}
-		expect(Object.isFrozen(firstValue.response)).toBe(true);
+		expect(Object.isFrozen(responseValue.response)).toBe(true);
 	});
 
 	it('fails closed for malformed or oversized output and revokes an active handle', async () => {

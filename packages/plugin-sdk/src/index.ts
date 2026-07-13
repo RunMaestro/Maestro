@@ -739,11 +739,18 @@ export type RuntimeEvent =
 	| { readonly kind: 'started'; readonly sequence: bigint }
 	| { readonly kind: 'exit'; readonly sequence: bigint; readonly code: number | null }
 	| { readonly kind: 'safe_error'; readonly sequence: bigint; readonly class: PanelErrorCode };
+
+/** A validated, bounded JSON frame emitted by the runtime's stdout data plane. */
+export interface RuntimeMessage {
+	readonly sequence: number;
+	readonly value: JsonValue;
+}
 export interface InteractiveRuntimeHandle {
 	readonly runtimeId: UUID;
 	readonly generation: bigint;
 	writeCanonicalJson(request: JsonValue): Promise<void>;
 	onEvent(listener: (event: RuntimeEvent) => void): () => void;
+	onMessage(listener: (message: RuntimeMessage) => void): () => void;
 	stop(reason: InteractiveStopReason): Promise<void>;
 }
 export interface MaestroInteractiveRuntimeApi {

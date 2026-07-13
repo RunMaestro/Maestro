@@ -38,6 +38,7 @@ import type {
 	InteractiveStopReason,
 	InteractiveRuntimeHandle,
 	RuntimeEvent,
+	RuntimeMessage,
 	MaestroInteractiveRuntimeApi,
 	MaestroSdk,
 } from '../index';
@@ -71,6 +72,7 @@ import type {
 	InteractiveStopReason as SrcInteractiveStopReason,
 	InteractiveRuntimeHandle as SrcInteractiveRuntimeHandle,
 	RuntimeEvent as SrcRuntimeEvent,
+	RuntimeMessage as SrcRuntimeMessage,
 	MaestroInteractiveRuntimeApi as SrcMaestroInteractiveRuntimeApi,
 } from '../../../../src/shared/plugins/interactive-runtime';
 import type {
@@ -101,6 +103,7 @@ expectTypeOf<OmpSafeStartupOptions>().toEqualTypeOf<SrcOmpSafeStartupOptions>();
 expectTypeOf<InteractiveStopReason>().toEqualTypeOf<SrcInteractiveStopReason>();
 expectTypeOf<InteractiveRuntimeHandle>().toEqualTypeOf<SrcInteractiveRuntimeHandle>();
 expectTypeOf<RuntimeEvent>().toEqualTypeOf<SrcRuntimeEvent>();
+expectTypeOf<RuntimeMessage>().toEqualTypeOf<SrcRuntimeMessage>();
 expectTypeOf<MaestroInteractiveRuntimeApi>().toEqualTypeOf<SrcMaestroInteractiveRuntimeApi>();
 expectTypeOf<MaestroSdk['interactiveRuntime']>().toEqualTypeOf<
 	MaestroInteractiveRuntimeApi | undefined

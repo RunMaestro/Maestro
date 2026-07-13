@@ -14,6 +14,8 @@ const MAX_BUFFER_BYTES = 1024 * 1024;
 const MAX_FRAMES_PER_WINDOW = 128;
 const RATE_WINDOW_MS = 1_000;
 const STOP_GRACE_MS = 1_000;
+const MAX_PRE_LISTENER_MESSAGES = 64;
+const MAX_PRE_LISTENER_MESSAGE_BYTES = 256 * 1024;
 
 export interface ManagedRuntimeWritable {
 	write(data: string): boolean;
@@ -74,6 +76,9 @@ export class ManagedRuntimeProcess {
 	private stopping: Promise<void> | undefined;
 	private windowStartedAt = 0;
 	private framesInWindow = 0;
+	private preListenerMessages: RuntimeMessage[] = [];
+	private preListenerMessageBytes = 0;
+	private firstMessageListenerInstalled = false;
 
 	constructor(private readonly options: ManagedRuntimeProcessOptions) {
 		this.now = options.now ?? Date.now;
@@ -98,6 +103,13 @@ export class ManagedRuntimeProcess {
 
 	onMessage(listener: (message: RuntimeMessage) => void): () => void {
 		this.messageListeners.add(listener);
+		if (!this.firstMessageListenerInstalled) {
+			this.firstMessageListenerInstalled = true;
+			const queued = this.preListenerMessages;
+			this.preListenerMessages = [];
+			this.preListenerMessageBytes = 0;
+			for (const message of queued) this.notifyMessage(listener, message);
+		}
 		return () => this.messageListeners.delete(listener);
 	}
 
@@ -124,6 +136,7 @@ export class ManagedRuntimeProcess {
 	}
 
 	stop(_reason: InteractiveStopReason): Promise<void> {
+		this.clearPreListenerMessages();
 		if (this.stopping) return this.stopping;
 		this.stopping = this.stopInternal();
 		return this.stopping;
@@ -224,6 +237,7 @@ export class ManagedRuntimeProcess {
 	private onExit(code: number | null): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.clearPreListenerMessages();
 		this.emit({ kind: 'exit', sequence: this.nextSequence(), code });
 	}
 
@@ -238,13 +252,39 @@ export class ManagedRuntimeProcess {
 	}
 
 	private emitMessage(message: RuntimeMessage): void {
-		for (const listener of this.messageListeners) {
+		if (!this.firstMessageListenerInstalled) {
+			let encodedBytes: number;
 			try {
-				listener(message);
+				encodedBytes = Buffer.byteLength(JSON.stringify(message));
 			} catch {
-				// A consumer cannot crash the runtime process with a callback fault.
+				this.fail('invalid_request');
+				return;
 			}
+			if (
+				this.preListenerMessages.length >= MAX_PRE_LISTENER_MESSAGES ||
+				this.preListenerMessageBytes + encodedBytes > MAX_PRE_LISTENER_MESSAGE_BYTES
+			) {
+				this.fail('backpressure');
+				return;
+			}
+			this.preListenerMessages.push(message);
+			this.preListenerMessageBytes += encodedBytes;
+			return;
 		}
+		for (const listener of this.messageListeners) this.notifyMessage(listener, message);
+	}
+
+	private notifyMessage(listener: (message: RuntimeMessage) => void, message: RuntimeMessage): void {
+		try {
+			listener(message);
+		} catch {
+			// A consumer cannot crash the runtime process with a callback fault.
+		}
+	}
+
+	private clearPreListenerMessages(): void {
+		this.preListenerMessages = [];
+		this.preListenerMessageBytes = 0;
 	}
 
 	private nextSequence(): bigint {
