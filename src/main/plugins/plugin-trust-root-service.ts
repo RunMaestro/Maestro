@@ -25,7 +25,6 @@ interface ManagedInstallState {
 	/** The prior signed artifact is re-verified before it informs an upgrade decision. */
 	artifactBase64: string;
 	trustRootFingerprint: string;
-	owner: InstallOwner;
 }
 
 export interface CapabilityDelta {
@@ -36,7 +35,7 @@ export interface OmpArchiveInstallRequest {
 	archivePath: string;
 	/** SHA-256 published alongside the packaged archive. This is never inferred from settings. */
 	expectedSha256: string;
-	/** Bundles may only create or upgrade an existing bundle-owned installation. */
+	/** Distinguishes bundled bootstrap policy from explicit external installation. */
 	owner: InstallOwner;
 	requestCapabilityConsent?: (delta: CapabilityDelta) => boolean;
 }
@@ -102,7 +101,6 @@ export class OmpPluginTrustRootService {
 		const destinationExists = fs.existsSync(destination);
 
 		if (destinationExists && !state) {
-			if (request.owner === 'bundle') return preserved(manifest, artifactSha256);
 			throw new Error('existing OMP installation is not managed by the immutable OMP trust root');
 		}
 		if (!destinationExists && state) {
@@ -113,7 +111,7 @@ export class OmpPluginTrustRootService {
 				destination,
 				statePath,
 				artifact,
-				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
 			return { action: 'installed', manifest, artifactSha256 };
 		}
@@ -130,9 +128,6 @@ export class OmpPluginTrustRootService {
 			throw new Error('managed OMP installation does not match its verified install state');
 		}
 		if (contentHashForDirectory(destination) !== contentHashForArtifact(previousArtifact)) {
-			if (request.owner === 'bundle' && state.owner !== 'bundle') {
-				throw new Error('externally managed OMP installation bytes do not match its verified signed artifact');
-			}
 			if (artifactSha256 !== state.artifactSha256) {
 				throw new Error('managed OMP installation bytes do not match its verified signed artifact');
 			}
@@ -140,20 +135,19 @@ export class OmpPluginTrustRootService {
 				destination,
 				statePath,
 				artifact,
-				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 			);
 			return { action: 'updated', manifest, artifactSha256 };
 		}
-		if (request.owner === 'bundle' && state.owner !== 'bundle') return preserved(manifest, artifactSha256);
 		if (artifactSha256 === state.artifactSha256) return { action: 'unchanged', manifest, artifactSha256 };
 		if (!semver.valid(manifest.version) || !semver.valid(state.version)) {
 			throw new Error('OMP install state contains an invalid version');
 		}
-		if (semver.lt(manifest.version, state.version)) throw new Error('OMP archive downgrade refused');
-		if (semver.eq(manifest.version, state.version)) throw new Error('OMP archive equivocation detected');
-		if (request.owner === 'bundle' && !semver.gt(manifest.version, state.version)) {
-			return preserved(manifest, artifactSha256);
+		if (semver.lt(manifest.version, state.version)) {
+			if (request.owner === 'bundle') return preserved(manifest, artifactSha256);
+			throw new Error('OMP archive downgrade refused');
 		}
+		if (semver.eq(manifest.version, state.version)) throw new Error('OMP archive equivocation detected');
 
 		const added = capabilityDelta(previousManifest.permissions ?? [], manifest.permissions ?? []);
 		if (added.length > 0 && !request.requestCapabilityConsent?.({ added })) {
@@ -163,7 +157,7 @@ export class OmpPluginTrustRootService {
 			destination,
 			statePath,
 			artifact,
-			managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+			managedState(manifest, archive, artifactSha256, this.trustRootFingerprint)
 		);
 		return { action: 'updated', manifest, artifactSha256 };
 	}
@@ -334,8 +328,7 @@ function managedState(
 	manifest: PluginManifest,
 	archive: Buffer,
 	artifactSha256: string,
-	trustRootFingerprint: string,
-	owner: InstallOwner
+	trustRootFingerprint: string
 ): ManagedInstallState {
 	return {
 		pluginId: OMP_PLUGIN_ID,
@@ -343,7 +336,6 @@ function managedState(
 		artifactSha256,
 		artifactBase64: archive.toString('base64'),
 		trustRootFingerprint,
-		owner,
 	};
 }
 
@@ -402,7 +394,6 @@ function isManagedState(value: unknown): value is ManagedInstallState {
 		typeof state.version === 'string' &&
 		isSha256(state.artifactSha256 ?? '') &&
 		typeof state.artifactBase64 === 'string' &&
-		typeof state.trustRootFingerprint === 'string' &&
-		(state.owner === 'bundle' || state.owner === 'external')
+		typeof state.trustRootFingerprint === 'string'
 	);
 }

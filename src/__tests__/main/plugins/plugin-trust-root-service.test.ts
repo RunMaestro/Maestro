@@ -280,6 +280,31 @@ describe('OmpPluginTrustRootService', () => {
 			'bytes do not match'
 		);
 	});
+
+	it('fails closed without overwriting an unmanaged OMP directory during bootstrap', () => {
+		const destination = path.join(workDir, 'plugins', OMP_PLUGIN_ID);
+		fs.mkdirSync(destination, { recursive: true });
+		fs.writeFileSync(path.join(destination, 'plugin.json'), JSON.stringify(manifest('9.0.0')));
+		fs.writeFileSync(path.join(destination, 'index.js'), 'module.exports = "unmanaged";');
+
+		expect(() => makeService().bootstrapBundledArchive(writeArchive(artifact('1.0.0')))).toThrow(
+			'not managed by the immutable OMP trust root'
+		);
+		expect(fs.readFileSync(path.join(destination, 'index.js'), 'utf8')).toBe(
+			'module.exports = "unmanaged";'
+		);
+	});
+
+	it('does not let mutable ownership metadata suppress a verified bundled upgrade', () => {
+		const service = makeService();
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		const statePath = path.join(workDir, '.maestro-omp-install.json');
+		const state = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
+		state.owner = 'external';
+		fs.writeFileSync(statePath, JSON.stringify(state));
+
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.1.0'))).action).toBe('updated');
+	});
 	it('preserves a user-managed OMP installation during bundled bootstrap', () => {
 		const service = makeService();
 		expect(
