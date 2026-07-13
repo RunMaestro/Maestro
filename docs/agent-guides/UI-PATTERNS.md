@@ -766,6 +766,27 @@ This rule applies to **content containers** sized to wrap text. It does NOT appl
 
 ---
 
+## Exporting Rendered SVG Diagrams (Copy / Save)
+
+Any surface that renders a diagram the user might want to keep should offer the shared right-click menu. Do NOT hand-roll a copy/save affordance.
+
+- **Menu:** `<SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />` (`src/renderer/components/SvgContextMenu.tsx`) - "Copy Image" (rasterized PNG) and "Save Image (SVG)".
+- **State:** `useSvgContextMenu()` (`src/renderer/hooks/ui/useSvgContextMenu.ts`) returns `{ svgMenu, dismissSvgMenu, openSvgMenu, openSvgMenuFromContainer }`.
+- **Export logic:** `serializeSvg()`, `svgToPngDataUrl()`, `copySvgToClipboard()`, `downloadSvg()` in `src/renderer/utils/svgExport.ts`.
+
+Which opener to use depends on how the SVG got into the DOM:
+
+| SVG source                                                     | Opener                                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| React-rendered `<svg>` (agent-authored inline SVG in markdown) | `openSvgMenu(e.currentTarget, e.clientX, e.clientY)` from the element's own `onContextMenu` |
+| Imperatively injected `<svg>` (Mermaid appends into a div)     | `openSvgMenuFromContainer` on the container's `onContextMenu`                               |
+
+The second case is the one that gets missed: an SVG appended with `appendChild` never passes through React's element tree, so a component map override (like the chat markdown `svg:` renderer) will never see it. Hang the handler off the container instead.
+
+`copySvgToClipboard()` returns `'image' | 'markup' | 'failed'` - flash accordingly. A blanket "Copied to Clipboard" is wrong when rasterization fell back to copying markup as text, and silence is wrong when it failed outright.
+
+---
+
 ## Tab System
 
 Each agent supports multiple AI tabs within its workspace. Tab management hooks live in `src/renderer/hooks/tabs/`.
