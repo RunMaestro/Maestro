@@ -596,6 +596,20 @@ describe('parseWorkspaceFoundation', () => {
 		});
 	});
 
+	it('bounds validation for a sparse oversized workspace list', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{ ...rawContributes, workspaces: new Array(100_000) },
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['workspaces must contain exactly one item'],
+		});
+	});
+
 	it('requires exactly one interactive panel', () => {
 		const rawContributes = createRawContributes();
 		expect(
@@ -662,6 +676,36 @@ describe('parseWorkspaceFoundation', () => {
 		).toEqual({
 			ok: false,
 			errors: ['interactivePanels[0].workspaceLocalId must reference workspaces[0].localId'],
+		});
+	});
+
+	it('rejects equal workspace and interactive panel local IDs', () => {
+		const rawContributes = createRawContributes();
+		const localId = 'omp-shared';
+		expect(
+			parseWorkspaceFoundation(
+				{
+					workspaces: [
+						{
+							...rawContributes.workspaces[0],
+							localId,
+							interactivePanelLocalId: localId,
+						},
+					],
+					interactivePanels: [
+						{
+							...rawContributes.interactivePanels[0],
+							localId,
+							workspaceLocalId: localId,
+						},
+					],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['workspaces[0].localId must differ from interactivePanels[0].localId'],
 		});
 	});
 

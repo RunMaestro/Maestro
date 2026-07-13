@@ -127,19 +127,27 @@ function parseFoundation(
 		}
 	}
 
-	const validatedWorkspaces = workspaces
-		? validateWorkspaces(workspaces, addError)
-		: { items: [] as readonly (ValidWorkspace | null)[], complete: false };
-	const validatedPanels = panels
-		? validatePanels(panels, addError)
-		: { items: [] as readonly (ValidPanel | null)[], complete: false };
-
 	if (workspaces && workspaces.length !== 1) {
 		addError('workspaces', 'workspaces must contain exactly one item');
 	}
 	if (panels && panels.length !== 1) {
 		addError('interactivePanels', 'interactivePanels must contain exactly one item');
 	}
+	if (workspaces?.length === 2) {
+		validatePairDuplicateLocalIds(workspaces, 'workspaces', addError);
+	}
+	if (panels?.length === 2) {
+		validatePairDuplicateLocalIds(panels, 'interactivePanels', addError);
+	}
+
+	const validatedWorkspaces =
+		workspaces?.length === 1
+			? validateWorkspaces(workspaces, addError)
+			: { items: [] as readonly (ValidWorkspace | null)[], complete: false };
+	const validatedPanels =
+		panels?.length === 1
+			? validatePanels(panels, addError)
+			: { items: [] as readonly (ValidPanel | null)[], complete: false };
 
 	const capabilities = validatePermissions(rawPermissions, addError);
 	if (capabilities && !capabilities.has(REQUIRED_CAPABILITIES[0])) {
@@ -169,6 +177,12 @@ function parseFoundation(
 			addError(
 				'interactivePanels[0].workspaceLocalId',
 				'interactivePanels[0].workspaceLocalId must reference workspaces[0].localId'
+			);
+		}
+		if (workspace.localId === panel.localId) {
+			addError(
+				'workspaces[0].localId',
+				'workspaces[0].localId must differ from interactivePanels[0].localId'
 			);
 		}
 	}
@@ -220,12 +234,25 @@ function validateOwnerPluginId(
 	return ownerPluginId;
 }
 
+function validatePairDuplicateLocalIds(
+	items: readonly unknown[],
+	listName: 'workspaces' | 'interactivePanels',
+	addError: (path: string, message: string) => void
+): void {
+	const first = items[0];
+	const second = items[1];
+	const firstLocalId = isPlainObject(first) ? readDataProperty(first, 'localId') : undefined;
+	const secondLocalId = isPlainObject(second) ? readDataProperty(second, 'localId') : undefined;
+	if (typeof firstLocalId === 'string' && firstLocalId === secondLocalId) {
+		addError(`${listName}[1].localId`, `${listName}[1].localId duplicates ${listName}[0].localId`);
+	}
+}
+
 function validateWorkspaces(
 	workspaces: readonly unknown[],
 	addError: (path: string, message: string) => void
 ): { readonly items: readonly (ValidWorkspace | null)[]; readonly complete: boolean } {
 	const items: (ValidWorkspace | null)[] = [];
-	const firstIndexes = new Map<string, number>();
 	let complete = true;
 
 	for (let index = 0; index < workspaces.length; index += 1) {
@@ -258,13 +285,6 @@ function validateWorkspaces(
 		} else if (!LOCAL_ID_PATTERN.test(localId)) {
 			addError(`${path}.localId`, `${path}.localId must be a valid local ID`);
 			valid = false;
-		} else {
-			const firstIndex = firstIndexes.get(localId);
-			if (firstIndex === undefined) {
-				firstIndexes.set(localId, index);
-			} else {
-				addError(`${path}.localId`, `${path}.localId duplicates workspaces[${firstIndex}].localId`);
-			}
 		}
 		if (typeof title !== 'string') {
 			addError(`${path}.title`, `${path}.title must be a string`);
@@ -321,7 +341,6 @@ function validatePanels(
 	addError: (path: string, message: string) => void
 ): { readonly items: readonly (ValidPanel | null)[]; readonly complete: boolean } {
 	const items: (ValidPanel | null)[] = [];
-	const firstIndexes = new Map<string, number>();
 	let complete = true;
 
 	for (let index = 0; index < panels.length; index += 1) {
@@ -347,16 +366,6 @@ function validatePanels(
 		} else if (!LOCAL_ID_PATTERN.test(localId)) {
 			addError(`${path}.localId`, `${path}.localId must be a valid local ID`);
 			valid = false;
-		} else {
-			const firstIndex = firstIndexes.get(localId);
-			if (firstIndex === undefined) {
-				firstIndexes.set(localId, index);
-			} else {
-				addError(
-					`${path}.localId`,
-					`${path}.localId duplicates interactivePanels[${firstIndex}].localId`
-				);
-			}
 		}
 		if (typeof title !== 'string') {
 			addError(`${path}.title`, `${path}.title must be a string`);
@@ -464,8 +473,8 @@ function isSafeRelativeEntry(entry: string): boolean {
 	return !segments.includes('..') && !segments.includes('.') && !segments.includes('');
 }
 
-function sortErrors(errors: readonly ErrorEntry[]): readonly string[] {
-	return [...errors]
+function sortErrors(errors: ErrorEntry[]): readonly string[] {
+	return errors
 		.sort((left, right) => {
 			if (left.path < right.path) return -1;
 			if (left.path > right.path) return 1;
