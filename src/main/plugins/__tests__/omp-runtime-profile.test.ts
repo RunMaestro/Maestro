@@ -25,7 +25,7 @@ describe('OMP sterile launch profile', () => {
 		const profile = new OmpRuntimeProfileService({
 			stateRoot: root,
 			model: 'maestro/approved-model',
-			authEnvironment: { MAESTRO_OMP_TOKEN: 'host-issued' },
+			authEnvironment: { ANTHROPIC_API_KEY: 'test-anthropic-key-12345' },
 		});
 
 		const launch = await profile.prepareForLaunch();
@@ -45,7 +45,7 @@ describe('OMP sterile launch profile', () => {
 			PI_NO_PTY: '1',
 			PI_NO_TITLE: '1',
 			PI_NOTIFICATIONS: 'off',
-			MAESTRO_OMP_TOKEN: 'host-issued',
+			ANTHROPIC_API_KEY: 'test-anthropic-key-12345',
 		});
 	});
 
@@ -62,18 +62,23 @@ describe('OMP sterile launch profile', () => {
 		}
 	});
 
-	it('rejects a modified config or a forbidden inherited discovery environment key', async () => {
+	it('rejects profile mutations, discovery environment keys, and non-provider auth variables', async () => {
 		const root = await stateRoot();
 		const profile = new OmpRuntimeProfileService({ stateRoot: root });
 		const launch = await profile.prepareForLaunch();
 		await fs.writeFile(launch.config, 'extensions: ["C:/Users/attacker/extension.js"]\n');
 		await expect(profile.prepareForLaunch()).rejects.toThrow('unapproved discovery state');
 
-		expect(
-			() => new OmpRuntimeProfileService({ authEnvironment: { HOME: 'C:/attacker' } })
-		).not.toThrow();
-		await expect(
-			new OmpRuntimeProfileService({ authEnvironment: { HOME: 'C:/attacker' } }).prepareForLaunch()
-		).rejects.toThrow('auth environment is not allowlisted');
+		const rejectedAuthEnvironments: readonly Readonly<Record<string, string>>[] = [
+			{ HOME: 'C:/attacker' },
+			{ MAESTRO_OMP_TOKEN: 'host-issued' },
+			{ AWS_SECRET_ACCESS_KEY: 'never-forward-this' },
+			{ ANTHROPIC_API_KEY_EXTRA: 'test-anthropic-key-12345' },
+		];
+		for (const authEnvironment of rejectedAuthEnvironments) {
+			await expect(
+				new OmpRuntimeProfileService({ authEnvironment }).prepareForLaunch()
+			).rejects.toThrow('auth environment is not allowlisted');
+		}
 	});
 });
