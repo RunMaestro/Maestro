@@ -108,10 +108,10 @@ function memoryHandle(
 }
 
 function toolFilesystem(contents = new Map<string, string>()): OmpToolFilesystem {
+	const directories = new Set([testWorkspace, path.join(testWorkspace, 'docs')]);
 	return {
 		lstat: async (value) => {
-			if (value === testWorkspace) return pathStat('directory', 1);
-			if (value === path.join(testWorkspace, 'docs')) return pathStat('directory', 2);
+			if (directories.has(value)) return pathStat('directory', value.length);
 			const content = contents.get(value);
 			if (content === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
 			return pathStat('file', value.length + 10, Buffer.byteLength(content));
@@ -123,6 +123,25 @@ function toolFilesystem(contents = new Map<string, string>()): OmpToolFilesystem
 			return memoryHandle(Buffer.from(current), value.length + 10, {
 				onClose: (content) => contents.set(value, content.toString()),
 			});
+		},
+		readdir: async (directory) => {
+			const prefix = `${directory}${path.sep}`;
+			return [...directories, ...contents.keys()]
+				.filter((entry) => entry.startsWith(prefix))
+				.map((entry) => entry.slice(prefix.length))
+				.filter((entry) => !entry.includes(path.sep));
+		},
+		mkdir: async (directory) => {
+			directories.add(directory);
+		},
+		rename: async (source, target) => {
+			const content = contents.get(source);
+			if (content === undefined || contents.has(target)) throw new Error('invalid move');
+			contents.delete(source);
+			contents.set(target, content);
+		},
+		unlink: async (value) => {
+			if (!contents.delete(value)) throw new Error('missing');
 		},
 	};
 }
@@ -168,6 +187,47 @@ describe('OMP host safety brokers', () => {
 		).resolves.toEqual({ phase: 'completed' });
 		expect(files.get(path.join(testWorkspace, 'docs', 'a.txt'))).toBe('updated');
 		await expect(broker.invoke('bash', { command: 'whoami' })).rejects.toThrow('unavailable');
+	});
+
+	it('executes the closed root-bound list, search, stat, mkdir, move, and delete tools', async () => {
+		const source = path.join(testWorkspace, 'docs', 'a.txt');
+		const moved = path.join(testWorkspace, 'docs', 'renamed.txt');
+		const content = ['first', 'needle here', 'needle again'].join('\n');
+		const { broker, files } = await toolBroker(new Map([[source, content]]));
+
+		await expect(broker.invoke('maestro.workspace.list', { path: 'docs' })).resolves.toEqual({
+			entries: ['a.txt'],
+		});
+		await expect(
+			broker.invoke('maestro.workspace.search', { path: 'docs/a.txt', query: 'needle' })
+		).resolves.toEqual({
+			matches: [
+				{ line: 2, text: 'needle here' },
+				{ line: 3, text: 'needle again' },
+			],
+		});
+		await expect(broker.invoke('maestro.workspace.stat', { path: 'docs/a.txt' })).resolves.toEqual({
+			stat: { kind: 'file', size: Buffer.byteLength(content) },
+		});
+		await expect(
+			broker.invoke('maestro.workspace.mkdir', { path: 'docs/new-dir' })
+		).resolves.toEqual({
+			phase: 'completed',
+		});
+		await expect(
+			broker.invoke('maestro.workspace.move', { path: 'docs/a.txt', target: 'docs/renamed.txt' })
+		).resolves.toEqual({ phase: 'completed' });
+		expect(files.has(source)).toBe(false);
+		expect(files.get(moved)).toBe(content);
+		await expect(
+			broker.invoke('maestro.workspace.delete', { path: 'docs/renamed.txt' })
+		).resolves.toEqual({
+			phase: 'completed',
+		});
+		expect(files.has(moved)).toBe(false);
+		await expect(
+			broker.invoke('maestro.workspace.search', { path: 'docs/renamed.txt', query: 'needle' })
+		).rejects.toThrow('unavailable');
 	});
 
 	it('rejects a concurrent call and rejects the pending call once after revocation', async () => {

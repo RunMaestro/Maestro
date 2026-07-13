@@ -17,8 +17,14 @@ const BASH_OUTPUT_BYTES = 1024 * 1024;
 
 export const OMP_WORKSPACE_TOOLS = [
 	'maestro.workspace.read',
+	'maestro.workspace.list',
+	'maestro.workspace.search',
+	'maestro.workspace.stat',
 	'maestro.workspace.write',
 	'maestro.workspace.edit',
+	'maestro.workspace.mkdir',
+	'maestro.workspace.move',
+	'maestro.workspace.delete',
 ] as const;
 
 export type OmpWorkspaceToolName = (typeof OMP_WORKSPACE_TOOLS)[number];
@@ -53,6 +59,10 @@ export interface OmpToolFilesystem {
 	readonly lstat: (value: string) => Promise<OmpPathStat>;
 	readonly realpath: (value: string) => Promise<string>;
 	readonly openExistingNoFollow: (value: string, writable: boolean) => Promise<OmpToolFileHandle>;
+	readonly readdir?: (value: string) => Promise<readonly string[]>;
+	readonly mkdir?: (value: string) => Promise<void>;
+	readonly rename?: (source: string, target: string) => Promise<void>;
+	readonly unlink?: (value: string) => Promise<void>;
 }
 
 interface PathAuthorityEntry {
@@ -100,6 +110,7 @@ async function writeAll(file: OmpToolFileHandle, content: Buffer): Promise<void>
 export interface OmpToolApprovalRequest {
 	readonly tool: OmpWorkspaceToolName;
 	readonly path: string;
+	readonly target?: string;
 }
 
 export interface OmpRootToolPolicyBrokerDeps {
@@ -112,7 +123,17 @@ export interface OmpRootToolPolicyBrokerDeps {
 	readonly clock?: () => number;
 }
 
-export type OmpWorkspaceToolResult = { readonly text: string } | { readonly phase: 'completed' };
+export type OmpWorkspaceToolResult =
+	| { readonly text: string }
+	| { readonly phase: 'completed' }
+	| { readonly entries: readonly string[] }
+	| { readonly matches: readonly { readonly line: number; readonly text: string }[] }
+	| {
+			readonly stat: {
+				readonly kind: 'file' | 'directory';
+				readonly size: number;
+			};
+	  };
 
 /**
  * A root-constrained, closed tool broker. Its public request format contains a
@@ -144,7 +165,15 @@ export class OmpRootToolPolicyBroker {
 		this.inFlight = true;
 		this.activeSignal = signal;
 		try {
-			if (!(await this.deps.approve({ tool, path: request.path }))) throw unavailable();
+			if (
+				!(await this.deps.approve({
+					tool,
+					path: request.path,
+					...(request.target ? { target: request.target } : {}),
+				}))
+			) {
+				throw unavailable();
+			}
 			this.assertCurrent();
 			const root = this.resolveRoot();
 			const absolute = this.resolveRelativePath(root, request.path);
@@ -180,6 +209,43 @@ export class OmpRootToolPolicyBroker {
 			return { text: content.toString('utf8') };
 		}
 
+		if (tool === 'maestro.workspace.list') {
+			const entries = await this.withVerifiedDirectory(root, request.path, absolute, async () => {
+				const list = await this.filesystem.readdir?.(absolute);
+				if (!list || list.length > 10_000 || list.some((entry) => !isSafeDirectoryEntry(entry))) {
+					throw unavailable();
+				}
+				return [...list].sort();
+			});
+			return { entries };
+		}
+
+		if (tool === 'maestro.workspace.stat') {
+			const authority = await this.capturePathAuthority(root, request.path, 'any');
+			this.assertCurrent();
+			const entry = authority.entries.at(-1)?.stat;
+			if (!entry) throw unavailable();
+			return {
+				stat: {
+					kind: entry.isDirectory() ? 'directory' : 'file',
+					size: entry.size,
+				},
+			};
+		}
+
+		if (tool === 'maestro.workspace.search') {
+			const query = request.query;
+			if (query === undefined) throw unavailable();
+			const content = await this.withVerifiedExisting(root, request.path, absolute, false, (file) =>
+				file.readFile()
+			);
+			if (content.byteLength > MAX_TOOL_FILE_BYTES)
+				throw new Error('workspace tool input exceeds limit');
+			const matches = boundedMatches(content.toString('utf8'), query);
+			this.assertCurrent();
+			return { matches };
+		}
+
 		if (tool === 'maestro.workspace.write') {
 			const text = request.text;
 			if (text === undefined) throw unavailable();
@@ -187,6 +253,23 @@ export class OmpRootToolPolicyBroker {
 			if (content.byteLength > MAX_TOOL_INPUT_BYTES)
 				throw new Error('workspace tool input exceeds limit');
 			await this.replaceVerifiedExisting(root, request.path, absolute, async () => content);
+			return { phase: 'completed' };
+		}
+
+		if (tool === 'maestro.workspace.mkdir') {
+			await this.createVerifiedDirectory(root, request.path, absolute);
+			return { phase: 'completed' };
+		}
+
+		if (tool === 'maestro.workspace.move') {
+			const target = request.target;
+			if (target === undefined) throw unavailable();
+			await this.moveVerifiedExisting(root, request.path, absolute, target);
+			return { phase: 'completed' };
+		}
+
+		if (tool === 'maestro.workspace.delete') {
+			await this.deleteVerifiedExisting(root, request.path, absolute);
 			return { phase: 'completed' };
 		}
 
@@ -228,6 +311,98 @@ export class OmpRootToolPolicyBroker {
 		});
 	}
 
+	private async withVerifiedDirectory<T>(
+		root: string,
+		relative: string,
+		absolute: string,
+		operation: () => Promise<T>
+	): Promise<T> {
+		if (!samePath(this.resolveRelativePath(root, relative), absolute)) throw unavailable();
+		const before = await this.capturePathAuthority(root, relative, 'directory');
+		this.assertCurrent();
+		const result = await operation();
+		const after = await this.capturePathAuthority(root, relative, 'directory');
+		if (!samePathAuthority(before, after)) throw unavailable();
+		this.assertCurrent();
+		return result;
+	}
+
+	private async createVerifiedDirectory(
+		root: string,
+		relative: string,
+		absolute: string
+	): Promise<void> {
+		const parent = relative.split(/[\\/]/u).slice(0, -1).join(path.sep);
+		const beforeParent = await this.capturePathAuthority(root, parent, 'directory');
+		let exists = true;
+		try {
+			await this.filesystem.lstat(absolute);
+		} catch {
+			exists = false;
+		}
+		if (exists || !this.filesystem.mkdir) throw unavailable();
+		this.assertCurrent();
+		await this.filesystem.mkdir(absolute);
+		const created = await this.capturePathAuthority(root, relative, 'directory');
+		if (!samePathAuthority(beforeParent, { entries: created.entries.slice(0, -1) })) {
+			throw unavailable();
+		}
+		this.assertCurrent();
+	}
+
+	private async moveVerifiedExisting(
+		root: string,
+		relative: string,
+		absolute: string,
+		target: string
+	): Promise<void> {
+		const source = await this.capturePathAuthority(root, relative, 'file');
+		const targetAbsolute = this.resolveRelativePath(root, target);
+		const targetParent = target.split(/[\\/]/u).slice(0, -1).join(path.sep);
+		const beforeTargetParent = await this.capturePathAuthority(root, targetParent, 'directory');
+		let targetExists = true;
+		try {
+			await this.filesystem.lstat(targetAbsolute);
+		} catch {
+			targetExists = false;
+		}
+		if (targetExists || !this.filesystem.rename) throw unavailable();
+		this.assertCurrent();
+		await this.filesystem.rename(absolute, targetAbsolute);
+		const moved = await this.capturePathAuthority(root, target, 'file');
+		if (
+			!samePathIdentity(
+				source.entries[0]?.stat,
+				moved.entries[0]?.stat ?? source.entries[0]!.stat
+			) ||
+			!samePathAuthority(beforeTargetParent, { entries: moved.entries.slice(0, -1) })
+		) {
+			throw unavailable();
+		}
+		this.assertCurrent();
+	}
+
+	private async deleteVerifiedExisting(
+		root: string,
+		relative: string,
+		absolute: string
+	): Promise<void> {
+		if (!this.filesystem.unlink) throw unavailable();
+		const before = await this.capturePathAuthority(root, relative, 'file');
+		this.assertCurrent();
+		await this.filesystem.unlink(absolute);
+		let exists = true;
+		try {
+			await this.filesystem.lstat(absolute);
+		} catch {
+			exists = false;
+		}
+		const afterRoot = await this.capturePathAuthority(root, '', 'directory');
+		if (exists || !samePathAuthority({ entries: [before.entries[0]!] }, afterRoot)) {
+			throw unavailable();
+		}
+		this.assertCurrent();
+	}
 	/**
 	 * Node has no cross-platform openat-style ancestor descriptor API. Existing
 	 * entries are therefore opened non-destructively, then the handle and every
@@ -267,7 +442,11 @@ export class OmpRootToolPolicyBroker {
 		}
 	}
 
-	private async capturePathAuthority(root: string, relative: string): Promise<PathAuthority> {
+	private async capturePathAuthority(
+		root: string,
+		relative: string,
+		leaf: 'file' | 'directory' | 'any' = 'file'
+	): Promise<PathAuthority> {
 		try {
 			const rootStat = await this.filesystem.lstat(root);
 			if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw unavailable();
@@ -276,15 +455,20 @@ export class OmpRootToolPolicyBroker {
 			const entries: PathAuthorityEntry[] = [
 				{ path: root, canonical: canonicalRoot, stat: rootStat },
 			];
+			if (relative.length === 0) return { entries };
 			let current = root;
-			for (const [index, segment] of relative.split(/[\\/]/u).entries()) {
+			const segments = relative.split(/[\\/]/u);
+			for (const [index, segment] of segments.entries()) {
 				if (!segment) throw unavailable();
 				current = path.join(current, segment);
 				const stat = await this.filesystem.lstat(current);
+				const final = index === segments.length - 1;
 				if (
 					stat.isSymbolicLink() ||
-					(index < relative.split(/[\\/]/u).length - 1 && !stat.isDirectory()) ||
-					(index === relative.split(/[\\/]/u).length - 1 && !stat.isFile())
+					(!final && !stat.isDirectory()) ||
+					(final && leaf === 'file' && !stat.isFile()) ||
+					(final && leaf === 'directory' && !stat.isDirectory()) ||
+					(final && leaf === 'any' && !stat.isDirectory() && !stat.isFile())
 				) {
 					throw unavailable();
 				}
@@ -594,7 +778,53 @@ export class OmpNativeExportBroker {
 /** A stable, closed tool definition that exposes neither root capability nor host path. */
 export interface OmpSandboxToolDefinition {
 	readonly name: OmpWorkspaceToolName;
+	readonly description: string;
+	readonly parameters: Readonly<Record<string, unknown>>;
 }
+
+const OMP_WORKSPACE_TOOL_DEFINITIONS: Readonly<
+	Record<OmpWorkspaceToolName, Omit<OmpSandboxToolDefinition, 'name'>>
+> = {
+	'maestro.workspace.read': {
+		description: 'Read one approved workspace file.',
+		parameters: closedPathSchema(['path']),
+	},
+	'maestro.workspace.list': {
+		description: 'List direct entries in one approved workspace directory.',
+		parameters: closedPathSchema(['path']),
+	},
+	'maestro.workspace.search': {
+		description: 'Search one approved workspace file for literal text.',
+		parameters: closedPathSchema(['path', 'query'], { query: { type: 'string', minLength: 1 } }),
+	},
+	'maestro.workspace.stat': {
+		description: 'Read bounded metadata for one approved workspace entry.',
+		parameters: closedPathSchema(['path']),
+	},
+	'maestro.workspace.write': {
+		description: 'Replace the contents of one approved existing workspace file.',
+		parameters: closedPathSchema(['path', 'text'], { text: { type: 'string' } }),
+	},
+	'maestro.workspace.edit': {
+		description: 'Replace one unique literal match in an approved workspace file.',
+		parameters: closedPathSchema(['path', 'expectedText', 'replacement'], {
+			expectedText: { type: 'string' },
+			replacement: { type: 'string' },
+		}),
+	},
+	'maestro.workspace.mkdir': {
+		description: 'Create one approved workspace directory.',
+		parameters: closedPathSchema(['path']),
+	},
+	'maestro.workspace.move': {
+		description: 'Move one approved workspace file to an approved new path.',
+		parameters: closedPathSchema(['path', 'target'], { target: { type: 'string' } }),
+	},
+	'maestro.workspace.delete': {
+		description: 'Delete one approved workspace file.',
+		parameters: closedPathSchema(['path']),
+	},
+};
 
 export interface OmpSandboxToolCall {
 	readonly id: string;
@@ -661,7 +891,9 @@ export function createOmpSandboxHostHandlers(
 	const exportBroker = new OmpNativeExportBroker(deps.export);
 	const activeTools = new Map<string, AbortController>();
 	const toolDefinitions = Object.freeze(
-		OMP_WORKSPACE_TOOLS.map((name) => Object.freeze({ name }))
+		OMP_WORKSPACE_TOOLS.map((name) =>
+			Object.freeze({ name, ...OMP_WORKSPACE_TOOL_DEFINITIONS[name] })
+		)
 	) as readonly OmpSandboxToolDefinition[];
 	const providerList = Object.freeze(
 		authRouter.providerIds().map((id) => Object.freeze({ id }))
@@ -739,6 +971,8 @@ interface ParsedWorkspaceToolRequest {
 	readonly text?: string;
 	readonly expectedText?: string;
 	readonly replacement?: string;
+	readonly query?: string;
+	readonly target?: string;
 }
 
 function parseWorkspaceToolRequest(
@@ -747,18 +981,38 @@ function parseWorkspaceToolRequest(
 ): ParsedWorkspaceToolRequest {
 	if (!isPlainObject(params)) throw unavailable();
 	const allowed =
-		tool === 'maestro.workspace.read'
-			? ['path']
-			: tool === 'maestro.workspace.write'
-				? ['path', 'text']
-				: ['path', 'expectedText', 'replacement'];
+		tool === 'maestro.workspace.write'
+			? ['path', 'text']
+			: tool === 'maestro.workspace.edit'
+				? ['path', 'expectedText', 'replacement']
+				: tool === 'maestro.workspace.search'
+					? ['path', 'query']
+					: tool === 'maestro.workspace.move'
+						? ['path', 'target']
+						: ['path'];
 	if (Object.keys(params).some((key) => !allowed.includes(key))) throw unavailable();
 	const relative = params.path;
 	if (!isSafeRelativePath(relative)) throw unavailable();
-	if (tool === 'maestro.workspace.read') return { path: relative };
+	if (
+		tool === 'maestro.workspace.read' ||
+		tool === 'maestro.workspace.list' ||
+		tool === 'maestro.workspace.stat' ||
+		tool === 'maestro.workspace.mkdir' ||
+		tool === 'maestro.workspace.delete'
+	) {
+		return { path: relative };
+	}
 	if (tool === 'maestro.workspace.write') {
 		if (!isBoundedText(params.text)) throw unavailable();
 		return { path: relative, text: params.text };
+	}
+	if (tool === 'maestro.workspace.search') {
+		if (!isBoundedText(params.query) || params.query.length === 0) throw unavailable();
+		return { path: relative, query: params.query };
+	}
+	if (tool === 'maestro.workspace.move') {
+		if (!isSafeRelativePath(params.target) || params.target === relative) throw unavailable();
+		return { path: relative, target: params.target };
 	}
 	if (!isBoundedText(params.expectedText) || !isBoundedText(params.replacement))
 		throw unavailable();
@@ -777,6 +1031,45 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isBoundedText(value: unknown): value is string {
 	return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= MAX_TOOL_INPUT_BYTES;
+}
+
+function isSafeDirectoryEntry(value: string): boolean {
+	return (
+		value.length > 0 &&
+		value.length <= 255 &&
+		!value.includes('\0') &&
+		!value.includes('/') &&
+		!value.includes('\\') &&
+		value !== '.' &&
+		value !== '..'
+	);
+}
+
+function closedPathSchema(
+	required: readonly string[],
+	extra: Readonly<Record<string, unknown>> = {}
+): Readonly<Record<string, unknown>> {
+	return Object.freeze({
+		type: 'object',
+		additionalProperties: false,
+		required: Object.freeze([...required]),
+		properties: Object.freeze({
+			path: Object.freeze({ type: 'string', minLength: 1, maxLength: 4096 }),
+			...extra,
+		}),
+	});
+}
+
+function boundedMatches(
+	source: string,
+	query: string
+): readonly { readonly line: number; readonly text: string }[] {
+	const matches: { line: number; text: string }[] = [];
+	for (const [index, line] of source.split(/\r?\n/u).entries()) {
+		if (line.includes(query)) matches.push({ line: index + 1, text: line });
+		if (matches.length >= 1_000) break;
+	}
+	return matches;
 }
 
 function isSafeRelativePath(value: unknown): value is string {
@@ -911,6 +1204,12 @@ const defaultToolFilesystem: OmpToolFilesystem = {
 			value,
 			(writable ? fs.constants.O_RDWR : fs.constants.O_RDONLY) | fs.constants.O_NOFOLLOW
 		),
+	readdir: fs.readdir,
+	mkdir: async (value) => {
+		await fs.mkdir(value);
+	},
+	rename: fs.rename,
+	unlink: fs.unlink,
 };
 
 const defaultExportFilesystem: OmpExportFilesystem = {

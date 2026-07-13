@@ -24,6 +24,7 @@ import {
 	type RuntimeActivationContext,
 } from './native-workspace-root-service';
 import type { OmpSandboxHostHandlerSeam } from './omp-host-safety-brokers';
+import { OmpRuntimeProfileService, type OmpRuntimeProfile } from './omp-runtime-profile';
 
 /** The runtime service owns only teardown of this injected host safety seam. */
 export type OmpManagedRuntimeSandboxHandlers = Pick<OmpSandboxHostHandlerSeam, 'revoke'>;
@@ -78,6 +79,8 @@ export interface PluginManagedRuntimeServiceDependencies {
 	readonly stopGraceMs?: number;
 	/** Injected by bootstrap; lifecycle authority stays with the managed runtime owner. */
 	readonly ompSandboxHandlers?: OmpManagedRuntimeSandboxHandlers;
+	/** Host-owned sterile cwd/profile authority. Never receives a workspace path. */
+	readonly profile?: OmpRuntimeProfileService;
 }
 
 /**
@@ -91,11 +94,13 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 	private readonly spawn: ManagedRuntimeSpawner;
 	private readonly killTree: ProcessTreeKiller;
 	private readonly runtimeId: () => UUID;
+	private readonly profile: OmpRuntimeProfileService;
 
 	constructor(private readonly deps: PluginManagedRuntimeServiceDependencies) {
 		this.spawn = deps.spawn ?? defaultSpawn;
 		this.killTree = deps.killTree ?? defaultProcessTreeKiller;
 		this.runtimeId = deps.runtimeId ?? defaultRuntimeId;
+		this.profile = deps.profile ?? new OmpRuntimeProfileService();
 	}
 
 	requestWorkspaceRoot(): Promise<WorkspaceRootCapability | null> {
@@ -121,11 +126,7 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		) {
 			throw new Error('workspace root capability is unavailable');
 		}
-		const currentRoot = this.deps.roots.resolveCurrent(
-			input.workspaceRoot,
-			current.ownerPluginId,
-			current.generation
-		);
+		this.deps.roots.resolveCurrent(input.workspaceRoot, current.ownerPluginId, current.generation);
 		const key = activeKey(current.ownerPluginId, current.generation);
 		if (this.active.has(key)) throw new Error('interactive runtime is already active');
 
@@ -133,9 +134,22 @@ export class PluginManagedRuntimeService implements MaestroInteractiveRuntimeApi
 		if (!isSameAuthenticatedRuntime(executable, launchRuntime)) {
 			throw new Error('authenticated Bun or OMP CLI changed before runtime launch');
 		}
+		const profile = await this.profile.prepareForLaunch();
+		const launchActivation = this.requireAuthorizedActivation();
+		if (
+			launchActivation.ownerPluginId !== current.ownerPluginId ||
+			launchActivation.generation !== current.generation
+		) {
+			throw new Error('workspace root capability is unavailable');
+		}
+		this.deps.roots.resolveCurrent(
+			input.workspaceRoot,
+			launchActivation.ownerPluginId,
+			launchActivation.generation
+		);
 		const runtimeId = this.runtimeId();
 		assertRuntimeId(runtimeId);
-		const child = this.spawn(launchFor(launchRuntime, currentRoot));
+		const child = this.spawn(launchFor(launchRuntime, profile));
 		const process = new ManagedRuntimeProcess({
 			child,
 			killTree: this.killTree,
@@ -258,13 +272,36 @@ function assertVerifiedRuntime(value: VerifiedRuntimeLaunch): VerifiedRuntimeLau
 	return value;
 }
 
-function launchFor(runtime: VerifiedRuntimeLaunch, root: string): ManagedRuntimeLaunch {
+function launchFor(
+	runtime: VerifiedRuntimeLaunch,
+	profile: OmpRuntimeProfile
+): ManagedRuntimeLaunch {
 	const stdio: ['pipe', 'pipe', 'pipe'] = ['pipe', 'pipe', 'pipe'];
 	return Object.freeze({
 		command: runtime.executablePath,
-		args: [...runtime.prefixArgs, '--mode', 'rpc', '--cwd', root],
-		cwd: root,
-		env: Object.freeze({}),
+		args: [
+			...runtime.prefixArgs,
+			'--mode',
+			'rpc',
+			'--profile',
+			profile.profile,
+			'--cwd',
+			profile.sterileCwd,
+			'--config',
+			profile.config,
+			'--no-session',
+			'--no-tools',
+			'--no-extensions',
+			'--no-skills',
+			'--no-rules',
+			'--no-lsp',
+			'--no-pty',
+			'--no-title',
+			'--model',
+			profile.model,
+		],
+		cwd: profile.sterileCwd,
+		env: profile.env,
 		shell: false,
 		stdio,
 	});

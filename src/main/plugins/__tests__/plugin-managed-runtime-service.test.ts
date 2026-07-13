@@ -128,7 +128,7 @@ describe('managed OMP runtime service', () => {
 		expect(Object.isFrozen(root as object)).toBe(true);
 	});
 
-	it('starts only through authenticated Bun with the OMP CLI as the explicit first argument', async () => {
+	it('starts in a host-owned sterile RPC profile with only OMP built-ins disabled', async () => {
 		const roots = rootService();
 		const root = (await roots.requestWorkspaceRoot()) as WorkspaceRootCapability;
 		const { service, launch } = buildService(roots);
@@ -141,13 +141,40 @@ describe('managed OMP runtime service', () => {
 			runtimeId: '00000000-0000-4000-8000-000000000001',
 			generation: 7n,
 		});
-		expect(launch()).toEqual({
+		const spawned = launch();
+		expect(spawned).toMatchObject({
 			command: '/bin/bun',
-			args: ['/bin/omp', '--mode', 'rpc', '--cwd', '/workspace'],
-			cwd: '/workspace',
-			env: {},
+			cwd: expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]cwd$/u),
 			shell: false,
 			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+		expect(spawned?.cwd).not.toBe('/workspace');
+		expect(spawned?.args).toEqual([
+			'/bin/omp',
+			'--mode',
+			'rpc',
+			'--profile',
+			expect.stringMatching(/maestro-omp-16\.4\.8-.+[\\/]profile$/u),
+			'--cwd',
+			spawned?.cwd,
+			'--config',
+			expect.stringMatching(/maestro-omp\.yaml$/u),
+			'--no-session',
+			'--no-tools',
+			'--no-extensions',
+			'--no-skills',
+			'--no-rules',
+			'--no-lsp',
+			'--no-pty',
+			'--no-title',
+			'--model',
+			'maestro-approved',
+		]);
+		expect(spawned?.env).toEqual({
+			OMP_PROFILE: spawned?.args[4],
+			PI_NO_PTY: '1',
+			PI_NO_TITLE: '1',
+			PI_NOTIFICATIONS: 'off',
 		});
 	});
 

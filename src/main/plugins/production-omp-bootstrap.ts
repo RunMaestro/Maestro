@@ -15,6 +15,7 @@ import { OmpPluginTrustRootService } from './plugin-trust-root-service';
 import type { InstallResult, PluginExecutionSnapshot } from './plugin-manager';
 import type { ManagedRuntimeResolver } from './plugin-managed-runtime-service';
 import { PluginManagedRuntimeService } from './plugin-managed-runtime-service';
+import { OmpRuntimeProfileService } from './omp-runtime-profile';
 import type {
 	NativeWorkspaceRootFilesystem,
 	NativeWorkspaceRootServiceDeps,
@@ -50,6 +51,8 @@ export interface ProductionOmpBootstrapInput {
 	readonly activation: NativeWorkspaceRootServiceDeps['activation'];
 	readonly chooseDirectory: NativeWorkspaceRootServiceDeps['chooseDirectory'];
 	readonly filesystem?: NativeWorkspaceRootFilesystem;
+	/** App-owned sterile OMP launch profile; defaults to a new host-owned profile service. */
+	readonly ompRuntimeProfile?: OmpRuntimeProfileService;
 }
 
 /** Immutable release/trust inputs compiled into a production host. */
@@ -101,6 +104,7 @@ export function createProductionOmpBootstrap(
 	const managedRuntime = new PluginManagedRuntimeService({
 		activation: input.activation,
 		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
+		...(input.ompRuntimeProfile ? { profile: input.ompRuntimeProfile } : {}),
 		roots: workspaceRoots,
 		runtime: runtimeResolver,
 	});
