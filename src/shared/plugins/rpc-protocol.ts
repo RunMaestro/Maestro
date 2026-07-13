@@ -77,6 +77,7 @@ export const HOST_API = {
 	'interactivePanel.resolve': { capability: 'ui:interactivePanel' },
 	'interactivePanel.reject': { capability: 'ui:interactivePanel' },
 	'interactivePanel.emit': { capability: 'ui:interactivePanel' },
+	'interactivePanel.consumeResource': { capability: 'ui:interactivePanel' },
 	'interactiveRuntime.requestWorkspaceRoot': { capability: 'process:interactive' },
 	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
 	'interactiveRuntime.write': { capability: 'process:interactive' },

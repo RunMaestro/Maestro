@@ -24,6 +24,9 @@ describe('OMP plugin activation', () => {
 				resolve: async () => undefined,
 				reject: async () => undefined,
 				emit: async () => undefined,
+				consumeResource: async () => {
+					throw new Error('unreachable');
+				},
 			},
 			workspace: {
 				publishExternalSessions: async () => undefined,
@@ -57,6 +60,9 @@ describe('OMP plugin activation', () => {
 				resolve: async () => undefined,
 				reject: async () => undefined,
 				emit: async () => undefined,
+				consumeResource: async () => {
+					throw new Error('unreachable');
+				},
 			},
 			workspace: {
 				publishExternalSessions: async () => undefined,
@@ -81,6 +87,9 @@ describe('OMP plugin activation', () => {
 				resolve: async () => undefined,
 				reject: async () => undefined,
 				emit: async () => undefined,
+				consumeResource: async () => {
+					throw new Error('unreachable');
+				},
 			},
 			workspace: {
 				publishExternalSessions: async () => undefined,
@@ -98,6 +107,14 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 	const sessions: Array<readonly unknown[]> = [];
 	const statuses: Array<{ state: string; label: string }> = [];
 	const panels: Array<{ kind: string; payload: unknown }> = [];
+	let receivePanelRequest:
+		| ((request: { kind: string; requestId: string; payload: Record<string, unknown> }) => void)
+		| undefined;
+	let resolvePanelRequest: (() => void) | undefined;
+	const panelRequestHandled = new Promise<void>((resolve) => {
+		resolvePanelRequest = resolve;
+	});
+	const consumedBytes = new Uint8Array([97, 98, 99]);
 	let emit: ((event: unknown) => void) | undefined;
 	let messageSequence = 0;
 	let resolveMessageSubscription!: () => void;
@@ -154,6 +171,14 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 							data: { models: [] },
 						});
 					}
+					if (frame.type === 'prompt') {
+						emitLine({
+							type: 'response',
+							id: frame.id,
+							command: 'prompt',
+							success: true,
+						});
+					}
 					if (frame.type === 'set_host_tools' || frame.type === 'set_host_uri_schemes') {
 						emitLine({
 							type: 'response',
@@ -187,11 +212,27 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 			}),
 		},
 		interactivePanel: {
-			onRequest: () => () => undefined,
-			resolve: async () => undefined,
+			onRequest: (listener) => {
+				receivePanelRequest = listener as typeof receivePanelRequest;
+				return () => undefined;
+			},
+			resolve: async () => {
+				resolvePanelRequest?.();
+			},
 			reject: async () => undefined,
 			emit: async (kind, payload) => {
 				panels.push({ kind, payload });
+			},
+			consumeResource: async (ref) => {
+				expect(ref).toBe('a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8');
+				return {
+					ref,
+					name: 'image.png',
+					mediaType: 'image/png',
+					size: 3,
+					sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+					bytes: consumedBytes,
+				};
 			},
 		},
 		workspace: {
@@ -209,6 +250,29 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 	await messageSubscription;
 	await expect(starting).resolves.toBe(true);
 	expect(messageSequence).toBe(6);
+	receivePanelRequest?.({
+		kind: 'omp.prompt.send',
+		requestId: 'panel-request-1',
+		payload: {
+			sessionId: 'session-1',
+			text: 'inspect image',
+			attachments: [
+				{
+					ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+					name: 'image.png',
+					mediaType: 'image/png',
+					size: 3,
+					sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+				},
+			],
+		},
+	});
+	await panelRequestHandled;
+	expect(writes.find((frame) => frame.type === 'prompt')).toMatchObject({
+		message: 'inspect image',
+		images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
+	});
+	expect(consumedBytes).toEqual(new Uint8Array([0, 0, 0]));
 
 	expect(writes.map((frame) => frame.type)).toEqual(
 		expect.arrayContaining([

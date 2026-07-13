@@ -15,9 +15,18 @@ export interface OmpPanelEvent {
 	readonly payload: unknown;
 }
 
+export interface OmpPanelResourceRef {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+}
+
 /** The panel's generation-capability-bound API; it never exposes raw runtime frames. */
 export interface OmpPanelPort {
 	request(kind: OmpPanelRequestKind, payload: Record<string, unknown>): Promise<OmpPanelResult>;
+	stageResource(name: string, mediaType: string, bytes: Uint8Array): Promise<unknown>;
 	subscribe(kind: OmpPanelEventKind, listener: (event: OmpPanelEvent) => void): () => void;
 }
 
@@ -68,8 +77,8 @@ export function createOmpPanelControllerAdapter(port: OmpPanelPort): OmpPanelCon
 	};
 }
 
-const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
-const MAX_ATTACHMENT_WIRE_BYTES = 512 * 1024;
+const MAX_ATTACHMENT_BYTES_PER_FILE = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_COUNT = 8;
 const SUPPORTED_IMAGE_MEDIA_TYPES: Record<string, true> = {
 	'image/png': true,
 	'image/jpeg': true,
@@ -122,7 +131,7 @@ export function createOmpWorkspaceAdapter(port: OmpPanelPort): OmpWorkspaceAdapt
 			await controller.request('omp.prompt.send', {
 				sessionId,
 				text,
-				attachments: await encodeAttachments(attachments),
+				attachments: await stageAttachments(port, attachments),
 			});
 		},
 		async abort(sessionId) {
@@ -232,10 +241,12 @@ function updateSession(
 	};
 }
 
-async function encodeAttachments(
+async function stageAttachments(
+	port: OmpPanelPort,
 	attachments: readonly File[]
-): Promise<readonly { name: string; mediaType: string; size: number; dataBase64: string }[]> {
-	let wireBytes = 0;
+): Promise<readonly OmpPanelResourceRef[]> {
+	if (attachments.length > MAX_ATTACHMENT_COUNT)
+		throw new Error('Attachments exceed the file limit.');
 	for (const attachment of attachments) {
 		if (
 			attachment.size < 1 ||
@@ -247,31 +258,39 @@ async function encodeAttachments(
 			throw new Error(
 				`Attachment ${attachment.name || '(unnamed)'} has an unsupported image type.`
 			);
-		wireBytes += attachment.size + Math.ceil(attachment.size / 3) * 4;
-		if (wireBytes > MAX_ATTACHMENT_WIRE_BYTES)
-			throw new Error('Attachments exceed the total size limit.');
+		if (
+			attachment.name.length === 0 ||
+			attachment.name.length > 255 ||
+			attachment.name.includes('/') ||
+			attachment.name.includes('\\') ||
+			[...attachment.name].some((character) => character.charCodeAt(0) < 32)
+		)
+			throw new Error(
+				`Attachment ${attachment.name || '(unnamed)'} has an invalid name or media type.`
+			);
 	}
 	return Promise.all(
 		attachments.map(async (attachment) => {
-			const mediaType = attachment.type;
-			if (
-				attachment.name.length === 0 ||
-				attachment.name.length > 255 ||
-				attachment.name.includes('/') ||
-				attachment.name.includes('\\') ||
-				[...attachment.name].some((character) => character.charCodeAt(0) < 32)
-			)
-				throw new Error(
-					`Attachment ${attachment.name || '(unnamed)'} has an invalid name or media type.`
-				);
-			const dataBase64 = encodeBase64(new Uint8Array(await attachment.arrayBuffer()));
-			return { name: attachment.name, mediaType, size: attachment.size, dataBase64 };
+			const bytes = new Uint8Array(await attachment.arrayBuffer());
+			const staged = await port.stageResource(attachment.name, attachment.type, bytes);
+			if (!isMatchingResourceRef(staged, attachment)) throw new Error('Attachment staging failed.');
+			return staged;
 		})
 	);
 }
 
-function encodeBase64(bytes: Uint8Array): string {
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary);
+function isMatchingResourceRef(value: unknown, attachment: File): value is OmpPanelResourceRef {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const resource = value as Record<string, unknown>;
+	return (
+		typeof resource.ref === 'string' &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			resource.ref
+		) &&
+		resource.name === attachment.name &&
+		resource.mediaType === attachment.type &&
+		resource.size === attachment.size &&
+		typeof resource.sha256 === 'string' &&
+		/^[a-f0-9]{64}$/.test(resource.sha256)
+	);
 }

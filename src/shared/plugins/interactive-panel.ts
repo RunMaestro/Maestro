@@ -69,6 +69,20 @@ export interface PanelError<K extends string> {
 	readonly code: PanelErrorCode;
 }
 
+/** Opaque panel-owned staged resource metadata, safe inside closed JSON envelopes. */
+export interface PanelResourceRef {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+}
+
+/** One-shot owner result; byte content never travels in a panel request envelope. */
+export interface PanelConsumedResource extends PanelResourceRef {
+	readonly bytes: Uint8Array;
+}
+
 /**
  * Owner endpoint injected only for the plugin's mounted declared panel. The
  * host derives owner, contribution, descriptor, and instance from this endpoint;
@@ -79,4 +93,5 @@ export interface MaestroInteractivePanelOwnerApi {
 	resolve(requestId: UUID, kind: string, payload: JsonValue): Promise<void>;
 	reject(requestId: UUID, code: PanelErrorCode): Promise<void>;
 	emit(kind: string, payload: JsonValue, eventSequence: bigint): Promise<void>;
+	consumeResource(ref: string): Promise<PanelConsumedResource>;
 }

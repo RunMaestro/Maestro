@@ -7,6 +7,7 @@ import { pluginPanelPartition, pluginPanelUrl } from '../../../shared/plugins/pa
 export interface InteractivePanelWebviewElement extends HTMLElement {
 	addEventListener(type: string, listener: (event: Event) => void): void;
 	removeEventListener(type: string, listener: (event: Event) => void): void;
+	send(channel: string, ...args: unknown[]): void;
 }
 
 /**

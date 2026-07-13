@@ -10,6 +10,8 @@ import type {
 	PluginWorkspacePanelSubscriptionInput,
 	PluginWorkspacePanelUnsubscribeAllInput,
 	PluginWorkspaceUnmountPanelInput,
+	PluginWorkspacePanelResourceRef,
+	PluginWorkspacePanelStageResourceInput,
 } from '../../shared/plugins/plugin-workspace-bridge';
 
 const SNAPSHOT_CHANGED_CHANNEL = 'plugin-workspaces:changed';
@@ -41,6 +43,10 @@ export function createPluginWorkspacesApi(): PluginWorkspacesApi {
 			ipcRenderer.invoke('plugin-workspaces:unmount-panel', input),
 		panelRequest: (input: PluginWorkspacePanelRequestInput): Promise<void> =>
 			ipcRenderer.invoke('plugin-workspaces:panel-request', input),
+		panelStageResource: (
+			input: PluginWorkspacePanelStageResourceInput
+		): Promise<PluginWorkspacePanelResourceRef> =>
+			ipcRenderer.invoke('plugin-workspaces:panel-stage-resource', input),
 		panelSubscribe: (input: PluginWorkspacePanelSubscriptionInput): Promise<void> =>
 			ipcRenderer.invoke('plugin-workspaces:panel-subscribe', input),
 		panelUnsubscribe: (input: PluginWorkspacePanelSubscriptionInput): Promise<void> =>

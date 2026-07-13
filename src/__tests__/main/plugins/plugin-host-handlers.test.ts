@@ -355,13 +355,21 @@ describe('net.fetch egress + fs.write guarding', () => {
 });
 
 describe('interactive panel owner surface', () => {
-	it('routes closed resolve, reject, and event operations through the owner-bound surface', async () => {
+	it('routes closed resolve, reject, event, and one-shot resource operations through the owner-bound surface', async () => {
 		const resolve = vi.fn(async () => undefined);
 		const reject = vi.fn(async () => undefined);
 		const emit = vi.fn(async () => undefined);
+		const consumeResource = vi.fn(async () => ({
+			ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+			bytes: [1, 2, 3],
+		}));
 		const h = buildHostCallHandlers(
 			makeDeps({
-				interactivePanelSurfaceFor: () => ({ resolve, reject, emit }),
+				interactivePanelSurfaceFor: () => ({ resolve, reject, emit, consumeResource }),
 			})
 		);
 
@@ -379,10 +387,23 @@ describe('interactive panel owner surface', () => {
 			payload: { ready: true },
 			eventSequence: 1n,
 		});
+		await expect(
+			h['interactivePanel.consumeResource']!('p', {
+				ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+			})
+		).resolves.toEqual({
+			ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+			bytes: [1, 2, 3],
+		});
 
 		expect(resolve).toHaveBeenCalledWith('request-capability', 'ping', { ok: true });
 		expect(reject).toHaveBeenCalledWith('request-capability', 'runtime_stopped');
 		expect(emit).toHaveBeenCalledWith('status', { ready: true }, 1n);
+		expect(consumeResource).toHaveBeenCalledWith('a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8');
 	});
 });
 

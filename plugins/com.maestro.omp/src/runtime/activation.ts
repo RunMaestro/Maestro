@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
 	InteractiveRuntimeHandle,
 	JsonValue,
@@ -374,7 +375,7 @@ async function handlePanelRequest(
 			await current.panel.reject(request.requestId, 'runtime_stopped');
 			return;
 		}
-		const outcome = await dispatchPanelRequest(runtime, request);
+		const outcome = await dispatchPanelRequest(current, runtime, request);
 		await projectRuntime(current, runtime);
 		await current.panel.resolve(request.requestId, request.kind, outcome);
 	} catch (error) {
@@ -383,12 +384,13 @@ async function handlePanelRequest(
 }
 
 async function dispatchPanelRequest(
+	current: ActivePlugin,
 	runtime: ActiveRuntime,
 	request: PanelRequest<string, JsonValue>
 ): Promise<JsonValue> {
 	const payload = requireRecord(request.payload);
 	const sessionId = readString(payload, 'sessionId');
-	const command = panelCommand(request.kind, payload, sessionId);
+	const command = await panelCommand(current.panel, request.kind, payload, sessionId);
 	if (command) {
 		const response = await runtime.controller.command(command);
 		if (request.kind === 'omp.commands.refresh') return currentView(runtime);
@@ -436,28 +438,64 @@ async function dispatchPanelRequest(
 	throw new OmpProtocolError(`unknown OMP panel request ${JSON.stringify(request.kind)}`);
 }
 
-function panelCommand(
+async function panelCommand(
+	panel: MaestroInteractivePanelOwnerApi,
 	kind: string,
 	payload: Record<string, JsonValue>,
 	sessionId: string | undefined
-): OmpRpcCommand | undefined {
+): Promise<OmpRpcCommand | undefined> {
 	const text = readString(payload, 'text');
-	const images = toOmpImages(Array.isArray(payload.attachments) ? payload.attachments : undefined);
 	switch (kind) {
 		case 'omp.session.create':
 			return { type: 'new_session' };
 		case 'omp.session.select':
 			return sessionId ? { type: 'switch_session', sessionPath: sessionId } : undefined;
 		case 'omp.prompt.send':
-			return text ? { type: 'prompt', message: text, images } : undefined;
+			return text
+				? {
+						type: 'prompt',
+						message: text,
+						images: await toOmpImages(
+							panel,
+							Array.isArray(payload.attachments) ? payload.attachments : undefined
+						),
+					}
+				: undefined;
 		case 'omp.steer.send':
-			return text ? { type: 'steer', message: text, images } : undefined;
+			return text
+				? {
+						type: 'steer',
+						message: text,
+						images: await toOmpImages(
+							panel,
+							Array.isArray(payload.attachments) ? payload.attachments : undefined
+						),
+					}
+				: undefined;
 		case 'omp.followUp.send':
-			return text ? { type: 'follow_up', message: text, images } : undefined;
+			return text
+				? {
+						type: 'follow_up',
+						message: text,
+						images: await toOmpImages(
+							panel,
+							Array.isArray(payload.attachments) ? payload.attachments : undefined
+						),
+					}
+				: undefined;
 		case 'omp.run.abort':
 			return sessionId ? { type: 'abort' } : undefined;
 		case 'omp.run.abortAndPrompt':
-			return text ? { type: 'abort_and_prompt', message: text, images } : undefined;
+			return text
+				? {
+						type: 'abort_and_prompt',
+						message: text,
+						images: await toOmpImages(
+							panel,
+							Array.isArray(payload.attachments) ? payload.attachments : undefined
+						),
+					}
+				: undefined;
 		case 'omp.session.compact':
 			return { type: 'compact', customInstructions: readString(payload, 'customInstructions') };
 		case 'omp.session.branch':
@@ -611,24 +649,54 @@ function requireRecord(value: JsonValue): Record<string, JsonValue> {
 	return value as Record<string, JsonValue>;
 }
 
-function toOmpImages(
+async function toOmpImages(
+	panel: MaestroInteractivePanelOwnerApi,
 	attachments: readonly JsonValue[] | undefined
-): readonly unknown[] | undefined {
+): Promise<readonly unknown[] | undefined> {
 	if (!attachments) return undefined;
-	return Object.freeze(
-		attachments.map((attachment) => {
-			const value = requireRecord(attachment);
-			const data = readString(value, 'dataBase64');
-			const mimeType = readString(value, 'mediaType');
+	const images: unknown[] = [];
+	for (const attachment of attachments) {
+		const value = requireRecord(attachment);
+		const ref = readString(value, 'ref');
+		const name = readString(value, 'name');
+		const mediaType = readString(value, 'mediaType');
+		const sha256 = readString(value, 'sha256');
+		const size = value.size;
+		if (
+			!ref ||
+			!name ||
+			!mediaType ||
+			!sha256 ||
+			typeof size !== 'number' ||
+			!Number.isSafeInteger(size) ||
+			size < 1 ||
+			!Object.prototype.hasOwnProperty.call(OMP_IMAGE_MEDIA_TYPES, mediaType)
+		)
+			throw new OmpProtocolError('invalid OMP image attachment');
+		const resource = await panel.consumeResource(ref);
+		try {
 			if (
-				!data ||
-				!mimeType ||
-				!Object.prototype.hasOwnProperty.call(OMP_IMAGE_MEDIA_TYPES, mimeType)
+				resource.ref !== ref ||
+				resource.name !== name ||
+				resource.mediaType !== mediaType ||
+				resource.size !== size ||
+				resource.sha256 !== sha256 ||
+				resource.bytes.byteLength !== size ||
+				createHash('sha256').update(resource.bytes).digest('hex') !== sha256
 			)
 				throw new OmpProtocolError('invalid OMP image attachment');
-			return Object.freeze({ type: 'image', data, mimeType });
-		})
-	);
+			images.push(
+				Object.freeze({
+					type: 'image',
+					data: Buffer.from(resource.bytes).toString('base64'),
+					mimeType: mediaType,
+				})
+			);
+		} finally {
+			resource.bytes.fill(0);
+		}
+	}
+	return Object.freeze(images);
 }
 
 function readString(value: Record<string, JsonValue>, key: string): string | undefined {

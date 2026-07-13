@@ -2457,6 +2457,17 @@ app
 						throw new Error('invalid interactive panel event sequence');
 					await owner.emit(kind, payload as never, eventSequence);
 				},
+				consumeResource: async (ref: string) => {
+					const resource = await owner.consumeResource(ref);
+					return Object.freeze({
+						ref: resource.ref,
+						name: resource.name,
+						mediaType: resource.mediaType,
+						size: resource.size,
+						sha256: resource.sha256,
+						bytes: Object.freeze([...resource.bytes]),
+					});
+				},
 			};
 		};
 		const interactiveRuntimeSurfaceFor = (pluginId: string) => {

@@ -116,6 +116,33 @@ function bindPanel(
 		)
 			return;
 		if (
+			message.channel === 'maestro:panel-stage-resource' &&
+			Number.isSafeInteger(payload.stageId) &&
+			typeof payload.name === 'string' &&
+			typeof payload.mediaType === 'string' &&
+			payload.bytes instanceof Uint8Array
+		) {
+			void api
+				.panelStageResource({
+					guestWebContentsId,
+					instanceId,
+					name: payload.name,
+					mediaType: payload.mediaType,
+					bytes: payload.bytes,
+				})
+				.then((resource) => {
+					if (active && instanceId !== null) {
+						webview.send('maestro:panel-resource-staged', {
+							instanceId,
+							stageId: payload.stageId,
+							resource,
+						});
+					}
+				})
+				.catch(reportFailure);
+			return;
+		}
+		if (
 			message.channel === 'maestro:panel-request' &&
 			Number.isSafeInteger(payload.requestId) &&
 			typeof payload.kind === 'string'

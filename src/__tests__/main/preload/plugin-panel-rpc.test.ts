@@ -22,6 +22,7 @@ const INSTANCE = 'instance-capability-0001';
 
 type GuestApi = {
 	request(kind: string, payload: unknown): Promise<unknown>;
+	stageResource(name: string, mediaType: string, bytes: Uint8Array): Promise<unknown>;
 	subscribe(kind: string, listener: (payload: unknown) => void): () => void;
 };
 
@@ -46,7 +47,7 @@ describe('closed plugin panel guest API', () => {
 	it('exposes only frozen request/subscribe methods and correlates an exact request response', async () => {
 		const api = guestApi();
 		expect(Object.isFrozen(api)).toBe(true);
-		expect(Object.keys(api).sort()).toEqual(['request', 'subscribe']);
+		expect(Object.keys(api).sort()).toEqual(['request', 'stageResource', 'subscribe']);
 		const result = api.request('ping', { value: 1 });
 		expect(sendToHost).toHaveBeenCalledWith('maestro:panel-request', {
 			instanceId: INSTANCE,
@@ -61,6 +62,39 @@ describe('closed plugin panel guest API', () => {
 			payload: { ok: true },
 		});
 		await expect(result).resolves.toEqual({ ok: true });
+	});
+
+	it('stages bytes on the dedicated channel and accepts only a matching opaque resource response', async () => {
+		const api = guestApi();
+		const staged = api.stageResource('image.png', 'image/png', new Uint8Array([1, 2, 3]));
+		expect(sendToHost).toHaveBeenLastCalledWith('maestro:panel-stage-resource', {
+			instanceId: INSTANCE,
+			stageId: 1,
+			name: 'image.png',
+			mediaType: 'image/png',
+			bytes: new Uint8Array([1, 2, 3]),
+		});
+		fromHost('maestro:panel-resource-staged', {
+			instanceId: INSTANCE,
+			stageId: 1,
+			resource: {
+				ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+				name: 'image.png',
+				mediaType: 'image/png',
+				size: 3,
+				sha256: 'a'.repeat(64),
+			},
+		});
+		await expect(staged).resolves.toEqual({
+			ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+		});
+		await expect(
+			api.stageResource('large.png', 'image/png', new Uint8Array(2 * 1024 * 1024 + 1))
+		).rejects.toThrow('interactive panel resource capability unavailable');
 	});
 
 	it('delivers only subscribed descriptor events and releases subscriptions on dispose', () => {

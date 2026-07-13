@@ -10,6 +10,8 @@ import {
 	type InteractivePanelDescriptor,
 	type InteractivePanelGuestSender,
 	type InteractivePanelMountHandle,
+	type PluginPanelResourceStageInput,
+	type PluginPanelResourceRef,
 	PluginInteractivePanelHost,
 } from './plugin-interactive-panel-host';
 import {
@@ -108,6 +110,19 @@ export function registerPluginWorkspaceIpc(
 		if (!isTrustedGuest(guest, mainWindow.webContents))
 			throw new Error('InvalidPluginWorkspaceGuest');
 		options.panelHost.receive(guest, channel, relay.payload);
+	};
+
+	const stagePanelResource = (
+		event: { readonly sender: unknown },
+		input: unknown
+	): PluginPanelResourceRef => {
+		const mainWindow = requireTrustedRenderer(event);
+		const relay = parsePanelResourceRelay(input);
+		if (!relay) throw new Error('InvalidPluginWorkspacePanelResourceIngress');
+		const guest = options.getGuestWebContents(relay.guestWebContentsId);
+		if (!isTrustedGuest(guest, mainWindow.webContents))
+			throw new Error('InvalidPluginWorkspaceGuest');
+		return options.panelHost.stageResource(guest, relay.payload);
 	};
 
 	const unmount = (instanceId: string): void => {
@@ -218,6 +233,10 @@ export function registerPluginWorkspaceIpc(
 		relayPanelMessage(event, input, 'maestro:panel-request');
 	});
 
+	options.ipcMain.handle('plugin-workspaces:panel-stage-resource', async (event, input) => {
+		return stagePanelResource(event, input);
+	});
+
 	options.ipcMain.handle('plugin-workspaces:panel-subscribe', async (event, input) => {
 		relayPanelMessage(event, input, 'maestro:panel-subscribe');
 	});
@@ -242,6 +261,7 @@ export function registerPluginWorkspaceIpc(
 			'plugin-workspaces:mount-panel',
 			'plugin-workspaces:unmount-panel',
 			'plugin-workspaces:panel-request',
+			'plugin-workspaces:panel-stage-resource',
 			'plugin-workspaces:panel-subscribe',
 			'plugin-workspaces:panel-unsubscribe',
 			'plugin-workspaces:panel-unsubscribe-all',
@@ -369,9 +389,39 @@ function parsePanelRelay(
 			}),
 		});
 	}
+
 	return Object.freeze({
 		guestWebContentsId: guestWebContentsId as number,
 		payload: Object.freeze({ instanceId, kind }),
+	});
+}
+
+interface PanelResourceRelay {
+	readonly guestWebContentsId: number;
+	readonly payload: PluginPanelResourceStageInput;
+}
+
+function parsePanelResourceRelay(input: unknown): PanelResourceRelay | null {
+	if (!isRecord(input)) return null;
+	const guestWebContentsId = ownValue(input, 'guestWebContentsId');
+	const instanceId = ownValue(input, 'instanceId');
+	const name = ownValue(input, 'name');
+	const mediaType = ownValue(input, 'mediaType');
+	const bytes = ownValue(input, 'bytes');
+	if (
+		!Number.isSafeInteger(guestWebContentsId) ||
+		(guestWebContentsId as number) < 1 ||
+		typeof instanceId !== 'string' ||
+		instanceId.length < 16 ||
+		instanceId.length > 128 ||
+		typeof name !== 'string' ||
+		typeof mediaType !== 'string' ||
+		!(bytes instanceof Uint8Array)
+	)
+		return null;
+	return Object.freeze({
+		guestWebContentsId: guestWebContentsId as number,
+		payload: Object.freeze({ instanceId, name, mediaType, bytes }),
 	});
 }
 

@@ -44,18 +44,18 @@ export interface ClosedPanelBridge {
 
 const emptyObjectSchema: JsonSchema = objectSchema({});
 const sessionIdSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
-const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
-const MAX_ATTACHMENT_TOTAL_BYTES = 512 * 1024;
-const MAX_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES_PER_FILE / 3) * 4;
+const MAX_ATTACHMENT_BYTES_PER_FILE = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_TOTAL_BYTES = 8 * 1024 * 1024;
 const SUPPORTED_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 const attachmentSchema: JsonSchema = objectSchema(
 	{
+		ref: stringSchema(36, 36),
 		name: stringSchema(1, 255),
 		mediaType: { enum: SUPPORTED_IMAGE_MEDIA_TYPES },
 		size: integerSchema(1, MAX_ATTACHMENT_BYTES_PER_FILE),
-		dataBase64: stringSchema(4, MAX_ATTACHMENT_BASE64_LENGTH),
+		sha256: stringSchema(64, 64),
 	},
-	['name', 'mediaType', 'size', 'dataBase64']
+	['ref', 'name', 'mediaType', 'size', 'sha256']
 );
 const promptSchema: JsonSchema = objectSchema(
 	{
@@ -291,8 +291,10 @@ function isValidPromptAttachments(payload: unknown): boolean {
 	let totalBytes = 0;
 	for (const attachment of payload.attachments) {
 		if (!isRecord(attachment)) return false;
-		const { name, mediaType, size, dataBase64 } = attachment;
+		const { ref, name, mediaType, size, sha256 } = attachment;
 		if (
+			typeof ref !== 'string' ||
+			!isUuid(ref) ||
 			typeof name !== 'string' ||
 			name.length === 0 ||
 			name.includes('/') ||
@@ -304,24 +306,18 @@ function isValidPromptAttachments(payload: unknown): boolean {
 			!Number.isInteger(size) ||
 			size < 1 ||
 			size > MAX_ATTACHMENT_BYTES_PER_FILE ||
-			typeof dataBase64 !== 'string' ||
-			!isBase64(dataBase64) ||
-			decodedBase64Length(dataBase64) !== size
+			typeof sha256 !== 'string' ||
+			!/^[a-f0-9]{64}$/.test(sha256)
 		)
 			return false;
-		totalBytes += size + dataBase64.length;
+		totalBytes += size + new TextEncoder().encode(JSON.stringify(attachment)).byteLength;
 		if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) return false;
 	}
 	return true;
 }
 
-function isBase64(value: string): boolean {
-	return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
-}
-
-function decodedBase64Length(value: string): number {
-	const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
-	return (value.length / 4) * 3 - padding;
+function isUuid(value: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function objectSchema(

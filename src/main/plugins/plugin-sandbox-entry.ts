@@ -383,7 +383,27 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				},
 				resolve: function (requestId, kind, payload) { return hostCall('interactivePanel.resolve', { requestId: requestId, kind: kind, payload: payload }); },
 				reject: function (requestId, code) { return hostCall('interactivePanel.reject', { requestId: requestId, code: code }); },
-				emit: function (kind, payload, eventSequence) { return hostCall('interactivePanel.emit', { kind: kind, payload: payload, eventSequence: eventSequence }); }
+				emit: function (kind, payload, eventSequence) { return hostCall('interactivePanel.emit', { kind: kind, payload: payload, eventSequence: eventSequence }); },
+				consumeResource: function (ref) {
+					return hostCall('interactivePanel.consumeResource', { ref: ref }).then(function (resource) {
+						if (!resource || typeof resource !== 'object' ||
+							typeof resource.ref !== 'string' || typeof resource.name !== 'string' ||
+							typeof resource.mediaType !== 'string' || !Number.isSafeInteger(resource.size) ||
+							resource.size < 1 || typeof resource.sha256 !== 'string' ||
+							!/^[a-f0-9]{64}$/.test(resource.sha256) || !Array.isArray(resource.bytes) ||
+							resource.bytes.length !== resource.size) throw new Error('invalid panel resource');
+						var bytes = new Uint8Array(resource.size);
+						for (var i = 0; i < resource.bytes.length; i += 1) {
+							var value = resource.bytes[i];
+							if (!Number.isInteger(value) || value < 0 || value > 255) throw new Error('invalid panel resource');
+							bytes[i] = value;
+						}
+						return Object.freeze({
+							ref: resource.ref, name: resource.name, mediaType: resource.mediaType,
+							size: resource.size, sha256: resource.sha256, bytes: bytes
+						});
+					});
+				}
 			});
 		}
 		if (surfaceFlags.interactiveRuntime === true) {

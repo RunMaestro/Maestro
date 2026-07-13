@@ -121,13 +121,23 @@ export interface WorkspaceSurfaceEndpoint {
 	reveal(snapshotToken: string): Promise<void>;
 }
 
+/** JSON-safe sandbox transport form; the realm rebuilds its private Uint8Array. */
+export interface InteractivePanelConsumedResource {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+	readonly bytes: readonly number[];
+}
+
 /** Host-derived owner endpoint for a currently mounted closed panel. */
 export interface InteractivePanelSurfaceEndpoint {
 	resolve(requestId: string, kind: string, payload: unknown): Promise<void>;
 	reject(requestId: string, code: string): Promise<void>;
 	emit(kind: string, payload: unknown, eventSequence: unknown): Promise<void>;
+	consumeResource(ref: string): Promise<InteractivePanelConsumedResource>;
 }
-
 /** Opaque runtime proxy: root/handle records are host-kept, not child-owned. */
 export interface InteractiveRuntimeSurfaceEndpoint {
 	requestWorkspaceRoot(): Promise<unknown>;
@@ -1395,6 +1405,27 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (!surface) throw new Error('interactive panel capability unavailable');
 			await surface.emit(p.kind, p.payload, p.eventSequence);
 			return null;
+		},
+		'interactivePanel.consumeResource': async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('interactivePanel.consumeResource', p, { ref: true });
+			if (
+				typeof p.ref !== 'string' ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.ref)
+			)
+				throw new Error('invalid panel resource');
+			assertBrokerAllowed(deps, pluginId, 'interactivePanel.consumeResource', p);
+			const surface = deps.interactivePanelSurfaceFor?.(pluginId);
+			if (!surface) throw new Error('interactive panel capability unavailable');
+			const resource = await surface.consumeResource(p.ref);
+			return Object.freeze({
+				ref: resource.ref,
+				name: resource.name,
+				mediaType: resource.mediaType,
+				size: resource.size,
+				sha256: resource.sha256,
+				bytes: Object.freeze([...resource.bytes]),
+			});
 		},
 		'interactiveRuntime.requestWorkspaceRoot': async (pluginId, params) => {
 			assertClosedSchema('interactiveRuntime.requestWorkspaceRoot', asObject(params), {});

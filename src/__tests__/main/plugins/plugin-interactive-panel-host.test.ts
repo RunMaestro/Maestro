@@ -395,4 +395,161 @@ describe('PluginInteractivePanelHost', () => {
 			guest.send.mock.calls.filter(([channel]) => channel === 'maestro:panel-error')
 		).toHaveLength(8);
 	});
+	it('stages opaque image resources outside the JSON envelope and consumes exact bytes once', async () => {
+		const host = new PluginInteractivePanelHost();
+		const guest = createMount();
+		const mounted = host.mount({
+			ownerPluginId: 'com.example.plugin',
+			workspaceLocalId: 'workspace',
+			panelLocalId: 'panel',
+			generation: 10n,
+			descriptor,
+			sender: guest.sender,
+		});
+		for (const mediaType of ['image/png', 'image/jpeg', 'image/webp', 'image/gif']) {
+			const bytes = new Uint8Array([1, 2, 3]);
+			const ref = host.stageResource(guest.sender, {
+				instanceId: mounted.instanceId,
+				name: `image.${mediaType.slice(6)}`,
+				mediaType,
+				bytes,
+			});
+			expect(ref).toEqual(
+				expect.objectContaining({
+					name: `image.${mediaType.slice(6)}`,
+					mediaType,
+					size: 3,
+					sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+				})
+			);
+			expect(ref).not.toHaveProperty('bytes');
+			bytes.fill(9);
+			const consumed = await host.ownerApi('com.example.plugin', 10n).consumeResource(ref.ref);
+			expect([...consumed.bytes]).toEqual([1, 2, 3]);
+			await expect(
+				host.ownerApi('com.example.plugin', 10n).consumeResource(ref.ref)
+			).rejects.toThrow('UnavailablePluginPanelResource');
+		}
+	});
+
+	it('enforces per-file, per-panel byte overhead, and file-count staging quotas', () => {
+		const host = new PluginInteractivePanelHost();
+		const guest = createMount();
+		const mounted = host.mount({
+			ownerPluginId: 'com.example.plugin',
+			workspaceLocalId: 'workspace',
+			panelLocalId: 'panel',
+			generation: 11n,
+			descriptor,
+			sender: guest.sender,
+		});
+		expect(() =>
+			host.stageResource(guest.sender, {
+				instanceId: mounted.instanceId,
+				name: 'two-meg.png',
+				mediaType: 'image/png',
+				bytes: new Uint8Array(2 * 1024 * 1024),
+			})
+		).not.toThrow();
+		expect(() =>
+			host.stageResource(guest.sender, {
+				instanceId: mounted.instanceId,
+				name: 'too-large.png',
+				mediaType: 'image/png',
+				bytes: new Uint8Array(2 * 1024 * 1024 + 1),
+			})
+		).toThrow('InvalidPluginPanelResource');
+
+		const countedHost = new PluginInteractivePanelHost();
+		const countedGuest = createMount();
+		const countedMount = countedHost.mount({
+			ownerPluginId: 'com.example.plugin',
+			workspaceLocalId: 'workspace-2',
+			panelLocalId: 'panel',
+			generation: 11n,
+			descriptor,
+			sender: countedGuest.sender,
+		});
+		for (let index = 0; index < 8; index += 1) {
+			countedHost.stageResource(countedGuest.sender, {
+				instanceId: countedMount.instanceId,
+				name: `${index}.png`,
+				mediaType: 'image/png',
+				bytes: new Uint8Array([index]),
+			});
+		}
+		expect(() =>
+			countedHost.stageResource(countedGuest.sender, {
+				instanceId: countedMount.instanceId,
+				name: 'ninth.png',
+				mediaType: 'image/png',
+				bytes: new Uint8Array([1]),
+			})
+		).toThrow('PluginPanelResourceQuotaExceeded');
+	});
+
+	it('fails closed across senders, owners, generations, expiry, and unmount cleanup', async () => {
+		const scheduler = createScheduler();
+		const host = new PluginInteractivePanelHost({ scheduler, resourceTtlMs: 10 });
+		const guest = createMount();
+		const attacker = createMount();
+		const mounted = host.mount({
+			ownerPluginId: 'com.example.plugin',
+			workspaceLocalId: 'workspace',
+			panelLocalId: 'panel',
+			generation: 12n,
+			descriptor,
+			sender: guest.sender,
+		});
+		expect(() =>
+			host.stageResource(attacker.sender, {
+				instanceId: mounted.instanceId,
+				name: 'image.png',
+				mediaType: 'image/png',
+				bytes: new Uint8Array([1]),
+			})
+		).toThrow('UnavailablePluginPanelResource');
+		const ref = host.stageResource(guest.sender, {
+			instanceId: mounted.instanceId,
+			name: 'image.png',
+			mediaType: 'image/png',
+			bytes: new Uint8Array([1]),
+		});
+		await expect(host.ownerApi('other.plugin', 12n).consumeResource(ref.ref)).rejects.toThrow(
+			'UnavailablePluginPanelResource'
+		);
+		await expect(host.ownerApi('com.example.plugin', 13n).consumeResource(ref.ref)).rejects.toThrow(
+			'UnavailablePluginPanelResource'
+		);
+		// Test-only corruption seam proves the consume-time integrity check and zeroization.
+		const hostWithTestSeam = host as unknown as {
+			readonly mounts: Map<
+				string,
+				{ readonly resources: Map<string, { readonly bytes: Uint8Array }> }
+			>;
+		};
+		const privateBytes = hostWithTestSeam.mounts
+			.get(mounted.instanceId)
+			?.resources.get(ref.ref)?.bytes;
+		if (!privateBytes) throw new Error('missing staged resource');
+		privateBytes[0] = 2;
+		await expect(host.ownerApi('com.example.plugin', 12n).consumeResource(ref.ref)).rejects.toThrow(
+			'InvalidPluginPanelResource'
+		);
+		expect(privateBytes).toEqual(new Uint8Array([0]));
+		scheduler.advance(10);
+		await expect(host.ownerApi('com.example.plugin', 12n).consumeResource(ref.ref)).rejects.toThrow(
+			'UnavailablePluginPanelResource'
+		);
+		const cleanup = host.stageResource(guest.sender, {
+			instanceId: mounted.instanceId,
+			name: 'cleanup.png',
+			mediaType: 'image/png',
+			bytes: new Uint8Array([4]),
+		});
+		mounted.dispose();
+		await expect(
+			host.ownerApi('com.example.plugin', 12n).consumeResource(cleanup.ref)
+		).rejects.toThrow('UnavailablePluginPanelResource');
+	});
 });

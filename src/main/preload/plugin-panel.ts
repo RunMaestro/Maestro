@@ -12,17 +12,25 @@ const INIT_CHANNEL = 'maestro:panel-init';
 const RESULT_CHANNEL = 'maestro:panel-result';
 const ERROR_CHANNEL = 'maestro:panel-error';
 const EVENT_CHANNEL = 'maestro:panel-event';
+const STAGE_RESOURCE_CHANNEL = 'maestro:panel-stage-resource';
+const RESOURCE_STAGED_CHANNEL = 'maestro:panel-resource-staged';
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_PENDING_REQUESTS = 32;
 const MAX_REQUESTS_PER_SECOND = 120;
 const MAX_GENERATION_DECIMAL = '18446744073709551615';
+const MAX_RESOURCE_BYTES = 2 * 1024 * 1024;
 
 let instanceId: string | null = null;
 let generation = '';
 let nextRequestId = 1;
+let nextStageId = 1;
 let windowStartedAt = 0;
 let windowCount = 0;
 const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+const pendingStages = new Map<
+	number,
+	{ resolve(value: unknown): void; reject(error: Error): void }
+>();
 const subscriptions = new Map<string, Set<(payload: unknown) => void>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,11 +68,14 @@ function isStaleGeneration(nextGeneration: string): boolean {
 
 function resetInstance(nextInstanceId: string, nextGeneration: string): void {
 	for (const entry of pending.values()) entry.reject(new Error('panel instance replaced'));
+	for (const entry of pendingStages.values()) entry.reject(new Error('panel instance replaced'));
 	pending.clear();
+	pendingStages.clear();
 	subscriptions.clear();
 	instanceId = nextInstanceId;
 	generation = nextGeneration;
 	nextRequestId = 1;
+	nextStageId = 1;
 	windowStartedAt = 0;
 	windowCount = 0;
 }
@@ -93,6 +104,29 @@ const maestroInteractivePanel = Object.freeze({
 		return new Promise<unknown>((resolve, reject) => {
 			pending.set(requestId, { resolve, reject });
 			ipcRenderer.sendToHost(REQUEST_CHANNEL, { instanceId, requestId, kind, payload });
+		});
+	},
+
+	stageResource(name: string, mediaType: string, bytes: Uint8Array): Promise<unknown> {
+		if (
+			instanceId === null ||
+			typeof name !== 'string' ||
+			typeof mediaType !== 'string' ||
+			!(bytes instanceof Uint8Array) ||
+			bytes.byteLength < 1 ||
+			bytes.byteLength > MAX_RESOURCE_BYTES
+		)
+			return Promise.reject(new Error('interactive panel resource capability unavailable'));
+		const stageId = nextStageId++;
+		return new Promise<unknown>((resolve, reject) => {
+			pendingStages.set(stageId, { resolve, reject });
+			ipcRenderer.sendToHost(STAGE_RESOURCE_CHANNEL, {
+				instanceId,
+				stageId,
+				name,
+				mediaType,
+				bytes,
+			});
 		});
 	},
 
@@ -163,6 +197,46 @@ ipcRenderer.on(ERROR_CHANNEL, (_event, payload: unknown) => {
 	entry.reject(new Error(payload.code));
 });
 
+ipcRenderer.on(RESOURCE_STAGED_CHANNEL, (_event, payload: unknown) => {
+	if (
+		!isRecord(payload) ||
+		!isCurrentInstance(payload.instanceId) ||
+		!Number.isSafeInteger(payload.stageId) ||
+		!isRecord(payload.resource)
+	)
+		return;
+	const resource = payload.resource;
+	const ref = resource.ref;
+	const name = resource.name;
+	const mediaType = resource.mediaType;
+	const size = resource.size;
+	const sha256 = resource.sha256;
+	if (
+		typeof ref !== 'string' ||
+		typeof name !== 'string' ||
+		typeof mediaType !== 'string' ||
+		typeof size !== 'number' ||
+		!Number.isSafeInteger(size) ||
+		size < 1 ||
+		size > MAX_RESOURCE_BYTES ||
+		typeof sha256 !== 'string' ||
+		!/^[a-f0-9]{64}$/.test(sha256)
+	)
+		return;
+	const entry = pendingStages.get(payload.stageId as number);
+	if (!entry) return;
+	pendingStages.delete(payload.stageId as number);
+	entry.resolve(
+		Object.freeze({
+			ref,
+			name,
+			mediaType,
+			size,
+			sha256,
+		})
+	);
+});
+
 ipcRenderer.on(EVENT_CHANNEL, (_event, payload: unknown) => {
 	if (
 		!isRecord(payload) ||
@@ -185,7 +259,9 @@ ipcRenderer.on(EVENT_CHANNEL, (_event, payload: unknown) => {
 window.addEventListener('unload', () => {
 	if (instanceId !== null) ipcRenderer.sendToHost(UNSUBSCRIBE_ALL_CHANNEL, { instanceId });
 	for (const entry of pending.values()) entry.reject(new Error('panel unloaded'));
+	for (const entry of pendingStages.values()) entry.reject(new Error('panel unloaded'));
 	pending.clear();
+	pendingStages.clear();
 	subscriptions.clear();
 	instanceId = null;
 	generation = '';

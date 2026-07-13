@@ -90,6 +90,13 @@ function harness() {
 	const panelHost = {
 		mount: vi.fn(() => ({ instanceId: 'panel-instance', dispose: panelDispose })),
 		receive: vi.fn(),
+		stageResource: vi.fn(() => ({
+			ref: 'opaque-resource-ref',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+		})),
 		unmount: vi.fn(),
 	};
 	const registration = registerPluginWorkspaceIpc({
@@ -247,5 +254,32 @@ describe('plugin workspace main registration', () => {
 		await expect(request({ sender: {} }, panelRequest)).rejects.toThrow(
 			'UntrustedPluginWorkspaceRequester'
 		);
+	});
+
+	it('forwards staged binary bytes only from the mounted trusted guest', async () => {
+		const h = harness();
+		const stage = h.handlers.get('plugin-workspaces:panel-stage-resource');
+		const input = {
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance-0001',
+			name: 'image.png',
+			mediaType: 'image/png',
+			bytes: new Uint8Array([1, 2, 3]),
+		};
+		await expect(stage({ sender: h.mainContents }, input)).resolves.toEqual({
+			ref: 'opaque-resource-ref',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+		});
+		expect(h.panelHost.stageResource).toHaveBeenCalledWith(
+			h.guest,
+			expect.objectContaining({
+				instanceId: 'panel-instance-0001',
+				bytes: new Uint8Array([1, 2, 3]),
+			})
+		);
+		await expect(stage({ sender: {} }, input)).rejects.toThrow('UntrustedPluginWorkspaceRequester');
 	});
 });

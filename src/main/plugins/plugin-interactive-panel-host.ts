@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
 	compileCanonicalJsonSchema,
 	measureJsonValue,
@@ -28,6 +28,12 @@ const MAX_JSON_NODES = 10_000;
 const MAX_VIOLATIONS = 8;
 const VIOLATION_WINDOW_MS = 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RESOURCE_BYTES_PER_FILE = 2 * 1024 * 1024;
+const MAX_RESOURCES_PER_PANEL = 8;
+const MAX_RESOURCE_BYTES_PER_PANEL = 8 * 1024 * 1024;
+const DEFAULT_RESOURCE_TTL_MS = 30_000;
+const MAX_RESOURCE_NAME_LENGTH = 255;
+const MAX_RESOURCE_MIME_LENGTH = 127;
 
 type PanelTimer = number | object;
 
@@ -68,7 +74,35 @@ export interface InteractivePanelHostScheduler {
 export interface PluginInteractivePanelHostOptions {
 	readonly scheduler?: InteractivePanelHostScheduler;
 	readonly requestTimeoutMs?: number;
+	readonly resourceTtlMs?: number;
 }
+
+/** Guest payload for the dedicated, structured-clone-only resource staging channel. */
+export interface PluginPanelResourceStageInput {
+	readonly instanceId: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly bytes: Uint8Array;
+}
+
+/** Opaque JSON-safe resource capability. It deliberately contains no content. */
+export interface PluginPanelResourceRef {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+}
+
+/** Owner-only, one-shot resource body returned by the host. */
+export interface PluginPanelConsumedResource extends PluginPanelResourceRef {
+	readonly bytes: Uint8Array;
+}
+
+/** Host extension pending propagation to the sandbox SDK's shared owner contract. */
+export type PluginInteractivePanelOwnerApi = MaestroInteractivePanelOwnerApi & {
+	consumeResource(ref: string): Promise<PluginPanelConsumedResource>;
+};
 
 interface PendingRequest {
 	readonly guestRequestId: number;
@@ -100,12 +134,21 @@ interface MountRecord {
 	readonly subscriptions: Set<string>;
 	readonly egress: EgressEvent[];
 	readonly violations: number[];
+	readonly resources: Map<string, StagedResource>;
 	readonly ingressRate: RateWindow;
 	readonly egressRate: RateWindow;
 	ingressQueuedBytes: number;
 	egressQueuedBytes: number;
+	resourceBytes: number;
 	lastEventSequence: bigint | undefined;
 	egressTimer: PanelTimer | undefined;
+}
+
+interface StagedResource {
+	readonly ref: PluginPanelResourceRef;
+	readonly bytes: Uint8Array;
+	readonly accountedBytes: number;
+	readonly expires: PanelTimer;
 }
 
 interface CompiledDescriptor {
@@ -181,6 +224,40 @@ function validTimeout(value: number | undefined): number {
 		: DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
+function validResourceTtl(value: number | undefined): number {
+	return value !== undefined && Number.isSafeInteger(value) && value > 0
+		? value
+		: DEFAULT_RESOURCE_TTL_MS;
+}
+
+function isValidResourceName(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length > 0 &&
+		value.length <= MAX_RESOURCE_NAME_LENGTH &&
+		!value.includes('/') &&
+		!value.includes('\\') &&
+		![...value].some((character) => character.charCodeAt(0) < 32)
+	);
+}
+
+function isValidResourceMediaType(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length > 0 &&
+		value.length <= MAX_RESOURCE_MIME_LENGTH &&
+		/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+\/[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)
+	);
+}
+
+function resourceAccountedBytes(name: string, mediaType: string, size: number): number {
+	return size + new TextEncoder().encode(JSON.stringify({ name, mediaType, size })).byteLength;
+}
+
+function hashResource(bytes: Uint8Array): string {
+	return createHash('sha256').update(bytes).digest('hex');
+}
+
 /**
  * Owner/instance/generation-bound closed panel broker. It has no Electron IPC
  * dependency: a trusted renderer binder supplies one sender per mounted guest,
@@ -191,12 +268,14 @@ export class PluginInteractivePanelHost {
 	private readonly ownerListeners = new Map<OwnerKey, Set<OwnerRequestListener>>();
 	private readonly scheduler: InteractivePanelHostScheduler;
 	private readonly requestTimeoutMs: number;
+	private readonly resourceTtlMs: number;
 	private globalQueuedBytes = 0;
 	private globalEgressRate: RateWindow;
 
 	constructor(options: PluginInteractivePanelHostOptions = {}) {
 		this.scheduler = options.scheduler ?? defaultScheduler;
 		this.requestTimeoutMs = validTimeout(options.requestTimeoutMs);
+		this.resourceTtlMs = validResourceTtl(options.resourceTtlMs);
 		this.globalEgressRate = { startedAt: this.scheduler.now(), count: 0, bytes: 0 };
 	}
 
@@ -215,10 +294,12 @@ export class PluginInteractivePanelHost {
 			subscriptions: new Set(),
 			egress: [],
 			violations: [],
+			resources: new Map(),
 			ingressRate: { startedAt: now, count: 0, bytes: 0 },
 			egressRate: { startedAt: now, count: 0, bytes: 0 },
 			ingressQueuedBytes: 0,
 			egressQueuedBytes: 0,
+			resourceBytes: 0,
 			lastEventSequence: undefined,
 			egressTimer: undefined,
 		};
@@ -228,6 +309,55 @@ export class PluginInteractivePanelHost {
 			generation: mount.generation.toString(10),
 		});
 		return Object.freeze({ instanceId, dispose: () => this.unmount(instanceId) });
+	}
+
+	/**
+	 * Stages a structured-cloned binary payload for this exact mounted guest.
+	 * Resource bytes never enter the closed JSON request envelope.
+	 */
+	stageResource(
+		sender: InteractivePanelGuestSender,
+		input: PluginPanelResourceStageInput
+	): PluginPanelResourceRef {
+		if (!isRecord(input) || typeof input.instanceId !== 'string')
+			throw new TypeError('InvalidPluginPanelResource');
+		const record = this.mounts.get(input.instanceId);
+		if (!record || record.mount.sender !== sender)
+			throw new Error('UnavailablePluginPanelResource');
+		if (
+			!isValidResourceName(input.name) ||
+			!isValidResourceMediaType(input.mediaType) ||
+			!(input.bytes instanceof Uint8Array) ||
+			input.bytes.byteLength < 1 ||
+			input.bytes.byteLength > MAX_RESOURCE_BYTES_PER_FILE
+		)
+			throw new TypeError('InvalidPluginPanelResource');
+		const accountedBytes = resourceAccountedBytes(
+			input.name,
+			input.mediaType,
+			input.bytes.byteLength
+		);
+		if (
+			record.resources.size >= MAX_RESOURCES_PER_PANEL ||
+			record.resourceBytes + accountedBytes > MAX_RESOURCE_BYTES_PER_PANEL
+		)
+			throw new Error('PluginPanelResourceQuotaExceeded');
+
+		const bytes = new Uint8Array(input.bytes);
+		const ref = Object.freeze({
+			ref: randomUUID(),
+			name: input.name,
+			mediaType: input.mediaType,
+			size: bytes.byteLength,
+			sha256: hashResource(bytes),
+		} satisfies PluginPanelResourceRef);
+		const expires = this.scheduler.setTimeout(
+			() => this.expireResource(record.instanceId, ref.ref),
+			this.resourceTtlMs
+		);
+		record.resources.set(ref.ref, { ref, bytes, accountedBytes, expires });
+		record.resourceBytes += accountedBytes;
+		return ref;
 	}
 
 	/** Receives only a message emitted through the exact guest sender installed at mount. */
@@ -278,7 +408,7 @@ export class PluginInteractivePanelHost {
 		this.violate(record);
 	}
 
-	ownerApi(ownerPluginId: string, generation: bigint): MaestroInteractivePanelOwnerApi {
+	ownerApi(ownerPluginId: string, generation: bigint): PluginInteractivePanelOwnerApi {
 		const key = ownerKey(ownerPluginId, generation);
 		return Object.freeze({
 			onRequest: (listener: OwnerRequestListener): (() => void) => {
@@ -302,6 +432,8 @@ export class PluginInteractivePanelHost {
 			emit: async (kind: string, payload: JsonValue, eventSequence: bigint): Promise<void> => {
 				this.emit(ownerPluginId, generation, kind, payload, eventSequence);
 			},
+			consumeResource: async (ref: string): Promise<PluginPanelConsumedResource> =>
+				this.consumeResource(ownerPluginId, generation, ref),
 		});
 	}
 
@@ -310,12 +442,18 @@ export class PluginInteractivePanelHost {
 		if (!record) return;
 		this.mounts.delete(instanceId);
 		for (const pending of record.pending.values()) this.scheduler.clearTimeout(pending.timeout);
+		for (const resource of record.resources.values()) {
+			this.scheduler.clearTimeout(resource.expires);
+			resource.bytes.fill(0);
+		}
 		this.globalQueuedBytes -= record.ingressQueuedBytes + record.egressQueuedBytes;
 		record.pending.clear();
 		record.subscriptions.clear();
 		record.egress.length = 0;
+		record.resources.clear();
 		record.ingressQueuedBytes = 0;
 		record.egressQueuedBytes = 0;
+		record.resourceBytes = 0;
 		if (record.egressTimer !== undefined) this.scheduler.clearTimeout(record.egressTimer);
 		record.egressTimer = undefined;
 	}
@@ -327,6 +465,40 @@ export class PluginInteractivePanelHost {
 		for (const key of this.ownerListeners.keys()) {
 			if (key.startsWith(`${ownerPluginId}\u0000`)) this.ownerListeners.delete(key);
 		}
+	}
+
+	private consumeResource(
+		ownerPluginId: string,
+		generation: bigint,
+		ref: string
+	): PluginPanelConsumedResource {
+		if (typeof ref !== 'string') throw new Error('UnavailablePluginPanelResource');
+		for (const record of this.mounts.values()) {
+			if (record.mount.ownerPluginId !== ownerPluginId || record.mount.generation !== generation)
+				continue;
+			const resource = record.resources.get(ref);
+			if (!resource) continue;
+			const bytes = new Uint8Array(resource.bytes);
+			const valid = hashResource(bytes) === resource.ref.sha256;
+			this.releaseResource(record, ref);
+			if (!valid) throw new Error('InvalidPluginPanelResource');
+			return Object.freeze({ ...resource.ref, bytes });
+		}
+		throw new Error('UnavailablePluginPanelResource');
+	}
+
+	private expireResource(instanceId: string, ref: string): void {
+		const record = this.mounts.get(instanceId);
+		if (record) this.releaseResource(record, ref);
+	}
+
+	private releaseResource(record: MountRecord, ref: string): void {
+		const resource = record.resources.get(ref);
+		if (!resource) return;
+		record.resources.delete(ref);
+		this.scheduler.clearTimeout(resource.expires);
+		record.resourceBytes -= resource.accountedBytes;
+		resource.bytes.fill(0);
 	}
 
 	private receiveRequest(

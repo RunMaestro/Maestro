@@ -681,11 +681,26 @@ export interface PanelError<K extends string> {
 	readonly requestId: UUID;
 	readonly code: PanelErrorCode;
 }
+
+/** Opaque panel-owned staged resource metadata, safe inside closed JSON envelopes. */
+export interface PanelResourceRef {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+}
+
+/** One-shot owner result; byte content never travels in a panel request envelope. */
+export interface PanelConsumedResource extends PanelResourceRef {
+	readonly bytes: Uint8Array;
+}
 export interface MaestroInteractivePanelOwnerApi {
 	onRequest(listener: (request: PanelRequest<string, JsonValue>) => void): () => void;
 	resolve(requestId: UUID, kind: string, payload: JsonValue): Promise<void>;
 	reject(requestId: UUID, code: PanelErrorCode): Promise<void>;
 	emit(kind: string, payload: JsonValue, eventSequence: bigint): Promise<void>;
+	consumeResource(ref: string): Promise<PanelConsumedResource>;
 }
 
 export type WorkspaceCapability = { readonly __hostIssuedWorkspace: never };
@@ -1452,6 +1467,7 @@ export const HOST_API = {
 	'interactivePanel.resolve': { capability: 'ui:interactivePanel' },
 	'interactivePanel.reject': { capability: 'ui:interactivePanel' },
 	'interactivePanel.emit': { capability: 'ui:interactivePanel' },
+	'interactivePanel.consumeResource': { capability: 'ui:interactivePanel' },
 	'interactiveRuntime.requestWorkspaceRoot': { capability: 'process:interactive' },
 	'interactiveRuntime.startOmpRuntime': { capability: 'process:interactive' },
 	'interactiveRuntime.write': { capability: 'process:interactive' },

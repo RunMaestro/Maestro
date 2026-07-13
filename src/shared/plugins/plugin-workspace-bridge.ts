@@ -91,6 +91,24 @@ export interface PluginWorkspacePanelUnsubscribeAllInput {
 	readonly instanceId: string;
 }
 
+/** Structured-cloned guest bytes relayed on the dedicated resource staging path. */
+export interface PluginWorkspacePanelStageResourceInput {
+	readonly guestWebContentsId: number;
+	readonly instanceId: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly bytes: Uint8Array;
+}
+
+/** Content-free resource capability safe for closed-panel JSON request payloads. */
+export interface PluginWorkspacePanelResourceRef {
+	readonly ref: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly size: number;
+	readonly sha256: string;
+}
+
 /** Narrow generic API exposed as `window.maestro.pluginWorkspaces`. */
 export interface PluginWorkspacesApi {
 	getSnapshot(): Promise<PluginWorkspacesSnapshotDto>;
@@ -101,6 +119,9 @@ export interface PluginWorkspacesApi {
 	mountPanel(input: PluginWorkspaceMountPanelInput): Promise<PluginWorkspaceMountPanelResult>;
 	unmountPanel(input: PluginWorkspaceUnmountPanelInput): Promise<void>;
 	panelRequest(input: PluginWorkspacePanelRequestInput): Promise<void>;
+	panelStageResource(
+		input: PluginWorkspacePanelStageResourceInput
+	): Promise<PluginWorkspacePanelResourceRef>;
 	panelSubscribe(input: PluginWorkspacePanelSubscriptionInput): Promise<void>;
 	panelUnsubscribe(input: PluginWorkspacePanelSubscriptionInput): Promise<void>;
 	panelUnsubscribeAll(input: PluginWorkspacePanelUnsubscribeAllInput): Promise<void>;

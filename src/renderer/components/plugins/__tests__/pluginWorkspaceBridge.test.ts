@@ -34,6 +34,13 @@ function api(): PluginWorkspacesApi {
 		mountPanel: vi.fn(async () => ({ instanceId: 'panel-instance' })),
 		unmountPanel: vi.fn(async () => undefined),
 		panelRequest: vi.fn(async () => undefined),
+		panelStageResource: vi.fn(async () => ({
+			ref: 'opaque-resource-ref',
+			name: 'image.png',
+			mediaType: 'image/png',
+			size: 3,
+			sha256: 'a'.repeat(64),
+		})),
 		panelSubscribe: vi.fn(async () => undefined),
 		panelUnsubscribe: vi.fn(async () => undefined),
 		panelUnsubscribeAll: vi.fn(async () => undefined),
@@ -132,6 +139,58 @@ describe('plugin workspace renderer adapters', () => {
 			kind: 'ping',
 			payload: { state: 'ready' },
 		});
+	});
+
+	it('relays guest resource bytes only through the dedicated staging operation', async () => {
+		const bridge = api();
+		const binder = createInteractivePanelHostBinder(bridge);
+		const listeners = new Map<string, (event: Event) => void>();
+		const webview = {
+			addEventListener: vi.fn((event: string, listener: (event: Event) => void) =>
+				listeners.set(event, listener)
+			),
+			removeEventListener: vi.fn(),
+			getWebContentsId: () => 42,
+			send: vi.fn(),
+		};
+		binder.bind({
+			panel: {
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'main-panel',
+				canonicalContributionId: 'com.maestro.omp/main-panel',
+				title: 'OMP',
+				entry: 'panel.html',
+			} as unknown as CanonicalInteractivePanelContribution,
+			webview: webview as never,
+		});
+		listeners.get('dom-ready')?.(new Event('dom-ready'));
+		await Promise.resolve();
+		await Promise.resolve();
+		listeners.get('ipc-message')?.({
+			channel: 'maestro:panel-stage-resource',
+			args: [
+				{
+					instanceId: 'panel-instance',
+					stageId: 1,
+					name: 'image.png',
+					mediaType: 'image/png',
+					bytes: new Uint8Array([1, 2, 3]),
+				},
+			],
+		} as unknown as Event);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(bridge.panelStageResource).toHaveBeenCalledWith({
+			guestWebContentsId: 42,
+			instanceId: 'panel-instance',
+			name: 'image.png',
+			mediaType: 'image/png',
+			bytes: new Uint8Array([1, 2, 3]),
+		});
+		expect(webview.send).toHaveBeenCalledWith(
+			'maestro:panel-resource-staged',
+			expect.objectContaining({ instanceId: 'panel-instance', stageId: 1 })
+		);
 	});
 
 	it('reports a rejected snapshot to the current binding without an unhandled rejection', async () => {
