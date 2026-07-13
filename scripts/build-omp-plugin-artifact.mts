@@ -1,45 +1,36 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { bundleOmpPlugin } from '../src/main/omp-distribution/bundle-plugin';
 import {
 	buildPluginArtifact,
 	type ImmutableTrustRoot,
 } from '../src/main/omp-distribution/plugin-artifact';
 
-interface ArtifactInputFile {
-	path: string;
-	source: string;
-}
-
-interface ArtifactBuildInput {
-	pluginId: string;
+interface BuiltManifestIdentity {
+	id: string;
 	version: string;
-	contractSha256: string;
-	trustRoot: ImmutableTrustRoot;
-	files: ArtifactInputFile[];
-	signature: string;
 }
 
 async function main(): Promise<void> {
 	const options = parseOptions(process.argv.slice(2));
-	const inputPath = requiredOption(options, 'input');
-	const sourceRoot = resolve(requiredOption(options, 'source-root'));
+	const pluginRoot = resolve(requiredOption(options, 'plugin-root'));
+	const trustRoot = parseTrustRoot(await readFile(requiredOption(options, 'trust-root'), 'utf8'));
+	const signature = requiredOption(options, 'signature');
 	const bundledOutput = resolve(requiredOption(options, 'bundled-output'));
 	const installableOutput = resolve(requiredOption(options, 'installable-output'));
-	const input = parseInput(await readFile(inputPath, 'utf8'));
-	const files = await Promise.all(
-		input.files.map(async (file) => ({
-			path: file.path,
-			content: await readArtifactSource(sourceRoot, file.source),
-		}))
+	const bundle = await bundleOmpPlugin(pluginRoot);
+	const manifest = parseBuiltManifest(
+		bundle.files.find((file) => file.path === 'plugin.json')?.content
 	);
+
 	const artifact = buildPluginArtifact({
-		pluginId: input.pluginId,
-		version: input.version,
-		contractSha256: input.contractSha256,
-		trustRoot: Object.freeze({ ...input.trustRoot }),
-		files,
-		sign: () => input.signature,
+		pluginId: manifest.id,
+		version: manifest.version,
+		contractSha256: bundle.contractSha256,
+		trustRoot: Object.freeze(trustRoot),
+		files: bundle.files,
+		sign: () => signature,
 	});
 
 	await Promise.all([
@@ -75,48 +66,38 @@ function requiredOption(options: Record<string, string>, key: string): string {
 	return value;
 }
 
-function parseInput(serialized: string): ArtifactBuildInput {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(serialized);
-	} catch {
-		throw new Error('invalid plugin artifact input JSON');
-	}
-	if (!isArtifactBuildInput(parsed)) throw new Error('invalid plugin artifact input');
-	return parsed;
-}
-
-function isArtifactBuildInput(value: unknown): value is ArtifactBuildInput {
-	if (!isRecord(value) || !isRecord(value.trustRoot) || !Array.isArray(value.files)) return false;
-	return (
-		typeof value.pluginId === 'string' &&
-		typeof value.version === 'string' &&
-		typeof value.contractSha256 === 'string' &&
-		typeof value.signature === 'string' &&
-		typeof value.trustRoot.keyId === 'string' &&
-		typeof value.trustRoot.algorithm === 'string' &&
-		typeof value.trustRoot.publicKey === 'string' &&
-		value.files.every(
-			(file) => isRecord(file) && typeof file.path === 'string' && typeof file.source === 'string'
-		)
-	);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function readArtifactSource(sourceRoot: string, source: string): Promise<Buffer> {
-	const sourcePath = resolve(sourceRoot, source);
-	const sourceRelativePath = relative(sourceRoot, sourcePath);
+function parseTrustRoot(serialized: string): ImmutableTrustRoot {
+	const parsed = parseJsonObject(serialized, 'invalid trust-root metadata');
 	if (
-		sourceRelativePath.length === 0 ||
-		sourceRelativePath.startsWith('..') ||
-		sourceRelativePath.includes('..\\')
+		typeof parsed.keyId !== 'string' ||
+		typeof parsed.algorithm !== 'string' ||
+		typeof parsed.publicKey !== 'string'
 	) {
-		throw new Error(`unsafe plugin artifact source: ${source}`);
+		throw new Error('trust-root metadata requires keyId, algorithm, and publicKey');
 	}
-	return readFile(sourcePath);
+	return { keyId: parsed.keyId, algorithm: parsed.algorithm, publicKey: parsed.publicKey };
+}
+
+function parseBuiltManifest(content: Uint8Array | undefined): BuiltManifestIdentity {
+	if (!content) throw new Error('bundler omitted plugin.json');
+	const parsed = parseJsonObject(
+		Buffer.from(content).toString('utf8'),
+		'invalid bundled plugin.json'
+	);
+	if (parsed.id !== 'com.maestro.omp' || typeof parsed.version !== 'string')
+		throw new Error('bundled plugin identity is invalid');
+	return { id: parsed.id, version: parsed.version };
+}
+
+function parseJsonObject(serialized: string, errorMessage: string): Record<string, unknown> {
+	try {
+		const parsed: unknown = JSON.parse(serialized);
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+			throw new Error(errorMessage);
+		return parsed as Record<string, unknown>;
+	} catch {
+		throw new Error(errorMessage);
+	}
 }
 
 async function writeArtifact(outputPath: string, artifact: Uint8Array): Promise<void> {

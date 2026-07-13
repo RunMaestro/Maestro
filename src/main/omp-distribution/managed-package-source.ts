@@ -3,6 +3,7 @@ import {
 	verifyManagedPackage,
 	type ManagedPackageInput,
 	type NpmProvenanceDocument,
+	type NpmSignatureVerifier,
 	type VerifiedManagedPackage,
 	type VerifiedProvenance,
 } from './integrity';
@@ -18,6 +19,7 @@ export interface ManagedPackageMetadata {
 export interface ManagedPackageFetcher {
 	fetchMetadata(): Promise<ManagedPackageMetadata>;
 	fetchTarball(): Promise<Uint8Array>;
+	verifyNpmSignature: NpmSignatureVerifier;
 }
 
 export interface VerifiedManagedPackageSource extends VerifiedManagedPackage {
@@ -29,15 +31,17 @@ export interface VerifiedManagedPackageSource extends VerifiedManagedPackage {
 /** Verifies a registry-provided package source; GitHub executables are deliberately not a fallback source. */
 export function verifyManagedPackageSource(
 	metadata: ManagedPackageMetadata,
-	tarball: Uint8Array
+	tarball: Uint8Array,
+	verifyNpmSignature: NpmSignatureVerifier
 ): VerifiedManagedPackageSource {
+	if (typeof verifyNpmSignature !== 'function') throw new Error('missing npm signature verifier');
 	const packageInput: ManagedPackageInput = {
 		packageJson: metadata.packageJson,
 		tarball,
 		integrity: metadata.integrity,
 	};
 	const managedPackage = verifyManagedPackage(packageInput);
-	const provenance = parseNpmProvenance(metadata.provenance);
+	const provenance = parseNpmProvenance(metadata.provenance, verifyNpmSignature);
 	const expectedDigest = metadata.integrity.slice('sha512-'.length);
 	if (provenance.digest !== expectedDigest)
 		throw new Error('npm provenance does not match the verified tarball digest');
@@ -60,5 +64,5 @@ export async function fetchVerifiedManagedPackage(
 ): Promise<VerifiedManagedPackageSource> {
 	const metadata = await fetcher.fetchMetadata();
 	const tarball = await fetcher.fetchTarball();
-	return verifyManagedPackageSource(metadata, tarball);
+	return verifyManagedPackageSource(metadata, tarball, fetcher.verifyNpmSignature);
 }

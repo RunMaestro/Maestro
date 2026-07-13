@@ -53,10 +53,12 @@ const metadata = {
 		],
 	},
 };
+const verifyFixtureSignature = (keyId: string, signature: string): boolean =>
+	keyId === 'publisher' && signature === 'signature';
 
 describe('managed package source', () => {
 	it('binds exact manifest, tarball digest, signature, attestation and extracted executable', () => {
-		const verified = verifyManagedPackageSource(metadata, tarball);
+		const verified = verifyManagedPackageSource(metadata, tarball, verifyFixtureSignature);
 		expect(verified).toMatchObject({
 			version: '16.4.8',
 			executable: 'dist/cli.js',
@@ -71,6 +73,7 @@ describe('managed package source', () => {
 					throw new Error('offline');
 				},
 				fetchTarball: async () => tarball,
+				verifyNpmSignature: verifyFixtureSignature,
 			})
 		).rejects.toThrow('offline');
 		expect(() =>
@@ -87,8 +90,16 @@ describe('managed package source', () => {
 						],
 					},
 				},
-				tarball
+				tarball,
+				verifyFixtureSignature
 			)
 		).toThrow('provenance does not match');
+		expect(() =>
+			verifyManagedPackageSource(
+				metadata,
+				tarball,
+				undefined as unknown as typeof verifyFixtureSignature
+			)
+		).toThrow('missing npm signature verifier');
 	});
 });

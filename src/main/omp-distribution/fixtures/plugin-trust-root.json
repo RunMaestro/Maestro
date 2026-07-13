@@ -1,0 +1,5 @@
+{
+	"keyId": "maestro-omp-plugin-root-2026",
+	"algorithm": "hmac-sha256",
+	"publicKey": "fixture-public-key"
+}

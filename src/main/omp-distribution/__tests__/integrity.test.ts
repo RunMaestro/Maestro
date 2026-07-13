@@ -45,17 +45,20 @@ describe('managed OMP package verification', () => {
 
 	it('requires signature and attestation provenance for the pinned package digest', () => {
 		const digest = createHash('sha512').update('fixture').digest('base64');
-		const provenance = parseNpmProvenance({
-			signatures: [
-				{ keyid: 'SHA256:publisher-key', sig: 'signature', integrity: `sha512-${digest}` },
-			],
-			attestations: [
-				{
-					predicateType: 'https://slsa.dev/provenance/v1',
-					subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: digest } }],
-				},
-			],
-		});
+		const provenance = parseNpmProvenance(
+			{
+				signatures: [
+					{ keyid: 'SHA256:publisher-key', sig: 'signature', integrity: `sha512-${digest}` },
+				],
+				attestations: [
+					{
+						predicateType: 'https://slsa.dev/provenance/v1',
+						subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: digest } }],
+					},
+				],
+			},
+			() => true
+		);
 
 		expect(provenance).toEqual({ keyId: 'SHA256:publisher-key', digest, attested: true });
 	});
@@ -65,11 +68,28 @@ describe('managed OMP package verification', () => {
 			'missing npm signature evidence'
 		);
 		expect(() =>
-			parseNpmProvenance({
-				signatures: [{ keyid: 'key', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
-				attestations: [{ predicateType: 'https://slsa.dev/provenance/v1', subject: [] }],
-			})
+			parseNpmProvenance(
+				{
+					signatures: [{ keyid: 'key', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
+					attestations: [{ predicateType: 'https://slsa.dev/provenance/v1', subject: [] }],
+				},
+				() => true
+			)
 		).toThrow('missing matching npm attestation evidence');
+		expect(() =>
+			parseNpmProvenance(
+				{
+					signatures: [{ keyid: 'key', sig: 'signature', integrity: 'sha512-ZmFrZQ==' }],
+					attestations: [
+						{
+							predicateType: 'https://slsa.dev/provenance/v1',
+							subject: [{ name: MANAGED_OMP_PACKAGE, digest: { sha512: 'ZmFrZQ==' } }],
+						},
+					],
+				},
+				() => false
+			)
+		).toThrow('npm signature verification failed');
 	});
 
 	it('pins MIT notice aggregation to the exact managed package', () => {

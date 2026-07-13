@@ -36,6 +36,10 @@ export interface VerifiedProvenance {
 	attested: true;
 }
 
+export interface NpmSignatureVerifier {
+	(keyId: string, signature: string, integrity: string): boolean;
+}
+
 export interface ManagedPackageInput {
 	packageJson: string;
 	tarball: Uint8Array;
@@ -71,7 +75,10 @@ export function verifyManagedPackage(input: ManagedPackageInput): VerifiedManage
 	return { executable, version: MANAGED_OMP_VERSION };
 }
 
-export function parseNpmProvenance(document: NpmProvenanceDocument): VerifiedProvenance {
+export function parseNpmProvenance(
+	document: NpmProvenanceDocument,
+	verifySignature?: NpmSignatureVerifier
+): VerifiedProvenance {
 	const signatures = Array.isArray(document.signatures) ? document.signatures : [];
 	const validSignature = signatures
 		.filter((entry): entry is NpmSignature => isRecord(entry))
@@ -88,6 +95,16 @@ export function parseNpmProvenance(document: NpmProvenanceDocument): VerifiedPro
 	const integrityMatch = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(validSignature.integrity as string);
 	if (!integrityMatch) throw new Error('invalid npm signature integrity evidence');
 	const digest = integrityMatch[1];
+	if (
+		verifySignature &&
+		!verifySignature(
+			validSignature.keyid as string,
+			validSignature.sig as string,
+			validSignature.integrity as string
+		)
+	) {
+		throw new Error('npm signature verification failed');
+	}
 
 	const attestations = Array.isArray(document.attestations) ? document.attestations : [];
 	const hasMatchingAttestation = attestations
