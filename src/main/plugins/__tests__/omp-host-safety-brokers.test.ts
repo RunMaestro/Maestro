@@ -12,6 +12,7 @@ import {
 	type OmpExportFilesystem,
 	type OmpToolFilesystem,
 	type OmpSupervisedWorkspaceProcess,
+	type OmpToolApprovalRequest,
 } from '../omp-host-safety-brokers';
 import { NativeWorkspaceRootService } from '../native-workspace-root-service';
 
@@ -149,7 +150,8 @@ function toolFilesystem(contents = new Map<string, string>()): OmpToolFilesystem
 
 async function toolBroker(
 	files = new Map<string, string>(),
-	process?: OmpSupervisedWorkspaceProcess
+	process?: OmpSupervisedWorkspaceProcess,
+	approve: (request: OmpToolApprovalRequest) => Promise<boolean> = async () => true
 ) {
 	const rootService = roots();
 	const root = (await rootService.requestWorkspaceRoot()) as WorkspaceRootCapability;
@@ -159,7 +161,7 @@ async function toolBroker(
 			workspaceRoot: () => root,
 			activation,
 			filesystem: toolFilesystem(files),
-			approve: async () => true,
+			approve,
 			clock: () => 1_000,
 			...(process ? { process } : {}),
 		}),
@@ -284,6 +286,32 @@ describe('OMP host safety brokers', () => {
 		await expect(
 			unavailable.invoke('maestro.workspace.run', { command: 'git status', timeoutMs: 30_000 })
 		).rejects.toThrow('unavailable');
+	});
+
+	it('does not launch a workspace command when the user rejects its exact approval request', async () => {
+		let launched = false;
+		let approval: OmpToolApprovalRequest | undefined;
+		const process: OmpSupervisedWorkspaceProcess = {
+			run: async () => {
+				launched = true;
+				return { stdout: '', stderr: '', exitCode: 0 };
+			},
+			cancel: () => undefined,
+			revoke: () => undefined,
+		};
+		const { broker } = await toolBroker(new Map(), process, async (request) => {
+			approval = request;
+			return false;
+		});
+		await expect(
+			broker.invoke('maestro.workspace.run', { command: 'git status', timeoutMs: 1_000 })
+		).rejects.toThrow('unavailable');
+		expect(launched).toBe(false);
+		expect(approval).toEqual({
+			tool: 'maestro.workspace.run',
+			path: 'workspace',
+			command: 'git status',
+		});
 	});
 
 	it('enforces the per-minute workspace tool rate limit', async () => {

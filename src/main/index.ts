@@ -20,10 +20,13 @@ import crypto from 'crypto';
 import * as https from 'https';
 import type { LookupFunction } from 'net';
 import WebSocket from 'ws';
-import { readFile } from 'fs/promises';
+import { constants as fsConstants } from 'fs';
+import { access, lstat, mkdir, readFile, realpath } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
+import { getDefaultShell } from './stores/defaults';
+import { resolveShellPath } from './process-manager/utils/pathResolver';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
@@ -64,6 +67,7 @@ import {
 import { loadProductionOmpResource } from './omp-distribution/production-omp-resource';
 import { createProductionOmpRuntimeDependencies } from './omp-distribution/production-omp-runtime-dependencies';
 import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
+import { createConfiguredOmpSupervisedWorkspaceProcess } from './plugins/omp-supervised-workspace-process';
 import { InteractiveRuntimeSandboxEventForwarder } from './plugins/interactive-runtime-sandbox-events';
 import type {
 	InteractiveRuntimeHandle,
@@ -2302,6 +2306,70 @@ app
 				: await dialog.showOpenDialog(options);
 			return result.canceled ? null : (result.filePaths[0] ?? null);
 		};
+		let activeOmpWorkspaceRoot: WorkspaceRootCapability | null = null;
+		const customShellPath = store.get('customShellPath', '') as string;
+		const selectedOmpShell =
+			customShellPath || (store.get('defaultShell', getDefaultShell()) as string);
+		const ompWorkspaceProcess = await createConfiguredOmpSupervisedWorkspaceProcess({
+			selectedShell: selectedOmpShell,
+			resolveShellPath,
+			inspectShell: async (shellPath) => {
+				const [entry, canonicalPath] = await Promise.all([lstat(shellPath), realpath(shellPath)]);
+				await access(shellPath, fsConstants.X_OK);
+				return {
+					isRegularFile: entry.isFile(),
+					isReparsePoint: entry.isSymbolicLink(),
+					canonicalPath,
+				};
+			},
+			privateHome: path.join(app.getPath('userData'), 'omp-workspace-shell-home'),
+			ensurePrivateHome: async () => {
+				const privateHome = path.join(app.getPath('userData'), 'omp-workspace-shell-home');
+				await mkdir(privateHome, { recursive: true, mode: 0o700 });
+				const [entry, canonicalPath] = await Promise.all([
+					lstat(privateHome),
+					realpath(privateHome),
+				]);
+				if (!entry.isDirectory() || entry.isSymbolicLink() || canonicalPath !== privateHome) {
+					throw new Error('OMP workspace shell home is unsafe');
+				}
+			},
+			environment: process.env,
+		});
+		const approveOmpWorkspaceTool = async ({
+			tool,
+			path: requestedPath,
+			target,
+			command,
+		}: {
+			readonly tool: string;
+			readonly path: string;
+			readonly target?: string;
+			readonly command?: string;
+		}): Promise<boolean> => {
+			const detail =
+				command === undefined
+					? `Tool: ${tool}\nPath: ${requestedPath}${target ? `\nTarget: ${target}` : ''}`
+					: `Command:\n${command}\n\nWorking directory: the approved workspace root`;
+			const result = mainWindow
+				? await dialog.showMessageBox(mainWindow, {
+						type: 'question',
+						buttons: ['Allow once', 'Deny'],
+						defaultId: 1,
+						cancelId: 1,
+						message: 'Allow OMP workspace operation?',
+						detail,
+					})
+				: await dialog.showMessageBox({
+						type: 'question',
+						buttons: ['Allow once', 'Deny'],
+						defaultId: 1,
+						cancelId: 1,
+						message: 'Allow OMP workspace operation?',
+						detail,
+					});
+			return result.response === 0;
+		};
 		const packagedOmpConfiguration = (() => {
 			if (!app.isPackaged) return undefined;
 			const resource = loadProductionOmpResource(path.join(process.resourcesPath, 'omp'));
@@ -2348,6 +2416,22 @@ app
 					...productionOmpConfiguration,
 					activation: ompRuntimeActivation,
 					chooseDirectory: chooseOmpDirectory,
+					ompSandboxHandlerDeps: {
+						workspaceRoot: () => activeOmpWorkspaceRoot,
+						approve: approveOmpWorkspaceTool,
+						auth: {
+							providers: [],
+							allowedOrigins: new Set<string>(),
+							openAuthorization: async () => {
+								throw new Error('OMP authorization providers are not configured');
+							},
+							exchangeCode: async () => {
+								throw new Error('OMP authorization providers are not configured');
+							},
+						},
+						export: { chooseDirectory: chooseOmpDirectory },
+						...(ompWorkspaceProcess ? { process: ompWorkspaceProcess } : {}),
+					},
 				})
 			: undefined;
 		const workspaceRoots =
@@ -2381,6 +2465,7 @@ app
 			for (const [runtimeId, entry] of runtimeHandles) {
 				if (entry.ownerPluginId === pluginId) runtimeHandles.delete(runtimeId);
 			}
+			activeOmpWorkspaceRoot = null;
 			runtimeEvents.revokeOwner(pluginId);
 			if (productionOmpBootstrap) {
 				void productionOmpBootstrap.teardown(pluginId, reason);
@@ -2496,6 +2581,9 @@ app
 					) {
 						throw new Error('invalid interactive runtime request');
 					}
+					if (runtimeHandles.size > 0) {
+						throw new Error('only one OMP runtime may hold workspace authority');
+					}
 					const generation = registration.context.generation;
 					const handle = await managedRuntime.startOmpRuntime({
 						workspaceRoot: rootEntry.root,
@@ -2516,6 +2604,7 @@ app
 						generation,
 						handle,
 					});
+					activeOmpWorkspaceRoot = rootEntry.root;
 					return { runtimeId: handle.runtimeId, generation: generation.toString(10) };
 				},
 				write: async (runtimeId: string, request: unknown) => {
@@ -2538,6 +2627,7 @@ app
 					const handle =
 						runtimeEvents.detach(pluginId, runtimeId, entry.generation) ?? entry.handle;
 					await handle.stop(reason as never);
+					activeOmpWorkspaceRoot = null;
 				},
 				hostTools: async (runtimeId: string) => {
 					const entry = runtimeHandles.get(runtimeId);

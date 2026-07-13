@@ -143,6 +143,50 @@ describe('production OMP bootstrap', () => {
 		expect(await bootstrap.managedRuntime.requestWorkspaceRoot()).toBeNull();
 	});
 
+	it('exposes workspace run in the production catalog only when a supervised process is injected', async () => {
+		const input = await writeArtifact();
+		const bootstrap = createProductionOmpBootstrap({
+			pluginsDir: join(input.directory, 'plugins'),
+			archivePath: input.archivePath,
+			expectedArchiveSha256: input.expectedSha256,
+			trustRoot: input.trustRoot,
+			verifySignature: input.verifySignature,
+			pinnedRelease,
+			resolver: {
+				resolveSystem: async () => null,
+				managedInstallAllowed: () => false,
+				resolveManaged: async () => {
+					throw new Error('managed installation is disabled');
+				},
+			},
+			activation: () => null,
+			chooseDirectory: async () => null,
+			ompSandboxHandlerDeps: {
+				workspaceRoot: () => null,
+				approve: async () => true,
+				process: {
+					run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+					cancel: () => undefined,
+					revoke: () => undefined,
+				},
+				auth: {
+					providers: [],
+					allowedOrigins: new Set<string>(),
+					openAuthorization: async () => {
+						throw new Error('no provider');
+					},
+					exchangeCode: async () => {
+						throw new Error('no provider');
+					},
+				},
+				export: { chooseDirectory: async () => null },
+			},
+		});
+		expect(bootstrap.ompSandboxHandlers?.tools.catalog().map(({ name }) => name)).toContain(
+			'maestro.workspace.run'
+		);
+	});
+
 	it('uses managed runtime only when its explicit production opt-in is true', async () => {
 		const input = await writeArtifact();
 		const resolver: ManagedRuntimeResolver = {

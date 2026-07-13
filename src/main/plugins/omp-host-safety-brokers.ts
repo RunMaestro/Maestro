@@ -111,6 +111,8 @@ export interface OmpToolApprovalRequest {
 	readonly tool: OmpWorkspaceToolName;
 	readonly path: string;
 	readonly target?: string;
+	/** Exact host-bound command, present only for the explicitly approved run tool. */
+	readonly command?: string;
 }
 export interface OmpSupervisedWorkspaceProcess {
 	run(request: {
@@ -182,6 +184,7 @@ export class OmpRootToolPolicyBroker {
 					tool,
 					path: tool === 'maestro.workspace.run' ? 'workspace' : request.path,
 					...(request.target ? { target: request.target } : {}),
+					...(tool === 'maestro.workspace.run' ? { command: request.command } : {}),
 				}))
 			) {
 				throw unavailable();
