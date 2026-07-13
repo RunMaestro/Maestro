@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activate, deactivate, startFromExplicitPanelAction } from '../../runtime';
+import { buildConversationTree } from '../../runtime/activation';
 
 afterEach(async () => deactivate());
 
@@ -201,6 +202,24 @@ describe('OMP plugin activation', () => {
 	});
 });
 
+it('projects bounded message trees from real entry parent relationships without cycles or orphans', () => {
+	const tree = buildConversationTree({
+		messages: [
+			{ id: 'root', text: 'Root' },
+			{ id: 'child', parentId: 'root', text: 'Child' },
+			{ id: 'orphan', parentId: 'missing', text: 'Orphan' },
+			{ id: 'cycle-a', parentId: 'cycle-b', text: 'Cycle A' },
+			{ id: 'cycle-b', parentId: 'cycle-a', text: 'Cycle B' },
+		],
+	});
+	expect(tree).toEqual([
+		{ id: 'root', label: 'Root', children: [{ id: 'child', label: 'Child' }] },
+		{ id: 'orphan', label: 'Orphan' },
+		{ id: 'cycle-a', label: 'Cycle A' },
+		{ id: 'cycle-b', label: 'Cycle B' },
+	]);
+});
+
 it('binds a runtime generation JSONL stream to the RPC controller and publishes the ready projection', async () => {
 	const writes: Array<Record<string, unknown>> = [];
 	const sessions: Array<readonly unknown[]> = [];
@@ -225,6 +244,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 	});
 	const emitLine = (frame: Record<string, unknown>) =>
 		emit?.({ sequence: ++messageSequence, value: frame });
+	let currentSessionName = 'First session';
 	await activate({
 		interactiveRuntime: {
 			requestWorkspaceRoot: async () => ({ opaque: true }),
@@ -242,7 +262,8 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 							success: true,
 							data: {
 								sessionId: 'session-1',
-								sessionName: 'First session',
+								sessionName: currentSessionName,
+								sessionFile: 'C:/private/session-1.jsonl',
 								isStreaming: false,
 								isCompacting: false,
 								steeringMode: 'all',
@@ -273,11 +294,37 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 							data: { models: [] },
 						});
 					}
+					if (frame.type === 'get_messages') {
+						emitLine({
+							type: 'response',
+							id: frame.id,
+							command: 'get_messages',
+							success: true,
+							data: { messages: [{ id: 'entry-a', text: 'Entry A' }] },
+						});
+					}
 					if (frame.type === 'prompt') {
 						emitLine({
 							type: 'response',
 							id: frame.id,
 							command: 'prompt',
+							success: true,
+						});
+					}
+					if (frame.type === 'set_session_name') {
+						currentSessionName = typeof frame.name === 'string' ? frame.name : currentSessionName;
+						emitLine({
+							type: 'response',
+							id: frame.id,
+							command: 'set_session_name',
+							success: true,
+						});
+					}
+					if (frame.type === 'branch') {
+						emitLine({
+							type: 'response',
+							id: frame.id,
+							command: 'branch',
 							success: true,
 						});
 					}
@@ -364,7 +411,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 	const starting = startFromExplicitPanelAction();
 	await messageSubscription;
 	await expect(starting).resolves.toBe(true);
-	expect(messageSequence).toBe(6);
+	expect(messageSequence).toBe(7);
 	receivePanelRequest?.({
 		kind: 'omp.prompt.send',
 		requestId: 'panel-request-1',
@@ -442,7 +489,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 					model: 'OMP default',
 					mode: 'build',
 					events: [],
-					tree: [],
+					tree: [{ id: 'entry-a', label: 'Entry A' }],
 					subagents: [],
 					usage: { inputTokens: 0, outputTokens: 0 },
 					queuedMessageCount: 0,
@@ -468,7 +515,7 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 					expect.objectContaining({
 						id: 'session-1',
 						events: [],
-						tree: [],
+						tree: [{ id: 'entry-a', label: 'Entry A' }],
 						subagents: [],
 						usage: { inputTokens: 0, outputTokens: 0 },
 					}),
@@ -477,4 +524,48 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 			}),
 		})
 	);
+	receivePanelRequest?.({
+		kind: 'omp.session.rename',
+		requestId: 'panel-rename',
+		payload: { sessionId: 'session-1', name: 'Renamed session' },
+	});
+	await vi.waitFor(() =>
+		expect(panelResults).toContainEqual({
+			requestId: 'panel-rename',
+			kind: 'omp.session.rename',
+			payload: expect.objectContaining({
+				sessions: [expect.objectContaining({ id: 'session-1', title: 'Renamed session' })],
+			}),
+		})
+	);
+	expect(writes.find((frame) => frame.type === 'set_session_name')).toMatchObject({
+		type: 'set_session_name',
+		name: 'Renamed session',
+	});
+	expect(JSON.stringify(panelResults)).not.toContain('C:/private/session-1.jsonl');
+
+	receivePanelRequest?.({
+		kind: 'omp.session.branch',
+		requestId: 'panel-branch',
+		payload: { sessionId: 'session-1', entryId: 'entry-a' },
+	});
+	await vi.waitFor(() =>
+		expect(panelResults).toContainEqual({
+			requestId: 'panel-branch',
+			kind: 'omp.session.branch',
+			payload: expect.objectContaining({
+				activeSessionId: 'session-1',
+				sessions: [
+					expect.objectContaining({
+						id: 'session-1',
+						tree: [{ id: 'entry-a', label: 'Entry A' }],
+					}),
+				],
+			}),
+		})
+	);
+	expect(writes.find((frame) => frame.type === 'branch')).toMatchObject({
+		type: 'branch',
+		entryId: 'entry-a',
+	});
 });

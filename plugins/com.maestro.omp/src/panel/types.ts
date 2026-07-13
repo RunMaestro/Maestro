@@ -85,6 +85,8 @@ export interface OmpWorkspaceAdapter {
 	getSnapshot(): Promise<OmpWorkspaceSnapshot>;
 	subscribe(listener: (snapshot: OmpWorkspaceSnapshot) => void): () => void;
 	selectSession(sessionId: string): Promise<void>;
+	renameSession(sessionId: string, name: string): Promise<void>;
+	branchSession(sessionId: string, entryId: string): Promise<void>;
 	createSession(): Promise<void>;
 	sendMessage(sessionId: string, text: string, attachments: File[]): Promise<void>;
 	abort(sessionId: string): Promise<void>;

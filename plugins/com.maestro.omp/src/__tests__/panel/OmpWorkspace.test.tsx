@@ -76,6 +76,8 @@ function snapshot(overrides: Partial<OmpWorkspaceSnapshot> = {}): OmpWorkspaceSn
 
 class DeterministicOmpAdapter implements OmpWorkspaceAdapter {
 	public readonly selectSession = vi.fn(async () => {});
+	public readonly renameSession = vi.fn(async () => {});
+	public readonly branchSession = vi.fn(async () => {});
 	public readonly createSession = vi.fn(async () => {});
 	public readonly sendMessage = vi.fn(async () => {});
 	public readonly abort = vi.fn(async () => {});
@@ -141,6 +143,20 @@ describe('OmpWorkspace', () => {
 		expect(adapter.sendMessage).toHaveBeenCalledWith('session-a', 'Run the focused test.', [file]);
 		fireEvent.click(screen.getByRole('button', { name: 'Abort stream' }));
 		expect(adapter.abort).toHaveBeenCalledWith('session-a');
+	});
+
+	it('offers keyboard-accessible opaque rename and conversation branch actions', async () => {
+		const adapter = new DeterministicOmpAdapter(snapshot());
+		vi.spyOn(window, 'prompt').mockReturnValue('Renamed queue');
+		render(<OmpWorkspace adapter={adapter} theme={theme} />);
+
+		fireEvent.click(
+			await screen.findByRole('button', { name: 'Rename Refactor queue processing' })
+		);
+		expect(adapter.renameSession).toHaveBeenCalledWith('session-a', 'Renamed queue');
+		fireEvent.click(screen.getByRole('button', { name: 'tree' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Branch from Turn 1' }));
+		expect(adapter.branchSession).toHaveBeenCalledWith('session-a', 'root');
 	});
 
 	it('shows offline and incompatible recovery states emitted by the deterministic adapter', async () => {

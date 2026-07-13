@@ -123,8 +123,9 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 	if (snapshot.connection === 'offline') {
 		return (
 			<WorkspaceState
-				label="Offline — OMP is unavailable."
+				label={snapshot.error ?? 'Offline — OMP is unavailable.'}
 				theme={theme}
+				start={() => invoke(adapter.createSession)}
 				retry={() => invoke(adapter.retry)}
 			/>
 		);
@@ -196,6 +197,10 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 								text={theme.colors.textMain}
 								dim={theme.colors.textDim}
 								onSelect={() => invoke(() => adapter.selectSession(session.id))}
+								onRename={() => {
+									const name = window.prompt('Rename OMP session', session.title)?.trim();
+									if (name) invoke(() => adapter.renameSession(session.id, name));
+								}}
 							/>
 						))
 					)}
@@ -268,6 +273,7 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 						tab={inspectorTab}
 						theme={theme}
 						onTab={setInspectorTab}
+						onBranch={(entryId) => invoke(() => adapter.branchSession(activeSession.id, entryId))}
 					/>
 				)}
 			</div>
@@ -280,6 +286,7 @@ export function OmpWorkspace({ adapter, theme, focusEventId }: OmpWorkspaceProps
 					theme={theme}
 					onTab={setInspectorTab}
 					onResize={setInspectorWidth}
+					onBranch={(entryId) => invoke(() => adapter.branchSession(activeSession.id, entryId))}
 				/>
 			)}
 		</section>
@@ -290,11 +297,13 @@ function WorkspaceState({
 	label,
 	theme,
 	retry,
+	start,
 	error = false,
 }: {
 	label: string;
 	theme: WorkspaceTheme;
 	retry?: () => void;
+	start?: () => void;
 	error?: boolean;
 }) {
 	return (
@@ -316,6 +325,17 @@ function WorkspaceState({
 					<RotateCw className="mr-1 inline" size={14} /> Retry
 				</button>
 			)}
+			{start && (
+				<button
+					type="button"
+					aria-label="New OMP session"
+					onClick={start}
+					className="rounded border px-3 py-2 text-xs font-semibold"
+					style={{ borderColor: theme.colors.border }}
+				>
+					New Session
+				</button>
+			)}
 		</section>
 	);
 }
@@ -327,6 +347,7 @@ function SessionButton({
 	text,
 	dim,
 	onSelect,
+	onRename,
 }: {
 	session: OmpWorkspaceSession;
 	active: boolean;
@@ -334,27 +355,39 @@ function SessionButton({
 	text: string;
 	dim: string;
 	onSelect: () => void;
+	onRename: () => void;
 }) {
 	return (
-		<button
-			type="button"
-			onClick={onSelect}
-			aria-current={active ? 'page' : undefined}
-			className="mb-1 w-full rounded border-l-2 px-3 py-2 text-left transition-col motion-reduce:transition-none hover:bg-white/5"
-			style={{ borderLeftColor: active ? accent : 'transparent', color: text }}
-		>
-			<span className="block truncate text-sm">{session.title}</span>
-			<span
-				className="mt-1 flex items-center gap-1 text-[10px] uppercase tracking-wider"
+		<div className="mb-1 flex gap-1">
+			<button
+				type="button"
+				onClick={onSelect}
+				aria-current={active ? 'page' : undefined}
+				className="min-w-0 flex-1 rounded border-l-2 px-3 py-2 text-left transition-col motion-reduce:transition-none hover:bg-white/5"
+				style={{ borderLeftColor: active ? accent : 'transparent', color: text }}
+			>
+				<span className="block truncate text-sm">{session.title}</span>
+				<span
+					className="mt-1 flex items-center gap-1 text-[10px] uppercase tracking-wider"
+					style={{ color: dim }}
+				>
+					<span
+						className="h-1.5 w-1.5 rounded-full"
+						style={{ backgroundColor: session.status === 'streaming' ? accent : dim }}
+					/>
+					{session.branch ?? session.status}
+				</span>
+			</button>
+			<button
+				type="button"
+				aria-label={`Rename ${session.title}`}
+				onClick={onRename}
+				className="rounded px-2 text-xs hover:bg-white/5 focus:outline-none focus:ring-1"
 				style={{ color: dim }}
 			>
-				<span
-					className="h-1.5 w-1.5 rounded-full"
-					style={{ backgroundColor: session.status === 'streaming' ? accent : dim }}
-				/>
-				{session.branch ?? session.status}
-			</span>
-		</button>
+				Rename
+			</button>
+		</div>
 	);
 }
 
@@ -627,6 +660,7 @@ function Inspector({
 	theme,
 	onTab,
 	onResize,
+	onBranch,
 }: {
 	session: OmpWorkspaceSession;
 	tab: InspectorTab;
@@ -634,6 +668,7 @@ function Inspector({
 	theme: WorkspaceTheme;
 	onTab: (tab: InspectorTab) => void;
 	onResize: (width: number) => void;
+	onBranch: (entryId: string) => void;
 }) {
 	return (
 		<aside
@@ -691,7 +726,12 @@ function Inspector({
 				))}
 			</div>
 			<div className="min-h-0 flex-1 overflow-auto p-3">
-				<InspectorContent session={session} tab={tab} textDim={theme.colors.textDim} />
+				<InspectorContent
+					session={session}
+					tab={tab}
+					textDim={theme.colors.textDim}
+					onBranch={onBranch}
+				/>
 			</div>
 		</aside>
 	);
@@ -702,11 +742,13 @@ function MobileInspector({
 	tab,
 	theme,
 	onTab,
+	onBranch,
 }: {
 	session: OmpWorkspaceSession;
 	tab: InspectorTab;
 	theme: WorkspaceTheme;
 	onTab: (tab: InspectorTab) => void;
+	onBranch: (entryId: string) => void;
 }) {
 	return (
 		<aside
@@ -733,7 +775,12 @@ function MobileInspector({
 				))}
 			</div>
 			<div className="pt-3">
-				<InspectorContent session={session} tab={tab} textDim={theme.colors.textDim} />
+				<InspectorContent
+					session={session}
+					tab={tab}
+					textDim={theme.colors.textDim}
+					onBranch={onBranch}
+				/>
 			</div>
 		</aside>
 	);
@@ -743,10 +790,12 @@ function InspectorContent({
 	session,
 	tab,
 	textDim,
+	onBranch,
 }: {
 	session: OmpWorkspaceSession;
 	tab: InspectorTab;
 	textDim: string;
+	onBranch: (entryId: string) => void;
 }) {
 	if (tab === 'session')
 		return (
@@ -793,10 +842,12 @@ function InspectorContent({
 		);
 	if (tab === 'tree')
 		return (
-			<ul className="space-y-1 text-sm">
-				{session.tree.map((node) => (
-					<TreeItem key={node.id} node={node} />
-				))}
+			<ul className="space-y-1 text-sm" aria-label="OMP conversation tree">
+				{session.tree.length === 0 ? (
+					<li style={{ color: textDim }}>No messages available.</li>
+				) : (
+					session.tree.map((node) => <TreeItem key={node.id} node={node} onBranch={onBranch} />)
+				)}
 			</ul>
 		);
 	if (tab === 'subagents')
@@ -844,14 +895,21 @@ function InspectorContent({
 	);
 }
 
-function TreeItem({ node }: { node: OmpTreeNode }) {
+function TreeItem({ node, onBranch }: { node: OmpTreeNode; onBranch: (entryId: string) => void }) {
 	return (
 		<li>
-			<span>{node.label}</span>
+			<button
+				type="button"
+				onClick={() => onBranch(node.id)}
+				aria-label={`Branch from ${node.label}`}
+				className="rounded px-1 text-left hover:bg-white/5 focus:outline-none focus:ring-1"
+			>
+				{node.label}
+			</button>
 			{node.children && node.children.length > 0 && (
 				<ul className="ml-3 mt-1 border-l pl-2" style={{ borderColor: 'currentColor' }}>
 					{node.children.map((child) => (
-						<TreeItem key={child.id} node={child} />
+						<TreeItem key={child.id} node={child} onBranch={onBranch} />
 					))}
 				</ul>
 			)}

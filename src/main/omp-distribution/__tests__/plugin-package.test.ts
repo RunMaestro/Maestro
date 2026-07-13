@@ -17,6 +17,8 @@ describe('first-party OMP plugin package', () => {
 		expect(pluginJson.permissions).toEqual([
 			{ capability: 'ui:workspace' },
 			{ capability: 'ui:interactivePanel' },
+			{ capability: 'storage:read' },
+			{ capability: 'storage:write' },
 			{ capability: 'process:interactive', scope: 'omp' },
 		]);
 	});

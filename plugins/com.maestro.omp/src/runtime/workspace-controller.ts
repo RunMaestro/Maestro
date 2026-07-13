@@ -149,6 +149,9 @@ export class OmpWorkspaceController {
 	): Promise<OmpRpcResponse> {
 		const response = await this.client.command(command, options);
 		if (command.type === 'get_state') this.acceptState(response);
+		if (isSelectionMutation(command.type) && response.success) {
+			this.acceptState(await this.client.command({ type: 'get_state' }, options));
+		}
 		if (command.type === 'get_available_commands') this.acceptAvailableCommands(response);
 		if (command.type === 'get_available_models') this.acceptAvailableModels(response);
 		return response;

@@ -14,11 +14,15 @@ import type {
 } from '@maestro/plugin-sdk';
 import { OmpProtocolError, OmpRpcClient } from './rpc-client';
 import { OmpWorkspaceController } from './workspace-controller';
+import { OmpSessionCatalog } from './session-catalog';
 import type { OmpRpcCommand, OmpRpcEvent, OmpRpcTransport, OmpSessionState } from './types';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
-type ActivationSdk = Pick<MaestroSdk, 'workspace' | 'interactivePanel' | 'interactiveRuntime'>;
+type ActivationSdk = Pick<
+	MaestroSdk,
+	'workspace' | 'interactivePanel' | 'interactiveRuntime' | 'storage'
+>;
 type ExternalSessionStatus =
 	| 'starting'
 	| 'idle'
@@ -41,6 +45,9 @@ const OMP_IMAGE_MEDIA_TYPES: Readonly<Record<string, true>> = {
 interface ActiveRuntime {
 	readonly handle: InteractiveRuntimeHandle;
 	readonly client: OmpRpcClient;
+	readonly catalog: OmpSessionCatalog;
+	treeSessionId?: string;
+	tree: readonly JsonValue[];
 	readonly controller: OmpWorkspaceController;
 	unsubscribe: () => void;
 	unsubscribeMessages: () => void;
@@ -61,6 +68,7 @@ interface ActivePlugin {
 	readonly panel: MaestroInteractivePanelOwnerApi;
 	generation: number;
 	panelSequence: bigint;
+	readonly catalog: OmpSessionCatalog;
 	starting?: Promise<boolean>;
 	runtime?: ActiveRuntime;
 }
@@ -80,12 +88,14 @@ export async function activate(sdk: ActivationSdk): Promise<void> {
 		unsubscribePanel: () => undefined,
 		generation: 0,
 		panelSequence: 0n,
+		catalog: new OmpSessionCatalog(sdk.storage),
 	};
 	active = candidate;
 	try {
 		candidate.unsubscribePanel = candidate.panel.onRequest((request) => {
 			void handlePanelRequest(candidate, request);
 		});
+		await candidate.catalog.load();
 		await candidate.workspace.publishExternalSessions(1, []);
 		await candidate.workspace.setStatus({ state: 'offline', label: 'OMP setup required' });
 		await candidate.workspace.setBadge(null);
@@ -209,6 +219,8 @@ async function startRuntime(
 	const activeRuntime: ActiveRuntime = {
 		handle,
 		client,
+		catalog: current.catalog,
+		tree: Object.freeze([]),
 		controller,
 		unsubscribe: () => undefined,
 		unsubscribeMessages: () => undefined,
@@ -270,6 +282,8 @@ async function startRuntime(
 			return false;
 		}
 		activeRuntime.status = 'idle';
+		await refreshCatalog(activeRuntime);
+		await refreshConversationTree(activeRuntime);
 		await projectRuntime(current, activeRuntime, 'idle');
 		return true;
 	} catch (error) {
@@ -420,12 +434,20 @@ async function dispatchPanelRequest(
 ): Promise<JsonValue> {
 	const payload = requireRecord(request.payload);
 	const sessionId = readString(payload, 'sessionId');
-	const command = await panelCommand(current.panel, request.kind, payload, sessionId);
+	const command = await panelCommand(
+		current.panel,
+		runtime.catalog,
+		request.kind,
+		payload,
+		sessionId
+	);
 	if (command) {
 		const response = await runtime.controller.command(command);
 		if (snapshotResult(request.kind)) {
-			if (request.kind !== 'omp.commands.refresh')
+			if (request.kind !== 'omp.commands.refresh' && !selectionRequest(request.kind))
 				await runtime.controller.command({ type: 'get_state' });
+			await refreshCatalog(runtime);
+			await refreshConversationTree(runtime);
 			return currentView(runtime);
 		}
 		return projectCommandResult(request.kind, response.data, payload, runtime);
@@ -453,10 +475,20 @@ async function dispatchPanelRequest(
 	throw new OmpProtocolError(`unknown OMP panel request ${JSON.stringify(request.kind)}`);
 }
 
+function selectionRequest(kind: string): boolean {
+	return (
+		kind === 'omp.session.create' ||
+		kind === 'omp.session.select' ||
+		kind === 'omp.session.branch' ||
+		kind === 'omp.session.handoff'
+	);
+}
+
 function snapshotResult(kind: string): boolean {
 	switch (kind) {
 		case 'omp.session.create':
 		case 'omp.session.select':
+		case 'omp.session.rename':
 		case 'omp.session.compact':
 		case 'omp.session.branch':
 		case 'omp.session.handoff':
@@ -535,10 +567,6 @@ function subagentMessages(data: unknown): JsonValue {
 	const result = isRecord(data) ? data : {};
 	const entries = Array.isArray(result.entries) ? result.entries : [];
 	return Object.freeze({
-		sessionFile: boundedString(
-			typeof result.sessionFile === 'string' ? result.sessionFile : '',
-			4096
-		),
 		fromByte: boundedCount(result.fromByte),
 		nextByte: boundedCount(result.nextByte),
 		reset: result.reset === true,
@@ -606,6 +634,7 @@ function boundedString(value: string, maximum: number): string {
 
 async function panelCommand(
 	panel: MaestroInteractivePanelOwnerApi,
+	catalog: OmpSessionCatalog,
 	kind: string,
 	payload: Record<string, JsonValue>,
 	sessionId: string | undefined
@@ -614,8 +643,17 @@ async function panelCommand(
 	switch (kind) {
 		case 'omp.session.create':
 			return { type: 'new_session' };
-		case 'omp.session.select':
-			return sessionId ? { type: 'switch_session', sessionPath: sessionId } : undefined;
+		case 'omp.session.select': {
+			const sessionPath = sessionId ? catalog.sessionPath(sessionId) : undefined;
+			if (!sessionPath) throw new OmpProtocolError('OMP session is unknown or has no private path');
+			return { type: 'switch_session', sessionPath };
+		}
+		case 'omp.session.rename': {
+			const name = readString(payload, 'name');
+			return sessionId && name && name.length <= 4096
+				? { type: 'set_session_name', name }
+				: undefined;
+		}
 		case 'omp.prompt.send':
 			return text
 				? {
@@ -755,22 +793,42 @@ async function projectRuntime(
 	if (nextStatus) runtime.status = nextStatus;
 	const state = runtime.controller.getState();
 	if (!state) return;
-	const snapshot = externalSession(state, runtime);
-	await current.workspace.publishExternalSessions(++current.generation, Object.freeze([snapshot]));
+	await refreshCatalog(runtime);
+	await current.workspace.publishExternalSessions(
+		++current.generation,
+		externalSessions(state, runtime)
+	);
 	await current.workspace.setStatus(workspaceStatus(runtime.status));
 	await current.workspace.setBadge(runtime.pendingApproval ? 1 : null);
 	await emitPanel(current, 'omp.view.replace', currentView(runtime));
 }
 
-function externalSession(state: OmpSessionState, runtime: ActiveRuntime) {
-	return Object.freeze({
-		externalSessionId: state.sessionId,
-		title: state.sessionName ?? state.sessionId,
-		status: runtime.status,
-		unread: 0,
-		pendingApproval: runtime.pendingApproval,
-		updatedAt: Date.now(),
-	});
+function externalSessions(state: OmpSessionState, runtime: ActiveRuntime) {
+	const entries = runtime.catalog.entries();
+	const seen = new Set(entries.map((entry) => entry.id));
+	const sessions = entries.map((entry) =>
+		Object.freeze({
+			externalSessionId: entry.id,
+			title: entry.title,
+			status: entry.id === state.sessionId ? runtime.status : 'idle',
+			unread: 0,
+			pendingApproval: entry.id === state.sessionId && runtime.pendingApproval,
+			updatedAt: entry.updatedAt,
+		})
+	);
+	if (!seen.has(state.sessionId)) {
+		sessions.unshift(
+			Object.freeze({
+				externalSessionId: state.sessionId,
+				title: state.sessionName ?? state.sessionId,
+				status: runtime.status,
+				unread: 0,
+				pendingApproval: runtime.pendingApproval,
+				updatedAt: Date.now(),
+			})
+		);
+	}
+	return Object.freeze(sessions);
 }
 
 function workspaceStatus(status: ExternalSessionStatus) {
@@ -799,28 +857,163 @@ function currentView(runtime: ActiveRuntime): JsonValue {
 			(value): value is string => value !== undefined
 		)
 	);
+	const entries = runtime.catalog.entries();
+	const knownIds = new Set(entries.map((entry) => entry.id));
+	const sessions = entries.map((entry) =>
+		sessionView(entry.id, entry.title, entry.updatedAt, runtime, state, selectedModel)
+	);
+	if (!knownIds.has(state.sessionId)) {
+		sessions.unshift(
+			sessionView(
+				state.sessionId,
+				boundedString(state.sessionName ?? state.sessionId, 4096),
+				Date.now(),
+				runtime,
+				state,
+				selectedModel
+			)
+		);
+	}
 	return Object.freeze({
 		connection: connectionState(runtime.status),
 		models: Object.freeze([...new Set(models)].slice(0, 100)),
-		sessions: Object.freeze([
-			Object.freeze({
-				id: boundedString(state.sessionId, 4096),
-				title: boundedString(state.sessionName ?? state.sessionId, 4096),
-				updatedAt: Date.now(),
-				status: sessionStatus(runtime, state),
-				model: boundedString(selectedModel ?? 'OMP default', 4096),
-				mode: runtime.composerMode,
-				events: Object.freeze([]),
-				tree: Object.freeze([]),
-				subagents: Object.freeze([]),
-				usage: Object.freeze({ inputTokens: 0, outputTokens: 0 }),
-				...(state.thinkingLevel === undefined ? {} : { thinkingLevel: state.thinkingLevel }),
-				queuedMessageCount: boundedCount(state.queuedMessageCount),
-				todoPhases: todoPhases(state.todoPhases),
-			}),
-		]),
+		sessions: Object.freeze(sessions),
 		activeSessionId: boundedString(state.sessionId, 4096),
 	});
+}
+
+function sessionView(
+	id: string,
+	title: string,
+	updatedAt: number,
+	runtime: ActiveRuntime,
+	currentState: OmpSessionState,
+	selectedModel: string | undefined
+): JsonValue {
+	const selected = id === currentState.sessionId;
+	return Object.freeze({
+		id: boundedString(id, 4096),
+		title: boundedString(selected ? (currentState.sessionName ?? title) : title, 4096),
+		updatedAt,
+		status: selected ? sessionStatus(runtime, currentState) : 'idle',
+		model: boundedString(selected ? (selectedModel ?? 'OMP default') : 'OMP default', 4096),
+		mode: runtime.composerMode,
+		events: Object.freeze([]),
+		tree: selected && runtime.treeSessionId === id ? runtime.tree : Object.freeze([]),
+		subagents: Object.freeze([]),
+		usage: Object.freeze({ inputTokens: 0, outputTokens: 0 }),
+		...(selected && currentState.thinkingLevel === undefined
+			? {}
+			: selected
+				? { thinkingLevel: currentState.thinkingLevel }
+				: {}),
+		queuedMessageCount: selected ? boundedCount(currentState.queuedMessageCount) : 0,
+		todoPhases: selected ? todoPhases(currentState.todoPhases) : Object.freeze([]),
+	});
+}
+
+async function refreshCatalog(runtime: ActiveRuntime): Promise<void> {
+	const state = runtime.controller.getState();
+	if (state) await runtime.catalog.sync(state);
+}
+
+async function refreshConversationTree(runtime: ActiveRuntime): Promise<void> {
+	const state = runtime.controller.getState();
+	if (!state) return;
+	const response = await runtime.controller.command({ type: 'get_messages' });
+	runtime.treeSessionId = state.sessionId;
+	runtime.tree = response.success ? buildConversationTree(response.data) : Object.freeze([]);
+}
+
+interface ConversationEntry {
+	readonly id: string;
+	readonly parentId?: string;
+	readonly label: string;
+}
+
+/** Projects only bounded, opaque entry identifiers and labels from OMP messages. */
+export function buildConversationTree(data: unknown): readonly JsonValue[] {
+	const messages = Array.isArray(data)
+		? data
+		: isRecord(data) && Array.isArray(data.messages)
+			? data.messages
+			: [];
+	const entries: ConversationEntry[] = [];
+	const knownIds = new Set<string>();
+	for (const message of messages) {
+		if (entries.length >= 500 || !isRecord(message) || typeof message.id !== 'string') continue;
+		const id = boundedString(message.id, 256);
+		if (id.length === 0 || knownIds.has(id)) continue;
+		const rawLabel =
+			typeof message.title === 'string'
+				? message.title
+				: typeof message.text === 'string'
+					? message.text
+					: typeof message.content === 'string'
+						? message.content
+						: typeof message.role === 'string'
+							? message.role
+							: 'Message';
+		const parentId =
+			typeof message.parentId === 'string'
+				? boundedString(message.parentId, 256)
+				: typeof message.parentEntryId === 'string'
+					? boundedString(message.parentEntryId, 256)
+					: undefined;
+		knownIds.add(id);
+		entries.push(
+			Object.freeze({ id, ...(parentId ? { parentId } : {}), label: boundedString(rawLabel, 256) })
+		);
+	}
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const childrenByParent = new Map<string, ConversationEntry[]>();
+	const roots: ConversationEntry[] = [];
+	for (const entry of entries) {
+		const directParentId = entry.parentId;
+		let cursor = directParentId;
+		let safeParent = cursor !== undefined;
+		const ancestors = new Set<string>([entry.id]);
+		while (cursor) {
+			if (ancestors.has(cursor)) {
+				safeParent = false;
+				break;
+			}
+			ancestors.add(cursor);
+			const parent = byId.get(cursor);
+			if (!parent) {
+				safeParent = false;
+				break;
+			}
+			cursor = parent.parentId;
+		}
+		if (!directParentId || !safeParent) {
+			roots.push(entry);
+			continue;
+		}
+		const children = childrenByParent.get(directParentId) ?? [];
+		children.push(entry);
+		childrenByParent.set(directParentId, children);
+	}
+	const project = (
+		entry: ConversationEntry,
+		depth: number,
+		trail: ReadonlySet<string>
+	): JsonValue => {
+		const nextTrail = new Set(trail);
+		nextTrail.add(entry.id);
+		const children =
+			depth >= 31
+				? []
+				: (childrenByParent.get(entry.id) ?? []).filter((child) => !nextTrail.has(child.id));
+		return Object.freeze({
+			id: entry.id,
+			label: entry.label,
+			...(children.length > 0
+				? { children: Object.freeze(children.map((child) => project(child, depth + 1, nextTrail))) }
+				: {}),
+		});
+	};
+	return Object.freeze(roots.map((entry) => project(entry, 0, new Set())));
 }
 
 function connectionState(status: ExternalSessionStatus): 'loading' | 'ready' | 'offline' | 'error' {

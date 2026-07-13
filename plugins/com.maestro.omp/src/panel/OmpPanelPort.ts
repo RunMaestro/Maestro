@@ -127,6 +127,12 @@ export function createOmpWorkspaceAdapter(port: OmpPanelPort): OmpWorkspaceAdapt
 		async selectSession(sessionId) {
 			await controller.request('omp.session.select', { sessionId });
 		},
+		async renameSession(sessionId, name) {
+			await controller.request('omp.session.rename', { sessionId, name });
+		},
+		async branchSession(sessionId, entryId) {
+			await controller.request('omp.session.branch', { sessionId, entryId });
+		},
 		async createSession() {
 			await controller.request('omp.session.create', {});
 		},

@@ -97,6 +97,41 @@ describe('OmpWorkspaceController', () => {
 		await expect(prompt).resolves.toMatchObject({ command: 'prompt', success: true });
 	});
 
+	it('refreshes state after an exact private session-path selection', async () => {
+		const transport = new FakeTransport();
+		const controller = new OmpWorkspaceController('workspace-select', new OmpRpcClient(transport), {
+			tools: [],
+			uriSchemes: [],
+		});
+		await initializeController(controller, transport);
+
+		const switching = controller.command({
+			type: 'switch_session',
+			sessionPath: 'C:/private/session-b.jsonl',
+		});
+		await Promise.resolve();
+		const switchFrame = JSON.parse(transport.writes[5] ?? '') as {
+			id: string;
+			type: string;
+			sessionPath?: string;
+		};
+		expect(switchFrame).toMatchObject({
+			type: 'switch_session',
+			sessionPath: 'C:/private/session-b.jsonl',
+		});
+		transport.stdout(
+			`{"id":"${switchFrame.id}","type":"response","command":"switch_session","success":true}\n`
+		);
+		await Promise.resolve();
+		const refreshFrame = JSON.parse(transport.writes[6] ?? '') as { id: string; type: string };
+		expect(refreshFrame.type).toBe('get_state');
+		transport.stdout(
+			`{"id":"${refreshFrame.id}","type":"response","command":"get_state","success":true,"data":${JSON.stringify({ ...sessionState(), sessionId: 's-2', sessionFile: 'C:/private/session-b.jsonl' })}}\n`
+		);
+		await expect(switching).resolves.toMatchObject({ success: true });
+		expect(controller.selectedSessionId).toBe('s-2');
+	});
+
 	it('routes real host tool call and cancellation identifiers without accepting malformed or late callbacks', async () => {
 		const transport = new FakeTransport();
 		const calls: Array<{

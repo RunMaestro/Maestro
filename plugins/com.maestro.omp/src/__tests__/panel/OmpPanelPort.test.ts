@@ -117,4 +117,27 @@ describe('OMP panel resource staging', () => {
 		expect(stageResource).not.toHaveBeenCalled();
 		expect(request).not.toHaveBeenCalled();
 	});
+
+	it('uses closed opaque rename and branch actions without accepting runtime paths', async () => {
+		const request = vi.fn(async (kind, payload) => ({ kind, requestId: 'request-id', payload }));
+		const port: OmpPanelPort = {
+			request,
+			stageResource: vi.fn(),
+			subscribe: vi.fn(() => vi.fn()),
+		};
+		const adapter = createOmpWorkspaceAdapter(port);
+
+		await adapter.renameSession('session-b', 'Renamed B');
+		await adapter.branchSession('session-b', 'entry-42');
+
+		expect(request).toHaveBeenNthCalledWith(1, 'omp.session.rename', {
+			sessionId: 'session-b',
+			name: 'Renamed B',
+		});
+		expect(request).toHaveBeenNthCalledWith(2, 'omp.session.branch', {
+			sessionId: 'session-b',
+			entryId: 'entry-42',
+		});
+		expect(JSON.stringify(request.mock.calls)).not.toContain('sessionFile');
+	});
 });
