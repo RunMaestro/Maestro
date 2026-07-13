@@ -40,6 +40,9 @@ const workspaceRequiredFields = ['localId', 'title', 'icon', 'interactivePanelLo
 const panelRequiredFields = ['localId', 'title', 'entry', 'workspaceLocalId'] as const;
 const unsafeEntries = [
 	{ label: 'a traversal entry', entry: '../panel.html' },
+	{ label: 'a nested POSIX traversal entry', entry: 'dist/../../panel.html' },
+	{ label: 'a Windows traversal entry', entry: '..\\panel.html' },
+	{ label: 'a nested Windows traversal entry', entry: 'dist\\..\\..\\panel.html' },
 	{ label: 'an absolute entry', entry: '/panel.html' },
 	{ label: 'a Windows drive entry', entry: 'C:\\panel.html' },
 	{ label: 'a Windows UNC entry', entry: '\\\\server\\share\\panel.html' },
@@ -203,6 +206,40 @@ describe('parseWorkspaceFoundation', () => {
 			});
 		});
 	}
+
+	it('rejects an arbitrary unknown workspace item key', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{
+					...rawContributes,
+					workspaces: [{ ...rawContributes.workspaces[0], unexpected: true }],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['workspaces[0].unexpected is not allowed'],
+		});
+	});
+
+	it('rejects an arbitrary unknown interactive panel item key', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{
+					...rawContributes,
+					interactivePanels: [{ ...rawContributes.interactivePanels[0], unexpected: true }],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toEqual({
+			ok: false,
+			errors: ['interactivePanels[0].unexpected is not allowed'],
+		});
+	});
 
 	it('rejects a non-array contribution list', () => {
 		const rawContributes = createRawContributes();
