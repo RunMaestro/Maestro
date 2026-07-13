@@ -1,0 +1,7 @@
+{
+	"name": "@oh-my-pi/pi-coding-agent",
+	"version": "16.4.8",
+	"bin": {
+		"pi": "dist/cli.js"
+	}
+}

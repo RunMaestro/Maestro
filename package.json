@@ -33,6 +33,7 @@
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
+		"build:omp-plugin-artifact": "bun scripts/build-omp-plugin-artifact.mts",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
