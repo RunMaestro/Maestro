@@ -19,14 +19,12 @@ import { PermissionBroker } from './permission-broker';
 import type { PluginActivationIdentity } from './plugin-activation-identity';
 import {
 	isHostMethod,
-	MAX_PLUGIN_HOST_CALL_BYTES,
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
 	type SandboxSurfaceFlags,
 	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
-import { MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES } from '../../shared/plugins/interactive-runtime';
 import type { PluginEvent } from '../../shared/plugins/events';
 
 export interface SandboxControlEvent {
@@ -84,6 +82,8 @@ export interface ActivitySnapshot {
 	recentLogs: ActivityLogLine[];
 }
 
+/** Hard cap on a single RPC message to bound memory from a hostile child. */
+const MAX_MESSAGE_BYTES = 1_000_000;
 /** Grace period between a graceful shutdown message and a hard kill. */
 const SHUTDOWN_GRACE_MS = 2000;
 /** Max concurrent in-flight host calls per plugin (backpressure). */
@@ -287,7 +287,7 @@ export class PluginSandboxHost {
 		} catch {
 			return false;
 		}
-		if (serialized.length > MAX_PLUGIN_HOST_CALL_BYTES) return false;
+		if (serialized.length > MAX_MESSAGE_BYTES) return false;
 		try {
 			record.proc.postMessage({ kind: 'invokeCommand', commandId, args });
 			return true;
@@ -316,7 +316,7 @@ export class PluginSandboxHost {
 		} catch {
 			return Promise.reject(new Error('tool args are not serializable'));
 		}
-		if (serialized.length > MAX_PLUGIN_HOST_CALL_BYTES) {
+		if (serialized.length > MAX_MESSAGE_BYTES) {
 			return Promise.reject(new Error('tool args exceed size limit'));
 		}
 		if (record.pendingTools.size >= MAX_PENDING_TOOLS) {
@@ -459,6 +459,19 @@ export class PluginSandboxHost {
 			}
 		}
 
+		// Bound message size from a hostile child.
+		let serializedSize = 0;
+		try {
+			serializedSize = JSON.stringify(request.params ?? null).length;
+		} catch {
+			respond({ ok: false, error: 'params are not serializable' });
+			return;
+		}
+		if (serializedSize > MAX_MESSAGE_BYTES) {
+			respond({ ok: false, error: 'request params exceed size limit' });
+			return;
+		}
+
 		const method = request.method;
 		if (!record) {
 			respond({ ok: false, error: 'plugin activation is no longer current' });
@@ -467,24 +480,6 @@ export class PluginSandboxHost {
 		const decision = this.deps.broker.authorizeInvocation(record.identity, method, request.params);
 		if (!decision.allowed) {
 			respond({ ok: false, error: decision.reason ?? 'permission denied' });
-			return;
-		}
-
-		// An authorized runtime write transports one bounded child-input frame
-		// plus its RPC wrapper. Every other host method retains the generic cap.
-		let serializedSize = 0;
-		try {
-			serializedSize = Buffer.byteLength(JSON.stringify(request.params ?? null));
-		} catch {
-			respond({ ok: false, error: 'params are not serializable' });
-			return;
-		}
-		const maxMessageBytes =
-			method === 'interactiveRuntime.write'
-				? MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES
-				: MAX_PLUGIN_HOST_CALL_BYTES;
-		if (serializedSize > maxMessageBytes) {
-			respond({ ok: false, error: 'request params exceed size limit' });
 			return;
 		}
 

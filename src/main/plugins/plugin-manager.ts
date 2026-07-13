@@ -821,30 +821,6 @@ export class PluginManager {
 	}
 
 	/**
-	 * Return an interactive workspace panel's HTML from the current verified
-	 * artifact snapshot. Identity is deliberately split into owner + local id:
-	 * this resolves only the closed interactive-panel declaration, never a legacy
-	 * `contributes.panels` entry with the same namespaced contribution id.
-	 */
-	getInteractivePanelHtml(ownerPluginId: string, panelLocalId: string): string | null {
-		if (
-			ownerPluginId.length === 0 ||
-			panelLocalId.length === 0 ||
-			ownerPluginId.includes('/') ||
-			panelLocalId.includes('/')
-		) {
-			return null;
-		}
-		const owner = this.getActiveRecords().find((record) => record.id === ownerPluginId);
-		if (!owner) return null;
-		const panel = this.getContributions().interactivePanels.find(
-			(candidate) => candidate.ownerPluginId === ownerPluginId && candidate.localId === panelLocalId
-		);
-		if (!panel) return null;
-		return this.getExecutionSnapshot(owner.id)?.text(panel.entry) ?? null;
-	}
-
-	/**
 	 * Return panel HTML from the verified activation snapshot. Mutable installed
 	 * files are never re-read after the signature/artifact check.
 	 */
