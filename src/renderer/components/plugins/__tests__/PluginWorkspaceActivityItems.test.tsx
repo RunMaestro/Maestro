@@ -58,13 +58,14 @@ const pluginBridge = {
 };
 
 const projectionSource: PluginWorkspaceProjectionSource = {
-	getSnapshot: vi.fn(async (): Promise<PluginWorkspaceProjection> => ({
-		connection: 'ready',
-		workspaces: [],
-		selection: null,
-	})),
+	getSnapshot: vi.fn(
+		async (): Promise<PluginWorkspaceProjection> => ({
+			connection: 'ready',
+			workspaces: [],
+			selection: null,
+		})
+	),
 	subscribe: vi.fn(() => vi.fn()),
-	select: vi.fn(async () => {}),
 	reveal: vi.fn(async () => {}),
 };
 const binder: InteractivePanelHostBinder = { bind: vi.fn(() => vi.fn()) };
@@ -97,6 +98,49 @@ describe('PluginWorkspaceActivityItems', () => {
 		const destination = await screen.findByRole('button', { name: 'Open Agent workspace' });
 		fireEvent.click(destination);
 		await waitFor(() => expect(destination).toHaveAttribute('aria-current', 'page'));
+	});
+
+	it('displays the host badge verbatim instead of deriving a badge from sessions', async () => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			workspaces: [workspace],
+			interactivePanels: [interactivePanel],
+		});
+		const source: PluginWorkspaceProjectionSource = {
+			getSnapshot: vi.fn(async () => ({
+				connection: 'ready' as const,
+				selection: null,
+				workspaces: [
+					{
+						ownerPluginId: workspace.ownerPluginId,
+						workspaceLocalId: workspace.localId,
+						panelLocalId: workspace.panelLocalId,
+						generation: '1',
+						projectionRevision: 1,
+						status: { state: 'ready' as const, label: 'Ready' },
+						badge: 7,
+						sessions: [
+							{
+								externalSessionId: 'session',
+								title: 'OMP',
+								status: 'working' as const,
+								unread: 42,
+								pendingApproval: false,
+								updatedAt: 1,
+								snapshotToken: 'opaque-token-000000000000',
+							},
+						],
+					},
+				],
+			})),
+			subscribe: vi.fn(() => vi.fn()),
+			reveal: vi.fn(async () => {}),
+		};
+
+		render(<PluginWorkspaceActivityItems theme={THEMES.dracula} binder={binder} source={source} />);
+
+		expect(await screen.findByText('7')).toBeInTheDocument();
+		expect(screen.queryByText('42')).toBeNull();
 	});
 
 	it('does not expose a route before the host binder is injected', async () => {

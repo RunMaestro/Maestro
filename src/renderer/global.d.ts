@@ -184,6 +184,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { PluginWorkspacesApi } from '../shared/plugins/plugin-workspace-bridge';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3859,6 +3860,8 @@ interface MaestroAPI {
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;
 	};
+	/** Frozen generic workspace projection and panel lifecycle bridge. */
+	pluginWorkspaces: PluginWorkspacesApi;
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {

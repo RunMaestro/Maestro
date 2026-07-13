@@ -14,6 +14,11 @@ const snapshot: PluginWorkspaceProjection = {
 		{
 			ownerPluginId: 'com.example.agent',
 			workspaceLocalId: 'workspace',
+			panelLocalId: 'main-panel',
+			generation: '1',
+			projectionRevision: 1,
+			status: { state: 'ready', label: 'Ready' },
+			badge: null,
 			sessions: [
 				{
 					externalSessionId: 'external-1',
@@ -34,7 +39,6 @@ function source(value: PluginWorkspaceProjection): PluginWorkspaceProjectionSour
 	return {
 		getSnapshot: vi.fn(async () => value),
 		subscribe: vi.fn(() => vi.fn()),
-		select: vi.fn(async () => {}),
 		reveal: vi.fn(async () => {}),
 	};
 }
@@ -56,32 +60,72 @@ describe('PluginWorkspaceRail', () => {
 		expect(session).toHaveAccessibleDescription('Approval required');
 		fireEvent.keyDown(session, { key: 'Enter' });
 		expect(projectionSource.reveal).toHaveBeenCalledWith({
-			ownerPluginId: 'com.example.agent',
-			workspaceLocalId: 'workspace',
 			snapshotToken: 'opaque-workspace-capability-token',
 		});
 	});
 
-	it('renders genuine offline and error states supplied by the projection source', async () => {
-		const offlineSource = source({ ...snapshot, connection: 'offline' });
+	it('announces exact connecting, degraded, offline, and error registry status labels', async () => {
+		const connecting = source({
+			...snapshot,
+			workspaces: [
+				{ ...snapshot.workspaces[0], status: { state: 'connecting', label: 'Connecting OMP' } },
+			],
+		});
 		const { rerender } = render(
 			<PluginWorkspaceRail
 				theme={THEMES.dracula}
-				source={offlineSource}
+				source={connecting}
 				ownerPluginId="com.example.agent"
 				workspaceLocalId="workspace"
 			/>
 		);
-		expect(await screen.findByRole('status')).toHaveTextContent('Offline');
+		const connectingStatus = (await screen.findByText('Connecting OMP')).closest('[role="status"]');
+		expect(connectingStatus).toHaveAttribute('aria-live', 'polite');
 
 		rerender(
 			<PluginWorkspaceRail
 				theme={THEMES.dracula}
-				source={source({ ...snapshot, connection: 'error', error: 'Transport stopped' })}
+				source={source({
+					...snapshot,
+					workspaces: [
+						{ ...snapshot.workspaces[0], status: { state: 'degraded', label: 'OMP degraded' } },
+					],
+				})}
 				ownerPluginId="com.example.agent"
 				workspaceLocalId="workspace"
 			/>
 		);
-		expect(await screen.findByRole('alert')).toHaveTextContent('Transport stopped');
+		expect(await screen.findByText('OMP degraded')).toBeInTheDocument();
+
+		rerender(
+			<PluginWorkspaceRail
+				theme={THEMES.dracula}
+				source={source({
+					...snapshot,
+					workspaces: [
+						{ ...snapshot.workspaces[0], status: { state: 'offline', label: 'OMP offline' } },
+					],
+				})}
+				ownerPluginId="com.example.agent"
+				workspaceLocalId="workspace"
+			/>
+		);
+		expect(await screen.findByText('OMP offline')).toBeInTheDocument();
+
+		rerender(
+			<PluginWorkspaceRail
+				theme={THEMES.dracula}
+				source={source({
+					...snapshot,
+					workspaces: [
+						{ ...snapshot.workspaces[0], status: { state: 'error', label: 'OMP failed' } },
+					],
+				})}
+				ownerPluginId="com.example.agent"
+				workspaceLocalId="workspace"
+			/>
+		);
+		const errorStatus = (await screen.findByText('OMP failed')).closest('[role="alert"]');
+		expect(errorStatus).toHaveAttribute('aria-live', 'assertive');
 	});
 });

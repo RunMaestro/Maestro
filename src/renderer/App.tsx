@@ -15,6 +15,10 @@ import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
 import { AppShell } from './components/AppShell';
+import {
+	createInteractivePanelHostBinder,
+	createPluginWorkspaceProjectionSource,
+} from './components/plugins/pluginWorkspaceBridge';
 import { initializeRendererPrompts } from './services/promptInit';
 import { useWizard, type SerializableWizardState, type WizardStep } from './components/Wizard';
 import type { MainPanelHandle } from './components/MainPanel';
@@ -211,6 +215,15 @@ import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 
 function MaestroConsoleInner() {
+	const pluginWorkspaceProjectionSource = useMemo(
+		() => createPluginWorkspaceProjectionSource(window.maestro.pluginWorkspaces),
+		[]
+	);
+	const interactivePanelHostBinder = useMemo(
+		() => createInteractivePanelHostBinder(window.maestro.pluginWorkspaces),
+		[]
+	);
+
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
 
@@ -3017,6 +3030,8 @@ function MaestroConsoleInner() {
 			rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
 			logViewerOpen={logViewerOpen}
 			onToastSessionClick={handleToastSessionClick}
+			interactivePanelHostBinder={interactivePanelHostBinder}
+			pluginWorkspaceProjectionSource={pluginWorkspaceProjectionSource}
 			logViewer={
 				logViewerOpen ? (
 					<div

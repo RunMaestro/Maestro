@@ -60,7 +60,7 @@ export function getPluginWorkspaceDestinations(
 }
 
 export function reducePluginWorkspaceRoute(
-	route: PluginWorkspaceRoute | null,
+	_route: PluginWorkspaceRoute | null,
 	action: PluginWorkspaceRouteAction
 ): PluginWorkspaceRoute | null {
 	switch (action.type) {

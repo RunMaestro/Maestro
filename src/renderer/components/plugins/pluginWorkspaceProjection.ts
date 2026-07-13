@@ -1,49 +1,17 @@
 import { useEffect, useState } from 'react';
+import type {
+	PluginWorkspaceExternalSessionDto,
+	PluginWorkspacesSnapshotDto,
+} from '../../../shared/plugins/plugin-workspace-bridge';
 
-export type PluginExternalSessionStatus =
-	| 'starting'
-	| 'idle'
-	| 'working'
-	| 'waiting_for_input'
-	| 'waiting_for_approval'
-	| 'retrying'
-	| 'completed'
-	| 'aborted'
-	| 'failed'
-	| 'offline';
-
-export interface PluginExternalSessionProjection {
-	externalSessionId: string;
-	title: string;
-	status: PluginExternalSessionStatus;
-	unread: number;
-	pendingApproval: boolean;
-	updatedAt: number;
-	/** Opaque host-issued capability, passed only to reveal. */
-	snapshotToken: string;
-}
-
-export interface PluginWorkspaceProjection {
-	connection: 'ready' | 'offline' | 'error';
-	error?: string;
-	workspaces: readonly {
-		ownerPluginId: string;
-		workspaceLocalId: string;
-		sessions: readonly PluginExternalSessionProjection[];
-	}[];
-	selection: {
-		ownerPluginId: string;
-		workspaceLocalId: string;
-		snapshotToken: string;
-	} | null;
-}
+export type PluginExternalSessionProjection = PluginWorkspaceExternalSessionDto;
+export type PluginWorkspaceProjection = PluginWorkspacesSnapshotDto;
 
 /** Typed frozen preload source injected by App; no renderer component accesses globals or IPC. */
 export interface PluginWorkspaceProjectionSource {
 	getSnapshot(): Promise<PluginWorkspaceProjection>;
 	subscribe(listener: (snapshot: PluginWorkspaceProjection) => void): () => void;
-	select(target: { ownerPluginId: string; workspaceLocalId: string }): Promise<void>;
-	reveal(target: { ownerPluginId: string; workspaceLocalId: string; snapshotToken: string }): Promise<void>;
+	reveal(target: { snapshotToken: string }): Promise<void>;
 }
 
 export interface PluginWorkspaceProjectionState {

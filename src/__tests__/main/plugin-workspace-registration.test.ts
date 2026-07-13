@@ -1,0 +1,181 @@
+import { describe, expect, it, vi } from 'vitest';
+import { PluginInteractivePanelHost } from '../../main/plugins/plugin-interactive-panel-host';
+import { registerPluginWorkspaceIpc } from '../../main/plugins/plugin-workspace-registration';
+
+const OWNER = 'com.maestro.omp';
+const WORKSPACE = 'omp';
+const TOKEN = 'opaque-token-000000000000';
+
+interface IpcHandlers {
+	readonly get: (
+		channel: string
+	) => (event: { sender: unknown }, input?: unknown) => Promise<unknown>;
+}
+
+function projection(revision = 4): Record<string, unknown> {
+	return {
+		ownerPluginId: OWNER,
+		workspaceLocalId: WORKSPACE,
+		generation: 2n,
+		projectionRevision: revision,
+		workspace: { localId: WORKSPACE },
+		panel: { localId: 'main-panel' },
+		status: { state: 'degraded', label: 'Syncing OMP' },
+		badge: 7,
+		externalSessions: [
+			{
+				externalSessionId: 'session-1',
+				title: 'OMP session',
+				status: 'waiting_for_approval',
+				unread: 3,
+				pendingApproval: true,
+				updatedAt: 42,
+				snapshotToken: TOKEN,
+			},
+		],
+		selectedSnapshotToken: null,
+		selectedContext: null,
+	};
+}
+
+function harness() {
+	const handlers = new Map<
+		string,
+		(event: { sender: unknown }, input?: unknown) => Promise<unknown>
+	>();
+	const ipcMain = {
+		handle: vi.fn(
+			(
+				channel: string,
+				handler: (event: { sender: unknown }, input?: unknown) => Promise<unknown>
+			) => {
+				handlers.set(channel, handler);
+			}
+		),
+		removeHandler: vi.fn(),
+	};
+	const sent: unknown[] = [];
+	const mainContents = {
+		send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })),
+	};
+	const windowListeners = new Map<string, () => void>();
+	const mainWindow = {
+		webContents: mainContents,
+		isDestroyed: () => false,
+		on: vi.fn((event: string, listener: () => void) => windowListeners.set(event, listener)),
+		removeListener: vi.fn(),
+	};
+	const unsubscribe = vi.fn();
+	const registry = {
+		listProjections: vi.fn(() => [projection()]),
+		onDidChangeProjection: vi.fn(() => unsubscribe),
+		selectBySnapshotToken: vi.fn(() => ({
+			kind: 'resolved',
+			ownerPluginId: OWNER,
+			workspaceLocalId: WORKSPACE,
+			externalSession: { snapshotToken: TOKEN },
+		})),
+	};
+	const guest = {
+		isDestroyed: () => false,
+		getType: () => 'webview',
+		hostWebContents: mainContents,
+		send: vi.fn(),
+	};
+	const panelDispose = vi.fn();
+	const panelHost = {
+		mount: vi.fn(() => ({ instanceId: 'panel-instance', dispose: panelDispose })),
+		unmount: vi.fn(),
+	};
+	const registration = registerPluginWorkspaceIpc({
+		ipcMain,
+		getMainWindow: () => mainWindow,
+		registry: registry as never,
+		panelHost: panelHost as unknown as PluginInteractivePanelHost,
+		getGuestWebContents: (id) => (id === 42 ? guest : null),
+		getPanelDescriptor: () => ({
+			requestSchemas: {},
+			eventSchemas: {},
+			resultSchemas: {},
+			errorSchemas: {},
+		}),
+	});
+	return {
+		handlers: handlers as unknown as IpcHandlers,
+		mainContents,
+		registry,
+		guest,
+		panelHost,
+		panelDispose,
+		registration,
+		sent,
+		unsubscribe,
+		windowListeners,
+	};
+}
+
+describe('plugin workspace main registration', () => {
+	it('rejects a non-main-window renderer and projects exact registry status and badge', async () => {
+		const h = harness();
+		const getSnapshot = h.handlers.get('plugin-workspaces:get-snapshot');
+
+		await expect(getSnapshot({ sender: {} })).rejects.toThrow('UntrustedPluginWorkspaceRequester');
+		await expect(getSnapshot({ sender: h.mainContents })).resolves.toMatchObject({
+			workspaces: [
+				{
+					projectionRevision: 4,
+					status: { state: 'degraded', label: 'Syncing OMP' },
+					badge: 7,
+				},
+			],
+		});
+	});
+
+	it('selects only a current opaque token and rejects stale generation or a non-guest panel target', async () => {
+		const h = harness();
+		const reveal = h.handlers.get('plugin-workspaces:reveal-or-select');
+		const mount = h.handlers.get('plugin-workspaces:mount-panel');
+
+		await expect(reveal({ sender: h.mainContents }, { snapshotToken: TOKEN })).resolves.toEqual({
+			ownerPluginId: OWNER,
+			workspaceLocalId: WORKSPACE,
+			snapshotToken: TOKEN,
+		});
+		expect(h.registry.selectBySnapshotToken).toHaveBeenCalledWith(TOKEN);
+		await expect(
+			mount(
+				{ sender: h.mainContents },
+				{
+					ownerPluginId: OWNER,
+					workspaceLocalId: WORKSPACE,
+					generation: '1',
+					guestWebContentsId: 42,
+				}
+			)
+		).rejects.toThrow('StalePluginWorkspaceGeneration');
+		await expect(
+			mount(
+				{ sender: h.mainContents },
+				{
+					ownerPluginId: OWNER,
+					workspaceLocalId: WORKSPACE,
+					generation: '2',
+					guestWebContentsId: 9,
+				}
+			)
+		).rejects.toThrow('InvalidPluginWorkspaceGuest');
+	});
+
+	it('cleans registry and panel subscriptions on window destruction', () => {
+		const h = harness();
+		const mount = h.handlers.get('plugin-workspaces:mount-panel');
+		void mount(
+			{ sender: h.mainContents },
+			{ ownerPluginId: OWNER, workspaceLocalId: WORKSPACE, generation: '2', guestWebContentsId: 42 }
+		);
+
+		h.windowListeners.get('closed')?.();
+		expect(h.unsubscribe).toHaveBeenCalledOnce();
+		expect(h.panelDispose).toHaveBeenCalledOnce();
+	});
+});

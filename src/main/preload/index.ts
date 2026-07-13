@@ -65,6 +65,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createPluginWorkspacesApi } from './plugin-workspaces';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -242,6 +243,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
 	plugins: createPluginsApi(),
+	// Generic, typed workspace projection and panel lifecycle bridge.
+	pluginWorkspaces: createPluginWorkspacesApi(),
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
@@ -350,6 +353,8 @@ export {
 	createPianolaApi,
 	// Plugins
 	createPluginsApi,
+	// Plugin workspace renderer bridge
+	createPluginWorkspacesApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI
@@ -369,6 +374,8 @@ export {
 	// Session Images
 	createImagesApi,
 };
+
+export type { PluginWorkspacesApi } from '../../shared/plugins/plugin-workspace-bridge';
 
 // Re-export types for TypeScript consumers
 export type {
