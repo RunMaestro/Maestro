@@ -50,6 +50,7 @@ import {
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
 import {
+	OMP_PLUGIN_ID,
 	type OmpArchiveInstallRequest,
 	type OmpPluginTrustRootService,
 } from './plugin-trust-root-service';
@@ -501,6 +502,12 @@ export class PluginManager {
 		if (!manifest) {
 			return { success: false, error: `invalid plugin.json: ${errors.join('; ')}` };
 		}
+		if (manifest.id === OMP_PLUGIN_ID) {
+			return {
+				success: false,
+				error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
+			};
+		}
 		if (!isSafePluginFolderName(manifest.id)) {
 			return { success: false, error: `plugin id "${manifest.id}" is not a safe folder name` };
 		}
@@ -604,6 +611,9 @@ export class PluginManager {
 		const { manifest, errors } = validatePluginManifest(rawManifest);
 		if (!manifest) {
 			throw new Error(`invalid plugin.json: ${errors.join('; ')}`);
+		}
+		if (manifest.id === OMP_PLUGIN_ID) {
+			throw new Error('OMP archives require installOrUpdateArchive with immutable trust verification');
 		}
 		const id = manifest.id;
 		if (!isSafePluginFolderName(id)) {

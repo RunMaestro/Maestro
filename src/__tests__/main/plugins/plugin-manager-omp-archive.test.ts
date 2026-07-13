@@ -1,4 +1,6 @@
+import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }));
@@ -43,5 +45,36 @@ describe('PluginManager.installOrUpdateArchive', () => {
 			success: false,
 			error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
 		});
+	});
+
+	it('rejects an OMP manifest routed through a legacy directory install', () => {
+		const previousUserData = process.env.MAESTRO_USER_DATA;
+		const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-legacy-manager-'));
+		const source = path.join(userData, 'source');
+		process.env.MAESTRO_USER_DATA = userData;
+		try {
+			fs.mkdirSync(source);
+			fs.writeFileSync(
+				path.join(source, 'plugin.json'),
+				JSON.stringify({
+					id: 'com.maestro.omp',
+					name: 'Unverified OMP',
+					version: '1.0.0',
+					tier: 1,
+					entry: 'index.js',
+					maestro: { minHostApi: '1.0.0' },
+				})
+			);
+			fs.writeFileSync(path.join(source, 'index.js'), 'module.exports = "unverified";');
+
+			expect(new PluginManager({ isEnabled: () => true }).install(source)).toEqual({
+				success: false,
+				error: 'OMP archives require installOrUpdateArchive with immutable trust verification',
+			});
+		} finally {
+			if (previousUserData === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = previousUserData;
+			fs.rmSync(userData, { recursive: true, force: true });
+		}
 	});
 });

@@ -210,6 +210,40 @@ describe('OmpPluginTrustRootService', () => {
 		).toBe('1.1.0');
 	});
 
+	it('repairs tampered installed bytes instead of calling a verified archive a no-op', () => {
+		const service = makeService();
+		const input = writeArchive(artifact('1.0.0'));
+		expect(service.bootstrapBundledArchive(input).action).toBe('installed');
+		fs.writeFileSync(
+			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'index.js'),
+			'module.exports = "tampered";'
+		);
+
+		expect(service.bootstrapBundledArchive(input).action).toBe('updated');
+		expect(fs.readFileSync(path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'index.js'), 'utf8')).toBe(
+			'module.exports = "omp";'
+		);
+	});
+
+	it('does not derive capability consent from a mutable installed plugin.json', () => {
+		const service = makeService();
+		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.0.0'))).action).toBe('installed');
+		fs.writeFileSync(
+			path.join(workDir, 'plugins', OMP_PLUGIN_ID, 'plugin.json'),
+			JSON.stringify(manifest('1.0.0', [{ capability: 'net:fetch', scope: 'api.maestro.test' }]))
+		);
+
+		expect(() =>
+			service.installOrUpdateArchive({
+				...writeArchive(
+					artifact('1.1.0', [{ capability: 'net:fetch', scope: 'api.maestro.test' }]),
+					'omp-capability-tampered.omp-plugin.json'
+				),
+				owner: 'external',
+			})
+		).toThrow('bytes do not match');
+	});
+
 	it('refuses downgrade and equal-version equivocation after a verified installation', () => {
 		const service = makeService();
 		expect(service.bootstrapBundledArchive(writeArchive(artifact('1.1.0'))).action).toBe('installed');

@@ -22,6 +22,8 @@ interface ManagedInstallState {
 	pluginId: typeof OMP_PLUGIN_ID;
 	version: string;
 	artifactSha256: string;
+	/** The prior signed artifact is re-verified before it informs an upgrade decision. */
+	artifactBase64: string;
 	trustRootFingerprint: string;
 	owner: InstallOwner;
 }
@@ -107,15 +109,39 @@ export class OmpPluginTrustRootService {
 			throw new Error('OMP install state exists without its managed plugin directory');
 		}
 		if (!state) {
-			this.promote(destination, statePath, artifact, managedState(manifest, artifactSha256, this.trustRootFingerprint, request.owner));
+			this.promote(
+				destination,
+				statePath,
+				artifact,
+				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+			);
 			return { action: 'installed', manifest, artifactSha256 };
 		}
 
-		const installedManifest = readInstalledManifest(destination);
-		if (installedManifest.version !== state.version) {
+		if (request.owner === 'bundle' && state.owner !== 'bundle') return preserved(manifest, artifactSha256);
+		const previousArchive = decodeStoredArtifact(state);
+		const previousArtifact = verifySignedPluginArtifact(
+			previousArchive,
+			this.trustRoot,
+			this.deps.verifySignature
+		);
+		assertSafeArtifactFiles(previousArtifact);
+		const previousManifest = validateArtifactManifest(previousArtifact);
+		if (previousManifest.version !== state.version) {
 			throw new Error('managed OMP installation does not match its verified install state');
 		}
-		if (request.owner === 'bundle' && state.owner !== 'bundle') return preserved(manifest, artifactSha256);
+		if (contentHashForDirectory(destination) !== contentHashForArtifact(previousArtifact)) {
+			if (artifactSha256 !== state.artifactSha256) {
+				throw new Error('managed OMP installation bytes do not match its verified signed artifact');
+			}
+			this.promote(
+				destination,
+				statePath,
+				artifact,
+				managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+			);
+			return { action: 'updated', manifest, artifactSha256 };
+		}
 		if (artifactSha256 === state.artifactSha256) return { action: 'unchanged', manifest, artifactSha256 };
 		if (!semver.valid(manifest.version) || !semver.valid(state.version)) {
 			throw new Error('OMP install state contains an invalid version');
@@ -126,11 +152,16 @@ export class OmpPluginTrustRootService {
 			return preserved(manifest, artifactSha256);
 		}
 
-		const added = capabilityDelta(installedManifest.permissions ?? [], manifest.permissions ?? []);
+		const added = capabilityDelta(previousManifest.permissions ?? [], manifest.permissions ?? []);
 		if (added.length > 0 && !request.requestCapabilityConsent?.({ added })) {
 			throw new Error('OMP capability delta requires explicit consent');
 		}
-		this.promote(destination, statePath, artifact, managedState(manifest, artifactSha256, this.trustRootFingerprint, request.owner));
+		this.promote(
+			destination,
+			statePath,
+			artifact,
+			managedState(manifest, archive, artifactSha256, this.trustRootFingerprint, request.owner)
+		);
 		return { action: 'updated', manifest, artifactSha256 };
 	}
 
@@ -244,17 +275,47 @@ function readManagedState(statePath: string, trustRootFingerprint: string): Mana
 	return parsed;
 }
 
-function readInstalledManifest(destination: string): PluginManifest {
-	let raw: unknown;
-	try {
-		raw = JSON.parse(fs.readFileSync(path.join(destination, 'plugin.json'), 'utf8'));
-	} catch {
-		throw new Error('managed OMP installation has an unreadable plugin.json');
+function decodeStoredArtifact(state: ManagedInstallState): Buffer {
+	const archive = decodeArtifactFile(state.artifactBase64);
+	if (sha256(archive) !== state.artifactSha256) {
+		throw new Error('OMP install state does not contain its claimed signed artifact');
 	}
-	const { manifest, errors } = validatePluginManifest(raw);
-	if (!manifest) throw new Error(`managed OMP plugin.json is invalid: ${errors.join('; ')}`);
-	if (manifest.id !== OMP_PLUGIN_ID) throw new Error('managed OMP plugin id mismatch');
-	return manifest;
+	return archive;
+}
+
+
+function contentHashForArtifact(artifact: ParsedPluginArtifact): string {
+	const hash = createHash('sha256');
+	for (const file of [...artifact.files].sort((left, right) => left.path.localeCompare(right.path))) {
+		hash.update(file.path);
+		hash.update('\0');
+		hash.update(decodeArtifactFile(file.content));
+	}
+	return hash.digest('hex');
+}
+
+function contentHashForDirectory(directory: string): string {
+	const files: string[] = [];
+	const visit = (current: string): void => {
+		for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+			const absolute = path.join(current, entry.name);
+			if (entry.isSymbolicLink()) throw new Error('managed OMP installation contains a symlink');
+			if (entry.isDirectory()) {
+				visit(absolute);
+				continue;
+			}
+			if (!entry.isFile()) throw new Error('managed OMP installation contains an unsupported entry');
+			files.push(path.relative(directory, absolute).split(path.sep).join('/'));
+		}
+	};
+	visit(directory);
+	const hash = createHash('sha256');
+	for (const relativePath of files.sort((left, right) => left.localeCompare(right))) {
+		hash.update(relativePath);
+		hash.update('\0');
+		hash.update(fs.readFileSync(path.join(directory, ...relativePath.split('/'))));
+	}
+	return hash.digest('hex');
 }
 
 function capabilityDelta(previous: readonly PermissionRequest[], next: readonly PermissionRequest[]): PermissionRequest[] {
@@ -268,6 +329,7 @@ function permissionKey(permission: PermissionRequest): string {
 
 function managedState(
 	manifest: PluginManifest,
+	archive: Buffer,
 	artifactSha256: string,
 	trustRootFingerprint: string,
 	owner: InstallOwner
@@ -276,6 +338,7 @@ function managedState(
 		pluginId: OMP_PLUGIN_ID,
 		version: manifest.version,
 		artifactSha256,
+		artifactBase64: archive.toString('base64'),
 		trustRootFingerprint,
 		owner,
 	};
@@ -335,6 +398,7 @@ function isManagedState(value: unknown): value is ManagedInstallState {
 		state.pluginId === OMP_PLUGIN_ID &&
 		typeof state.version === 'string' &&
 		isSha256(state.artifactSha256 ?? '') &&
+		typeof state.artifactBase64 === 'string' &&
 		typeof state.trustRootFingerprint === 'string' &&
 		(state.owner === 'bundle' || state.owner === 'external')
 	);
