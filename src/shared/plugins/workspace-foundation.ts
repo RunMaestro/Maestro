@@ -17,6 +17,7 @@ export interface RawWorkspaceContribution {
 	readonly title: string;
 	readonly icon: WorkspaceIcon;
 	readonly interactivePanelLocalId: string;
+	readonly order?: number;
 }
 
 export interface RawInteractivePanelContribution {
@@ -41,13 +42,15 @@ export interface CanonicalWorkspaceFoundation {
 	readonly ownerPluginId: string;
 	readonly workspace: {
 		readonly localId: WorkspaceLocalId;
-		readonly canonicalId: string;
+		readonly canonicalContributionId: string;
 		readonly title: string;
 		readonly icon: WorkspaceIcon;
 		readonly panelLocalId: PanelLocalId;
+		readonly order: number;
 	};
 	readonly panel: {
 		readonly localId: PanelLocalId;
+		readonly canonicalContributionId: string;
 		readonly title: string;
 		readonly entry: string;
 	};
@@ -62,6 +65,7 @@ interface ValidWorkspace {
 	readonly title: string;
 	readonly icon: WorkspaceIcon;
 	readonly panelLocalId: string;
+	readonly order: number;
 }
 
 interface ValidPanel {
@@ -177,24 +181,24 @@ function parseFoundation(
 		return { ok: false, errors: ['contributes must be a plain object'] };
 	}
 
-	return {
-		ok: true,
-		value: {
-			ownerPluginId: validOwnerPluginId,
-			workspace: {
-				localId: workspace.localId as WorkspaceLocalId,
-				canonicalId: `${validOwnerPluginId}/${workspace.localId}`,
-				title: workspace.title,
-				icon: workspace.icon,
-				panelLocalId: workspace.panelLocalId as PanelLocalId,
-			},
-			panel: {
-				localId: panel.localId as PanelLocalId,
-				title: panel.title,
-				entry: panel.entry,
-			},
-		},
-	};
+	const foundation = Object.freeze({
+		ownerPluginId: validOwnerPluginId,
+		workspace: Object.freeze({
+			localId: workspace.localId as WorkspaceLocalId,
+			canonicalContributionId: `${validOwnerPluginId}/${workspace.localId}`,
+			title: workspace.title,
+			icon: workspace.icon,
+			panelLocalId: workspace.panelLocalId as PanelLocalId,
+			order: workspace.order,
+		}),
+		panel: Object.freeze({
+			localId: panel.localId as PanelLocalId,
+			canonicalContributionId: `${validOwnerPluginId}/${panel.localId}`,
+			title: panel.title,
+			entry: panel.entry,
+		}),
+	});
+	return Object.freeze({ ok: true as const, value: foundation });
 }
 
 function validateOwnerPluginId(
@@ -236,7 +240,7 @@ function validateWorkspaces(
 
 		validateClosedKeys(
 			raw,
-			['localId', 'title', 'icon', 'interactivePanelLocalId'],
+			['localId', 'title', 'icon', 'interactivePanelLocalId', 'order'],
 			path,
 			addError
 		);
@@ -244,6 +248,8 @@ function validateWorkspaces(
 		const title = readDataProperty(raw, 'title');
 		const icon = readDataProperty(raw, 'icon');
 		const panelLocalId = readDataProperty(raw, 'interactivePanelLocalId');
+		const hasOrder = Object.prototype.hasOwnProperty.call(raw, 'order');
+		const rawOrder = readDataProperty(raw, 'order');
 		let valid = true;
 
 		if (typeof localId !== 'string') {
@@ -284,6 +290,15 @@ function validateWorkspaces(
 			);
 			valid = false;
 		}
+		let order = 0;
+		if (hasOrder) {
+			if (typeof rawOrder !== 'number' || !Number.isFinite(rawOrder)) {
+				addError(`${path}.order`, `${path}.order must be a finite number`);
+				valid = false;
+			} else {
+				order = rawOrder;
+			}
+		}
 
 		items.push(
 			valid
@@ -292,6 +307,7 @@ function validateWorkspaces(
 						title: title as string,
 						icon,
 						panelLocalId: panelLocalId as string,
+						order,
 					}
 				: null
 		);

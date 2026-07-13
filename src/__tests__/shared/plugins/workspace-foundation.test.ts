@@ -53,7 +53,19 @@ const invalidLocalIds = [
 	{ label: 'a traversal-like local ID', value: '../omp-panel' },
 	{ label: 'a leading-numeric local ID', value: '1-omp-panel' },
 ] as const;
-const forbiddenItemKeys = ['id', 'pluginId', 'ownerPluginId', 'canonicalId'] as const;
+const invalidWorkspaceOrders = [
+	{ label: 'a string order', value: '1' },
+	{ label: 'a NaN order', value: Number.NaN },
+	{ label: 'an infinite order', value: Number.POSITIVE_INFINITY },
+	{ label: 'a negative infinite order', value: Number.NEGATIVE_INFINITY },
+] as const;
+const forbiddenItemKeys = [
+	'id',
+	'pluginId',
+	'ownerPluginId',
+	'canonicalId',
+	'canonicalContributionId',
+] as const;
 const invalidOwnerPluginIds = [
 	{
 		label: 'an empty owner plugin ID',
@@ -116,13 +128,15 @@ describe('parseWorkspaceFoundation', () => {
 				ownerPluginId,
 				workspace: {
 					localId: 'omp-workspace',
-					canonicalId: 'com.maestro.omp/omp-workspace',
+					canonicalContributionId: 'com.maestro.omp/omp-workspace',
 					title: 'OMP',
 					icon: 'sparkles',
 					panelLocalId: 'omp-panel',
+					order: 0,
 				},
 				panel: {
 					localId: 'omp-panel',
+					canonicalContributionId: 'com.maestro.omp/omp-panel',
 					title: 'OMP',
 					entry: 'dist/panel.html',
 				},
@@ -130,6 +144,25 @@ describe('parseWorkspaceFoundation', () => {
 		});
 		expect(rawContributes).toEqual(expectedContributes);
 		expect(rawPermissions).toEqual(expectedPermissions);
+	});
+
+	it('freezes canonical workspace foundation records', () => {
+		const result = parseWorkspaceFoundation(
+			createRawContributes(),
+			createRawPermissions(),
+			ownerPluginId
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) throw new Error(result.errors.join(', '));
+
+		expect(Object.isFrozen(result)).toBe(true);
+		expect(Object.isFrozen(result.value)).toBe(true);
+		expect(Object.isFrozen(result.value.workspace)).toBe(true);
+		expect(Object.isFrozen(result.value.panel)).toBe(true);
+		expect(Reflect.set(result.value.workspace, 'title', 'changed')).toBe(false);
+		expect(Reflect.set(result.value.panel, 'entry', 'changed.html')).toBe(false);
+		expect(result.value.workspace.title).toBe('OMP');
+		expect(result.value.panel.entry).toBe('dist/panel.html');
 	});
 
 	it('rejects a non-object contributes value', () => {
@@ -389,6 +422,42 @@ describe('parseWorkspaceFoundation', () => {
 			).toEqual({
 				ok: false,
 				errors: ['workspaces[0].localId must be a valid local ID'],
+			});
+		});
+	}
+
+	it('accepts and carries a finite workspace order', () => {
+		const rawContributes = createRawContributes();
+		expect(
+			parseWorkspaceFoundation(
+				{
+					...rawContributes,
+					workspaces: [{ ...rawContributes.workspaces[0], order: -2.5 }],
+				},
+				createRawPermissions(),
+				ownerPluginId
+			)
+		).toMatchObject({
+			ok: true,
+			value: { workspace: { order: -2.5 } },
+		});
+	});
+
+	for (const { label, value } of invalidWorkspaceOrders) {
+		it(`rejects ${label}`, () => {
+			const rawContributes = createRawContributes();
+			expect(
+				parseWorkspaceFoundation(
+					{
+						...rawContributes,
+						workspaces: [{ ...rawContributes.workspaces[0], order: value }],
+					},
+					createRawPermissions(),
+					ownerPluginId
+				)
+			).toEqual({
+				ok: false,
+				errors: ['workspaces[0].order must be a finite number'],
 			});
 		});
 	}
