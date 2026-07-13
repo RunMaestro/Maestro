@@ -6,6 +6,7 @@ import {
 	type InteractivePanelHostBinder,
 } from '../PluginInteractivePanelFrame';
 import { THEMES } from '../../../constants/themes';
+import type { CanonicalInteractivePanelContribution } from '../../../../shared/plugins/contributions';
 
 const panel = {
 	ownerPluginId: 'com.example.agent',
@@ -13,9 +14,9 @@ const panel = {
 	canonicalContributionId: 'com.example.agent/agent-panel',
 	title: 'Agent workspace panel',
 	entry: 'panel.html',
-};
+} as unknown as CanonicalInteractivePanelContribution;
 
-const bind = vi.fn(() => vi.fn());
+const bind = vi.fn<InteractivePanelHostBinder['bind']>(() => vi.fn());
 const binder: InteractivePanelHostBinder = { bind };
 
 describe('PluginInteractivePanelFrame', () => {
@@ -35,7 +36,7 @@ describe('PluginInteractivePanelFrame', () => {
 		);
 		expect(webview?.getAttribute('srcdoc')).toBeNull();
 		expect(bind).toHaveBeenCalledOnce();
-		expect(bind.mock.calls[0]?.[0].panel).toEqual(panel);
+		expect(bind.mock.calls[0]?.[0]?.panel).toEqual(panel);
 		unmount();
 		expect(cleanup).toHaveBeenCalledOnce();
 	});

@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type {
+	CanonicalInteractivePanelContribution,
+	CanonicalWorkspaceContribution,
+} from '../../../../shared/plugins/contributions';
 import {
 	getPluginWorkspaceDestinations,
 	initialPluginWorkspaceRoute,
@@ -14,14 +18,14 @@ describe('plugin workspace navigation', () => {
 		icon: 'bot',
 		panelLocalId: 'agent-panel',
 		order: 1,
-	};
+	} as unknown as CanonicalWorkspaceContribution;
 	const panel = {
 		ownerPluginId: 'com.example.agent',
 		localId: 'agent-panel',
 		canonicalContributionId: 'com.example.agent/agent-panel',
 		title: 'Agent workspace panel',
 		entry: 'panel.html',
-	};
+	} as unknown as CanonicalInteractivePanelContribution;
 
 	it('shows only workspaces paired to an interactive panel from the same owner', () => {
 		expect(getPluginWorkspaceDestinations([workspace], [panel])).toEqual([workspace]);

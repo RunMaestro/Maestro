@@ -6,6 +6,7 @@ import { SessionTooltipContent } from './SessionTooltipContent';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { PluginWorkspaceActivityItems } from '../plugins/PluginWorkspaceActivityItems';
 import type { InteractivePanelHostBinder } from '../plugins/PluginInteractivePanelFrame';
+import type { PluginWorkspaceProjectionSource } from '../plugins/pluginWorkspaceProjection';
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -20,6 +21,7 @@ interface SkinnySidebarProps {
 	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
 	showUnreadAgentsOnly: boolean;
 	interactivePanelHostBinder?: InteractivePanelHostBinder;
+	pluginWorkspaceProjectionSource?: PluginWorkspaceProjectionSource;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
@@ -35,6 +37,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	handleContextMenu,
 	showUnreadAgentsOnly,
 	interactivePanelHostBinder,
+	pluginWorkspaceProjectionSource,
 }: SkinnySidebarProps) {
 	const visibleSessions = showUnreadAgentsOnly
 		? sortedSessions.filter(
@@ -46,7 +49,11 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	return (
 		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
 			<PluginUiItemsSlot surface="activity-bar" />
-			<PluginWorkspaceActivityItems theme={theme} binder={interactivePanelHostBinder} />
+			<PluginWorkspaceActivityItems
+				theme={theme}
+				binder={interactivePanelHostBinder}
+				source={pluginWorkspaceProjectionSource}
+			/>
 			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);

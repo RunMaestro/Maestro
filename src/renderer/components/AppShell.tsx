@@ -21,6 +21,8 @@ import {
 } from './plugins/PluginWorkspaces';
 import type { InteractivePanelHostBinder } from './plugins/PluginInteractivePanelFrame';
 import { usePluginWorkspaceRoute } from './plugins/pluginWorkspaceNavigation';
+import type { PluginWorkspaceProjectionSource } from './plugins/pluginWorkspaceProjection';
+import { PluginWorkspaceSelectionSync } from './plugins/PluginWorkspaceSelectionSync';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
@@ -36,6 +38,19 @@ type SessionListProps = ComponentProps<typeof SessionList>;
 type MainPanelProps = ComponentProps<typeof MainPanel>;
 type RightPanelProps = ComponentProps<typeof RightPanel>;
 type EmptyStateViewProps = ComponentProps<typeof EmptyStateView>;
+
+export type MainWorkspaceSurface = 'plugin' | 'native' | null;
+
+export function resolveMainWorkspaceSurface(input: {
+	hasNativeSessions: boolean;
+	hasActiveGroupChat: boolean;
+	isLogViewerOpen: boolean;
+	hasActivePluginWorkspace: boolean;
+}): MainWorkspaceSurface {
+	if (input.hasActiveGroupChat || input.isLogViewerOpen) return null;
+	if (input.hasActivePluginWorkspace) return 'plugin';
+	return input.hasNativeSessions ? 'native' : null;
+}
 
 export interface AppShellProps {
 	theme: Theme;
@@ -79,6 +94,7 @@ export interface AppShellProps {
 
 	onToastSessionClick: (sessionId: string, tabId?: string) => void;
 	interactivePanelHostBinder?: InteractivePanelHostBinder;
+	pluginWorkspaceProjectionSource?: PluginWorkspaceProjectionSource;
 }
 
 export function AppShell({
@@ -117,6 +133,7 @@ export function AppShell({
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
 	interactivePanelHostBinder,
+	pluginWorkspaceProjectionSource,
 }: AppShellProps) {
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
@@ -128,6 +145,16 @@ export function AppShell({
 	}, [concertoEnabled]);
 
 	const pluginWorkspaceRoute = usePluginWorkspaceRoute();
+
+	const mainWorkspaceSurface = resolveMainWorkspaceSurface({
+		hasNativeSessions: sessions.length > 0,
+		hasActiveGroupChat: activeGroupChatId !== null,
+		isLogViewerOpen: logViewerOpen,
+		hasActivePluginWorkspace:
+			interactivePanelHostBinder !== undefined &&
+			pluginWorkspaceProjectionSource !== undefined &&
+			pluginWorkspaceRoute !== null,
+	});
 
 
 	const showTitleBar =
@@ -216,6 +243,7 @@ export function AppShell({
 					<SessionList
 						{...sessionListProps}
 						interactivePanelHostBinder={interactivePanelHostBinder}
+						pluginWorkspaceProjectionSource={pluginWorkspaceProjectionSource}
 					/>
 				</ErrorBoundary>
 			)}
@@ -254,13 +282,21 @@ export function AppShell({
 
 			{groupChatView}
 
-			{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-				interactivePanelHostBinder && pluginWorkspaceRoute ? (
-					<PluginWorkspaces theme={theme} binder={interactivePanelHostBinder} />
-				) : (
-					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
-				)
+			{pluginWorkspaceProjectionSource && (
+				<PluginWorkspaceSelectionSync source={pluginWorkspaceProjectionSource} />
 			)}
+
+			{mainWorkspaceSurface === 'plugin' &&
+				interactivePanelHostBinder &&
+				pluginWorkspaceProjectionSource && (
+					<PluginWorkspaces
+						theme={theme}
+						binder={interactivePanelHostBinder}
+						source={pluginWorkspaceProjectionSource}
+					/>
+				)}
+
+			{mainWorkspaceSurface === 'native' && <MainPanel ref={mainPanelRef} {...mainPanelProps} />}
 
 			<PluginPanelSlot
 				theme={theme}
