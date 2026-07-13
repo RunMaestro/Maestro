@@ -141,3 +141,24 @@ describe('OMP panel resource staging', () => {
 		expect(JSON.stringify(request.mock.calls)).not.toContain('sessionFile');
 	});
 });
+
+describe('OMP panel refresh result contract', () => {
+	it('accepts the workspace snapshot payload delivered by the preload bridge', async () => {
+		const snapshot = {
+			connection: 'offline' as const,
+			models: [],
+			sessions: [],
+			activeSessionId: '',
+			error: 'OMP setup required. Create a new session to start OMP.',
+		};
+		const request = vi.fn(async () => snapshot);
+		const port: OmpPanelPort = {
+			request,
+			stageResource: vi.fn(),
+			subscribe: vi.fn(() => vi.fn()),
+		};
+
+		await expect(createOmpWorkspaceAdapter(port).getSnapshot()).resolves.toEqual(snapshot);
+		expect(request).toHaveBeenCalledWith('omp.commands.refresh', {});
+	});
+});

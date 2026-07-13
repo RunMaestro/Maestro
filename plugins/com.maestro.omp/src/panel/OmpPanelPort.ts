@@ -4,19 +4,6 @@ import type { OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from './types';
 
 export type { OmpPanelEventKind, OmpPanelRequestKind } from '../bridge/descriptor';
 
-export interface OmpPanelResult {
-	readonly kind: OmpPanelRequestKind;
-	readonly requestId: string;
-	readonly payload: unknown;
-}
-
-export interface OmpPanelEvent {
-	readonly kind: OmpPanelEventKind;
-	/** Canonical positive decimal wire value; never a BigInt in panel JSON. */
-	readonly eventSequence: string;
-	readonly payload: unknown;
-}
-
 export interface OmpPanelResourceRef {
 	readonly ref: string;
 	readonly name: string;
@@ -25,11 +12,11 @@ export interface OmpPanelResourceRef {
 	readonly sha256: string;
 }
 
-/** The panel's generation-capability-bound API; it never exposes raw runtime frames. */
+/** The panel's generation-capability-bound API; preload unwraps panel result envelopes. */
 export interface OmpPanelPort {
-	request(kind: OmpPanelRequestKind, payload: Record<string, unknown>): Promise<OmpPanelResult>;
+	request(kind: OmpPanelRequestKind, payload: Record<string, unknown>): Promise<unknown>;
 	stageResource(name: string, mediaType: string, bytes: Uint8Array): Promise<unknown>;
-	subscribe(kind: OmpPanelEventKind, listener: (event: OmpPanelEvent) => void): () => void;
+	subscribe(kind: OmpPanelEventKind, listener: (payload: unknown) => void): () => void;
 }
 
 export class OmpPanelCapabilityUnavailableError extends Error {
@@ -61,21 +48,11 @@ function isWorkspaceSnapshot(value: unknown): value is OmpWorkspaceSnapshot {
 	);
 }
 
-async function request(
-	port: OmpPanelPort,
-	kind: OmpPanelRequestKind,
-	payload: Record<string, unknown>
-): Promise<unknown> {
-	const result = await port.request(kind, payload);
-	if (result.kind !== kind) throw new Error(`OMP panel received ${result.kind} for ${kind}.`);
-	return result.payload;
-}
-
 /** Exposes all frozen named controls while keeping presentation callers off a generic transport. */
 export function createOmpPanelControllerAdapter(port: OmpPanelPort): OmpPanelControllerAdapter {
 	return {
-		request: (kind, payload) => request(port, kind, payload),
-		subscribe: (kind, listener) => port.subscribe(kind, (event) => listener(event.payload)),
+		request: (kind, payload) => port.request(kind, payload),
+		subscribe: (kind, listener) => port.subscribe(kind, listener),
 	};
 }
 
