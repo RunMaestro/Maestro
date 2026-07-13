@@ -3912,4 +3912,60 @@ describe('SessionList', () => {
 			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
 		});
 	});
+	it('renders a generic plugin workspace destination in the expanded zero-session sidebar', async () => {
+		useUIStore.setState({ leftSidebarOpen: true });
+		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+			...EMPTY_PLUGIN_CONTRIBUTIONS,
+			workspaces: [
+				{
+					ownerPluginId: 'com.example.agent',
+					localId: 'agent-workspace',
+					canonicalContributionId: 'com.example.agent/agent-workspace',
+					title: 'Agent workspace',
+					icon: 'bot',
+					panelLocalId: 'agent-panel',
+				},
+			],
+			interactivePanels: [
+				{
+					ownerPluginId: 'com.example.agent',
+					localId: 'agent-panel',
+					canonicalContributionId: 'com.example.agent/agent-panel',
+					title: 'Agent workspace panel',
+					entry: 'panel.html',
+				},
+			],
+		} as AggregatedContributions);
+		const pluginWorkspaceProjectionSource = {
+			getSnapshot: vi.fn(async () => ({
+				connection: 'ready' as const,
+				selection: null,
+				workspaces: [
+					{
+						ownerPluginId: 'com.example.agent',
+						workspaceLocalId: 'agent-workspace',
+						panelLocalId: 'agent-panel',
+						generation: '1',
+						projectionRevision: 1,
+						status: { state: 'ready' as const, label: 'Ready' },
+						badge: null,
+						sessions: [],
+					},
+				],
+			})),
+			subscribe: vi.fn(() => vi.fn()),
+			reveal: vi.fn(async () => undefined),
+		};
+
+		render(
+			<SessionList
+				{...createDefaultProps({
+					interactivePanelHostBinder: { bind: vi.fn(() => vi.fn()) },
+					pluginWorkspaceProjectionSource,
+				})}
+			/>
+		);
+
+		expect(await screen.findByRole('button', { name: 'Open Agent workspace' })).toBeVisible();
+	});
 });

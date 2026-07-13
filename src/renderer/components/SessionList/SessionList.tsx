@@ -55,6 +55,7 @@ import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
 import { SkinnySidebar } from './SkinnySidebar';
+import { PluginWorkspaceActivityItems } from '../plugins/PluginWorkspaceActivityItems';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
@@ -1355,6 +1356,12 @@ function SessionListInner(props: SessionListProps) {
 					className="flex-1 min-h-0 flex flex-col overflow-y-auto py-2 select-none scrollbar-thin"
 					data-tour="session-list"
 				>
+					<PluginWorkspaceActivityItems
+						theme={theme}
+						binder={props.interactivePanelHostBinder}
+						source={props.pluginWorkspaceProjectionSource}
+					/>
+
 					{/* Session Filter */}
 					{sessionFilterOpen && (
 						<div className="mx-3 mb-3 relative">
