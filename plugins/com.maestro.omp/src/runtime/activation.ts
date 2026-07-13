@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { encodeBase64, MAX_OMP_IMAGE_BYTES, sha256Hex } from './byte-codec';
 import type {
 	InteractiveRuntimeHandle,
 	JsonValue,
@@ -10,6 +10,8 @@ import type {
 import { OmpProtocolError, OmpRpcClient } from './rpc-client';
 import { OmpWorkspaceController } from './workspace-controller';
 import type { OmpRpcCommand, OmpRpcEvent, OmpRpcTransport, OmpSessionState } from './types';
+
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 type ActivationSdk = Pick<MaestroSdk, 'workspace' | 'interactivePanel' | 'interactiveRuntime'>;
 type ExternalSessionStatus =
@@ -667,9 +669,11 @@ async function toOmpImages(
 			!name ||
 			!mediaType ||
 			!sha256 ||
+			!SHA256_HEX.test(sha256) ||
 			typeof size !== 'number' ||
 			!Number.isSafeInteger(size) ||
 			size < 1 ||
+			size > MAX_OMP_IMAGE_BYTES ||
 			!Object.prototype.hasOwnProperty.call(OMP_IMAGE_MEDIA_TYPES, mediaType)
 		)
 			throw new OmpProtocolError('invalid OMP image attachment');
@@ -682,13 +686,13 @@ async function toOmpImages(
 				resource.size !== size ||
 				resource.sha256 !== sha256 ||
 				resource.bytes.byteLength !== size ||
-				createHash('sha256').update(resource.bytes).digest('hex') !== sha256
+				sha256Hex(resource.bytes) !== sha256
 			)
 				throw new OmpProtocolError('invalid OMP image attachment');
 			images.push(
 				Object.freeze({
 					type: 'image',
-					data: Buffer.from(resource.bytes).toString('base64'),
+					data: encodeBase64(resource.bytes),
 					mimeType: mediaType,
 				})
 			);

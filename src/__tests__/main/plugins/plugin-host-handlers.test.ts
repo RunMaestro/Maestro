@@ -385,7 +385,7 @@ describe('interactive panel owner surface', () => {
 		await h['interactivePanel.emit']!('p', {
 			kind: 'status',
 			payload: { ready: true },
-			eventSequence: 1n,
+			eventSequence: '1',
 		});
 		await expect(
 			h['interactivePanel.consumeResource']!('p', {
@@ -404,6 +404,37 @@ describe('interactive panel owner surface', () => {
 		expect(reject).toHaveBeenCalledWith('request-capability', 'runtime_stopped');
 		expect(emit).toHaveBeenCalledWith('status', { ready: true }, 1n);
 		expect(consumeResource).toHaveBeenCalledWith('a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8');
+	});
+
+	it.each([
+		['a non-decimal sequence', '1.0'],
+		['a negative sequence', '-1'],
+		['a zero sequence', '0'],
+		['a non-canonical sequence', '01'],
+		['an overflow sequence', '9223372036854775808'],
+	])('rejects %s before it reaches the owner', async (_label, eventSequence) => {
+		const emit = vi.fn(async () => undefined);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				interactivePanelSurfaceFor: () => ({
+					resolve: async () => undefined,
+					reject: async () => undefined,
+					emit,
+					consumeResource: async () => {
+						throw new Error('unreachable');
+					},
+				}),
+			})
+		);
+
+		await expect(
+			h['interactivePanel.emit']!('p', {
+				kind: 'status',
+				payload: { ready: true },
+				eventSequence,
+			})
+		).rejects.toThrow('invalid panel event');
+		expect(emit).not.toHaveBeenCalled();
 	});
 });
 

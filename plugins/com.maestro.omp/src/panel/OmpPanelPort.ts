@@ -11,7 +11,8 @@ export interface OmpPanelResult {
 
 export interface OmpPanelEvent {
 	readonly kind: OmpPanelEventKind;
-	readonly eventSequence: bigint;
+	/** Canonical positive decimal wire value; never a BigInt in panel JSON. */
+	readonly eventSequence: string;
 	readonly payload: unknown;
 }
 

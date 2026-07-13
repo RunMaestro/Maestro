@@ -105,6 +105,7 @@ async function bundleEntry(
 		entryNames: 'bundle',
 		entryPoints: [entryPoint],
 		format,
+		...(platform === 'browser' ? { define: { 'process.env.NODE_ENV': '"production"' } } : {}),
 		legalComments: 'none',
 		minify: false,
 		outdir: 'dist',

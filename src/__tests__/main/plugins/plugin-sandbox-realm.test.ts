@@ -55,6 +55,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+async function createBundledOmpFixture(): Promise<{ readonly runtimeSource: string }> {
+	const bundle = await bundleOmpPlugin(resolve(process.cwd(), 'plugins/com.maestro.omp'));
+	const runtime = bundle.files.find((file) => file.path === 'dist/runtime.js');
+	const panel = bundle.files.find((file) => file.path === 'dist/panel.html');
+	if (!runtime || !panel) throw new Error('OMP bundle omitted a sandbox entry');
+	const runtimeSource = new TextDecoder().decode(runtime.content);
+	const panelSource = new TextDecoder().decode(panel.content);
+	for (const source of [runtimeSource, panelSource]) {
+		expect(source).not.toMatch(/["']node:/);
+		expect(source).not.toMatch(/\brequire\s*\(/);
+		expect(source).not.toMatch(/\bBuffer(?:\.|\()/);
+		expect(source).not.toMatch(/\bprocess(?:\.|\[)/);
+		expect(source).not.toMatch(/\bmodule\.require\b/);
+	}
+	return { runtimeSource };
+}
+
 /** Plugin-side graph walker. Records every escape success into
  * `globalThis.__findings` (an array of path strings); empty array = safe. */
 const WALKER_SOURCE = String.raw`
@@ -474,6 +491,45 @@ describe('plugin sandbox realm — behavioral parity', () => {
 		);
 		expect(vi.mocked(bridge.log).mock.calls).not.toContainEqual(['info', 'message:2:leak']);
 	});
+
+	it('serializes only bounded canonical decimal panel event sequences', async () => {
+		const sent: Array<{ id: number; method: string; params: unknown }> = [];
+		const bridge = makeBridge({
+			send: vi.fn((json: string) =>
+				sent.push(JSON.parse(json) as { id: number; method: string; params: unknown })
+			),
+		});
+		const realm = createSandboxRealm(bridge);
+		realm.init('panel-sequence', { interactivePanel: true });
+		realm.runScript(
+			'void maestro.interactivePanel.emit("omp.view.replace", {}, 1n);',
+			'panel-sequence-valid'
+		);
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({
+			method: 'interactivePanel.emit',
+			params: { eventSequence: '1' },
+		});
+		realm.deliverResponse(JSON.stringify({ id: sent[0]!.id, ok: true, result: null }));
+
+		realm.runScript(
+			'void maestro.interactivePanel.emit("omp.view.replace", {}, 0n).catch(function (error) { console.log(error.message); });',
+			'panel-sequence-zero'
+		);
+		realm.runScript(
+			'void maestro.interactivePanel.emit("omp.view.replace", {}, 9223372036854775808n).catch(function (error) { console.log(error.message); });',
+			'panel-sequence-overflow'
+		);
+		await vi.waitFor(() =>
+			expect(vi.mocked(bridge.log).mock.calls).toEqual(
+				expect.arrayContaining([
+					['info', 'invalid panel event sequence'],
+					['info', 'invalid panel event sequence'],
+				])
+			)
+		);
+		expect(sent).toHaveLength(1);
+	});
 });
 
 describe('signed OMP artifact sandbox smoke', () => {
@@ -484,9 +540,7 @@ describe('signed OMP artifact sandbox smoke', () => {
 				sent.push(JSON.parse(json) as { id: number; method: string; params: unknown })
 			),
 		});
-		const bundle = await bundleOmpPlugin(resolve(process.cwd(), 'plugins/com.maestro.omp'));
-		const runtime = bundle.files.find((file) => file.path === 'dist/runtime.js');
-		expect(runtime).toBeDefined();
+		const { runtimeSource } = await createBundledOmpFixture();
 
 		const realm = createSandboxRealm(bridge);
 		realm.init('com.maestro.omp', {
@@ -494,7 +548,7 @@ describe('signed OMP artifact sandbox smoke', () => {
 			interactivePanel: true,
 			interactiveRuntime: true,
 		});
-		realm.runScript(Buffer.from(runtime!.content).toString('utf8'), 'omp-runtime.js');
+		realm.runScript(runtimeSource, 'omp-runtime.js');
 		const activation = realm.activate();
 
 		for (const [method, result] of [
@@ -550,6 +604,26 @@ describe('signed OMP artifact sandbox smoke', () => {
 				result: { runtimeId: 'runtime-1', generation: '1' },
 			})
 		);
+		let runtimeSequence = 1;
+		await vi.waitFor(() => {
+			expect(sent[nextCall]).toMatchObject({ method: 'interactiveRuntime.hostTools' });
+		});
+		const hostToolsCall = sent[nextCall++];
+		if (!hostToolsCall) throw new Error('missing host tool catalog request');
+		realm.deliverResponse(
+			JSON.stringify({
+				id: hostToolsCall.id,
+				ok: true,
+				result: [
+					{
+						name: 'maestro.workspace.read',
+						description: 'Read a host-approved workspace file.',
+						parameters: { type: 'object', additionalProperties: false },
+					},
+				],
+			})
+		);
+		await Promise.resolve();
 		realm.deliverEvent(
 			JSON.stringify({
 				topic: '__interactiveRuntimeMessage:runtime-1',
@@ -561,7 +635,6 @@ describe('signed OMP artifact sandbox smoke', () => {
 				},
 			})
 		);
-		let runtimeSequence = 1;
 		for (let initialized = 0; initialized < 5; initialized++) {
 			await vi.waitFor(() => {
 				const call = sent[nextCall];
@@ -622,20 +695,26 @@ describe('signed OMP artifact sandbox smoke', () => {
 			);
 			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
 		}
-		let readyStatusCall: (typeof sent)[number] | undefined;
-		await vi.waitFor(() => {
-			const call = sent
-				.slice(nextCall)
-				.find((candidate) => candidate.method === 'workspace.setStatus');
-			if (!call) throw new Error('waiting for ready status');
-			readyStatusCall = call;
-		});
-		if (!readyStatusCall) throw new Error('missing ready status');
-		expect(readyStatusCall).toMatchObject({
-			method: 'workspace.setStatus',
-			params: { status: { state: 'ready', label: 'OMP ready' } },
-		});
-		realm.deliverResponse(JSON.stringify({ id: readyStatusCall.id, ok: true, result: null }));
+		for (const expectedMethod of [
+			'workspace.publishExternalSessions',
+			'workspace.setStatus',
+			'workspace.setBadge',
+			'interactivePanel.emit',
+		]) {
+			await vi.waitFor(() => {
+				const call = sent[nextCall];
+				if (!call) throw new Error(`waiting for ${expectedMethod}`);
+				expect(call.method).toBe(expectedMethod);
+			});
+			const call = sent[nextCall++];
+			if (!call) throw new Error(`missing ${expectedMethod}`);
+			if (expectedMethod === 'workspace.setStatus') {
+				expect(call).toMatchObject({
+					params: { status: { state: 'ready', label: 'OMP ready' } },
+				});
+			}
+			realm.deliverResponse(JSON.stringify({ id: call.id, ok: true, result: null }));
+		}
 		await vi.waitFor(() => {
 			expect(vi.mocked(bridge.log).mock.calls).toContainEqual(['info', 'started:true']);
 		});

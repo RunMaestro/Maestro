@@ -65,6 +65,7 @@ const MAX_SOCKETS_PER_PLUGIN = 4;
 /** Per-frame byte cap for net:connect, enforced on BOTH directions: outbound in
  * the net.send handler, inbound via the ws client's `maxPayload` in the sink. */
 const MAX_FRAME_BYTES = 64 * 1024;
+const MAX_PANEL_EVENT_SEQUENCE = 9_223_372_036_854_775_807n;
 
 export interface PluginTabMetadata {
 	id: string;
@@ -367,6 +368,14 @@ export interface ResolvedSpawnSpec {
 
 function asObject(params: unknown): Record<string, unknown> {
 	return typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {};
+}
+
+function isCanonicalPanelEventSequence(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		/^[1-9][0-9]{0,18}$/.test(value) &&
+		BigInt(value) <= MAX_PANEL_EVENT_SEQUENCE
+	);
 }
 
 /** Keys we never expose through settings.get, even if asked (defense in depth).
@@ -1399,11 +1408,12 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				payload: true,
 				eventSequence: true,
 			});
-			if (typeof p.kind !== 'string') throw new Error('invalid panel event');
+			if (typeof p.kind !== 'string' || !isCanonicalPanelEventSequence(p.eventSequence))
+				throw new Error('invalid panel event');
 			assertBrokerAllowed(deps, pluginId, 'interactivePanel.emit', p);
 			const surface = deps.interactivePanelSurfaceFor?.(pluginId);
 			if (!surface) throw new Error('interactive panel capability unavailable');
-			await surface.emit(p.kind, p.payload, p.eventSequence);
+			await surface.emit(p.kind, p.payload, BigInt(p.eventSequence));
 			return null;
 		},
 		'interactivePanel.consumeResource': async (pluginId, params) => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activate, deactivate, startFromExplicitPanelAction } from '../../runtime';
 
 afterEach(async () => deactivate());
@@ -115,6 +115,8 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 		resolvePanelRequest = resolve;
 	});
 	const consumedBytes = new Uint8Array([97, 98, 99]);
+	const mismatchedBytes = new Uint8Array([97, 98, 100]);
+	const rejections: unknown[][] = [];
 	let emit: ((event: unknown) => void) | undefined;
 	let messageSequence = 0;
 	let resolveMessageSubscription!: () => void;
@@ -219,11 +221,23 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 			resolve: async () => {
 				resolvePanelRequest?.();
 			},
-			reject: async () => undefined,
+			reject: async (...args) => {
+				rejections.push(args);
+			},
 			emit: async (kind, payload) => {
 				panels.push({ kind, payload });
 			},
 			consumeResource: async (ref) => {
+				if (ref === 'f40b0d1e-2f5c-4a7f-a7c3-3e1d51fa82c7') {
+					return {
+						ref,
+						name: 'image.png',
+						mediaType: 'image/png',
+						size: 3,
+						sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+						bytes: mismatchedBytes,
+					};
+				}
 				expect(ref).toBe('a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8');
 				return {
 					ref,
@@ -273,6 +287,25 @@ it('binds a runtime generation JSONL stream to the RPC controller and publishes 
 		images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
 	});
 	expect(consumedBytes).toEqual(new Uint8Array([0, 0, 0]));
+	receivePanelRequest?.({
+		kind: 'omp.prompt.send',
+		requestId: 'panel-request-mismatch',
+		payload: {
+			sessionId: 'session-1',
+			text: 'reject tampered image',
+			attachments: [
+				{
+					ref: 'f40b0d1e-2f5c-4a7f-a7c3-3e1d51fa82c7',
+					name: 'image.png',
+					mediaType: 'image/png',
+					size: 3,
+					sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+				},
+			],
+		},
+	});
+	await vi.waitFor(() => expect(rejections).toHaveLength(1));
+	expect(mismatchedBytes).toEqual(new Uint8Array([0, 0, 0]));
 
 	expect(writes.map((frame) => frame.type)).toEqual(
 		expect.arrayContaining([

@@ -383,7 +383,20 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				},
 				resolve: function (requestId, kind, payload) { return hostCall('interactivePanel.resolve', { requestId: requestId, kind: kind, payload: payload }); },
 				reject: function (requestId, code) { return hostCall('interactivePanel.reject', { requestId: requestId, code: code }); },
-				emit: function (kind, payload, eventSequence) { return hostCall('interactivePanel.emit', { kind: kind, payload: payload, eventSequence: eventSequence }); },
+				emit: function (kind, payload, eventSequence) {
+					if (
+						typeof eventSequence !== 'bigint' ||
+						eventSequence < 1n ||
+						eventSequence > 9223372036854775807n
+					) {
+						return Promise.reject(new Error('invalid panel event sequence'));
+					}
+					return hostCall('interactivePanel.emit', {
+						kind: kind,
+						payload: payload,
+						eventSequence: eventSequence.toString(10)
+					});
+				},
 				consumeResource: function (ref) {
 					return hostCall('interactivePanel.consumeResource', { ref: ref }).then(function (resource) {
 						if (!resource || typeof resource !== 'object' ||
