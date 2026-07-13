@@ -140,6 +140,45 @@ describe('plugin workspace renderer adapters', () => {
 		expect(bridge.activatePanel).not.toHaveBeenCalled();
 		expect(bridge.unmountPanel).toHaveBeenCalledWith({ instanceId: 'panel-instance' });
 	});
+	it('treats a pre-attach guest identity as unavailable without rejecting discarded mounts', async () => {
+		const bridge = api();
+		const binder = createInteractivePanelHostBinder(bridge);
+		const listeners = new Map<string, () => void>();
+		const onFailure = vi.fn();
+		const webview = {
+			addEventListener: vi.fn((event: string, listener: () => void) =>
+				listeners.set(event, listener)
+			),
+			removeEventListener: vi.fn(),
+			getWebContentsId: () => {
+				throw new Error('WebView must be attached to the embedder frame before getWebContentsId');
+			},
+		};
+
+		binder.bind({
+			panel: {
+				ownerPluginId: 'com.maestro.omp',
+				localId: 'main-panel',
+				canonicalContributionId: 'com.maestro.omp/main-panel',
+				title: 'OMP',
+				entry: 'panel.html',
+			} as unknown as CanonicalInteractivePanelContribution,
+			webview: webview as never,
+			onFailure,
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(bridge.mountPanel).not.toHaveBeenCalled();
+		expect(onFailure).not.toHaveBeenCalled();
+
+		listeners.get('dom-ready')?.();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(bridge.mountPanel).not.toHaveBeenCalled();
+		expect(onFailure).toHaveBeenCalledWith(new Error('Panel guest is unavailable.'));
+	});
 
 	it('relays only closed guest panel messages through their named sender-bound operations', async () => {
 		const bridge = api();

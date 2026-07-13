@@ -71,7 +71,13 @@ function bindPanel(
 	};
 	const mount = async (reportUnavailable: boolean): Promise<void> => {
 		if (!active || instanceId !== null || mountInFlight) return;
-		const guestWebContentsId = webviewWithContents.getWebContentsId?.();
+		let guestWebContentsId: number | undefined;
+		try {
+			guestWebContentsId = webviewWithContents.getWebContentsId?.();
+		} catch {
+			if (reportUnavailable) reportFailure(new Error('Panel guest is unavailable.'));
+			return;
+		}
 		if (
 			typeof guestWebContentsId !== 'number' ||
 			!Number.isSafeInteger(guestWebContentsId) ||
