@@ -65,6 +65,17 @@ export function buildSigningPayload(files: Record<string, string>): string {
 	return entries.map(([path, hash]) => `${path}:${hash}`).join('\n');
 }
 
+/**
+ * Canonical byte payload for a plugin's authorization content identity.
+ *
+ * This deliberately excludes detached signature metadata and represents only
+ * the exact signed plugin files. Every execution snapshot source MUST derive
+ * its authorization hash from this payload, never from a ledger-provided hash.
+ */
+export function buildPluginContentHashPayload(files: Record<string, string>): string {
+	return buildSigningPayload(files);
+}
+
 /** Normalize a plugin-relative path to POSIX with no leading `./` or slashes. */
 export function normalizeRelPath(path: string): string {
 	return path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');

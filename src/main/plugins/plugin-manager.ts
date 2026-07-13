@@ -70,6 +70,7 @@ const HOT_RELOAD_DEBOUNCE_MS = 150;
 export interface PluginExecutionSnapshot {
 	identity: Readonly<{
 		artifactDigest: string;
+		authorizationContentHash: string;
 		signerKeyId: string;
 	}>;
 	text: (filePath: string) => string | null;
@@ -409,6 +410,7 @@ export class PluginManager {
 						ownerPluginId: record.id,
 						generation,
 						artifactDigest: snapshot.identity.artifactDigest,
+						authorizationContentHash: snapshot.identity.authorizationContentHash,
 						signerKeyId: snapshot.identity.signerKeyId,
 					});
 				} catch {
@@ -818,6 +820,30 @@ export class PluginManager {
 		const localId = toolId.slice(sep + 1);
 		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
 		return this.deps.sandbox.invokeTool(pluginId, localId, args);
+	}
+
+	/**
+	 * Return an interactive workspace panel's HTML from the current verified
+	 * artifact snapshot. Identity is deliberately split into owner + local id:
+	 * this resolves only the closed interactive-panel declaration, never a legacy
+	 * `contributes.panels` entry with the same namespaced contribution id.
+	 */
+	getInteractivePanelHtml(ownerPluginId: string, panelLocalId: string): string | null {
+		if (
+			ownerPluginId.length === 0 ||
+			panelLocalId.length === 0 ||
+			ownerPluginId.includes('/') ||
+			panelLocalId.includes('/')
+		) {
+			return null;
+		}
+		const owner = this.getActiveRecords().find((record) => record.id === ownerPluginId);
+		if (!owner) return null;
+		const panel = this.getContributions().interactivePanels.find(
+			(candidate) => candidate.ownerPluginId === ownerPluginId && candidate.localId === panelLocalId
+		);
+		if (!panel) return null;
+		return this.getExecutionSnapshot(owner.id)?.text(panel.entry) ?? null;
 	}
 
 	/**

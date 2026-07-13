@@ -6,6 +6,7 @@ import { generateKeyPairSync, createHash, sign as cryptoSign } from 'crypto';
 import {
 	captureVerifiedPluginSnapshot,
 	verifyPluginSignature,
+	computePluginContentHash,
 } from '../../../main/plugins/plugin-signature';
 import { buildSigningPayload, SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
 
@@ -66,6 +67,15 @@ describe('verifyPluginSignature', () => {
 		expect(snapshot?.text('entry.js')).toBe('module.exports = {}');
 		snapshot?.release();
 		expect(snapshot?.text('entry.js')).toBeNull();
+	});
+
+	it('derives authorization content identity from captured verified bytes, not signature metadata', () => {
+		signDir(dir, publicKeyB64, privateKey);
+		const snapshot = captureVerifiedPluginSnapshot(dir, [publicKeyB64]);
+
+		expect(snapshot).not.toBeNull();
+		expect(snapshot?.identity.authorizationContentHash).toBe(computePluginContentHash(dir));
+		expect(snapshot?.identity.authorizationContentHash).not.toBe(snapshot?.identity.artifactDigest);
 	});
 
 	it('reports untrusted for a valid signature from an unknown key', () => {

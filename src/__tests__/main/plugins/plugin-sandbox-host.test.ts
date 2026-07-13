@@ -39,6 +39,7 @@ describe('PluginSandboxHost.invokeCommand payload cap', () => {
 			ownerPluginId: 'p',
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
+			authorizationContentHash: 'c'.repeat(64),
 			signerKeyId: 'test-signer',
 		});
 		// Drop the 'init' message posted by start().
@@ -102,6 +103,7 @@ describe('PluginSandboxHost.stop onStop hook', () => {
 			ownerPluginId: 'p',
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
+			authorizationContentHash: 'c'.repeat(64),
 			signerKeyId: 'test-signer',
 		});
 

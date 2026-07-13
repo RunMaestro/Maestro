@@ -20,6 +20,7 @@ import {
 	SIGNATURE_EXCLUDED_DIRS,
 	isExcludedSignaturePath,
 	buildSigningPayload,
+	buildPluginContentHashPayload,
 	validateSignatureManifest,
 	isTrustedKey,
 	normalizeRelPath,
@@ -38,6 +39,7 @@ export const PLUGIN_SOURCE_SNAPSHOT_LIMITS = Object.freeze({
 export interface VerifiedPluginSourceIdentity {
 	pluginId: string;
 	artifactDigest: string;
+	authorizationContentHash: string;
 	signerKeyId: string;
 }
 
@@ -129,9 +131,12 @@ function hashTree(dir: string): Record<string, string> {
  * symlink (same policy as the signer); the caller treats a throw as
  * un-authorizable (disabled).
  */
+export function computePluginContentHashFromFileHashes(files: Record<string, string>): string {
+	return createHash('sha256').update(buildPluginContentHashPayload(files), 'utf-8').digest('hex');
+}
+
 export function computePluginContentHash(dir: string): string {
-	const payload = buildSigningPayload(hashTree(dir));
-	return createHash('sha256').update(payload, 'utf-8').digest('hex');
+	return computePluginContentHashFromFileHashes(hashTree(dir));
 }
 
 /** Do two file-hash maps describe exactly the same files with the same hashes? */
@@ -299,7 +304,8 @@ export function captureVerifiedPluginSnapshot(
 	return new VerifiedPluginSourceSnapshot(
 		{
 			pluginId,
-			artifactDigest: createHash('sha256').update(payload, 'utf8').digest('hex'),
+			artifactDigest: createHash('sha256').update(raw, 'utf8').digest('hex'),
+			authorizationContentHash: computePluginContentHashFromFileHashes(hashes),
 			signerKeyId: manifest.publicKey,
 		},
 		textByPath,

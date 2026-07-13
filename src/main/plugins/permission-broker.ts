@@ -40,6 +40,7 @@ export interface PluginAuthorizationIdentity {
 	ownerPluginId: string;
 	generation: number;
 	artifactDigest: string;
+	authorizationContentHash: string;
 	signerKeyId: string;
 }
 
@@ -99,6 +100,7 @@ function sameAuthorizationIdentity(
 		left.ownerPluginId === right.ownerPluginId &&
 		left.generation === right.generation &&
 		left.artifactDigest === right.artifactDigest &&
+		left.authorizationContentHash === right.authorizationContentHash &&
 		left.signerKeyId === right.signerKeyId
 	);
 }
@@ -123,7 +125,7 @@ export class PermissionBroker {
 			!active ||
 			!sameAuthorizationIdentity(active, identity) ||
 			!granted ||
-			granted.contentHash !== identity.artifactDigest ||
+			granted.contentHash !== identity.authorizationContentHash ||
 			granted.signerKey !== identity.signerKeyId
 		) {
 			const decision: BrokerDecision = {

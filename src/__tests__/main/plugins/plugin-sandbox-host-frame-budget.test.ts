@@ -49,6 +49,7 @@ function startHost(allowed: boolean, handler = vi.fn(async () => ({}))) {
 		ownerPluginId: 'test-plugin',
 		generation: 1,
 		artifactDigest: 'a'.repeat(64),
+		authorizationContentHash: 'c'.repeat(64),
 		signerKeyId: 'test-signer',
 	});
 	postMessage.mockClear();

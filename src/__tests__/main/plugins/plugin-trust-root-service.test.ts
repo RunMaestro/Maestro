@@ -143,6 +143,7 @@ describe('OmpPluginTrustRootService', () => {
 		const initial = writeArchive(artifact('1.0.0'));
 		service.bootstrapBundledArchive(initial);
 		const initialSnapshot = service.getActiveSnapshot();
+		const initialAuthorizationContentHash = initialSnapshot?.identity.authorizationContentHash;
 		expect(initialSnapshot?.text('index.js')).toBe('module.exports = "omp";');
 
 		fs.writeFileSync(
@@ -161,6 +162,9 @@ describe('OmpPluginTrustRootService', () => {
 
 		expect(initialSnapshot?.text('index.js')).toBeNull();
 		expect(service.getActiveSnapshot()?.identity.artifactSha256).not.toBe(initial.expectedSha256);
+		expect(service.getActiveSnapshot()?.identity.authorizationContentHash).not.toBe(
+			initialAuthorizationContentHash
+		);
 	});
 
 	it('rejects a digest mismatch before installing any bytes', () => {

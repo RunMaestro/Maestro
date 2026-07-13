@@ -19,12 +19,14 @@ import { PermissionBroker } from './permission-broker';
 import type { PluginActivationIdentity } from './plugin-activation-identity';
 import {
 	isHostMethod,
+	MAX_PLUGIN_HOST_CALL_BYTES,
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
 	type SandboxSurfaceFlags,
 	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
+import { MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES } from '../../shared/plugins/interactive-runtime';
 import type { PluginEvent } from '../../shared/plugins/events';
 
 export interface SandboxControlEvent {
@@ -82,8 +84,6 @@ export interface ActivitySnapshot {
 	recentLogs: ActivityLogLine[];
 }
 
-/** Hard cap on a single RPC message to bound memory from a hostile child. */
-const MAX_MESSAGE_BYTES = 1_000_000;
 /** Grace period between a graceful shutdown message and a hard kill. */
 const SHUTDOWN_GRACE_MS = 2000;
 /** Max concurrent in-flight host calls per plugin (backpressure). */
@@ -218,6 +218,7 @@ export class PluginSandboxHost {
 			!Number.isSafeInteger(identity.generation) ||
 			identity.generation < 1 ||
 			!/^[a-f0-9]{64}$/i.test(identity.artifactDigest) ||
+			!/^[a-f0-9]{64}$/i.test(identity.authorizationContentHash) ||
 			identity.signerKeyId.length === 0
 		) {
 			throw new Error('invalid plugin activation identity');
@@ -287,7 +288,7 @@ export class PluginSandboxHost {
 		} catch {
 			return false;
 		}
-		if (serialized.length > MAX_MESSAGE_BYTES) return false;
+		if (serialized.length > MAX_PLUGIN_HOST_CALL_BYTES) return false;
 		try {
 			record.proc.postMessage({ kind: 'invokeCommand', commandId, args });
 			return true;
@@ -316,7 +317,7 @@ export class PluginSandboxHost {
 		} catch {
 			return Promise.reject(new Error('tool args are not serializable'));
 		}
-		if (serialized.length > MAX_MESSAGE_BYTES) {
+		if (serialized.length > MAX_PLUGIN_HOST_CALL_BYTES) {
 			return Promise.reject(new Error('tool args exceed size limit'));
 		}
 		if (record.pendingTools.size >= MAX_PENDING_TOOLS) {
@@ -459,20 +460,25 @@ export class PluginSandboxHost {
 			}
 		}
 
-		// Bound message size from a hostile child.
+		// Bound message size from a hostile child. The interactive runtime write
+		// protocol carries an intentionally larger verified frame; every other
+		// host method keeps the generic cap.
+		const method = request.method;
 		let serializedSize = 0;
 		try {
-			serializedSize = JSON.stringify(request.params ?? null).length;
+			serializedSize = Buffer.byteLength(JSON.stringify(request.params ?? null), 'utf8');
 		} catch {
 			respond({ ok: false, error: 'params are not serializable' });
 			return;
 		}
-		if (serializedSize > MAX_MESSAGE_BYTES) {
+		const maxParamsBytes =
+			method === 'interactiveRuntime.write'
+				? MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES
+				: MAX_PLUGIN_HOST_CALL_BYTES;
+		if (serializedSize > maxParamsBytes) {
 			respond({ ok: false, error: 'request params exceed size limit' });
 			return;
 		}
-
-		const method = request.method;
 		if (!record) {
 			respond({ ok: false, error: 'plugin activation is no longer current' });
 			return;

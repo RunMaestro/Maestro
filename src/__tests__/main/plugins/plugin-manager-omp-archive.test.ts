@@ -80,7 +80,11 @@ describe('PluginManager.installOrUpdateArchive', () => {
 
 	it('exposes an injected immutable execution snapshot without disk fallback', () => {
 		const snapshot = {
-			identity: { artifactDigest: 'a'.repeat(64), signerKeyId: 'omp-root' },
+			identity: {
+				artifactDigest: 'a'.repeat(64),
+				authorizationContentHash: 'c'.repeat(64),
+				signerKeyId: 'omp-root',
+			},
 			text: vi.fn(() => 'verified source'),
 			release: vi.fn(),
 		};

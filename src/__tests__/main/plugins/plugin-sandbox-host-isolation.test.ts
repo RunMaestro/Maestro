@@ -54,6 +54,7 @@ describe('PluginSandboxHost child isolation', () => {
 				ownerPluginId: 'p',
 				generation: 1,
 				artifactDigest: 'a'.repeat(64),
+				authorizationContentHash: 'c'.repeat(64),
 				signerKeyId: 'test-signer',
 			});
 			expect(forkMock).toHaveBeenCalledTimes(1);

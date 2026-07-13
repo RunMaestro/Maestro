@@ -1,4 +1,9 @@
 import { createHash } from 'crypto';
+import {
+	buildPluginContentHashPayload,
+	isExcludedSignaturePath,
+	SIGNATURE_FILENAME,
+} from '../../shared/plugins/signing';
 
 /** Hard caps keep hostile archives bounded before JSON parsing, decoding, or signature work. */
 export const PLUGIN_ARTIFACT_LIMITS = Object.freeze({
@@ -58,6 +63,7 @@ export interface VerifiedPluginArtifactIdentity {
 	version: string;
 	contractSha256: string;
 	artifactSha256: string;
+	authorizationContentHash: string;
 	signerKeyId: string;
 }
 
@@ -83,11 +89,21 @@ export class VerifiedPluginArtifactSnapshot {
 			byteLength += bytes.byteLength;
 			textByPath.set(file.path, bytes.toString('utf8'));
 		}
+		const authorizationFiles: Record<string, string> = {};
+		for (const file of artifact.files) {
+			if (file.path === SIGNATURE_FILENAME || isExcludedSignaturePath(file.path)) continue;
+			authorizationFiles[file.path] = createHash('sha256')
+				.update(Buffer.from(file.content, 'base64'))
+				.digest('hex');
+		}
 		this.identity = Object.freeze({
 			pluginId: artifact.pluginId,
 			version: artifact.version,
 			contractSha256: artifact.contractSha256,
 			artifactSha256: createHash('sha256').update(sourceArtifact).digest('hex'),
+			authorizationContentHash: createHash('sha256')
+				.update(buildPluginContentHashPayload(authorizationFiles), 'utf8')
+				.digest('hex'),
 			signerKeyId: artifact.trustRoot.keyId,
 		});
 		this.storedByteLength = byteLength;

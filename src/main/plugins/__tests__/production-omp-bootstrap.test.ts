@@ -8,6 +8,7 @@ import {
 	type ImmutableTrustRoot,
 } from '../../omp-distribution/plugin-artifact';
 import { createProductionOmpBootstrap } from '../production-omp-bootstrap';
+import { computePluginContentHash } from '../plugin-signature';
 import type { PinnedOmpRelease } from '../../omp-distribution/production-omp-runtime-resolver';
 import type {
 	ManagedRuntimeResolver,
@@ -141,6 +142,42 @@ describe('production OMP bootstrap', () => {
 			},
 		};
 		expect(await bootstrap.managedRuntime.requestWorkspaceRoot()).toBeNull();
+	});
+
+	it('derives production resource authorization identity from the same canonical file hash as installation', async () => {
+		const input = await writeArtifact();
+		const bootstrap = createProductionOmpBootstrap({
+			pluginsDir: join(input.directory, 'plugins'),
+			archivePath: input.archivePath,
+			expectedArchiveSha256: input.expectedSha256,
+			trustRoot: input.trustRoot,
+			verifySignature: input.verifySignature,
+			pinnedRelease,
+			resolver: {
+				resolveSystem: async () => null,
+				managedInstallAllowed: () => false,
+				resolveManaged: async () => {
+					throw new Error('managed installation is disabled');
+				},
+			},
+			activation: () => null,
+			chooseDirectory: async () => null,
+		});
+		bootstrap.bootstrapBundledArchive({
+			installOrUpdateArchive: (request) => {
+				bootstrap.ompArchiveInstaller.installOrUpdateArchive(request);
+				return { success: true };
+			},
+		});
+
+		const snapshot = bootstrap.snapshotFor('com.maestro.omp');
+		expect(snapshot).not.toBeNull();
+		expect(snapshot?.identity.authorizationContentHash).toBe(
+			computePluginContentHash(join(input.directory, 'plugins', 'com.maestro.omp'))
+		);
+		expect(snapshot?.identity.authorizationContentHash).not.toBe(
+			snapshot?.identity.artifactDigest
+		);
 	});
 
 	it('exposes workspace run in the production catalog only when a supervised process is injected', async () => {

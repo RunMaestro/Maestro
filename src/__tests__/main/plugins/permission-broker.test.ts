@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
 	PermissionBroker,
 	type PluginAuthorizationIdentity,
 } from '../../../main/plugins/permission-broker';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { AuthorizationStore } from '../../../main/plugins/authorization-ledger';
+import { ConsentMinter, ConsentNonceRegistry } from '../../../main/plugins/consent-minter';
+import { pluginIdentity } from '../../../main/plugins/plugin-identity';
+import { captureVerifiedPluginSnapshot } from '../../../main/plugins/plugin-signature';
+import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
 function grant(capability: string, scope?: string): PermissionGrant {
 	return { capability, ...(scope ? { scope } : {}), grantedAt: 1 } as PermissionGrant;
@@ -16,6 +24,7 @@ function identity(
 		ownerPluginId: 'p',
 		generation: 1,
 		artifactDigest: 'a'.repeat(64),
+		authorizationContentHash: 'c'.repeat(64),
 		signerKeyId: 'trusted-signer',
 		...overrides,
 	};
@@ -98,6 +107,93 @@ describe('PermissionBroker', () => {
 		expect(broker.authorize('other', 'fs.read', { path: '/x' }).allowed).toBe(false);
 	});
 
+	it('authorizes an exact verified snapshot after real consent despite distinct artifact and content digests', async () => {
+		const pluginId = 'com.example.signed';
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-broker-identity-'));
+		const signingKeys = makeSigningKeys();
+		try {
+			fs.writeFileSync(
+				path.join(directory, 'plugin.json'),
+				JSON.stringify({
+					id: pluginId,
+					name: 'Signed',
+					version: '1.0.0',
+					tier: 1,
+					maestro: { minHostApi: '1.0.0' },
+					entry: 'main.js',
+					permissions: [{ capability: 'notifications:toast' }],
+				})
+			);
+			fs.writeFileSync(path.join(directory, 'main.js'), 'module.exports = {};');
+			signPluginDir(directory, signingKeys);
+
+			const current = pluginIdentity(directory, [signingKeys.publicKeyB64]);
+			const snapshot = captureVerifiedPluginSnapshot(directory, [signingKeys.publicKeyB64], pluginId);
+			expect(current).not.toBeNull();
+			expect(snapshot).not.toBeNull();
+			expect(snapshot?.identity.authorizationContentHash).toBe(current?.contentHash);
+			expect(snapshot?.identity.artifactDigest).not.toBe(current?.contentHash);
+
+			const store = new AuthorizationStore({
+				seal: {
+					available: () => true,
+					seal: (plaintext) => Buffer.from(plaintext, 'utf8'),
+					unseal: (blob) => blob.toString('utf8'),
+				},
+				anchor: {
+					available: () => false,
+					read: () => null,
+					write: () => undefined,
+					clear: () => undefined,
+				},
+				ledgerPath: path.join(directory, 'authorization-ledger'),
+				now: () => 1,
+				newSecret: () => 'test-secret',
+			});
+			const sender = { webContentsId: 1, frameId: 1, url: 'app://consent' };
+			let nonce = '';
+			const minter = new ConsentMinter({
+				registry: new ConsentNonceRegistry({ now: () => 1, newNonce: () => 'nonce', ttlMs: 1000 }),
+				store,
+				requested: () => [{ capability: 'notifications:toast' }],
+				identityOf: () => current,
+				openPrompt: async ({ nonce: issuedNonce }) => {
+					nonce = issuedNonce;
+					return sender;
+				},
+				now: () => 1,
+			});
+			await minter.requestConsent(pluginId);
+			expect(
+				minter.confirm(sender, {
+					pluginId,
+					nonce,
+					approved: ['notifications:toast'],
+				}).ok
+			).toBe(true);
+
+			const activation: PluginAuthorizationIdentity = {
+				ownerPluginId: pluginId,
+				generation: 1,
+				artifactDigest: snapshot!.identity.artifactDigest,
+				authorizationContentHash: snapshot!.identity.authorizationContentHash,
+				signerKeyId: snapshot!.identity.signerKeyId,
+			};
+			const broker = new PermissionBroker({
+				getGrants: (id) => store.readGrants(id),
+				getActivationIdentity: (id) => (id === pluginId ? activation : null),
+				getGrantedIdentity: (id) => {
+					const granted = store.entryIdentity(id);
+					return granted ? { contentHash: granted.contentHash, signerKey: granted.signerKey } : null;
+				},
+			});
+
+			expect(broker.authorizeInvocation(activation, 'notifications.toast', {}).allowed).toBe(true);
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('rejects stale or forged snapshot provenance before consulting grants', () => {
 		const current = identity();
 		const broker = new PermissionBroker({
@@ -105,7 +201,10 @@ describe('PermissionBroker', () => {
 			getActivationIdentity: (pluginId) => (pluginId === 'p' ? current : null),
 			getGrantedIdentity: (pluginId) =>
 				pluginId === 'p'
-					? { contentHash: current.artifactDigest, signerKey: current.signerKeyId }
+					? {
+							contentHash: current.authorizationContentHash,
+							signerKey: current.signerKeyId,
+						}
 					: null,
 		});
 
@@ -113,6 +212,13 @@ describe('PermissionBroker', () => {
 		expect(
 			broker.authorizeInvocation(
 				identity({ artifactDigest: 'b'.repeat(64) }),
+				'notifications.toast',
+				{}
+			).allowed
+		).toBe(false);
+		expect(
+			broker.authorizeInvocation(
+				identity({ authorizationContentHash: 'd'.repeat(64) }),
 				'notifications.toast',
 				{}
 			).allowed

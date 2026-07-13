@@ -77,6 +77,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			ownerPluginId: 'p',
 			generation: 1,
 			artifactDigest: 'a'.repeat(64),
+			authorizationContentHash: 'c'.repeat(64),
 			signerKeyId: 'test-signer',
 		});
 	});
