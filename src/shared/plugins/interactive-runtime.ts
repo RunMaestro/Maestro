@@ -10,6 +10,18 @@
 import type { JsonValue, PanelErrorCode, UUID } from './interactive-panel';
 import { isPermitted, type PermissionGrant } from './permissions';
 
+/** Maximum canonical JSONL request frame written to a managed runtime child. */
+export const MAX_INTERACTIVE_RUNTIME_INPUT_FRAME_BYTES = 3 * 1024 * 1024;
+/** Maximum JSONL frame accepted from a managed runtime child's stdout data plane. */
+export const MAX_INTERACTIVE_RUNTIME_OUTPUT_FRAME_BYTES = 256 * 1024;
+/**
+ * Interactive-runtime write calls include a small RPC wrapper around the
+ * canonical child input. This remains method-specific so other host calls keep
+ * the stricter generic message budget.
+ */
+export const MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES =
+	MAX_INTERACTIVE_RUNTIME_INPUT_FRAME_BYTES + 16 * 1024;
+
 /** Opaque host-minted root authority, invalidated when consent or containment changes. */
 export type WorkspaceRootCapability = { readonly __hostIssuedRoot: never };
 

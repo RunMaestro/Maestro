@@ -15,6 +15,9 @@
 
 import type { PluginCapability } from './permissions';
 
+/** Generic maximum serialized params bytes for one sandbox-to-host RPC call. */
+export const MAX_PLUGIN_HOST_CALL_BYTES = 1_000_000;
+
 /**
  * The host API surface as ONE data-driven table: method -> { capability }. The
  * method-name union, the runtime method list, and the method->capability map are

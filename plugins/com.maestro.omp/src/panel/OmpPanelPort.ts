@@ -1,4 +1,5 @@
 import type { OmpPanelEventKind, OmpPanelRequestKind } from '../bridge/descriptor';
+import { MAX_OMP_IMAGE_BYTES, MAX_OMP_PROMPT_ATTACHMENT_BYTES } from '../runtime/byte-codec';
 import type { OmpWorkspaceAdapter, OmpWorkspaceSnapshot } from './types';
 
 export type { OmpPanelEventKind, OmpPanelRequestKind } from '../bridge/descriptor';
@@ -78,7 +79,8 @@ export function createOmpPanelControllerAdapter(port: OmpPanelPort): OmpPanelCon
 	};
 }
 
-const MAX_ATTACHMENT_BYTES_PER_FILE = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES_PER_FILE = MAX_OMP_IMAGE_BYTES;
+const MAX_ATTACHMENT_TOTAL_BYTES = MAX_OMP_PROMPT_ATTACHMENT_BYTES;
 const MAX_ATTACHMENT_COUNT = 8;
 const SUPPORTED_IMAGE_MEDIA_TYPES: Record<string, true> = {
 	'image/png': true,
@@ -248,6 +250,7 @@ async function stageAttachments(
 ): Promise<readonly OmpPanelResourceRef[]> {
 	if (attachments.length > MAX_ATTACHMENT_COUNT)
 		throw new Error('Attachments exceed the file limit.');
+	let totalBytes = 0;
 	for (const attachment of attachments) {
 		if (
 			attachment.size < 1 ||
@@ -255,6 +258,9 @@ async function stageAttachments(
 			attachment.size > MAX_ATTACHMENT_BYTES_PER_FILE
 		)
 			throw new Error(`Attachment ${attachment.name} exceeds the per-file size limit.`);
+		totalBytes += attachment.size;
+		if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES)
+			throw new Error('Attachments exceed the aggregate size limit.');
 		if (!SUPPORTED_IMAGE_MEDIA_TYPES[attachment.type])
 			throw new Error(
 				`Attachment ${attachment.name || '(unnamed)'} has an unsupported image type.`

@@ -3,19 +3,20 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 
 import type { JsonValue, PanelErrorCode } from '../../shared/plugins/interactive-panel';
-import type {
-	InteractiveStopReason,
-	RuntimeEvent,
-	RuntimeMessage,
+import {
+	MAX_INTERACTIVE_RUNTIME_INPUT_FRAME_BYTES,
+	MAX_INTERACTIVE_RUNTIME_OUTPUT_FRAME_BYTES,
+	type InteractiveStopReason,
+	type RuntimeEvent,
+	type RuntimeMessage,
 } from '../../shared/plugins/interactive-runtime';
 
-const MAX_FRAME_BYTES = 256 * 1024;
 const MAX_BUFFER_BYTES = 1024 * 1024;
 const MAX_FRAMES_PER_WINDOW = 128;
 const RATE_WINDOW_MS = 1_000;
 const STOP_GRACE_MS = 1_000;
 const MAX_PRE_LISTENER_MESSAGES = 64;
-const MAX_PRE_LISTENER_MESSAGE_BYTES = 256 * 1024;
+const MAX_PRE_LISTENER_MESSAGE_BYTES = MAX_INTERACTIVE_RUNTIME_OUTPUT_FRAME_BYTES;
 
 export interface ManagedRuntimeWritable {
 	write(data: string): boolean;
@@ -116,9 +117,8 @@ export class ManagedRuntimeProcess {
 	async writeCanonicalJson(value: JsonValue): Promise<void> {
 		if (this.closed || !this.acceptingWrites) throw new Error('runtime is closed');
 		const encoded = `${canonicalJson(value)}\n`;
-		if (Buffer.byteLength(encoded) > MAX_FRAME_BYTES) {
-			this.fail('invalid_request');
-			throw new Error('runtime frame exceeds the maximum size');
+		if (Buffer.byteLength(encoded) > MAX_INTERACTIVE_RUNTIME_INPUT_FRAME_BYTES) {
+			throw new Error('runtime input frame exceeds the maximum size');
 		}
 		const stdin = this.options.child.stdin;
 		if (!stdin) {
@@ -162,14 +162,14 @@ export class ManagedRuntimeProcess {
 		while (newline >= 0) {
 			const line = buffer.subarray(0, newline);
 			buffer = buffer.subarray(newline + 1);
-			if (line.length > MAX_FRAME_BYTES) {
+			if (line.length > MAX_INTERACTIVE_RUNTIME_OUTPUT_FRAME_BYTES) {
 				this.fail('invalid_request');
 				return;
 			}
 			if (line.length > 0 && !this.acceptFrame(line)) return;
 			newline = buffer.indexOf(10);
 		}
-		if (buffer.length > MAX_FRAME_BYTES) {
+		if (buffer.length > MAX_INTERACTIVE_RUNTIME_OUTPUT_FRAME_BYTES) {
 			this.fail('invalid_request');
 			return;
 		}
@@ -274,7 +274,10 @@ export class ManagedRuntimeProcess {
 		for (const listener of this.messageListeners) this.notifyMessage(listener, message);
 	}
 
-	private notifyMessage(listener: (message: RuntimeMessage) => void, message: RuntimeMessage): void {
+	private notifyMessage(
+		listener: (message: RuntimeMessage) => void,
+		message: RuntimeMessage
+	): void {
 		try {
 			listener(message);
 		} catch {

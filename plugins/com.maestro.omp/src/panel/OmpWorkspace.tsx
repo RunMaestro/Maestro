@@ -545,7 +545,7 @@ function Composer({
 					id="omp-attachments"
 					aria-label="Attach images"
 					type="file"
-					accept="image/*"
+					accept="image/png,image/jpeg,image/webp,image/gif"
 					multiple
 					className="sr-only"
 					onChange={(event) => onAttachmentsChange(Array.from(event.target.files ?? []))}

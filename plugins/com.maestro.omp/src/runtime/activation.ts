@@ -1,4 +1,9 @@
-import { encodeBase64, MAX_OMP_IMAGE_BYTES, sha256Hex } from './byte-codec';
+import {
+	encodeBase64,
+	MAX_OMP_IMAGE_BYTES,
+	MAX_OMP_PROMPT_ATTACHMENT_BYTES,
+	sha256Hex,
+} from './byte-codec';
 import type {
 	InteractiveRuntimeHandle,
 	JsonValue,
@@ -656,7 +661,14 @@ async function toOmpImages(
 	attachments: readonly JsonValue[] | undefined
 ): Promise<readonly unknown[] | undefined> {
 	if (!attachments) return undefined;
-	const images: unknown[] = [];
+	const imageAttachments: Array<{
+		readonly ref: string;
+		readonly name: string;
+		readonly mediaType: string;
+		readonly sha256: string;
+		readonly size: number;
+	}> = [];
+	let totalBytes = 0;
 	for (const attachment of attachments) {
 		const value = requireRecord(attachment);
 		const ref = readString(value, 'ref');
@@ -677,23 +689,30 @@ async function toOmpImages(
 			!Object.prototype.hasOwnProperty.call(OMP_IMAGE_MEDIA_TYPES, mediaType)
 		)
 			throw new OmpProtocolError('invalid OMP image attachment');
-		const resource = await panel.consumeResource(ref);
+		totalBytes += size;
+		if (totalBytes > MAX_OMP_PROMPT_ATTACHMENT_BYTES)
+			throw new OmpProtocolError('OMP image attachments exceed aggregate byte limit');
+		imageAttachments.push({ ref, name, mediaType, sha256, size });
+	}
+	const images: unknown[] = [];
+	for (const attachment of imageAttachments) {
+		const resource = await panel.consumeResource(attachment.ref);
 		try {
 			if (
-				resource.ref !== ref ||
-				resource.name !== name ||
-				resource.mediaType !== mediaType ||
-				resource.size !== size ||
-				resource.sha256 !== sha256 ||
-				resource.bytes.byteLength !== size ||
-				sha256Hex(resource.bytes) !== sha256
+				resource.ref !== attachment.ref ||
+				resource.name !== attachment.name ||
+				resource.mediaType !== attachment.mediaType ||
+				resource.size !== attachment.size ||
+				resource.sha256 !== attachment.sha256 ||
+				resource.bytes.byteLength !== attachment.size ||
+				sha256Hex(resource.bytes) !== attachment.sha256
 			)
 				throw new OmpProtocolError('invalid OMP image attachment');
 			images.push(
 				Object.freeze({
 					type: 'image',
 					data: encodeBase64(resource.bytes),
-					mimeType: mediaType,
+					mimeType: attachment.mediaType,
 				})
 			);
 		} finally {

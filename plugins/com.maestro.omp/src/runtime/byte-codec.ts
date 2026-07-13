@@ -1,4 +1,7 @@
+/** Maximum raw bytes for one staged image attachment. */
 export const MAX_OMP_IMAGE_BYTES = 2 * 1024 * 1024;
+/** Maximum combined raw bytes for all staged images in one OMP prompt. */
+export const MAX_OMP_PROMPT_ATTACHMENT_BYTES = MAX_OMP_IMAGE_BYTES;
 
 const SHA256_INITIAL_STATE = new Uint32Array([
 	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,

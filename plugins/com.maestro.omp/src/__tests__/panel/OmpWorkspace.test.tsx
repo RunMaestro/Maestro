@@ -131,7 +131,7 @@ describe('OmpWorkspace', () => {
 
 		const file = new File(['diagram'], 'diagram.png', { type: 'image/png' });
 		const imageInput = screen.getByLabelText('Attach images');
-		expect(imageInput).toHaveAttribute('accept', 'image/*');
+		expect(imageInput).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp,image/gif');
 		fireEvent.change(imageInput, { target: { files: [file] } });
 		expect(screen.getByText('diagram.png')).toBeVisible();
 		fireEvent.change(screen.getByLabelText('OMP message'), {

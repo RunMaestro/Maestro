@@ -1,3 +1,5 @@
+import { MAX_OMP_IMAGE_BYTES, MAX_OMP_PROMPT_ATTACHMENT_BYTES } from '../runtime/byte-codec';
+
 export type OmpPanelRequestKind =
 	| 'omp.session.create'
 	| 'omp.session.select'
@@ -44,8 +46,8 @@ export interface ClosedPanelBridge {
 
 const emptyObjectSchema: JsonSchema = objectSchema({});
 const sessionIdSchema: JsonSchema = objectSchema({ sessionId: stringSchema(1) }, ['sessionId']);
-const MAX_ATTACHMENT_BYTES_PER_FILE = 2 * 1024 * 1024;
-const MAX_ATTACHMENT_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES_PER_FILE = MAX_OMP_IMAGE_BYTES;
+const MAX_ATTACHMENT_TOTAL_BYTES = MAX_OMP_PROMPT_ATTACHMENT_BYTES;
 const SUPPORTED_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 const attachmentSchema: JsonSchema = objectSchema(
 	{
@@ -310,7 +312,7 @@ function isValidPromptAttachments(payload: unknown): boolean {
 			!/^[a-f0-9]{64}$/.test(sha256)
 		)
 			return false;
-		totalBytes += size + new TextEncoder().encode(JSON.stringify(attachment)).byteLength;
+		totalBytes += size;
 		if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) return false;
 	}
 	return true;

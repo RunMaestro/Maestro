@@ -32,10 +32,12 @@
 import * as vm from 'vm';
 import {
 	isHostMethod,
+	MAX_PLUGIN_HOST_CALL_BYTES,
 	type HostControlMessage,
 	type HostResponse,
 	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
+import { MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES } from '../../shared/plugins/interactive-runtime';
 
 // utilityProcess exposes a message channel on process.parentPort (not in the
 // standard Node Process type), so narrow access without redeclaring the global.
@@ -601,7 +603,14 @@ function makeParentPortBridge(): RealmBridge {
 	return {
 		send(json: string): void {
 			if (!parentPort) throw new Error('sandbox has no parent port');
-			parentPort.postMessage(JSON.parse(json));
+			const message = JSON.parse(json) as { method?: unknown; params?: unknown };
+			const paramsBytes = Buffer.byteLength(JSON.stringify(message.params ?? null));
+			const maxParamsBytes =
+				message.method === 'interactiveRuntime.write'
+					? MAX_INTERACTIVE_RUNTIME_WRITE_HOST_CALL_BYTES
+					: MAX_PLUGIN_HOST_CALL_BYTES;
+			if (paramsBytes > maxParamsBytes) throw new Error('sandbox host request exceeds size limit');
+			parentPort.postMessage(message);
 		},
 		log(level, message): void {
 			log(level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info', String(message));

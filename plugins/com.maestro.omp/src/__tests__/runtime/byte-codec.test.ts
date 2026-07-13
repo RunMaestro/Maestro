@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { encodeBase64, MAX_OMP_IMAGE_BYTES, sha256Hex } from '../../runtime/byte-codec';
+import {
+	encodeBase64,
+	MAX_OMP_IMAGE_BYTES,
+	MAX_OMP_PROMPT_ATTACHMENT_BYTES,
+	sha256Hex,
+} from '../../runtime/byte-codec';
 
 describe('sandbox-safe OMP byte codec', () => {
 	it.each([
@@ -18,10 +23,21 @@ describe('sandbox-safe OMP byte codec', () => {
 		expect(sha256Hex(bytes)).toBe(expected);
 	});
 
-	it('rejects bytes over the 2 MiB resource bound', () => {
-		const tooLarge = new Uint8Array(MAX_OMP_IMAGE_BYTES + 1);
-		expect(() => sha256Hex(tooLarge)).toThrow(RangeError);
-		expect(() => encodeBase64(tooLarge)).toThrow(RangeError);
+	it('accepts just-under and exact aggregate-bound image bytes, rejects one byte over, and keeps the encoded prompt under 3 MiB', () => {
+		expect(encodeBase64(new Uint8Array(MAX_OMP_IMAGE_BYTES - 1))).toHaveLength(
+			4 * Math.ceil((MAX_OMP_IMAGE_BYTES - 1) / 3)
+		);
+		const encoded = encodeBase64(new Uint8Array(MAX_OMP_IMAGE_BYTES));
+		expect(encoded).toHaveLength(4 * Math.ceil(MAX_OMP_IMAGE_BYTES / 3));
+		expect(() => encodeBase64(new Uint8Array(MAX_OMP_IMAGE_BYTES + 1))).toThrow(RangeError);
+
+		const command = {
+			type: 'prompt',
+			message: 'x'.repeat(65_536),
+			images: [{ type: 'image', data: encoded, mimeType: 'image/png' }],
+		};
+		expect(Buffer.byteLength(JSON.stringify(command))).toBeLessThan(3 * 1024 * 1024);
+		expect(MAX_OMP_PROMPT_ATTACHMENT_BYTES).toBe(MAX_OMP_IMAGE_BYTES);
 	});
 
 	it('encodes image bytes without host byte globals', () => {

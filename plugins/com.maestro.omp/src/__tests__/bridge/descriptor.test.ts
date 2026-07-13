@@ -4,6 +4,7 @@ import {
 	OMP_PANEL_BRIDGE_DESCRIPTOR_JSON,
 	validateOmpBridgeEnvelope,
 } from '../../bridge/descriptor';
+import { MAX_OMP_IMAGE_BYTES } from '../../runtime/byte-codec';
 
 describe('OMP closed bridge descriptor', () => {
 	it('publishes canonical build-time JSON schemas for every fixed §4.2 request, event, result, and error name', () => {
@@ -63,7 +64,7 @@ describe('OMP closed bridge descriptor', () => {
 		});
 	});
 
-	it('accepts exact opaque image refs and rejects inline content, malformed fields, and aggregate overflow', () => {
+	it('accepts only opaque supported images within the 2 MiB aggregate raw-byte budget', () => {
 		const attachment = {
 			ref: 'a3a2c574-aeb6-4ba7-9634-4f8ddbe8e1e8',
 			name: 'diagram.png',
@@ -71,12 +72,29 @@ describe('OMP closed bridge descriptor', () => {
 			size: 3,
 			sha256: 'a'.repeat(64),
 		};
-		expect(
-			validateOmpBridgeEnvelope({
-				kind: 'omp.prompt.send',
-				payload: { sessionId: 'session-1', text: 'inspect', attachments: [attachment] },
-			})
-		).toEqual({ ok: true });
+		const promptWithSizes = (sizes: readonly number[]) => ({
+			kind: 'omp.prompt.send',
+			payload: {
+				sessionId: 'session-1',
+				text: 'inspect',
+				attachments: sizes.map((size, index) => ({
+					...attachment,
+					ref: index === 0 ? attachment.ref : 'f40b0d1e-2f5c-4a7f-a7c3-3e1d51fa82c7',
+					size,
+				})),
+			},
+		});
+
+		expect(validateOmpBridgeEnvelope(promptWithSizes([MAX_OMP_IMAGE_BYTES - 2]))).toEqual({
+			ok: true,
+		});
+		expect(validateOmpBridgeEnvelope(promptWithSizes([MAX_OMP_IMAGE_BYTES - 1, 1]))).toEqual({
+			ok: true,
+		});
+		expect(validateOmpBridgeEnvelope(promptWithSizes([MAX_OMP_IMAGE_BYTES - 1, 2]))).toMatchObject({
+			ok: false,
+			code: 'invalid_envelope',
+		});
 		expect(
 			validateOmpBridgeEnvelope({
 				kind: 'omp.prompt.send',
@@ -94,21 +112,6 @@ describe('OMP closed bridge descriptor', () => {
 					sessionId: 'session-1',
 					text: 'inspect',
 					attachments: [{ ...attachment, dataBase64: 'not allowed' }],
-				},
-			})
-		).toMatchObject({ ok: false, code: 'invalid_envelope' });
-		expect(
-			validateOmpBridgeEnvelope({
-				kind: 'omp.prompt.send',
-				payload: {
-					sessionId: 'session-1',
-					text: 'inspect',
-					attachments: Array.from({ length: 5 }, (_, index) => ({
-						...attachment,
-						ref: `00000000-0000-4000-8000-00000000000${index}`,
-						name: `${index}.png`,
-						size: 2 * 1024 * 1024,
-					})),
 				},
 			})
 		).toMatchObject({ ok: false, code: 'invalid_envelope' });
