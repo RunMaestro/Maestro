@@ -69,6 +69,13 @@ export interface PluginSandboxLifecycle {
 	invokeTool: (pluginId: string, commandId: string, args?: unknown) => Promise<unknown>;
 }
 
+/** Main-process workspace lifecycle. */
+export interface PluginWorkspaceLifecycle {
+	reconcile: (records: readonly PluginRecord[]) => void;
+	teardown: (pluginId: string) => void;
+	teardownAll: () => void;
+}
+
 export interface PluginManagerDeps {
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
@@ -78,6 +85,8 @@ export interface PluginManagerDeps {
 	trustedKeys?: () => string[];
 	/** Optional sandbox controller for running tier-1 plugin code. */
 	sandbox?: PluginSandboxLifecycle;
+	/** Owner-bound workspace registrations revoked before runtime stop. */
+	workspaceRuntime?: PluginWorkspaceLifecycle;
 	/** Optional: purge a plugin's host-owned data (KV store, plugins.<id>.*
 	 * settings, live event subscriptions) on uninstall. The integrator wires this
 	 * to plugin-host-handlers' purgePluginData so uninstall leaves nothing behind
@@ -281,6 +290,7 @@ export class PluginManager {
 		if (!this.deps.isEnabled()) return this.registry;
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
+		this.deps.workspaceRuntime?.reconcile(this.registry.records);
 		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
 		this.deps.onChange?.(this.registry);
 		return this.registry;
@@ -597,7 +607,10 @@ export class PluginManager {
 			fs.cpSync(sourceDir, staged, { recursive: true });
 			// Stop the running sandbox before swapping files (mirrors uninstall's stop
 			// path); refresh() below restarts it if the new version is still runnable.
-			this.deps.sandbox?.stop(id);
+			{
+				this.deps.workspaceRuntime?.teardown(id);
+				this.deps.sandbox?.stop(id);
+			}
 			// Move the old dir aside, then move the new one into place. If the second
 			// rename fails, restore the old dir so we never leave a partial state.
 			fs.renameSync(dest, backup);
@@ -634,7 +647,10 @@ export class PluginManager {
 		// purge everything it owns: enable toggle, permission grants, and (via the
 		// injected host-data purge) its KV store, plugins.<id>.* settings, and live
 		// event subscriptions - so uninstall leaves nothing behind (invariant #8).
-		this.deps.sandbox?.stop(id);
+		{
+			this.deps.workspaceRuntime?.teardown(id);
+			this.deps.sandbox?.stop(id);
+		}
 		fs.rmSync(resolved, { recursive: true, force: true });
 		forgetPlugin(id);
 		forgetGrants(id);
@@ -648,7 +664,10 @@ export class PluginManager {
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
 	stopAllSandboxes(): void {
-		this.deps.sandbox?.stopAll();
+		{
+			this.deps.workspaceRuntime?.teardownAll();
+			this.deps.sandbox?.stopAll();
+		}
 	}
 
 	/** The permissions a plugin's manifest requests (empty for tier 0 / unknown). */

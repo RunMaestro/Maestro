@@ -56,6 +56,7 @@ import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
+import { createOmpWorkspaceApi } from './ompWorkspace';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
@@ -243,6 +244,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
 	plugins: createPluginsApi(),
 
+	// Receive-only workspace context adapter for the OMP integration.
+	ompWorkspace: createOmpWorkspaceApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
 
@@ -350,6 +354,8 @@ export {
 	createPianolaApi,
 	// Plugins
 	createPluginsApi,
+	// OMP workspace adapter
+	createOmpWorkspaceApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI

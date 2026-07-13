@@ -42,6 +42,11 @@ import type { DecisionPair } from '../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, execFile, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { PluginWorkspaceRegistry } from './plugins/plugin-workspace-registry';
+import {
+	PluginWorkspaceManagerLifecycle,
+	PluginWorkspaceRuntime,
+} from './plugins/plugin-workspace-runtime';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
@@ -493,6 +498,7 @@ let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
+let pluginWorkspaceLifecycle: PluginWorkspaceManagerLifecycle | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
 let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
@@ -2189,6 +2195,21 @@ app
 			}
 		}
 
+		const workspaceRegistry = new PluginWorkspaceRegistry({
+			tokenSource: () => crypto.randomBytes(24).toString('base64url'),
+			isOwnerEnabled: (pluginId) => pluginWorkspaceLifecycle?.isOwnerEnabled(pluginId) ?? false,
+		});
+		const workspaceRuntime = new PluginWorkspaceRuntime(workspaceRegistry);
+		const workspaceLifecycle = new PluginWorkspaceManagerLifecycle(workspaceRuntime, grantsOf);
+		pluginWorkspaceLifecycle = workspaceLifecycle;
+		workspaceRegistry.onDidChangeContext((context) => {
+			try {
+				mainWindow?.webContents.send('plugins:workspace-context', context);
+			} catch {
+				// The renderer may be gone while teardown revokes the selection.
+			}
+		});
+
 		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
 		const groupingRegistry = new PluginGroupingRegistry(() => {
 			try {
@@ -2397,6 +2418,7 @@ app
 				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
 			},
 			sandbox: sandboxHost,
+			workspaceRuntime: workspaceLifecycle,
 			// Gate capability-scoped contributions by the SAME live grant source the
 			// broker uses: the sealed authorization ledger.
 			getGrants: (pluginId) => grantsOf(pluginId),
