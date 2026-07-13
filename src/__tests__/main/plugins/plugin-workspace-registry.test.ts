@@ -65,8 +65,8 @@ function parsedFoundation(
 	return result.value;
 }
 
-function token(index: number, fill = 'a'): string {
-	return `A${index.toString(36).padStart(20, fill)}Z`;
+function token(index: number): string {
+	return `t${index.toString(36).padStart(21, '0')}`;
 }
 
 function externalSession(
