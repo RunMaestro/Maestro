@@ -494,6 +494,26 @@ describe('MainPanel', () => {
 		onNewTab: vi.fn(),
 	};
 
+	function seedSessionStore(session: Session | null | undefined) {
+		useSessionStore.setState({
+			sessions: session ? [session] : [],
+			activeSessionId: session?.id ?? '',
+		} as never);
+	}
+
+	function renderMainPanel(overrides: Partial<typeof defaultProps> = {}) {
+		const props = { ...defaultProps, ...overrides };
+		const session = props.activeSession as Session | null | undefined;
+		seedSessionStore(session);
+		const result = render(<MainPanel {...(props as any)} />);
+		const rerenderMainPanel = (nextOverrides: Partial<typeof defaultProps> = {}) => {
+			const nextProps = { ...defaultProps, ...nextOverrides };
+			seedSessionStore(nextProps.activeSession as Session | null | undefined);
+			result.rerender(<MainPanel {...(nextProps as any)} />);
+		};
+		return { ...result, rerender: rerenderMainPanel };
+	}
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -569,7 +589,7 @@ describe('MainPanel', () => {
 
 	describe('Render conditions', () => {
 		it('should render LogViewer when logViewerOpen is true', () => {
-			render(<MainPanel {...defaultProps} logViewerOpen={true} />);
+			renderMainPanel({ logViewerOpen: true });
 
 			expect(screen.getByTestId('log-viewer')).toBeInTheDocument();
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
@@ -577,9 +597,7 @@ describe('MainPanel', () => {
 
 		it('should close LogViewer and call setLogViewerOpen when close button is clicked', () => {
 			const setLogViewerOpen = vi.fn();
-			render(
-				<MainPanel {...defaultProps} logViewerOpen={true} setLogViewerOpen={setLogViewerOpen} />
-			);
+			renderMainPanel({ logViewerOpen: true, setLogViewerOpen: setLogViewerOpen });
 
 			fireEvent.click(screen.getByTestId('log-viewer-close'));
 
@@ -587,7 +605,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should render AgentSessionsBrowser when agentSessionsOpen is true', () => {
-			render(<MainPanel {...defaultProps} agentSessionsOpen={true} />);
+			renderMainPanel({ agentSessionsOpen: true });
 
 			expect(screen.getByTestId('agent-sessions-browser')).toBeInTheDocument();
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
@@ -595,13 +613,7 @@ describe('MainPanel', () => {
 
 		it('should close AgentSessionsBrowser when close button is clicked', () => {
 			const setAgentSessionsOpen = vi.fn();
-			render(
-				<MainPanel
-					{...defaultProps}
-					agentSessionsOpen={true}
-					setAgentSessionsOpen={setAgentSessionsOpen}
-				/>
-			);
+			renderMainPanel({ agentSessionsOpen: true, setAgentSessionsOpen: setAgentSessionsOpen });
 
 			fireEvent.click(screen.getByTestId('agent-sessions-close'));
 
@@ -609,14 +621,14 @@ describe('MainPanel', () => {
 		});
 
 		it('should render empty state when no activeSession', () => {
-			render(<MainPanel {...defaultProps} activeSession={null} />);
+			renderMainPanel({ activeSession: null });
 
 			expect(screen.getByText('No agents. Create one to get started.')).toBeInTheDocument();
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
 		});
 
 		it('should render normal session view with terminal output and input area', () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
@@ -637,6 +649,7 @@ describe('MainPanel', () => {
 				makeWindowState({ id: 'win-2', sessionIds: [], activeSessionId: null })
 			);
 
+			seedSessionStore(defaultProps.activeSession as Session);
 			render(
 				<WindowProvider>
 					<MainPanel {...defaultProps} />
@@ -656,6 +669,7 @@ describe('MainPanel', () => {
 			);
 			vi.mocked(window.maestro.windows.list).mockResolvedValue([]);
 
+			seedSessionStore(defaultProps.activeSession as Session);
 			render(
 				<WindowProvider>
 					<MainPanel {...defaultProps} />
@@ -670,21 +684,21 @@ describe('MainPanel', () => {
 	describe('Header display', () => {
 		it('should display session name in header', () => {
 			const session = createSession({ name: 'My Test Session' });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByText('My Test Session')).toBeInTheDocument();
 		});
 
 		it('should display LOCAL badge for non-git repos', () => {
 			const session = createSession({ isGitRepo: false });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
 		});
 
 		it('should display GIT badge with branch name for git repos', async () => {
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				// Should show GIT initially, then branch name after info loads
@@ -693,7 +707,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should hide header in mobile landscape mode', () => {
-			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
+			renderMainPanel({ isMobileLandscape: true });
 
 			// Header should not be visible
 			expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
@@ -701,20 +715,20 @@ describe('MainPanel', () => {
 
 		it('should show bookmark indicator when session is bookmarked', () => {
 			const session = createSession({ bookmarked: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('bookmark-icon')).toBeInTheDocument();
 		});
 
 		it('should not show bookmark indicator when session is not bookmarked', () => {
 			const session = createSession({ bookmarked: false });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByTestId('bookmark-icon')).not.toBeInTheDocument();
 		});
 
 		it('should show Agent Sessions button in header', () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			const agentSessionsBtn = screen.getByTitle(/Agent Sessions/);
 			expect(agentSessionsBtn).toBeInTheDocument();
@@ -723,13 +737,10 @@ describe('MainPanel', () => {
 		it('should open Agent Sessions when button is clicked', () => {
 			const setAgentSessionsOpen = vi.fn();
 			const setActiveAgentSessionId = vi.fn();
-			render(
-				<MainPanel
-					{...defaultProps}
-					setAgentSessionsOpen={setAgentSessionsOpen}
-					setActiveAgentSessionId={setActiveAgentSessionId}
-				/>
-			);
+			renderMainPanel({
+				setAgentSessionsOpen: setAgentSessionsOpen,
+				setActiveAgentSessionId: setActiveAgentSessionId,
+			});
 
 			fireEvent.click(screen.getByTitle(/Agent Sessions/));
 
@@ -759,7 +770,7 @@ describe('MainPanel', () => {
 				supportsStreamJsonInput: true,
 			});
 
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			// Agent Sessions button should not be present
 			expect(screen.queryByTitle(/Agent Sessions/)).not.toBeInTheDocument();
@@ -787,7 +798,7 @@ describe('MainPanel', () => {
 				supportsStreamJsonInput: true,
 			});
 
-			render(<MainPanel {...defaultProps} agentSessionsOpen={true} />);
+			renderMainPanel({ agentSessionsOpen: true });
 
 			// AgentSessionsBrowser should not be shown even with agentSessionsOpen=true
 			expect(screen.queryByTestId('agent-sessions-browser')).not.toBeInTheDocument();
@@ -799,21 +810,21 @@ describe('MainPanel', () => {
 	describe('Right panel toggle', () => {
 		it('should show toggle button when rightPanelOpen is false', () => {
 			useUIStore.setState({ rightPanelOpen: false });
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			expect(screen.getByTitle(/Show right panel/)).toBeInTheDocument();
 		});
 
 		it('should hide toggle button when rightPanelOpen is true', () => {
 			useUIStore.setState({ rightPanelOpen: true });
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			expect(screen.queryByTitle(/Show right panel/)).not.toBeInTheDocument();
 		});
 
 		it('should call setRightPanelOpen when toggle button is clicked', () => {
 			useUIStore.setState({ rightPanelOpen: false });
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			fireEvent.click(screen.getByTitle(/Show right panel/));
 
@@ -840,9 +851,7 @@ describe('MainPanel', () => {
 
 		it('should render FilePreview when activeFileTab is set', async () => {
 			const activeFileTab = createFileTab();
-			render(
-				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
-			);
+			renderMainPanel({ activeFileTabId: 'file-tab-1', activeFileTab: activeFileTab });
 
 			// FilePreview is React.lazy-loaded behind Suspense, so it mounts on a
 			// microtask rather than synchronously - await it the first time.
@@ -852,9 +861,7 @@ describe('MainPanel', () => {
 
 		it('should show TabBar when file preview tab is active (tabs remain visible)', () => {
 			const activeFileTab = createFileTab();
-			render(
-				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
-			);
+			renderMainPanel({ activeFileTabId: 'file-tab-1', activeFileTab: activeFileTab });
 
 			// In the new tab system, TabBar remains visible when file tab is active
 			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
@@ -864,14 +871,11 @@ describe('MainPanel', () => {
 			const onFileTabClose = vi.fn();
 			const activeFileTab = createFileTab();
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-					onFileTabClose={onFileTabClose}
-				/>
-			);
+			renderMainPanel({
+				activeFileTabId: 'file-tab-1',
+				activeFileTab: activeFileTab,
+				onFileTabClose: onFileTabClose,
+			});
 
 			fireEvent.click(screen.getByTestId('file-preview-close'));
 
@@ -889,7 +893,7 @@ describe('MainPanel', () => {
 				],
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
 			expect(screen.getByTestId('tab-tab-1')).toBeInTheDocument();
@@ -899,7 +903,7 @@ describe('MainPanel', () => {
 		it('should render TabBar in terminal mode (unified tab system shows tabs in all modes)', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// TabBar renders in both AI and terminal modes when aiTabs exist
 			expect(screen.queryByTestId('tab-bar')).toBeInTheDocument();
@@ -914,7 +918,7 @@ describe('MainPanel', () => {
 				],
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} onTabSelect={onTabSelect} />);
+			renderMainPanel({ activeSession: session, onTabSelect: onTabSelect });
 
 			fireEvent.click(screen.getByTestId('tab-tab-2'));
 
@@ -925,7 +929,7 @@ describe('MainPanel', () => {
 			const onNewTab = vi.fn();
 			const session = createSession();
 
-			render(<MainPanel {...defaultProps} activeSession={session} onNewTab={onNewTab} />);
+			renderMainPanel({ activeSession: session, onNewTab: onNewTab });
 
 			fireEvent.click(screen.getByTestId('new-tab-btn'));
 
@@ -949,7 +953,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should show truncated UUID (first segment in uppercase)
 			expect(screen.getByText('ABC12345')).toBeInTheDocument();
@@ -973,7 +977,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
@@ -994,7 +998,7 @@ describe('MainPanel', () => {
 				],
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
 		});
@@ -1019,7 +1023,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
 		});
@@ -1060,7 +1064,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should NOT show the UUID pill when agent doesn't support session ID
 			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
@@ -1104,7 +1108,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Cost is displayed with fixed 2 decimals, look for the cost pattern
 			const costElements = screen.getAllByText(/\$0\.\d+/);
@@ -1119,7 +1123,7 @@ describe('MainPanel', () => {
 		it('should not display cost tracker in terminal mode', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByText(/\$\d+\.\d+/)).not.toBeInTheDocument();
 		});
@@ -1178,7 +1182,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Cost tracker should not be present even though panel is wide enough and we have usage stats
 			expect(screen.queryByText(/\$0\.15/)).not.toBeInTheDocument();
@@ -1192,7 +1196,7 @@ describe('MainPanel', () => {
 
 	describe('Context window widget', () => {
 		it('should display context window widget in AI mode', () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			// Widget now shows a plain "X%" readout instead of a labeled gauge bar.
 			expect(screen.getByTestId('header-context-widget')).toBeInTheDocument();
@@ -1201,7 +1205,7 @@ describe('MainPanel', () => {
 		it('should not display context window in terminal mode', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
@@ -1228,7 +1232,7 @@ describe('MainPanel', () => {
 				supportsStreamJsonInput: true,
 			});
 
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
@@ -1256,7 +1260,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 			expect(screen.getByText('2/5')).toBeInTheDocument();
@@ -1283,7 +1287,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Stopping')).toBeInTheDocument();
 		});
@@ -1311,14 +1315,11 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					currentSessionBatchState={currentSessionBatchState}
-					onStopBatchRun={onStopBatchRun}
-				/>
-			);
+			renderMainPanel({
+				activeSession: session,
+				currentSessionBatchState: currentSessionBatchState,
+				onStopBatchRun: onStopBatchRun,
+			});
 
 			fireEvent.click(screen.getByText('Auto'));
 
@@ -1348,13 +1349,10 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					currentSessionBatchState={currentSessionBatchState}
-					onStopBatchRun={onStopBatchRun}
-				/>
-			);
+			renderMainPanel({
+				currentSessionBatchState: currentSessionBatchState,
+				onStopBatchRun: onStopBatchRun,
+			});
 
 			fireEvent.click(screen.getByText('Stopping'));
 
@@ -1362,14 +1360,14 @@ describe('MainPanel', () => {
 		});
 
 		it('should not display Auto mode button when currentSessionBatchState is null', () => {
-			render(<MainPanel {...defaultProps} currentSessionBatchState={null} />);
+			renderMainPanel({ currentSessionBatchState: null });
 
 			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
 			expect(screen.queryByText('Stopping')).not.toBeInTheDocument();
 		});
 
 		it('should not display Auto mode button when currentSessionBatchState is undefined', () => {
-			render(<MainPanel {...defaultProps} currentSessionBatchState={undefined} />);
+			renderMainPanel({ currentSessionBatchState: undefined });
 
 			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
 		});
@@ -1395,7 +1393,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
 		});
@@ -1422,7 +1420,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 			// Check for worktree title tooltip
@@ -1452,7 +1450,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			// Check for default worktree title tooltip
 			const worktreeIcon = screen.getByTitle('Worktree: active');
@@ -1480,7 +1478,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 			expect(screen.queryByTitle(/Worktree:/)).not.toBeInTheDocument();
@@ -1507,7 +1505,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Stopping').closest('button');
 			expect(button).toBeDisabled();
@@ -1534,7 +1532,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Auto').closest('button');
 			expect(button).not.toBeDisabled();
@@ -1561,7 +1559,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Auto').closest('button');
 			expect(button).toHaveAttribute('title', 'Click to stop auto-run');
@@ -1588,7 +1586,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Stopping').closest('button');
 			expect(button).toHaveAttribute('title', 'Stopping after current task...');
@@ -1615,7 +1613,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 			expect(screen.getByText('0/10')).toBeInTheDocument();
@@ -1642,7 +1640,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 			expect(screen.getByText('8/8')).toBeInTheDocument();
@@ -1669,7 +1667,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Auto').closest('button');
 			expect(button).toHaveStyle({ backgroundColor: theme.colors.error });
@@ -1696,7 +1694,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Stopping').closest('button');
 			expect(button).toHaveClass('cursor-not-allowed');
@@ -1723,7 +1721,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			const button = screen.getByText('Auto').closest('button');
 			expect(button).toHaveClass('cursor-pointer');
@@ -1750,7 +1748,7 @@ describe('MainPanel', () => {
 				sessionIds: [],
 			};
 
-			render(<MainPanel {...defaultProps} currentSessionBatchState={currentSessionBatchState} />);
+			renderMainPanel({ currentSessionBatchState: currentSessionBatchState });
 
 			// The text should have uppercase class applied
 			const autoText = screen.getByText('Auto');
@@ -1779,13 +1777,10 @@ describe('MainPanel', () => {
 			};
 
 			// Render without onStopBatchRun callback
-			render(
-				<MainPanel
-					{...defaultProps}
-					currentSessionBatchState={currentSessionBatchState}
-					onStopBatchRun={undefined}
-				/>
-			);
+			renderMainPanel({
+				currentSessionBatchState: currentSessionBatchState,
+				onStopBatchRun: undefined,
+			});
 
 			// Click should not throw
 			expect(() => fireEvent.click(screen.getByText('Auto'))).not.toThrow();
@@ -1795,7 +1790,7 @@ describe('MainPanel', () => {
 	describe('Git tooltip', () => {
 		it('should show git tooltip on hover for git repos', async () => {
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -1816,7 +1811,7 @@ describe('MainPanel', () => {
 			Object.assign(navigator, { clipboard: { writeText } });
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -1851,7 +1846,7 @@ describe('MainPanel', () => {
 			});
 			vi.mocked(window.maestro.sshRemote.getConfigs).mockImplementation(mockGetConfigs);
 
-			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+			renderMainPanel({ activeSession: session, setGitLogOpen: setGitLogOpen });
 
 			await waitFor(() => {
 				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
@@ -1868,7 +1863,7 @@ describe('MainPanel', () => {
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -1883,7 +1878,7 @@ describe('MainPanel', () => {
 				sessionSshRemoteConfig: { enabled: false, remoteId: 'ssh-remote-123' },
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -1899,7 +1894,7 @@ describe('MainPanel', () => {
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+			renderMainPanel({ activeSession: session, setGitLogOpen: setGitLogOpen });
 
 			fireEvent.click(screen.getByTestId('view-log-btn'));
 
@@ -1910,7 +1905,7 @@ describe('MainPanel', () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({ isGitRepo: true });
 
-			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+			renderMainPanel({ activeSession: session, setGitLogOpen: setGitLogOpen });
 
 			fireEvent.click(screen.getByTestId('view-log-btn'));
 
@@ -1920,7 +1915,7 @@ describe('MainPanel', () => {
 
 	describe('Context window tooltip', () => {
 		it('should show context tooltip on hover', async () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			const contextWidget = screen.getByTestId('header-context-widget');
 			fireEvent.mouseEnter(contextWidget);
@@ -1931,7 +1926,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should hide context tooltip on mouse leave after delay', async () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			const contextWidget = screen.getByTestId('header-context-widget');
 			fireEvent.mouseEnter(contextWidget);
@@ -1952,7 +1947,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should keep tooltip open when re-entering context widget quickly', async () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			const contextContainer = screen.getByTestId('header-context-widget');
 
@@ -1993,7 +1988,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			const contextWidget = screen.getByTestId('header-context-widget');
 			fireEvent.mouseEnter(contextWidget);
@@ -2022,7 +2017,7 @@ describe('MainPanel', () => {
 			// Set activeFocus to something other than 'main' so we can detect the change
 			useUIStore.setState({ activeFocus: 'sidebar' });
 
-			render(<MainPanel {...defaultProps} setActiveSessionId={setActiveSessionId} />);
+			renderMainPanel({ setActiveSessionId: setActiveSessionId });
 
 			fireEvent.focus(screen.getByTestId('input-field'));
 
@@ -2031,7 +2026,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should hide input area in mobile landscape mode', () => {
-			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
+			renderMainPanel({ isMobileLandscape: true });
 
 			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
 		});
@@ -2042,13 +2037,7 @@ describe('MainPanel', () => {
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
+			renderMainPanel({ activeSession: session, setGitDiffPreview: setGitDiffPreview });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -2064,13 +2053,7 @@ describe('MainPanel', () => {
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
+			renderMainPanel({ activeSession: session, setGitDiffPreview: setGitDiffPreview });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -2083,13 +2066,7 @@ describe('MainPanel', () => {
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
+			renderMainPanel({ activeSession: session, setGitDiffPreview: setGitDiffPreview });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -2119,7 +2096,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
@@ -2150,7 +2127,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
@@ -2170,7 +2147,7 @@ describe('MainPanel', () => {
 	describe('Focus ring', () => {
 		it('should show focus ring when activeFocus is main', () => {
 			useUIStore.setState({ activeFocus: 'main' });
-			const { container } = render(<MainPanel {...defaultProps} />);
+			const { container } = renderMainPanel();
 
 			// MainPanel no longer uses ring-1 class; focus is tracked via activeFocus state only
 			// The component renders without a visible focus ring border
@@ -2180,7 +2157,7 @@ describe('MainPanel', () => {
 
 		it('should not show focus ring when activeFocus is not main', () => {
 			useUIStore.setState({ activeFocus: 'sidebar' });
-			const { container } = render(<MainPanel {...defaultProps} />);
+			const { container } = renderMainPanel();
 
 			const mainPanel = container.querySelector('.ring-1');
 			expect(mainPanel).not.toBeInTheDocument();
@@ -2189,7 +2166,7 @@ describe('MainPanel', () => {
 		it('should call setActiveFocus when main panel is clicked', () => {
 			useUIStore.setState({ activeFocus: 'sidebar' });
 
-			const { container } = render(<MainPanel {...defaultProps} />);
+			const { container } = renderMainPanel();
 
 			// Click on the main panel area
 			const mainArea = container.querySelector('[style*="backgroundColor"]');
@@ -2202,7 +2179,7 @@ describe('MainPanel', () => {
 
 	describe('Git status widget', () => {
 		it('should render GitStatusWidget', () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			expect(screen.getByTestId('git-status-widget')).toBeInTheDocument();
 		});
@@ -2232,9 +2209,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
-			);
+			renderMainPanel({ activeSession: session, getContextColor: getContextColor });
 
 			// Context usage: (50000 + 25000 + 0) / 200000 * 100 = 38% (input + cacheRead + cacheCreation)
 			expect(getContextColor).toHaveBeenCalledWith(38, theme);
@@ -2248,7 +2223,7 @@ describe('MainPanel', () => {
 		it('should display git info from context when session is a git repo', async () => {
 			const session = createSession({ isGitRepo: true });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// MainPanel should display the branch from context data
 			await waitFor(() => {
@@ -2259,7 +2234,7 @@ describe('MainPanel', () => {
 		it('should support refresh via context', async () => {
 			const session = createSession({ isGitRepo: true });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// The component should have access to refreshGitStatus from context
 			// This is now triggered through the git badge click
@@ -2273,7 +2248,7 @@ describe('MainPanel', () => {
 		it('should not display git info when session is not a git repo', async () => {
 			const session = createSession({ isGitRepo: false });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should show LOCAL badge instead of git branch
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
@@ -2283,7 +2258,7 @@ describe('MainPanel', () => {
 
 	describe('Panel width responsive behavior', () => {
 		it('should observe header resize', async () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			// Wait for the effect to run and ResizeObserver to be set up
 			await waitFor(() => {
@@ -2295,7 +2270,7 @@ describe('MainPanel', () => {
 
 	describe('ErrorBoundary wrapping', () => {
 		it('should wrap main content in ErrorBoundary', () => {
-			render(<MainPanel {...defaultProps} />);
+			renderMainPanel();
 
 			// The content should render without errors
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
@@ -2308,13 +2283,7 @@ describe('MainPanel', () => {
 			const onTabSelect = vi.fn();
 
 			// This handler is passed to InputArea's ThinkingStatusPill
-			render(
-				<MainPanel
-					{...defaultProps}
-					setActiveSessionId={setActiveSessionId}
-					onTabSelect={onTabSelect}
-				/>
-			);
+			renderMainPanel({ setActiveSessionId: setActiveSessionId, onTabSelect: onTabSelect });
 
 			// The InputArea receives handleSessionClick, but we can't directly test it without accessing the mock
 			// This is tested through the integration with InputArea mock
@@ -2324,7 +2293,7 @@ describe('MainPanel', () => {
 
 	describe('Tooltip timeout cleanup', () => {
 		it('should cleanup tooltip timeouts on unmount', () => {
-			const { unmount } = render(<MainPanel {...defaultProps} />);
+			const { unmount } = renderMainPanel();
 
 			// Should unmount without errors (timeouts should be cleaned up)
 			expect(() => unmount()).not.toThrow();
@@ -2347,7 +2316,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2376,7 +2345,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2405,7 +2374,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2434,7 +2403,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2465,7 +2434,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2498,7 +2467,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2523,7 +2492,7 @@ describe('MainPanel', () => {
 		it('should handle session with no tabs gracefully', () => {
 			const session = createSession({ aiTabs: undefined });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
@@ -2531,7 +2500,7 @@ describe('MainPanel', () => {
 		it('should handle empty tabs array gracefully', () => {
 			const session = createSession({ aiTabs: [] });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
@@ -2551,7 +2520,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
 			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
@@ -2563,7 +2532,7 @@ describe('MainPanel', () => {
 
 			const session = createSession({ isGitRepo: true });
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should render without crashing, showing GIT badge (without branch name since no data)
 			await waitFor(() => {
@@ -2589,7 +2558,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
@@ -2608,13 +2577,7 @@ describe('MainPanel', () => {
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
+			renderMainPanel({ activeSession: session, setGitDiffPreview: setGitDiffPreview });
 
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
@@ -2652,7 +2615,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Context Window widget should be hidden when contextWindow is 0 (not configured)
 			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
@@ -2682,9 +2645,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
-			);
+			renderMainPanel({ activeSession: session, getContextColor: getContextColor });
 
 			// raw = 150000 + 100000 + 100000 = 350000 > 200000 (accumulated)
 			// Falls back to session.contextUsage = 45%
@@ -2695,7 +2656,7 @@ describe('MainPanel', () => {
 	describe('Hover bridge behavior', () => {
 		it('should keep git tooltip open when moving to bridge element', async () => {
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2732,7 +2693,7 @@ describe('MainPanel', () => {
 			});
 
 			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			await waitFor(() => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
@@ -2782,7 +2743,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(
 				screen.getByText('Authentication token has expired. Please re-authenticate.')
@@ -2804,7 +2765,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.queryByText(/error|expired|failed/i)).not.toBeInTheDocument();
 		});
@@ -2825,13 +2786,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onShowAgentErrorModal={onShowAgentErrorModal}
-				/>
-			);
+			renderMainPanel({ activeSession: session, onShowAgentErrorModal: onShowAgentErrorModal });
 
 			expect(screen.getByText('View Details')).toBeInTheDocument();
 		});
@@ -2852,13 +2807,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onShowAgentErrorModal={onShowAgentErrorModal}
-				/>
-			);
+			renderMainPanel({ activeSession: session, onShowAgentErrorModal: onShowAgentErrorModal });
 
 			fireEvent.click(screen.getByText('View Details'));
 
@@ -2880,9 +2829,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel {...defaultProps} activeSession={session} onShowAgentErrorModal={undefined} />
-			);
+			renderMainPanel({ activeSession: session, onShowAgentErrorModal: undefined });
 
 			expect(screen.queryByText('View Details')).not.toBeInTheDocument();
 		});
@@ -2903,13 +2850,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onClearAgentError={onClearAgentError}
-				/>
-			);
+			renderMainPanel({ activeSession: session, onClearAgentError: onClearAgentError });
 
 			expect(screen.getByTitle('Dismiss error')).toBeInTheDocument();
 		});
@@ -2930,13 +2871,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onClearAgentError={onClearAgentError}
-				/>
-			);
+			renderMainPanel({ activeSession: session, onClearAgentError: onClearAgentError });
 
 			fireEvent.click(screen.getByTitle('Dismiss error'));
 
@@ -2959,13 +2894,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onClearAgentError={onClearAgentError}
-				/>
-			);
+			renderMainPanel({ activeSession: session, onClearAgentError: onClearAgentError });
 
 			// Error banner should be shown but dismiss button should not be present
 			expect(
@@ -2989,7 +2918,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} onClearAgentError={undefined} />);
+			renderMainPanel({ activeSession: session, onClearAgentError: undefined });
 
 			expect(screen.queryByTitle('Dismiss error')).not.toBeInTheDocument();
 		});
@@ -3009,7 +2938,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const { container } = render(<MainPanel {...defaultProps} activeSession={session} />);
+			const { container } = renderMainPanel({ activeSession: session });
 
 			// Check for the AlertCircle icon (lucide-react renders as SVG with lucide class)
 			// Look for an SVG within the error banner container (next to the error message)
@@ -3045,7 +2974,7 @@ describe('MainPanel', () => {
 					activeTabId: 'tab-1',
 				});
 
-				const { unmount } = render(<MainPanel {...defaultProps} activeSession={session} />);
+				const { unmount } = renderMainPanel({ activeSession: session });
 
 				expect(screen.getByText(message)).toBeInTheDocument();
 				unmount();
@@ -3074,7 +3003,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-2', // Tab 2 is active
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Should show tab-2's error, not tab-1's
 			expect(screen.getByText('Error on tab 2')).toBeInTheDocument();
@@ -3082,7 +3011,7 @@ describe('MainPanel', () => {
 		});
 
 		it('should not display error banner when session is null', () => {
-			render(<MainPanel {...defaultProps} activeSession={null} />);
+			renderMainPanel({ activeSession: null });
 
 			// Empty state should be shown, no error banner
 			expect(screen.getByText('No agents. Create one to get started.')).toBeInTheDocument();
@@ -3106,7 +3035,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// The error banner is shown regardless of inputMode to ensure visibility
 			expect(
@@ -3131,14 +3060,11 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onShowAgentErrorModal={onShowAgentErrorModal}
-					onClearAgentError={onClearAgentError}
-				/>
-			);
+			renderMainPanel({
+				activeSession: session,
+				onShowAgentErrorModal: onShowAgentErrorModal,
+				onClearAgentError: onClearAgentError,
+			});
 
 			expect(screen.getByText('View Details')).toBeInTheDocument();
 			expect(screen.getByTitle('Dismiss error')).toBeInTheDocument();
@@ -3159,7 +3085,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const { container } = render(<MainPanel {...defaultProps} activeSession={session} />);
+			const { container } = renderMainPanel({ activeSession: session });
 
 			// Find the error banner element by looking for the error message container
 			const errorMessage = screen.getByText(
@@ -3187,7 +3113,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionWithError} />);
+			const { rerender } = renderMainPanel({ activeSession: sessionWithError });
 
 			expect(screen.getByText('Error message')).toBeInTheDocument();
 
@@ -3206,7 +3132,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-2',
 			});
 
-			rerender(<MainPanel {...defaultProps} activeSession={sessionWithoutError} />);
+			rerender({ activeSession: sessionWithoutError });
 
 			expect(screen.queryByText('Error message')).not.toBeInTheDocument();
 		});
@@ -3226,7 +3152,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const { container } = render(<MainPanel {...defaultProps} activeSession={session} />);
+			const { container } = renderMainPanel({ activeSession: session });
 
 			// Tab bar should exist
 			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
@@ -3269,7 +3195,7 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// The error message should be displayed (the component doesn't truncate, but CSS might)
 			expect(screen.getByText(longMessage)).toBeInTheDocument();
@@ -3305,14 +3231,11 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
+			renderMainPanel({
+				activeSession: session,
+				activeFileTabId: 'file-tab-1',
+				activeFileTab: activeFileTab,
+			});
 
 			// Both error banner and file preview should be visible
 			expect(
@@ -3343,7 +3266,7 @@ describe('MainPanel', () => {
 			});
 
 			// Should render without crashing
-			const { container } = render(<MainPanel {...defaultProps} activeSession={session} />);
+			const { container } = renderMainPanel({ activeSession: session });
 
 			// The banner should still render with an icon even if message is empty
 			// Look for the error banner structure - contains an SVG icon
@@ -3385,7 +3308,7 @@ describe('MainPanel', () => {
 				},
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 			expect(screen.getByText('Wizard Conversation (2 messages)')).toBeInTheDocument();
@@ -3395,7 +3318,7 @@ describe('MainPanel', () => {
 		it('should render TerminalOutput when wizard is not active', () => {
 			const session = createSessionWithTabWizardState(undefined);
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.queryByTestId('wizard-conversation-view')).not.toBeInTheDocument();
@@ -3414,7 +3337,7 @@ describe('MainPanel', () => {
 				},
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.queryByTestId('wizard-conversation-view')).not.toBeInTheDocument();
@@ -3436,7 +3359,7 @@ describe('MainPanel', () => {
 				},
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 			expect(screen.getByTestId('wizard-loading')).toBeInTheDocument();
@@ -3455,7 +3378,7 @@ describe('MainPanel', () => {
 				},
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// Header elements should still be visible
 			expect(screen.getByText('Test Session')).toBeInTheDocument();
@@ -3484,7 +3407,7 @@ describe('MainPanel', () => {
 				}
 			);
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			// The mock component just shows message count, but the agentName is passed through
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
@@ -3519,10 +3442,7 @@ describe('MainPanel', () => {
 				activeTerminalTabId: tab.id,
 				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
 			});
-			// Seed session store so the eviction effect keeps the session alive
-			useSessionStore.setState({ sessions: [session] });
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 
 			const view = screen.getByTestId('terminal-view-session-term');
 			expect(view).toBeInTheDocument();
@@ -3545,9 +3465,7 @@ describe('MainPanel', () => {
 				activeTerminalTabId: tab.id,
 				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
 			});
-			useSessionStore.setState({ sessions: [sessionTerminal] });
-
-			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+			const { rerender } = renderMainPanel({ activeSession: sessionTerminal });
 
 			// Confirm it is visible
 			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe(
@@ -3556,7 +3474,7 @@ describe('MainPanel', () => {
 
 			// Simulate switching to AI mode (inputMode changes, terminalTabs unchanged)
 			await act(async () => {
-				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+				rerender({ activeSession: sessionAI });
 			});
 
 			// TerminalView must still be in the DOM (not unmounted)
@@ -3582,18 +3500,16 @@ describe('MainPanel', () => {
 				activeTerminalTabId: tab.id,
 				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
 			});
-			useSessionStore.setState({ sessions: [sessionTerminal] });
-
-			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+			const { rerender } = renderMainPanel({ activeSession: sessionTerminal });
 
 			// Switch to AI mode
 			await act(async () => {
-				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+				rerender({ activeSession: sessionAI });
 			});
 
 			// Switch back to terminal mode
 			await act(async () => {
-				rerender(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+				rerender({ activeSession: sessionTerminal });
 			});
 
 			const view = screen.getByTestId('terminal-view-session-roundtrip');
@@ -3602,8 +3518,7 @@ describe('MainPanel', () => {
 
 		it('does not render TerminalView when session has no terminal tabs', () => {
 			const session = createSession({ inputMode: 'ai', terminalTabs: [] });
-			useSessionStore.setState({ sessions: [session] });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			renderMainPanel({ activeSession: session });
 			expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument();
 		});
 	});
@@ -3658,10 +3573,8 @@ describe('MainPanel', () => {
 			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
 			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 
-			useSessionStore.setState({ sessions: [openCodeSession] });
-
 			// Render with OpenCode session — triggers getModels('opencode') which is pending
-			const { rerender } = render(<MainPanel {...defaultProps} activeSession={openCodeSession} />);
+			const { rerender } = renderMainPanel({ activeSession: openCodeSession });
 
 			// Switch to Claude session — triggers getModels('claude-code') which resolves fast
 			const claudeSession = createSession({
@@ -3669,10 +3582,8 @@ describe('MainPanel', () => {
 				toolType: 'claude-code',
 				name: 'Claude Session',
 			});
-			useSessionStore.setState({ sessions: [claudeSession] });
-
 			await act(async () => {
-				rerender(<MainPanel {...defaultProps} activeSession={claudeSession} />);
+				rerender({ activeSession: claudeSession });
 			});
 
 			// Wait for Claude models to be applied

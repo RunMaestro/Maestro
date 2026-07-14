@@ -77,10 +77,13 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		goalConfig: { goal, exitCriteria, maxIterations },
 	});
 
-	const renderProcessor = (sessions: Session[], groups: Group[]) =>
-		renderHook(() =>
+	const renderProcessor = (sessions: Session[], groups: Group[]) => {
+		useSessionStore.setState({
+			sessions,
+			activeSessionId: sessions[0]?.id ?? '',
+		} as never);
+		return renderHook(() =>
 			useBatchProcessor({
-				sessions,
 				groups,
 				onUpdateSession: mockOnUpdateSession,
 				onSpawnAgent: mockOnSpawnAgent,
@@ -89,6 +92,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				onComplete: mockOnComplete,
 			})
 		);
+	};
 
 	/**
 	 * Find the final-summary history entry. Per-iteration entries now lead with
