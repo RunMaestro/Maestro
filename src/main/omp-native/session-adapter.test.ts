@@ -235,6 +235,100 @@ describe('OmpNativeSessionAdapter', () => {
 			images: [{ image: { mimeType: 'image/png', data: 'cG5nLWJ5dGVz' } }],
 		});
 	});
+	it('reconciles an acquired session model before its next prompt and refreshes the model control', async () => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		let selectedModel = 'fixture-initial';
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as {
+				id?: string;
+				modelId?: string;
+				type: string;
+			};
+			frames.push(command);
+			if (command.type === 'set_model' && command.modelId) selectedModel = command.modelId;
+			if (command.id) {
+				const data =
+					command.type === 'get_available_commands'
+						? { commands: [] }
+						: command.type === 'get_available_models'
+							? {
+									models: [
+										{ provider: 'fixture', id: 'fixture-initial', label: 'Initial' },
+										{ provider: 'fixture', id: 'fixture-reconciled', label: 'Reconciled' },
+									],
+								}
+							: command.type === 'get_messages'
+								? { messages: [] }
+								: command.type === 'get_subagents'
+									? { subagents: [] }
+									: command.type === 'get_session_stats'
+										? { stats: {} }
+										: command.type === 'get_state'
+											? { model: { id: selectedModel }, todoPhases: [] }
+											: {};
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data,
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const options = {
+			sessionId: 'tab-model-reconcile',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			model: 'fixture:fixture-initial',
+			send,
+			spawn: vi.fn(() => child as never),
+		};
+		const adapter = await OmpNativeSessionAdapter.acquire(options);
+		try {
+			emit(child, { type: 'ready', version: '16.4.8' });
+			await adapter.prompt('first prompt');
+			frames.length = 0;
+
+			const unchanged = await OmpNativeSessionAdapter.acquire(options);
+			expect(unchanged).toBe(adapter);
+			expect(frames.filter((frame) => frame.type === 'set_model')).toHaveLength(0);
+
+			send.mockClear();
+			const reconfigured = await OmpNativeSessionAdapter.acquire({
+				...options,
+				model: 'fixture:fixture-reconciled',
+			});
+			await reconfigured.prompt('prompt after model change');
+
+			const modelFrames = frames.filter((frame) => frame.type === 'set_model');
+			expect(modelFrames).toEqual([
+				expect.objectContaining({
+					type: 'set_model',
+					provider: 'fixture',
+					modelId: 'fixture-reconciled',
+				}),
+			]);
+			expect(frames.findIndex((frame) => frame.type === 'set_model')).toBeLessThan(
+				frames.findIndex((frame) => frame.type === 'prompt')
+			);
+			expect(send).toHaveBeenCalledWith(
+				'process:runtime-features',
+				'tab-model-reconcile',
+				expect.objectContaining({
+					controls: expect.arrayContaining([
+						expect.objectContaining({ id: 'model', value: 'fixture-reconciled' }),
+					]),
+				})
+			);
+		} finally {
+			adapter.dispose();
+		}
+	});
 
 	it('projects confirm callbacks as approvals and fails closed for unknown interactive callbacks', async () => {
 		const child = new FakeChild();

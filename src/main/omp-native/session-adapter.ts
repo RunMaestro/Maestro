@@ -49,6 +49,7 @@ export class OmpNativeSessionAdapter {
 	private disposed = false;
 	private turnInFlight = false;
 	private autoRetryEnabled = true;
+	private appliedModel?: string;
 
 	private constructor(private readonly options: OmpNativeSessionOptions) {
 		const spawn = options.spawn ?? spawnChild;
@@ -88,7 +89,10 @@ export class OmpNativeSessionAdapter {
 
 	static async acquire(options: OmpNativeSessionOptions): Promise<OmpNativeSessionAdapter> {
 		const existing = adapters.get(options.sessionId);
-		if (existing && !existing.disposed) return existing;
+		if (existing && !existing.disposed) {
+			await existing.reconcileModel(options.model);
+			return existing;
+		}
 		const adapter = OmpNativeSessionAdapter.create(options);
 		adapters.set(options.sessionId, adapter);
 		return adapter;
@@ -149,6 +153,7 @@ export class OmpNativeSessionAdapter {
 		if (!command) return false;
 		try {
 			await this.client.command(command);
+			if (controlId === 'model' && typeof value === 'string') this.appliedModel = value;
 			if (controlId === 'auto-retry') this.autoRetryEnabled = value as boolean;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -209,9 +214,22 @@ export class OmpNativeSessionAdapter {
 		} else {
 			await this.client.command({ type: 'new_session' });
 		}
-		if (this.options.model) await this.client.command(modelCommand(this.options.model));
+		if (this.options.model) await this.applyModel(this.options.model);
 		await this.client.command({ type: 'set_subagent_subscription', level: 'events' });
 		await Promise.all([this.emitCommands(), this.refreshFeatures()]);
+	}
+
+	private async reconcileModel(model?: string): Promise<void> {
+		if (!model) return;
+		await this.initialized;
+		if (model === this.appliedModel) return;
+		await this.applyModel(model);
+		await this.refreshFeatures();
+	}
+
+	private async applyModel(model: string): Promise<void> {
+		await this.client.command(modelCommand(model));
+		this.appliedModel = model;
 	}
 
 	private async emitCommands(): Promise<void> {
