@@ -6,32 +6,12 @@
 	"maestro": {
 		"minHostApi": "1.13.0"
 	},
-	"description": "Managed Oh My Pi workspace integration.",
+	"description": "Managed Oh My Pi native session provider.",
 	"license": "MIT",
 	"entry": "src/runtime/index.ts",
 	"permissions": [
-		{ "capability": "ui:workspace" },
-		{ "capability": "ui:interactivePanel" },
 		{ "capability": "storage:read" },
 		{ "capability": "storage:write" },
 		{ "capability": "process:interactive", "scope": "omp" }
-	],
-	"contributes": {
-		"workspaces": [
-			{
-				"localId": "omp",
-				"title": "Oh My Pi",
-				"icon": "bot",
-				"interactivePanelLocalId": "omp-panel"
-			}
-		],
-		"interactivePanels": [
-			{
-				"localId": "omp-panel",
-				"title": "Oh My Pi",
-				"entry": "src/panel/index.tsx",
-				"workspaceLocalId": "omp"
-			}
-		]
-	}
+	]
 }

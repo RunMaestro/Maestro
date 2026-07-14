@@ -1,5 +1,0 @@
-{
-	"schemaVersion": 1,
-	"pluginId": "com.maestro.omp",
-	"bridgeDescriptor": "src/bridge/descriptor.ts"
-}

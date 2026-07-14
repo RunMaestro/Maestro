@@ -74,17 +74,25 @@ interface ActivePlugin {
 }
 
 let active: ActivePlugin | undefined;
+const HEADLESS_WORKSPACE = {
+	publishExternalSessions: async () => undefined,
+	setStatus: async () => undefined,
+	setBadge: async () => undefined,
+} as unknown as MaestroWorkspaceApi;
+const HEADLESS_PANEL = {
+	onRequest: () => () => undefined,
+} as unknown as MaestroInteractivePanelOwnerApi;
 
-/** Registers only a setup projection; filesystem-root consent is deferred to an explicit panel action. */
+/**
+ * Keeps the trusted tier-one provider active without claiming a workspace or
+ * interactive-panel surface. Native OMP sessions are owned by Maestro's adapter.
+ */
 export async function activate(sdk: ActivationSdk): Promise<void> {
 	if (active) throw new Error('OMP plugin is already active');
-	if (!sdk.interactiveRuntime || !sdk.workspace || !sdk.interactivePanel) {
-		throw new Error('OMP workspace, panel, or interactive runtime capability is unavailable');
-	}
 	const candidate: ActivePlugin = {
 		sdk,
-		workspace: sdk.workspace,
-		panel: sdk.interactivePanel,
+		workspace: sdk.workspace ?? HEADLESS_WORKSPACE,
+		panel: sdk.interactivePanel ?? HEADLESS_PANEL,
 		unsubscribePanel: () => undefined,
 		generation: 0,
 		panelSequence: 0n,

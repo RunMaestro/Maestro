@@ -404,24 +404,6 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		expect(m.getInteractivePanelHtml(pluginId, '../omp-panel')).toBeNull();
 	});
 
-	it('serves the exact HTML from a built and signed OMP panel fixture', async () => {
-		const fixture = await installSignedBundledOmpPanelFixture();
-		const grants = new Map<string, PermissionGrant[]>();
-		const m = manager({ getGrants: (id) => grants.get(id) ?? [] });
-
-		m.refresh();
-		m.setEnabled(fixture.pluginId, true);
-		grants.set(fixture.pluginId, [
-			{ capability: 'ui:workspace', grantedAt: 1 },
-			{ capability: 'ui:interactivePanel', grantedAt: 1 },
-		]);
-		m.refresh();
-
-		expect(m.getInteractivePanelHtml(fixture.pluginId, fixture.panelLocalId)).toBe(
-			fixture.panelHtml
-		);
-	});
-
 	it('installs and starts a CLI-packed plugin archive with nested runtime assets', async () => {
 		const source = path.join(workDir, 'packed-plugin');
 		fs.mkdirSync(path.join(source, 'assets', 'nested'), { recursive: true });
