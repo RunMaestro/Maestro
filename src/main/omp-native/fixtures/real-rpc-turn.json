@@ -40,7 +40,9 @@
 		"id": "captured-state",
 		"command": "get_state",
 		"success": true,
-		"data": { "todoPhases": [] }
+		"data": {
+			"todoPhases": [{ "id": "phase-1", "label": "Verify focused tests", "status": "in_progress" }]
+		}
 	},
 	{
 		"type": "response",
@@ -54,14 +56,28 @@
 		"id": "captured-subagents",
 		"command": "get_subagents",
 		"success": true,
-		"data": { "subagents": [] }
+		"data": { "subagents": [{ "id": "sub-1", "name": "Scout", "status": "completed" }] }
 	},
 	{
 		"type": "response",
 		"id": "captured-stats",
 		"command": "get_session_stats",
 		"success": true,
-		"data": { "stats": {} }
+		"data": {
+			"sessionId": "captured-session",
+			"userMessages": 1,
+			"assistantMessages": 1,
+			"tokens": {
+				"input": 12,
+				"output": 7,
+				"reasoning": 3,
+				"cacheRead": 4,
+				"cacheWrite": 5,
+				"total": 31
+			},
+			"cost": 0.02,
+			"contextUsage": { "tokens": 31, "contextWindow": 1000000, "percent": 0.0031 }
+		}
 	},
 	{
 		"type": "response",

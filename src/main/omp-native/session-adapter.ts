@@ -146,7 +146,17 @@ export class OmpNativeSessionAdapter {
 		await this.initialized;
 		const command = controlCommand(controlId, value);
 		if (!command) return false;
-		await this.client.command(command);
+		try {
+			await this.client.command(command);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.options.send(
+				'process:stderr',
+				this.options.sessionId,
+				`OMP control ${controlId} rejected: ${message}`
+			);
+			throw error;
+		}
 		await this.refreshFeatures();
 		return true;
 	}
@@ -224,7 +234,7 @@ export class OmpNativeSessionAdapter {
 		const modelOptions = Array.isArray(modelsData)
 			? modelsData.map(modelOption).filter((option) => option.id.length > 0)
 			: [];
-		const statsProjection = statsFromData(asRecord(stats.data).stats);
+		const statsProjection = statsFromData(stats.data);
 		const features: AgentRuntimeFeatureState = {
 			controls: controlsFromState(stateData, modelOptions),
 			tree: treeFromMessages(asRecord(messages.data).messages),
@@ -451,24 +461,18 @@ function modelOption(value: unknown): AgentControlOption {
 function todosFromState(state: Record<string, unknown>): AgentTodoPhase[] | null {
 	const phases = Array.isArray(state.todoPhases) ? state.todoPhases : null;
 	if (!phases) return null;
-	return phases.map((phase) => {
+	return phases.flatMap((phase) => {
 		const record = asRecord(phase);
-		return {
-			name: stringAt(record, 'name') ?? 'Tasks',
-			items: Array.isArray(record.items)
-				? record.items.map((item) => {
-						const entry = asRecord(item);
-						const rawState = stringAt(entry, 'state');
-						return {
-							content: stringAt(entry, 'content') ?? '',
-							state:
-								rawState === 'in_progress' || rawState === 'done' || rawState === 'dropped'
-									? rawState
-									: 'open',
-						};
-					})
-				: [],
-		};
+		const name = stringAt(record, 'name') ?? stringAt(record, 'label') ?? stringAt(record, 'id');
+		if (!name) return [];
+		const items = Array.isArray(record.items)
+			? record.items.flatMap((item) => {
+					const entry = asRecord(item);
+					const content = stringAt(entry, 'content');
+					return content ? [{ content, state: todoState(stringAt(entry, 'state')) }] : [];
+				})
+			: [{ content: name, state: todoState(stringAt(record, 'status')) }];
+		return [{ name, items }];
 	});
 }
 
@@ -495,18 +499,51 @@ function subagentsFromData(value: unknown): AgentSubagent[] | null {
 		return {
 			id: stringAt(record, 'id') ?? String(index),
 			label: stringAt(record, 'label') ?? stringAt(record, 'name') ?? 'Subagent',
-			status: status === 'idle' || status === 'complete' || status === 'error' ? status : 'running',
-			detail: stringAt(record, 'detail'),
+			status:
+				status === 'idle'
+					? 'idle'
+					: status === 'complete' || status === 'completed'
+						? 'complete'
+						: status === 'error'
+							? 'error'
+							: 'running',
 		};
 	});
 }
 
 function statsFromData(value: unknown): Record<string, number | string> | null {
-	const record = asRecord(value);
-	const entries = Object.entries(record).filter(
-		([, item]) => typeof item === 'number' || typeof item === 'string'
+	const response = asRecord(value);
+	const nestedStats = asRecord(response.stats);
+	const stats = Object.keys(nestedStats).length > 0 ? nestedStats : response;
+	const values: Record<string, number | string> = Object.fromEntries(
+		Object.entries(stats).filter(([, item]) => typeof item === 'number' || typeof item === 'string')
+	) as Record<string, number | string>;
+	const tokens = asRecord(stats.tokens);
+	const contextUsage = asRecord(stats.contextUsage);
+	copyNumber(values, 'inputTokens', tokens.input ?? stats.inputTokens);
+	copyNumber(values, 'outputTokens', tokens.output ?? stats.outputTokens);
+	copyNumber(values, 'reasoningTokens', tokens.reasoning ?? stats.reasoningTokens);
+	copyNumber(values, 'cacheReadInputTokens', tokens.cacheRead ?? stats.cacheReadInputTokens);
+	copyNumber(
+		values,
+		'cacheCreationInputTokens',
+		tokens.cacheWrite ?? stats.cacheCreationInputTokens
 	);
-	return entries.length ? (Object.fromEntries(entries) as Record<string, number | string>) : null;
+	copyNumber(values, 'totalTokens', tokens.total ?? stats.totalTokens);
+	copyNumber(values, 'totalCostUsd', stats.cost ?? stats.totalCostUsd);
+	copyNumber(values, 'contextWindow', contextUsage.contextWindow ?? stats.contextWindow);
+	return Object.keys(values).length ? values : null;
+}
+
+function copyNumber(target: Record<string, number | string>, key: string, value: unknown): void {
+	if (typeof value === 'number') target[key] = value;
+}
+
+function todoState(value: string | undefined): AgentTodoPhase['items'][number]['state'] {
+	if (value === 'in_progress') return 'in_progress';
+	if (value === 'done' || value === 'completed') return 'done';
+	if (value === 'dropped' || value === 'abandoned') return 'dropped';
+	return 'open';
 }
 
 function usageFromStats(stats: Record<string, number | string> | null): {

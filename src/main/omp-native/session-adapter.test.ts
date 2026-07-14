@@ -505,6 +505,26 @@ describe('OmpNativeSessionAdapter', () => {
 			)
 		).toEqual([['process:data', 'captured-turn', 'Ok.']]);
 		expect(send).toHaveBeenCalledWith('process:command-exit', 'captured-turn', 0);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const features = send.mock.calls
+			.filter(([channel]) => channel === 'process:runtime-features')
+			.at(-1)?.[2] as { todos: unknown; subagents: unknown; stats: unknown };
+		expect(features).toMatchObject({
+			todos: [
+				{
+					name: 'Verify focused tests',
+					items: [{ content: 'Verify focused tests', state: 'in_progress' }],
+				},
+			],
+			subagents: [{ id: 'sub-1', label: 'Scout', status: 'complete' }],
+			stats: {
+				userMessages: 1,
+				assistantMessages: 1,
+				inputTokens: 12,
+				outputTokens: 7,
+				totalCostUsd: 0.02,
+			},
+		});
 		expect(
 			send.mock.calls.filter(
 				([channel, sessionId]) =>
@@ -519,6 +539,194 @@ describe('OmpNativeSessionAdapter', () => {
 			([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'captured-turn'
 		);
 		expect(dataIndex).toBeLessThan(completionIndex);
+	});
+
+	it('sends correlated control commands and projects OMP state, subagents, and post-turn stats', async () => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			frames.push(command);
+			if (!command.id) return true;
+			const data =
+				command.type === 'get_available_commands'
+					? { commands: [] }
+					: command.type === 'get_available_models'
+						? { models: [{ provider: 'anthropic', id: 'claude-fable-5', label: 'Claude Fable 5' }] }
+						: command.type === 'get_messages'
+							? { messages: [] }
+							: command.type === 'get_state'
+								? {
+										model: { id: 'claude-fable-5' },
+										thinkingLevel: 'high',
+										steeringMode: 'one-at-a-time',
+										autoCompactionEnabled: true,
+										autoRetryEnabled: true,
+										todoPhases: [
+											{ id: 'phase-1', label: 'Build inspector', status: 'in_progress' },
+										],
+									}
+								: command.type === 'get_subagents'
+									? { subagents: [{ id: 'sub-1', name: 'Scout', status: 'completed' }] }
+									: command.type === 'get_session_stats'
+										? {
+												sessionId: 'omp-session',
+												userMessages: 1,
+												assistantMessages: 1,
+												tokens: {
+													input: 12,
+													output: 7,
+													reasoning: 3,
+													cacheRead: 4,
+													cacheWrite: 5,
+													total: 31,
+												},
+												cost: 0.02,
+												contextUsage: { tokens: 31, contextWindow: 1000000, percent: 0.0031 },
+											}
+										: {};
+			queueMicrotask(() =>
+				emit(child, {
+					type: 'response',
+					id: command.id,
+					command: command.type,
+					success: true,
+					data,
+				})
+			);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-controls',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		await adapter.setControl('model', 'anthropic:claude-fable-5');
+		await adapter.setControl('thinking-level', 'high');
+		await adapter.setControl('steering-mode', 'one-at-a-time');
+		await adapter.setControl('auto-compaction', true);
+		await adapter.setControl('auto-retry', true);
+
+		expect(
+			frames.filter((frame) =>
+				[
+					'set_model',
+					'set_thinking_level',
+					'set_steering_mode',
+					'set_auto_compaction',
+					'set_auto_retry',
+				].includes(String(frame.type))
+			)
+		).toEqual([
+			{
+				type: 'set_model',
+				provider: 'anthropic',
+				modelId: 'claude-fable-5',
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_thinking_level',
+				level: 'high',
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_steering_mode',
+				mode: 'one-at-a-time',
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_auto_compaction',
+				enabled: true,
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_auto_retry',
+				enabled: true,
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+		]);
+		const features = send.mock.calls
+			.filter(([channel]) => channel === 'process:runtime-features')
+			.at(-1)?.[2] as {
+			todos: unknown;
+			subagents: unknown;
+			stats: unknown;
+		};
+		expect(features).toMatchObject({
+			todos: [
+				{
+					name: 'Build inspector',
+					items: [{ content: 'Build inspector', state: 'in_progress' }],
+				},
+			],
+			subagents: [{ id: 'sub-1', label: 'Scout', status: 'complete' }],
+			stats: {
+				userMessages: 1,
+				assistantMessages: 1,
+				inputTokens: 12,
+				outputTokens: 7,
+				reasoningTokens: 3,
+				cacheReadInputTokens: 4,
+				cacheCreationInputTokens: 5,
+				totalTokens: 31,
+				totalCostUsd: 0.02,
+				contextWindow: 1000000,
+			},
+		});
+	});
+
+	it('reports rejected controls and does not refresh the feature state as if they applied', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (!command.id) return true;
+			queueMicrotask(() =>
+				emit(child, {
+					type: 'response',
+					id: command.id,
+					command: command.type,
+					success: command.type !== 'set_auto_retry',
+					...(command.type === 'set_auto_retry'
+						? { error: 'Unknown callback type: set_auto_retry' }
+						: { data: command.type === 'get_state' ? { todoPhases: [] } : {} }),
+				})
+			);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-rejected-control',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const refreshesBeforeRejection = send.mock.calls.filter(
+			([channel]) => channel === 'process:runtime-features'
+		).length;
+
+		await expect(adapter.setControl('auto-retry', true)).rejects.toThrow(
+			'Unknown callback type: set_auto_retry'
+		);
+
+		expect(send).toHaveBeenCalledWith(
+			'process:stderr',
+			'tab-rejected-control',
+			'OMP control auto-retry rejected: Unknown callback type: set_auto_retry'
+		);
+		expect(
+			send.mock.calls.filter(([channel]) => channel === 'process:runtime-features')
+		).toHaveLength(refreshesBeforeRejection);
 	});
 
 	function extensionResponses(child: FakeChild): unknown[] {
