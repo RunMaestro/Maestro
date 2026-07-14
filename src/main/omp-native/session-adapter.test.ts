@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
 import { OmpNativeSessionAdapter } from './session-adapter';
+import capturedRpcTurn from './fixtures/real-rpc-turn.json';
 
 class FakeChild extends EventEmitter {
 	stdin = { write: vi.fn() };
@@ -463,6 +464,61 @@ describe('OmpNativeSessionAdapter', () => {
 			])
 		);
 		await expect(adapter.respondApproval('noninteractive-notify', 'approve')).resolves.toBe(false);
+	});
+
+	it('replays the captured RPC turn: nested delta, data-less prompt response, and turn completion', async () => {
+		const child = new FakeChild();
+		const responses = capturedRpcTurn.filter((frame) => frame.type === 'response') as Array<
+			Record<string, unknown>
+		>;
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				const captured = responses.find((response) => response.command === command.type);
+				if (captured) queueMicrotask(() => emit(child, { ...captured, id: command.id }));
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'captured-turn',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		for (const frame of capturedRpcTurn.filter((frame) => frame.type === 'ready'))
+			emit(child, frame);
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('say ok');
+		for (const frame of capturedRpcTurn.filter(
+			(frame) => frame.type !== 'ready' && frame.type !== 'response'
+		))
+			emit(child, frame);
+
+		expect(send).toHaveBeenCalledWith('process:data', 'captured-turn', 'Ok.');
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) => channel === 'process:data' && sessionId === 'captured-turn'
+			)
+		).toEqual([['process:data', 'captured-turn', 'Ok.']]);
+		expect(send).toHaveBeenCalledWith('process:command-exit', 'captured-turn', 0);
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'captured-turn'
+			)
+		).toHaveLength(1);
+		const dataIndex = send.mock.calls.findIndex(
+			([channel, sessionId, value]) =>
+				channel === 'process:data' && sessionId === 'captured-turn' && value === 'Ok.'
+		);
+		const completionIndex = send.mock.calls.findIndex(
+			([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'captured-turn'
+		);
+		expect(dataIndex).toBeLessThan(completionIndex);
 	});
 
 	function extensionResponses(child: FakeChild): unknown[] {

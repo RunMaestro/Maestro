@@ -1,0 +1,106 @@
+[
+	{ "type": "ready", "version": "16.4.8" },
+	{
+		"type": "extension_ui_request",
+		"id": "captured-notification",
+		"method": "notify",
+		"message": "runtime notification",
+		"notifyType": "info"
+	},
+	{
+		"type": "extension_ui_request",
+		"id": "captured-widget",
+		"method": "setWidget",
+		"widgetKey": "status"
+	},
+	{ "type": "available_commands_update", "commands": [] },
+	{
+		"type": "response",
+		"id": "captured-new-session",
+		"command": "new_session",
+		"success": true,
+		"data": {}
+	},
+	{
+		"type": "response",
+		"id": "captured-subagent-subscription",
+		"command": "set_subagent_subscription",
+		"success": true,
+		"data": {}
+	},
+	{
+		"type": "response",
+		"id": "captured-commands",
+		"command": "get_available_commands",
+		"success": true,
+		"data": { "commands": [] }
+	},
+	{
+		"type": "response",
+		"id": "captured-state",
+		"command": "get_state",
+		"success": true,
+		"data": { "todoPhases": [] }
+	},
+	{
+		"type": "response",
+		"id": "captured-messages",
+		"command": "get_messages",
+		"success": true,
+		"data": { "messages": [] }
+	},
+	{
+		"type": "response",
+		"id": "captured-subagents",
+		"command": "get_subagents",
+		"success": true,
+		"data": { "subagents": [] }
+	},
+	{
+		"type": "response",
+		"id": "captured-stats",
+		"command": "get_session_stats",
+		"success": true,
+		"data": { "stats": {} }
+	},
+	{
+		"type": "response",
+		"id": "captured-models",
+		"command": "get_available_models",
+		"success": true,
+		"data": { "models": [] }
+	},
+	{ "type": "response", "id": "captured-prompt", "command": "prompt", "success": true },
+	{ "type": "agent_start" },
+	{ "type": "turn_start" },
+	{
+		"type": "message_start",
+		"message": { "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] }
+	},
+	{
+		"type": "message_update",
+		"assistantMessageEvent": {
+			"type": "text_delta",
+			"contentIndex": 0,
+			"delta": "Ok.",
+			"partial": { "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] }
+		},
+		"message": { "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] }
+	},
+	{
+		"type": "message_end",
+		"message": { "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] }
+	},
+	{
+		"type": "turn_end",
+		"message": { "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] },
+		"toolResults": []
+	},
+	{
+		"type": "agent_end",
+		"messages": [
+			{ "role": "user", "content": [{ "type": "text", "text": "say ok" }] },
+			{ "role": "assistant", "content": [{ "type": "text", "text": "Ok." }] }
+		]
+	}
+]

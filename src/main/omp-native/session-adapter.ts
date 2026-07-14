@@ -241,11 +241,11 @@ export class OmpNativeSessionAdapter {
 
 	private handleEvent(event: OmpRpcEvent): void {
 		if (event.type === 'message_update') {
-			const text = textFrom(event);
+			const text = messageUpdateTextFrom(event);
 			if (text) this.options.send('process:data', this.options.sessionId, text);
 		}
 		if (event.type === 'message_update' && event.thinking === true) {
-			const text = textFrom(event);
+			const text = messageUpdateTextFrom(event);
 			if (text) this.options.send('process:thinking-chunk', this.options.sessionId, text);
 		}
 		if (event.type.startsWith('tool_execution_')) {
@@ -357,6 +357,16 @@ function textFrom(record: Record<string, unknown>): string | undefined {
 		if (typeof value === 'string') return value;
 	}
 	return undefined;
+}
+
+function messageUpdateTextFrom(event: OmpRpcEvent): string | undefined {
+	const assistantMessageEvent = asRecord(event.assistantMessageEvent);
+	if (Object.keys(assistantMessageEvent).length > 0) {
+		return assistantMessageEvent.type === 'text_delta'
+			? stringAt(assistantMessageEvent, 'delta')
+			: undefined;
+	}
+	return textFrom(event);
 }
 
 function toOmpImages(images: readonly string[]): OmpRpcImage[] {
