@@ -105,6 +105,12 @@ export interface ManagedProcess {
 	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
+	/** Set by `ProcessManager.interrupt()` before it sends SIGINT (or writes
+	 *  Ctrl+C). Lets the exit path tell a user-initiated stop apart from a real
+	 *  silent crash: an interrupted turn that exits with a null signal code
+	 *  (coerced to 0 by the spawner's `close` handler) must NOT be surfaced as an
+	 *  "exited without producing a response" error. */
+	interrupted?: boolean;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	stderrBuffer?: string;

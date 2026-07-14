@@ -595,4 +595,109 @@ describe('ExitHandler', () => {
 			expect(elapsed).toBeLessThan(200);
 		});
 	});
+
+	describe('omp silent-exit hardening', () => {
+		function ompProc(overrides: Partial<ManagedProcess> = {}): ManagedProcess {
+			return createMockProcess({
+				toolType: 'omp',
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser({ agentId: 'omp' }),
+				resultEmitted: false,
+				errorEmitted: false,
+				streamedText: '',
+				...overrides,
+			});
+		}
+
+		it('surfaces a recoverable agent_crashed error when omp exits clean with no result, error, or output', async () => {
+			processes.set('sess-ai-tab1', ompProc());
+
+			const errors: Array<{ type: string; recoverable: boolean; message: string }> = [];
+			const exitEvents: number[] = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
+
+			await exitHandler.handleExit('sess-ai-tab1', 0);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_crashed');
+			expect(errors[0].recoverable).toBe(true);
+			expect(errors[0].message).toContain('without producing a response');
+			// The exit event still fires so the tab leaves the busy state.
+			expect(exitEvents).toEqual([0]);
+		});
+
+		it('does not fire when the user interrupted the turn (null signal coerced to code 0)', async () => {
+			processes.set('sess-ai-tab1', ompProc({ interrupted: true }));
+
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+
+			await exitHandler.handleExit('sess-ai-tab1', 0);
+
+			expect(errors).toHaveLength(0);
+		});
+
+		it('does not fire when omp streamed text that the exit fallback flushes as the result', async () => {
+			processes.set('sess-ai-tab1', ompProc({ streamedText: 'here is my answer' }));
+
+			const errors: unknown[] = [];
+			const dataEvents: string[] = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('sess-ai-tab1', 0);
+
+			expect(errors).toHaveLength(0);
+			expect(dataEvents).toContain('here is my answer');
+		});
+
+		it('does not fire for non-omp agents that exit clean with no output', async () => {
+			processes.set('sess-ai-tab1', ompProc({ toolType: 'claude-code' }));
+
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+
+			await exitHandler.handleExit('sess-ai-tab1', 0);
+
+			expect(errors).toHaveLength(0);
+		});
+
+		it('does not fire for background omp synopsis or tab-naming sessions', async () => {
+			processes.set('sess-synopsis-123', ompProc());
+			processes.set('tab-naming-abc', ompProc());
+
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+
+			await exitHandler.handleExit('sess-synopsis-123', 0);
+			await exitHandler.handleExit('tab-naming-abc', 0);
+
+			expect(errors).toHaveLength(0);
+		});
+
+		it('does not double-report when a non-zero exit already emitted an error', async () => {
+			// detectErrorFromExit fires for non-zero codes; the guard must see
+			// errorEmitted and stay quiet so only one error surfaces.
+			const parser = createMockOutputParser({
+				agentId: 'omp',
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed',
+					message: 'Oh My Pi exited with code 1',
+					recoverable: true,
+					agentId: 'omp',
+					timestamp: Date.now(),
+				})) as unknown as AgentOutputParser['detectErrorFromExit'],
+			});
+			processes.set('sess-ai-tab1', ompProc({ outputParser: parser }));
+
+			const errors: Array<{ message: string }> = [];
+			emitter.on('agent-error', (_sid: string, err) => errors.push(err));
+
+			await exitHandler.handleExit('sess-ai-tab1', 1);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].message).toContain('code 1');
+		});
+	});
 });

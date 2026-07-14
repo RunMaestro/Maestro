@@ -226,6 +226,49 @@ export class ExitHandler {
 			}
 		}
 
+		// omp silent-exit hardening. Oh My Pi can exit cleanly (code 0) right after
+		// startup / TTSR-rule registration having emitted NO `agent_end`, no result,
+		// and no streamed text (observed: the main-turn process went silent while
+		// the paired tab-namer turn completed normally). Every branch above then
+		// no-ops - `detectErrorFromExit` returns null on code 0, and the streamed-
+		// text fallback has nothing to flush - so the tab clears its busy pill to an
+		// empty "done" state with no answer and no error, indistinguishable from
+		// success. That is the reported "started, never went busy, appeared done,
+		// no answer" turn. Surface a recoverable, non-auto-retrying `agent_crashed`
+		// (see NON_RETRYABLE_TYPES) so the turn visibly fails and the user can
+		// resend. Scoped to omp to avoid tripping legitimate empty helper turns of
+		// other agents. User stops are excluded: `kill()` removes the process before
+		// `close` (early return above), and `interrupt()` sets `interrupted`.
+		if (
+			toolType === 'omp' &&
+			isStreamJsonMode &&
+			!managedProcess.resultEmitted &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			!managedProcess.streamedText?.trim() &&
+			!sessionId.endsWith('-terminal') &&
+			!sessionId.includes('-synopsis-') &&
+			!sessionId.startsWith('tab-naming-')
+		) {
+			managedProcess.errorEmitted = true;
+			const agentError: AgentError = {
+				type: 'agent_crashed',
+				message:
+					'Oh My Pi exited without producing a response. The agent process ended early (for example right after startup) before sending any output. Please send your message again.',
+				recoverable: true,
+				agentId: toolType,
+				sessionId,
+				timestamp: Date.now(),
+				raw: { exitCode: code },
+			};
+			logger.warn(
+				'[ProcessManager] omp exited with no result, error, or output - surfacing recoverable error',
+				'ProcessManager',
+				{ sessionId, exitCode: code }
+			);
+			this.emitter.emit('agent-error', sessionId, agentError);
+		}
+
 		// Clean up temp image files if any
 		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempImageFiles);
