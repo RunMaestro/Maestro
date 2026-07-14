@@ -26,6 +26,8 @@ import {
 	type SealProvider,
 	shouldDisablePluginForVerifyResult,
 } from '../authorization-ledger';
+import { ConsentMinter, ConsentNonceRegistry } from '../consent-minter';
+import { enableProvidedPluginRuntimeForConsent } from '../provided-plugin-runtime';
 import type { RuntimeActivationContext } from '../native-workspace-root-service';
 
 function fakeSeal(): SealProvider {
@@ -180,7 +182,9 @@ describe('production OMP bootstrap', () => {
 		try {
 			const anchorHolder = { value: null as Anchor | null };
 			const ledgerPath = join(input.directory, 'plugin-authorizations.bin');
-			const persistedSettings = { encoreFeatures: { plugins: true } };
+			const persistedSettings: { encoreFeatures: Record<string, boolean> } = {
+				encoreFeatures: { plugins: false },
+			};
 			const makeBootstrap = (): ProductionOmpBootstrap =>
 				createProductionOmpBootstrap({
 					pluginsDir: join(input.directory, 'plugins'),
@@ -243,12 +247,59 @@ describe('production OMP bootstrap', () => {
 				.getRegistry()
 				.records.find((record) => record.id === 'com.maestro.omp');
 			expect(firstRecord).toBeDefined();
-			const consentIdentity = resolvePluginAuthorizationIdentity(firstRecord!, [], (candidate) =>
-				firstManager.getVerifiedBundledExecutionSnapshot(candidate)
-			);
-			expect(consentIdentity).not.toBeNull();
-			firstAuthorization.mint('com.maestro.omp', [], consentIdentity!);
+			const settingsStore = {
+				get: (key: string) =>
+					key === 'encoreFeatures' ? persistedSettings.encoreFeatures : undefined,
+				set: (key: string, value: unknown) => {
+					if (key === 'encoreFeatures' && value && typeof value === 'object') {
+						persistedSettings.encoreFeatures = value as Record<string, boolean>;
+					}
+				},
+			};
+			expect(
+				enableProvidedPluginRuntimeForConsent('com.maestro.omp', {
+					settingsStore,
+					manager: firstManager,
+				})
+			).toBe(true);
+			let consentNonce = '';
+			const consentSender = { webContentsId: 1, frameId: 1, url: 'app://consent' };
+			const consentMinter = new ConsentMinter({
+				registry: new ConsentNonceRegistry({
+					now: () => 1,
+					newNonce: () => 'consent-nonce',
+					ttlMs: 1000,
+				}),
+				store: firstAuthorization,
+				requested: (pluginId) => firstManager.getRequestedPermissions(pluginId) ?? [],
+				identityOf: (pluginId) => {
+					const record = firstManager
+						.getRegistry()
+						.records.find((candidate) => candidate.id === pluginId);
+					return record
+						? resolvePluginAuthorizationIdentity(record, [], (candidate) =>
+								firstManager.getVerifiedBundledExecutionSnapshot(candidate)
+							)
+						: null;
+				},
+				openPrompt: async ({ nonce }) => {
+					consentNonce = nonce;
+					return consentSender;
+				},
+			});
+			await consentMinter.requestConsent('com.maestro.omp');
+			expect(
+				consentMinter.confirm(consentSender, {
+					pluginId: 'com.maestro.omp',
+					nonce: consentNonce,
+					approved: [],
+				})
+			).toMatchObject({ ok: true });
 			firstManager.setEnabled('com.maestro.omp', true);
+			expect(
+				firstManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
+			).toBe(true);
+			firstManager.refresh();
 			expect(
 				firstManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
 			).toBe(true);
