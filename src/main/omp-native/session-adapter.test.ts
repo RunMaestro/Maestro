@@ -15,7 +15,7 @@ function emit(child: FakeChild, frame: unknown): void {
 }
 
 describe('OmpNativeSessionAdapter', () => {
-	it('uses the real user runtime and projects RPC activity to native events', async () => {
+	it('projects envelope-shaped RPC catalog and runtime features to native events', async () => {
 		const child = new FakeChild();
 		const spawn = vi.fn(() => child as never);
 		child.stdin.write.mockImplementation((frame: string) => {
@@ -23,16 +23,20 @@ describe('OmpNativeSessionAdapter', () => {
 			if (command.id) {
 				const data =
 					command.type === 'get_available_commands'
-						? [{ name: 'compact' }]
+						? { commands: [{ name: 'compact' }] }
 						: command.type === 'get_state'
 							? { sessionId: 'omp-session', thinkingLevel: 'high', todoPhases: [] }
-							: command.type === 'get_messages'
-								? [{ id: 'entry-1', content: 'Root' }]
-								: command.type === 'get_subagents'
-									? [{ id: 'sub-1', name: 'Scout', status: 'running' }]
-									: command.type === 'get_session_stats'
-										? { inputTokens: 12 }
-										: [];
+							: command.type === 'get_available_models'
+								? {
+										models: [{ provider: 'anthropic', id: 'claude-sonnet-4-5', label: 'Sonnet' }],
+									}
+								: command.type === 'get_messages'
+									? { messages: [{ id: 'entry-1', content: 'Root' }] }
+									: command.type === 'get_subagents'
+										? { subagents: [{ id: 'sub-1', name: 'Scout', status: 'running' }] }
+										: command.type === 'get_session_stats'
+											? { stats: { inputTokens: 12 } }
+											: [];
 				queueMicrotask(() =>
 					emit(child, {
 						type: 'response',
@@ -66,7 +70,17 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(send).toHaveBeenCalledWith(
 			'process:runtime-features',
 			'tab-1',
-			expect.objectContaining({ stats: { inputTokens: 12 } })
+			expect.objectContaining({
+				controls: expect.arrayContaining([
+					expect.objectContaining({
+						id: 'model',
+						options: [{ id: 'anthropic:claude-sonnet-4-5', label: 'Sonnet' }],
+					}),
+				]),
+				tree: [{ id: 'entry-1', label: 'Root' }],
+				subagents: [{ id: 'sub-1', label: 'Scout', status: 'running', detail: undefined }],
+				stats: { inputTokens: 12 },
+			})
 		);
 		emit(child, { type: 'message_update', sequence: 1, content: 'partial' });
 		emit(child, { type: 'prompt_result', agentInvoked: true, text: 'final' });
@@ -88,6 +102,81 @@ describe('OmpNativeSessionAdapter', () => {
 		await expect(adapter.respondApproval('approval-1', 'yes')).resolves.toBe(true);
 		await expect(adapter.branch('entry-1')).resolves.toBe(true);
 		expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"type":"branch"'));
+		expect(child.kill).not.toHaveBeenCalled();
+	});
+
+	it('signals each completed RPC turn without terminating the long-lived child', async () => {
+		const child = new FakeChild();
+		const promptMessages: string[] = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string; message?: string };
+			if (command.type === 'prompt' && command.message) promptMessages.push(command.message);
+			if (command.id) {
+				const data =
+					command.type === 'get_available_commands'
+						? { commands: [] }
+						: command.type === 'get_available_models'
+							? { models: [] }
+							: command.type === 'get_messages'
+								? { messages: [] }
+								: command.type === 'get_subagents'
+									? { subagents: [] }
+									: command.type === 'get_session_stats'
+										? { stats: {} }
+										: command.type === 'get_state'
+											? { todoPhases: [] }
+											: {};
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data,
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-2',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first prompt');
+		emit(child, { type: 'prompt_result', text: 'first result' });
+		emit(child, { type: 'turn_end' });
+
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'first result');
+		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
+		expect(child.kill).not.toHaveBeenCalled();
+
+		await adapter.prompt('second prompt');
+		emit(child, { type: 'prompt_result', text: 'second result' });
+		emit(child, { type: 'agent_end' });
+
+		expect(promptMessages).toEqual(['first prompt', 'second prompt']);
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'second result');
+		const firstResultIndex = send.mock.calls.findIndex(
+			([channel, sessionId, value]) =>
+				channel === 'process:data' && sessionId === 'tab-2' && value === 'first result'
+		);
+		const firstCompletionIndex = send.mock.calls.findIndex(
+			([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
+		);
+		expect(firstResultIndex).toBeLessThan(firstCompletionIndex);
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
+			)
+		).toHaveLength(2);
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 });

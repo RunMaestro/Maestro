@@ -38,6 +38,7 @@ export class OmpNativeSessionAdapter {
 	private readonly child: ChildProcessWithoutNullStreams;
 	private readonly approvals = new Map<string, OmpRpcEvent>();
 	private disposed = false;
+	private turnInFlight = false;
 
 	private constructor(private readonly options: OmpNativeSessionOptions) {
 		const spawn = options.spawn ?? spawnChild;
@@ -93,7 +94,13 @@ export class OmpNativeSessionAdapter {
 
 	async prompt(message: string): Promise<void> {
 		await this.initialized;
-		await this.client.command({ type: 'prompt', message });
+		this.turnInFlight = true;
+		try {
+			await this.client.command({ type: 'prompt', message });
+		} catch (error) {
+			this.turnInFlight = false;
+			throw error;
+		}
 	}
 
 	async interrupt(): Promise<void> {
@@ -180,8 +187,9 @@ export class OmpNativeSessionAdapter {
 
 	private async emitCommands(): Promise<void> {
 		const response = await this.client.command({ type: 'get_available_commands' });
-		const commands = Array.isArray(response.data)
-			? response.data.map(commandName).filter((command): command is string => Boolean(command))
+		const commandsData = asRecord(response.data).commands;
+		const commands = Array.isArray(commandsData)
+			? commandsData.map(commandName).filter((command): command is string => Boolean(command))
 			: [];
 		this.options.send('process:slash-commands', this.options.sessionId, commands);
 	}
@@ -195,15 +203,16 @@ export class OmpNativeSessionAdapter {
 			this.client.command({ type: 'get_available_models' }),
 		]);
 		const stateData = asRecord(state.data);
-		const modelOptions = Array.isArray(models.data)
-			? models.data.map(modelOption).filter((option) => option.id.length > 0)
+		const modelsData = asRecord(models.data).models;
+		const modelOptions = Array.isArray(modelsData)
+			? modelsData.map(modelOption).filter((option) => option.id.length > 0)
 			: [];
-		const statsProjection = statsFromData(stats.data);
+		const statsProjection = statsFromData(asRecord(stats.data).stats);
 		const features: AgentRuntimeFeatureState = {
 			controls: controlsFromState(stateData, modelOptions),
-			tree: treeFromMessages(messages.data),
+			tree: treeFromMessages(asRecord(messages.data).messages),
 			todos: todosFromState(stateData),
-			subagents: subagentsFromData(subagents.data),
+			subagents: subagentsFromData(asRecord(subagents.data).subagents),
 			stats: statsProjection,
 		};
 		this.options.send('process:runtime-features', this.options.sessionId, features);
@@ -230,7 +239,10 @@ export class OmpNativeSessionAdapter {
 				toolCallId: stringAt(event, 'id'),
 			});
 		}
-		if (event.type === 'turn_end' || event.type === 'agent_end') void this.refreshFeatures();
+		if (event.type === 'turn_end' || event.type === 'agent_end') {
+			this.completeTurn();
+			void this.refreshFeatures();
+		}
 	}
 
 	private handleCallback(callback: OmpRpcEvent): void {
@@ -261,6 +273,12 @@ export class OmpNativeSessionAdapter {
 			callback.type === 'config_update'
 		)
 			void this.refreshFeatures();
+	}
+
+	private completeTurn(): void {
+		if (!this.turnInFlight) return;
+		this.turnInFlight = false;
+		this.options.send('process:command-exit', this.options.sessionId, 0);
 	}
 }
 
