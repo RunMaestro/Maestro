@@ -174,6 +174,7 @@ export class OmpNativeSessionAdapter {
 		} else {
 			await this.client.command({ type: 'new_session' });
 		}
+		await this.client.command({ type: 'set_subagent_subscription', level: 'events' });
 		await Promise.all([this.emitCommands(), this.refreshFeatures()]);
 	}
 
