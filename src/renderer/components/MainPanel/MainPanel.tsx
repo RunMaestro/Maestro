@@ -76,12 +76,18 @@ function EmptyMainPanel({ theme }: { theme: Theme }) {
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
+		// PERF: Self-source the full active Session so streaming log/token updates
+		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
+		// App may still pass `activeSession` (chrome-equality slice) for prop-memo
+		// deps; ignore it for paint.
+		const activeSession = useSessionStore(selectActiveSession);
+
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession,
+			activeSession: _activeSessionFromApp,
 			theme,
 			stagedImages,
 			commandHistoryOpen,

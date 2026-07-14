@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useMemo, type MutableRefObject } from 'react';
 import type {
 	BatchRunState,
 	BatchRunConfig,
@@ -12,6 +12,7 @@ import type {
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useBatchStore } from '../../stores/batchStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -55,7 +56,6 @@ export interface PRResultInfo {
 }
 
 export interface UseBatchProcessorProps {
-	sessions: Session[];
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
 	onSpawnAgent: (
@@ -137,7 +137,6 @@ export { countUnfinishedTasks, uncheckAllTasks };
  * - Extracted hooks (useSessionDebounce, useTimeTracking) handle their own cleanup
  */
 export function useBatchProcessor({
-	sessions,
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
@@ -170,9 +169,23 @@ export function useBatchProcessor({
 	// Refs for tracking stop requests per session
 	const stopRequestedRefs = useRef<Record<string, boolean>>({});
 
-	// Ref to always have access to latest sessions (fixes stale closure in startBatchRun)
-	const sessionsRef = useRef(sessions);
-	sessionsRef.current = sessions;
+	// PERF: Read sessions at event time via getState() so App (this hook's
+	// caller) does not re-render on streaming session updates. Downstream
+	// runners already fall back to the store when a session is missing.
+	// Setter is a no-op so accidental `sessionsRef.current = ...` writes cannot
+	// replace the getter.
+	const sessionsRef = useMemo(
+		() =>
+			({
+				get current(): Session[] {
+					return useSessionStore.getState().sessions;
+				},
+				set current(_value: Session[]) {
+					/* store is the source of truth */
+				},
+			}) as MutableRefObject<Session[]>,
+		[]
+	);
 
 	// Refs to always have access to latest audio feedback settings (fixes stale closure during batch run)
 	// Without refs, toggling settings off during a batch run won't take effect until the next run

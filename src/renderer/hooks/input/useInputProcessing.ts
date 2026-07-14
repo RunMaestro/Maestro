@@ -18,6 +18,7 @@ import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 
 let cachedImageOnlyPrompt: string = '';
@@ -51,8 +52,13 @@ export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
  * Dependencies for the useInputProcessing hook.
  */
 export interface UseInputProcessingDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
+	/**
+	 * Current active session. When omitted, processInput resolves the live
+	 * session via sessionsRef / getState at submit time (preferred for App so
+	 * streaming does not require a React-subscribed Session). Pass null to mean
+	 * "no session" (tests).
+	 */
+	activeSession?: Session | null;
 	/** Active session ID (may be different from activeSession.id during transitions) */
 	activeSessionId: string;
 	/** Session state setter */
@@ -156,7 +162,7 @@ export interface UseInputProcessingReturn {
  */
 export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProcessingReturn {
 	const {
-		activeSession,
+		activeSession: activeSessionProp,
 		activeSessionId,
 		setSessions,
 		getInputValue,
@@ -204,6 +210,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
+
+			// PERF: When activeSession is omitted, resolve the live session at
+			// submit time via sessionsRef / getState so callers need not pass a
+			// React-subscribed Session (streaming would re-render App). Explicit
+			// null means "no session" (tests).
+			const activeSession =
+				activeSessionProp !== undefined
+					? activeSessionProp
+					: ((activeSessionId
+							? sessionsRef.current.find((s) => s.id === activeSessionId)
+							: undefined) ?? selectActiveSession(useSessionStore.getState()));
 
 			const effectiveInputValue = overrideInputValue ?? getInputValue();
 			// When the caller passes explicit images (e.g. Force Send button replaying a
@@ -1414,7 +1431,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 		},
 		[
-			activeSession,
+			activeSessionProp,
 			activeSessionId,
 			getInputValue,
 			stagedImages,

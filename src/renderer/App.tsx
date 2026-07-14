@@ -166,8 +166,8 @@ import {
 	sidebarSessionEquality,
 	gitPollSessionEquality,
 	projectRootSessionEquality,
+	activeSessionChromeEquality,
 } from './stores/sessionEquality';
-import { useActiveSession } from './hooks/session/useActiveSession';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
@@ -534,7 +534,14 @@ function MaestroConsoleInner() {
 	// to show a loading spinner instead of flashing the empty "create your first
 	// agent" state while sessions stream in over the WebSocket bridge.
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const activeSession = useActiveSession();
+	// PERF: Chrome equality ignores logs/tokens/contextUsage. Streaming must not
+	// re-render MaestroConsoleInner. MainPanel self-sources the full Session for
+	// live chat; App keeps this slice only for shell chrome / prop assembly.
+	const activeSession = useStoreWithEqualityFn(
+		useSessionStore,
+		selectActiveSession,
+		activeSessionChromeEquality
+	);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -2504,9 +2511,10 @@ function MaestroConsoleInner() {
 		setSendToAgentModalOpen,
 		// Summarize and continue (getter: evaluated lazily only when shortcut fires)
 		get canSummarizeActiveTab() {
-			if (!activeSession || !activeSession.activeTabId) return false;
-			const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
-			return canSummarize(activeSession.contextUsage, activeTab?.logs);
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session?.activeTabId) return false;
+			const tab = session.aiTabs.find((t) => t.id === session.activeTabId);
+			return canSummarize(session.contextUsage, tab?.logs);
 		},
 		summarizeAndContinue: handleSummarizeAndContinue,
 
