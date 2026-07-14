@@ -258,6 +258,7 @@ export class ExitHandler {
 				recoverable: true,
 				agentId: toolType,
 				sessionId,
+				sshRemoteId: managedProcess.sshRemoteId,
 				timestamp: Date.now(),
 				raw: { exitCode: code },
 			};

@@ -202,5 +202,37 @@ describe('OmpSessionStorage', () => {
 
 		const messages = await storage.readSessionMessages(projectPath, 'sess-1', undefined, sshConfig);
 		expect(messages.messages).toEqual([]);
+
+		const del = await storage.deleteMessagePair(projectPath, 'sess-1', 'm1', undefined, sshConfig);
+		expect(del.success).toBe(false);
+	});
+
+	it('does not read or delete a same-id transcript that belongs to another project', async () => {
+		// A transcript whose cwd is a DIFFERENT project. read/delete scoped to
+		// projectPath must not resolve it - project-boundary isolation (Greptile P1).
+		await writeTranscript('other', 'x_sess-b.jsonl', fullTranscript('/other/project', 'sess-b'));
+
+		const read = await storage.readSessionMessages(projectPath, 'sess-b');
+		expect(read.messages).toEqual([]);
+		expect(read.total).toBe(0);
+
+		const del = await storage.deleteMessagePair(projectPath, 'sess-b', 'm1');
+		expect(del.success).toBe(false);
+	});
+
+	it('matches a cwd differing only in casing on case-insensitive platforms', async () => {
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+		Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+		try {
+			// Transcript cwd differs from the requested project only in casing; on a
+			// case-insensitive platform (darwin) it must still be listed.
+			const casedCwd = path.join(tmpHome, 'code', 'PROJ');
+			await writeTranscript('-code-PROJ', 'a_sess-c.jsonl', fullTranscript(casedCwd, 'sess-c'));
+
+			const sessions = await storage.listSessions(projectPath); // projectPath ends in .../code/proj
+			expect(sessions.map((s) => s.sessionId)).toEqual(['sess-c']);
+		} finally {
+			if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+		}
 	});
 });

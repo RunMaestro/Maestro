@@ -40,11 +40,28 @@ import type {
 	SessionReadOptions,
 } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { isWindows, isMacOS } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = '[OmpSessionStorage]';
 
 /** Cap on how much of a single transcript we parse, guarding against a runaway file. */
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
+/**
+ * True when two paths resolve to the same location, comparing case-insensitively
+ * on Windows and default macOS filesystems (both case-insensitive) so a cwd that
+ * differs only in casing - drive-letter casing is the classic example - is not
+ * wrongly treated as a different project. Kept as a shared helper so listSessions
+ * and findTranscriptPath scope by cwd in lockstep.
+ */
+function samePath(a: string, b: string): boolean {
+	const resolvedA = path.resolve(a);
+	const resolvedB = path.resolve(b);
+	if (isWindows() || isMacOS()) {
+		return resolvedA.toLowerCase() === resolvedB.toLowerCase();
+	}
+	return resolvedA === resolvedB;
+}
 
 interface OmpContentBlock {
 	type: string;
@@ -233,7 +250,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 				const transcript = await this.parseTranscript(filePath);
 				if (!transcript || !transcript.cwd) continue;
 				// Authoritative filter: only sessions whose header cwd matches the project.
-				if (path.resolve(transcript.cwd) !== target) continue;
+				if (!samePath(transcript.cwd, projectPath)) continue;
 
 				const stat = await fs.stat(filePath);
 				const info = this.buildSessionInfo(transcript, target, stat.size, stat.mtime);
@@ -332,16 +349,20 @@ export class OmpSessionStorage extends BaseSessionStorage {
 		};
 	}
 
-	/** Resolve the on-disk transcript path for a sessionId (searches candidate dirs). */
+	/**
+	 * Resolve the transcript path for a sessionId WITHIN a project. Parses each
+	 * candidate and requires BOTH the session id and the authoritative `cwd` to
+	 * match, so a same-id transcript belonging to another project is never
+	 * returned - read/delete stay project-scoped, matching listSessions().
+	 */
 	private async findTranscriptPath(projectPath: string, sessionId: string): Promise<string | null> {
 		const files = await this.collectTranscriptFiles();
 		for (const filePath of files) {
-			if (extractSessionIdFromFilename(path.basename(filePath)) === sessionId) return filePath;
-		}
-		// Fall back to matching the session header id (filename scheme could differ).
-		for (const filePath of files) {
 			const transcript = await this.parseTranscript(filePath);
-			if (transcript?.sessionId === sessionId) return filePath;
+			if (!transcript || !transcript.cwd) continue;
+			if (transcript.sessionId !== sessionId) continue;
+			if (!samePath(transcript.cwd, projectPath)) continue;
+			return filePath;
 		}
 		return null;
 	}
@@ -408,10 +429,16 @@ export class OmpSessionStorage extends BaseSessionStorage {
 	}
 
 	getSessionPath(): string | null {
-		// omp transcripts are addressed by a timestamped filename, not a stable
-		// path derivable from sessionId alone (findTranscriptPath resolves it
-		// asynchronously). The sync accessor is best-effort null; History uses the
-		// async read/list paths above.
+		// Deliberately null (a considered call, not an oversight): an omp transcript
+		// lives at a timestamped filename under a cwd-slug dir, so it is not
+		// derivable synchronously from a sessionId. This matches Codex's storage,
+		// which returns null here for the same reason and resolves paths via an
+		// async search instead. A synchronous directory scan would be an O(n^2)
+		// blocking footgun in the agentSessions.ts loop callers. Consequence, same
+		// as Codex: the starred-transcript mirror cannot snapshot an omp session
+		// and getSessionPath-based name backfill skips omp - omp History itself is
+		// unaffected (served by listSessions/readSessionMessages). Tracked as a
+		// follow-up (a list/read-warmed path cache would enable starred snapshots).
 		return null;
 	}
 
