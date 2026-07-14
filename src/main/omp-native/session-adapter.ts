@@ -10,7 +10,13 @@ import type {
 	AgentTreeNode,
 } from '../../shared/agent-runtime-features';
 import { OmpRpcClient } from './rpc-client';
-import type { OmpRpcCommand, OmpRpcEvent, OmpRpcTransport } from './types';
+import {
+	OMP_IMAGE_MEDIA_TYPES,
+	type OmpRpcCommand,
+	type OmpRpcEvent,
+	type OmpRpcImage,
+	type OmpRpcTransport,
+} from './types';
 
 export type OmpNativeSend = (channel: string, ...args: unknown[]) => void;
 export type OmpChildSpawner = (
@@ -25,6 +31,8 @@ export interface OmpNativeSessionOptions {
 	command: string;
 	env?: NodeJS.ProcessEnv;
 	agentSessionId?: string;
+	/** Provider-qualified OMP model selector (`provider:modelId`). */
+	model?: string;
 	send: OmpNativeSend;
 	spawn?: OmpChildSpawner;
 }
@@ -93,11 +101,15 @@ export class OmpNativeSessionAdapter {
 		return this.child.pid ?? 0;
 	}
 
-	async prompt(message: string): Promise<void> {
+	async prompt(message: string, images?: readonly string[]): Promise<void> {
 		await this.initialized;
 		this.turnInFlight = true;
 		try {
-			await this.client.command({ type: 'prompt', message });
+			await this.client.command({
+				type: 'prompt',
+				message,
+				...(images?.length ? { images: toOmpImages(images) } : {}),
+			});
 		} catch (error) {
 			this.turnInFlight = false;
 			throw error;
@@ -185,6 +197,7 @@ export class OmpNativeSessionAdapter {
 		} else {
 			await this.client.command({ type: 'new_session' });
 		}
+		if (this.options.model) await this.client.command(modelCommand(this.options.model));
 		await this.client.command({ type: 'set_subagent_subscription', level: 'events' });
 		await Promise.all([this.emitCommands(), this.refreshFeatures()]);
 	}
@@ -266,7 +279,15 @@ export class OmpNativeSessionAdapter {
 		}
 		if (callback.type === 'extension_ui_request') {
 			const id = stringAt(callback, 'id');
-			if (!id || this.resolvedApprovals.has(id)) return;
+			if (!id) {
+				this.options.send(
+					'process:stderr',
+					this.options.sessionId,
+					'OMP extension UI request is missing its response ID'
+				);
+				return;
+			}
+			if (this.resolvedApprovals.has(id)) return;
 			if (isChoiceRequest(stringAt(callback, 'method')) && approvalOptions(callback).length > 0) {
 				this.approvals.set(id, callback);
 				this.options.send(
@@ -275,6 +296,9 @@ export class OmpNativeSessionAdapter {
 				);
 				return;
 			}
+			// OMP blocks the active turn until every extension UI request has an
+			// explicit response. Unsupported interactive methods must therefore
+			// fail closed rather than being silently ignored.
 			this.rejectExtensionUiRequest(id, callback);
 			return;
 		}
@@ -335,6 +359,27 @@ function textFrom(record: Record<string, unknown>): string | undefined {
 	return undefined;
 }
 
+function toOmpImages(images: readonly string[]): OmpRpcImage[] {
+	return images.map((dataUrl) => {
+		const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl);
+		if (
+			!match ||
+			!OMP_IMAGE_MEDIA_TYPES.includes(match[1] as (typeof OMP_IMAGE_MEDIA_TYPES)[number])
+		)
+			throw new Error('OMP image attachments must be supported base64 image data URLs');
+		return { image: { mimeType: match[1] as OmpRpcImage['image']['mimeType'], data: match[2] } };
+	});
+}
+
+function modelCommand(selection: string): OmpRpcCommand {
+	const separator = selection.indexOf(':');
+	const provider = selection.slice(0, separator);
+	const modelId = selection.slice(separator + 1);
+	if (separator <= 0 || !modelId)
+		throw new Error('OMP model selection must use the provider:modelId format');
+	return { type: 'set_model', provider, modelId };
+}
+
 function commandName(value: unknown): string | undefined {
 	if (typeof value === 'string') return value;
 	return stringAt(asRecord(value), 'name');
@@ -357,13 +402,6 @@ function controlsFromState(
 				label: id,
 			})),
 			value: stringAt(state, 'thinkingLevel') ?? 'off',
-		},
-		{
-			id: 'composer-mode',
-			label: 'Composer mode',
-			kind: 'select',
-			options: ['build', 'plan', 'ask'].map((id) => ({ id, label: id })),
-			value: stringAt(state, 'composerMode') ?? 'build',
 		},
 		{
 			id: 'steering-mode',
@@ -500,14 +538,19 @@ function approvalOptions(callback: OmpRpcEvent): AgentApprovalRequest['options']
 			kind: kind === 'approve' || kind === 'deny' ? kind : 'custom',
 		});
 	}
-	return options;
+	const method = stringAt(callback, 'method');
+	if (options.length || (method !== 'confirm' && method !== 'extension_ui.confirm')) return options;
+	return [
+		{ id: 'approve', label: 'Approve', kind: 'approve' },
+		{ id: 'deny', label: 'Deny', kind: 'deny' },
+	];
 }
 
 function isChoiceRequest(method: string | undefined): boolean {
 	return (
 		method === 'select' ||
-		method === 'confirm' ||
 		method === 'extension_ui.select' ||
+		method === 'confirm' ||
 		method === 'extension_ui.confirm'
 	);
 }
@@ -538,14 +581,9 @@ function approvalFrom(callback: OmpRpcEvent, sessionId: string): AgentApprovalRe
 }
 
 function controlCommand(controlId: string, value: string | boolean): OmpRpcCommand | null {
-	if (controlId === 'model' && typeof value === 'string') {
-		const [provider, modelId] = value.split(':', 2);
-		return provider && modelId ? { type: 'set_model', provider, modelId } : null;
-	}
+	if (controlId === 'model' && typeof value === 'string') return modelCommand(value);
 	if (controlId === 'thinking-level' && typeof value === 'string')
 		return { type: 'set_thinking_level', level: value };
-	if (controlId === 'composer-mode' && typeof value === 'string')
-		return { type: 'set_follow_up_mode', mode: value === 'plan' ? 'one-at-a-time' : 'all' };
 	if (controlId === 'steering-mode' && typeof value === 'string')
 		return { type: 'set_steering_mode', mode: value };
 	if (controlId === 'auto-compaction' && typeof value === 'boolean')

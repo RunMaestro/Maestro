@@ -20,6 +20,7 @@ import {
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
+import { OmpNativeSessionAdapter } from '../../../../main/omp-native/session-adapter';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -238,6 +239,21 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 	})),
 }));
 
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	isPluginsFeatureEnabled: vi.fn(() => true),
+	getActivePluginManager: vi.fn(() => ({
+		getActiveRecords: () => [{ id: 'com.maestro.omp' }],
+		getContributions: () => ({ tools: [] }),
+	})),
+}));
+
+vi.mock('../../../../main/omp-native/session-adapter', () => ({
+	OmpNativeSessionAdapter: {
+		acquire: vi.fn(),
+		forSession: vi.fn(() => undefined),
+	},
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
@@ -410,6 +426,94 @@ describe('process IPC handlers', () => {
 				})
 			);
 			expect(result).toEqual({ pid: 12345, success: true });
+		});
+
+		it('forwards OMP images, configured model, and first-turn system prompt to the native adapter', async () => {
+			const prompt = vi.fn().mockResolvedValue(undefined);
+			const nativeAdapter = {
+				ready: Promise.resolve(),
+				pid: 9876,
+				prompt,
+			};
+			// The handler only consumes this narrow adapter surface.
+			vi.mocked(OmpNativeSessionAdapter.acquire).mockResolvedValue(
+				nativeAdapter as unknown as OmpNativeSessionAdapter
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'omp', command: 'omp' });
+
+			const handler = handlers.get('process:spawn');
+			const result = await handler!(undefined, {
+				sessionId: 'native-omp-inputs',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+				prompt: 'Describe this attachment',
+				images: ['data:image/png;base64,cG5nLWJ5dGVz'],
+				modelId: 'fallback:unused',
+				sessionCustomModel: 'fixture:fixture-fast',
+				appendSystemPrompt: 'Follow the project rules.',
+			});
+
+			expect(OmpNativeSessionAdapter.acquire).toHaveBeenCalledWith(
+				expect.objectContaining({ model: 'fixture:fixture-fast' })
+			);
+			expect(prompt).toHaveBeenCalledWith(
+				'Follow the project rules.\n\n---\n\n# User Request\n\nDescribe this attachment',
+				['data:image/png;base64,cG5nLWJ5dGVz']
+			);
+			expect(result).toEqual({ success: true, pid: 9876 });
+		});
+
+		it('does not duplicate the fallback system prompt when resuming a native OMP transcript', async () => {
+			const prompt = vi.fn().mockResolvedValue(undefined);
+			const nativeAdapter = {
+				ready: Promise.resolve(),
+				pid: 9877,
+				prompt,
+			};
+			// A resumed adapter has the same narrow surface as the initial adapter.
+			vi.mocked(OmpNativeSessionAdapter.acquire).mockResolvedValue(
+				nativeAdapter as unknown as OmpNativeSessionAdapter
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'omp', command: 'omp' });
+
+			const handler = handlers.get('process:spawn');
+			await handler!(undefined, {
+				sessionId: 'native-omp-resume',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+				prompt: 'Continue from the previous turn',
+				agentSessionId: 'existing-omp-session',
+				appendSystemPrompt: 'Follow the project rules.',
+			});
+
+			expect(prompt).toHaveBeenCalledWith('Continue from the previous turn', undefined);
+		});
+
+		it('fails closed to legacy spawning for read-only OMP sessions', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'omp',
+				requiresPty: false,
+				command: 'omp',
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 8765 });
+
+			const handler = handlers.get('process:spawn');
+			await handler!(undefined, {
+				sessionId: 'native-omp-readonly',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+				prompt: 'Read the repository',
+				permissionMode: 'readonly',
+			});
+
+			expect(OmpNativeSessionAdapter.acquire).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
 		it('should return pid on successful spawn', async () => {

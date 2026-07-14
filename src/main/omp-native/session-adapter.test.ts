@@ -180,6 +180,162 @@ describe('OmpNativeSessionAdapter', () => {
 		).toHaveLength(2);
 		expect(child.kill).not.toHaveBeenCalled();
 	});
+	it('applies the configured model before prompting and preserves staged image payloads', async () => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			frames.push(command);
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data:
+							command.type === 'get_available_models'
+								? { models: [] }
+								: command.type === 'get_available_commands'
+									? { commands: [] }
+									: command.type === 'get_messages'
+										? { messages: [] }
+										: command.type === 'get_subagents'
+											? { subagents: [] }
+											: command.type === 'get_session_stats'
+												? { stats: {} }
+												: { todoPhases: [] },
+					})
+				);
+			}
+			return true;
+		});
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-input-parity',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			model: 'fixture:fixture-fast',
+			send: vi.fn(),
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('describe the image', ['data:image/png;base64,cG5nLWJ5dGVz']);
+
+		const modelIndex = frames.findIndex((frame) => frame.type === 'set_model');
+		const promptIndex = frames.findIndex((frame) => frame.type === 'prompt');
+		expect(modelIndex).toBeGreaterThanOrEqual(0);
+		expect(modelIndex).toBeLessThan(promptIndex);
+		expect(frames[promptIndex]).toMatchObject({
+			type: 'prompt',
+			message: 'describe the image',
+			images: [{ image: { mimeType: 'image/png', data: 'cG5nLWJ5dGVz' } }],
+		});
+	});
+
+	it('projects confirm callbacks as approvals and fails closed for unknown interactive callbacks', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-callback-safety',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'confirm-without-options',
+			method: 'confirm',
+			title: 'Approve fixture tool?',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:approval-request',
+			expect.objectContaining({
+				id: 'confirm-without-options',
+				options: [
+					{ id: 'approve', label: 'Approve', kind: 'approve' },
+					{ id: 'deny', label: 'Deny', kind: 'deny' },
+				],
+			})
+		);
+
+		await adapter.prompt('a turn that can finish');
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'unknown-interactive',
+			method: 'form',
+			title: 'Unsupported interactive request',
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(extensionResponses(child)).toContainEqual({
+			type: 'extension_ui_response',
+			id: 'unknown-interactive',
+			cancelled: true,
+		});
+		emit(child, { type: 'turn_end' });
+		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-callback-safety', 0);
+	});
+
+	it('does not expose or mutate a composer control without a matching RPC command', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-no-composer-mode',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const features = send.mock.calls.find(
+			([channel]) => channel === 'process:runtime-features'
+		)?.[2] as { controls: Array<{ id: string }> } | undefined;
+		expect(features?.controls).not.toContainEqual(expect.objectContaining({ id: 'composer-mode' }));
+		await expect(adapter.setControl('composer-mode', 'plan')).resolves.toBe(false);
+		expect(child.stdin.write).not.toHaveBeenCalledWith(
+			expect.stringContaining('"type":"set_follow_up_mode"')
+		);
+	});
+
 	it('preserves callback option IDs, rejects mismatches without consuming approval, and ignores resolved replays', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {

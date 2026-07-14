@@ -80,13 +80,23 @@ export async function handleProcessSpawn(
 
 	// Native OMP uses a dedicated, long-lived JSONL RPC process instead of the
 	// one-shot CLI spawner. It is deliberately gated on the first-party plugin:
-	// without it the legacy batch path below remains untouched.
+	// without it the legacy batch path below remains untouched. OMP 16.4.8 does
+	// not expose a read-only permission control, so read-only sessions fail
+	// closed to that legacy path rather than starting with full tool access.
 	const pluginsFeatureEnabled = isPluginsFeatureEnabled();
 	const activePluginManager = getActivePluginManager();
 	const ompPluginActive =
 		activePluginManager?.getActiveRecords().some((record) => record.id === 'com.maestro.omp') ??
 		false;
-	if (config.toolType === 'omp' && pluginsFeatureEnabled && ompPluginActive) {
+	const ompReadOnlyRequiresLegacy =
+		config.permissionMode === 'readonly' ||
+		(config.permissionMode === undefined && config.readOnlyMode === true);
+	if (
+		config.toolType === 'omp' &&
+		pluginsFeatureEnabled &&
+		ompPluginActive &&
+		!ompReadOnlyRequiresLegacy
+	) {
 		const send = (channel: string, ...args: unknown[]) => {
 			if (safeSend) {
 				safeSend(channel, ...args);
@@ -102,11 +112,21 @@ export async function handleProcessSpawn(
 			command: config.sessionCustomPath || agent?.path || agent?.command || config.command || 'omp',
 			env: { ...process.env, ...config.sessionCustomEnvVars },
 			agentSessionId: config.agentSessionId,
+			model: config.sessionCustomModel || config.modelId,
 			send,
 		});
+		// The OMP RPC protocol has no system-prompt command. Match the legacy
+		// fallback: prepend it to the first user turn only, and do not duplicate
+		// it when resuming a transcript that already contains the first turn.
+		const prompt =
+			config.appendSystemPrompt && !config.agentSessionId
+				? config.prompt
+					? `${config.appendSystemPrompt}\n\n---\n\n# User Request\n\n${config.prompt}`
+					: config.appendSystemPrompt
+				: config.prompt;
 		try {
 			await adapter.ready;
-			if (config.prompt) await adapter.prompt(config.prompt);
+			if (prompt) await adapter.prompt(prompt, config.images);
 			return { success: true, pid: adapter.pid };
 		} catch (error) {
 			send(
@@ -122,6 +142,7 @@ export async function handleProcessSpawn(
 			pluginsFeatureEnabled,
 			activePluginManagerPresent: activePluginManager !== null,
 			ompPluginActive,
+			ompReadOnlyRequiresLegacy,
 		});
 	}
 
