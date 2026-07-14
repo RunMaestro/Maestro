@@ -7,6 +7,9 @@ import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
+import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
+import type { AccountRegistry } from '../../accounts/account-registry';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -83,6 +86,9 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -105,6 +111,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		settingsStore,
 		getMainWindow,
 		safeSend,
+		getAccountSwitcher,
+		getAccountAuthRecovery,
+		getAccountRegistry,
 	} = deps;
 
 	// Wire the Claude Code permission relay: surface requests to the renderer
@@ -123,8 +132,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
-			handleProcessSpawn(config, {
+		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) => {
+			// Record the prompt for account switch / auth recovery resume. Batch-mode
+			// agents deliver prompts via the spawn config (never process:write), so
+			// without this the switch respawn has nothing to re-send.
+			if (config.prompt) {
+				getAccountSwitcher?.()?.recordLastPrompt(config.sessionId, config.prompt, config.images);
+				getAccountAuthRecovery?.()?.recordLastPrompt(
+					config.sessionId,
+					config.prompt,
+					config.images
+				);
+			}
+			return handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,
 				agentConfigsStore,
@@ -133,8 +153,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
-			})
-		)
+				getAccountRegistry,
+			});
+		})
 	);
 
 	// Write data to a process
@@ -146,7 +167,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionId,
 				dataLength: data.length,
 			});
-			return processManager.write(sessionId, data);
+			const result = processManager.write(sessionId, data);
+
+			// Record the last prompt for account switching/auth recovery resume
+			const accountSwitcher = getAccountSwitcher?.();
+			if (accountSwitcher) {
+				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+			const authRecovery = getAccountAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.recordLastPrompt(sessionId, data);
+			}
+
+			return result;
 		})
 	);
 

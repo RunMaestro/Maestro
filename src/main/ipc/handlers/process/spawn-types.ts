@@ -40,6 +40,8 @@ export interface SpawnProcessConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	// Account multiplexing
+	accountId?: string; // Account to use for this session
 	// Batch Mode (Claude Code only). When true and a maestro-p binary resolves,
 	// the spawner picks between maestro-p (Time Limits / Max plan) and
 	// claude --print (API Limits) based on the latest usage snapshot.

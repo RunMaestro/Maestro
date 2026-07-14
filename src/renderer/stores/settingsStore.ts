@@ -218,6 +218,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	pianola: false,
 	plugins: false,
 	concerto: false,
+	virtuosos: false,
 	groupsPlus: false,
 };
 

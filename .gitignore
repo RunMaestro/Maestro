@@ -63,3 +63,6 @@ yarn-error.log*
 # Claude Code local settings
 .claude/settings.local.json
 .cue-migration-backup-*/
+
+# SlopTimize CLI local cache
+.sloptimize/

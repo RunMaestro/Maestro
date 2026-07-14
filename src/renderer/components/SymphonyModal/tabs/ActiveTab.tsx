@@ -4,13 +4,22 @@ import { RefreshCw, Music } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { ActiveContribution } from '../../../../shared/symphony-types';
 import { ActiveContributionCard } from '../components/ActiveContributionCard';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import { useSessionStore } from '../../../stores/sessionStore';
 
-function sessionNameMapEquality(a: Map<string, string>, b: Map<string, string>): boolean {
+type SessionDisplay = { name: string; accountName?: string };
+
+function sessionDisplayMapEquality(
+	a: Map<string, SessionDisplay>,
+	b: Map<string, SessionDisplay>
+): boolean {
 	if (a === b) return true;
 	if (a.size !== b.size) return false;
-	for (const [k, v] of a) {
-		if (b.get(k) !== v) return false;
+	for (const [id, display] of a) {
+		const other = b.get(id);
+		if (!other || other.name !== display.name || other.accountName !== display.accountName) {
+			return false;
+		}
 	}
 	return true;
 }
@@ -42,15 +51,18 @@ export const ActiveTab = memo(function ActiveTab({
 	onSelectSession,
 	onCloseModal,
 }: ActiveTabProps) {
-	// Narrow id→name map so streaming logs do not re-render this tab.
-	const sessionNames = useStoreWithEqualityFn(
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
+	// Narrow id-to-display map so streaming logs do not re-render this tab.
+	const sessionDisplays = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => {
-			const map = new Map<string, string>();
-			for (const sess of s.sessions) map.set(sess.id, sess.name);
+			const map = new Map<string, SessionDisplay>();
+			for (const sess of s.sessions) {
+				map.set(sess.id, { name: sess.name, accountName: sess.accountName });
+			}
 			return map;
 		},
-		sessionNameMapEquality
+		sessionDisplayMapEquality
 	);
 	return (
 		<div className="flex-1 flex flex-col overflow-hidden">
@@ -110,8 +122,9 @@ export const ActiveTab = memo(function ActiveTab({
 				) : (
 					<div className="grid grid-cols-2 gap-4">
 						{activeContributions.map((contribution) => {
-							const sessionName = sessionNames.get(contribution.sessionId) ?? null;
-							const hasSession = sessionNames.has(contribution.sessionId);
+							const sessionDisplay = sessionDisplays.get(contribution.sessionId);
+							const sessionName = sessionDisplay?.name ?? null;
+							const hasSession = !!sessionDisplay;
 							return (
 								<ActiveContributionCard
 									key={contribution.id}
@@ -121,6 +134,7 @@ export const ActiveTab = memo(function ActiveTab({
 									onSync={() => onSyncContribution(contribution.id)}
 									isSyncing={syncingContributionId === contribution.id}
 									sessionName={sessionName}
+									accountName={virtuososEnabled ? sessionDisplay?.accountName : undefined}
 									onNavigateToSession={() => {
 										if (hasSession) {
 											onSelectSession(contribution.sessionId);

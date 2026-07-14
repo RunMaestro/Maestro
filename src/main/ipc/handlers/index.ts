@@ -80,7 +80,10 @@ import {
 	wireEmptySecondaryWindowAutoClose,
 	WindowsHandlerDependencies,
 } from './windows';
+import { registerAccountHandlers, AccountHandlerDependencies } from './accounts';
+import { registerProviderHandlers, ProviderHandlerDependencies } from './providers';
 import { AgentDetector } from '../../agents';
+import type { AccountRegistry } from '../../accounts/account-registry';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import type { WindowRegistry } from '../../window-registry';
@@ -156,6 +159,10 @@ export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
 export { wireEmptySecondaryWindowAutoClose };
 export type { WindowsHandlerDependencies };
+export { registerAccountHandlers };
+export type { AccountHandlerDependencies };
+export { registerProviderHandlers };
+export type { ProviderHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -202,6 +209,7 @@ export interface HandlerDependencies {
 	// later phase). Until then the windows:* handlers report "not initialized".
 	getWindowRegistry?: () => WindowRegistry | null;
 	getWindowManager?: () => WindowManager | null;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -291,6 +299,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		getAccountRegistry: deps.getAccountRegistry || (() => null),
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({

@@ -12,6 +12,7 @@ import {
 	Server,
 	Tag,
 	Terminal,
+	User,
 	Variable,
 	X,
 } from 'lucide-react';
@@ -22,6 +23,8 @@ import { formatRuntime } from './runtime';
 export interface ProcessDetailViewProps {
 	theme: Theme;
 	detail: ProcessDetailData;
+	/** Assigned account name for the owning agent (account multiplexing) */
+	accountName?: string;
 	onBack: () => void;
 	onClose: () => void;
 }
@@ -30,7 +33,13 @@ export interface ProcessDetailViewProps {
 // so Escape (handled by useModalLayer in the shell) routes back to the list view.
 const ENV_VAR_COLLAPSED_LIMIT = 5;
 
-export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDetailViewProps) {
+export function ProcessDetailView({
+	theme,
+	detail,
+	accountName,
+	onBack,
+	onClose,
+}: ProcessDetailViewProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [envExpanded, setEnvExpanded] = useState(false);
 
@@ -170,6 +179,27 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 							{new Date(detail.startTime).toLocaleString()}
 						</span>
 					</div>
+
+					{/* Account Info (account multiplexing) */}
+					{accountName && (
+						<div
+							className="col-span-2 p-4 rounded-lg"
+							style={{ backgroundColor: theme.colors.bgMain }}
+						>
+							<div className="flex items-center gap-2 mb-2">
+								<User className="w-4 h-4" style={{ color: theme.colors.accent }} />
+								<span
+									className="text-xs font-medium uppercase tracking-wide"
+									style={{ color: theme.colors.textDim }}
+								>
+									Virtuoso
+								</span>
+							</div>
+							<span className="text-sm" style={{ color: theme.colors.textMain }}>
+								{accountName}
+							</span>
+						</div>
+					)}
 
 					{/* Agent Session ID — half width (UUID, ~36 chars) */}
 					{detail.agentSessionId && (

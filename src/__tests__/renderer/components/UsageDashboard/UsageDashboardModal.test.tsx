@@ -167,6 +167,9 @@ function setEncoreFlags({ maestroCue, usageStats }: { maestroCue: boolean; usage
 			usageStats,
 			symphony: false,
 			maestroCue,
+			// Tab-ordering tests assert the Virtuosos tab position, which only
+			// exists while the Virtuosos Encore flag is on
+			virtuosos: true,
 		},
 	});
 }
@@ -205,6 +208,10 @@ function seedCodexUsageSnapshots() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Virtuosos tab only exists while the Encore flag is on
+	useSettingsStore.setState((s) => ({
+		encoreFeatures: { ...s.encoreFeatures, virtuosos: true },
+	}));
 	useClaudeUsageStore.getState().__resetForTests();
 	useCodexUsageStore.getState().__resetForTests();
 	// The dashboard remembers the last-selected tab in the (singleton) uiStore.
@@ -319,11 +326,13 @@ describe('UsageDashboardModal — tab ordering', () => {
 		const labels = screen.getAllByRole('tab').map((el) => el.textContent?.trim());
 		const autoRunIdx = labels.indexOf('Auto Run');
 		const cueIdx = labels.indexOf('Cue');
+		const virtuososIdx = labels.indexOf('Virtuosos');
 		const shortcutsIdx = labels.indexOf('Shortcuts');
 
 		expect(autoRunIdx).toBeGreaterThanOrEqual(0);
 		expect(cueIdx).toBe(autoRunIdx + 1);
-		expect(shortcutsIdx).toBe(cueIdx + 1);
+		expect(virtuososIdx).toBe(cueIdx + 1);
+		expect(shortcutsIdx).toBe(virtuososIdx + 1);
 	});
 });
 

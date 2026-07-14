@@ -30,6 +30,7 @@ import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReader
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * View modes for the modal
@@ -60,6 +61,8 @@ interface SessionListItem {
 	agentSessionId?: string;
 	estimatedTokens: number;
 	lastActivity?: number;
+	accountId?: string;
+	accountName?: string;
 }
 
 export interface MergeSessionModalProps {
@@ -148,6 +151,7 @@ export function MergeSessionModal({
 	onClose,
 	onMerge,
 }: MergeSessionModalProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	// View mode state
 	const [viewMode, setViewMode] = useState<ViewMode>('search');
 
@@ -251,6 +255,8 @@ export function MergeSessionModal({
 						estimatedTokens: estimateTokens(tab.logs),
 						lastActivity:
 							tab.logs.length > 0 ? Math.max(...tab.logs.map((l) => l.timestamp)) : tab.createdAt,
+						accountId: session.accountId,
+						accountName: session.accountName,
 					});
 				}
 			}
@@ -889,6 +895,19 @@ export function MergeSessionModal({
 																					{item.agentSessionId.split('-')[0].toUpperCase()}
 																				</span>
 																			)}
+																			{virtuososEnabled && item.accountId && (
+																				<span
+																					style={{
+																						fontSize: '10px',
+																						color: isTarget
+																							? theme.colors.accentForeground
+																							: theme.colors.textDim,
+																						marginLeft: '4px',
+																					}}
+																				>
+																					({item.accountName || item.accountId})
+																				</span>
+																			)}
 																		</div>
 																	</div>
 																	<span
@@ -939,6 +958,29 @@ export function MergeSessionModal({
 								~{formatTokensCompact(sourceTokens)} tokens
 							</span>
 						</div>
+						{virtuososEnabled && sourceSession?.accountId && (
+							<div
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: '6px',
+									fontSize: '11px',
+									color: theme.colors.textDim,
+									marginTop: '4px',
+								}}
+							>
+								<span
+									style={{
+										display: 'inline-block',
+										width: '6px',
+										height: '6px',
+										borderRadius: '50%',
+										backgroundColor: theme.colors.success,
+									}}
+								/>
+								Account: {sourceSession.accountName || sourceSession.accountId}
+							</div>
+						)}
 
 						{(selectedTarget || (viewMode === 'paste' && pastedIdMatch)) && (
 							<>
@@ -980,6 +1022,35 @@ export function MergeSessionModal({
 							</>
 						)}
 					</div>
+
+					{/* Account mismatch warning */}
+					{(() => {
+						const target = viewMode === 'paste' ? pastedIdMatch : selectedTarget;
+						if (
+							sourceSession?.accountId &&
+							target?.accountId &&
+							sourceSession.accountId !== target.accountId
+						) {
+							return (
+								<div
+									style={{
+										padding: '8px 12px',
+										backgroundColor: theme.colors.accentDim || `${theme.colors.accent}15`,
+										borderRadius: '4px',
+										fontSize: '11px',
+										color: theme.colors.textDim,
+										marginTop: '8px',
+									}}
+								>
+									Note: Source and target sessions use different accounts (
+									{sourceSession.accountName || sourceSession.accountId} →{' '}
+									{target.accountName || target.accountId}). Session files are shared via symlinks,
+									so this merge should work seamlessly.
+								</div>
+							);
+						}
+						return null;
+					})()}
 
 					{/* Options */}
 					<fieldset className="space-y-2">

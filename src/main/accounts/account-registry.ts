@@ -1,0 +1,403 @@
+import type Store from 'electron-store';
+import type { AccountStoreData } from '../stores/account-store-types';
+import type {
+	AccountProfile,
+	AccountAssignment,
+	AccountSwitchConfig,
+	AccountId,
+	AccountStatus,
+	MultiplexableAgent,
+} from '../../shared/account-types';
+import { DEFAULT_TOKEN_WINDOW_MS, ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
+import { generateUUID } from '../../shared/uuid';
+import { logger } from '../utils/logger';
+import { getWindowBounds } from './account-utils';
+
+/** Minimal interface for usage stats queries; avoids hard dependency on StatsDB */
+export interface AccountUsageStatsProvider {
+	getAccountUsageInWindow(
+		id: string,
+		start: number,
+		end: number
+	): {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
+	};
+	isReady(): boolean;
+}
+
+const LOG_CONTEXT = 'AccountRegistry';
+
+// Process session IDs carry per-surface suffixes (`${base}-ai-${tabId}`,
+// `${base}-terminal`, `${base}-synopsis-${ts}`, `${base}-batch-${n}`) while the
+// renderer's manual assign/cleanup/reconcile paths use the bare agent ID.
+// Assignments are per-AGENT (mirroring Session.accountId), so every key is
+// normalized to the base ID; otherwise a spawn-time assignment under
+// `x-ai-tab1` is invisible to a lookup for `x` and vice versa. Patterns mirror
+// src/renderer/utils/sessionIdParser.ts.
+const REGEX_AI_TAB_SUFFIX = /^(.+)-ai-.+$/;
+const REGEX_SYNOPSIS_SUFFIX = /^(.+)-synopsis-\d+$/;
+const REGEX_BATCH_SUFFIX = /^(.+)-batch-\d+$/;
+const REGEX_TERMINAL_SUFFIX = /^(.+)-terminal(?:-.+)?$/;
+
+/** Strip known process-suffix decorations down to the base agent session ID. */
+export function normalizeAssignmentSessionId(sessionId: string): string {
+	for (const re of [
+		REGEX_AI_TAB_SUFFIX,
+		REGEX_SYNOPSIS_SUFFIX,
+		REGEX_BATCH_SUFFIX,
+		REGEX_TERMINAL_SUFFIX,
+	]) {
+		const match = sessionId.match(re);
+		if (match) return match[1];
+	}
+	if (sessionId.endsWith('-ai')) return sessionId.slice(0, -3);
+	return sessionId;
+}
+
+export class AccountRegistry {
+	constructor(private store: Store<AccountStoreData>) {}
+
+	// --- Account CRUD ---
+
+	/** Get all registered accounts */
+	getAll(): AccountProfile[] {
+		const accounts = this.store.get('accounts', {});
+		return Object.values(accounts);
+	}
+
+	/** Get a single account by ID */
+	get(id: AccountId): AccountProfile | null {
+		const accounts = this.store.get('accounts', {});
+		return accounts[id] ?? null;
+	}
+
+	/** Find account by email */
+	findByEmail(email: string): AccountProfile | null {
+		return this.getAll().find((a) => a.email === email) ?? null;
+	}
+
+	/** Find account by config directory path */
+	findByConfigDir(configDir: string): AccountProfile | null {
+		return this.getAll().find((a) => a.configDir === configDir) ?? null;
+	}
+
+	/** Register a new account. Returns the created profile. */
+	add(params: {
+		name: string;
+		email: string;
+		configDir: string;
+		agentType?: MultiplexableAgent;
+		authMethod?: 'oauth' | 'api-key';
+	}): AccountProfile {
+		// Check for duplicate email
+		const existing = this.findByEmail(params.email);
+		if (existing) {
+			throw new Error(`Account with email "${params.email}" already exists (ID: ${existing.id})`);
+		}
+
+		const now = Date.now();
+		const isFirst = this.getAll().length === 0;
+		const profile: AccountProfile = {
+			id: generateUUID(),
+			name: params.name,
+			email: params.email,
+			configDir: params.configDir,
+			agentType: params.agentType ?? 'claude-code',
+			status: 'active',
+			authMethod: params.authMethod ?? 'oauth',
+			addedAt: now,
+			lastUsedAt: 0,
+			lastThrottledAt: 0,
+			tokenLimitPerWindow: 0,
+			tokenWindowMs: DEFAULT_TOKEN_WINDOW_MS,
+			isDefault: isFirst, // First account is default
+			autoSwitchEnabled: true,
+		};
+
+		const accounts = this.store.get('accounts', {});
+		accounts[profile.id] = profile;
+		this.store.set('accounts', accounts);
+
+		// Add to rotation order
+		const order = this.store.get('rotationOrder', []);
+		order.push(profile.id);
+		this.store.set('rotationOrder', order);
+
+		return profile;
+	}
+
+	/** Update an existing account profile. Returns updated profile or null if not found. */
+	update(id: AccountId, updates: Partial<Omit<AccountProfile, 'id'>>): AccountProfile | null {
+		const accounts = this.store.get('accounts', {});
+		const existing = accounts[id];
+		if (!existing) return null;
+
+		// If setting this as default, clear default from others
+		if (updates.isDefault) {
+			for (const acct of Object.values(accounts)) {
+				acct.isDefault = false;
+			}
+		}
+
+		accounts[id] = { ...existing, ...updates };
+		this.store.set('accounts', accounts);
+		return accounts[id];
+	}
+
+	/** Remove an account. Returns true if found and removed. */
+	remove(id: AccountId): boolean {
+		const accounts = this.store.get('accounts', {});
+		if (!accounts[id]) return false;
+
+		delete accounts[id];
+		this.store.set('accounts', accounts);
+
+		// Remove from rotation order
+		const order = this.store.get('rotationOrder', []);
+		this.store.set(
+			'rotationOrder',
+			order.filter((aid) => aid !== id)
+		);
+
+		// Remove any assignments pointing to this account
+		const assignments = this.store.get('assignments', {});
+		for (const [sid, assignment] of Object.entries(assignments)) {
+			if (assignment.accountId === id) {
+				delete assignments[sid];
+			}
+		}
+		this.store.set('assignments', assignments);
+
+		return true;
+	}
+
+	/** Update account status (active, throttled, expired, disabled) */
+	setStatus(id: AccountId, status: AccountStatus): void {
+		const accounts = this.store.get('accounts', {});
+		if (!accounts[id]) return;
+		accounts[id].status = status;
+		if (status === 'throttled') {
+			accounts[id].lastThrottledAt = Date.now();
+		}
+		this.store.set('accounts', accounts);
+	}
+
+	/** Mark account as recently used */
+	touchLastUsed(id: AccountId): void {
+		const accounts = this.store.get('accounts', {});
+		if (!accounts[id]) return;
+		accounts[id].lastUsedAt = Date.now();
+		this.store.set('accounts', accounts);
+	}
+
+	// --- Assignments ---
+
+	/** Assign an account to a session (keyed by the base agent session ID) */
+	assignToSession(sessionId: string, accountId: AccountId): AccountAssignment {
+		const baseId = normalizeAssignmentSessionId(sessionId);
+		const assignment: AccountAssignment = {
+			sessionId: baseId,
+			accountId,
+			assignedAt: Date.now(),
+		};
+		const assignments = this.store.get('assignments', {});
+		assignments[baseId] = assignment;
+		this.store.set('assignments', assignments);
+		this.touchLastUsed(accountId);
+		return assignment;
+	}
+
+	/** Get the account assigned to a session (suffixed process IDs resolve to their agent) */
+	getAssignment(sessionId: string): AccountAssignment | null {
+		const assignments = this.store.get('assignments', {});
+		return assignments[normalizeAssignmentSessionId(sessionId)] ?? null;
+	}
+
+	/** Remove a session assignment (e.g., when session is closed) */
+	removeAssignment(sessionId: string): void {
+		const assignments = this.store.get('assignments', {});
+		delete assignments[normalizeAssignmentSessionId(sessionId)];
+		this.store.set('assignments', assignments);
+	}
+
+	/** Get all current assignments */
+	getAllAssignments(): AccountAssignment[] {
+		return Object.values(this.store.get('assignments', {}));
+	}
+
+	/**
+	 * Get the default account (first one marked isDefault, or first active).
+	 * When agentType is given, only accounts of that provider are considered
+	 * (legacy profiles without agentType count as claude-code).
+	 */
+	getDefaultAccount(agentType?: MultiplexableAgent): AccountProfile | null {
+		const all = this.getAll().filter(
+			(a) => !agentType || (a.agentType ?? 'claude-code') === agentType
+		);
+		return (
+			all.find((a) => a.isDefault && a.status === 'active') ??
+			all.find((a) => a.status === 'active') ??
+			null
+		);
+	}
+
+	/**
+	 * Select the next account using the configured strategy.
+	 * When statsDB is provided, uses actual token consumption for routing.
+	 * Falls back to lastUsedAt-based selection when statsDB is unavailable.
+	 */
+	selectNextAccount(
+		excludeIds: AccountId[] = [],
+		statsDB?: AccountUsageStatsProvider,
+		agentType?: MultiplexableAgent
+	): AccountProfile | null {
+		const config = this.getSwitchConfig();
+		const available = this.getAll().filter(
+			(a) =>
+				a.status === 'active' &&
+				a.autoSwitchEnabled &&
+				!excludeIds.includes(a.id) &&
+				(!agentType || (a.agentType ?? 'claude-code') === agentType)
+		);
+		if (available.length === 0) return null;
+
+		if (config.selectionStrategy === 'round-robin') {
+			const order = this.store
+				.get('rotationOrder', [])
+				.filter((id) => available.some((a) => a.id === id));
+			if (order.length === 0) return available[0];
+			const storedRotationIndex: unknown = this.store.get('rotationIndex', {});
+			const rotationIndexByAgentType: Record<string, number> =
+				typeof storedRotationIndex === 'number'
+					? { 'claude-code': storedRotationIndex }
+					: storedRotationIndex &&
+						  typeof storedRotationIndex === 'object' &&
+						  !Array.isArray(storedRotationIndex)
+						? Object.fromEntries(
+								Object.entries(storedRotationIndex).filter(([, value]) => typeof value === 'number')
+							)
+						: {};
+			const rotationKey = agentType ?? 'claude-code';
+			const idx = ((rotationIndexByAgentType[rotationKey] ?? 0) + 1) % order.length;
+			this.store.set('rotationIndex', { ...rotationIndexByAgentType, [rotationKey]: idx });
+			return available.find((a) => a.id === order[idx]) ?? available[0];
+		}
+
+		// least-used: prefer capacity-aware selection when statsDB is available
+		if (statsDB && statsDB.isReady()) {
+			return this.selectByRemainingCapacity(available, statsDB);
+		}
+
+		// Fallback: sort by lastUsedAt ascending (least recently used first)
+		available.sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+		return available[0];
+	}
+
+	/**
+	 * Select the account with the most remaining capacity in its current window.
+	 * Accounts without configured limits are treated as having infinite remaining capacity,
+	 * but deprioritized behind accounts with known remaining capacity.
+	 */
+	private selectByRemainingCapacity(
+		accounts: AccountProfile[],
+		statsDB: AccountUsageStatsProvider
+	): AccountProfile {
+		const now = Date.now();
+
+		const scored = accounts.map((account) => {
+			const windowMs = account.tokenWindowMs || DEFAULT_TOKEN_WINDOW_MS;
+			const { start: windowStart, end: windowEnd } = getWindowBounds(now, windowMs);
+
+			const usage = statsDB.getAccountUsageInWindow(account.id, windowStart, windowEnd);
+			const totalTokens =
+				usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+
+			let remainingCapacity: number;
+
+			if (account.tokenLimitPerWindow > 0) {
+				remainingCapacity = Math.max(0, account.tokenLimitPerWindow - totalTokens);
+			} else {
+				remainingCapacity = Infinity;
+			}
+
+			// Deprioritize accounts that were recently throttled (within last 2 windows)
+			const recentThrottlePenalty =
+				account.lastThrottledAt > 0 && now - account.lastThrottledAt < windowMs * 2 ? 0.5 : 1.0;
+
+			return {
+				account,
+				remainingCapacity:
+					remainingCapacity === Infinity ? Infinity : remainingCapacity * recentThrottlePenalty,
+			};
+		});
+
+		// Sort: most remaining capacity first
+		const hasLimits = scored.some((s) => s.remainingCapacity !== Infinity);
+
+		if (hasLimits) {
+			scored.sort((a, b) => {
+				// Finite capacity always before infinite
+				if (a.remainingCapacity === Infinity && b.remainingCapacity !== Infinity) return 1;
+				if (a.remainingCapacity !== Infinity && b.remainingCapacity === Infinity) return -1;
+				// Both finite: higher remaining first
+				return (b.remainingCapacity as number) - (a.remainingCapacity as number);
+			});
+		} else {
+			// No limits configured on any account; fall back to LRU
+			scored.sort((a, b) => a.account.lastUsedAt - b.account.lastUsedAt);
+		}
+
+		return scored[0].account;
+	}
+
+	// --- Reconciliation ---
+
+	/**
+	 * Reconcile assignments with a list of active session IDs.
+	 * Removes assignments for sessions that no longer exist and migrates any
+	 * legacy suffixed keys (`x-ai-tab1`) to their base agent ID.
+	 * Called on app startup after session restore.
+	 */
+	reconcileAssignments(activeSessionIds: Set<string>): number {
+		const assignments = this.store.get('assignments', {});
+		let changed = 0;
+		for (const [key, assignment] of Object.entries(assignments)) {
+			const baseId = normalizeAssignmentSessionId(key);
+			if (!activeSessionIds.has(baseId)) {
+				// Session no longer exists; drop the raw key (bypass the
+				// normalizing removeAssignment so legacy suffixed keys are hit).
+				delete assignments[key];
+				changed++;
+			} else if (key !== baseId) {
+				// Legacy suffixed key for a live session; migrate to the base ID
+				// (an existing base entry wins; it is the newer keying scheme).
+				if (!assignments[baseId]) {
+					assignments[baseId] = { ...assignment, sessionId: baseId };
+				}
+				delete assignments[key];
+				changed++;
+			}
+		}
+		if (changed > 0) {
+			this.store.set('assignments', assignments);
+			logger.info(`Reconciled ${changed} stale account assignments`, LOG_CONTEXT);
+		}
+		return changed;
+	}
+
+	// --- Switch Config ---
+
+	getSwitchConfig(): AccountSwitchConfig {
+		return this.store.get('switchConfig', ACCOUNT_SWITCH_DEFAULTS);
+	}
+
+	updateSwitchConfig(updates: Partial<AccountSwitchConfig>): AccountSwitchConfig {
+		const current = this.getSwitchConfig();
+		const updated = { ...current, ...updates };
+		this.store.set('switchConfig', updated);
+		return updated;
+	}
+}

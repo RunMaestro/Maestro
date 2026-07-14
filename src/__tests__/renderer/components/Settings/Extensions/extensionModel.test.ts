@@ -95,6 +95,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'opencodeServer',
 			'concerto',
 			'groupsPlus',
+			'virtuosos',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {

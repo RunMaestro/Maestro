@@ -1,5 +1,5 @@
 /**
- * useSessionLifecycle — extracted from App.tsx (Phase 2H)
+ * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
  * Owns session operation callbacks and session-level effects:
  *   - handleSaveEditAgent: persist agent config changes
@@ -100,6 +100,7 @@ export interface SessionLifecycleReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
+		accountId?: string,
 		additionalDirectories?: AdditionalDirectory[]
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
@@ -172,8 +173,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
+			accountId?: string,
 			additionalDirectories?: AdditionalDirectory[]
 		) => {
+			const previousAccountId = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)?.accountId;
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
@@ -199,6 +205,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// cleared on a provider switch below (unlike maestroP fields).
 						retryOnAvailabilityErrors,
 						retryOnTokenExhaustion,
+						...(accountId !== undefined ? { accountId } : {}),
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -245,13 +252,54 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 						// Kill the existing AI process for this session
 						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist — that's fine
+							// Process may not exist - that's fine
 						});
 					}
 
 					return { ...s, ...updatedFields };
 				})
 			);
+
+			// Handle account change: resolve name immediately, then trigger switch/assign
+			if (accountId) {
+				const fromAccountId = previousAccountId;
+
+				// Resolve account name and update session right away
+				window.maestro.accounts
+					.list()
+					.then((accounts) => {
+						const account = (accounts as Array<{ id: string; name: string }>).find(
+							(a) => a.id === accountId
+						);
+						if (account) {
+							useSessionStore.getState().setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== sessionId) return s;
+									return { ...s, accountId, accountName: account.name };
+								})
+							);
+						}
+					})
+					.catch(() => {});
+
+				if (fromAccountId && fromAccountId !== accountId) {
+					// Full switch: kills running process, reassigns, respawns with new CLAUDE_CONFIG_DIR
+					window.maestro.accounts
+						.executeSwitch({
+							sessionId,
+							fromAccountId,
+							toAccountId: accountId,
+							reason: 'manual',
+							automatic: false,
+						})
+						.catch((err) =>
+							captureException(err, { extra: { operation: 'accounts:executeSwitch' } })
+						);
+				} else {
+					// First assignment or same account - just update registry
+					window.maestro.accounts.assign(sessionId, accountId).catch(() => {});
+				}
+			}
 		},
 		[]
 	);
@@ -444,7 +492,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			})
 		);
 
-		// Fire and forget — generate name via ephemeral agent
+		// Fire and forget - generate name via ephemeral agent
 		window.maestro.tabNaming
 			.generateTabName({
 				userMessage: summary,
@@ -528,7 +576,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				});
 			}
 
-			// Kill terminal tab PTYs — each tab has its own PTY with ID {sessionId}-terminal-{tabId}
+			// Kill terminal tab PTYs - each tab has its own PTY with ID {sessionId}-terminal-{tabId}
 			for (const tab of session.terminalTabs || []) {
 				try {
 					await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
@@ -545,6 +593,15 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'delete-playbooks' },
+				});
+			}
+
+			// Clean up account assignment and switcher tracking
+			try {
+				await window.maestro.accounts.cleanupSession(id);
+			} catch (error) {
+				captureException(error, {
+					extra: { sessionId: id, operation: 'cleanup-account-session' },
 				});
 			}
 
@@ -592,7 +649,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const toggleTabStar = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		// Star toggle only applies when an AI tab is the visible view — not when a
+		// Star toggle only applies when an AI tab is the visible view - not when a
 		// terminal, file preview, or browser tab is focused.
 		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
 			return;
@@ -638,7 +695,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const { showUnreadOnly } = useUIStore.getState();
 
 		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab (only if in AI mode —
+			// Entering filter mode: save current active tab (only if in AI mode -
 			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
 			const wasAiMode =
 				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;

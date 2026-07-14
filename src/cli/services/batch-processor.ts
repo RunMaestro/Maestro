@@ -1,6 +1,7 @@
 // Batch processor service for CLI
 // Executes playbooks and yields JSONL events
 
+import * as path from 'path';
 import type { Playbook, SessionInfo, UsageStats, HistoryEntry } from '../../shared/types';
 import type { JsonlEvent } from '../output/jsonl';
 import {
@@ -11,7 +12,9 @@ import {
 	writeDoc,
 } from './agent-spawner';
 import { captureCliRun } from './agent-run-capture';
-import { addHistoryEntry, readGroups } from './storage';
+import { readAccountsFromStore, getAccountByIdOrName, getDefaultAccount } from './account-reader';
+import type { CLIAccountInfo } from './account-reader';
+import { addHistoryEntry, readGroups, readSettingValue } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
@@ -31,6 +34,57 @@ import { detectHaltMarker } from '../../shared/autorun/haltMarker';
 export { detectHaltMarker };
 
 /**
+ * Resolve the account configDir for a given task, based on CLI options.
+ * - If --account is set, use that specific account (must match the task's provider).
+ * - If --account-rotation is set, round-robin through active accounts of the provider.
+ * - Otherwise, use the provider's default account if one exists.
+ * Accounts are always scoped to the session's agent type so a Codex account
+ * dir is never exported into a Claude Code spawn (and vice versa).
+ */
+async function resolveAccountConfigDir(
+	taskIndex: number,
+	toolType: string,
+	accountOption?: string,
+	accountRotation?: boolean,
+	cachedAccounts?: CLIAccountInfo[] | null
+): Promise<string | undefined> {
+	// The entire Virtuosos feature is gated on the Encore flag; with it off the
+	// CLI behaves as if account multiplexing does not exist (same as the desktop).
+	if (readSettingValue('encoreFeatures.virtuosos') !== true) {
+		if (accountOption || accountRotation) {
+			process.stderr.write(
+				'Warning: --account/--account-rotation require the Virtuosos extension (Settings -> Plugins -> Virtuosos); ignoring.\n'
+			);
+		}
+		return undefined;
+	}
+
+	if (accountOption) {
+		const account = await getAccountByIdOrName(accountOption);
+		if (account && account.agentType !== toolType) {
+			process.stderr.write(
+				`Warning: account "${accountOption}" belongs to ${account.agentType}, not ${toolType}; ignoring it for this run.\n`
+			);
+			return undefined;
+		}
+		return account?.configDir;
+	}
+
+	if (accountRotation) {
+		const accounts = cachedAccounts ?? (await readAccountsFromStore());
+		const activeAccounts = accounts.filter(
+			(a) => a.status === 'active' && a.agentType === toolType
+		);
+		if (activeAccounts.length === 0) return undefined;
+		const account = activeAccounts[taskIndex % activeAccounts.length];
+		return account.configDir;
+	}
+
+	const defaultAccount = await getDefaultAccount(toolType);
+	return defaultAccount?.configDir;
+}
+
+/**
  * Process a playbook and yield JSONL events
  */
 export async function* runPlaybook(
@@ -43,6 +97,8 @@ export async function* runPlaybook(
 		debug?: boolean;
 		verbose?: boolean;
 		skipSynopsis?: boolean;
+		account?: string;
+		accountRotation?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -51,6 +107,8 @@ export async function* runPlaybook(
 		debug = false,
 		verbose = false,
 		skipSynopsis = false,
+		account: accountOption,
+		accountRotation = false,
 	} = options;
 	const batchStartTime = Date.now();
 
@@ -60,6 +118,9 @@ export async function* runPlaybook(
 	const groups = readGroups();
 	const sessionGroup = groups.find((g) => g.id === session.groupId);
 	const groupName = sessionGroup?.name;
+
+	// Pre-cache accounts for rotation if enabled (avoids re-reading store per task)
+	const cachedAccounts = accountRotation ? await readAccountsFromStore() : null;
 
 	// Register CLI activity so desktop app knows this session is busy
 	registerCliActivity({
@@ -234,6 +295,7 @@ export async function* runPlaybook(
 		let totalCompletedTasks = 0;
 		let totalCost = 0;
 		let loopIteration = 0;
+		let globalTaskIndex = 0; // Used for account rotation round-robin
 
 		// Per-loop tracking
 		let loopStartTime = Date.now();
@@ -403,7 +465,7 @@ export async function* runPlaybook(
 
 					const taskStartTime = Date.now();
 
-					const docFilePath = `${folderPath}/${docEntry.filename}.md`;
+					const docFilePath = path.join(folderPath, `${docEntry.filename}.md`);
 
 					// Build template context for this task
 					const templateContext: TemplateContext = {
@@ -460,6 +522,16 @@ export async function* runPlaybook(
 						};
 					}
 
+					// Resolve account for this task (account multiplexing, provider-scoped)
+					const configDir = await resolveAccountConfigDir(
+						globalTaskIndex,
+						session.toolType,
+						accountOption,
+						accountRotation,
+						cachedAccounts
+					);
+					globalTaskIndex++;
+
 					// Spawn agent with combined prompt + document. The Maestro
 					// system prompt is delivered as an out-of-band flag (or
 					// embedded in turn 1 for agents lacking native support) so
@@ -488,6 +560,7 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								configDir,
 							}),
 						(r) => (r.success ? 0 : 1)
 					);
@@ -548,6 +621,8 @@ export async function* runPlaybook(
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
 										maestroPPath: session.maestroPPath,
+										// Same account as the task turn
+										configDir,
 									}
 								),
 							(r) => (r.success ? 0 : 1)

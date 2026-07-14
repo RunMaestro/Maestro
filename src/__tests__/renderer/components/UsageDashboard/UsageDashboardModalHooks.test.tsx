@@ -4,6 +4,7 @@ import type { StatsAggregation } from '../../../../shared/stats-types';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	useQuotaTabDiscovery,
 	useUsageDashboardData,
@@ -108,6 +109,10 @@ describe('UsageDashboardModal hooks', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		// Virtuosos tab only exists while the Encore flag is on
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, virtuosos: true },
+		}));
 		useClaudeUsageStore.getState().__resetForTests();
 		useCodexUsageStore.getState().__resetForTests();
 		mockGetAggregation.mockResolvedValue(sampleAggregation);
@@ -215,6 +220,7 @@ describe('UsageDashboardModal hooks', () => {
 			'agents',
 			'activity',
 			'autorun',
+			'accounts',
 			'shortcuts',
 			'anthropic-usage',
 			'codex-usage',

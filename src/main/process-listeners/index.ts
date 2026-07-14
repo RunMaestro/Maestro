@@ -18,6 +18,7 @@ import { setupErrorListener } from './error-listener';
 import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
 import { setupPluginEventListener } from './plugin-event-listener';
+import { setupAccountUsageListener } from './account-usage-listener';
 
 // Re-export types for consumers
 export type { ProcessListenerDependencies, ParticipantInfo } from './types';
@@ -45,8 +46,27 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener
-	setupErrorListener(processManager, deps);
+	// Agent error listener (account throttle/auth recovery + provider failover)
+	setupErrorListener(
+		processManager,
+		deps,
+		deps.getAccountRegistry
+			? {
+					getAccountRegistry: deps.getAccountRegistry,
+					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+					getAuthRecovery: deps.getAuthRecovery,
+				}
+			: undefined,
+		deps.getProviderErrorTracker
+	);
+
+	// Reset provider error tracking on successful query completion so only
+	// CONSECUTIVE failures accumulate toward the failover threshold.
+	if (deps.getProviderErrorTracker) {
+		processManager.on('query-complete', (sessionId: string) => {
+			deps.getProviderErrorTracker?.()?.clearSession(sessionId);
+		});
+	}
 
 	// Stats/query-complete listener
 	setupStatsListener(processManager, deps);
@@ -57,4 +77,14 @@ export function setupProcessListeners(
 	// Plugin event-bus bridge: forwards metadata-only lifecycle events to plugins
 	// that hold events:subscribe (no-op when the plugin bus is not wired).
 	setupPluginEventListener(processManager, deps);
+
+	// Account usage listener (per-account token aggregation for limit tracking)
+	if (deps.getAccountRegistry) {
+		setupAccountUsageListener(processManager, {
+			getAccountRegistry: deps.getAccountRegistry,
+			getStatsDB: deps.getStatsDB,
+			safeSend: deps.safeSend,
+			logger: deps.logger,
+		});
+	}
 }

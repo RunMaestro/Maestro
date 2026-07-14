@@ -42,6 +42,9 @@ import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode'
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import type { SpawnProcessConfig } from './spawn-types';
+import type { AccountRegistry } from '../../../accounts/account-registry';
+import { injectAccountEnv } from '../../../accounts/account-env-injector';
+import { getStatsDB } from '../../../stats';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -55,6 +58,7 @@ export interface SpawnHandlerDependencies {
 	safeSend?: (channel: string, ...args: unknown[]) => void;
 	sessionsStore: Store<{ sessions: unknown[] }>;
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -603,6 +607,32 @@ export async function handleProcessSpawn(
 	let useShell = false;
 	let sshRemoteUsed: SshRemoteConfig | null = null;
 	let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
+
+	// ========================================================================
+	// Account Multiplexing: Inject CLAUDE_CONFIG_DIR for account assignment
+	// Must happen before SSH command building so the env var is included
+	// ========================================================================
+	const accountRegistry = deps.getAccountRegistry?.();
+	if (accountRegistry) {
+		const envToInject: Record<string, string> = customEnvVarsToPass
+			? { ...customEnvVarsToPass }
+			: {};
+		const assignedAccountId = injectAccountEnv(
+			config.sessionId,
+			config.toolType,
+			envToInject,
+			accountRegistry,
+			config.accountId, // May be passed from renderer
+			safeSend,
+			() => {
+				const db = getStatsDB();
+				return db.isReady() ? db : null;
+			}
+		);
+		if (assignedAccountId) {
+			customEnvVarsToPass = envToInject;
+		}
+	}
 
 	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = applyLocalInteractiveSpawnDecision({
 		config,

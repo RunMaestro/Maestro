@@ -1,5 +1,5 @@
 /**
- * cycleSession — Cmd+Shift+[/] agent / group-chat cycling.
+ * cycleSession: Cmd+Shift+[/] agent / group-chat cycling.
  *
  * PERF: All store reads happen at event time via `getState()`. No React
  * subscriptions, so MaestroConsoleInner does not re-render when sessions,

@@ -35,6 +35,12 @@ export const MODAL_PRIORITIES = {
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
+	/** Account switch confirmation modal - triggered by throttle/limit events */
+	ACCOUNT_SWITCH: 1004,
+
+	/** Provider switch modal - Virtuosos vertical swapping between agent types */
+	PROVIDER_SWITCH: 1003,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
@@ -276,6 +282,9 @@ export const MODAL_PRIORITIES = {
 	/** Custom theme base-theme picker dropdown (above settings so Escape closes
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
+
+	/** Virtuosos (account management) modal */
+	VIRTUOSOS: 455,
 
 	/** Settings modal */
 	SETTINGS: 450,

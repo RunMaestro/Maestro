@@ -175,6 +175,8 @@ import {
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
+	registerAccountHandlers,
+	registerProviderHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -183,6 +185,14 @@ import { startCoworkingBridge, stopCoworkingBridge } from './coworking/coworking
 import { ensureCoworkingServerScript } from './coworking/coworking-server-paths';
 import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
 import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
+import { AccountRegistry } from './accounts/account-registry';
+import { AccountThrottleHandler } from './accounts/account-throttle-handler';
+import { AccountAuthRecovery } from './accounts/account-auth-recovery';
+import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
+import { AccountSwitcher } from './accounts/account-switcher';
+import { ProviderErrorTracker } from './providers/provider-error-tracker';
+import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../shared/account-types';
+import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -192,6 +202,7 @@ import {
 	setGetAgentConfigCallback,
 	setGetModeratorSettingsCallback,
 	setSshStore,
+	setAccountRegistry as setGroupChatAccountRegistry,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
 	spawnModeratorSynthesis,
@@ -501,6 +512,29 @@ let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
+let accountRegistry: AccountRegistry | null = null;
+let accountThrottleHandler: AccountThrottleHandler | null = null;
+let accountAuthRecovery: AccountAuthRecovery | null = null;
+let accountRecoveryPoller: AccountRecoveryPoller | null = null;
+let accountSwitcher: AccountSwitcher | null = null;
+let providerErrorTracker: ProviderErrorTracker | null = null;
+
+/**
+ * The ENTIRE Virtuosos feature (account multiplexing + provider switching) is
+ * gated on the `virtuosos` Encore flag. Every consumer receives the account
+ * machinery through these gated getters, which read the flag live on each
+ * call: with the flag off, spawns get no env injection, errors take the
+ * pre-existing path, usage is not aggregated per account, and no account
+ * events reach the renderer - as if the feature did not exist.
+ */
+const isVirtuososEnabled = (): boolean =>
+	(store.get('encoreFeatures', {}) as Record<string, boolean> | undefined)?.virtuosos === true;
+const getAccountRegistryGated = () => (isVirtuososEnabled() ? accountRegistry : null);
+const getAccountThrottleHandlerGated = () => (isVirtuososEnabled() ? accountThrottleHandler : null);
+const getAccountAuthRecoveryGated = () => (isVirtuososEnabled() ? accountAuthRecovery : null);
+const getAccountSwitcherGated = () => (isVirtuososEnabled() ? accountSwitcher : null);
+const getAccountRecoveryPollerGated = () => (isVirtuososEnabled() ? accountRecoveryPoller : null);
+const getProviderErrorTrackerGated = () => (isVirtuososEnabled() ? providerErrorTracker : null);
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2676,6 +2710,115 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
+		// Initialize account registry and throttle handler for account multiplexing
+		try {
+			accountRegistry = new AccountRegistry(getAccountStore());
+			accountThrottleHandler = new AccountThrottleHandler(
+				accountRegistry,
+				getStatsDB,
+				safeSend,
+				logger
+			);
+			logger.info('Account registry initialized', 'Startup');
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Failed to initialize account registry: ${error}`, 'Startup');
+			logger.warn('Continuing without account multiplexing', 'Startup');
+		}
+
+		// Initialize auth recovery for automatic re-login on expired tokens
+		if (accountRegistry && processManager && agentDetector) {
+			try {
+				accountAuthRecovery = new AccountAuthRecovery(
+					processManager,
+					accountRegistry,
+					agentDetector,
+					safeSend
+				);
+				logger.info('Account auth recovery initialized', 'Startup');
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize auth recovery: ${error}`, 'Startup');
+			}
+		}
+
+		// Initialize recovery poller for timer-based throttle recovery
+		// Only ticks while the Virtuosos Encore flag is on; the onDidChange
+		// listener starts/stops it when the user toggles the flag.
+		if (accountRegistry) {
+			try {
+				accountRecoveryPoller = new AccountRecoveryPoller({
+					accountRegistry,
+					safeSend,
+				});
+				if (isVirtuososEnabled()) {
+					accountRecoveryPoller.start();
+					logger.info('Account recovery poller started', 'Startup');
+				}
+				store.onDidChange('encoreFeatures', (features) => {
+					const enabled = (features as Record<string, boolean> | undefined)?.virtuosos === true;
+					if (enabled) {
+						accountRecoveryPoller?.start();
+					} else {
+						accountRecoveryPoller?.stop();
+					}
+				});
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize recovery poller: ${error}`, 'Startup');
+			}
+		}
+
+		// Initialize account switcher for manual account switching from renderer
+		if (accountRegistry && processManager) {
+			try {
+				accountSwitcher = new AccountSwitcher(processManager, accountRegistry, safeSend);
+				logger.info('Account switcher initialized', 'Startup');
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize account switcher: ${error}`, 'Startup');
+			}
+		}
+
+		// Initialize provider error tracker for Virtuosos failover detection
+		try {
+			const savedConfig = store.get('providerSwitchConfig') as
+				| Partial<typeof DEFAULT_PROVIDER_SWITCH_CONFIG>
+				| undefined;
+			const config = savedConfig
+				? { ...DEFAULT_PROVIDER_SWITCH_CONFIG, ...savedConfig }
+				: DEFAULT_PROVIDER_SWITCH_CONFIG;
+			providerErrorTracker = new ProviderErrorTracker(
+				config,
+				(suggestion) => {
+					// Send failover suggestion to renderer
+					safeSend('provider:failover-suggest', suggestion);
+				},
+				(sessionId) => {
+					// Resolve session name from sessions store
+					const sessions = sessionsStore.get('sessions', []) as Array<{
+						id: string;
+						name?: string;
+					}>;
+					const session = sessions.find((s) => s.id === sessionId);
+					return session?.name || sessionId;
+				}
+			);
+			// Keep the tracker's thresholds live when the failover config changes
+			store.onDidChange('providerSwitchConfig' as never, (newValue: unknown) => {
+				if (providerErrorTracker && newValue && typeof newValue === 'object') {
+					providerErrorTracker.updateConfig({
+						...DEFAULT_PROVIDER_SWITCH_CONFIG,
+						...(newValue as Partial<typeof DEFAULT_PROVIDER_SWITCH_CONFIG>),
+					});
+				}
+			});
+			logger.info('Provider error tracker initialized', 'Startup');
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Failed to initialize provider error tracker: ${error}`, 'Startup');
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers();
@@ -3010,6 +3153,11 @@ quitHandler = createQuitHandler({
 });
 quitHandler.setup();
 
+// Stop recovery poller on quit (must run before the quit handler's cleanup)
+app.on('before-quit', () => {
+	accountRecoveryPoller?.stop();
+});
+
 // startCliActivityWatcher is now handled by cliWatcher (Phase 4 refactoring)
 
 function setupIpcHandlers() {
@@ -3106,6 +3254,8 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
+		getAccountAuthRecovery: getAccountAuthRecoveryGated,
+		getAccountSwitcher: getAccountSwitcherGated,
 		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
@@ -3127,6 +3277,7 @@ function setupIpcHandlers() {
 				};
 			});
 		},
+		getAccountRegistry: getAccountRegistryGated,
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
@@ -3296,6 +3447,7 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		getAccountRegistry: getAccountRegistryGated,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
@@ -3318,6 +3470,19 @@ function setupIpcHandlers() {
 	registerCueStatsHandlers({
 		settingsStore: store,
 		getCueEngine: () => cueEngine,
+	});
+
+	// Register Account Multiplexing handlers (CRUD, assignments, usage queries)
+	registerAccountHandlers({
+		getAccountRegistry: getAccountRegistryGated,
+		getAccountAuthRecovery: getAccountAuthRecoveryGated,
+		getRecoveryPoller: getAccountRecoveryPollerGated,
+		getAccountSwitcher: getAccountSwitcherGated,
+	});
+
+	// Register Provider Error Tracking handlers (stats queries, error clearing)
+	registerProviderHandlers({
+		getProviderErrorTracker: getProviderErrorTrackerGated,
 	});
 
 	// Register Document Graph handlers for file watching
@@ -3374,6 +3539,10 @@ function setupIpcHandlers() {
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
+
+	// Set up account registry getter for group chat account multiplexing
+	// (gated: returns null while the Virtuosos Encore flag is off)
+	setGroupChatAccountRegistry(getAccountRegistryGated);
 
 	// Set up callback for group chat to get custom shell path (for Windows PowerShell preference)
 	// This is used by both group-chat-router.ts and group-chat-agent.ts via the shared config module
@@ -3487,6 +3656,10 @@ function setupProcessListeners() {
 				calculateContextTokens,
 			},
 			getStatsDB,
+			getAccountRegistry: getAccountRegistryGated,
+			getThrottleHandler: getAccountThrottleHandlerGated,
+			getAuthRecovery: getAccountAuthRecoveryGated,
+			getProviderErrorTracker: getProviderErrorTrackerGated,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

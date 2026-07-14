@@ -58,7 +58,7 @@ import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
-import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
+import { Maximize2, Edit as EditIcon, Eye, Search, Brain, XCircle } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -625,17 +625,70 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				</div>
 			)}
 
+			{/* Recovery Indicator - shown when all accounts are rate-limited and waiting for recovery */}
+			{isErrorPaused &&
+				batchError &&
+				batchError.type === 'rate_limited' &&
+				batchError.message?.includes('All virtuosos') && (
+					<div
+						className="mx-2 mb-2 p-3 rounded-lg border"
+						style={{
+							backgroundColor: `${theme.colors.accent}15`,
+							borderColor: theme.colors.accent,
+						}}
+					>
+						<div className="flex items-center gap-2">
+							<span className="relative flex h-3 w-3 flex-shrink-0">
+								<span
+									className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+									style={{ backgroundColor: theme.colors.accent }}
+								/>
+								<span
+									className="relative inline-flex rounded-full h-3 w-3"
+									style={{ backgroundColor: theme.colors.accent }}
+								/>
+							</span>
+							<span className="text-xs" style={{ color: theme.colors.accent }}>
+								Waiting for virtuoso recovery; will auto-resume
+							</span>
+							<button
+								onClick={() => window.maestro.accounts.checkRecovery()}
+								className="text-xs underline opacity-70 hover:opacity-100 transition-opacity ml-auto flex-shrink-0"
+								style={{ color: theme.colors.accent }}
+							>
+								Check Now
+							</button>
+							{onAbortBatchOnError && (
+								<button
+									onClick={onAbortBatchOnError}
+									className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80 flex-shrink-0"
+									style={{
+										backgroundColor: theme.colors.error,
+										color: 'white',
+									}}
+									title="Stop Auto Run completely"
+								>
+									<XCircle className="w-3 h-3" />
+									Abort
+								</button>
+							)}
+						</div>
+					</div>
+				)}
+
 			{/* Error Banner (Phase 5.10) - shown when batch is paused due to agent error */}
-			{isErrorPaused && batchError && (
-				<AutoRunErrorBanner
-					theme={theme}
-					errorMessage={batchError.message}
-					errorDocumentName={errorDocumentName}
-					isRecoverable={batchError.recoverable || false}
-					onResumeAfterError={onResumeAfterError}
-					onAbortBatchOnError={onAbortBatchOnError}
-				/>
-			)}
+			{isErrorPaused &&
+				batchError &&
+				!(batchError.type === 'rate_limited' && batchError.message?.includes('All virtuosos')) && (
+					<AutoRunErrorBanner
+						theme={theme}
+						errorMessage={batchError.message}
+						errorDocumentName={errorDocumentName}
+						isRecoverable={batchError.recoverable || false}
+						onResumeAfterError={onResumeAfterError}
+						onAbortBatchOnError={onAbortBatchOnError}
+					/>
+				)}
 
 			{/* Attached Images Preview (edit mode) - only when folder selected */}
 			{folderPath && mode === 'edit' && (

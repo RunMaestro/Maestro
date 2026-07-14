@@ -59,6 +59,9 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	// Virtuosos flag: batch account resolution is gated on this; tests exercise
+	// the account paths, so report the feature as enabled.
+	readSettingValue: vi.fn((key: string) => (key === 'encoreFeatures.virtuosos' ? true : undefined)),
 }));
 
 // Mock cli-activity

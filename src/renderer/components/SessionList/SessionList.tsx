@@ -31,6 +31,7 @@ import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
+import { useAccountUsage } from '../../hooks/useAccountUsage';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
 import { useLiveOverlay, useResizablePanel, useViewportBreakpoint } from '../../hooks';
@@ -72,7 +73,7 @@ import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 // ============================================================================
 
 interface SessionListProps {
-	// Computed values (not in stores — remain as props)
+	// Computed values (not in stores - remain as props)
 	theme: Theme;
 	sortedSessions: Session[];
 	navIndexMap?: Map<string, number>;
@@ -111,6 +112,10 @@ interface SessionListProps {
 
 	// Edit agent modal handler (for context menu edit)
 	onEditAgent: (session: Session) => void;
+	/** Virtuosos: open the SwitchProviderModal for this agent (hidden when undefined). */
+	onSwitchProvider?: (sessionId: string) => void;
+	/** Virtuosos: restore a provider-switch-archived agent (hidden when undefined). */
+	onUnarchive?: (sessionId: string) => void;
 
 	// Duplicate agent handlers (for context menu duplicate)
 	onNewAgentSession: () => void;
@@ -158,6 +163,9 @@ const UNGROUPED_DROP_TARGET = '__ungrouped__';
 
 function SessionListInner(props: SessionListProps) {
 	const pluginContributions = usePluginContributions();
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos === true);
+	// Account usage metrics for SessionItem badge tooltips (account multiplexing)
+	const { metrics: accountUsageMetrics } = useAccountUsage({ enabled: virtuososEnabled });
 	// Store subscriptions
 	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
 	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
@@ -275,7 +283,7 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
+	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
@@ -296,7 +304,7 @@ function SessionListInner(props: SessionListProps) {
 						});
 					}
 				}
-				// Preserve referential identity when nothing changed — the map is fed
+				// Preserve referential identity when nothing changed - the map is fed
 				// to every SessionItem as a prop, and a fresh reference busts memo even
 				// when contents are equal. With cue activity ticks coming in at ~1Hz this
 				// would otherwise re-render all sidebar rows on every tick.
@@ -422,6 +430,8 @@ function SessionListInner(props: SessionListProps) {
 		onDeleteSession,
 		onDeleteWorktreeGroup,
 		onEditAgent,
+		onSwitchProvider,
+		onUnarchive,
 		onNewAgentSession,
 		onToggleWorktreeExpanded,
 		onOpenCreatePR,
@@ -515,7 +525,7 @@ function SessionListInner(props: SessionListProps) {
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
 
-	// Group context menu state — opened by right-clicking a group header
+	// Group context menu state - opened by right-clicking a group header
 	const [groupContextMenu, setGroupContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -821,7 +831,7 @@ function SessionListInner(props: SessionListProps) {
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
-	// depend on the *set of session ids* — not on per-session field changes — so
+	// depend on the *set of session ids* - not on per-session field changes - so
 	// rebuilding them on every sidebar field change (state/name/etc.) was
 	// wasted work that broke SessionItem's React.memo bail-out (5 × N closures
 	// per flush). Key off a derived id signature instead.
@@ -987,11 +997,14 @@ function SessionListInner(props: SessionListProps) {
 
 		const content = (
 			<>
-				{/* Parent session — chevron in SessionItem toggles worktree expansion. */}
+				{/* Parent session - chevron in SessionItem toggles worktree expansion. */}
 				<SessionItem
 					session={session}
 					variant={effectiveVariant}
 					theme={theme}
+					accountUsagePercent={
+						session.accountId ? accountUsageMetrics[session.accountId]?.usagePercent : undefined
+					}
 					navDomKey={globalIdx >= 0 ? `idx:${globalIdx}` : undefined}
 					isActive={
 						activeSessionId === session.id &&
@@ -1060,6 +1073,11 @@ function SessionListInner(props: SessionListProps) {
 										session={child}
 										variant="worktree"
 										theme={theme}
+										accountUsagePercent={
+											child.accountId
+												? accountUsageMetrics[child.accountId]?.usagePercent
+												: undefined
+										}
 										navDomKey={childGlobalIdx >= 0 ? `idx:${childGlobalIdx}` : undefined}
 										isActive={
 											activeSessionId === child.id &&
@@ -1226,7 +1244,7 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
-							{/* Global LIVE Toggle — hidden in the web-desktop bundle, where
+							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
 							{!isWebDesktop() && (
@@ -2131,6 +2149,12 @@ function SessionListInner(props: SessionListProps) {
 						setRenameInstanceModalOpen(true);
 					}}
 					onEdit={() => onEditAgent(contextMenuSession)}
+					onSwitchProvider={
+						onSwitchProvider && contextMenuSession.toolType !== 'terminal'
+							? () => onSwitchProvider(contextMenuSession.id)
+							: undefined
+					}
+					onUnarchive={onUnarchive ? () => onUnarchive(contextMenuSession.id) : undefined}
 					onDuplicate={() => {
 						useModalStore
 							.getState()

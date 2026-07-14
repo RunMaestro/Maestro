@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { UsageDashboardViewMode as ViewMode } from '../../../../types';
 import { useUIStore } from '../../../../stores/uiStore';
+import { useSettingsStore } from '../../../../stores/settingsStore';
 import { BASE_VIEW_MODE_TABS } from '../constants';
 import type { UsageDashboardTab } from '../types';
 
@@ -20,6 +21,7 @@ export function useUsageDashboardTabs({
 	onViewModeChanged,
 }: UseUsageDashboardTabsOptions) {
 	const setUsageDashboardViewMode = useUIStore((s) => s.setUsageDashboardViewMode);
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const [viewMode, setViewMode] = useState<ViewMode>(
 		() => useUIStore.getState().usageDashboardViewMode
 	);
@@ -29,6 +31,8 @@ export function useUsageDashboardTabs({
 	const viewModeTabs = useMemo<UsageDashboardTab[]>(() => {
 		const tabs: UsageDashboardTab[] = [];
 		for (const tab of BASE_VIEW_MODE_TABS) {
+			// Virtuosos tab only exists while the Encore flag is on
+			if (tab.value === 'accounts' && !virtuososEnabled) continue;
 			tabs.push(tab);
 			if (tab.value === 'autorun' && cueTabEnabled) {
 				tabs.push({ value: 'cue', label: 'Cue' });
@@ -41,7 +45,7 @@ export function useUsageDashboardTabs({
 			tabs.push({ value: 'codex-usage', label: 'OpenAI Usage' });
 		}
 		return tabs;
-	}, [cueTabEnabled, hasAnthropicUsageDetails, hasCodexUsageDetails]);
+	}, [cueTabEnabled, hasAnthropicUsageDetails, hasCodexUsageDetails, virtuososEnabled]);
 
 	const switchViewMode = useCallback(
 		(mode: ViewMode) => {

@@ -13,6 +13,7 @@ import { ProcessListView } from './ProcessListView';
 import { ProcessDetailView } from './ProcessDetailView';
 import { KillConfirmDialog } from './KillConfirmDialog';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 // Hook composition order:
 //   1. useProcessMonitorData owns polling and exposes refresh.
@@ -24,6 +25,7 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 //   4. useProcessKill receives data.refresh + a settle callback that clears the kill prompt.
 //   5. useProcessKeyboardNav is stateless and just maps keys → mutators.
 export function ProcessMonitor(props: ProcessMonitorProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const {
 		theme,
 		sessions,
@@ -162,6 +164,11 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 					<ProcessDetailView
 						theme={theme}
 						detail={detailView}
+						accountName={(() => {
+							if (!virtuososEnabled) return undefined;
+							const sess = sessions.find((s) => s.id === detailView.agentSessionId);
+							return sess?.accountId ? (sess.accountName ?? sess.accountId) : undefined;
+						})()}
 						onBack={() => setDetailView(null)}
 						onClose={onClose}
 					/>
@@ -251,6 +258,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						<div className="overflow-y-auto flex-1 scrollbar-thin">
 							<ProcessListView
 								theme={theme}
+								sessions={sessions}
 								tree={tree}
 								isLoading={data.isLoading}
 								selectedNodeId={selectedNodeId}

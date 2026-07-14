@@ -19,6 +19,7 @@ import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
+import { getAccountProviderMeta } from '../../shared/accountProviderMeta';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import {
@@ -415,10 +416,16 @@ async function spawnClaudeAgent(
 	readOnlyMode?: boolean,
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {},
-	tokenSource: ClaudeTokenSourceFields = {}
+	tokenSource: ClaudeTokenSourceFields = {},
+	configDir?: string
 ): Promise<AgentResult> {
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition('claude-code');
+
+	// Inject account config dir if provided (account multiplexing)
+	if (configDir) {
+		env.CLAUDE_CONFIG_DIR = configDir;
+	}
 
 	// Build args WITHOUT the prompt — the prompt is appended below for local
 	// execution or embedded into the SSH wrapper for remote execution.
@@ -801,10 +808,21 @@ async function spawnJsonLineAgent(
 	agentSessionId?: string,
 	readOnlyMode?: boolean,
 	sshRemoteConfig?: AgentSshRemoteConfig,
-	overrides: SpawnOverrides = {}
+	overrides: SpawnOverrides = {},
+	configDir?: string
 ): Promise<AgentResult> {
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition(toolType);
+
+	// Inject account config dir if provided (account multiplexing).
+	// Env var is provider-specific: CODEX_HOME, XDG_DATA_HOME (opencode), etc.
+	// XDG_DATA_HOME isolates opencode on Windows too - opencode resolves its data
+	// dir via the npm xdg-basedir package, which reads the env var with no
+	// platform branch (see src/shared/accountProviderMeta.ts parity notes).
+	if (configDir) {
+		const accountEnvVar = getAccountProviderMeta(toolType).envVar;
+		if (accountEnvVar) env[accountEnvVar] = configDir;
+	}
 
 	// Build args from agent definition (without the prompt or model/customArgs —
 	// those come from applyAgentConfigOverrides via configOptions).
@@ -1088,6 +1106,12 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * Account config dir (account multiplexing). When set, exported under the
+	 * provider's env var for the spawned process: CLAUDE_CONFIG_DIR (Claude Code),
+	 * CODEX_HOME (Codex), XDG_DATA_HOME (OpenCode).
+	 */
+	configDir?: string;
 }
 
 /**
@@ -1121,7 +1145,8 @@ export async function spawnAgent(
 			readOnly,
 			sshRemoteConfig,
 			overrides,
-			tokenSource
+			tokenSource,
+			options?.configDir
 		);
 	}
 
@@ -1133,7 +1158,8 @@ export async function spawnAgent(
 			agentSessionId,
 			readOnly,
 			sshRemoteConfig,
-			overrides
+			overrides,
+			options?.configDir
 		);
 	}
 
@@ -1150,7 +1176,7 @@ export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
 ): { content: string; taskCount: number } {
-	const filePath = `${folderPath}/${filename}.md`;
+	const filePath = path.join(folderPath, `${filename}.md`);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -1171,7 +1197,7 @@ export function readDocAndGetTasks(
 	folderPath: string,
 	filename: string
 ): { content: string; tasks: string[] } {
-	const filePath = `${folderPath}/${filename}.md`;
+	const filePath = path.join(folderPath, `${filename}.md`);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -1194,6 +1220,6 @@ export function uncheckAllTasks(content: string): string {
  * Write content to a document
  */
 export function writeDoc(folderPath: string, filename: string, content: string): void {
-	const filePath = `${folderPath}/${filename}`;
+	const filePath = path.join(folderPath, filename);
 	fs.writeFileSync(filePath, content, 'utf-8');
 }

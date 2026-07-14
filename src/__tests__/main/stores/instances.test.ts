@@ -60,8 +60,8 @@ describe('stores/instances', () => {
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 
-			// Should create 9 stores (added agentCapabilitiesStore for snapshot persistence)
-			expect(mockStoreConstructorCalls).toHaveLength(9);
+			// Should create 10 stores (agentCapabilitiesStore for snapshot persistence + accountStore)
+			expect(mockStoreConstructorCalls).toHaveLength(10);
 
 			// Should return syncPath and bootstrapStore
 			expect(result.syncPath).toBe('/mock/user/data');
@@ -179,6 +179,7 @@ describe('stores/instances', () => {
 			expect(instances.windowStateStore).toBeDefined();
 			expect(instances.claudeSessionOriginsStore).toBeDefined();
 			expect(instances.agentSessionOriginsStore).toBeDefined();
+			expect(instances.accountStore).toBeDefined();
 		});
 	});
 

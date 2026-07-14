@@ -1,8 +1,8 @@
 /**
- * useSessionRestoration — extracted from App.tsx (Phase 2E)
+ * useSessionRestoration - extracted from App.tsx (Phase 2E)
  *
  * Owns session loading, restoration, migration, and corruption recovery.
- * Reads from Zustand stores directly — no parameters needed.
+ * Reads from Zustand stores directly - no parameters needed.
  *
  * Functions:
  *   - restoreSession: migrates legacy fields, recovers corrupted data, resets runtime state
@@ -25,6 +25,7 @@ import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { getAccountProviderMeta } from '../../../shared/accountProviderMeta';
 
 // ============================================================================
 // Return type
@@ -83,7 +84,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
 	// If the agent is unavailable, marks the session with error state.
-	// Called after splash hides — never blocks startup.
+	// Called after splash hides - never blocks startup.
 	const validateAgentInBackground = useCallback(
 		async (sessionId: string, toolType: string, sshRemoteId: string | undefined) => {
 			try {
@@ -256,13 +257,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// rendering a file preview without a tab bar (orphaned file preview bug).
 			if (session.inputMode !== 'ai' && session.activeFileTabId) {
 				logger.warn(
-					`[restoreSession] Session has activeFileTabId='${session.activeFileTabId}' but inputMode='${session.inputMode}' — clearing orphaned file tab reference`
+					`[restoreSession] Session has activeFileTabId='${session.activeFileTabId}' but inputMode='${session.inputMode}' - clearing orphaned file tab reference`
 				);
 				session = { ...session, activeFileTabId: null };
 			}
 			if (session.inputMode !== 'ai' && session.activeBrowserTabId) {
 				logger.warn(
-					`[restoreSession] Session has activeBrowserTabId='${session.activeBrowserTabId}' but inputMode='${session.inputMode}' — clearing orphaned browser tab reference`
+					`[restoreSession] Session has activeBrowserTabId='${session.activeBrowserTabId}' but inputMode='${session.inputMode}' - clearing orphaned browser tab reference`
 				);
 				session = { ...session, activeBrowserTabId: null };
 			}
@@ -323,7 +324,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.
-				// This is a known trade-off of Promise.race — Promises are not cancellable.
+				// This is a known trade-off of Promise.race - Promises are not cancellable.
 				try {
 					const gitResult = await Promise.race([
 						(async () => {
@@ -354,7 +355,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
-			// Migration: ensure terminalTabs exists (may be empty — terminals are created on demand)
+			// Migration: ensure terminalTabs exists (may be empty - terminals are created on demand)
 			if (!correctedSession.terminalTabs) {
 				correctedSession = {
 					...correctedSession,
@@ -534,6 +535,47 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		}
 	}, []);
 
+	const reconcileAccountsInBackground = useCallback(async (activeIds: string[]) => {
+		try {
+			const reconciliation = await window.maestro.accounts.reconcileSessions(activeIds);
+			if (!reconciliation.success || reconciliation.corrections.length === 0) return;
+
+			setSessions((prev) =>
+				prev.map((session) => {
+					const correction = reconciliation.corrections.find((c) => c.sessionId === session.id);
+					if (!correction) return session;
+
+					const configEnvVar = getAccountProviderMeta(session.toolType).envVar;
+					if (correction.status === 'removed') {
+						const cleanedEnvVars = { ...session.customEnvVars };
+						if (configEnvVar) delete cleanedEnvVars[configEnvVar];
+						return {
+							...session,
+							accountId: undefined,
+							accountName: undefined,
+							customEnvVars: Object.keys(cleanedEnvVars).length > 0 ? cleanedEnvVars : undefined,
+						};
+					}
+
+					if (correction.configDir && session.accountId && configEnvVar) {
+						return {
+							...session,
+							accountId: correction.accountId ?? undefined,
+							accountName: correction.accountName ?? undefined,
+							customEnvVars: {
+								...session.customEnvVars,
+								[configEnvVar]: correction.configDir,
+							},
+						};
+					}
+					return session;
+				})
+			);
+		} catch (reconcileError) {
+			logger.error('Account reconciliation failed:', undefined, reconcileError);
+		}
+	}, []);
+
 	// --- Session & group loading effect ---
 	// Use a ref to prevent duplicate execution in React Strict Mode
 	const sessionLoadStarted = useRef(false);
@@ -544,6 +586,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		sessionLoadStarted.current = true;
 
 		const loadSessionsAndGroups = async () => {
+			let activeIds: string[] = [];
+
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
 				const savedSessions = await window.maestro.sessions.getAll();
@@ -553,14 +597,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				if (savedSessions && savedSessions.length > 0) {
 					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
 					setSessions(restoredSessions);
+					activeIds = restoredSessions.map((session) => session.id);
 
 					// Restore persisted active session ID, falling back to first session.
 					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
-						// Saved ID is valid — hydrate locally without writing back to disk
+						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
 					} else if (restoredSessions[0]?.id) {
-						// Saved ID is stale or missing — persist the fallback so it
+						// Saved ID is stale or missing - persist the fallback so it
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
@@ -585,7 +630,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				} else {
 					setSessions([]);
-					// No sessions means no file tree to load — unblock splash immediately
+					// No sessions means no file tree to load - unblock splash immediately
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
@@ -608,7 +653,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				logger.error('Failed to load sessions/groups:', undefined, e);
 				setSessions([]);
 				setGroups([]);
-				// Error loading sessions — no file tree to wait for
+				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
 				// Mark initial load as complete to enable persistence
@@ -616,10 +661,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 				// Mark sessions as loaded for splash screen coordination
 				setSessionsLoaded(true);
+
+				// Reconciliation follows startup completion so splash dismissal never waits on it.
+				if (activeIds.length > 0) {
+					void reconcileAccountsInBackground(activeIds);
+				}
 			}
 		};
 		loadSessionsAndGroups();
-	}, []);
+	}, [reconcileAccountsInBackground]);
 
 	return {
 		initialLoadComplete,

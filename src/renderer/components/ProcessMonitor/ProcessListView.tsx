@@ -8,12 +8,16 @@ import {
 	RefreshCw,
 	XCircle,
 } from 'lucide-react';
-import type { Theme } from '../../types';
+import type { Session, Theme } from '../../types';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
 
 export interface ProcessListViewProps {
 	theme: Theme;
+	/** Sessions for account badge lookup (account multiplexing). Optional so
+	 *  callers/tests without account data render unchanged. */
+	sessions?: Session[];
 	tree: ProcessNode[];
 	isLoading: boolean;
 	selectedNodeId: string | null;
@@ -31,8 +35,10 @@ export interface ProcessListViewProps {
 // selectedNodeRef + scroll-into-view side-effect; everything else is pure
 // presentation driven by props.
 export function ProcessListView(props: ProcessListViewProps) {
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
 	const {
 		theme,
+		sessions = [],
 		tree,
 		isLoading,
 		selectedNodeId,
@@ -392,6 +398,29 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
 									</span>
 								)}
+								{/* Account badge: Virtuosos Encore flag + session has an account assigned */}
+								{(() => {
+									if (!virtuososEnabled) return null;
+									const sess = sessions.find((s) => s.id === node.agentSessionId);
+									if (sess?.accountName) {
+										return (
+											<span
+												className="flex-shrink-0"
+												style={{
+													fontSize: '9px',
+													padding: '1px 5px',
+													borderRadius: '3px',
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													fontWeight: 500,
+												}}
+											>
+												{sess.accountName}
+											</span>
+										);
+									}
+									return null;
+								})()}
 								{node.sessionId &&
 									onNavigateToSession &&
 									!isGroupChatProcess &&

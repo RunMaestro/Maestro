@@ -68,6 +68,10 @@ export function getEnhancedStatusColor(
 		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
 	}
 
+	if (session.archivedByMigration) {
+		return { color: theme.colors.textDim, animate: false, label: 'Archived (provider switched)' };
+	}
+
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
 	}
@@ -140,6 +144,7 @@ export interface SessionItemProps {
 	 * would be meaningless (and dropping fell through to "ungroup").
 	 */
 	dragDisabled?: boolean;
+	accountUsagePercent?: number | null; // Usage % for assigned account (passed from parent to avoid N hook instances)
 
 	// Handlers
 	onSelect: () => void;
@@ -189,6 +194,7 @@ export const SessionItem = memo(function SessionItem({
 	worktreeChildCount,
 	otherWindowNumber,
 	dragDisabled = false,
+	accountUsagePercent,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -286,6 +292,8 @@ export const SessionItem = memo(function SessionItem({
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				// Provider-switch archive: keep the row visible but visually parked
+				opacity: session.archivedByMigration ? 0.45 : undefined,
 			}}
 		>
 			{/* Left side: Session name and metadata */}
@@ -426,6 +434,19 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						{/* Account assignment badge */}
+						{session.accountId && session.accountName && (
+							<span
+								className="text-[9px] px-1 py-0.5 rounded font-bold"
+								style={{
+									backgroundColor: `${theme.colors.accent}25`,
+									color: theme.colors.accentText || theme.colors.accent,
+								}}
+								title={`Virtuoso: ${session.accountName}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
+							>
+								{session.accountName.split('@')[0]?.slice(0, 10)?.toUpperCase() || 'ACC'}
+							</span>
+						)}
 					</div>
 				)}
 			</div>

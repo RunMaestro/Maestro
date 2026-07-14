@@ -50,6 +50,7 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import type { AccountRegistry } from '../accounts/account-registry';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -122,6 +123,9 @@ let getModeratorSettingsCallback: GetModeratorSettingsCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
+
+// Module-level account registry for account multiplexing
+let accountRegistryGetter: () => AccountRegistry | null = () => null;
 
 /**
  * Tracks pending participant responses for each group chat.
@@ -450,6 +454,15 @@ export function setGetModeratorSettingsCallback(callback: GetModeratorSettingsCa
  */
 export function setSshStore(store: SshRemoteSettingsStore): void {
 	sshStore = store;
+}
+
+/**
+ * Sets the account registry getter for account multiplexing.
+ * Called from index.ts during initialization. A getter (not a direct ref)
+ * so the Virtuosos Encore flag is re-checked live on every spawn.
+ */
+export function setAccountRegistry(getRegistry: () => AccountRegistry | null): void {
+	accountRegistryGetter = getRegistry;
 }
 
 /**
@@ -973,6 +986,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					processManager,
 					readOnlyMode: true,
 					debugLabel: 'moderator',
+					accountRegistry: accountRegistryGetter(),
+					accountId: chat.accountId,
 					// Match maestro-p's idle budget to the moderator supervising timeout
 					// so a still-working moderator isn't killed at maestro-p's 300s default.
 					maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
@@ -1421,6 +1436,8 @@ export async function routeModeratorResponse(
 					processManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
+					accountRegistry: accountRegistryGetter(),
+					accountId: updatedChat.accountId,
 					// Match maestro-p's idle budget to the participant supervising timeout
 					// so a still-working participant isn't killed at maestro-p's 300s default.
 					maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
@@ -1815,6 +1832,8 @@ Review the agent responses above. Either:
 			processManager,
 			readOnlyMode: true,
 			debugLabel: 'synthesis moderator',
+			accountRegistry: accountRegistryGetter(),
+			accountId: chat.accountId,
 			// Match maestro-p's idle budget to the moderator supervising timeout
 			// so a still-working synthesis turn isn't killed at maestro-p's 300s default.
 			maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
@@ -1981,6 +2000,8 @@ export async function respawnParticipantWithRecovery(
 		processManager,
 		readOnlyMode: readOnly ?? false,
 		debugLabel: `recovery of ${participantName}`,
+		accountRegistry: accountRegistryGetter(),
+		accountId: chat.accountId,
 		// Match maestro-p's idle budget to the participant supervising timeout
 		// so a still-working recovery turn isn't killed at maestro-p's 300s default.
 		maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),

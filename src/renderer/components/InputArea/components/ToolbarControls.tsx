@@ -22,6 +22,7 @@ import {
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 } from '../../../../shared/agentMetadata';
+import { isMultiplexingCapable } from '../../../../shared/accountProviderMeta';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -29,6 +30,8 @@ import { useViewportBreakpoint } from '../../../hooks/ui';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ModelEffortPills } from './ModelEffortPills';
+import { AccountSelector } from '../../AccountSelector';
+import { getModalActions } from '../../../stores/modalStore';
 
 interface ToolbarControlsProps {
 	session: Session;
@@ -262,6 +265,32 @@ export const ToolbarControls = memo(function ToolbarControls({
 				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
 				data-tour="toolbar-toggles"
 			>
+				{/* Account selector - AI mode + multiplexing-capable providers (claude-code, codex, opencode) */}
+				{isAiMode && isMultiplexingCapable(session.toolType) && (
+					<AccountSelector
+						theme={theme}
+						sessionId={session.id}
+						agentType={session.toolType}
+						currentAccountId={session.accountId}
+						currentAccountName={session.accountName}
+						onSwitchAccount={async (toAccountId) => {
+							const currentAccountId = session.accountId;
+							if (currentAccountId && currentAccountId !== toAccountId) {
+								await window.maestro.accounts.executeSwitch({
+									sessionId: session.id,
+									fromAccountId: currentAccountId,
+									toAccountId,
+									reason: 'manual',
+									automatic: false,
+								});
+							} else {
+								await window.maestro.accounts.assign(session.id, toAccountId);
+							}
+						}}
+						onManageAccounts={() => getModalActions().setVirtuososOpen(true)}
+						compact
+					/>
+				)}
 				{isAiMode && onToggleTabSaveToHistory && (
 					<button
 						onClick={onToggleTabSaveToHistory}
