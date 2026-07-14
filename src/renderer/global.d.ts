@@ -65,6 +65,9 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Session's Additional Directories. Providers that support it get native grant
+	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
+	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

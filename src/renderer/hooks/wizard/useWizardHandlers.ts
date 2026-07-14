@@ -61,6 +61,8 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
+import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { getHomeDir } from '../../utils/homeDir';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
@@ -1158,6 +1160,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const {
 				selectedAgent,
 				directoryPath,
+				additionalDirectories,
 				agentName,
 				generatedDocuments,
 				customPath,
@@ -1250,6 +1253,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				cwd: directoryPath,
 				fullPath: directoryPath,
 				projectRoot: directoryPath,
+				// getHomeDir() reads the module cache the app warmed at startup, so `~`
+				// paths typed in the wizard expand the same way they do in the modals.
+				additionalDirectories: normalizeAdditionalDirectories(additionalDirectories, getHomeDir()),
 				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,

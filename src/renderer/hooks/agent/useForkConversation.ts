@@ -215,6 +215,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 						appendSystemPrompt,
 						sessionCustomPath: session.customPath,
 						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
 						sessionCustomModel: session.customModel,
 						sessionCustomEffort: session.customEffort,

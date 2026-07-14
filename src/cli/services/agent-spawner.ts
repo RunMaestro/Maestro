@@ -5,7 +5,12 @@ import { spawn, SpawnOptions, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentSshRemoteConfig, ToolType, UsageStats } from '../../shared/types';
+import type {
+	AdditionalDirectory,
+	AgentSshRemoteConfig,
+	ToolType,
+	UsageStats,
+} from '../../shared/types';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
@@ -15,7 +20,7 @@ import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
-import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
+import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -112,7 +117,12 @@ function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void 
 
 type SpawnOverrides = Pick<
 	SpawnAgentOptions,
-	'customModel' | 'customEffort' | 'customArgs' | 'customEnvVars' | 'appendSystemPrompt'
+	| 'customModel'
+	| 'customEffort'
+	| 'customArgs'
+	| 'customEnvVars'
+	| 'appendSystemPrompt'
+	| 'additionalDirectories'
 >;
 
 /**
@@ -826,6 +836,12 @@ async function spawnJsonLineAgent(
 		preOverrideArgs.push(...def.workingDirArgs(cwd));
 	}
 
+	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
+	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
+	// an interactive turn hand the provider identical flags. Providers with no
+	// native mechanism emit nothing here and rely on the prompt block instead.
+	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
+
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
 	const { args: resolvedArgs, userCustomEnvVars } = resolveAgentOverrides(
@@ -1040,6 +1056,15 @@ export interface SpawnAgentOptions {
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
 	/**
+	 * Per-session Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` translate these into native grant flags via
+	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
+	 * receives them in the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block built
+	 * by `prepareMaestroSystemPromptCli()`. Mirrors the desktop `process:spawn`
+	 * handler's `sessionAdditionalDirectories`.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
+	/**
 	 * Per-session SSH remote config. When `enabled`, the spawn is wrapped with
 	 * ssh so the agent runs on the remote host. Required for parity with the
 	 * desktop app when sessions are configured for SSH remote execution.
@@ -1083,6 +1108,7 @@ export async function spawnAgent(
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
+		additionalDirectories: options?.additionalDirectories,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

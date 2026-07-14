@@ -147,6 +147,7 @@ export async function send(
 				customModel: agent.customModel,
 				customEffort: agent.customEffort,
 				customArgs: agent.customArgs,
+				additionalDirectories: agent.additionalDirectories,
 				customEnvVars: agent.customEnvVars,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
 				appendSystemPrompt,

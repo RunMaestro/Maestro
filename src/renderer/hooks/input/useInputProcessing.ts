@@ -1261,6 +1261,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Per-session config overrides (if set)
 							sessionCustomPath: freshSession.customPath,
 							sessionCustomArgs: freshSession.customArgs,
+							sessionAdditionalDirectories: freshSession.additionalDirectories,
 							sessionCustomEnvVars: freshSession.customEnvVars,
 							sessionCustomModel: freshActiveTab?.customModel ?? freshSession.customModel,
 							sessionCustomEffort: freshActiveTab?.customEffort ?? freshSession.customEffort,

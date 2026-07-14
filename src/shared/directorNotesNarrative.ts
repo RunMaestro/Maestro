@@ -145,14 +145,52 @@ function validateSection(
 }
 
 /**
+ * Slice out the first complete, brace-balanced JSON object in `raw`.
+ *
+ * Scanning to the matching close brace (tracking string state so a `{`/`}`
+ * inside a bullet's text doesn't move the depth counter) rather than to the
+ * LAST `}` in the response: agents routinely append a closing code fence or a
+ * trailing "Note: ..." sentence, and a naive `lastIndexOf('}')` swallows that
+ * epilogue into the slice and fails an otherwise-valid object.
+ */
+function extractFirstJsonObject(raw: string): string | null {
+	const start = raw.indexOf('{');
+	if (start === -1) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < raw.length; i++) {
+		const char = raw[i];
+
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') inString = true;
+		else if (char === '{') depth++;
+		else if (char === '}') {
+			depth--;
+			if (depth === 0) return raw.slice(start, i + 1);
+		}
+	}
+
+	return null;
+}
+
+/**
  * Tolerantly extract and strictly validate the structured narrative from the
  * agent's raw output.
  *
- * Extraction tolerates a leading/trailing code fence or stray prose by locating
- * the first `{` and last `}` and parsing the slice between them. Validation is
- * strict: `version` must be the number 1, `sections` must be an array of
- * well-formed sections, and every item must have a string `text` plus only the
- * allowed optional `severity`/`agent` fields. Any deviation yields
+ * Extraction tolerates a leading code fence or stray prose, plus any epilogue
+ * after the object, by taking the first brace-balanced object in the response.
+ * Validation is strict: `version` must be the number 1, `sections` must be an
+ * array of well-formed sections, and every item must have a string `text` plus
+ * only the allowed optional `severity`/`agent` fields. Any deviation yields
  * `{ ok: false, error }` with a precise message - the function never throws and
  * never returns a partially-built structure.
  */
@@ -161,13 +199,10 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 		return { ok: false, error: 'Response was empty.' };
 	}
 
-	// Tolerant extraction: ignore code fences / stray prose around the object.
-	const start = raw.indexOf('{');
-	const end = raw.lastIndexOf('}');
-	if (start === -1 || end === -1 || end < start) {
+	const jsonText = extractFirstJsonObject(raw);
+	if (jsonText === null) {
 		return { ok: false, error: 'No JSON object found in the response.' };
 	}
-	const jsonText = raw.slice(start, end + 1);
 
 	let parsed: unknown;
 	try {

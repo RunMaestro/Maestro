@@ -521,6 +521,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						// Per-session config overrides (if set)
 						sessionCustomPath: targetSession.customPath,
 						sessionCustomArgs: targetSession.customArgs,
+						sessionAdditionalDirectories: targetSession.additionalDirectories,
 						sessionCustomEnvVars: targetSession.customEnvVars,
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,

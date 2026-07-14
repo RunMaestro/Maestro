@@ -36,6 +36,7 @@ const baseCapabilities = {
 	usesCombinedContextWindow: false,
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
+	supportsAdditionalDirectories: false,
 };
 
 describe('useAgentCapabilities', () => {

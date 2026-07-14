@@ -2,6 +2,80 @@
 
 > Generated from the CLI command tree by `maestro-cli reference`. Do not edit by hand - run `npm run gen:cli-reference` to refresh.
 
+## `maestro-cli agent-run`
+
+Record and inspect agent runs
+
+## `maestro-cli agent-run record`
+
+Record or update an agent run from a JSON file
+
+| Option          | Description                    | Default |
+| --------------- | ------------------------------ | ------- |
+| `--file <json>` | Agent run JSON file            | -       |
+| `--json`        | Output as JSON (for scripting) | -       |
+
+## `maestro-cli agent-run append-event <run-id>`
+
+Append an event to an agent run
+
+| Option              | Description                           | Default |
+| ------------------- | ------------------------------------- | ------- |
+| `--type <type>`     | Event type                            | -       |
+| `--status <status>` | Update the run status with this event | -       |
+| `--message <text>`  | Human-readable event message          | -       |
+| `--json`            | Output as JSON (for scripting)        | -       |
+
+## `maestro-cli agent-run list`
+
+List recent agent runs
+
+| Option              | Description                    | Default |
+| ------------------- | ------------------------------ | ------- |
+| `--status <status>` | Filter by run status           | -       |
+| `--campaign <id>`   | Filter by campaign id          | -       |
+| `--limit <n>`       | Maximum number of runs to show | -       |
+| `--json`            | Output as JSON (for scripting) | -       |
+
+## `maestro-cli agent-run show <run-id>`
+
+Show an agent run and its events
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli campaign`
+
+Record and inspect agent campaigns
+
+## `maestro-cli campaign record`
+
+Record or update a campaign from a JSON file
+
+| Option          | Description                    | Default |
+| --------------- | ------------------------------ | ------- |
+| `--file <json>` | Campaign JSON file             | -       |
+| `--json`        | Output as JSON (for scripting) | -       |
+
+## `maestro-cli campaign list`
+
+List campaigns
+
+| Option              | Description                         | Default |
+| ------------------- | ----------------------------------- | ------- |
+| `--status <status>` | Filter by campaign status           | -       |
+| `--limit <n>`       | Maximum number of campaigns to show | -       |
+| `--json`            | Output as JSON (for scripting)      | -       |
+
+## `maestro-cli campaign show <id>`
+
+Show a campaign
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli list`
 
 List resources
@@ -84,6 +158,18 @@ Run a playbook
 | `--verbose`     | Show full prompt sent to agent on each iteration            | -       |
 | `--no-synopsis` | Skip synopsis generation after each task (reduces overhead) | -       |
 | `--wait`        | Wait for agent to become available if busy                  | -       |
+
+## `maestro-cli goal-run <agent-id> <goal>`
+
+Launch a Goal-Driven Auto Run: pursue a free-text goal until done
+
+| Option                   | Description                                           | Default |
+| ------------------------ | ----------------------------------------------------- | ------- |
+| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock | -       |
+| `--max-iterations <n>`   | Cap iterations (default: infinite)                    | -       |
+| `--no-history`           | Do not write history entries                          | -       |
+| `--json`                 | Output as JSON lines (for scripting)                  | -       |
+| `--verbose`              | Show full prompt sent to agent on each iteration      | -       |
 
 ## `maestro-cli run-doc <docs>`
 
@@ -412,6 +498,14 @@ Generate AI synopsis of recent activity (requires running Maestro app)
 
 Check if the Maestro desktop app is running and reachable
 
+## `maestro-cli version`
+
+Show the running Maestro app's version and build commit hash
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli doctor`
 
 Diagnose CLI connectivity, version skew, and configuration
@@ -463,6 +557,7 @@ Create a new group in the Maestro desktop app
 | Option                | Description                    | Default |
 | --------------------- | ------------------------------ | ------- |
 | `-e, --emoji <emoji>` | Emoji icon for the group       | -       |
+| `--parent <group-id>` | Create inside this root group  | -       |
 | `--json`              | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli remove-group <group-id>`
@@ -768,7 +863,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -777,6 +872,188 @@ Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)
 ## `maestro-cli encore disable <feature>`
 
 Disable an Encore feature
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola`
+
+Pianola manager agent: watch tabs, auto-answer or escalate per your rules
+
+## `maestro-cli pianola watch <tab-id>`
+
+Watch a desktop tab and act on awaiting-input prompts per your rules
+
+| Option                 | Description                                                     | Default |
+| ---------------------- | --------------------------------------------------------------- | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)     | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                         | -       |
+| `--dry-run`            | Classify and record decisions but never send a message          | -       |
+| `--once`               | Run a single iteration instead of looping                       | -       |
+| `--json`               | Reserved for scripting; affects the disabled-feature error only | -       |
+
+## `maestro-cli pianola rules`
+
+List the configured Pianola rules
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola add-rule`
+
+Add a Pianola rule (how the manager agent turns a conversation into a durable rule)
+
+| Option                    | Description                                           | Default |
+| ------------------------- | ----------------------------------------------------- | ------- |
+| `--scope <scope>`         | global \| project \| tab (default global)             | -       |
+| `--scope-id <id>`         | Project path (scope project) or tab id (scope tab)    | -       |
+| `--action <action>`       | auto_answer \| escalate \| ignore (required)          | -       |
+| `--answer <text>`         | Reply text (required for auto_answer)                 | -       |
+| `--max-risk <risk>`       | Only fire when risk is at most: low \| medium \| high | -       |
+| `--kinds <list>`          | Comma list of signal kinds: question,blocked,none     | -       |
+| `--topic-includes <list>` | Comma list of case-insensitive topic substrings       | -       |
+| `--priority <n>`          | Lower runs first (default 100)                        | -       |
+| `--description <text>`    | Human-readable description                            | -       |
+| `--disabled`              | Create the rule disabled                              | -       |
+| `--json`                  | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli pianola learn`
+
+Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)
+
+| Option               | Description                                                             | Default |
+| -------------------- | ----------------------------------------------------------------------- | ------- |
+| `--agent <list>`     | Comma list of agents to crawl: claude-code,codex (default both)         | -       |
+| `--limit <n>`        | Max sessions per agent, newest first (default 300)                      | -       |
+| `--since <date>`     | Only crawl transcripts modified on/after this date (e.g. 2026-06-01)    | -       |
+| `--project <substr>` | Only keep decisions from sessions whose path contains this substring    | -       |
+| `--exclude <substr>` | Drop decisions from sessions whose path contains this substring         | -       |
+| `--max-pairs <n>`    | Max decision pairs to print inline when --out is not used (default 200) | -       |
+| `--out <file>`       | Write the full corpus JSON to a file instead of stdout                  | -       |
+| `--json`             | Compact JSON output (for scripting)                                     | -       |
+
+## `maestro-cli pianola profile`
+
+Read a learned decision profile (per-project with --project, else global)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `--project <path>` | Project path to read the profile for (falls back to global) | -       |
+| `--json`           | Output as JSON (for scripting)                              | -       |
+
+## `maestro-cli pianola set-profile`
+
+Save a learned decision profile from --file or stdin (per-project or global)
+
+| Option             | Description                                                    | Default |
+| ------------------ | -------------------------------------------------------------- | ------- |
+| `--project <path>` | Project path this profile is for (omit for the global profile) | -       |
+| `--file <path>`    | Read the profile markdown from this file (else reads stdin)    | -       |
+| `--pair-count <n>` | How many decision pairs this profile was synthesized from      | -       |
+| `--json`           | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli pianola log`
+
+Show recent Pianola decisions from the audit log
+
+| Option        | Description                                    | Default |
+| ------------- | ---------------------------------------------- | ------- |
+| `--limit <n>` | Maximum number of records to show (default 20) | -       |
+| `--json`      | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli pianola plan`
+
+Author and inspect Pianola task plans (DAGs)
+
+## `maestro-cli pianola plan set`
+
+Save a plan from --file or piped stdin (validated before write)
+
+| Option          | Description                                          | Default |
+| --------------- | ---------------------------------------------------- | ------- |
+| `--file <path>` | Read the plan JSON from this file (else reads stdin) | -       |
+| `--json`        | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli pianola plan list`
+
+List saved plans with a progress summary
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola plan show <planId>`
+
+Show one plan: its tasks, statuses, and dependencies
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola orchestrate <planId>`
+
+Run a saved plan to completion, dispatching tasks as their dependencies finish
+
+| Option                 | Description                               | Default |
+| ---------------------- | ----------------------------------------- | ------- |
+| `--interval <seconds>` | Polling interval in seconds (default 5)   | -       |
+| `--concurrency <n>`    | Max tasks running at once (default 3)     | -       |
+| `--once`               | Run a single iteration instead of looping | -       |
+| `--json`               | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli pianola supervise`
+
+Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
+
+## `maestro-cli pianola supervise watch <tabId>`
+
+Register a supervised tab watcher the desktop keeps alive
+
+| Option                 | Description                                | Default |
+| ---------------------- | ------------------------------------------ | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (required) | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)    | -       |
+| `--json`               | Output as JSON (for scripting)             | -       |
+
+## `maestro-cli pianola supervise orchestrate <planId>`
+
+Register a supervised plan orchestration the desktop keeps alive
+
+| Option                 | Description                             | Default |
+| ---------------------- | --------------------------------------- | ------- |
+| `--concurrency <n>`    | Max tasks running at once (default 3)   | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5) | -       |
+| `--json`               | Output as JSON (for scripting)          | -       |
+
+## `maestro-cli pianola supervise list`
+
+List registered supervised targets
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola supervise remove <id>`
+
+Unregister a supervised target by id (the desktop stops its child)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola supervise enable <id>`
+
+Enable a supervised target by id
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli pianola supervise disable <id>`
+
+Disable a supervised target by id (the desktop stops its child)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -877,6 +1154,116 @@ Report whether a capture is currently recording
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli cadenza`
+
+Open small cadenza views to display or track work in the Maestro desktop app
+
+## `maestro-cli cadenza open <id>`
+
+Open (or replace by id) a cadenza view
+
+| Option                   | Description                                                                                                       | Default |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------- |
+| `--type <type>`          | tracker \| file \| markdown \| image \| code \| view \| decision (default: tracker)                               | -       |
+| `--title <text>`         | Header label for the panel                                                                                        | -       |
+| `--body <text>`          | Body content - tracker line, markdown/code source, JSON block spec (--type view), or the prompt (--type decision) | -       |
+| `--body-file <path>`     | Read body content from a file (large markdown or a view JSON spec)                                                | -       |
+| `--path <path>`          | File/image path (required for file and image; for --type code, shows that file as a snippet)                      | -       |
+| `--lang <lang>`          | Language for --type code highlighting (inferred from --path if omitted)                                           | -       |
+| `--option <label:value>` | A decision button (repeatable); clicking replies value to --agent. Requires --type decision                       | `[]`    |
+| `-c, --color <color>`    | green \| yellow \| orange \| red \| theme (default: theme)                                                        | -       |
+| `-a, --agent <id>`       | Owning agent - lets a file cadenza expand into its tab, and the reply target for --type decision                  | -       |
+| `--json`                 | Output as JSON (for scripting)                                                                                    | -       |
+
+## `maestro-cli cadenza update <id>`
+
+Update fields of an open cadenza in place (the living view)
+
+| Option                | Description                                        | Default |
+| --------------------- | -------------------------------------------------- | ------- |
+| `--title <text>`      | New header label                                   | -       |
+| `--body <text>`       | New body content (tracker line or markdown source) | -       |
+| `--body-file <path>`  | Read new body content from a file                  | -       |
+| `--path <path>`       | New file/image path                                | -       |
+| `-c, --color <color>` | green \| yellow \| orange \| red \| theme          | -       |
+| `--json`              | Output as JSON (for scripting)                     | -       |
+
+## `maestro-cli cadenza close <id>`
+
+Close a cadenza view by id
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli movement`
+
+Compose the agent-driven movement (free-placed data views) in the Maestro main window
+
+## `maestro-cli movement add <id>`
+
+Add (or replace by id) a movement item rendering a JSON block spec
+
+| Option               | Description                                                                  | Default |
+| -------------------- | ---------------------------------------------------------------------------- | ------- |
+| `--x <px>`           | X position (px from movement left)                                           | -       |
+| `--y <px>`           | Y position (px from movement top)                                            | -       |
+| `--width <px>`       | Item width in px (default 320)                                               | -       |
+| `--height <px>`      | Optional fixed item height in px (default: fit content)                      | -       |
+| `--title <text>`     | Item header title                                                            | -       |
+| `--body <json>`      | Block spec JSON, e.g. {"blocks":[{"kind":"stat","label":"Tests","value":8}]} | -       |
+| `--body-file <path>` | Read the block spec JSON from a file                                         | -       |
+| `--json`             | Output as JSON (for scripting)                                               | -       |
+
+## `maestro-cli movement update <id>`
+
+Update fields of an existing movement item in place
+
+| Option               | Description                              | Default |
+| -------------------- | ---------------------------------------- | ------- |
+| `--x <px>`           | New X position                           | -       |
+| `--y <px>`           | New Y position                           | -       |
+| `--width <px>`       | New width                                | -       |
+| `--height <px>`      | New fixed height                         | -       |
+| `--title <text>`     | New title                                | -       |
+| `--body <json>`      | New block spec JSON                      | -       |
+| `--body-file <path>` | Read the new block spec JSON from a file | -       |
+| `--json`             | Output as JSON (for scripting)           | -       |
+
+## `maestro-cli movement move <id>`
+
+Reposition a movement item
+
+| Option     | Description                    | Default |
+| ---------- | ------------------------------ | ------- |
+| `--x <px>` | New X position                 | -       |
+| `--y <px>` | New Y position                 | -       |
+| `--json`   | Output as JSON (for scripting) | -       |
+
+## `maestro-cli movement remove <id>`
+
+Remove a movement item by id
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli movement clear`
+
+Remove all movement items
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli movement state`
+
+Read the current movement layout (items + size) to compose around it
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli stats`
 
 Show aggregated Usage Dashboard metrics for a time range
@@ -894,3 +1281,60 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 | --------------------- | ----------------------------------------------------------------- | ------- |
 | `-p, --param <value>` | Bind a value to a positional ? placeholder (repeatable, in order) | `[]`    |
 | `--json`              | Output rows as JSON instead of a tab-separated table              | -       |
+
+## `maestro-cli plugin`
+
+Author, validate, sign, and package Maestro plugins
+
+## `maestro-cli plugin init [dir]`
+
+Scaffold a new plugin in <dir> (defaults to the current directory)
+
+| Option          | Description                                          | Default |
+| --------------- | ---------------------------------------------------- | ------- | ---------------------------------------- | --- |
+| `--tier <0      | 1                                                    | 2>`     | Plugin trust/capability tier (default 1) | -   |
+| `--id <id>`     | Plugin id (defaults to a slug of the directory name) | -       |
+| `--name <name>` | Human-readable plugin name (defaults to the id)      | -       |
+| `--force`       | Scaffold into a non-empty directory                  | -       |
+| `--json`        | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli plugin validate [dir]`
+
+Validate <dir>/plugin.json and, when present, its signature.json
+
+| Option                 | Description                                                                            | Default |
+| ---------------------- | -------------------------------------------------------------------------------------- | ------- |
+| `--trusted-key <keys>` | Comma-separated base64 public keys to treat as trusted when resolving signature status | -       |
+| `--json`               | Output as JSON (for scripting)                                                         | -       |
+
+## `maestro-cli plugin sign <dir>`
+
+Sign <dir> with ed25519 and write signature.json
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `--key <path>`     | Private key to sign with (PEM, or base64-encoded PKCS8 DER) | -       |
+| `--gen-key`        | Generate a fresh ed25519 keypair (requires --key-out)       | -       |
+| `--key-out <path>` | Where to write the generated private key (with --gen-key)   | -       |
+| `--json`           | Output as JSON (for scripting)                              | -       |
+
+## `maestro-cli plugin pack <dir>`
+
+Package <dir> into a distributable archive (excludes node_modules/.git/keys)
+
+| Option         | Description                                      | Default |
+| -------------- | ------------------------------------------------ | ------- |
+| `--out <file>` | Output archive path (default <id>-<version>.tgz) | -       |
+| `--json`       | Output as JSON (for scripting)                   | -       |
+
+## `maestro-cli mcp`
+
+Model Context Protocol bridge for Maestro plugin tools
+
+## `maestro-cli mcp serve`
+
+Run an MCP stdio server exposing registered plugin tools (spawned by an agent via its MCP config)
+
+| Option       | Description                                   | Default |
+| ------------ | --------------------------------------------- | ------- |
+| `--tab <id>` | Originating desktop tab id (diagnostics only) | -       |

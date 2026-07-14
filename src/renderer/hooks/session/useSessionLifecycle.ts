@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { Session, AITab } from '../../types';
+import type { AdditionalDirectory, Session, AITab } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -99,7 +99,8 @@ export interface SessionLifecycleReturn {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[]
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -170,7 +171,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPPath?: string,
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean
+			retryOnTokenExhaustion?: boolean,
+			additionalDirectories?: AdditionalDirectory[]
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -180,6 +182,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						name,
 						nudgeMessage,
 						newSessionMessage,
+						// Directory grants are provider-agnostic, so (like resilience) they
+						// survive a provider switch below.
+						additionalDirectories,
 						customPath,
 						customArgs,
 						customEnvVars,

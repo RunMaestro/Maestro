@@ -26,7 +26,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 
 1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
-3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (23 boolean fields)
+3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. **Sync renderer interfaces** — add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
@@ -36,6 +36,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 7. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
 8. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
 9. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+10. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 
 #### CI Enforcement
 
@@ -46,6 +47,7 @@ The `agent-completeness.test.ts` test validates:
 - Every agent with `supportsJsonOutput` has a registered output parser
 - Every agent with `supportsSessionStorage` has a registered session storage
 - Every agent with an output parser has error patterns registered
+- Every agent declares `additionalDirArgs` **iff** `supportsAdditionalDirectories` is true
 
 See detailed instructions below.
 
@@ -122,7 +124,7 @@ Each agent declares capabilities that determine which UI features are available.
 ### Capability Interface
 
 ```typescript
-// src/main/agents/capabilities.ts (23 boolean fields + 1 optional)
+// src/main/agents/capabilities.ts (24 boolean fields + 1 optional)
 
 interface AgentCapabilities {
 	// Core features
@@ -162,6 +164,9 @@ interface AgentCapabilities {
 	usesJsonLineOutput: boolean; // Uses JSONL (not JSON) in batch mode
 	usesCombinedContextWindow: boolean; // Combined input+output context display
 
+	// Filesystem scope
+	supportsAdditionalDirectories: boolean; // CLI can grant dirs outside the cwd (e.g. --add-dir)
+
 	// Optional non-boolean
 	imageResumeMode?: 'prompt-embed'; // How to handle images on resume when -i unavailable
 }
@@ -173,31 +178,32 @@ interface AgentCapabilities {
 
 ### Capability-to-UI Feature Mapping
 
-| Capability                    | UI Feature                    | Hidden When False        |
-| ----------------------------- | ----------------------------- | ------------------------ |
-| `supportsResume`              | Resume button                 | Button disabled          |
-| `supportsReadOnlyMode`        | Read-only toggle              | Toggle hidden            |
-| `supportsJsonOutput`          | Output parsing                | Raw text fallback        |
-| `supportsSessionId`           | Session ID pill               | Pill hidden              |
-| `supportsImageInput`          | Image attachment button       | Button hidden            |
-| `supportsImageInputOnResume`  | Image attach on resume        | Button hidden on resume  |
-| `supportsSlashCommands`       | Slash command autocomplete    | Autocomplete disabled    |
-| `supportsStreamJsonInput`     | Image via stdin (stream-json) | Uses file path fallback  |
-| `supportsSessionStorage`      | Sessions browser tab          | Tab hidden               |
-| `supportsCostTracking`        | Cost widget                   | Widget hidden            |
-| `supportsUsageStats`          | Token usage display           | Display hidden           |
-| `supportsBatchMode`           | Batch processing              | Persistent process mode  |
-| `requiresPromptToStart`       | Eager spawn on create         | Agent spawns immediately |
-| `supportsStreaming`           | Real-time display             | Waits for full response  |
-| `supportsModelSelection`      | Model dropdown                | Dropdown hidden          |
-| `supportsResultMessages`      | Show only final result        | Shows all messages       |
-| `supportsThinkingDisplay`     | Thinking/reasoning panel      | Panel hidden             |
-| `supportsContextMerge`        | Receive merged context        | Merge option hidden      |
-| `supportsContextExport`       | Export context                | Export option hidden     |
-| `supportsWizard`              | Wizard agent selection        | Agent excluded           |
-| `supportsGroupChatModeration` | Moderator dropdown            | Agent excluded           |
-| `usesJsonLineOutput`          | CLI batch parsing strategy    | Uses JSON fallback       |
-| `usesCombinedContextWindow`   | Context bar display           | Separate bars            |
+| Capability                      | UI Feature                                        | Hidden When False                                                |
+| ------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
+| `supportsResume`                | Resume button                                     | Button disabled                                                  |
+| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                    |
+| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                |
+| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                      |
+| `supportsImageInput`            | Image attachment button                           | Button hidden                                                    |
+| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
+| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
+| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
+| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
+| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
+| `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
+| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                          |
+| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                         |
+| `supportsStreaming`             | Real-time display                                 | Waits for full response                                          |
+| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                  |
+| `supportsResultMessages`        | Show only final result                            | Shows all messages                                               |
+| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                     |
+| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                              |
+| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so |
+| `supportsContextExport`         | Export context                                    | Export option hidden                                             |
+| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                   |
+| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                   |
+| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                               |
+| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                    |
 
 ### Context Window Configuration
 
@@ -293,6 +299,9 @@ your-agent --help | grep -i plan
 your-agent --help | grep -i readonly
 your-agent --help | grep -i permission
 
+# Check for directory grants outside the cwd (Additional Directories)
+your-agent --help | grep -iE "add-dir|directories|workspace|writable|allowed"
+
 # Test JSON output
 your-agent run --format json "say hello" 2>&1 | head -20
 ```
@@ -304,6 +313,8 @@ Document:
 - [ ] How to resume a session
 - [ ] How to enable read-only mode
 - [ ] Token/usage reporting format
+- [ ] Whether directories outside the cwd can be granted, and **what a grant means**
+      (read? write? both?) - see [Additional Directories](#additional-directories) below
 
 ### Step 2: Add Agent Definition
 
@@ -383,9 +394,62 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: false, // Enable if agent can moderate group chats
 		usesJsonLineOutput: false, // true if batch output is JSONL (not JSON)
 		usesCombinedContextWindow: false, // true if context = input + output combined
+		supportsAdditionalDirectories: false, // true if the CLI can grant dirs outside the cwd
 	},
 };
 ```
+
+### Step 3.5: Additional Directories
+
+Maestro lets the user grant an agent extra directories beyond its working directory,
+each with independent **read** and **write** toggles (`AdditionalDirectory` in
+`src/shared/types.ts`). Every agent gets these grants in its system prompt via the
+`{{ADDITIONAL_DIRECTORIES}}` block, whether or not its CLI knows anything about
+directories - that path needs no per-agent work.
+
+What differs per provider is whether the grants are also **enforced by the CLI**.
+Wiring that up is two lines, and the two must agree:
+
+1. `supportsAdditionalDirectories: true` in `capabilities.ts`
+2. `additionalDirArgs` in `definitions.ts` - maps the grants to your CLI's flags
+
+```typescript
+// src/main/agents/definitions.ts
+import { dirsWithAnyAccess, dirsWithWriteAccess, repeatDirFlag } from '../../shared/additionalDirectories';
+
+// A CLI whose flag means "allow tool access to this dir" (Claude Code, Copilot-CLI):
+additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+
+// A CLI whose flag adds a WRITABLE sandbox root (Codex):
+additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithWriteAccess(dirs)),
+```
+
+`agent-completeness.test.ts` fails CI if the capability and the builder disagree in
+either direction, so a provider cannot silently promise enforcement it never delivers.
+
+**Read the provider's flag description before picking a helper.** The flags look
+identical and are not: Claude Code's `--add-dir` grants tool _access_ (read and
+write), while Codex's `--add-dir` only adds a _writable_ root. Handing Codex a
+read-only grant would give the sandbox write access the user never asked for.
+
+**Nothing today expresses "write but never read."** A native grant opens the
+directory; the finer read/write rule is carried only by the prompt block. Do not
+write UI copy or docs that claim otherwise.
+
+Current support:
+
+| Agent           | Flag                              | Grant means               |
+| --------------- | --------------------------------- | ------------------------- |
+| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)  |
+| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
+| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
+| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
+| `factory-droid` | unverified                        | Prompt-only               |
+| `gemini-cli`    | unverified                        | Prompt-only               |
+
+Emit the flag **once per directory** (`repeatDirFlag`) rather than as a single
+variadic list. A variadic option swallows the positional that follows it, and the
+prompt is passed positionally on several spawn paths.
 
 ### Step 4: Create Output Parser
 

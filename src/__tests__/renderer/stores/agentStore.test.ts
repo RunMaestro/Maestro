@@ -13,6 +13,7 @@ import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore'
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { resetStores } from '../../helpers';
 
 // ============================================================================
 // Helpers
@@ -111,24 +112,8 @@ vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((template: string) => template),
 }));
 
-function resetStores() {
-	useAgentStore.setState({
-		availableAgents: [],
-		agentsDetected: false,
-	});
-	useSessionStore.setState({
-		sessions: [],
-		groups: [],
-		activeSessionId: '',
-		sessionsLoaded: false,
-		initialLoadComplete: false,
-		removedWorktreePaths: new Set(),
-		cyclePosition: -1,
-	});
-}
-
-beforeEach(async () => {
-	resetStores();
+beforeEach(() => {
+	resetStores(useAgentStore, useSessionStore);
 	vi.clearAllMocks();
 });
 
@@ -189,9 +174,11 @@ describe('agentStore', () => {
 
 			await expect(useAgentStore.getState().refreshAgents()).rejects.toThrow('IPC failed');
 
-			// State unchanged on failure
+			// Agent list unchanged on failure...
 			expect(useAgentStore.getState().availableAgents).toEqual([]);
-			expect(useAgentStore.getState().agentsDetected).toBe(false);
+			// ...but detection is marked done so the pickers fall out of "Loading agents..."
+			// instead of spinning forever.
+			expect(useAgentStore.getState().agentsDetected).toBe(true);
 		});
 
 		it('refreshAgents with empty result sets agentsDetected true', async () => {
@@ -1163,7 +1150,7 @@ describe('agentStore', () => {
 			expect(useAgentStore.getState().agentsDetected).toBe(true);
 
 			// Reset
-			resetStores();
+			resetStores(useAgentStore, useSessionStore);
 
 			expect(useAgentStore.getState().availableAgents).toEqual([]);
 			expect(useAgentStore.getState().agentsDetected).toBe(false);
@@ -1176,7 +1163,7 @@ describe('agentStore', () => {
 			useAgentStore.getState().clearAgentError('session-1');
 
 			// Reset
-			resetStores();
+			resetStores(useAgentStore, useSessionStore);
 
 			// Set up again and use
 			const newSession = createMockSession({ id: 'session-2', state: 'error' });

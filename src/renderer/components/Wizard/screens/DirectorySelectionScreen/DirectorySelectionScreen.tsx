@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWizard } from '../../WizardContext';
 import { ScreenReaderAnnouncement } from '../../ScreenReaderAnnouncement';
 import { ExistingDocsModal } from '../../ExistingDocsModal';
+import { AdditionalDirectoriesSection } from '../../../shared/AdditionalDirectoriesSection';
 import {
 	DirectoryContinueButton,
 	DirectoryKeyboardHints,
@@ -25,6 +26,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	const {
 		state,
 		setDirectoryPath,
+		setAdditionalDirectories,
 		setIsGitRepo,
 		setDirectoryError,
 		setHasExistingAutoRunDocs,
@@ -158,6 +160,17 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 						initRepoError={initRepoError}
 						onInitRepo={actions.handleInitRepo}
 					/>
+
+					{/* Optional read/write grants outside the project directory */}
+					<div className="mt-6">
+						<AdditionalDirectoriesSection
+							theme={theme}
+							directories={state.additionalDirectories}
+							onChange={setAdditionalDirectories}
+							disableBrowse={isRemoteSession}
+							nativelyEnforced={!!agentConfig?.capabilities?.supportsAdditionalDirectories}
+						/>
+					</div>
 				</div>
 			</div>
 

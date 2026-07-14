@@ -1,4 +1,5 @@
 import type { AgentConfig, AgentDefinition } from '../agents';
+import type { AdditionalDirectory } from '../../shared/types';
 import { logger } from './logger';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -16,6 +17,12 @@ type BuildAgentArgsOptions = {
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
+	/**
+	 * The session's Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` turn these into native grant flags; the rest
+	 * ignore them here and rely on the system-prompt block instead.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
 	/**
 	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
 	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
@@ -187,7 +194,33 @@ export function buildAgentArgs(
 		dedupedArgs.push(arg);
 	}
 
-	return dedupedArgs;
+	// Additional Directories are appended AFTER the dedupe on purpose. Every
+	// provider expresses a multi-directory grant by repeating its flag
+	// (`--add-dir a --add-dir b`), and the dedupe above drops repeated flag
+	// tokens - it would keep the first `--add-dir`, delete the second, and leave
+	// the orphaned path behind as a stray positional that the CLI would read as
+	// the prompt. Emitting them last also keeps them ahead of the prompt, which
+	// callers append after this function returns.
+	return [...dedupedArgs, ...buildAdditionalDirArgs(agent, options.additionalDirectories)];
+}
+
+/**
+ * Translate the session's directory grants into provider-native CLI args.
+ *
+ * Returns [] for providers that have no native mechanism - they still receive
+ * the grants through the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block, which
+ * is built independently of this path. Exported so the CLI spawner
+ * (`src/cli/services/agent-spawner.ts`), which assembles args itself rather than
+ * calling `buildAgentArgs`, produces byte-identical flags.
+ */
+export function buildAdditionalDirArgs(
+	agent: Pick<AgentConfig, 'additionalDirArgs'> | AgentDefinition | null | undefined,
+	dirs: AdditionalDirectory[] | undefined
+): string[] {
+	if (!agent?.additionalDirArgs || !dirs?.length) {
+		return [];
+	}
+	return agent.additionalDirArgs(dirs);
 }
 
 /** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */

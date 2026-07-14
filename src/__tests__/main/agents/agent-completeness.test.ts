@@ -91,6 +91,7 @@ describe('Agent Completeness', () => {
 						'supportsThinkingDisplay',
 						'supportsContextMerge',
 						'supportsContextExport',
+						'supportsAdditionalDirectories',
 					];
 
 					for (const field of requiredBooleanFields) {
@@ -99,6 +100,33 @@ describe('Agent Completeness', () => {
 							`Agent "${def.id}" is missing capability field "${field}"`
 						).toBe('boolean');
 					}
+				});
+
+				// The capability boolean and the arg builder are two halves of one
+				// feature: the boolean drives UI copy ("enforced by the provider" vs
+				// "instructions only") while the builder produces the actual flags.
+				// Let them drift and the UI promises enforcement that never ships.
+				it('declares additionalDirArgs iff supportsAdditionalDirectories', () => {
+					const caps = getAgentCapabilities(def.id);
+
+					if (caps.supportsAdditionalDirectories) {
+						expect(
+							typeof def.additionalDirArgs,
+							`Agent "${def.id}" has supportsAdditionalDirectories=true but no additionalDirArgs() in agents/definitions.ts, so its grants would silently never reach the CLI`
+						).toBe('function');
+					} else {
+						expect(
+							def.additionalDirArgs,
+							`Agent "${def.id}" defines additionalDirArgs() but supportsAdditionalDirectories=false, so the args are built and the UI still tells the user nothing is enforced`
+						).toBeUndefined();
+					}
+				});
+
+				it('emits no directory args when the agent has no grants', () => {
+					// Guards the common spawn case: an agent with an empty grant list
+					// must not gain a stray flag (a bare `--add-dir` with no value would
+					// eat the next arg, which on several paths is the prompt).
+					expect(def.additionalDirArgs?.([]) ?? []).toEqual([]);
 				});
 
 				it('has output parser if supportsJsonOutput', () => {

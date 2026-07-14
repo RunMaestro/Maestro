@@ -49,7 +49,9 @@ The reference material is split into focused, on-demand includes. Each `Path` be
 
 ## Critical Directive: Directory Restrictions
 
-**Hard rule:** only write files within `{{AGENT_PATH}}` (your working directory) or `{{AUTORUN_FOLDER}}` (the shared Auto Run folder). Reads anywhere are fine. For the full restriction set, allowed/prohibited operations, and how to handle override requests, read `{{REF:_file-access-rules}}`.
+**Hard rule:** only write files within `{{AGENT_PATH}}` (your working directory) or `{{AUTORUN_FOLDER}}` (the shared Auto Run folder), plus any directory listed under "Additional Directories" below with Write access. Reads anywhere are fine unless a directory below is marked write-only. For the full restriction set, allowed/prohibited operations, and how to handle override requests, read `{{REF:_file-access-rules}}`.
+
+{{ADDITIONAL_DIRECTORIES}}
 
 ## Operating Rules
 
