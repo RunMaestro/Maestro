@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
 import { OmpNativeSessionAdapter } from './session-adapter';
 import capturedRpcTurn from './fixtures/real-rpc-turn.json';
+import capturedThinkingLevel from './fixtures/real-rpc-thinking-level.json';
 
 class FakeChild extends EventEmitter {
 	stdin = { write: vi.fn() };
@@ -158,6 +159,7 @@ describe('OmpNativeSessionAdapter', () => {
 
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'first result');
 		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
+		expect(send).toHaveBeenCalledWith('process:exit', 'tab-2', 0);
 		expect(child.kill).not.toHaveBeenCalled();
 
 		await adapter.prompt('second prompt');
@@ -177,6 +179,11 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(
 			send.mock.calls.filter(
 				([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
+			)
+		).toHaveLength(2);
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) => channel === 'process:exit' && sessionId === 'tab-2'
 			)
 		).toHaveLength(2);
 		expect(child.kill).not.toHaveBeenCalled();
@@ -786,6 +793,77 @@ describe('OmpNativeSessionAdapter', () => {
 			.at(-1)?.[2] as { controls: Array<{ id: string; value: string | boolean }> };
 		expect(postMutationFeatures.controls).toContainEqual(
 			expect.objectContaining({ id: 'auto-retry', value: false })
+		);
+	});
+
+	it('uses the captured level payload and projects high after the state refresh', async () => {
+		expect(capturedThinkingLevel).toContainEqual(
+			expect.objectContaining({
+				command: 'set_thinking_level',
+				success: true,
+			})
+		);
+		expect(capturedThinkingLevel).toContainEqual(
+			expect.objectContaining({
+				command: 'get_state',
+				data: expect.objectContaining({ thinkingLevel: 'high' }),
+			})
+		);
+
+		const child = new FakeChild();
+		let thinkingLevel = 'medium';
+		const frames: Array<{ id?: string; type: string; level?: string }> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string; level?: string };
+			frames.push(command);
+			if (!command.id) return true;
+			if (command.type === 'set_thinking_level' && command.level) {
+				thinkingLevel = command.level;
+			}
+			const data =
+				command.type === 'get_available_commands'
+					? { commands: [] }
+					: command.type === 'get_available_models'
+						? { models: [] }
+						: command.type === 'get_messages'
+							? { messages: [] }
+							: command.type === 'get_subagents'
+								? { subagents: [] }
+								: command.type === 'get_state'
+									? { thinkingLevel, todoPhases: [] }
+									: {};
+			queueMicrotask(() =>
+				emit(child, {
+					type: 'response',
+					id: command.id,
+					command: command.type,
+					success: true,
+					data,
+				})
+			);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-thinking',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await adapter.setControl('thinking-level', 'high');
+
+		expect(frames).toContainEqual(
+			expect.objectContaining({ type: 'set_thinking_level', level: 'high' })
+		);
+		const features = send.mock.calls
+			.filter(([channel]) => channel === 'process:runtime-features')
+			.at(-1)?.[2] as { controls: Array<{ id: string; value: string | boolean }> };
+		expect(features.controls).toContainEqual(
+			expect.objectContaining({ id: 'thinking-level', value: 'high' })
 		);
 	});
 

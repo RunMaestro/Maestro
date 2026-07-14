@@ -87,4 +87,26 @@ describe('SessionInspector', () => {
 
 		expect(container).toBeEmptyDOMElement();
 	});
+
+	it('renders explicit Todos and Subagents empty states for a live native session', () => {
+		render(
+			<SessionInspector
+				sessionId="session-1"
+				runtimeFeatures={{
+					controls: [],
+					tree: [],
+					todos: [],
+					subagents: [],
+					stats: {},
+				}}
+				theme={THEMES.dracula}
+				onBranchSession={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByRole('heading', { name: 'Todos' })).toBeInTheDocument();
+		expect(screen.getByText('No todos')).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Subagents' })).toBeInTheDocument();
+		expect(screen.getByText('No subagents')).toBeInTheDocument();
+	});
 });

@@ -4,6 +4,7 @@ import { useAgentExitListener } from '../../../../../renderer/hooks/agent/intern
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import type { QueuedItem } from '../../../../../renderer/types';
 
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -96,6 +97,45 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	it('dispatches and removes the queued second native prompt when the first turn completes', async () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const queuedSecondPrompt = {
+			id: 'queued-second-prompt',
+			timestamp: 1,
+			tabId: 'tab-1',
+			type: 'message',
+			text: 'second native prompt',
+		} satisfies QueuedItem;
+		const session = createMockSession({
+			id: 'native-session',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [queuedSecondPrompt],
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const processQueuedItem = vi.fn(
+			async (_sessionId: string, _item: QueuedItem): Promise<void> => undefined
+		);
+		const deps = {
+			...makeDeps(),
+			processQueuedItemRef: { current: processQueuedItem },
+		};
+		renderHook(() => useAgentExitListener(deps));
+
+		await act(async () => {
+			await handler!('native-session-ai-tab-1', 0);
+			const waitForDispatch = Promise.withResolvers<void>();
+			setTimeout(waitForDispatch.resolve, 0);
+			await waitForDispatch.promise;
+		});
+
+		expect(processQueuedItem).toHaveBeenCalledWith('native-session', queuedSecondPrompt);
+		expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
 	});
 
 	it('appends a system log on terminal exit', async () => {

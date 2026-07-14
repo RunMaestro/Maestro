@@ -1,0 +1,15 @@
+[
+	{
+		"type": "response",
+		"id": "captured-set-thinking-level",
+		"command": "set_thinking_level",
+		"success": true
+	},
+	{
+		"type": "response",
+		"id": "captured-state-high",
+		"command": "get_state",
+		"success": true,
+		"data": { "thinkingLevel": "high", "todoPhases": [] }
+	}
+]

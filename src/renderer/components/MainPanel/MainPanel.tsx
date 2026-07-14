@@ -51,6 +51,7 @@ import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+import type { AgentControl } from '../../../shared/agent-runtime-features';
 
 /**
  * Empty placeholder shown when this window has no agent to display - either no
@@ -70,6 +71,18 @@ function EmptyMainPanel({ theme }: { theme: Theme }) {
 			</p>
 		</div>
 	);
+}
+
+export function resolvePillModels(
+	toolType: string | undefined,
+	discoveredModels: readonly string[],
+	runtimeControls: readonly AgentControl[] | null | undefined
+): string[] {
+	if (discoveredModels.length > 0 || toolType !== 'omp') return [...discoveredModels];
+	const modelControl = runtimeControls?.find(
+		(control) => control.id === 'model' && control.kind === 'select'
+	);
+	return modelControl?.options?.map((option) => option.id).filter(Boolean) ?? [];
 }
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
@@ -475,10 +488,22 @@ export const MainPanel = React.memo(
 			};
 		}, [activeSession?.toolType]);
 
-		// Resolved current model/effort: tab override > session override > agent config > empty
-		const resolvedModel = activeTab?.customModel || activeSession?.customModel || agentDefaultModel;
+		// Resolved current model/effort: tab override > session override > live runtime > agent config
+		const runtimeModel = activeSession?.runtimeFeatures?.controls.find(
+			(control) => control.id === 'model' && typeof control.value === 'string'
+		)?.value;
+		const resolvedModel =
+			activeTab?.customModel ||
+			activeSession?.customModel ||
+			(typeof runtimeModel === 'string' ? runtimeModel : '') ||
+			agentDefaultModel;
 		const resolvedEffort =
 			activeTab?.customEffort || activeSession?.customEffort || agentDefaultEffort;
+		const resolvedPillModels = resolvePillModels(
+			activeSession?.toolType,
+			pillModels,
+			activeSession?.runtimeFeatures?.controls
+		);
 
 		const setTabModel = useTabStore((s) => s.setTabModel);
 		const setTabEffort = useTabStore((s) => s.setTabEffort);
@@ -1392,7 +1417,7 @@ export const MainPanel = React.memo(
 									// Model/Effort quick-change pills
 									currentModel={resolvedModel}
 									currentEffort={resolvedEffort}
-									availableModels={pillModels}
+									availableModels={resolvedPillModels}
 									availableEfforts={pillEfforts}
 									onModelChange={handleModelChange}
 									onEffortChange={handleEffortChange}

@@ -367,7 +367,10 @@ export class OmpNativeSessionAdapter {
 	private completeTurn(): void {
 		if (!this.turnInFlight) return;
 		this.turnInFlight = false;
+		// Match the legacy one-shot lifecycle: command-exit settles shell-command
+		// bookkeeping, while exit drives the AI-tab reducer that dequeues the next prompt.
 		this.options.send('process:command-exit', this.options.sessionId, 0);
+		this.options.send('process:exit', this.options.sessionId, 0);
 	}
 }
 
@@ -478,10 +481,9 @@ function modelOption(value: unknown): AgentControlOption {
 		label: stringAt(model, 'label') ?? id,
 	};
 }
-
-function todosFromState(state: Record<string, unknown>): AgentTodoPhase[] | null {
-	const phases = Array.isArray(state.todoPhases) ? state.todoPhases : null;
-	if (!phases) return null;
+function todosFromState(state: Record<string, unknown>): AgentTodoPhase[] {
+	const phases = Array.isArray(state.todoPhases) ? state.todoPhases : [];
+	if (!phases.length) return [];
 	return phases.flatMap((phase) => {
 		const record = asRecord(phase);
 		const name = stringAt(record, 'name') ?? stringAt(record, 'label') ?? stringAt(record, 'id');
@@ -511,9 +513,8 @@ function treeFromMessages(value: unknown): AgentTreeNode[] | null {
 		};
 	});
 }
-
-function subagentsFromData(value: unknown): AgentSubagent[] | null {
-	if (!Array.isArray(value)) return null;
+function subagentsFromData(value: unknown): AgentSubagent[] {
+	if (!Array.isArray(value)) return [];
 	return value.map((subagent, index) => {
 		const record = asRecord(subagent);
 		const status = stringAt(record, 'status');

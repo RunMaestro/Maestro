@@ -112,10 +112,10 @@ export const SessionInspector = memo(function SessionInspector({
 					/>
 				</section>
 			) : null}
-			{runtimeFeatures.todos?.length ? (
-				<section className="mb-4">
-					<h2 className="mb-1 text-xs font-semibold">Todos</h2>
-					{runtimeFeatures.todos.map((phase) => (
+			<section className="mb-4">
+				<h2 className="mb-1 text-xs font-semibold">Todos</h2>
+				{runtimeFeatures.todos?.length ? (
+					runtimeFeatures.todos.map((phase) => (
 						<div key={phase.name} className="mb-2">
 							<h3 className="text-[11px] font-medium" style={{ color: theme.colors.textDim }}>
 								{phase.name}
@@ -134,12 +134,14 @@ export const SessionInspector = memo(function SessionInspector({
 								))}
 							</ul>
 						</div>
-					))}
-				</section>
-			) : null}
-			{runtimeFeatures.subagents?.length ? (
-				<section className="mb-4">
-					<h2 className="mb-1 text-xs font-semibold">Subagents</h2>
+					))
+				) : (
+					<p style={{ color: theme.colors.textDim }}>No todos</p>
+				)}
+			</section>
+			<section className="mb-4">
+				<h2 className="mb-1 text-xs font-semibold">Subagents</h2>
+				{runtimeFeatures.subagents?.length ? (
 					<ul className="space-y-1.5">
 						{runtimeFeatures.subagents.map((subagent) => (
 							<li
@@ -167,8 +169,10 @@ export const SessionInspector = memo(function SessionInspector({
 							</li>
 						))}
 					</ul>
-				</section>
-			) : null}
+				) : (
+					<p style={{ color: theme.colors.textDim }}>No subagents</p>
+				)}
+			</section>
 			{runtimeFeatures.stats && Object.keys(runtimeFeatures.stats).length ? (
 				<section>
 					<h2 className="mb-1 text-xs font-semibold">Session stats</h2>
