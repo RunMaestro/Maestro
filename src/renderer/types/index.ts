@@ -44,6 +44,10 @@ import type {
 	ThinkingMode,
 	TaskSelectionMode,
 } from '../../shared/types';
+import type {
+	AgentApprovalRequest,
+	AgentRuntimeFeatureState,
+} from '../../shared/agent-runtime-features';
 
 // Re-export group chat types from shared location
 export type {
@@ -564,6 +568,10 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/** Native agent capability projection; present only for agents with an RPC runtime. */
+	runtimeFeatures?: AgentRuntimeFeatureState | null;
+	/** Native approvals awaiting an explicit decision for this tab. */
+	pendingApprovals?: AgentApprovalRequest[];
 }
 
 // A single "thinking item" — one busy tab within a session.
@@ -797,6 +805,10 @@ export interface Session {
 	// AI process PID (for agents with persistent processes)
 	// For batch mode agents, this is 0 since processes spawn per-message
 	aiPid: number;
+	/** Native agent capability projection when the event is not tab-scoped. */
+	runtimeFeatures?: AgentRuntimeFeatureState | null;
+	/** Native approvals awaiting an explicit decision outside a tab context. */
+	pendingApprovals?: AgentApprovalRequest[];
 	// DEPRECATED: Replaced by terminalTabs[].pid — each terminal tab now has its own PTY pid
 	terminalPid: number;
 	port: number;

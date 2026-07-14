@@ -281,7 +281,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionId: true,
 		supportsImageInput: true,
 		supportsImageInputOnResume: true,
-		supportsSlashCommands: false,
+		supportsSlashCommands: true,
 		supportsSessionStorage: false,
 		supportsCostTracking: true,
 		supportsUsageStats: true,

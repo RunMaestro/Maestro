@@ -31,6 +31,7 @@ import { useAgentDataListener } from './internal/useAgentDataListener';
 import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
+import { useRuntimeFeaturesListener } from './internal/useRuntimeFeaturesListener';
 
 export type { BatchedUpdater, UseAgentListenersDeps } from './internal/types';
 export { getErrorTitleForType } from './internal/helpers/errorTitles';
@@ -98,6 +99,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();
+	useRuntimeFeaturesListener();
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
 	// orphan tool entries are released for GC.

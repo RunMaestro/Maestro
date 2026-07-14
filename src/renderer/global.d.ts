@@ -351,6 +351,22 @@ interface MaestroAPI {
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
+		onApprovalRequest: (
+			callback: (request: import('../shared/agent-runtime-features').AgentApprovalRequest) => void
+		) => () => void;
+		onRuntimeFeatures: (
+			callback: (
+				sessionId: string,
+				state: import('../shared/agent-runtime-features').AgentRuntimeFeatureState
+			) => void
+		) => () => void;
+		respondApproval: (sessionId: string, requestId: string, optionId: string) => Promise<boolean>;
+		setAgentControl: (
+			sessionId: string,
+			controlId: string,
+			value: string | boolean
+		) => Promise<boolean>;
+		branchSession: (sessionId: string, entryId: string) => Promise<boolean>;
 		onToolExecution: (
 			callback: (
 				sessionId: string,

@@ -3,6 +3,10 @@ import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type {
+	AgentApprovalRequest,
+	AgentRuntimeFeatureState,
+} from '../../shared/agent-runtime-features';
 
 /**
  * Kill/interrupt handle for server-backed processes that have no OS child
@@ -182,6 +186,8 @@ export interface ProcessManagerEvents {
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
+	'approval-request': (request: AgentApprovalRequest) => void;
+	'runtime-features': (sessionId: string, state: AgentRuntimeFeatureState) => void;
 }
 
 export interface ToolExecution {

@@ -24,6 +24,7 @@ import { MaestroSettings } from './persistence';
 import { getDefaultShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
+import { OmpNativeSessionAdapter } from '../../omp-native/session-adapter';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -137,6 +138,54 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		)
 	);
 
+	ipcMain.handle(
+		'process:respond-approval',
+		withIpcErrorLogging(
+			handlerOpts('respond-approval'),
+			async (_event, payload: unknown): Promise<boolean> => {
+				if (!isOmpPayload(payload, ['sessionId', 'requestId', 'optionId'])) return false;
+				const { sessionId, requestId, optionId } = payload as {
+					sessionId: string;
+					requestId: string;
+					optionId: string;
+				};
+				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
+				return adapter ? adapter.respondApproval(requestId, optionId) : false;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'process:set-agent-control',
+		withIpcErrorLogging(
+			handlerOpts('set-agent-control'),
+			async (_event, payload: unknown): Promise<boolean> => {
+				if (!isOmpPayload(payload, ['sessionId', 'controlId'])) return false;
+				const { sessionId, controlId, value } = payload as {
+					sessionId: string;
+					controlId: string;
+					value: unknown;
+				};
+				if (typeof value !== 'string' && typeof value !== 'boolean') return false;
+				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
+				return adapter ? adapter.setControl(controlId, value) : false;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'process:branch-session',
+		withIpcErrorLogging(
+			handlerOpts('branch-session'),
+			async (_event, payload: unknown): Promise<boolean> => {
+				if (!isOmpPayload(payload, ['sessionId', 'entryId'])) return false;
+				const { sessionId, entryId } = payload as { sessionId: string; entryId: string };
+				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
+				return adapter ? adapter.branch(entryId) : false;
+			}
+		)
+	);
+
 	// Write data to a process
 	ipcMain.handle(
 		'process:write',
@@ -181,10 +230,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		)
 	);
 
-	// Send SIGINT to a process
+	// Send an RPC abort for a live native OMP session; other agents retain
+	// ProcessManager's existing platform-specific interrupt implementation.
 	ipcMain.handle(
 		'process:interrupt',
 		withIpcErrorLogging(handlerOpts('interrupt'), async (sessionId: string) => {
+			if (typeof sessionId !== 'string') return false;
+			const ompAdapter = OmpNativeSessionAdapter.forSession(sessionId);
+			if (ompAdapter) {
+				await ompAdapter.interrupt();
+				return true;
+			}
 			const processManager = requireProcessManager(getProcessManager);
 			logger.info(`Interrupting process: ${sessionId}`, LOG_CONTEXT, { sessionId });
 			return processManager.interrupt(sessionId);
@@ -536,4 +592,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			}
 		)
 	);
+}
+
+function isOmpPayload(
+	payload: unknown,
+	required: readonly string[]
+): payload is Record<string, unknown> & { sessionId: string } {
+	if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+	const record = payload as Record<string, unknown>;
+	return required.every((key) => typeof record[key] === 'string');
 }

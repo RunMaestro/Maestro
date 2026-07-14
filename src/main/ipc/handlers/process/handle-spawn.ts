@@ -10,6 +10,7 @@ import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
+import { OmpNativeSessionAdapter } from '../../../omp-native/session-adapter';
 import {
 	buildMcpInjection,
 	MCP_CONFIG_BY_AGENT,
@@ -76,6 +77,47 @@ export async function handleProcessSpawn(
 
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+
+	// Native OMP uses a dedicated, long-lived JSONL RPC process instead of the
+	// one-shot CLI spawner. It is deliberately gated on the first-party plugin:
+	// without it the legacy batch path below remains untouched.
+	if (
+		config.toolType === 'omp' &&
+		isPluginsFeatureEnabled() &&
+		getActivePluginManager()
+			?.getActiveRecords()
+			.some((record) => record.id === 'com.maestro.omp')
+	) {
+		const send = (channel: string, ...args: unknown[]) => {
+			if (safeSend) {
+				safeSend(channel, ...args);
+				return;
+			}
+			const window = getMainWindow();
+			if (isWebContentsAvailable(window)) window.webContents.send(channel, ...args);
+		};
+		const agent = await agentDetector.getAgent(config.toolType);
+		const adapter = await OmpNativeSessionAdapter.acquire({
+			sessionId: config.sessionId,
+			cwd: config.cwd,
+			command: config.sessionCustomPath || agent?.path || agent?.command || config.command || 'omp',
+			env: { ...process.env, ...config.sessionCustomEnvVars },
+			agentSessionId: config.agentSessionId,
+			send,
+		});
+		try {
+			await adapter.ready;
+			if (config.prompt) await adapter.prompt(config.prompt);
+			return { success: true, pid: adapter.pid };
+		} catch (error) {
+			send(
+				'process:stderr',
+				config.sessionId,
+				error instanceof Error ? error.message : String(error)
+			);
+			return { success: false, pid: 0 };
+		}
+	}
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
