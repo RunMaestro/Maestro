@@ -816,6 +816,9 @@ async function spawnJsonLineAgent(
 
 	// Inject account config dir if provided (account multiplexing).
 	// Env var is provider-specific: CODEX_HOME, XDG_DATA_HOME (opencode), etc.
+	// XDG_DATA_HOME isolates opencode on Windows too - opencode resolves its data
+	// dir via the npm xdg-basedir package, which reads the env var with no
+	// platform branch (see src/shared/accountProviderMeta.ts parity notes).
 	if (configDir) {
 		const accountEnvVar = getAccountProviderMeta(toolType).envVar;
 		if (accountEnvVar) env[accountEnvVar] = configDir;
@@ -1173,7 +1176,7 @@ export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
 ): { content: string; taskCount: number } {
-	const filePath = `${folderPath}/${filename}.md`;
+	const filePath = path.join(folderPath, `${filename}.md`);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -1194,7 +1197,7 @@ export function readDocAndGetTasks(
 	folderPath: string,
 	filename: string
 ): { content: string; tasks: string[] } {
-	const filePath = `${folderPath}/${filename}.md`;
+	const filePath = path.join(folderPath, `${filename}.md`);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -1217,6 +1220,6 @@ export function uncheckAllTasks(content: string): string {
  * Write content to a document
  */
 export function writeDoc(folderPath: string, filename: string, content: string): void {
-	const filePath = `${folderPath}/${filename}`;
+	const filePath = path.join(folderPath, filename);
 	fs.writeFileSync(filePath, content, 'utf-8');
 }

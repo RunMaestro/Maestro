@@ -6,7 +6,7 @@
  * filesystem discovery fallback, and account lookup helpers.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -133,6 +133,51 @@ describe('account-reader', () => {
 				name: 'personal',
 				configDir: path.join(TEST_HOME, '.claude-personal'),
 				status: 'active',
+			});
+		});
+
+		describe('case sensitivity of filesystem discovery', () => {
+			const originalPlatform = process.platform;
+
+			function setPlatform(value: string) {
+				Object.defineProperty(process, 'platform', { value, configurable: true });
+			}
+
+			afterEach(() => {
+				setPlatform(originalPlatform);
+			});
+
+			it('matches mixed-case .claude- dirs on Windows (NTFS is case-insensitive)', async () => {
+				setPlatform('win32');
+				vi.mocked(fs.readFileSync).mockImplementation(() => {
+					throw new Error('ENOENT');
+				});
+				vi.mocked(fs.promises.readdir).mockResolvedValue([
+					{ name: '.Claude-Work', isDirectory: () => true } as unknown as fs.Dirent,
+				]);
+				vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('ENOENT'));
+
+				const accounts = await readAccountsFromStore();
+				expect(accounts).toHaveLength(1);
+				expect(accounts[0]).toMatchObject({
+					id: 'Work',
+					name: 'Work',
+					configDir: path.join(TEST_HOME, '.Claude-Work'),
+				});
+			});
+
+			it('keeps case-sensitive matching on POSIX', async () => {
+				setPlatform('linux');
+				vi.mocked(fs.readFileSync).mockImplementation(() => {
+					throw new Error('ENOENT');
+				});
+				vi.mocked(fs.promises.readdir).mockResolvedValue([
+					{ name: '.Claude-Work', isDirectory: () => true } as unknown as fs.Dirent,
+				]);
+				vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('ENOENT'));
+
+				const accounts = await readAccountsFromStore();
+				expect(accounts).toHaveLength(0);
 			});
 		});
 

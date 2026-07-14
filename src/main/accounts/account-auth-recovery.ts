@@ -13,7 +13,7 @@
  * from the provider's base directory.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { ProcessManager } from '../process-manager/ProcessManager';
@@ -22,6 +22,11 @@ import type { AgentDetector } from '../agents';
 import type { SafeSendFn } from '../utils/safe-send';
 import { syncCredentialsFromBase } from './account-setup';
 import { getAccountProviderMeta, inferProviderFromDir } from '../../shared/accountProviderMeta';
+import {
+	escapeArgsForShell,
+	getWindowsShellForAgentExecution,
+} from '../process-manager/utils/shellEscape';
+import { isWindows } from '../../shared/platformDetection';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'account-auth-recovery';
@@ -36,8 +41,8 @@ const KILL_DELAY_MS = 1000;
 const activeRecoveries = new Set<string>();
 
 export class AccountAuthRecovery {
-	/** Tracks the last user prompt per session for re-sending after recovery */
-	private lastPrompts = new Map<string, string>();
+	/** Tracks the last user prompt (and any images) per session for re-sending after recovery */
+	private lastPrompts = new Map<string, { prompt: string; images?: string[] }>();
 
 	constructor(
 		private processManager: ProcessManager,
@@ -48,10 +53,12 @@ export class AccountAuthRecovery {
 
 	/**
 	 * Record the last user prompt sent to a session.
-	 * Called by the process write handler so we can re-send after recovery.
+	 * Called by the process spawn/write handlers so we can re-send after
+	 * recovery. Images (base64 data URLs) ride along so an image-bearing
+	 * turn does not resume as text-only.
 	 */
-	recordLastPrompt(sessionId: string, prompt: string): void {
-		this.lastPrompts.set(sessionId, prompt);
+	recordLastPrompt(sessionId: string, prompt: string, images?: string[]): void {
+		this.lastPrompts.set(sessionId, { prompt, images });
 	}
 
 	/**
@@ -182,7 +189,7 @@ export class AccountAuthRecovery {
 		// Mark account as active again
 		this.accountRegistry.setStatus(accountId, 'active');
 
-		const lastPrompt = this.lastPrompts.get(sessionId);
+		const lastEntry = this.lastPrompts.get(sessionId);
 
 		// Notify renderer that recovery completed
 		this.safeSend('account:auth-recovery-completed', {
@@ -197,7 +204,8 @@ export class AccountAuthRecovery {
 			toAccountId: accountId,
 			toAccountName: accountName,
 			configDir,
-			lastPrompt: lastPrompt ?? null,
+			lastPrompt: lastEntry?.prompt ?? null,
+			lastImages: lastEntry?.images ?? null,
 			reason: 'auth-recovery',
 		});
 
@@ -232,13 +240,34 @@ export class AccountAuthRecovery {
 		});
 
 		return new Promise<boolean>((resolve) => {
-			const child = spawn(binary, meta.loginSpawn!.args, {
-				env: {
-					...process.env,
-					[envVar]: configDir,
-				},
-				stdio: ['ignore', 'pipe', 'pipe'],
-			});
+			const spawnEnv = {
+				...process.env,
+				[envVar]: configDir,
+			};
+			let child: ChildProcess;
+			if (isWindows()) {
+				// Provider CLIs on Windows are typically .cmd/.ps1 npm shims that Node
+				// cannot exec directly, and a bare binary name is not PATH-resolved
+				// without a shell - a plain spawn fails with ENOENT/EINVAL on every
+				// stock install. Mirror handle-spawn.ts: run through the preferred
+				// Windows shell (PowerShell over cmd.exe for its higher command-line
+				// length limit), quoting the binary and args for that shell.
+				const shellConfig = getWindowsShellForAgentExecution();
+				const commandLine = escapeArgsForShell(
+					[binary, ...meta.loginSpawn!.args],
+					shellConfig.shell
+				).join(' ');
+				child = spawn(commandLine, [], {
+					env: spawnEnv,
+					stdio: ['ignore', 'pipe', 'pipe'],
+					shell: shellConfig.shell,
+				});
+			} else {
+				child = spawn(binary, meta.loginSpawn!.args, {
+					env: spawnEnv,
+					stdio: ['ignore', 'pipe', 'pipe'],
+				});
+			}
 
 			let stderr = '';
 

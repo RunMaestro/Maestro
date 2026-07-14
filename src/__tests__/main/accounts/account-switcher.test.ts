@@ -236,6 +236,41 @@ describe('AccountSwitcher', () => {
 		);
 	});
 
+	it('should include recorded images in the respawn payload', async () => {
+		const toAccount = createMockAccount({
+			id: 'acct-2',
+			name: 'Account Two',
+			configDir: '/home/test/.claude-two',
+		});
+		mockRegistry.get.mockImplementation((id: string) => {
+			if (id === 'acct-2') return toAccount;
+			return null;
+		});
+
+		const images = ['data:image/png;base64,AAAA'];
+		switcher.recordLastPrompt('session-1', 'Describe this screenshot', images);
+
+		const switchPromise = switcher.executeSwitch({
+			sessionId: 'session-1',
+			fromAccountId: 'acct-1',
+			toAccountId: 'acct-2',
+			reason: 'throttled',
+			automatic: true,
+		});
+
+		expect(exitListener).not.toBeNull();
+		exitListener?.('session-1', 0);
+		await switchPromise;
+
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-respawn',
+			expect.objectContaining({
+				lastPrompt: 'Describe this screenshot',
+				lastImages: images,
+			})
+		);
+	});
+
 	it('should send switch-failed notification on error', async () => {
 		mockRegistry.get.mockImplementation((id: string) => {
 			if (id === 'acct-2') return createMockAccount({ id: 'acct-2' });

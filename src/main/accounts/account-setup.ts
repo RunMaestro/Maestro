@@ -11,6 +11,7 @@ import {
 	getAccountProviderMeta,
 	inferProviderFromDir,
 } from '../../shared/accountProviderMeta';
+import { isWindows } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = 'account-setup';
 const execFileAsync = promisify(execFile);
@@ -18,15 +19,27 @@ const execFileAsync = promisify(execFile);
 function validateManagedAccountDirectory(configDir: string): string | null {
 	const resolvedConfigDir = path.resolve(configDir);
 	const resolvedHomeDir = path.resolve(os.homedir());
-	if (path.dirname(resolvedConfigDir) !== resolvedHomeDir) {
+	// NTFS is case-insensitive, so both the home-dir containment check and the
+	// managed-prefix match ignore case on Windows. Bare base dirs (~/.claude,
+	// ~/.codex, ~/.gemini) never match a prefix and stay protected.
+	const dirOf = isWindows()
+		? path.dirname(resolvedConfigDir).toLowerCase()
+		: path.dirname(resolvedConfigDir);
+	const homeOf = isWindows() ? resolvedHomeDir.toLowerCase() : resolvedHomeDir;
+	if (dirOf !== homeOf) {
 		return 'Safety check failed: directory must be a direct child of the home directory';
 	}
 
 	const basename = path.basename(resolvedConfigDir);
+	const nameToMatch = isWindows() ? basename.toLowerCase() : basename;
 	const managedPrefixes = Object.values(ACCOUNT_PROVIDER_META)
 		.map((m) => m.dirPrefix)
 		.filter((p): p is string => !!p);
-	if (!managedPrefixes.some((prefix) => basename.startsWith(prefix))) {
+	if (
+		!managedPrefixes.some((prefix) =>
+			nameToMatch.startsWith(isWindows() ? prefix.toLowerCase() : prefix)
+		)
+	) {
 		return `Safety check failed: directory name must start with one of ${managedPrefixes.join(', ')}`;
 	}
 
@@ -301,6 +314,36 @@ export async function readAccountEmail(configDir: string): Promise<string | null
 }
 
 /**
+ * Link one shared resource from the provider's base dir into an account dir.
+ * POSIX: a plain symlink.
+ * Windows: creating a symlink requires SeCreateSymbolicLinkPrivilege (admin
+ * elevation or Developer Mode), which a stock install does not have, so a
+ * plain fs.symlink fails with EPERM. Use privilege-free equivalents instead:
+ * directory junctions for directories, and a plain file copy for regular
+ * files (a file symlink would still need the privilege).
+ */
+async function linkSharedResource(source: string, target: string): Promise<void> {
+	if (!isWindows()) {
+		await fs.symlink(source, target);
+		return;
+	}
+	const sourceStat = await fs.stat(source);
+	if (sourceStat.isDirectory()) {
+		try {
+			await fs.symlink(source, target, 'junction');
+		} catch (err) {
+			throw new Error(
+				`Failed to create directory junction ${target} -> ${source}: ${String(err)}. ` +
+					'Junctions need no special privilege but require a local NTFS volume; ' +
+					'check that the home directory is not on a network share or FAT/exFAT drive.'
+			);
+		}
+	} else {
+		await fs.copyFile(source, target);
+	}
+}
+
+/**
  * Create a new account directory for a provider, with symlinks to shared resources.
  * Does NOT authenticate - that requires running the provider's login command separately.
  */
@@ -349,26 +392,38 @@ export async function createAccountDirectory(
 		await fs.mkdir(configDir, { recursive: true });
 		logger.info(`Created account directory: ${configDir}`, LOG_CONTEXT);
 
-		// Create symlinks for shared resources
+		// Link shared resources (symlinks on POSIX; junctions/copies on Windows)
 		for (const resource of SHARED_SYMLINKS[agentType]) {
 			const source = path.join(baseDir, resource);
 			const target = path.join(configDir, resource);
 
 			try {
 				await fs.access(source);
-				// Check if target already exists
-				try {
-					await fs.lstat(target);
-					// Already exists (maybe from a previous attempt); skip
-					continue;
-				} catch {
-					// Doesn't exist; create symlink
-				}
-				await fs.symlink(source, target);
-				logger.info(`Symlinked ${resource}`, LOG_CONTEXT);
 			} catch {
-				// Source doesn't exist; not all resources are required
+				// Source doesn't exist - not all resources are required
 				logger.warn(`Skipped symlink for ${resource} (source not found)`, LOG_CONTEXT);
+				continue;
+			}
+
+			// Check if target already exists
+			try {
+				await fs.lstat(target);
+				// Already exists (maybe from a previous attempt) - skip
+				continue;
+			} catch {
+				// Doesn't exist - create the link
+			}
+
+			try {
+				await linkSharedResource(source, target);
+				logger.info(`Symlinked ${resource}`, LOG_CONTEXT);
+			} catch (err) {
+				if (isWindows()) {
+					// Junction/copy failures leave the account dir unusable - surface
+					// a clear error instead of a half-provisioned directory.
+					throw err;
+				}
+				logger.warn(`Skipped symlink for ${resource} (${String(err)})`, LOG_CONTEXT);
 			}
 		}
 
@@ -405,9 +460,14 @@ export async function validateAccountSymlinks(configDir: string): Promise<{
 					broken.push(resource);
 				}
 			}
-			// Not a symlink; could be a real file/dir, which is fine
+			// Not a symlink - a real file/dir satisfies the resource. This is the
+			// NORMAL state for shared files on Windows, where they are copied
+			// instead of symlinked (file symlinks need SeCreateSymbolicLinkPrivilege),
+			// so a present regular file must never be reported missing or broken.
+			// Directory junctions (the Windows dir strategy) report
+			// isSymbolicLink() === true and take the branch above.
 		} catch {
-			// Missing entirely; check if source exists
+			// Missing entirely - check if source exists
 			try {
 				await fs.access(path.join(baseDir, resource));
 				missing.push(resource);
@@ -446,7 +506,7 @@ export async function repairAccountSymlinks(configDir: string): Promise<{
 			} catch {
 				/* didn't exist */
 			}
-			await fs.symlink(source, target);
+			await linkSharedResource(source, target);
 			repaired.push(resource);
 		} catch (err) {
 			errors.push(`Failed to repair ${resource}: ${err}`);
@@ -480,6 +540,12 @@ export async function syncCredentialsFromBase(configDir: string): Promise<{
 		baseCreds = path.join(homeDir, '.codex', 'auth.json');
 		targetCreds = path.join(configDir, 'auth.json');
 	} else if (agentType === 'opencode') {
+		// OpenCode resolves its data dir through the npm `xdg-basedir` package, which
+		// has NO platform branch: $XDG_DATA_HOME when set, else <home>/.local/share on
+		// EVERY OS, including Windows (verified 2026-07-14 against sst/opencode
+		// packages/core/src/global.ts and sindresorhus/xdg-basedir index.js). It does
+		// NOT use %APPDATA%/%LOCALAPPDATA%, so this same resolution is correct on
+		// Windows and must mirror xdg-basedir exactly.
 		const dataHome = process.env.XDG_DATA_HOME || path.join(homeDir, '.local', 'share');
 		baseCreds = path.join(dataHome, 'opencode', 'auth.json');
 		targetCreds = path.join(configDir, 'opencode', 'auth.json');

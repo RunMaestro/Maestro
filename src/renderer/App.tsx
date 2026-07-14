@@ -212,7 +212,7 @@ import {
 	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from './utils/spawnHelpers';
+import { buildAccountSwitchRespawnConfig } from './utils/accountSwitchRespawn';
 import { buildThinkingItems } from './utils/thinkingItems';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -1152,11 +1152,6 @@ function MaestroConsoleInner() {
 			} = data;
 			if (!ownedSessionGate.current?.(switchSessionId)) return;
 
-			const eventImages =
-				'images' in data && Array.isArray(data.images)
-					? data.images.filter((image): image is string => typeof image === 'string')
-					: undefined;
-
 			// Find the session that needs respawning, preferring the longest matching id.
 			const session = sessionsRef.current
 				.filter((s) => switchSessionId === s.id || switchSessionId.startsWith(`${s.id}-ai-`))
@@ -1207,12 +1202,8 @@ function MaestroConsoleInner() {
 			}
 
 			try {
-				const agent = await window.maestro.agents.get(session.toolType);
-				if (!agent) {
-					console.error('[AccountSwitch] Agent not found for respawn:', session.toolType);
-					return;
-				}
-
+				// Resolve the tab whose turn was interrupted from the decorated
+				// process session id; fall back to the active tab inside the helper.
 				const tabPrefix = `${session.id}-ai-`;
 				const throttledTabId = switchSessionId.startsWith(tabPrefix)
 					? switchSessionId.slice(tabPrefix.length)
@@ -1220,51 +1211,28 @@ function MaestroConsoleInner() {
 				const throttledTab = throttledTabId
 					? session.aiTabs?.find((candidate) => candidate.id === throttledTabId)
 					: undefined;
-				const tab = throttledTab ?? getActiveTab(session);
-				const tabAgentSessionId = tab?.agentSessionId;
-				const commandToUse = agent.path ?? agent.command ?? '';
-				const agentArgs = agent.args ?? [];
-				const interruptedImages = eventImages ?? tab?.stagedImages;
-				const hasImages = !!interruptedImages?.length;
-				const appendSystemPrompt = await prepareMaestroSystemPrompt({
-					session,
-					activeTabId: tab?.id,
-				});
-				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-					isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages,
-				});
 
-				// Switch events do not currently include images. Reuse staged tab images
-				// when available so an interrupted image turn retains its attachments.
-				const targetSessionId = `${session.id}-ai-${tab?.id || 'default'}`;
-				await window.maestro.process.spawn({
-					sessionId: targetSessionId,
-					toolType: session.toolType,
-					cwd: session.cwd,
-					command: commandToUse,
-					args: agentArgs,
-					prompt: lastPrompt,
-					images: hasImages ? interruptedImages : undefined,
-					appendSystemPrompt,
-					agentSessionId: tabAgentSessionId ?? undefined,
-					permissionMode: tab?.permissionMode,
-					readOnlyMode: tab?.readOnlyMode === true || tab?.permissionMode === 'readonly',
-					sessionCustomPath: session.customPath,
-					sessionCustomArgs: session.customArgs,
-					sessionCustomEnvVars: {
-						...session.customEnvVars,
-						CLAUDE_CONFIG_DIR: configDir,
+				// Respawn as a normal turn: prompt (and any recorded images) in the
+				// spawn config, --resume for conversation continuity, and the tab's
+				// permission mode preserved. buildAccountSwitchRespawnConfig routes
+				// through the shared buildSpawnConfigForAgent path so the replayed
+				// turn carries the same appendSystemPrompt, per-tab model/effort,
+				// and Windows stdin transport flags as a user-initiated turn.
+				const spawnConfig = await buildAccountSwitchRespawnConfig(
+					session,
+					{
+						toAccountId,
+						configDir,
+						lastPrompt,
+						lastImages: data.lastImages,
 					},
-					sessionCustomModel: tab?.customModel ?? session.customModel,
-					sessionCustomEffort: tab?.customEffort ?? session.customEffort,
-					sessionCustomContextWindow: session.customContextWindow,
-					accountId: toAccountId,
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					sendPromptViaStdin,
-					sendPromptViaStdinRaw,
-				});
+					throttledTab
+				);
+				if (!spawnConfig) {
+					console.error('[AccountSwitch] Agent not available for respawn:', session.toolType);
+					return;
+				}
+				await window.maestro.process.spawn(spawnConfig);
 
 				notifyToast({
 					type: 'info',

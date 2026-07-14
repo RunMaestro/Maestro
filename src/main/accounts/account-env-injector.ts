@@ -134,7 +134,11 @@ export function injectAccountEnv(
 			});
 	}
 
-	// Inject the env var
+	// Inject the env var. This isolates accounts on Windows too: opencode's
+	// XDG_DATA_HOME resolution goes through the npm xdg-basedir package, which
+	// reads the env var with NO platform branch (verified 2026-07-14 against
+	// sst/opencode packages/core/src/global.ts + sindresorhus/xdg-basedir), and
+	// CLAUDE_CONFIG_DIR/CODEX_HOME are documented cross-platform overrides.
 	env[envVar] = account.configDir;
 
 	// Create/update assignment

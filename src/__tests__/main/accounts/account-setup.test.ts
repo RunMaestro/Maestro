@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 
 // Hoist mock functions so they can be used in vi.mock factories
@@ -14,6 +14,7 @@ const {
 	mockUnlink,
 	mockRm,
 	mockWriteFile,
+	mockCopyFile,
 	mockExecFile,
 } = vi.hoisted(() => ({
 	TEST_HOME: '/home/testuser',
@@ -27,6 +28,7 @@ const {
 	mockUnlink: vi.fn(),
 	mockRm: vi.fn(),
 	mockWriteFile: vi.fn(),
+	mockCopyFile: vi.fn(),
 	mockExecFile: vi.fn(),
 }));
 
@@ -43,6 +45,7 @@ vi.mock('fs/promises', () => ({
 		unlink: mockUnlink,
 		rm: mockRm,
 		writeFile: mockWriteFile,
+		copyFile: mockCopyFile,
 	},
 	stat: mockStat,
 	access: mockAccess,
@@ -54,6 +57,7 @@ vi.mock('fs/promises', () => ({
 	unlink: mockUnlink,
 	rm: mockRm,
 	writeFile: mockWriteFile,
+	copyFile: mockCopyFile,
 }));
 
 // Mock os module
@@ -140,9 +144,18 @@ import { inferProviderFromDir } from '../../../shared/accountProviderMeta';
 
 describe('account-setup', () => {
 	const baseDir = path.join(TEST_HOME, '.claude');
+	const originalPlatform = process.platform;
+
+	function setPlatform(value: string) {
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+	}
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		setPlatform(originalPlatform);
 	});
 
 	describe('validateBaseClaudeDir', () => {
@@ -216,13 +229,39 @@ describe('account-setup', () => {
 
 	describe('buildLoginCommand', () => {
 		it('should build command with default binary', () => {
+			setPlatform('linux');
 			const cmd = buildLoginCommand('/home/user/.claude-work');
 			expect(cmd).toBe('CLAUDE_CONFIG_DIR="/home/user/.claude-work" claude login');
 		});
 
 		it('should build command with custom binary path', () => {
+			setPlatform('linux');
 			const cmd = buildLoginCommand('/home/user/.claude-work', '/usr/local/bin/claude');
 			expect(cmd).toBe('CLAUDE_CONFIG_DIR="/home/user/.claude-work" /usr/local/bin/claude login');
+		});
+
+		describe('on Windows (PowerShell form)', () => {
+			it('should build a PowerShell env-prefixed command', () => {
+				setPlatform('win32');
+				const cmd = buildLoginCommand('C:\\Users\\u\\.claude-work');
+				expect(cmd).toBe("$env:CLAUDE_CONFIG_DIR='C:\\Users\\u\\.claude-work'; claude login");
+			});
+
+			it('should keep custom binary paths in the PowerShell form', () => {
+				setPlatform('win32');
+				const cmd = buildLoginCommand('C:\\Users\\u\\.claude-work', 'C:\\bin\\claude.cmd');
+				expect(cmd).toBe(
+					"$env:CLAUDE_CONFIG_DIR='C:\\Users\\u\\.claude-work'; C:\\bin\\claude.cmd login"
+				);
+			});
+
+			it('should escape embedded single quotes in the dir', () => {
+				setPlatform('win32');
+				const cmd = buildLoginCommand("C:\\Users\\o'brien\\.claude-work");
+				expect(cmd).toBe(
+					"$env:CLAUDE_CONFIG_DIR='C:\\Users\\o''brien\\.claude-work'; claude login"
+				);
+			});
 		});
 	});
 
@@ -245,6 +284,7 @@ describe('account-setup', () => {
 		});
 
 		it('should create directory and symlinks when base dir is valid', async () => {
+			setPlatform('linux');
 			mockAccess.mockImplementation(async (p: string) => {
 				const pStr = String(p);
 				if (pStr.endsWith('.claude-newacct')) {
@@ -262,6 +302,11 @@ describe('account-setup', () => {
 			expect(result.configDir).toBe(path.join(TEST_HOME, '.claude-newacct'));
 			expect(mockMkdir).toHaveBeenCalled();
 			expect(mockSymlink).toHaveBeenCalled();
+			// POSIX keeps plain symlinks: no 'junction' type, no file copies
+			for (const call of mockSymlink.mock.calls) {
+				expect(call[2]).toBeUndefined();
+			}
+			expect(mockCopyFile).not.toHaveBeenCalled();
 		});
 	});
 
@@ -338,6 +383,59 @@ describe('account-setup', () => {
 				expect(result.error).toContain('Safety check');
 			}
 		});
+
+		describe('case sensitivity of the managed-prefix safety gate', () => {
+			const originalPlatform = process.platform;
+
+			function setPlatform(value: string) {
+				Object.defineProperty(process, 'platform', { value, configurable: true });
+			}
+
+			afterEach(() => {
+				setPlatform(originalPlatform);
+			});
+
+			it('should match mixed-case managed dirs on Windows (NTFS is case-insensitive)', async () => {
+				setPlatform('win32');
+				mockRm.mockResolvedValue(undefined);
+
+				const result = await removeAccountDirectory(path.join(TEST_HOME, '.Claude-Work'));
+				expect(result.success).toBe(true);
+				expect(mockRm).toHaveBeenCalledWith(path.join(TEST_HOME, '.Claude-Work'), {
+					recursive: true,
+					force: true,
+				});
+			});
+
+			it('should still reject unmanaged dir names on Windows', async () => {
+				setPlatform('win32');
+
+				const result = await removeAccountDirectory(path.join(TEST_HOME, 'Important-Stuff'));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Safety check');
+				expect(mockRm).not.toHaveBeenCalled();
+			});
+
+			it('should still protect bare base dirs on Windows regardless of case', async () => {
+				setPlatform('win32');
+
+				for (const dir of ['.claude', '.Claude', '.CODEX', '.opencode']) {
+					const result = await removeAccountDirectory(path.join(TEST_HOME, dir));
+					expect(result.success).toBe(false);
+					expect(result.error).toContain('Safety check');
+				}
+				expect(mockRm).not.toHaveBeenCalled();
+			});
+
+			it('should keep case-sensitive matching on POSIX', async () => {
+				setPlatform('linux');
+
+				const result = await removeAccountDirectory(path.join(TEST_HOME, '.Claude-Work'));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Safety check');
+				expect(mockRm).not.toHaveBeenCalled();
+			});
+		});
 	});
 
 	describe('provider parity', () => {
@@ -356,14 +454,26 @@ describe('account-setup', () => {
 
 		describe('buildLoginCommand per provider', () => {
 			it('should build a CODEX_HOME login command for codex dirs', () => {
+				setPlatform('linux');
 				expect(buildLoginCommand('/home/u/.codex-work')).toBe(
 					'CODEX_HOME="/home/u/.codex-work" codex login'
 				);
 			});
 
 			it('should build an XDG_DATA_HOME auth login command for opencode dirs', () => {
+				setPlatform('linux');
 				expect(buildLoginCommand('/home/u/.opencode-work')).toBe(
 					'XDG_DATA_HOME="/home/u/.opencode-work" opencode auth login'
+				);
+			});
+
+			it('should build PowerShell forms for all providers on Windows', () => {
+				setPlatform('win32');
+				expect(buildLoginCommand('C:\\Users\\u\\.codex-work')).toBe(
+					"$env:CODEX_HOME='C:\\Users\\u\\.codex-work'; codex login"
+				);
+				expect(buildLoginCommand('C:\\Users\\u\\.opencode-work')).toBe(
+					"$env:XDG_DATA_HOME='C:\\Users\\u\\.opencode-work'; opencode auth login"
 				);
 			});
 
@@ -429,6 +539,70 @@ describe('account-setup', () => {
 				const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.gemini'));
 				expect(result.success).toBe(false);
 			});
+
+			describe('opencode base data dir resolution (mirrors xdg-basedir)', () => {
+				const originalXdgDataHome = process.env.XDG_DATA_HOME;
+
+				afterEach(() => {
+					if (originalXdgDataHome === undefined) {
+						delete process.env.XDG_DATA_HOME;
+					} else {
+						process.env.XDG_DATA_HOME = originalXdgDataHome;
+					}
+				});
+
+				function mockHappySync() {
+					mockAccess.mockResolvedValue(undefined);
+					mockStat.mockResolvedValue({ isDirectory: () => true });
+					mockMkdir.mockResolvedValue(undefined);
+					mockReadFile.mockResolvedValue('{"token":"oc"}');
+					mockWriteFile.mockResolvedValue(undefined);
+				}
+
+				it('should read from <home>/.local/share on POSIX when XDG_DATA_HOME is unset', async () => {
+					setPlatform('linux');
+					delete process.env.XDG_DATA_HOME;
+					mockHappySync();
+
+					const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.opencode-work'));
+					expect(result.success).toBe(true);
+					expect(mockReadFile).toHaveBeenCalledWith(
+						path.join(TEST_HOME, '.local', 'share', 'opencode', 'auth.json'),
+						'utf-8'
+					);
+					expect(mockWriteFile).toHaveBeenCalledWith(
+						path.join(TEST_HOME, '.opencode-work', 'opencode', 'auth.json'),
+						'{"token":"oc"}',
+						'utf-8'
+					);
+				});
+
+				it('should read from <home>/.local/share on Windows too (opencode uses xdg-basedir, not APPDATA)', async () => {
+					setPlatform('win32');
+					delete process.env.XDG_DATA_HOME;
+					mockHappySync();
+
+					const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.opencode-work'));
+					expect(result.success).toBe(true);
+					expect(mockReadFile).toHaveBeenCalledWith(
+						path.join(TEST_HOME, '.local', 'share', 'opencode', 'auth.json'),
+						'utf-8'
+					);
+				});
+
+				it('should honor XDG_DATA_HOME when set, on any platform', async () => {
+					setPlatform('win32');
+					process.env.XDG_DATA_HOME = path.join(TEST_HOME, 'custom-xdg');
+					mockHappySync();
+
+					const result = await syncCredentialsFromBase(path.join(TEST_HOME, '.opencode-work'));
+					expect(result.success).toBe(true);
+					expect(mockReadFile).toHaveBeenCalledWith(
+						path.join(TEST_HOME, 'custom-xdg', 'opencode', 'auth.json'),
+						'utf-8'
+					);
+				});
+			});
 		});
 	});
 
@@ -463,6 +637,7 @@ describe('account-setup', () => {
 
 	describe('repairAccountSymlinks', () => {
 		it('should repair broken and missing symlinks', async () => {
+			setPlatform('linux');
 			mockLstat.mockImplementation(async (p: string) => {
 				const pStr = String(p);
 				if (pStr.endsWith('/commands')) {
@@ -489,6 +664,189 @@ describe('account-setup', () => {
 			);
 			expect(mockUnlink).not.toHaveBeenCalled();
 			expect(mockSymlink).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Windows junction/copy strategy', () => {
+		// Shared claude-code resources that are regular files (copied on Windows);
+		// everything else in SHARED_SYMLINKS is a directory (junctioned on Windows).
+		const FILE_RESOURCES = new Set(['settings.json', 'CLAUDE.md']);
+
+		beforeEach(() => {
+			setPlatform('win32');
+		});
+
+		describe('createAccountDirectory', () => {
+			function mockValidBaseWithMissingTarget() {
+				mockAccess.mockImplementation(async (p: string) => {
+					if (String(p).endsWith('.claude-winacct')) {
+						throw new Error('ENOENT');
+					}
+					return undefined;
+				});
+				mockStat.mockImplementation(async (p: string) => ({
+					isDirectory: () => !FILE_RESOURCES.has(path.basename(String(p))),
+				}));
+				mockMkdir.mockResolvedValue(undefined);
+				mockLstat.mockRejectedValue(new Error('ENOENT'));
+			}
+
+			it('should create junctions for directories and copy regular files', async () => {
+				mockValidBaseWithMissingTarget();
+				mockSymlink.mockResolvedValue(undefined);
+				mockCopyFile.mockResolvedValue(undefined);
+
+				const result = await createAccountDirectory('winacct');
+				expect(result.success).toBe(true);
+
+				// Directories become junctions (no privilege required)
+				expect(mockSymlink).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'commands'),
+					path.join(TEST_HOME, '.claude-winacct', 'commands'),
+					'junction'
+				);
+				expect(mockSymlink).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'projects'),
+					path.join(TEST_HOME, '.claude-winacct', 'projects'),
+					'junction'
+				);
+				// Every symlink call on Windows must use the junction type
+				for (const call of mockSymlink.mock.calls) {
+					expect(call[2]).toBe('junction');
+					expect(FILE_RESOURCES.has(path.basename(String(call[1])))).toBe(false);
+				}
+				// Regular files are copied (a file symlink still needs the privilege)
+				expect(mockCopyFile).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'settings.json'),
+					path.join(TEST_HOME, '.claude-winacct', 'settings.json')
+				);
+				expect(mockCopyFile).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'CLAUDE.md'),
+					path.join(TEST_HOME, '.claude-winacct', 'CLAUDE.md')
+				);
+			});
+
+			it('should surface a clear error when junction creation fails', async () => {
+				mockValidBaseWithMissingTarget();
+				mockSymlink.mockRejectedValue(new Error('EPERM: operation not permitted'));
+				mockCopyFile.mockResolvedValue(undefined);
+
+				const result = await createAccountDirectory('winacct');
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('junction');
+				expect(result.error).toContain('EPERM');
+			});
+
+			it('should still skip resources whose source does not exist', async () => {
+				mockAccess.mockImplementation(async (p: string) => {
+					const pStr = String(p);
+					if (pStr.endsWith('.claude-winacct')) throw new Error('ENOENT');
+					// Only settings.json and commands exist in the base dir
+					if (pStr.endsWith('settings.json') || pStr.endsWith('commands')) return undefined;
+					if (pStr.endsWith('.credentials.json') || pStr.endsWith('.claude.json')) return undefined;
+					throw new Error('ENOENT');
+				});
+				mockStat.mockImplementation(async (p: string) => ({
+					isDirectory: () => !FILE_RESOURCES.has(path.basename(String(p))),
+				}));
+				mockMkdir.mockResolvedValue(undefined);
+				mockLstat.mockRejectedValue(new Error('ENOENT'));
+				mockSymlink.mockResolvedValue(undefined);
+				mockCopyFile.mockResolvedValue(undefined);
+
+				const result = await createAccountDirectory('winacct');
+				expect(result.success).toBe(true);
+				expect(mockSymlink).toHaveBeenCalledTimes(1);
+				expect(mockCopyFile).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		describe('repairAccountSymlinks', () => {
+			it('should repair a missing directory with a junction', async () => {
+				const configDir = path.join(TEST_HOME, '.claude-win');
+				mockLstat.mockRejectedValue(new Error('ENOENT'));
+				mockAccess.mockImplementation(async (p: string) => {
+					if (String(p) === path.join(TEST_HOME, '.claude', 'commands')) return undefined;
+					throw new Error('ENOENT');
+				});
+				mockUnlink.mockRejectedValue(new Error('ENOENT'));
+				mockStat.mockResolvedValue({ isDirectory: () => true });
+				mockSymlink.mockResolvedValue(undefined);
+
+				const result = await repairAccountSymlinks(configDir);
+				expect(result.errors).toHaveLength(0);
+				expect(result.repaired).toEqual(['commands']);
+				expect(mockSymlink).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'commands'),
+					path.join(configDir, 'commands'),
+					'junction'
+				);
+				expect(mockCopyFile).not.toHaveBeenCalled();
+			});
+
+			it('should repair a missing shared file with a copy', async () => {
+				const configDir = path.join(TEST_HOME, '.claude-win');
+				mockLstat.mockRejectedValue(new Error('ENOENT'));
+				mockAccess.mockImplementation(async (p: string) => {
+					if (String(p) === path.join(TEST_HOME, '.claude', 'settings.json')) return undefined;
+					throw new Error('ENOENT');
+				});
+				mockUnlink.mockRejectedValue(new Error('ENOENT'));
+				mockStat.mockResolvedValue({ isDirectory: () => false });
+				mockCopyFile.mockResolvedValue(undefined);
+
+				const result = await repairAccountSymlinks(configDir);
+				expect(result.errors).toHaveLength(0);
+				expect(result.repaired).toEqual(['settings.json']);
+				expect(mockCopyFile).toHaveBeenCalledWith(
+					path.join(TEST_HOME, '.claude', 'settings.json'),
+					path.join(configDir, 'settings.json')
+				);
+				expect(mockSymlink).not.toHaveBeenCalled();
+			});
+
+			it('should report a clear error when junction repair fails', async () => {
+				const configDir = path.join(TEST_HOME, '.claude-win');
+				mockLstat.mockRejectedValue(new Error('ENOENT'));
+				mockAccess.mockImplementation(async (p: string) => {
+					if (String(p) === path.join(TEST_HOME, '.claude', 'commands')) return undefined;
+					throw new Error('ENOENT');
+				});
+				mockUnlink.mockRejectedValue(new Error('ENOENT'));
+				mockStat.mockResolvedValue({ isDirectory: () => true });
+				mockSymlink.mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+				const result = await repairAccountSymlinks(configDir);
+				expect(result.repaired).toHaveLength(0);
+				expect(result.errors).toHaveLength(1);
+				expect(result.errors[0]).toContain('junction');
+			});
+		});
+
+		describe('validateAccountSymlinks', () => {
+			it('should not flag copied files or junctions as missing or broken', async () => {
+				mockLstat.mockImplementation(async (p: string) => {
+					const base = path.basename(String(p));
+					// Copied regular files report isSymbolicLink() === false;
+					// junctions report isSymbolicLink() === true.
+					return { isSymbolicLink: () => !FILE_RESOURCES.has(base) };
+				});
+				mockStat.mockResolvedValue({}); // junction targets resolve
+
+				const result = await validateAccountSymlinks(path.join(TEST_HOME, '.claude-win'));
+				expect(result.valid).toBe(true);
+				expect(result.broken).toHaveLength(0);
+				expect(result.missing).toHaveLength(0);
+			});
+
+			it('should still report broken junctions', async () => {
+				mockLstat.mockResolvedValue({ isSymbolicLink: () => true });
+				mockStat.mockRejectedValue(new Error('ENOENT'));
+
+				const result = await validateAccountSymlinks(path.join(TEST_HOME, '.claude-win'));
+				expect(result.valid).toBe(false);
+				expect(result.broken.length).toBeGreaterThan(0);
+			});
 		});
 	});
 

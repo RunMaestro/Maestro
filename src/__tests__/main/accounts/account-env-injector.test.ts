@@ -309,6 +309,42 @@ describe('injectAccountEnv', () => {
 			expect(env.XDG_DATA_HOME).toBe('/home/test/.opencode-work');
 		});
 
+		it('should inject XDG_DATA_HOME for opencode on Windows', async () => {
+			// OpenCode honors XDG_DATA_HOME on Windows: it resolves its data dir via
+			// the npm xdg-basedir package, which reads the env var with no platform
+			// branch (verified against sst/opencode + sindresorhus/xdg-basedir).
+			// This test locks in that injection is NOT skipped on win32.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			try {
+				const injectAccountEnv = await loadInjector();
+				const ocAccount = createMockAccount({
+					id: 'oc-win',
+					agentType: 'opencode',
+					configDir: 'C:\\Users\\test\\.opencode-work',
+				});
+				mockRegistry.getAll.mockReturnValue([ocAccount]);
+				mockRegistry.get.mockReturnValue(ocAccount);
+				const env: Record<string, string | undefined> = {};
+
+				const result = injectAccountEnv(
+					'sess-1',
+					'opencode',
+					env,
+					mockRegistry as unknown as AccountRegistry,
+					'oc-win'
+				);
+
+				expect(result).toBe('oc-win');
+				expect(env.XDG_DATA_HOME).toBe('C:\\Users\\test\\.opencode-work');
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
 		it('should respect existing CODEX_HOME in env', async () => {
 			const injectAccountEnv = await loadInjector();
 			const env: Record<string, string | undefined> = { CODEX_HOME: '/custom/codex' };

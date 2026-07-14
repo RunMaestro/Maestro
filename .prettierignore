@@ -4,6 +4,7 @@ node_modules/
 coverage/
 .worktrees/
 .sloptimize/
+.ai-audit/
 *.min.js
 .gitignore
 .husky/_/

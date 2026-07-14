@@ -137,8 +137,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			// agents deliver prompts via the spawn config (never process:write), so
 			// without this the switch respawn has nothing to re-send.
 			if (config.prompt) {
-				getAccountSwitcher?.()?.recordLastPrompt(config.sessionId, config.prompt);
-				getAccountAuthRecovery?.()?.recordLastPrompt(config.sessionId, config.prompt);
+				getAccountSwitcher?.()?.recordLastPrompt(config.sessionId, config.prompt, config.images);
+				getAccountAuthRecovery?.()?.recordLastPrompt(
+					config.sessionId,
+					config.prompt,
+					config.images
+				);
 			}
 			return handleProcessSpawn(config, {
 				getProcessManager,

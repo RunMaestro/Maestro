@@ -8,7 +8,12 @@
  * Parity matrix (verified 2026-07-12):
  * - claude-code: full parity via CLAUDE_CONFIG_DIR
  * - codex: full parity via CODEX_HOME (auth.json lives in CODEX_HOME)
- * - opencode: full parity via XDG_DATA_HOME (auth at $XDG_DATA_HOME/opencode/auth.json)
+ * - opencode: full parity via XDG_DATA_HOME (auth at $XDG_DATA_HOME/opencode/auth.json).
+ *   Honored on Windows too: opencode resolves its data dir through the npm
+ *   xdg-basedir package, which reads the env var with NO platform branch and
+ *   falls back to <home>/.local/share on every OS - it never uses
+ *   %APPDATA%/%LOCALAPPDATA% (verified 2026-07-14 against sst/opencode
+ *   packages/core/src/global.ts + sindresorhus/xdg-basedir index.js)
  * - gemini-cli: NO config-dir override exists (google-gemini/gemini-cli#2815 open);
  *   import/observe only, single default dir
  * - factory-droid: no documented override for ~/.factory, credentials in OS keyring;
@@ -16,6 +21,7 @@
  */
 
 import type { MultiplexableAgent } from './account-types';
+import { isWindows } from './platformDetection';
 
 export interface AccountProviderMeta {
 	agentType: MultiplexableAgent;
@@ -44,7 +50,25 @@ export interface AccountProviderMeta {
 	createUnsupportedReason?: string;
 }
 
-const q = (s: string) => `"${s}"`;
+/**
+ * Build the user-facing manual login command for an account dir.
+ * POSIX shells accept an inline `VAR="value" cmd` prefix; neither cmd.exe nor
+ * PowerShell does, so Windows gets the PowerShell form
+ * (`$env:VAR='value'; cmd`) - PowerShell is Maestro's preferred Windows shell
+ * for agent execution (see getWindowsShellForAgentExecution). Single quotes
+ * keep the dir literal in PowerShell; embedded single quotes are doubled.
+ */
+function buildEnvLoginCommand(
+	envVar: string,
+	dir: string,
+	binary: string,
+	loginArgs: string
+): string {
+	if (isWindows()) {
+		return `$env:${envVar}='${dir.replace(/'/g, "''")}'; ${binary} ${loginArgs}`;
+	}
+	return `${envVar}="${dir}" ${binary} ${loginArgs}`;
+}
 
 export const ACCOUNT_PROVIDER_META: Record<MultiplexableAgent, AccountProviderMeta> = {
 	'claude-code': {
@@ -55,7 +79,8 @@ export const ACCOUNT_PROVIDER_META: Record<MultiplexableAgent, AccountProviderMe
 		baseDirName: '.claude',
 		authFiles: ['.claude.json', '.credentials.json'],
 		credentialFile: '.credentials.json',
-		buildLoginCommand: (dir, binary = 'claude') => `CLAUDE_CONFIG_DIR=${q(dir)} ${binary} login`,
+		buildLoginCommand: (dir, binary = 'claude') =>
+			buildEnvLoginCommand('CLAUDE_CONFIG_DIR', dir, binary, 'login'),
 		loginSpawn: { binary: 'claude', args: ['login'] },
 		supportsCreate: true,
 	},
@@ -67,7 +92,8 @@ export const ACCOUNT_PROVIDER_META: Record<MultiplexableAgent, AccountProviderMe
 		baseDirName: '.codex',
 		authFiles: ['auth.json', 'config.toml'],
 		credentialFile: 'auth.json',
-		buildLoginCommand: (dir, binary = 'codex') => `CODEX_HOME=${q(dir)} ${binary} login`,
+		buildLoginCommand: (dir, binary = 'codex') =>
+			buildEnvLoginCommand('CODEX_HOME', dir, binary, 'login'),
 		loginSpawn: { binary: 'codex', args: ['login'] },
 		supportsCreate: true,
 	},
@@ -80,7 +106,8 @@ export const ACCOUNT_PROVIDER_META: Record<MultiplexableAgent, AccountProviderMe
 		// XDG_DATA_HOME layout puts auth at <dir>/opencode/auth.json; legacy layouts checked after
 		authFiles: ['opencode/auth.json', 'auth.json', 'config.json'],
 		credentialFile: 'opencode/auth.json',
-		buildLoginCommand: (dir, binary = 'opencode') => `XDG_DATA_HOME=${q(dir)} ${binary} auth login`,
+		buildLoginCommand: (dir, binary = 'opencode') =>
+			buildEnvLoginCommand('XDG_DATA_HOME', dir, binary, 'auth login'),
 		loginSpawn: { binary: 'opencode', args: ['auth', 'login'] },
 		supportsCreate: true,
 	},

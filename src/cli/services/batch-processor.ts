@@ -1,6 +1,7 @@
 // Batch processor service for CLI
 // Executes playbooks and yields JSONL events
 
+import * as path from 'path';
 import type { Playbook, SessionInfo, UsageStats, HistoryEntry } from '../../shared/types';
 import type { JsonlEvent } from '../output/jsonl';
 import {
@@ -464,7 +465,7 @@ export async function* runPlaybook(
 
 					const taskStartTime = Date.now();
 
-					const docFilePath = `${folderPath}/${docEntry.filename}.md`;
+					const docFilePath = path.join(folderPath, `${docEntry.filename}.md`);
 
 					// Build template context for this task
 					const templateContext: TemplateContext = {

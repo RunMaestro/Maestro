@@ -7,6 +7,7 @@ import * as os from 'os';
 import type { AccountProfile, AccountStatus } from '../../shared/account-types';
 import type { AccountStoreData } from '../../main/stores/account-store-types';
 import { ACCOUNT_PROVIDER_META } from '../../shared/accountProviderMeta';
+import { isWindows } from '../../shared/platformDetection';
 
 export interface CLIAccountInfo {
 	id: string;
@@ -113,8 +114,11 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
 
+		// NTFS is case-insensitive, so prefix matching ignores case on Windows
+		const nameToMatch = isWindows() ? entry.name.toLowerCase() : entry.name;
 		const provider = Object.values(ACCOUNT_PROVIDER_META).find(
-			({ dirPrefix }) => dirPrefix && entry.name.startsWith(dirPrefix)
+			({ dirPrefix }) =>
+				dirPrefix && nameToMatch.startsWith(isWindows() ? dirPrefix.toLowerCase() : dirPrefix)
 		);
 		if (!provider?.dirPrefix) continue;
 

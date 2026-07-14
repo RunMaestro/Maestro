@@ -1119,6 +1119,8 @@ export interface ProcessConfig {
 	// `supportsAdditionalDirectories` turn these into native grant flags
 	// (e.g. --add-dir); every agent also gets them via the system prompt.
 	sessionAdditionalDirectories?: AdditionalDirectory[];
+	// Account multiplexing (Virtuosos): pin the spawn to a specific account
+	accountId?: string;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

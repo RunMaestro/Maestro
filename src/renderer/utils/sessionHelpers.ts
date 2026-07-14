@@ -90,8 +90,14 @@ export interface BuildSpawnConfigOptions {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
-	/** Whether the prompt includes images (default: false) */
+	/** Whether the prompt includes images (default: false; implied by `images`) */
 	hasImages?: boolean;
+	/** Base64 data URLs for images attached to the prompt */
+	images?: string[];
+	/** Account multiplexing (Virtuosos): pin the spawn to a specific account */
+	accountId?: string;
+	/** Agent-level SSH remote ID (treated as an SSH session for stdin flags) */
+	sshRemoteId?: string;
 	/** Maestro system prompt to append (injected via --append-system-prompt) */
 	appendSystemPrompt?: string;
 }
@@ -139,6 +145,9 @@ export async function buildSpawnConfigForAgent(
 		sessionAdditionalDirectories,
 		sessionSshRemoteConfig,
 		hasImages = false,
+		images,
+		accountId,
+		sshRemoteId,
 		appendSystemPrompt,
 	} = options;
 
@@ -163,11 +172,11 @@ export async function buildSpawnConfigForAgent(
 
 	// Determine whether to send the prompt via stdin on Windows to avoid
 	// exceeding the command line length limit (~8KB cmd.exe).
-	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled);
+	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled) || Boolean(sshRemoteId);
 	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 		isSshSession,
 		supportsStreamJsonInput: agentConfig.capabilities?.supportsStreamJsonInput ?? false,
-		hasImages,
+		hasImages: hasImages || (images?.length ?? 0) > 0,
 	});
 
 	// Build the spawn config
@@ -180,6 +189,7 @@ export async function buildSpawnConfigForAgent(
 		command,
 		args: agentConfig.args || [],
 		prompt,
+		images,
 		appendSystemPrompt,
 		// Generic spawn options - main process builds agent-specific args
 		agentSessionId,
@@ -195,6 +205,8 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomEffort,
 		sessionCustomContextWindow,
 		sessionAdditionalDirectories,
+		// Account multiplexing (Virtuosos)
+		accountId,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
 		// Windows stdin handling - send prompt via stdin to avoid command line length limits

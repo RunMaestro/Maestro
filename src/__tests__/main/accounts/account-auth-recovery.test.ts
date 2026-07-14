@@ -45,6 +45,17 @@ vi.mock('../../../main/accounts/account-setup', () => ({
 	syncCredentialsFromBase: mockSyncCredentialsFromBase,
 }));
 
+// Mock the Windows shell helpers so the Windows spawn path is deterministic
+// (the real resolver probes the filesystem for PowerShell installs).
+vi.mock('../../../main/process-manager/utils/shellEscape', () => ({
+	getWindowsShellForAgentExecution: vi.fn(() => ({
+		shell: 'powershell.exe',
+		useShell: true,
+		source: 'powershell-default',
+	})),
+	escapeArgsForShell: vi.fn((args: string[]) => args),
+}));
+
 import { AccountAuthRecovery } from '../../../main/accounts/account-auth-recovery';
 import type { ProcessManager } from '../../../main/process-manager/ProcessManager';
 import type { AccountRegistry } from '../../../main/accounts/account-registry';
@@ -105,9 +116,19 @@ describe('AccountAuthRecovery', () => {
 	};
 	let mockSafeSend: ReturnType<typeof vi.fn>;
 
+	const originalPlatform = process.platform;
+
+	function setPlatform(value: string) {
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+	}
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		// The login spawn branches on the platform; pin to POSIX by default so
+		// assertions are deterministic on every CI leg. Windows-specific tests
+		// opt in via setPlatform('win32').
+		setPlatform('linux');
 
 		mockProcessManager = {
 			kill: vi.fn().mockReturnValue(true),
@@ -135,6 +156,7 @@ describe('AccountAuthRecovery', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		setPlatform(originalPlatform);
 	});
 
 	describe('recoverAuth', () => {
@@ -291,6 +313,7 @@ describe('AccountAuthRecovery', () => {
 				toAccountName: 'Test Account',
 				configDir: '/home/test/.claude-test',
 				lastPrompt: 'Tell me about TypeScript',
+				lastImages: null,
 				reason: 'auth-recovery',
 			});
 		});
@@ -471,6 +494,108 @@ describe('AccountAuthRecovery', () => {
 			await promise;
 
 			expect(mockSpawn).toHaveBeenCalledWith('claude', ['login'], expect.any(Object));
+		});
+
+		it('should spawn without a shell on POSIX', async () => {
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			await promise;
+
+			expect(mockSpawn).toHaveBeenCalledWith('/usr/bin/claude', ['login'], expect.any(Object));
+			const options = mockSpawn.mock.calls[0][2];
+			expect(options.shell).toBeUndefined();
+		});
+	});
+
+	describe('Windows login spawning', () => {
+		beforeEach(() => {
+			setPlatform('win32');
+		});
+
+		it('should spawn the login command through a shell', async () => {
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(result).toBe(true);
+			// Command line goes to the shell as a single string; args stay empty
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'/usr/bin/claude login',
+				[],
+				expect.objectContaining({
+					shell: 'powershell.exe',
+					env: expect.objectContaining({
+						CLAUDE_CONFIG_DIR: '/home/test/.claude-test',
+					}),
+				})
+			);
+		});
+
+		it('should inject CODEX_HOME for codex accounts through the shell path', async () => {
+			mockAccountRegistry.get.mockReturnValue(
+				createMockAccount({ agentType: 'codex', configDir: '/home/test/.codex-work' })
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				path: 'C:\\bin\\codex.cmd',
+				command: 'codex',
+			});
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(result).toBe(true);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'C:\\bin\\codex.cmd login',
+				[],
+				expect.objectContaining({
+					shell: 'powershell.exe',
+					env: expect.objectContaining({
+						CODEX_HOME: '/home/test/.codex-work',
+					}),
+				})
+			);
+		});
+
+		it('should inject XDG_DATA_HOME for opencode accounts through the shell path', async () => {
+			mockAccountRegistry.get.mockReturnValue(
+				createMockAccount({ agentType: 'opencode', configDir: '/home/test/.opencode-work' })
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({ path: 'opencode', command: 'opencode' });
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(result).toBe(true);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'opencode auth login',
+				[],
+				expect.objectContaining({
+					shell: 'powershell.exe',
+					env: expect.objectContaining({
+						XDG_DATA_HOME: '/home/test/.opencode-work',
+					}),
+				})
+			);
 		});
 	});
 

@@ -341,6 +341,7 @@ export function createAccountsApi() {
 				toAccountName: string;
 				configDir: string;
 				lastPrompt: string | null;
+				lastImages: string[] | null;
 				reason: string;
 			}) => void
 		): (() => void) => {

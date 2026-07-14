@@ -21,8 +21,8 @@ const LOG_CONTEXT = 'account-switcher';
 const PROCESS_EXIT_TIMEOUT_MS = 3000;
 
 export class AccountSwitcher {
-	/** Tracks the last user prompt per session for re-sending after switch */
-	private lastPrompts = new Map<string, string>();
+	/** Tracks the last user prompt (and any images) per session for re-sending after switch */
+	private lastPrompts = new Map<string, { prompt: string; images?: string[] }>();
 
 	constructor(
 		private processManager: ProcessManager,
@@ -47,10 +47,12 @@ export class AccountSwitcher {
 
 	/**
 	 * Record the last user prompt sent to a session.
-	 * Called by the process write handler so we can re-send after switching.
+	 * Called by the process spawn/write handlers so we can re-send after
+	 * switching. Images (base64 data URLs) ride along so an image-bearing
+	 * turn does not resume as text-only.
 	 */
-	recordLastPrompt(sessionId: string, prompt: string): void {
-		this.lastPrompts.set(sessionId, prompt);
+	recordLastPrompt(sessionId: string, prompt: string, images?: string[]): void {
+		this.lastPrompts.set(sessionId, { prompt, images });
 	}
 
 	/**
@@ -79,7 +81,7 @@ export class AccountSwitcher {
 			}
 
 			const fromAccount = this.accountRegistry.get(fromAccountId);
-			const lastPrompt = this.lastPrompts.get(sessionId);
+			const lastEntry = this.lastPrompts.get(sessionId);
 
 			logger.info(
 				`Switching session ${sessionId} from ${fromAccount?.id ?? fromAccountId} to ${toAccount.id}`,
@@ -125,7 +127,8 @@ export class AccountSwitcher {
 				toAccountId,
 				toAccountName: toAccount.name,
 				configDir: toAccount.configDir,
-				lastPrompt: lastPrompt ?? null,
+				lastPrompt: lastEntry?.prompt ?? null,
+				lastImages: lastEntry?.images ?? null,
 				reason,
 			});
 
