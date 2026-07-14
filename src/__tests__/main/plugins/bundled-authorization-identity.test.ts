@@ -133,6 +133,9 @@ describe('bundled authorization identity', () => {
 				signatureStatus: 'trusted',
 				signerKey: SNAPSHOT.identity.authorizationSignerKey,
 			});
+			expect(
+				ledger.verify(PLUGIN_ID, identity!, ['storage:read', 'ui:workspace', 'ui:interactivePanel'])
+			).toMatchObject({ authorized: true, reason: 'ok' });
 			for (const [method, params] of [
 				['storage.get', { key: 'a' }],
 				['workspace.publishExternalSessions', { sessions: [] }],

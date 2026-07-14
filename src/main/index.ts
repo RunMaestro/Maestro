@@ -1637,6 +1637,7 @@ app
 			safeStorage,
 			anchor: createKeyringAnchor('com.maestro.plugin-authorization', anchorAccount),
 			ledgerPath: path.join(app.getPath('userData'), 'plugin-authorization.bin'),
+			warn: (message) => logger.warn(message, '[Plugins]'),
 		});
 		// Expose the same instance to the IPC registration phase below.
 		pluginAuthStore = authStore;
@@ -3113,12 +3114,18 @@ app
 					'[Plugins]'
 				);
 				try {
-					// Minting IS consent: flip the enable toggle + reconcile the sandbox now
-					// that the plugin holds sealed ledger grants. setEnabled fires onChange
-					// -> plugins:changed for the renderer.
+					// Rebuild against the just-minted authorization. The registry may have
+					// been refreshed while consent was open, when its record was correctly
+					// gated as not-authorized. Persist the enable toggle first, then refresh
+					// so the verifier recomputes the canonical identity and activates only if
+					// the freshly minted grant matches it in this same process.
 					pluginManager?.setEnabled(pluginId, true);
-				} catch {
-					// Best-effort; the grant is already minted.
+					pluginManager?.refresh();
+				} catch (error) {
+					logger.warn(
+						`[Plugins] consent minted for "${pluginId}" but activation refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+						'[Plugins]'
+					);
 				}
 				return { ok: true, granted: outcome.grants };
 			}

@@ -112,6 +112,8 @@ export interface AuthorizationStoreDeps {
 	anchor: AnchorStore;
 	/** Absolute path of the sealed ledger file. */
 	ledgerPath: string;
+	/** Auditable warning sink for fail-closed session-only degradation. */
+	warn?: (message: string) => void;
 	now?: () => number;
 	newSecret?: () => string;
 }
@@ -174,6 +176,7 @@ export class AuthorizationStore {
 	private readonly seal: SealProvider;
 	private readonly anchor: AnchorStore;
 	private readonly ledgerPath: string;
+	private readonly warn: (message: string) => void;
 	private readonly now: () => number;
 	private readonly newSecret: () => string;
 
@@ -188,6 +191,7 @@ export class AuthorizationStore {
 		this.seal = deps.seal;
 		this.anchor = deps.anchor;
 		this.ledgerPath = deps.ledgerPath;
+		this.warn = deps.warn ?? (() => {});
 		this.now = deps.now ?? (() => Date.now());
 		this.newSecret = deps.newSecret ?? (() => randomBytes(32).toString('base64url'));
 		this.ledger = emptyLedger('');
@@ -234,9 +238,16 @@ export class AuthorizationStore {
 
 		// No seal or no anchor → session-only. We cannot verify freshness, so we
 		// refuse to silently honor anything on disk.
-		if (!this.seal.available() || !this.anchor.available()) {
+		const sealAvailable = this.seal.available();
+		const anchorAvailable = this.anchor.available();
+		if (!sealAvailable || !anchorAvailable) {
 			this.ledger = emptyLedger(this.newSecret());
 			this.storageMode = 'session-only';
+			const unavailable = [
+				...(!sealAvailable ? ['safeStorage'] : []),
+				...(!anchorAvailable ? ['freshness anchor'] : []),
+			].join(' and ');
+			this.warnSessionOnly(`${unavailable} unavailable`);
 			return;
 		}
 
@@ -297,13 +308,22 @@ export class AuthorizationStore {
 			fs.writeFileSync(tmp, this.seal.seal(JSON.stringify(this.ledger)));
 			fs.renameSync(tmp, this.ledgerPath);
 			this.droppedPriorState = false;
-		} catch {
+		} catch (error) {
 			// Seal / anchor / disk failure (locked keyring, read-only disk, …). Fail
 			// safe: degrade to session-only so this run's grants live only in memory
 			// and nothing is left half-persisted. Any partial write is caught next
 			// launch by the epoch check → re-consent.
 			this.storageMode = 'session-only';
+			this.warnSessionOnly(`persistence failed (${this.errorReason(error)})`);
 		}
+	}
+
+	private warnSessionOnly(reason: string): void {
+		this.warn(`[PluginAuthorization] session-only: ${reason}; ledger path "${this.ledgerPath}"`);
+	}
+
+	private errorReason(error: unknown): string {
+		return error instanceof Error && error.message ? error.message : 'unknown error';
 	}
 
 	/** Advance the monotonic epoch for any authoritative mutation. */
@@ -550,10 +570,12 @@ export function createAuthorizationStore(opts: {
 	safeStorage: SafeStorageLike;
 	ledgerPath: string;
 	anchor?: AnchorStore;
+	warn?: (message: string) => void;
 }): AuthorizationStore {
 	return new AuthorizationStore({
 		seal: safeStorageSeal(opts.safeStorage),
 		anchor: opts.anchor ?? noAnchor(),
 		ledgerPath: opts.ledgerPath,
+		warn: opts.warn,
 	});
 }

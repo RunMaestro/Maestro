@@ -125,7 +125,7 @@ function makeStore(seal: SealProvider, anchor: AnchorStore, seq = { n: 0 }): Aut
 
 beforeEach(() => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-ledger-'));
-	ledgerPath = path.join(tmpDir, 'auth-ledger.bin');
+	ledgerPath = path.join(tmpDir, 'user-data', 'plugin-authorization.bin');
 });
 
 afterEach(() => {
@@ -162,9 +162,12 @@ describe('AuthorizationStore — mint / revoke', () => {
 });
 
 describe('AuthorizationStore — persistence', () => {
-	it('persists across instances when sealed + anchored', () => {
+	it('persists the sealed ledger at the documented user-data path across instances', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('storage:write'), ident('hash-a'));
+
+		expect(ledgerPath).toBe(path.join(tmpDir, 'user-data', 'plugin-authorization.bin'));
+		expect(fs.existsSync(ledgerPath)).toBe(true);
 
 		const reopened = makeStore(fakeSeal(), fakeAnchor(holder));
 		expect(reopened.isEnabled('a')).toBe(true);
@@ -249,10 +252,21 @@ describe('AuthorizationStore — anti-rollback (the contract)', () => {
 });
 
 describe('AuthorizationStore — session-only fail-safe', () => {
-	it('no seal → in-memory grants this session, nothing persisted', () => {
+	it('no seal → logs session-only mode, keeps grants in memory, and never writes the ledger', () => {
 		const holder = { value: null as Anchor | null };
-		const store = makeStore(fakeSeal(false), fakeAnchor(holder));
+		const warnings: string[] = [];
+		const store = new AuthorizationStore({
+			seal: fakeSeal(false),
+			anchor: fakeAnchor(holder),
+			ledgerPath,
+			now: () => 1000,
+			newSecret: () => 'session-only-secret',
+			warn: (message) => warnings.push(message),
+		});
 		expect(store.isSessionOnly()).toBe(true);
+		expect(warnings).toContain(
+			`[PluginAuthorization] session-only: safeStorage unavailable; ledger path "${ledgerPath}"`
+		);
 
 		store.mint('a', caps('fs:read', '/d'), ident('hash-a'));
 		expect(store.readGrants('a')).toHaveLength(1); // usable this run
@@ -270,8 +284,9 @@ describe('AuthorizationStore — session-only fail-safe', () => {
 });
 
 describe('AuthorizationStore — persist failure (locked keyring) fails safe', () => {
-	it('an anchor write that throws degrades to session-only, not a crash', () => {
+	it('an anchor write that throws logs degradation, remains usable in-session, and never crashes', () => {
 		const holder = { value: null as Anchor | null };
+		const warnings: string[] = [];
 		const throwingAnchor: AnchorStore = {
 			available: () => true,
 			read: () => holder.value,
@@ -280,12 +295,22 @@ describe('AuthorizationStore — persist failure (locked keyring) fails safe', (
 			},
 			clear: () => {},
 		};
-		const store = makeStore(fakeSeal(), throwingAnchor);
+		const store = new AuthorizationStore({
+			seal: fakeSeal(),
+			anchor: throwingAnchor,
+			ledgerPath,
+			now: () => 1000,
+			newSecret: () => 'locked-keyring-secret',
+			warn: (message) => warnings.push(message),
+		});
 		// First-run persist() hits the throwing write and must NOT throw.
 		expect(() => store.mint('a', caps('fs:read', '/d'), ident('hash-a'))).not.toThrow();
 		expect(store.isSessionOnly()).toBe(true); // degraded safely
 		expect(store.readGrants('a')).toHaveLength(1); // usable this session
 		expect(fs.existsSync(ledgerPath)).toBe(false);
+		expect(warnings).toContain(
+			`[PluginAuthorization] session-only: persistence failed (keyring locked); ledger path "${ledgerPath}"`
+		);
 	});
 
 	it('a seal/file write failing after the anchor write stays session-only for all later mints', () => {
