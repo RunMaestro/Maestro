@@ -225,7 +225,10 @@ describe('useInputProcessing', () => {
 			expect(mockOnWizardCommand).toHaveBeenCalledWith('');
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 		});
 
 		it('intercepts /wizard with arguments and passes them to handler', async () => {
@@ -350,7 +353,10 @@ describe('useInputProcessing', () => {
 			// Should clear input
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 			vi.useRealTimers();
 		});
 

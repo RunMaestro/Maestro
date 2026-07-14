@@ -294,6 +294,7 @@ describe('useInputHandlers', () => {
 			expect(result.current).toHaveProperty('processInput');
 			expect(result.current).toHaveProperty('processInputRef');
 			expect(result.current).toHaveProperty('handleInputKeyDown');
+			expect(result.current).toHaveProperty('handleMainPanelInputFocus');
 			expect(result.current).toHaveProperty('handleMainPanelInputBlur');
 			expect(result.current).toHaveProperty('handleReplayMessage');
 			expect(result.current).toHaveProperty('handlePaste');
@@ -1248,6 +1249,7 @@ describe('useInputHandlers', () => {
 
 			const firstRender = {
 				handleInputKeyDown: result.current.handleInputKeyDown,
+				handleMainPanelInputFocus: result.current.handleMainPanelInputFocus,
 				handleMainPanelInputBlur: result.current.handleMainPanelInputBlur,
 				handleReplayMessage: result.current.handleReplayMessage,
 				syncFileTreeToTabCompletion: result.current.syncFileTreeToTabCompletion,
@@ -1256,6 +1258,7 @@ describe('useInputHandlers', () => {
 			rerender();
 
 			expect(result.current.handleInputKeyDown).toBe(firstRender.handleInputKeyDown);
+			expect(result.current.handleMainPanelInputFocus).toBe(firstRender.handleMainPanelInputFocus);
 			expect(result.current.handleMainPanelInputBlur).toBe(firstRender.handleMainPanelInputBlur);
 			expect(result.current.handleReplayMessage).toBe(firstRender.handleReplayMessage);
 			expect(result.current.syncFileTreeToTabCompletion).toBe(
@@ -2271,7 +2274,10 @@ describe('useInputHandlers', () => {
 
 			// Draft should be restored after replay
 			expect(inputVal()).toBe('my draft message');
-			expect(mockProcessInput).toHaveBeenCalledWith('replayed message');
+			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 
 			// Clean up mock
 			mockProcessInput.mockReset();

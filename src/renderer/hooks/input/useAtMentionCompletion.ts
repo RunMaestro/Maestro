@@ -55,7 +55,6 @@ const EARLY_EXIT_EXACT_MATCH_THRESHOLD = 50;
 export function useAtMentionCompletion(session?: Session | null): UseAtMentionCompletionReturn {
 	const injected = session !== undefined;
 
-	const storeActiveId = useSessionStore((s) => (injected ? undefined : s.activeSessionId));
 	const storeFileTree = useSessionStore((s) =>
 		injected ? undefined : selectActiveSession(s)?.fileTree
 	);
@@ -64,13 +63,9 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 		injected ? undefined : selectActiveSession(s)?.autoRunFolderPath
 	);
 
-	const fileTree = injected ? session?.fileTree : storeActiveId ? storeFileTree : undefined;
-	const sessionCwd = injected ? session?.cwd : storeActiveId ? storeCwd : undefined;
-	const autoRunFolderPath = injected
-		? session?.autoRunFolderPath
-		: storeActiveId
-			? storeAutoRunFolderPath
-			: undefined;
+	const fileTree = injected ? session?.fileTree : storeFileTree;
+	const sessionCwd = injected ? session?.cwd : storeCwd;
+	const autoRunFolderPath = injected ? session?.autoRunFolderPath : storeAutoRunFolderPath;
 
 	// State for Auto Run folder files (fetched asynchronously)
 	const [autoRunFiles, setAutoRunFiles] = useState<

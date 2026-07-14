@@ -67,7 +67,6 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 	// Narrow store selectors (ignored when a session is injected). When injected,
 	// each selector returns a stable undefined so Object.is bails out on stream
 	// updates and this hook does not re-render solely due to store notifications.
-	const storeActiveId = useSessionStore((s) => (injected ? undefined : s.activeSessionId));
 	const storeCwd = useSessionStore((s) => (injected ? undefined : selectActiveSession(s)?.cwd));
 	const storeShellCwd = useSessionStore((s) =>
 		injected ? undefined : selectActiveSession(s)?.shellCwd
@@ -92,17 +91,15 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 		? session
 			? pickTabCompletionFields(session)
 			: null
-		: storeActiveId
-			? {
-					cwd: storeCwd ?? '',
-					shellCwd: storeShellCwd,
-					fileTree: storeFileTree ?? [],
-					shellCommandHistory: storeShellHistory,
-					isGitRepo: storeIsGitRepo ?? false,
-					gitBranches: storeGitBranches,
-					gitTags: storeGitTags,
-				}
-			: null;
+		: {
+				cwd: storeCwd ?? '',
+				shellCwd: storeShellCwd,
+				fileTree: storeFileTree ?? [],
+				shellCommandHistory: storeShellHistory,
+				isGitRepo: storeIsGitRepo ?? false,
+				gitBranches: storeGitBranches,
+				gitTags: storeGitTags,
+			};
 
 	// Compute relative path from project root (cwd) to shell working directory (shellCwd)
 	const shellRelativePath = useMemo(() => {

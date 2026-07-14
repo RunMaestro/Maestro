@@ -858,11 +858,12 @@ export const MainPanel = React.memo(
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
+			props.onComposerFocus?.();
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
 				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId]);
+		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
 		// Memoized session click handler for InputArea's ThinkingStatusPill
 		// Avoids creating new function reference on every render

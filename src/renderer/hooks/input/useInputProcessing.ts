@@ -78,7 +78,7 @@ export interface UseInputProcessingDeps {
 	/** Slash command menu open state setter */
 	setSlashCommandOpen: (open: boolean) => void;
 	/** Sync AI input value to session state (for persistence) */
-	syncAiInputToSession: (value: string) => void;
+	syncAiInputToSession: (value: string, target?: { sessionId: string; tabId?: string }) => void;
 	/** Sync terminal input value to session state (for persistence) */
 	syncTerminalInputToSession: (value: string) => void;
 	/** Whether the active session is in AI mode */
@@ -131,19 +131,22 @@ export type BatchState = BatchRunState;
 /**
  * Return type for useInputProcessing hook.
  */
+/** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
+export type ProcessInputOptions = {
+	forceParallel?: boolean;
+	images?: string[];
+	/** Prefer this agent over the live activeSessionId when the callback runs. */
+	sessionId?: string;
+	/** Prefer this AI tab over the session's current activeTabId. */
+	tabId?: string;
+};
+
 export interface UseInputProcessingReturn {
 	/** Process the current input (send message or execute command) */
-	processInput: (
-		overrideInputValue?: string,
-		options?: { forceParallel?: boolean; images?: string[] }
-	) => Promise<void>;
+	processInput: (overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>;
 	/** Ref to processInput for use in callbacks that need latest version */
 	processInputRef: React.MutableRefObject<
-		| ((
-				overrideInputValue?: string,
-				options?: { forceParallel?: boolean; images?: string[] }
-		  ) => Promise<void>)
-		| null
+		((overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>) | null
 	>;
 }
 
@@ -192,35 +195,50 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 	// Ref for the processInput function so external code can access the latest version
 	const processInputRef = useRef<
-		| ((
-				overrideInputValue?: string,
-				options?: { forceParallel?: boolean; images?: string[] }
-		  ) => Promise<void>)
-		| null
+		((overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>) | null
 	>(null);
 
 	/**
 	 * Process user input - handles slash commands, queuing, and message sending.
 	 */
 	const processInput = useCallback(
-		async (
-			overrideInputValue?: string,
-			options?: { forceParallel?: boolean; images?: string[] }
-		) => {
+		async (overrideInputValue?: string, options?: ProcessInputOptions) => {
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
 
-			// PERF: When activeSession is omitted, resolve the live session at
-			// submit time via sessionsRef / getState so callers need not pass a
-			// React-subscribed Session (streaming would re-render App). Explicit
-			// null means "no session" (tests).
+			// Prefer an explicit pin (replay / recovery) over the live active id so a
+			// deferred setTimeout cannot send into a different agent after a fast switch.
+			const resolvedSessionId =
+				options?.sessionId ||
+				activeSessionId ||
+				selectActiveSession(useSessionStore.getState())?.id ||
+				'';
+
+			// PERF: When activeSession is omitted, resolve at submit time via
+			// sessionsRef / getState so callers need not pass a React-subscribed
+			// Session (streaming would re-render App). Explicit null means "no
+			// session" (tests).
 			const activeSession =
 				activeSessionProp !== undefined
 					? activeSessionProp
-					: ((activeSessionId
-							? sessionsRef.current.find((s) => s.id === activeSessionId)
+					: ((resolvedSessionId
+							? sessionsRef.current.find((s) => s.id === resolvedSessionId)
 							: undefined) ?? selectActiveSession(useSessionStore.getState()));
+
+			const resolveTargetTab = (session: Session) => {
+				if (options?.tabId) {
+					return session.aiTabs.find((t) => t.id === options.tabId) ?? getActiveTab(session);
+				}
+				return getActiveTab(session);
+			};
+
+			const syncTarget = activeSession
+				? {
+						sessionId: activeSession.id,
+						tabId: resolveTargetTab(activeSession)?.id,
+					}
+				: undefined;
 
 			const effectiveInputValue = overrideInputValue ?? getInputValue();
 			// When the caller passes explicit images (e.g. Force Send button replaying a
@@ -256,7 +274,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (!isTerminalMode && commandText === '/history' && onHistoryCommand) {
 					setInputValue('');
 					setSlashCommandOpen(false);
-					syncAiInputToSession('');
+					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 
 					// Execute the history command handler asynchronously
@@ -277,7 +295,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 					setInputValue('');
 					setSlashCommandOpen(false);
-					syncAiInputToSession('');
+					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 
 					// Execute the wizard command handler with the argument text
@@ -295,7 +313,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				) {
 					setInputValue('');
 					setSlashCommandOpen(false);
-					syncAiInputToSession('');
+					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 
 					// Execute the skills command handler asynchronously
@@ -331,7 +349,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Execute the custom AI command by sending its prompt
 						setInputValue('');
 						setSlashCommandOpen(false);
-						syncAiInputToSession(''); // We're in AI mode here (isTerminalMode === false)
+						syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
 						if (inputRef.current) inputRef.current.style.height = 'auto';
 
 						// Substitute template variables and send to the AI agent
@@ -355,7 +373,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 							// ALWAYS queue slash commands - they execute in order like write messages
 							// This ensures commands are processed sequentially through the queue
-							const activeTab = getActiveTab(activeSession);
+							const activeTab = resolveTargetTab(activeSession);
 							const isReadOnlyMode = activeTab?.readOnlyMode === true;
 							// Check both session busy state AND AutoRun state
 							// AutoRun runs in isolation and doesn't set session to busy, so we check it explicitly
@@ -395,7 +413,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// and adding it would cause duplicate display (once as sent message, once in queue section)
 								setSessions((prev) =>
 									prev.map((s) => {
-										if (s.id !== activeSessionId) return s;
+										if (s.id !== resolvedSessionId) return s;
 
 										// Set the target tab to busy
 										const updatedAiTabs = s.aiTabs.map((tab) =>
@@ -424,13 +442,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// 50ms delay allows React to flush the setState above, ensuring the session
 								// is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
 								setTimeout(() => {
-									processQueuedItemRef.current?.(activeSessionId, queuedItem);
+									processQueuedItemRef.current?.(resolvedSessionId, queuedItem);
 								}, 50);
 							} else {
 								// Session is busy - just add to queue
 								setSessions((prev) =>
 									prev.map((s) => {
-										if (s.id !== activeSessionId) return s;
+										if (s.id !== resolvedSessionId) return s;
 										return {
 											...s,
 											executionQueue: [...s.executionQueue, queuedItem],
@@ -473,7 +491,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Clear input
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
-				syncAiInputToSession('');
+				syncAiInputToSession('', syncTarget);
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 
 				// Send to wizard (with images if any were staged)
@@ -491,7 +509,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// === undefined` so it fires exactly once, on a real input-box submit -
 			// not on queued replays / force-sends, which pass an override value.
 			if (currentMode === 'ai' && overrideInputValue === undefined && onCrossAgentMentions) {
-				const sourceTab = getActiveTab(activeSession);
+				const sourceTab = resolveTargetTab(activeSession);
 				const suppressLocal = onCrossAgentMentions(
 					effectiveInputValue,
 					activeSession,
@@ -514,8 +532,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
-							const tab = getActiveTab(s);
+							if (s.id !== resolvedSessionId) return s;
+							const tab = resolveTargetTab(s);
 							if (!tab) return s;
 							const trimmed = effectiveInputValue.trim();
 							const priorHistory = s.aiCommandHistory || [];
@@ -554,7 +572,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Clear the composer.
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
-					syncAiInputToSession('');
+					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					return;
 				}
@@ -566,7 +584,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// EXCEPTION: Write commands can bypass the queue and run in parallel if ALL busy tabs
 			// and ALL queued items are read-only
 			if (currentMode === 'ai') {
-				const activeTab = getActiveTab(activeSession);
+				const activeTab = resolveTargetTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
@@ -651,7 +669,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// to complete to prevent file conflicts.
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
+							if (s.id !== resolvedSessionId) return s;
 							return {
 								...s,
 								executionQueue: [...s.executionQueue, queuedItem],
@@ -662,7 +680,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Clear input
 					setInputValue('');
 					if (!usingOverrideImages) setStagedImages([]);
-					syncAiInputToSession(''); // Sync empty value to session state
+					syncAiInputToSession('', syncTarget); // Sync empty value to session state
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					return;
 				}
@@ -671,7 +689,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
 			// override — skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
-			const activeTabForEntry = currentMode === 'ai' ? getActiveTab(activeSession) : null;
+			const activeTabForEntry = currentMode === 'ai' ? resolveTargetTab(activeSession) : null;
 			const currentBatchState = getBatchState(activeSession.id);
 			const isForceParallelEntry =
 				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
@@ -802,7 +820,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			setSessions((prev) =>
 				prev.map((s) => {
-					if (s.id !== activeSessionId) return s;
+					if (s.id !== resolvedSessionId) return s;
 
 					// Add command to history (separate histories for AI and terminal modes)
 					const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
@@ -832,8 +850,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 					}
 
-					// For AI mode, add to ACTIVE TAB's logs
-					const activeTab = getActiveTab(s);
+					// For AI mode, add to the target tab's logs (pinned tabId or active)
+					const activeTab = resolveTargetTab(s);
 					if (!activeTab) {
 						// No tabs exist - this is a bug, sessions must have aiTabs
 						logger.error(
@@ -888,7 +906,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Trigger automatic tab naming. Retries on every send until the tab has a name,
 			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
 			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
-			const activeTabForNaming = getActiveTab(activeSession);
+			const activeTabForNaming = resolveTargetTab(activeSession);
 			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
 			const hasTextMessage = effectiveInputValue.trim().length > 0;
 			const hasNoCustomName = !activeTabForNaming?.name;
@@ -939,7 +957,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					});
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
+							if (s.id !== resolvedSessionId) return s;
 							return {
 								...s,
 								aiTabs: s.aiTabs.map((t) =>
@@ -952,7 +970,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Set isGeneratingName to show spinner in tab
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
+							if (s.id !== resolvedSessionId) return s;
 							return {
 								...s,
 								aiTabs: s.aiTabs.map((t) =>
@@ -988,7 +1006,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Clear the generating indicator
 							setSessions((prev) =>
 								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
+									if (s.id !== resolvedSessionId) return s;
 									return {
 										...s,
 										aiTabs: s.aiTabs.map((t) =>
@@ -1009,7 +1027,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Update the tab name only if it's still null (user hasn't manually renamed it)
 							setSessions((prev) =>
 								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
+									if (s.id !== resolvedSessionId) return s;
 									const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
 									if (!tab || tab.name !== null) {
 										window.maestro.logger.log(
@@ -1052,7 +1070,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Clear the generating indicator on error
 							setSessions((prev) =>
 								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
+									if (s.id !== resolvedSessionId) return s;
 									return {
 										...s,
 										aiTabs: s.aiTabs.map((t) =>
@@ -1077,7 +1095,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						undefined;
 					const isGitRepo = await gitService.isRepo(cwdToCheck, sshIdForGit);
 					setSessions((prev) =>
-						prev.map((s) => (s.id === activeSessionId ? { ...s, isGitRepo } : s))
+						prev.map((s) => (s.id === resolvedSessionId ? { ...s, isGitRepo } : s))
 					);
 				})();
 			}
@@ -1104,7 +1122,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Sync empty value to session state (prevents stale input restoration on blur)
 			if (isAiMode) {
-				syncAiInputToSession('');
+				syncAiInputToSession('', syncTarget);
 			} else {
 				syncTerminalInputToSession('');
 			}
@@ -1117,7 +1135,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const targetPid = currentMode === 'ai' ? activeSession.aiPid : activeSession.terminalPid;
 			// For batch mode (Claude), include tab ID in session ID to prevent process collision
 			// This ensures each tab's process has a unique identifier
-			const activeTabForSpawn = getActiveTab(activeSession);
+			const activeTabForSpawn = resolveTargetTab(activeSession);
 			const isForceParallel =
 				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
 			const targetSessionId =
@@ -1148,11 +1166,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 						// IMPORTANT: Get fresh session state from ref to avoid stale closure bug
 						// If user switches tabs quickly, activeSession from closure may have wrong activeTabId
-						const freshSession = sessionsRef.current.find((s) => s.id === activeSessionId);
+						const freshSession = sessionsRef.current.find((s) => s.id === resolvedSessionId);
 						if (!freshSession) throw new Error('Session not found');
 
 						// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
-						const freshActiveTab = getActiveTab(freshSession);
+						const freshActiveTab = resolveTargetTab(freshSession);
 						const tabAgentSessionId = freshActiveTab?.agentSessionId;
 
 						if (!tabAgentSessionId && freshActiveTab?.logs && freshActiveTab.logs.length > 0) {
@@ -1161,7 +1179,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								{
 									tabId: freshActiveTab.id,
 									logCount: freshActiveTab.logs.length,
-									sessionId: activeSessionId,
+									sessionId: resolvedSessionId,
 								}
 							);
 						}
@@ -1170,7 +1188,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an
 						// explicit override — skip the Auto Run gate, but still honor the tab's own
 						// readOnlyMode setting.
-						const currentSessionBatchState = getBatchState(activeSessionId);
+						const currentSessionBatchState = getBatchState(resolvedSessionId);
 						const isAutoRunReadOnly =
 							currentSessionBatchState.isRunning &&
 							!currentSessionBatchState.worktreeActive &&
@@ -1224,7 +1242,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Clear the pending merged context from the tab
 							setSessions((prev) =>
 								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
+									if (s.id !== resolvedSessionId) return s;
 									return {
 										...s,
 										aiTabs: s.aiTabs.map((tab) =>
@@ -1301,12 +1319,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 						setSessions((prev) =>
 							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
-								// Reset active tab's state to 'idle' and add error log
+								if (s.id !== resolvedSessionId) return s;
+								const errorTabId = options?.tabId ?? s.activeTabId;
+								// Reset target tab's state to 'idle' and add error log
 								const updatedAiTabs =
 									s.aiTabs?.length > 0
 										? s.aiTabs.map((tab) =>
-												tab.id === s.activeTabId
+												tab.id === errorTabId
 													? {
 															...tab,
 															state: 'idle' as const,
@@ -1333,7 +1352,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (trimmedCommand === 'clear') {
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
+							if (s.id !== resolvedSessionId) return s;
 							return {
 								...s,
 								state: 'idle',
@@ -1369,7 +1388,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						logger.error('Failed to run command:', undefined, error);
 						setSessions((prev) =>
 							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
+								if (s.id !== resolvedSessionId) return s;
 								return {
 									...s,
 									state: 'idle',
@@ -1403,7 +1422,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					};
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSessionId) return s;
+							if (s.id !== resolvedSessionId) return s;
 							// Reset active tab's state to 'idle' and add error log
 							const updatedAiTabs =
 								s.aiTabs?.length > 0

@@ -1732,6 +1732,7 @@ function MaestroConsoleInner() {
 		processInput,
 		processInputRef,
 		handleInputKeyDown,
+		handleMainPanelInputFocus,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
 		handlePaste,
@@ -2770,6 +2771,7 @@ function MaestroConsoleInner() {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleMainPanelInputBlur,
+		handleMainPanelInputFocus,
 		handleOpenPromptComposer,
 		handleReplayMessage,
 		handleForkConversation,
@@ -3304,14 +3306,15 @@ function MaestroConsoleInner() {
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
 					onRunPromptMacro={handleRunPromptMacro}
-					canSummarizeActiveTab={
-						activeSession
-							? canSummarize(
-									activeSession.contextUsage,
-									activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId)?.logs
-								)
-							: false
-					}
+					canSummarizeActiveTab={(() => {
+						// Fresh snapshot: chrome equality ignores contextUsage / logs.
+						const session = selectActiveSession(useSessionStore.getState());
+						if (!session) return false;
+						return canSummarize(
+							session.contextUsage,
+							session.aiTabs.find((t) => t.id === session.activeTabId)?.logs
+						);
+					})()}
 					onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}

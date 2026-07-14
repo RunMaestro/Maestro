@@ -231,6 +231,7 @@ export interface UseMainPanelPropsDeps {
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
 	handleMainPanelInputBlur: () => void;
+	handleMainPanelInputFocus: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
 	handleForkConversation: (logId: string) => void;
@@ -450,6 +451,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onScrollPositionChange: deps.handleScrollPositionChange,
 			onAtBottomChange: deps.handleAtBottomChange,
 			onInputBlur: deps.handleMainPanelInputBlur,
+			onComposerFocus: deps.handleMainPanelInputFocus,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
 			onForkConversation: deps.handleForkConversation,
@@ -709,6 +711,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleScrollPositionChange,
 			deps.handleAtBottomChange,
 			deps.handleMainPanelInputBlur,
+			deps.handleMainPanelInputFocus,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
 			deps.handleForkConversation,

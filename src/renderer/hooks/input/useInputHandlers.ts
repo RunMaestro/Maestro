@@ -157,13 +157,21 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
+	processInput: (
+		text?: string,
+		options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+	) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
+	/** Capture the agent/tab that owns the composer when the input gains focus */
+	handleMainPanelInputFocus: () => void;
 	/** Handler for input blur (persists input to session state) */
 	handleMainPanelInputBlur: () => void;
 	/** Replay a message (optionally with images) */
@@ -612,7 +620,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	// processInputRef - maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
@@ -639,14 +650,30 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Handlers
 	// ====================================================================
 
+	// Agent/tab that owned the composer when it last gained focus. Blur must write
+	// here - not to the live active agent (click can switch focus before blur runs).
+	const composerFocusTargetRef = useRef<{ sessionId: string; tabId?: string } | null>(null);
+
+	const handleMainPanelInputFocus = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		const tab = session ? getActiveTab(session) : null;
+		composerFocusTargetRef.current = session ? { sessionId: session.id, tabId: tab?.id } : null;
+	}, []);
+
 	const handleMainPanelInputBlur = useCallback(() => {
+		const target = composerFocusTargetRef.current;
+		const blurSessionId = target?.sessionId ?? activeSessionIdRef.current;
 		const currentIsAiMode =
-			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
+			sessionsRef.current.find((s) => s.id === blurSessionId)?.inputMode === 'ai';
 		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
-			syncAiInputToSession(composer.aiValue);
+			if (target?.sessionId) {
+				syncAiInputToSession(composer.aiValue, target);
+			} else {
+				syncAiInputToSession(composer.aiValue);
+			}
 		} else {
-			syncTerminalInputToSession(composer.terminalValue);
+			syncTerminalInputToSession(composer.terminalValue, blurSessionId || undefined);
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
@@ -657,16 +684,23 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			const activeTab = activeSession ? getActiveTab(activeSession) : null;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
+			const pin = activeSession ? { sessionId: activeSession.id, tabId: activeTab?.id } : undefined;
 
 			if (images && images.length > 0) {
 				setStagedImages(images);
 			}
 			setTimeout(() => {
-				processInputRef.current(text);
+				// Pin the agent/tab from click time so a focus change before the
+				// timeout cannot retarget the replay. Images were staged above.
+				processInputRef.current(text, pin);
 				// Restore draft input after processInput clears it
 				if (draftInput) {
 					setInputValue(draftInput);
-					syncAiInputToSession(draftInput);
+					if (pin) {
+						syncAiInputToSession(draftInput, pin);
+					} else {
+						syncAiInputToSession(draftInput);
+					}
 				}
 				if (draftImages.length > 0) {
 					setStagedImages(draftImages);
@@ -931,6 +965,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		processInput,
 		processInputRef,
 		handleInputKeyDown,
+		handleMainPanelInputFocus,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
 		handlePaste,

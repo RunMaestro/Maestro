@@ -172,7 +172,11 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 		a.agentSessionId === b.agentSessionId &&
 		a.autoSendOnActivate === b.autoSendOnActivate &&
 		a.customModel === b.customModel &&
-		a.customEffort === b.customEffort
+		a.customEffort === b.customEffort &&
+		a.isGeneratingName === b.isGeneratingName &&
+		!!a.pendingMergedContext === !!b.pendingMergedContext &&
+		a.agentError?.timestamp === b.agentError?.timestamp &&
+		a.agentError?.message === b.agentError?.message
 	);
 }
 
@@ -182,6 +186,10 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
  * Returns true when nothing the shell needs for layout, tab strip, title bar, or
  * modal flags has changed. Streaming fields (logs, tokens, contextUsage, fileTree,
  * workLog, etc.) are ignored so log/token flushes do not re-render the whole console.
+ *
+ * Tab-strip chrome includes `isGeneratingName`, tab `agentError`, presence of
+ * `pendingMergedContext`, and browser `customTitle` so rename / error / naming
+ * spinners stay live under this equality.
  *
  * Paint leaves that need live logs (MainPanel chat) must self-subscribe with
  * `selectActiveSession` (default Object.is) instead of this equality.
@@ -256,7 +264,12 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		if ((ba?.length ?? 0) !== (bb?.length ?? 0)) return false;
 		if (ba && bb) {
 			for (let i = 0; i < ba.length; i++) {
-				if (ba[i].id !== bb[i].id || ba[i].title !== bb[i].title || ba[i].url !== bb[i].url) {
+				if (
+					ba[i].id !== bb[i].id ||
+					ba[i].title !== bb[i].title ||
+					ba[i].url !== bb[i].url ||
+					ba[i].customTitle !== bb[i].customTitle
+				) {
 					return false;
 				}
 			}
