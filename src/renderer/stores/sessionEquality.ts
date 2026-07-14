@@ -68,3 +68,87 @@ export function sidebarSessionEquality(a: Session[], b: Session[]): boolean {
 
 	return true;
 }
+
+/**
+ * Fields useGitStatusPolling reads for poll cwd / SSH / isGitRepo gating.
+ * Ignores logs, tokens, and other streaming-heavy fields.
+ */
+export function gitPollSessionEquality(a: Session[], b: Session[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+
+		if (
+			x.id !== y.id ||
+			x.isGitRepo !== y.isGitRepo ||
+			x.inputMode !== y.inputMode ||
+			x.cwd !== y.cwd ||
+			x.shellCwd !== y.shellCwd ||
+			x.sshRemoteId !== y.sshRemoteId ||
+			x.sessionSshRemoteConfig?.remoteId !== y.sessionSshRemoteConfig?.remoteId
+		) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Fields GroupChat @mention autocomplete needs (id, name, toolType, groupId).
+ */
+export function mentionSessionEquality(a: Session[], b: Session[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+
+		if (
+			x.id !== y.id ||
+			x.name !== y.name ||
+			x.toolType !== y.toolType ||
+			x.groupId !== y.groupId
+		) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Fields that need a live id → projectRoot map (e.g. GroupChat participant paths).
+ * Ignores logs, tokens, and other streaming-heavy fields. Unlike
+ * `sidebarSessionEquality`, this *does* compare `projectRoot`.
+ */
+export function projectRootSessionEquality(a: Session[], b: Session[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+
+		if (x.id !== y.id || x.projectRoot !== y.projectRoot) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Compact signature of session id + projectRoot for Cue auto-discovery.
+ * Changes only when agents are added/removed or their project root moves.
+ */
+export function selectCueDiscoverySignature(state: { sessions: Session[] }): string {
+	return state.sessions.map((s) => `${s.id}\0${s.projectRoot ?? ''}`).join('\n');
+}

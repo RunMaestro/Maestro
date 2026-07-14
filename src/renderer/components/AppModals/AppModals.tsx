@@ -117,7 +117,6 @@ export interface AppModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
-	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	onCloseEditAgentModal: () => void;
@@ -638,7 +637,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Session modals
 		onCloseNewInstanceModal,
 		onCreateSession,
-		existingSessions,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		onCloseEditAgentModal,
@@ -967,7 +965,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				newInstanceModalOpen={newInstanceModalOpen}
 				onCloseNewInstanceModal={onCloseNewInstanceModal}
 				onCreateSession={onCreateSession}
-				existingSessions={existingSessions}
+				existingSessions={sessions}
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
 				editAgentModalOpen={editAgentModalOpen}

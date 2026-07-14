@@ -16,6 +16,8 @@ import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
+import { useThinkingItems } from '../../hooks/session/useThinkingItems';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
@@ -81,7 +83,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionCategory,
 		selectedAtMentionIndex = 0,
 		setSelectedAtMentionIndex,
-		thinkingItems = [],
 		namedSessions,
 		onSessionClick,
 		autoRunState,
@@ -129,6 +130,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onModelChange,
 		onEffortChange,
 	} = props;
+
+	// Self-source thinking items with a narrow store equality so App/MainPanel
+	// are not re-rendered on every streaming log flush.
+	const ownsSession = useWindowContextOptional()?.ownsSession;
+	const thinkingItems = useThinkingItems(ownsSession);
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
@@ -191,7 +197,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
 	);
 
-	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
+	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 
 	const currentCommandHistory = useMemo(
 		() => getCurrentCommandHistory(session, isTerminalMode),

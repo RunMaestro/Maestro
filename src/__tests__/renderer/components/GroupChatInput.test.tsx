@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -53,17 +54,21 @@ function createMockGroup(id: string, name: string, emoji: string = '📁'): Grou
 }
 
 /**
- * Default props for GroupChatInput
+ * Default props for GroupChatInput.
+ * Pass `sessions` to seed the store (component self-sources mentions).
  */
-function createDefaultProps(overrides: Partial<Parameters<typeof GroupChatInput>[0]> = {}) {
+function createDefaultProps(
+	overrides: Partial<Parameters<typeof GroupChatInput>[0]> & { sessions?: Session[] } = {}
+) {
+	const { sessions = [], ...rest } = overrides;
+	useSessionStore.setState({ sessions });
 	return {
 		theme: createMockTheme(),
 		state: 'idle' as const,
 		onSend: vi.fn(),
 		participants: [],
-		sessions: [],
 		groupChatId: 'test-group-chat',
-		...overrides,
+		...rest,
 	};
 }
 
@@ -79,6 +84,10 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] });
+	});
+
 	afterEach(() => {
 		vi.useRealTimers();
 	});

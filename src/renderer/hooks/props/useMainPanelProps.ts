@@ -20,7 +20,6 @@ import type {
 	AITab,
 	UnifiedTab,
 	FilePreviewTab,
-	ThinkingItem,
 	AgentError,
 	QueuedItem,
 } from '../../types';
@@ -47,7 +46,6 @@ export interface UseMainPanelPropsDeps {
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
 	activeSession: Session | null;
-	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape: boolean;
 	stagedImages: string[];
@@ -336,7 +334,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			memoryViewerOpen: deps.memoryViewerOpen,
 			activeAgentSessionId: deps.activeAgentSessionId,
 			activeSession: deps.activeSession,
-			thinkingItems: deps.thinkingItems,
 			theme: deps.theme,
 			isMobileLandscape: deps.isMobileLandscape,
 			stagedImages: deps.stagedImages,
@@ -580,7 +577,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// Without it, queue mutations while the agent is idle (no other tracked dep
 			// changing) leave the transcript showing a stale queued message.
 			deps.activeSession?.executionQueue,
-			deps.thinkingItems,
 			deps.theme,
 			deps.isMobileLandscape,
 			deps.stagedImages,

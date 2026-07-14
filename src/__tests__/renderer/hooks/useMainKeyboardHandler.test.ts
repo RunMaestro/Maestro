@@ -12,6 +12,15 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
  * "is not a function" errors when processing keyboard events.
  */
 function createMockContext(overrides: Record<string, unknown> = {}) {
+	// Keyboard gates (toggleSidebar / quickAction / agentSwitcher) read
+	// session count via useSessionStore.getState(), not ctx.sessions.
+	// Only sync when the test explicitly provides `sessions` so other
+	// suites that pre-seed the store (e.g. output-search Cmd+F) are not wiped.
+	if ('sessions' in overrides) {
+		const sessions = Array.isArray(overrides.sessions) ? overrides.sessions : [];
+		useSessionStore.setState({ sessions: sessions as never });
+	}
+
 	return {
 		hasOpenLayers: () => false,
 		hasOpenModal: () => false,

@@ -13,13 +13,15 @@
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { mentionSessionEquality } from '../stores/sessionEquality';
 import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
 	GroupChatState,
-	Session,
 	Group,
 	QueuedItem,
 	Shortcut,
@@ -58,7 +60,6 @@ interface GroupChatInputProps {
 	state: GroupChatState;
 	onSend: (content: string, images?: string[], readOnly?: boolean) => void;
 	participants: GroupChatParticipant[];
-	sessions: Session[];
 	groups?: Group[];
 	groupChatId: string;
 	draftMessage?: string;
@@ -97,7 +98,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	state,
 	onSend,
 	participants: _participants,
-	sessions,
 	groups,
 	groupChatId,
 	draftMessage,
@@ -164,6 +164,13 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			if (draftFlushRef.current === flushDraft) draftFlushRef.current = null;
 		};
 	}, [draftFlushRef, flushDraft]);
+
+	// Narrow mention-shaped sessions so streaming logs do not rebuild @mentions.
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		mentionSessionEquality
+	);
 
 	// Build list of mentionable items: groups first, then individual agents
 	// Groups expand into all their member @mentions when selected
