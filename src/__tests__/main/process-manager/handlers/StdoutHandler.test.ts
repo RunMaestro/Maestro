@@ -2123,6 +2123,28 @@ describe('StdoutHandler — single JSON parse per line', () => {
 				'{"confidence":40,"ready":false,"message":"hi"}'
 			);
 		});
+
+		it('still emits thinking-chunk for Factory Droid assistant partials without isReasoning', async () => {
+			const { FactoryDroidOutputParser } =
+				await import('../../../../main/parsers/factory-droid-output-parser');
+			const parser = new FactoryDroidOutputParser();
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'message', role: 'assistant', text: 'Hello from droid' }) + '\n'
+			);
+
+			// Factory Droid has no isReasoning split; keep live thinking-panel partials
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid');
+			expect(proc.streamedText).toBe('Hello from droid');
+		});
 	});
 
 	describe('SSH auth_expired login guidance by agentId', () => {

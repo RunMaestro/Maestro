@@ -433,6 +433,32 @@ describe('GrokSessionStorage - reading messages', () => {
 		expect(reply.content).toBe('Created `hello.txt` and read it back.');
 	});
 
+	it('joins multiple <user_query> wrappers in a single user turn', async () => {
+		const multiWrapperHistory = [
+			{
+				type: 'user',
+				content: [
+					{
+						type: 'text',
+						text: '<user_query>\nFirst block\n</user_query>\n\n<preamble>\nignored\n</preamble>\n\n<user_query>\nSecond block\n</user_query>',
+					},
+				],
+			},
+			{ type: 'assistant', content: 'ok' },
+		]
+			.map((record) => JSON.stringify(record))
+			.join('\n');
+
+		mockLocalFs(
+			sessionFiles(PROJECT, SESSION_ID, summaryJson(SESSION_ID, PROJECT), multiWrapperHistory)
+		);
+
+		const storage = new GrokSessionStorage();
+		const result = await storage.readSessionMessages(PROJECT, SESSION_ID);
+
+		expect(result.messages[0].content).toBe('First block\n\nSecond block');
+	});
+
 	it('returns an empty result for a session owned by a different project (ownership guard)', async () => {
 		mockLocalFs(
 			sessionFiles(
@@ -536,6 +562,43 @@ describe('GrokSessionStorage - SSH remote', () => {
 		expect(vi.mocked(remoteFs.readFileRemote)).not.toHaveBeenCalled();
 		expect(vi.mocked(captureException)).not.toHaveBeenCalled();
 	});
+
+	it('reports unexpected remote stat failures to Sentry when reading messages', async () => {
+		vi.mocked(remoteFs.readDirRemote).mockImplementation(async (dirPath: string) => {
+			if (dirPath === '~/.grok/sessions') {
+				return {
+					success: true,
+					data: [{ name: encodedProject, isDirectory: true, isSymlink: false }],
+				};
+			}
+			if (dirPath === `~/.grok/sessions/${encodedProject}`) {
+				return {
+					success: true,
+					data: [{ name: SESSION_ID, isDirectory: true, isSymlink: false }],
+				};
+			}
+			return { success: false, error: 'Directory not found or not accessible' };
+		});
+		vi.mocked(remoteFs.readFileRemote).mockImplementation(async (filePath: string) => {
+			if (filePath.endsWith('/summary.json')) {
+				return { success: true, data: summaryJson(SESSION_ID, PROJECT) };
+			}
+			return { success: false, error: 'No such file' };
+		});
+		vi.mocked(remoteFs.statRemote).mockResolvedValue({
+			success: false,
+			error: 'ssh connection reset by peer',
+		});
+
+		const storage = new GrokSessionStorage();
+		const result = await storage.readSessionMessages(PROJECT, SESSION_ID, undefined, sshConfig);
+
+		expect(result).toEqual({ messages: [], total: 0, hasMore: false });
+		expect(vi.mocked(captureException)).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('connection reset') }),
+			expect.objectContaining({ operation: 'grokStorage:statSessionFile' })
+		);
+	});
 });
 
 describe('GrokSessionStorage - misc contract', () => {
@@ -638,5 +701,38 @@ describe('GrokSessionStorage - misc contract', () => {
 				)
 			);
 		});
+	});
+
+	it('getSessionPath rejects path-traversal and non-UUID sessionIds', () => {
+		const storage = new GrokSessionStorage();
+
+		expect(storage.getSessionPath(PROJECT, '../other-project')).toBeNull();
+		expect(storage.getSessionPath(PROJECT, 'foo/bar')).toBeNull();
+		expect(storage.getSessionPath(PROJECT, 'foo\\bar')).toBeNull();
+		expect(storage.getSessionPath(PROJECT, 'not-a-uuid')).toBeNull();
+		expect(storage.getSessionPath(PROJECT, '')).toBeNull();
+	});
+
+	it('getSessionPath honors GROK_HOME for the local sessions root', () => {
+		const prev = process.env.GROK_HOME;
+		process.env.GROK_HOME = '/custom/grok-home';
+		try {
+			const storage = new GrokSessionStorage();
+			expect(storage.getSessionPath(PROJECT, SESSION_ID)).toBe(
+				path.join(
+					'/custom/grok-home',
+					'sessions',
+					encodeURIComponent(PROJECT),
+					SESSION_ID,
+					'chat_history.jsonl'
+				)
+			);
+		} finally {
+			if (prev === undefined) {
+				delete process.env.GROK_HOME;
+			} else {
+				process.env.GROK_HOME = prev;
+			}
+		}
 	});
 });

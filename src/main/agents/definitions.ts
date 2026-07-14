@@ -786,7 +786,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Do not add noToolsArgs unless grok ships a verified all-off flag.
 		yoloModeArgs: ['--always-approve'],
 		workingDirArgs: (dir: string) => ['--cwd', dir], // Set working directory
-		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: grok -m grok-4.5
+		// modelArgs and configOptions.model.argBuilder both emit -m; trim both
+		// so desktop spawn and settings UI stay aligned.
+		modelArgs: (modelId: string) => {
+			const trimmed = modelId.trim();
+			return trimmed ? ['-m', trimmed] : [];
+		},
 		// Agent-specific configuration options shown in UI
 		configOptions: [
 			{

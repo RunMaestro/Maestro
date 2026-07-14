@@ -1044,9 +1044,9 @@ codex exec --json resume <thread_id> "continue"
 | Read-only        | `--permission-mode plan` (CLI-enforced; blocks writes headlessly without hanging)                                             |
 | YOLO Mode        | `--always-approve` (also the batch-mode arg; boolean flag so arg dedup stays clean)                                           |
 | Session ID Field | `sessionId` (camelCase, UUIDv7) on the final `end` event only; no init event exists                                           |
-| Session Storage  | `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/`                                                                      |
+| Session Storage  | `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (default `GROK_HOME=~/.grok`)                                     |
 | Context Window   | 500K tokens (grok-4.5 default); 200K for grok-composer-2.5-fast                                                               |
-| Model Selection  | `-m <model>`; dynamic discovery from `~/.grok/models_cache.json` (or `grok models`)                                           |
+| Model Selection  | `-m <model>`; dynamic discovery from `$GROK_HOME/models_cache.json` (or `grok models`)                                        |
 | Reasoning Effort | `--reasoning-effort` accepts none, minimal, low, medium, high, xhigh, max (default high; grok-4.5 rejects `none` server-side) |
 
 **Implementation Status:**
@@ -1071,6 +1071,10 @@ Exactly four event types appear on stdout with `--output-format streaming-json`:
 - **No token usage or cost anywhere in the stream:** the context usage widget shows nothing for Grok until xAI adds usage fields
 - **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
 - **No image input:** no image flag observed in `grok --help`
+- **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
+- **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
+- **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
+- **Auth/rate error patterns are multi-token only:** bare `401`/`429` are intentionally not matched (false positives on recovery UX). Tighten further when live unauthenticated/rate-limit CLI strings are captured.
 
 **Command Line Pattern:**
 

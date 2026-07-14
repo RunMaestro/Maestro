@@ -510,15 +510,26 @@ export class StdoutHandler {
 
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// Thinking panel only receives reasoning deltas. Assistant text must not
-			// go to thinking-chunk: Grok streams the final answer as partial `text`
-			// events, and dumping those into the thinking panel makes the wizard
-			// look finished while the process is still running tools with no
-			// further stdout (Grok emits no tool events on the stream).
-			// Copilot still skips entirely: its deltas accumulate in streamedText
-			// and flush once at exit.
-			if (event.isReasoning && managedProcess.toolType !== 'copilot-cli') {
-				this.emitter.emit('thinking-chunk', sessionId, event.text);
+			// Thinking panel routing:
+			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
+			//   and flush once at exit).
+			// - Agents that split thought vs answer (Grok, Codex, Claude, OpenCode):
+			//   only isReasoning deltas → thinking-chunk. Grok streams the final
+			//   answer as partial `text` without isReasoning; dumping those into
+			//   the thinking panel makes the wizard look finished while tools
+			//   still run (Grok emits no tool events on the stream).
+			// - Factory Droid: streams assistant partials without isReasoning, so
+			//   keep the pre-Grok behavior of forwarding all partials.
+			const toolType = managedProcess.toolType;
+			if (toolType !== 'copilot-cli') {
+				const requiresReasoningTag =
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'claude-code' ||
+					toolType === 'opencode';
+				if (!requiresReasoningTag || event.isReasoning) {
+					this.emitter.emit('thinking-chunk', sessionId, event.text);
+				}
 			}
 			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.

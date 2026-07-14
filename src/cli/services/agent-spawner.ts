@@ -1027,10 +1027,15 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			if (code === 0 && !errorText) {
+			// Soft success: agents like Grok may exit non-zero after a full
+			// answer (e.g. --max-turns) with no structured error event. Prefer
+			// the streamed answer over raw stderr when there is no errorText.
+			const responseText = result || streamedText || undefined;
+			const hasAnswer = Boolean(responseText?.trim());
+			if (!errorText && (code === 0 || hasAnswer)) {
 				resolve({
 					success: true,
-					response: result || streamedText || undefined,
+					response: responseText,
 					agentSessionId: sessionId,
 					usageStats,
 				});

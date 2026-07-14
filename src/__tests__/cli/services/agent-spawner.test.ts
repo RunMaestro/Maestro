@@ -1700,6 +1700,28 @@ Some text with [x] in it that's not a checkbox
 			expect(result.error).toBe('This model does not support that');
 		});
 
+		it('should soft-succeed when Grok streams a full answer then exits non-zero without a structured error', async () => {
+			// Mirrors wizard recovery: --max-turns (or similar) can exit 1 after
+			// a complete text+end stream with no {"type":"error"} event.
+			const resultPromise = spawnAgent('grok', '/project', 'brief task');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"all done"}\n{"type":"end","stopReason":"EndTurn","sessionId":"sess-soft"}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('max turns reached\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('all done');
+			expect(result.agentSessionId).toBe('sess-soft');
+		});
+
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';

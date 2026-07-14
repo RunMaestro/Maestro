@@ -622,6 +622,44 @@ describe('error-patterns', () => {
 				});
 			});
 
+			describe('auth_expired patterns', () => {
+				it('should match multi-token authentication failures', () => {
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Not authenticated. Please run grok login')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Authentication failed on remote host')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 401 Unauthorized request')?.type
+					).toBe('auth_expired');
+				});
+
+				it('should NOT match bare 401 status alone', () => {
+					// Bare codes misclassify unrelated failures into auth recovery UX.
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 401')).toBeNull();
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'status 401')).not.toBeNull();
+				});
+			});
+
+			describe('rate_limited patterns', () => {
+				it('should match multi-token rate limit failures', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Rate limit exceeded')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Too many requests, slow down')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 429 from API')?.type).toBe(
+						'rate_limited'
+					);
+				});
+
+				it('should NOT match bare 429 status alone', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 429')).toBeNull();
+				});
+			});
+
 			describe('agent_crashed patterns', () => {
 				// Real message from `grok -p "hi" -m nonexistent-model-xyz`
 				// (grok v0.2.93).

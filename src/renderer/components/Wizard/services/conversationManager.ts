@@ -25,6 +25,7 @@ import {
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
+import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
 
 /**
  * Configuration for starting a conversation
@@ -745,10 +746,9 @@ class ConversationManager {
 			}
 
 			case 'grok': {
-				// Match inline wizard: no plan mode (discovery needs read/fetch).
-				// Cap turns + no subagents to avoid silent multi-minute freezes.
+				// Shared discovery caps with inline wizard (see grokWizard.ts).
 				const args = [...(agent.args || [])];
-				args.push('--always-approve', '--max-turns', '8', '--no-subagents');
+				args.push(...GROK_WIZARD_DISCOVERY_ARGS);
 				return args;
 			}
 
@@ -864,21 +864,8 @@ class ConversationManager {
 
 			// For Grok: join text deltas only (skip thought); end has no body
 			if (agentType === 'grok') {
-				const textParts: string[] = [];
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					try {
-						const msg = JSON.parse(line);
-						if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
-							textParts.push(msg.data);
-						}
-					} catch {
-						// Ignore non-JSON lines
-					}
-				}
-				if (textParts.length > 0) {
-					return textParts.join('');
-				}
+				const grokText = extractGrokTextFromJsonl(lines);
+				if (grokText) return grokText;
 			}
 
 			// For Copilot: look for the final assistant message

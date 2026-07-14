@@ -28,6 +28,9 @@ import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 
+/** Cap for user-facing unmatched error bodies in UI/logs. */
+const MAX_ERROR_MESSAGE_CHARS = 500;
+
 interface GrokRawMessage {
 	type?: string;
 	/** Delta payload for `thought` and `text` events */
@@ -39,6 +42,12 @@ interface GrokRawMessage {
 	requestId?: string;
 	/** Present on `error` events */
 	message?: string;
+}
+
+/** Truncate long unmatched error bodies for UI/logs. Full text stays in raw. */
+function truncateErrorText(text: string): string {
+	if (text.length <= MAX_ERROR_MESSAGE_CHARS) return text;
+	return `${text.slice(0, MAX_ERROR_MESSAGE_CHARS)}...`;
 }
 
 /**
@@ -76,52 +85,55 @@ export class GrokOutputParser implements AgentOutputParser {
 		const msg = parsed as GrokRawMessage;
 
 		switch (msg.type) {
-			case 'thought': {
-				const data = typeof msg.data === 'string' ? msg.data : '';
-				if (!data) {
-					return null;
-				}
-				return {
-					type: 'text',
-					text: data,
-					isPartial: true,
-					isReasoning: true,
-					raw: msg,
-				};
-			}
-			case 'text': {
-				const data = typeof msg.data === 'string' ? msg.data : '';
-				if (!data) {
-					return null;
-				}
-				return {
-					type: 'text',
-					text: data,
-					isPartial: true,
-					raw: msg,
-				};
-			}
+			case 'thought':
+				return this.deltaEvent(msg, true);
+			case 'text':
+				return this.deltaEvent(msg, false);
 			case 'end':
 				// Sole result-style event. The full answer text was already
 				// streamed via `text` deltas, so no text is attached here.
 				// No usage object exists anywhere in the stream.
 				return {
 					type: 'result',
-					sessionId: msg.sessionId,
+					sessionId: typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : undefined,
 					raw: msg,
 				};
-			case 'error':
+			case 'error': {
+				// Align with detectErrorFromParsed: empty/non-string messages are
+				// not errors (avoid synthetic "Unknown error" on the CLI path).
+				const message = typeof msg.message === 'string' ? msg.message.trim() : '';
+				if (!message) {
+					return null;
+				}
 				return {
 					type: 'error',
-					text: msg.message || 'Unknown error',
+					text: message,
 					raw: msg,
 				};
+			}
 			default:
+				// Unknown types are absorbed as system (forward-compat with CLI
+				// schema growth). No user-visible error; keep raw for debugging.
 				return {
 					type: 'system',
 					raw: msg,
 				};
 		}
+	}
+
+	/** thought/text deltas share the same shape; only isReasoning differs. */
+	private deltaEvent(msg: GrokRawMessage, isReasoning: boolean): ParsedEvent | null {
+		const data = typeof msg.data === 'string' ? msg.data : '';
+		if (!data) {
+			return null;
+		}
+		return {
+			type: 'text',
+			text: data,
+			isPartial: true,
+			...(isReasoning ? { isReasoning: true as const } : {}),
+			raw: msg,
+		};
 	}
 
 	/** Check whether a parsed event represents a completed agent response. */
@@ -132,10 +144,12 @@ export class GrokOutputParser implements AgentOutputParser {
 	/** Extract the Grok session ID from a parsed event, if present.
 	 *  Grok reports the session ID only on the final `end` event. */
 	extractSessionId(event: ParsedEvent): string | null {
-		if (event.sessionId) return event.sessionId;
+		if (typeof event.sessionId === 'string' && event.sessionId) {
+			return event.sessionId;
+		}
 
 		const raw = event.raw as GrokRawMessage | undefined;
-		return raw?.sessionId || null;
+		return typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null;
 	}
 
 	/** Extract usage/token statistics from a parsed event.
@@ -151,7 +165,14 @@ export class GrokOutputParser implements AgentOutputParser {
 		return null;
 	}
 
-	/** Detect agent errors from a raw JSON line string. */
+	/**
+	 * Detect agent errors from a raw line (stdout JSON or stderr plain text).
+	 *
+	 * Mid-run: stderr often carries `Error: <message>` as non-JSON. Matching
+	 * the pattern bank here surfaces auth/rate/model failures before process
+	 * exit. Unmatched free-form stderr returns null so classification can
+	 * wait for the exit path (avoids false mid-stream unknowns).
+	 */
 	detectErrorFromLine(line: string): AgentError | null {
 		if (!line.trim()) {
 			return null;
@@ -160,11 +181,11 @@ export class GrokOutputParser implements AgentOutputParser {
 		try {
 			const error = this.detectErrorFromParsed(JSON.parse(line));
 			if (error) {
-				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
+				error.raw = { ...(error.raw || {}), errorLine: line };
 			}
 			return error;
 		} catch {
-			return null;
+			return this.matchPattern(line, { errorLine: line });
 		}
 	}
 
@@ -186,28 +207,15 @@ export class GrokOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, errorText);
-
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				parsedJson: parsed,
-			};
+		const matched = this.matchPattern(errorText, undefined, parsed);
+		if (matched) {
+			return matched;
 		}
 
-		return {
-			type: 'unknown',
-			message: errorText,
-			recoverable: true,
-			agentId: this.agentId,
-			timestamp: Date.now(),
+		// Truncate unmatched bodies for UI; full text remains in parsedJson.
+		return this.toAgentError('unknown', truncateErrorText(errorText), true, {
 			parsedJson: parsed,
-		};
+		});
 	}
 
 	/** Detect agent errors from process exit code and stderr/stdout content.
@@ -219,27 +227,62 @@ export class GrokOutputParser implements AgentOutputParser {
 		}
 
 		const combined = `${stderr}\n${stdout}`;
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, combined);
-
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: { exitCode, stderr, stdout },
-			};
+		const raw = { exitCode, stderr, stdout };
+		const matched = this.matchPattern(combined, raw);
+		if (matched) {
+			return matched;
 		}
 
+		return this.toAgentError('agent_crashed', `Agent exited with code ${exitCode}`, true, { raw });
+	}
+
+	/**
+	 * Match free-form text against the Grok error pattern bank.
+	 * On match, UI gets canned copy; truncated original is stored on
+	 * `raw.errorLine` when no stderr/errorLine is already present so
+	 * operators can still see which model id / detail failed.
+	 */
+	private matchPattern(
+		errorText: string,
+		rawBase?: AgentError['raw'],
+		parsedJson?: unknown
+	): AgentError | null {
+		const patterns = getErrorPatterns(this.agentId);
+		const match = matchErrorPattern(patterns, errorText);
+		if (!match) {
+			return null;
+		}
+
+		// Preserve a truncated original so canned messages do not erase
+		// which model id / detail failed. Prefer existing stderr/errorLine.
+		const raw: AgentError['raw'] = {
+			...(rawBase || {}),
+			...(!rawBase?.errorLine && !rawBase?.stderr
+				? { errorLine: truncateErrorText(errorText) }
+				: {}),
+		};
+
+		return this.toAgentError(match.type, match.message, match.recoverable, {
+			raw: Object.keys(raw).length > 0 ? raw : undefined,
+			parsedJson,
+		});
+	}
+
+	/** Build a consistent AgentError payload. */
+	private toAgentError(
+		type: AgentError['type'],
+		message: string,
+		recoverable: boolean,
+		options: { raw?: AgentError['raw']; parsedJson?: unknown } = {}
+	): AgentError {
 		return {
-			type: 'agent_crashed',
-			message: `Agent exited with code ${exitCode}`,
-			recoverable: true,
+			type,
+			message,
+			recoverable,
 			agentId: this.agentId,
 			timestamp: Date.now(),
-			raw: { exitCode, stderr, stdout },
+			...(options.raw ? { raw: options.raw } : {}),
+			...(options.parsedJson !== undefined ? { parsedJson: options.parsedJson } : {}),
 		};
 	}
 }

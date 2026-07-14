@@ -283,6 +283,30 @@ describe('GrokOutputParser', () => {
 
 		expect(parser.detectErrorFromParsed({ type: 'error' })).toBeNull();
 		expect(parser.detectErrorFromParsed({ type: 'error', message: '   ' })).toBeNull();
+		// parseJsonObject aligns with detectErrorFromParsed (no synthetic "Unknown error")
+		expect(parser.parseJsonObject({ type: 'error' })).toBeNull();
+		expect(parser.parseJsonObject({ type: 'error', message: '   ' })).toBeNull();
+		expect(parser.parseJsonObject({ type: 'error', message: 42 })).toBeNull();
+	});
+
+	it('only attaches string sessionIds from end events', () => {
+		const parser = new GrokOutputParser();
+
+		const good = parser.parseJsonObject({
+			type: 'end',
+			stopReason: 'EndTurn',
+			sessionId: '019f0000-aaaa-7000-8000-000000000001',
+		});
+		expect(good?.sessionId).toBe('019f0000-aaaa-7000-8000-000000000001');
+		expect(good && parser.extractSessionId(good)).toBe('019f0000-aaaa-7000-8000-000000000001');
+
+		const bad = parser.parseJsonObject({
+			type: 'end',
+			stopReason: 'EndTurn',
+			sessionId: 12345,
+		});
+		expect(bad?.sessionId).toBeUndefined();
+		expect(bad && parser.extractSessionId(bad)).toBeNull();
 	});
 
 	it('classifies exit failures from the duplicated stderr message', () => {
@@ -376,6 +400,60 @@ describe('GrokOutputParser', () => {
 		expect(parser.parseJsonLine('42')).toBeNull();
 
 		expect(parser.detectErrorFromLine('')).toBeNull();
+		// Unmatched free-form stderr waits for exit classification
 		expect(parser.detectErrorFromLine('not json at all')).toBeNull();
+	});
+
+	it('classifies mid-run non-JSON stderr against the pattern bank', () => {
+		// Grok duplicates failures on stderr as `Error: <message>` before exit.
+		const parser = new GrokOutputParser();
+
+		const auth = parser.detectErrorFromLine(
+			'Error: Not authenticated. Run grok login to continue.'
+		);
+		expect(auth).toEqual(
+			expect.objectContaining({
+				type: 'auth_expired',
+				recoverable: true,
+				agentId: 'grok',
+			})
+		);
+
+		const badModel = parser.detectErrorFromLine(BAD_MODEL_STDERR);
+		expect(badModel).toEqual(
+			expect.objectContaining({
+				type: 'agent_crashed',
+				message: expect.stringContaining('grok models'),
+				agentId: 'grok',
+			})
+		);
+		// Canned UI copy keeps the original on raw.errorLine
+		expect(badModel?.raw?.errorLine).toContain('unknown model id');
+	});
+
+	it('truncates long unmatched error messages for UI', () => {
+		const parser = new GrokOutputParser();
+		const longMessage = `x${'y'.repeat(600)}`;
+		const error = parser.detectErrorFromParsed({
+			type: 'error',
+			message: longMessage,
+		});
+
+		expect(error?.type).toBe('unknown');
+		expect(error?.message.length).toBeLessThanOrEqual(503); // 500 + "..."
+		expect(error?.message.endsWith('...')).toBe(true);
+		// Full body remains available via parsedJson
+		expect((error?.parsedJson as { message?: string })?.message).toBe(longMessage);
+	});
+
+	it('absorbs unknown stream types as system events', () => {
+		const parser = new GrokOutputParser();
+		const event = parser.parseJsonObject({ type: 'future_event', data: { x: 1 } });
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'system',
+				raw: expect.objectContaining({ type: 'future_event' }),
+			})
+		);
 	});
 });

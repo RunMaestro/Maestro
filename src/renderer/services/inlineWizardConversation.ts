@@ -14,6 +14,7 @@ import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
+import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
@@ -498,21 +499,8 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 		// The `end` event has sessionId but no result body, so the full answer is
 		// only available by joining {"type":"text","data":"..."} lines.
 		if (agentType === 'grok') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
-						textParts.push(msg.data);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
+			const grokText = extractGrokTextFromJsonl(lines);
+			if (grokText) return grokText;
 		}
 
 		// For Copilot: final answers arrive as assistant.message with phase=final_answer
@@ -607,14 +595,10 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'grok': {
-			// Do NOT force --permission-mode plan here: discovery needs read/fetch
-			// (e.g. package.json, GitHub issue URLs). Plan mode blocks those paths.
-			// Cap turns + ban subagents so silent tool loops cannot freeze the UI
-			// forever (Grok emits no tool events on streaming-json). always-approve
-			// avoids headless permission hangs. Leave batch/json/cwd/prompt out -
-			// IPC buildAgentArgs adds those (including batch always-approve).
+			// Shared discovery caps (always-approve, max-turns, no-subagents).
+			// Leave batch/json/cwd/prompt out - IPC buildAgentArgs adds those.
 			const args = [...(agent.args || [])];
-			args.push('--always-approve', '--max-turns', '8', '--no-subagents');
+			args.push(...GROK_WIZARD_DISCOVERY_ARGS);
 			return args;
 		}
 

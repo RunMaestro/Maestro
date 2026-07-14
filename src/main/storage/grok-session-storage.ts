@@ -39,14 +39,41 @@ import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isMacOS } from '../../shared/platformDetection';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { isExpectedRemoteError } from './remote-error-utils';
 
 const LOG_CONTEXT = '[GrokSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const FIRST_MESSAGE_PREVIEW_LENGTH = 200;
 
+/**
+ * Resolve the local Grok config home. Honors `GROK_HOME` the same way Codex
+ * honors `CODEX_HOME`, so History / model discovery match a relocated CLI home.
+ */
+function getLocalGrokHome(): string {
+	const fromEnv = process.env.GROK_HOME?.trim();
+	if (fromEnv) return fromEnv;
+	return path.join(os.homedir(), '.grok');
+}
+
 /** Resolve the local Grok sessions directory. */
 function getLocalGrokSessionsDir(): string {
-	return path.join(os.homedir(), '.grok', 'sessions');
+	return path.join(getLocalGrokHome(), 'sessions');
+}
+
+/**
+ * Reject path-traversal session IDs before joining under the project cwd folder.
+ * Grok session dirs are UUID-shaped; path separators and ".." must never land
+ * in getSessionPath (star-mirror / open-path consumers trust this join).
+ */
+function isSafeGrokSessionId(sessionId: string): boolean {
+	if (!sessionId || typeof sessionId !== 'string') return false;
+	if (sessionId.includes('..') || sessionId.includes('/') || sessionId.includes('\\')) {
+		return false;
+	}
+	// Allow UUID forms (v4/v7 and similar) used by Grok session dirs.
+	return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+		sessionId
+	);
 }
 
 /** Shape of summary.json (the fields this storage consumes). */
@@ -123,10 +150,15 @@ function isSyntheticUserRecord(record: GrokChatRecord, text: string): boolean {
 	return text.trim().startsWith('<user_info>');
 }
 
-/** Strip the `<user_query>` wrapper Grok adds around the real prompt text. */
+/** Strip `<user_query>` wrappers Grok adds around real prompt text.
+ *  Joins all blocks if a turn embeds multiple wrappers (non-greedy match). */
 function stripUserQueryWrapper(text: string): string {
-	const match = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/);
-	return match ? match[1] : text.trim();
+	const matches = [...text.matchAll(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/g)];
+	if (matches.length === 0) return text.trim();
+	return matches
+		.map((m) => m[1])
+		.filter((part) => part.trim().length > 0)
+		.join('\n\n');
 }
 
 /**
@@ -164,20 +196,13 @@ function matchesProject(cwd: string, projectPath: string): boolean {
 	return normalizedCwd === normalizedProject || normalizedCwd.startsWith(`${normalizedProject}/`);
 }
 
-/** Check if a remote-fs error indicates a benign not-found/permission case vs an unexpected SSH failure. */
-function isExpectedRemoteError(error?: string): boolean {
-	if (!error) return false;
-	const lower = error.toLowerCase();
-	return (
-		lower.includes('not found') ||
-		lower.includes('not accessible') ||
-		lower.includes('no such file') ||
-		lower.includes('permission denied') ||
-		lower.includes('does not exist')
-	);
-}
-
-/** Convert an assistant record's tool calls into a normalized tool-use array. */
+/**
+ * Convert an assistant record's tool calls into a normalized tool-use array.
+ *
+ * `args` stays the raw JSON string from the transcript (Codex-compatible shape).
+ * Consumers must use `state.input` for the parsed object, not assume `args` is
+ * already an object (History UI / tool cards).
+ */
 function buildToolUse(toolCalls?: GrokToolCall[]): GrokToolUseEntry[] | undefined {
 	if (!toolCalls?.length) return undefined;
 	const entries = toolCalls
@@ -191,6 +216,7 @@ function buildToolUse(toolCalls?: GrokToolCall[]): GrokToolUseEntry[] | undefine
 			}
 			return {
 				tool: call.name,
+				// Raw JSON string on purpose - see JSDoc above.
 				args: call.arguments,
 				state: { status: 'running', input },
 			};
@@ -579,6 +605,9 @@ export class GrokSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		sshConfig?: SshRemoteConfig
 	): string | null {
+		if (!isSafeGrokSessionId(sessionId)) {
+			return null;
+		}
 		const encoded = encodeURIComponent(toGrokRecordedCwd(projectPath, Boolean(sshConfig)));
 		return this.joinPath(
 			sshConfig,
@@ -639,6 +668,10 @@ export class GrokSessionStorage extends BaseSessionStorage {
 			if (!result.success || !result.data) {
 				if (!isExpectedRemoteError(result.error)) {
 					logger.warn(`Unexpected SSH failure stating ${filePath}: ${result.error}`, LOG_CONTEXT);
+					captureException(new Error(result.error || 'statRemote failed'), {
+						operation: 'grokStorage:statSessionFile',
+						filePath,
+					});
 				}
 				return null;
 			}

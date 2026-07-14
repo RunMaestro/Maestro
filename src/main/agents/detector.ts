@@ -517,12 +517,13 @@ export class AgentDetector {
 				}
 
 				case 'grok': {
-					// Grok: read ~/.grok/models_cache.json maintained by the Grok CLI.
+					// Grok: read models_cache.json under GROK_HOME (default ~/.grok).
 					// Unlike Codex's `models` array, Grok's `models` is an object map
 					// keyed by model ID, each entry wrapping an `info` object that
 					// carries a `hidden` flag.
 					try {
-						const cachePath = path.join(os.homedir(), '.grok', 'models_cache.json');
+						const grokHome = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
+						const cachePath = path.join(grokHome, 'models_cache.json');
 						const cacheContent = fs.readFileSync(cachePath, 'utf8');
 						const cache = parseJsonWithBom<{
 							models?: Record<string, { info?: { id?: string; hidden?: boolean } }>;

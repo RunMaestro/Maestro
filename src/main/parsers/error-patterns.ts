@@ -1157,8 +1157,9 @@ const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
 // (no JSON error event) - the failure appears only on stderr, so it is caught
 // via detectErrorFromExit. Bad-model and bad-resume failures were reproduced
 // live; ~/.grok/logs/ surfaced no real auth or rate-limit strings, so those
-// patterns remain conservative and should be tightened when real strings are
-// observed.
+// patterns stay multi-token phrases only (no bare HTTP status codes like
+// \b401\b / \b429\b, which misclassify unrelated failures). Tighten further
+// once real unauthenticated/rate-limit CLI strings are captured.
 
 const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
@@ -1168,7 +1169,10 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /unauthorized|\b401\b/i,
+			// Prefer multi-token auth phrases over bare "401" / lone "unauthorized"
+			// (those false-positive on non-auth failures and wrong recovery UX).
+			pattern:
+				/unauthorized.*(?:request|access)|(?:request|access).*unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
 			message: 'Unauthorized. Please re-authenticate with "grok login".',
 			recoverable: true,
 		},
@@ -1191,7 +1195,8 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /too many requests|\b429\b/i,
+			// Multi-token only; bare \b429\b is too broad for exit/stderr banks.
+			pattern: /too many requests|http\s*429|status(?:\s+code)?\s*429/i,
 			message: 'Too many requests. Please wait and try again.',
 			recoverable: true,
 		},

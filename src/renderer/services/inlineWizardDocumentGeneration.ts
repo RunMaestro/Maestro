@@ -18,6 +18,7 @@ import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -121,9 +122,8 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 
 			// Grok streaming-json: text deltas only (skip thought/reasoning)
 			else if (agentType === 'grok') {
-				if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
-					textParts.push(msg.data);
-				}
+				const data = getGrokTextDelta(msg);
+				if (data) textParts.push(data);
 			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
@@ -753,21 +753,8 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 
 		// For Grok: join text deltas (end event has no body)
 		if (agentType === 'grok') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'text' && typeof msg.data === 'string' && msg.data) {
-						textParts.push(msg.data);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
+			const grokText = extractGrokTextFromJsonl(lines);
+			if (grokText) return grokText;
 		}
 
 		// For Claude Code: look for result message
