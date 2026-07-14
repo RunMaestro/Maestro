@@ -13,6 +13,10 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	AgentApprovalRequest,
+	AgentRuntimeFeatureState,
+} from '../../shared/agent-runtime-features';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -320,6 +324,34 @@ export function createProcessApi() {
 			ipcRenderer.on('process:slash-commands', handler);
 			return () => ipcRenderer.removeListener('process:slash-commands', handler);
 		},
+
+		onApprovalRequest: (callback: (request: AgentApprovalRequest) => void): (() => void) => {
+			const handler = (_: unknown, request: AgentApprovalRequest) => callback(request);
+			ipcRenderer.on('process:approval-request', handler);
+			return () => ipcRenderer.removeListener('process:approval-request', handler);
+		},
+
+		onRuntimeFeatures: (
+			callback: (sessionId: string, state: AgentRuntimeFeatureState) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, state: AgentRuntimeFeatureState) =>
+				callback(sessionId, state);
+			ipcRenderer.on('process:runtime-features', handler);
+			return () => ipcRenderer.removeListener('process:runtime-features', handler);
+		},
+
+		respondApproval: (sessionId: string, requestId: string, optionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:respond-approval', { sessionId, requestId, optionId }),
+
+		setAgentControl: (
+			sessionId: string,
+			controlId: string,
+			value: string | boolean
+		): Promise<boolean> =>
+			ipcRenderer.invoke('process:set-agent-control', { sessionId, controlId, value }),
+
+		branchSession: (sessionId: string, entryId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:branch-session', { sessionId, entryId }),
 
 		/**
 		 * Subscribe to thinking/streaming content chunks from AI agents
