@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import type { Dirent } from 'fs';
 import os from 'os';
 import path from 'path';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
@@ -92,8 +93,9 @@ function parseTranscript(content: string): OmpTranscript | null {
 }
 
 /**
- * OMP persists each conversation as a JSONL transcript under
- * ~/.omp/agent/sessions/<home-relative-project-path>/.
+ * OMP groups transcripts beneath a per-run directory:
+ * ~/.omp/agent/sessions/<home-relative-project-path>/<run>/<agent>.jsonl.
+ * The project-root JSONL files are run indexes, not individual transcripts.
  *
  * The project directory omits the home-directory prefix and replaces path
  * separators with dashes, e.g. ~/Software/Maestro -> -Software-Maestro.
@@ -112,6 +114,32 @@ export class OmpSessionStorage extends BaseSessionStorage {
 			`-${relativePath.replace(/[\\/]+/g, '-')}`
 		);
 	}
+	private async collectTranscriptPaths(projectDir: string): Promise<string[]> {
+		const transcriptPaths: string[] = [];
+
+		const walk = async (directory: string, includeFiles: boolean): Promise<void> => {
+			let entries: Dirent[];
+			try {
+				entries = await fs.readdir(directory, { withFileTypes: true });
+			} catch {
+				return;
+			}
+
+			for (const entry of entries) {
+				const entryPath = path.join(directory, entry.name);
+				if (entry.isDirectory()) {
+					await walk(entryPath, true);
+					continue;
+				}
+				if (includeFiles && entry.isFile() && entry.name.endsWith(SESSION_FILE_EXTENSION)) {
+					transcriptPaths.push(entryPath);
+				}
+			}
+		};
+
+		await walk(projectDir, false);
+		return transcriptPaths;
+	}
 
 	private async findTranscript(
 		projectPath: string,
@@ -120,16 +148,8 @@ export class OmpSessionStorage extends BaseSessionStorage {
 		const projectDir = this.getProjectSessionDir(projectPath);
 		if (!projectDir) return null;
 
-		let files: string[];
-		try {
-			files = await fs.readdir(projectDir);
-		} catch {
-			return null;
-		}
-
-		for (const file of files) {
-			if (!file.endsWith(SESSION_FILE_EXTENSION)) continue;
-			const sessionPath = path.join(projectDir, file);
+		const transcriptPaths = await this.collectTranscriptPaths(projectDir);
+		for (const sessionPath of transcriptPaths) {
 			try {
 				const transcript = parseTranscript(await fs.readFile(sessionPath, 'utf-8'));
 				if (transcript?.sessionId === sessionId) return { path: sessionPath, transcript };
@@ -148,17 +168,10 @@ export class OmpSessionStorage extends BaseSessionStorage {
 		const projectDir = this.getProjectSessionDir(projectPath);
 		if (!projectDir) return [];
 
-		let files: string[];
-		try {
-			files = await fs.readdir(projectDir);
-		} catch {
-			return [];
-		}
+		const transcriptPaths = await this.collectTranscriptPaths(projectDir);
 
 		const sessions: AgentSessionInfo[] = [];
-		for (const file of files) {
-			if (!file.endsWith(SESSION_FILE_EXTENSION)) continue;
-			const sessionPath = path.join(projectDir, file);
+		for (const sessionPath of transcriptPaths) {
 			try {
 				const [content, stat] = await Promise.all([
 					fs.readFile(sessionPath, 'utf-8'),
@@ -166,8 +179,9 @@ export class OmpSessionStorage extends BaseSessionStorage {
 				]);
 				const transcript = parseTranscript(content);
 				if (!transcript) continue;
-				const firstMessage =
-					transcript.messages.find((message) => message.role === 'user')?.content ?? 'OMP session';
+				const firstMessage = (
+					transcript.messages.find((message) => message.role === 'user')?.content ?? 'OMP session'
+				).slice(0, 200);
 				const lastTimestamp = transcript.messages.at(-1)?.timestamp ?? transcript.createdAt;
 				const durationMilliseconds =
 					new Date(lastTimestamp).getTime() - new Date(transcript.createdAt).getTime();
@@ -186,7 +200,8 @@ export class OmpSessionStorage extends BaseSessionStorage {
 					durationSeconds: Number.isFinite(durationMilliseconds)
 						? Math.max(0, Math.floor(durationMilliseconds / 1000))
 						: 0,
-					sessionName: transcript.title || undefined,
+					sessionName:
+						transcript.title?.trim() || path.basename(sessionPath, SESSION_FILE_EXTENSION),
 				});
 			} catch {
 				// A malformed session is excluded rather than exposed with invented metadata.
