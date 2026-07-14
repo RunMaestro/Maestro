@@ -41,6 +41,7 @@ import {
 	buildKnownMentionNameSet,
 } from './useAgentMentionCompletion';
 import { messageStartsWithAgentMention } from '../../../shared/crossAgentContext';
+import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
 	FILE_TREE_SINGLE_MIME,
@@ -464,7 +465,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		getTabCompletionSuggestions,
 	]);
 
-	const debouncedAtMentionFilter = useDebouncedValue(atMentionOpen ? atMentionFilter : '', 100);
+	// The stored filter is raw (it carries the opening quote while the user types a
+	// quoted `@"path with spaces"` mention); the fuzzy file search wants it bare.
+	const debouncedAtMentionFilter = useDebouncedValue(
+		atMentionOpen ? stripMentionQuotes(atMentionFilter) : '',
+		100
+	);
 	// File/directory suggestions (raw) - only computed while the picker is open in
 	// AI mode. These feed the Files/Directories scopes of the unified picker.
 	const fileSuggestions = useMemo(() => {
@@ -728,7 +734,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const appendMentionsToAiInput = useCallback(
 		(paths: string[]) => {
 			if (paths.length === 0) return;
-			const joined = paths.map((p) => `@${p}`).join(' ');
+			const joined = paths.map((p) => formatFileMention(p)).join(' ');
 			setInputValue((prev) => {
 				if (!prev) return joined + ' ';
 				const sep = /\s$/.test(prev) ? '' : ' ';
@@ -740,7 +746,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
 		if (paths.length === 0) return;
-		const joined = paths.map((p) => `@${p}`).join(' ');
+		const joined = paths.map((p) => formatFileMention(p)).join(' ');
 		// Reading the store via getState() (instead of subscribing) is intentional:
 		// this callback only runs on user drop events, so we always want the latest
 		// chatId / setter at fire time and don't want stale-closure invalidation to

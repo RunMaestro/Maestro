@@ -434,3 +434,64 @@ describe('agent-definitions', () => {
 		});
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Additional Directories: per-provider grant mapping
+// ---------------------------------------------------------------------------
+describe('additionalDirArgs', () => {
+	const GRANTS = [
+		{ path: '/ref/docs', read: true, write: false }, // read-only
+		{ path: '/out/drop', read: false, write: true }, // write-only
+		{ path: '/shared/src', read: true, write: true }, // read + write
+		{ path: '/ignored', read: false, write: false }, // inert
+	];
+
+	const argsFor = (id: string) => {
+		const def = AGENT_DEFINITIONS.find((d) => d.id === id);
+		return def?.additionalDirArgs?.(GRANTS);
+	};
+
+	it('claude-code: --add-dir allows tool access, so every granted dir maps', () => {
+		// `--add-dir` is access (read AND write). It cannot express write-only, so
+		// the write-only dir is still passed and the prompt enforces "never read it".
+		expect(argsFor('claude-code')).toEqual([
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/out/drop',
+			'--add-dir',
+			'/shared/src',
+		]);
+	});
+
+	it('copilot-cli: same access semantics as Claude Code', () => {
+		expect(argsFor('copilot-cli')).toEqual([
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/out/drop',
+			'--add-dir',
+			'/shared/src',
+		]);
+	});
+
+	it('codex: --add-dir adds a WRITABLE sandbox root, so read-only grants do not map', () => {
+		// Codex's flag is narrower than Claude's. Passing a read-only dir here would
+		// hand the sandbox write access the user never granted.
+		expect(argsFor('codex')).toEqual(['--add-dir', '/out/drop', '--add-dir', '/shared/src']);
+	});
+
+	it('drops inert grants for every provider that has a builder', () => {
+		for (const def of AGENT_DEFINITIONS) {
+			const args = def.additionalDirArgs?.(GRANTS);
+			if (!args) continue;
+			expect(args, `${def.id} leaked a grant with neither read nor write`).not.toContain(
+				'/ignored'
+			);
+		}
+	});
+
+	it('opencode has no native mechanism and falls back to the prompt', () => {
+		expect(argsFor('opencode')).toBeUndefined();
+	});
+});

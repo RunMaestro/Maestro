@@ -192,6 +192,28 @@ function resolveFocusedAiTabId(group: TabGroup): string | null {
 }
 
 /**
+ * Resolve a group's focused pane to its full tab ref (any kind), or null when the
+ * group has no focused pane or the leaf can't be found. Walks the layout locally to
+ * avoid a circular import with panelLayout (which imports from this module). Used by
+ * the Cmd+W close path so it targets the visible tile, not a stale standalone active
+ * id that may point elsewhere (e.g. a file-focused pane leaves activeTabId untouched).
+ */
+export function resolveFocusedPaneTabRef(group: TabGroup): UnifiedTabRef | null {
+	if (!group.focusedPaneId) return null;
+	let found: UnifiedTabRef | null = null;
+	const walk = (node: PanelLayoutNode): void => {
+		if (found) return;
+		if (node.kind === 'leaf') {
+			if (node.id === group.focusedPaneId) found = node.tab;
+			return;
+		}
+		node.children.forEach(walk);
+	};
+	walk(group.layout);
+	return found;
+}
+
+/**
  * Locate the tiled group and leaf-pane id that hold a given tab (of any kind),
  * or null when the tab isn't tiled into any group (i.e. it's a standalone tab).
  * Walks each group's layout locally to avoid a circular import with panelLayout

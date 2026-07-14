@@ -1,3 +1,5 @@
+import type { AdditionalDirectory } from '../../../../shared/types';
+
 /**
  * IPC payload for `process:spawn`.
  * Supports agent-specific argument builders for batch mode, JSON output,
@@ -28,6 +30,10 @@ export interface SpawnProcessConfig {
 	sessionCustomModel?: string; // Session-specific model selection
 	sessionCustomEffort?: string; // Session-specific effort/reasoning level
 	sessionCustomContextWindow?: number; // Session-specific context window size
+	// Session's Additional Directories. Providers that declare
+	// `supportsAdditionalDirectories` turn these into native grant flags
+	// (e.g. --add-dir); every agent also gets them via the system prompt.
+	sessionAdditionalDirectories?: AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

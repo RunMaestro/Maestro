@@ -28,6 +28,7 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
+import { formatFileMention } from '../../shared/mentionPatterns';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -267,7 +268,7 @@ export function PromptComposerModal({
 			if (item.type === 'group') {
 				insertion = item.memberMentions.join(' ') + ' ';
 			} else if (item.type === 'file') {
-				insertion = `@${item.fullPath} `;
+				insertion = `${formatFileMention(item.fullPath)} `;
 			} else {
 				insertion = `@${item.mentionName} `;
 			}

@@ -168,7 +168,11 @@ import {
 	updateAiTab,
 } from './stores/sessionStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { sidebarSessionEquality } from './stores/sessionEquality';
+import {
+	sidebarSessionEquality,
+	gitPollSessionEquality,
+	projectRootSessionEquality,
+} from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
 import { useOwnedSessionGate } from './hooks/agent/internal/useOwnedSessionGate';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
@@ -183,14 +187,7 @@ import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type {
-	RightPanelTab,
-	Session,
-	QueuedItem,
-	CustomAICommand,
-	ThinkingItem,
-	ToolType,
-} from './types';
+import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ToolType } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
@@ -527,19 +524,21 @@ function MaestroConsoleInner() {
 
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---
 	// Reactive values - each selector triggers re-render only when its specific value changes
-	const sessions = useSessionStore((s) => s.sessions);
-	// PERF: Sidebar-stable view of `sessions` for the sort/navigation pipeline.
+	// PERF: Do NOT subscribe to the full `sessions` array here. Streaming log/token
+	// updates would re-render the entire console shell. Event-time readers use
+	// sessionsRef / getState(); paint leaves self-source with narrow selectors.
+	// Sidebar-stable view for the sort/navigation pipeline.
 	// `sidebarSessionEquality` ignores log/usage/cycle counters, so the array
 	// reference only flips when something the left bar actually displays
 	// changes. Plumbed into `useSortedSessions` so `sortedSessions` (and the
 	// SessionList tree) stops re-rendering on every 200ms streaming flush.
-	// `sessions` (full array) is still used for persistence, fork, and any
-	// consumer that needs the streaming-heavy fields.
 	const sessionsForSidebar = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		sidebarSessionEquality
 	);
+	const hasSessions = useSessionStore((s) => s.sessions.length > 0);
+	const hasNoAgents = !hasSessions;
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// Whether the initial agent list has finished loading. On desktop the splash
@@ -1366,7 +1365,7 @@ function MaestroConsoleInner() {
 	const { initialLoadComplete } = useSessionRestoration();
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
-	useCueAutoDiscovery(sessions, encoreFeatures);
+	useCueAutoDiscovery(encoreFeatures);
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
@@ -1737,15 +1736,8 @@ function MaestroConsoleInner() {
 		prevAiTabIdsRef.current = activeSession ? activeSession.aiTabs.map((t) => t.id) : [];
 	}, [activeSession?.id, activeSession?.aiTabs]);
 
-	// PERF: Memoize sessions for NewInstanceModal validation (only recompute when modal is open)
-	// This prevents re-renders of the modal's validation logic on every session state change
-	const sessionsForValidation = useMemo(
-		() => (newInstanceModalOpen ? sessions : []),
-		[newInstanceModalOpen, sessions]
-	);
-
-	// PERF: Memoize hasNoAgents check for SettingsModal (only depends on session count)
-	const hasNoAgents = useMemo(() => sessions.length === 0, [sessions.length]);
+	// PERF: NewInstanceModal validation reads from the store when open (see AppSessionModals).
+	// Avoid keeping a reactive full-array slice at App level.
 
 	// Remote integration hook - handles web interface communication
 	useRemoteIntegration({
@@ -1805,7 +1797,7 @@ function MaestroConsoleInner() {
 	});
 
 	// Fork conversation hook - creates a new tab in the current session from a point in conversation history
-	const handleForkConversation = useForkConversation(sessions, setSessions, activeSessionId);
+	const handleForkConversation = useForkConversation();
 
 	// Summarize & Continue hook for context compaction (non-blocking, per-tab)
 	const {
@@ -1911,7 +1903,7 @@ function MaestroConsoleInner() {
 			: hasActiveSessionCapability('supportsImageInput');
 	}, [activeSession, isResumingSession, hasActiveSessionCapability]);
 	// Session navigation handlers (extracted to useSessionNavigation hook)
-	const { handleNavBack, handleNavForward } = useSessionNavigation(sessions, {
+	const { handleNavBack, handleNavForward } = useSessionNavigation({
 		navigateBack,
 		navigateForward,
 		setActiveSessionId, // Uses the wrapper that also dismisses active group chat
@@ -1920,22 +1912,10 @@ function MaestroConsoleInner() {
 		onNavigateToGroupChat: handleOpenGroupChat,
 	});
 
-	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
-	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
-	// Flat list of (session, tab) pairs - one entry per busy tab across the agents this window owns.
-	// This allows the ThinkingStatusPill to show all active work, even when multiple tabs
-	// within the same agent are busy in parallel.
-	// Multi-window: gate on WindowContext.ownsSession so a window's pill never surfaces an agent
-	// (or its AutoRun) owned by another window - every renderer holds ALL agents because the main
-	// process broadcasts every agent's state to every window. Outside a WindowProvider (web /
-	// isolation tests) ownsSession is undefined, so buildThinkingItems includes every session.
+	// Multi-window: gate on WindowContext.ownsSession so a window's pill / cycling never
+	// surfaces an agent owned by another window. Outside a WindowProvider (web /
+	// isolation tests) ownsSession is undefined.
 	const ownsSession = windowCtx?.ownsSession;
-	const thinkingItems: ThinkingItem[] = useMemo(
-		() => buildThinkingItems(sessions, ownsSession),
-		[sessions, ownsSession]
-	);
-
-	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 
 	// --- AGENT EXECUTION ---
 	// Extracted hook for agent spawning and execution operations
@@ -2640,10 +2620,7 @@ function MaestroConsoleInner() {
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
-	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(
-		sessions,
-		initialLoadComplete
-	);
+	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(initialLoadComplete);
 
 	// Session lifecycle operations (rename, delete, star, unread, groups persistence, nav tracking)
 	// - provided by useSessionLifecycle hook (Phase 2H)
@@ -2687,7 +2664,7 @@ function MaestroConsoleInner() {
 		ownsSession,
 	});
 
-	// cycleSession - provided by useCycleSession hook
+	// cycleSession: event-time getState() via useCycleSession (no store subscriptions)
 	const { cycleSession } = useCycleSession({
 		sortedSessions,
 		handleOpenGroupChat,
@@ -2830,7 +2807,7 @@ function MaestroConsoleInner() {
 	// Restart-when-idle - installs a downloaded update once the app is idle
 	useRestartWhenIdle();
 
-	// Queue processing (execution, startup recovery) - extracted to useQueueProcessing hook
+	// Queue processing uses a narrow idle-queue signature so streaming updates do not re-render MaestroConsoleInner.
 	const { processQueuedItem } = useQueueProcessing({
 		conductorProfile,
 		customAICommandsRef,
@@ -2852,7 +2829,6 @@ function MaestroConsoleInner() {
 	// Extracted hook for file tree operations (refresh, git state, filtering)
 	const { refreshFileTree, refreshGitFileState, cancelFileTreeLoad, filteredFileTree } =
 		useFileTreeManagement({
-			sessions,
 			sessionsRef,
 			setSessions,
 			activeSessionId,
@@ -3020,7 +2996,6 @@ function MaestroConsoleInner() {
 		activeFocus,
 		activeRightTab,
 		handleOpenBatchRunner,
-		sessions,
 		selectedSidebarIndex,
 		activeSessionId,
 		quickActionOpen,
@@ -3247,7 +3222,6 @@ function MaestroConsoleInner() {
 		memoryViewerOpen,
 		activeAgentSessionId,
 		activeSession,
-		thinkingItems,
 		theme,
 		isMobileLandscape,
 		stagedImages,
@@ -3611,6 +3585,24 @@ function MaestroConsoleInner() {
 		setRightPanelOpen(false);
 	}, [setLeftSidebarOpen, setRightPanelOpen]);
 
+	// Narrow map for GroupChatRightPanel: participant id → projectRoot.
+	// Dedicated equality (not sidebar): sidebar ignores projectRoot, so a
+	// directory change would otherwise leave this map stale.
+	const sessionsForProjectRoots = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		projectRootSessionEquality
+	);
+	const participantSessionPaths = useMemo(() => {
+		if (!activeGroupChatId) return new Map<string, string>();
+		const chat = groupChats.find((c) => c.id === activeGroupChatId);
+		if (!chat) return new Map<string, string>();
+		const ids = new Set(chat.participants.map((p) => p.sessionId));
+		return new Map(
+			sessionsForProjectRoots.filter((s) => ids.has(s.id)).map((s) => [s.id, s.projectRoot])
+		);
+	}, [activeGroupChatId, groupChats, sessionsForProjectRoots]);
+
 	return (
 		<>
 			<AppShell
@@ -3626,7 +3618,7 @@ function MaestroConsoleInner() {
 				groupChats={groupChats}
 				groups={groups}
 				activeSession={activeSession}
-				sessions={sessions}
+				hasSessions={hasSessions}
 				sessionsLoaded={sessionsLoaded}
 				emptyStateProps={{
 					shortcuts,
@@ -3682,8 +3674,8 @@ function MaestroConsoleInner() {
 					groupChats.find((c) => c.id === activeGroupChatId) ? (
 						<>
 							<div
-								className="flex-1 flex flex-col min-w-0 relative"
-								{...groupChatDropZone.dragHandlers}
+								className="flex-1 flex flex-col min-w-0"
+								style={{ backgroundColor: theme.colors.bgMain }}
 							>
 								{groupChatDropZone.overlay}
 								<GroupChatPanel
@@ -3720,7 +3712,6 @@ function MaestroConsoleInner() {
 									rightPanelOpen={rightPanelOpen}
 									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
 									shortcuts={shortcuts}
-									sessions={sessions}
 									onDraftChange={handleGroupChatDraftChange}
 									onOpenPromptComposer={handleOpenGroupChatPromptComposer}
 									draftFlushRef={groupChatDraftFlushRef}
@@ -3756,17 +3747,7 @@ function MaestroConsoleInner() {
 									groupChats.find((c) => c.id === activeGroupChatId)?.participants || []
 								}
 								participantStates={participantStates}
-								participantSessionPaths={
-									new Map(
-										sessions
-											.filter((s) =>
-												groupChats
-													.find((c) => c.id === activeGroupChatId)
-													?.participants.some((p) => p.sessionId === s.id)
-											)
-											.map((s) => [s.id, s.projectRoot])
-									)
-								}
+								participantSessionPaths={participantSessionPaths}
 								sessionSshRemoteNames={sessionSshRemoteNames}
 								isOpen={rightPanelOpen}
 								onToggle={() => setRightPanelOpen(!rightPanelOpen)}
@@ -3833,7 +3814,6 @@ function MaestroConsoleInner() {
 						// AppSessionModals props
 						onCloseNewInstanceModal={handleCloseNewInstanceModal}
 						onCreateSession={createNewSession}
-						existingSessions={sessionsForValidation}
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
@@ -4128,7 +4108,6 @@ function MaestroConsoleInner() {
 						// Marketplace
 						onMarketplaceImportComplete={handleMarketplaceImportComplete}
 						// Symphony
-						sessions={sessions}
 						setActiveSessionId={setActiveSessionId}
 						onStartContribution={handleStartContribution}
 						encoreFeatures={encoreFeatures}
@@ -4208,7 +4187,7 @@ function MaestroConsoleInner() {
 					isOpen={virtuososOpen}
 					onClose={() => setVirtuososOpen(false)}
 					theme={theme}
-					sessions={sessions}
+					sessions={sessionsForSidebar}
 					onSelectSession={(sessionId) => {
 						setVirtuososOpen(false);
 						setActiveSessionId(sessionId);
@@ -4226,7 +4205,7 @@ function MaestroConsoleInner() {
 					}}
 					sourceSession={switchProviderSession}
 					sourceTabId={getActiveTab(switchProviderSession)?.id || ''}
-					sessions={sessions}
+					sessions={sessionsForSidebar}
 					onConfirmSwitch={handleConfirmProviderSwitch}
 				/>
 			)}
@@ -4250,9 +4229,16 @@ function MaestroConsoleInner() {
  * so GitStatusProvider can sit ABOVE MaestroConsoleInner. Required because
  * useModalHandlers (called inside MaestroConsoleInner) consumes useGitDetail,
  * and a context provider must wrap its consumer.
+ *
+ * PERF: Uses gitPollSessionEquality so streaming log/token updates do not
+ * re-render MaestroConsoleInner via this parent.
  */
 function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
-	const sessions = useSessionStore((s) => s.sessions);
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		gitPollSessionEquality
+	);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	return (
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>

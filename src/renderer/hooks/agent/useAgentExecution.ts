@@ -613,6 +613,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,
+							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
 							sessionCustomModel: session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort

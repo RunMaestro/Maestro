@@ -37,6 +37,7 @@ import {
 	isEphemeralBrowserTab,
 	sanitizeBrowserTabForPersistence,
 } from '../../utils/browserTabPersistence';
+import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
@@ -324,22 +325,27 @@ function diffSessions(
 /**
  * Hook that debounces session persistence to reduce disk writes.
  *
- * @param sessions - Array of sessions to persist
+ * PERF: Owns its own `useSessionStore.subscribe` so App does not need a
+ * reactive `sessions` subscription. Streaming updates reset the debounce
+ * timer via the subscription without re-rendering App on every flush
+ * (`isPending` only flips false→true once per dirty streak).
+ *
  * @param initialLoadComplete - Ref indicating if initial load is done (prevents persisting on mount)
  * @param delay - Debounce delay in milliseconds (default 2000)
  * @returns Object with isPending state and flushNow function
  */
 export function useDebouncedPersistence(
-	sessions: Session[],
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
 	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
+	// Mirror isPending so the store subscription can avoid setState on every
+	// streaming tick after the first dirty mark (would re-render App).
+	const isPendingRef = useRef(false);
 
 	// Store the latest sessions in a ref for access in flush callbacks
-	const sessionsRef = useRef<Session[]>(sessions);
-	sessionsRef.current = sessions;
+	const sessionsRef = useRef<Session[]>(useSessionStore.getState().sessions);
 
 	// Store the timer ID for cleanup
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -417,6 +423,7 @@ export function useDebouncedPersistence(
 		flushingRef.current = true;
 		try {
 			await persistInternal();
+			isPendingRef.current = false;
 			setIsPending(false);
 		} catch (err) {
 			logger.warn(
@@ -471,41 +478,52 @@ export function useDebouncedPersistence(
 			}
 
 			// No snapshot: only flush if there are known pending changes.
-			if (isPending) {
+			if (isPendingRef.current) {
 				persistSessions();
 			}
 		},
-		[isPending, persistSessions]
+		[persistSessions]
 	);
 
-	// Debounced persistence effect
+	// Debounced persistence via store subscribe (no App-level sessions subscription)
 	useEffect(() => {
-		// Skip persistence during initial load
-		if (!initialLoadComplete.current) {
-			return;
-		}
+		const schedulePersist = () => {
+			// Skip persistence during initial load
+			if (!initialLoadComplete.current) {
+				return;
+			}
 
-		// Mark as pending
-		setIsPending(true);
+			// Mark pending once per dirty streak — avoid setState on every stream tick
+			if (!isPendingRef.current) {
+				isPendingRef.current = true;
+				setIsPending(true);
+			}
 
-		// Clear existing timer
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-		}
+			// Clear existing timer
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+			}
 
-		// Set new debounce timer
-		timerRef.current = setTimeout(() => {
-			persistSessions();
-			timerRef.current = null;
-		}, delay);
+			// Set new debounce timer
+			timerRef.current = setTimeout(() => {
+				persistSessions();
+				timerRef.current = null;
+			}, delay);
+		};
 
-		// Cleanup on unmount or when sessions change
+		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
+			if (state.sessions === prevState.sessions) return;
+			sessionsRef.current = state.sessions;
+			schedulePersist();
+		});
+
 		return () => {
+			unsubscribe();
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
 		};
-	}, [sessions, delay, initialLoadComplete, persistSessions]);
+	}, [delay, initialLoadComplete, persistSessions]);
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {
@@ -531,7 +549,7 @@ export function useDebouncedPersistence(
 	// Flush on visibility change (user switching away from app)
 	useEffect(() => {
 		const handleVisibilityChange = () => {
-			if (document.hidden && isPending) {
+			if (document.hidden && isPendingRef.current) {
 				flushNow();
 			}
 		};
@@ -541,12 +559,12 @@ export function useDebouncedPersistence(
 		return () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		};
-	}, [isPending, flushNow]);
+	}, [flushNow]);
 
 	// Flush on beforeunload (app closing)
 	useEffect(() => {
 		const handleBeforeUnload = () => {
-			if (isPending) {
+			if (isPendingRef.current) {
 				// Synchronous flush for beforeunload — uses the same dirty-only
 				// path as the debounce timer (see persistInternal).
 				// Swallow rejections: the window is closing, there's no caller
@@ -562,7 +580,7 @@ export function useDebouncedPersistence(
 		return () => {
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
-	}, [isPending, persistInternal]);
+	}, [persistInternal]);
 
 	return { isPending, flushNow };
 }

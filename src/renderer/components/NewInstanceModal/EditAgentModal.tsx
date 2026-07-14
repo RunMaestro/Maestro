@@ -3,13 +3,16 @@ import { AlertTriangle, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
-import type { AgentConfig, ToolType } from '../../types';
+import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
+import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -43,6 +46,8 @@ export function EditAgentModal({
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
+	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
+	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -296,6 +301,9 @@ export function EditAgentModal({
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
+			// Clone the grants so editing a row doesn't mutate the persisted array
+			// in the session store before the user hits Save.
+			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -392,7 +400,8 @@ export function EditAgentModal({
 			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
 			enableMaestroP ? maestroPMode : undefined,
 			retryOnAvailabilityErrors,
-			retryOnTokenExhaustion
+			retryOnTokenExhaustion,
+			normalizeAdditionalDirectories(additionalDirectories, homeDir)
 		);
 		onClose();
 	}, [
@@ -400,6 +409,8 @@ export function EditAgentModal({
 		instanceName,
 		nudgeMessage,
 		newSessionMessage,
+		additionalDirectories,
+		homeDir,
 		customPath,
 		customArgs,
 		customEnvVars,
@@ -617,6 +628,15 @@ export function EditAgentModal({
 						/>
 					)}
 				</div>
+
+				{/* Additional Directories: extra read/write grants beyond the working dir */}
+				<AdditionalDirectoriesSection
+					theme={theme}
+					directories={additionalDirectories}
+					onChange={setAdditionalDirectories}
+					disableBrowse={!!isSshEnabled}
+					nativelyEnforced={!!agent?.capabilities?.supportsAdditionalDirectories}
+				/>
 
 				{/* New Session Message */}
 				<NudgeMessageField

@@ -6,6 +6,7 @@ import {
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -23,7 +24,7 @@ const FONT_SIZE_DEFAULT = 14;
  *
  * Key properties include:
  * - isShortcut, isTabShortcut: Shortcut matching functions
- * - sessions, activeSession, activeSessionId: Session state
+ * - sessions length (via getState), activeSession, activeSessionId: Session state
  * - activeFocus, activeRightTab: UI focus state
  * - Various modal open states (quickActionOpen, settingsModalOpen, etc.)
  * - hasOpenLayers, hasOpenModal: Layer stack functions
@@ -506,7 +507,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
 			if (ctx.isShortcut(e, 'toggleSidebar')) {
-				if (ctx.sessions.length > 0 || !ctx.leftSidebarOpen) {
+				if (useSessionStore.getState().sessions.length > 0 || !ctx.leftSidebarOpen) {
 					ctx.setLeftSidebarOpen((p: boolean) => !p);
 					trackShortcut('toggleSidebar');
 				}
@@ -572,13 +573,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('toggleMode');
 			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
 				e.preventDefault();
-				if (ctx.sessions.length > 0) {
+				if (useSessionStore.getState().sessions.length > 0) {
 					ctx.setQuickActionOpen(true, 'agents');
 					trackShortcut('agentSwitcher');
 				}
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
-				if (ctx.sessions.length > 0) {
+				if (useSessionStore.getState().sessions.length > 0) {
 					ctx.setQuickActionOpen(true, 'main');
 					trackShortcut('quickAction');
 				}

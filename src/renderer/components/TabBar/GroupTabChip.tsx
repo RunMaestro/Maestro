@@ -120,7 +120,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 		<div
 			ref={setTabRef}
 			data-tab-id={group.id}
-			className="flex items-center gap-1.5 shrink-0 px-2 py-1 mb-1 rounded-t text-xs font-medium max-w-[180px] transition-colors cursor-pointer select-none outline-none"
+			className={`flex items-center gap-1.5 shrink-0 px-2 py-1 mb-1 rounded-t text-xs font-medium transition-colors cursor-pointer select-none outline-none ${
+				isActive ? '' : 'max-w-[180px]'
+			}`}
 			style={{
 				color: isActive ? theme.colors.accentForeground : theme.colors.textMain,
 				backgroundColor: isActive ? theme.colors.accent : isHovered ? hoverBgColor : 'transparent',
@@ -154,7 +156,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 					}}
 				/>
 			) : (
-				<span className="truncate">{group.name}</span>
+				<span className={isActive ? 'whitespace-nowrap' : 'truncate'}>{group.name}</span>
 			)}
 
 			{/* Hover overlay menu (Rename group / Break apart) */}

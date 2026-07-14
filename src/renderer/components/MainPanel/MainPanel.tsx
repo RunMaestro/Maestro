@@ -82,7 +82,6 @@ export const MainPanel = React.memo(
 			memoryViewerOpen,
 			activeAgentSessionId,
 			activeSession,
-			thinkingItems,
 			theme,
 			stagedImages,
 			commandHistoryOpen,
@@ -1319,7 +1318,6 @@ export const MainPanel = React.memo(
 									handleInputKeyDown={handleInputKeyDown}
 									handlePaste={handlePaste}
 									handleDrop={handleDrop}
-									thinkingItems={thinkingItems}
 									onStopBatchRun={onStopBatchRun}
 									onRemoveQueuedItem={onRemoveQueuedItem}
 									onTogglePauseQueuedItem={onTogglePauseQueuedItem}

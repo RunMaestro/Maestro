@@ -76,7 +76,6 @@ const createDeps = (
 	state: ReturnType<typeof createSessionsState>,
 	overrides: Partial<UseFileTreeManagementDeps> = {}
 ): UseFileTreeManagementDeps => ({
-	sessions: state.getSessions(),
 	sessionsRef: state.sessionsRef,
 	setSessions: state.setSessions,
 	activeSessionId: state.getSessions()[0]?.id ?? null,

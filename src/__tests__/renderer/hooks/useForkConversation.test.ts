@@ -45,6 +45,7 @@ vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 // ============================================================================
 
 import { useForkConversation } from '../../../renderer/hooks/agent/useForkConversation';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 // ============================================================================
 // Helpers
@@ -76,25 +77,26 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 }
 
 /**
- * Drive the hook against a mutable session array that mirrors how App.tsx
- * wires it up. Returns the current snapshot, the fork handler, and setter.
+ * Seed the session store and mount the no-arg fork hook.
+ * Mutations go through the store; assert via getState().sessions.
  */
 function mountHook(initialSessions: Session[], activeSessionId: string | null) {
-	let sessions = initialSessions;
-	const setSessions = vi.fn((updater: (prev: Session[]) => Session[]) => {
-		sessions = updater(sessions);
+	const originalSetSessions = useSessionStore.getState().setSessions;
+	const setSessions = vi.fn((updater: Session[] | ((prev: Session[]) => Session[])) => {
+		originalSetSessions(updater);
+	});
+	useSessionStore.setState({
+		sessions: initialSessions,
+		activeSessionId,
+		setSessions: setSessions as typeof originalSetSessions,
 	});
 
-	const { result, rerender } = renderHook(
-		({ s, id }: { s: Session[]; id: string | null }) => useForkConversation(s, setSessions, id),
-		{ initialProps: { s: sessions, id: activeSessionId } }
-	);
+	const { result } = renderHook(() => useForkConversation());
 
 	return {
 		fork: (logId: string) => act(() => result.current(logId)),
-		getSessions: () => sessions,
+		getSessions: () => useSessionStore.getState().sessions,
 		setSessions,
-		rerender: () => rerender({ s: sessions, id: activeSessionId }),
 	};
 }
 
@@ -104,6 +106,9 @@ function mountHook(initialSessions: Session[], activeSessionId: string | null) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Avoid resetStores here: this file mocks notificationStore without
+	// exporting useNotificationStore, which resetStores imports.
+	useSessionStore.setState(useSessionStore.getInitialState(), true);
 
 	(window as any).maestro = {
 		agents: {

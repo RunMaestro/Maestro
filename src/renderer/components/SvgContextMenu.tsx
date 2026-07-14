@@ -1,11 +1,11 @@
 /**
- * SvgContextMenu - right-click menu for inline <svg> diagrams rendered in AI
- * chat markdown. Offers "Copy Image" (rasterized PNG to the clipboard) and
- * "Save Image" (standalone .svg download).
+ * SvgContextMenu - right-click menu for rendered SVG diagrams: agent-authored
+ * inline <svg> in chat markdown, and Mermaid charts. Offers "Copy Image"
+ * (rasterized PNG to the clipboard) and "Save Image" (standalone .svg download).
  *
- * Mirrors LinkContextMenu / FileContextMenu: the shell (Markdown.tsx) owns the
- * menu state and renders this component; positioning is handled by
- * useContextMenuPosition.
+ * Mirrors LinkContextMenu / FileContextMenu: the host (Markdown.tsx,
+ * MermaidRenderer) owns the menu state via useSvgContextMenu and renders this
+ * component; positioning is handled by useContextMenuPosition.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -15,6 +15,7 @@ import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { copySvgToClipboard, downloadSvg } from '../utils/svgExport';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 
 export interface SvgContextMenuState {
 	x: number;
@@ -55,9 +56,17 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 	}, []);
 
 	const handleCopy = useCallback(async () => {
-		const ok = await copySvgToClipboard(menu.svg);
-		if (ok) flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
 		onDismiss();
+		const result = await copySvgToClipboard(menu.svg);
+		if (result === 'image') {
+			flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
+		} else if (result === 'markup') {
+			// The raster pass failed, so the clipboard holds SVG markup, not an
+			// image. Say so rather than claiming a paste-able image.
+			flashCopiedToClipboard('Rasterizing failed', 'SVG Markup Copied to Clipboard');
+		} else {
+			notifyCenterFlash({ message: 'Could Not Copy Image', color: 'red' });
+		}
 	}, [menu.svg, onDismiss]);
 
 	const handleSave = useCallback(() => {

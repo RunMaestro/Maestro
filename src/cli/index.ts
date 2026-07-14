@@ -19,6 +19,7 @@ import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
+import { version } from './commands/version';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
@@ -616,6 +617,14 @@ program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
 	.action(status);
+
+// Version command - report the running app's version + build commit hash (the
+// hash shown in the About modal), plus the CLI's own version.
+program
+	.command('version')
+	.description("Show the running Maestro app's version and build commit hash")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => version(cliVersion, options));
 
 // Doctor command - diagnose connection, version skew, handler support, SSH config
 program

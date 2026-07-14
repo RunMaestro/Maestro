@@ -92,6 +92,30 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(result).toEqual({ ok: true, narrative: WELL_FORMED });
 		});
 
+		it('parses JSON followed by an epilogue that contains braces', () => {
+			// A naive last-`}` scan swallows the epilogue and fails the whole
+			// object; the balanced scan stops at the object's real close brace.
+			const withEpilogue =
+				JSON.stringify(WELL_FORMED) + '\n\nNote: skipped one unreadable file {see log}.';
+			const result = parseDirectorNotesNarrative(withEpilogue);
+			expect(result).toEqual({ ok: true, narrative: WELL_FORMED });
+		});
+
+		it('does not treat braces inside item text as structure', () => {
+			const braced = {
+				version: 1 as const,
+				sections: [
+					{
+						kind: 'accomplishments' as const,
+						title: 'Accomplishments',
+						items: [{ text: 'Fixed the `{{TAB_ID}}` template variable } leak' }],
+					},
+				],
+			};
+			const result = parseDirectorNotesNarrative(JSON.stringify(braced));
+			expect(result).toEqual({ ok: true, narrative: braced });
+		});
+
 		it('accepts an empty sections array', () => {
 			const result = parseDirectorNotesNarrative('{ "version": 1, "sections": [] }');
 			expect(result).toEqual({ ok: true, narrative: { version: 1, sections: [] } });

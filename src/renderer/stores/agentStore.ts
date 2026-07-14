@@ -199,8 +199,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- Actions ---
 
 	refreshAgents: async (sshRemoteId?) => {
-		const agents = await window.maestro.agents.detect(sshRemoteId);
-		set({ availableAgents: agents, agentsDetected: true });
+		// Always flip `detected` true so the pickers never get stuck on "Loading…"
+		// when the IPC call rejects. Errors still bubble up for Sentry.
+		try {
+			const agents = await window.maestro.agents.detect(sshRemoteId);
+			set({ availableAgents: agents });
+		} finally {
+			set({ agentsDetected: true });
+		}
 	},
 
 	getAgentConfig: (agentId) => {
@@ -447,6 +453,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
+					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
 					sessionCustomModel: targetTab.customModel ?? session.customModel,
 					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
@@ -555,6 +562,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						permissionMode: effectivePermissionMode,
 						sessionCustomPath: session.customPath,
 						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
 						sessionCustomModel: targetTab.customModel ?? session.customModel,
 						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,

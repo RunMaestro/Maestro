@@ -368,11 +368,17 @@ function getSshRemoteById(
 	return config;
 }
 
+/** Drop every function-valued property so the object survives structured clone. */
+function withoutFunctionProps(obj: any) {
+	return Object.fromEntries(Object.entries(obj).filter(([, value]) => typeof value !== 'function'));
+}
+
 /**
  * Helper to strip non-serializable functions from agent configs.
- * Agent configs can have function properties that cannot be sent over IPC:
- * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
+ * Agent definitions carry arg builders (resumeArgs, modelArgs, additionalDirArgs,
+ * argBuilder in configOptions, ...) that cannot be sent over IPC - a single one left
+ * behind makes the whole detect response fail to clone, so this drops them by type
+ * rather than by name.
  *
  * Also attaches the current capability snapshot (if any) for the requested
  * environment so renderer code can render status pills directly from the
@@ -381,25 +387,11 @@ function getSshRemoteById(
 function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 	if (!agent) return null;
 
-	// Destructure to remove function properties from agent config
-	const {
-		resumeArgs: _resumeArgs,
-		modelArgs: _modelArgs,
-		workingDirArgs: _workingDirArgs,
-		imageArgs: _imageArgs,
-		imagePromptBuilder: _imagePromptBuilder,
-		promptArgs: _promptArgs,
-		...serializableAgent
-	} = agent;
-
 	const snapshot = agent.id ? capabilitySnapshots.get(agent.id, sshRemoteId) : undefined;
 
 	return {
-		...serializableAgent,
-		configOptions: agent.configOptions?.map((opt: any) => {
-			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
-			return serializableOpt;
-		}),
+		...withoutFunctionProps(agent),
+		configOptions: agent.configOptions?.map(withoutFunctionProps),
 		...(snapshot ? { snapshot } : {}),
 	};
 }

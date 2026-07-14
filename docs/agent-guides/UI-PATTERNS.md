@@ -658,6 +658,21 @@ Standard cancel/confirm button layout:
 />
 ```
 
+### `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/AdditionalDirectoriesSection.tsx`)
+
+The row editor for an agent's extra directory grants (path + independent R / W square toggles + remove). Shared by NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen so all three emit the same `AdditionalDirectory[]`.
+
+```tsx
+<AdditionalDirectoriesSection
+	theme={theme}
+	directories={additionalDirectories}
+	onChange={setAdditionalDirectories}
+	disableBrowse={isSshEnabled} // local folder picker can't see the remote host
+/>
+```
+
+Always run the value through `normalizeAdditionalDirectories(dirs, homeDir)` (`src/shared/additionalDirectories.ts`) before persisting it on the session - the component keeps raw rows so the user can type and toggle freely. Grants are prompt-level only; see SHARED-UTILS.md → Additional Directories.
+
 ### `<FormInput>` (`src/renderer/components/ui/FormInput.tsx`)
 
 Themed form input with label, validation, and Enter-to-submit:
@@ -901,6 +916,27 @@ App.tsx uses it for edge-swipe drawers on phones, gated on `isNarrowViewport && 
 
 - Two thin (24px) fixed edge strips (`.maestro-edge-swipe-zone`, `touch-action: pan-y`) host the openers - a rightward swipe from the left edge opens the Left Bar (`setLeftSidebarOpen(true)`), a leftward swipe from the right edge opens the Right Panel. Because gestures can only START in the edge strips, center-content horizontal scrolling is never intercepted.
 - The mobile backdrop (only present while a drawer is open) hosts the closer - swipe left to close the left drawer, swipe right to close the right.
+
+---
+
+## Exporting Rendered SVG Diagrams (Copy / Save)
+
+Any surface that renders a diagram the user might want to keep should offer the shared right-click menu. Do NOT hand-roll a copy/save affordance.
+
+- **Menu:** `<SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />` (`src/renderer/components/SvgContextMenu.tsx`) - "Copy Image" (rasterized PNG) and "Save Image (SVG)".
+- **State:** `useSvgContextMenu()` (`src/renderer/hooks/ui/useSvgContextMenu.ts`) returns `{ svgMenu, dismissSvgMenu, openSvgMenu, openSvgMenuFromContainer }`.
+- **Export logic:** `serializeSvg()`, `svgToPngDataUrl()`, `copySvgToClipboard()`, `downloadSvg()` in `src/renderer/utils/svgExport.ts`.
+
+Which opener to use depends on how the SVG got into the DOM:
+
+| SVG source                                                     | Opener                                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| React-rendered `<svg>` (agent-authored inline SVG in markdown) | `openSvgMenu(e.currentTarget, e.clientX, e.clientY)` from the element's own `onContextMenu` |
+| Imperatively injected `<svg>` (Mermaid appends into a div)     | `openSvgMenuFromContainer` on the container's `onContextMenu`                               |
+
+The second case is the one that gets missed: an SVG appended with `appendChild` never passes through React's element tree, so a component map override (like the chat markdown `svg:` renderer) will never see it. Hang the handler off the container instead.
+
+`copySvgToClipboard()` returns `'image' | 'markup' | 'failed'` - flash accordingly. A blanket "Copied to Clipboard" is wrong when rasterization fell back to copying markup as text, and silence is wrong when it failed outright.
 
 ---
 

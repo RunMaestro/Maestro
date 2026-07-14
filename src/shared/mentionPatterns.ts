@@ -93,16 +93,75 @@ const MENTION_QUOTE_ESCAPE = `"'\`‘’“”`;
 const MENTION_PREV_BLOCK = new RegExp(`[@${MENTION_QUOTE_ESCAPE}${BODY_CHAR}]`, 'u');
 
 /**
- * A single scan alternative covers both mention kinds: a leading `@` plus a
- * path-ish body. Classification (file vs. agent vs. plain text) happens per
- * match in {@link scanMentionSpans}. The body class is a superset of
+ * The quote characters that, placed immediately AFTER the `@`, delimit a mention
+ * body so it may contain spaces: `@"Meetings/MEET-07-13 - Notes.md"`. Whitespace
+ * is not a {@link BODY_CHAR}, so an unquoted mention still ends at the first
+ * space - quoting is the ONLY way to carry a path with spaces, and it is what
+ * every insertion site emits (see {@link formatFileMention}).
+ *
+ * Note the position: a quote BEFORE the `@` escapes the mention
+ * ({@link MENTION_QUOTE_ESCAPE}, `"@codex"` stays literal text); a quote AFTER
+ * it delimits the body. Different characters, different sides, no ambiguity.
+ */
+export type MentionQuote = '"' | "'";
+
+/**
+ * The quoted-body alternatives. A newline never appears inside a mention, so it
+ * terminates an unclosed quote rather than swallowing the rest of the message.
+ */
+const QUOTED_MENTION_SOURCE = `@"[^"\\n]+"|@'[^'\\n]+'`;
+
+/**
+ * The scan alternatives cover both mention kinds: a leading `@` plus either a
+ * quoted body or a path-ish bare body. Quoted comes FIRST so `@"a b.md"` is
+ * captured whole instead of the bare alternative stopping at the space.
+ * Classification (file vs. agent vs. plain text) happens per match in
+ * {@link scanMentionSpans}. The bare body class is a superset of
  * {@link AGENT_MENTION_PATTERN_SOURCE} so a bare name is captured whole before
  * being classified. Compiled with the `u` flag (see {@link scanMentionSpans}).
  */
-const MENTION_SCAN_SOURCE = `@[${BODY_CHAR}]+`;
+const MENTION_SCAN_SOURCE = `${QUOTED_MENTION_SOURCE}|@[${BODY_CHAR}]+`;
 
-/** Sentence-ending punctuation trimmed off the tail of a match. */
+/** Sentence-ending punctuation trimmed off the tail of a BARE match. */
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/;
+
+/**
+ * The opening mention quote of `text` (a mention body, or the picker's raw
+ * filter - i.e. whatever follows the `@`), or null when it is unquoted.
+ */
+export function mentionQuoteChar(text: string): MentionQuote | null {
+	const first = text[0];
+	return first === '"' || first === "'" ? first : null;
+}
+
+/**
+ * Build the raw `@…` token for a file/directory path, quoting it when the path
+ * carries whitespace. Single source of truth for every insertion site (the `@`
+ * picker, the Files-panel drag-drop, the prompt composer), so what gets inserted
+ * always scans back out as one mention.
+ */
+export function formatFileMention(path: string): string {
+	if (!/\s/.test(path)) return `@${path}`;
+	// Prefer `"`; fall back to `'` when the filename itself carries a double
+	// quote. A path holding BOTH quote characters cannot be delimited, so it goes
+	// in bare rather than as a token that scans back as something else.
+	const quote: MentionQuote = path.includes('"') ? "'" : '"';
+	if (path.includes(quote)) return `@${path}`;
+	return `@${quote}${path}${quote}`;
+}
+
+/**
+ * Strip the mention quoting off a raw picker filter (or mention body) to get the
+ * text to SEARCH with: `"Meetings/MEET - Notes` -> `Meetings/MEET - Notes`. The
+ * filter is stored raw (quote included) because acceptance splices over it by
+ * length; only the fuzzy-search callers want it bare.
+ */
+export function stripMentionQuotes(text: string): string {
+	const quote = mentionQuoteChar(text);
+	if (!quote) return text;
+	const inner = text.slice(1);
+	return inner.endsWith(quote) ? inner.slice(0, -1) : inner;
+}
 
 /**
  * One tokenized run of the input. Segments concatenate (via their `value`)
@@ -141,9 +200,9 @@ export interface MentionSpan {
 	start: number;
 	/** Exclusive end index (one past the last kept character). */
 	end: number;
-	/** The matched text including the leading `@`, trailing punctuation trimmed. */
+	/** The matched text including the leading `@` (and both quotes when quoted). */
 	value: string;
-	/** `value` without the leading `@`. */
+	/** The mention body: `value` without the leading `@` and without any quotes. */
 	body: string;
 	/** Path-like (`@src/x`, `@a.md`) -> renders as a file mention. */
 	isFile: boolean;
@@ -193,9 +252,13 @@ export function scanMentionSpans(
 			continue;
 		}
 
-		// Trailing sentence punctuation is trimmed and spills into the next text run.
-		const value = match[0].replace(TRAILING_PUNCTUATION, '');
-		const body = value.slice(1);
+		// A quoted mention (`@"a b.md"`) is delimited, so its bounds are exact: the
+		// closing quote is part of the token and nothing is trimmed off it (the
+		// trailing-punctuation trim would eat that very quote). The body is the text
+		// BETWEEN the quotes, so `path`/roster lookups never see the delimiters.
+		const quote = mentionQuoteChar(match[0].slice(1));
+		const value = quote ? match[0] : match[0].replace(TRAILING_PUNCTUATION, '');
+		const body = quote ? value.slice(2, -1) : value.slice(1);
 		if (!body) continue;
 
 		// The roster is authoritative: a body that names a known agent/group is an

@@ -7,7 +7,7 @@
  * locally inside SessionList.tsx. Keyboard navigation lives in App.tsx and
  * could not see that list, so Cmd+[ / Cmd+] cycling skipped starred sessions
  * entirely. Lifting it here lets the render (SessionList) and the cycle
- * (useCycleSession) consume one owner.
+ * (cycleSession / useCycleSession) consume one owner.
  *
  * Reads sessions + showStarredSessionsSection directly from the stores; takes
  * the cross-agent jump + confirmation primitives (which originate in App) as

@@ -740,7 +740,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -794,7 +795,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -848,7 +850,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 	});
@@ -903,7 +906,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1421,7 +1425,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -1575,7 +1580,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 	});
@@ -2736,7 +2742,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -2967,7 +2974,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -3089,7 +3097,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 

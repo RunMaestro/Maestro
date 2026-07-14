@@ -7,7 +7,7 @@ import {
 	useRef,
 	useMemo,
 } from 'react';
-import type { ToolType, AgentConfig } from '../../types';
+import type { AdditionalDirectory, ToolType, AgentConfig } from '../../types';
 import { captureException } from '../../utils/sentry';
 import { STEP_INDEX, INDEX_TO_STEP, WIZARD_TOTAL_STEPS } from './WizardContext/constants';
 import { generateMessageId } from './WizardContext/messageIds';
@@ -164,6 +164,10 @@ export function WizardProvider({ children }: WizardProviderProps) {
 
 	const setDirectoryPath = useCallback((path: string) => {
 		dispatch({ type: 'SET_DIRECTORY_PATH', path });
+	}, []);
+
+	const setAdditionalDirectories = useCallback((directories: AdditionalDirectory[]) => {
+		dispatch({ type: 'SET_ADDITIONAL_DIRECTORIES', directories });
 	}, []);
 
 	const setIsGitRepo = useCallback((isGitRepo: boolean) => {
@@ -336,6 +340,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setMaestroPPath,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
+			setAdditionalDirectories,
 			setIsGitRepo,
 			setDetectedAgentPath,
 			setDirectoryError,
@@ -384,6 +389,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setMaestroPPath,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
+			setAdditionalDirectories,
 			setIsGitRepo,
 			setDetectedAgentPath,
 			setDirectoryError,

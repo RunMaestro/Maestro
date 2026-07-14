@@ -13,7 +13,6 @@ import type {
 	GroupChatState,
 	Group,
 	Shortcut,
-	Session,
 	QueuedItem,
 } from '../types';
 import { GroupChatHeader } from './GroupChatHeader';
@@ -36,7 +35,6 @@ interface GroupChatPanelProps {
 	rightPanelOpen: boolean;
 	onToggleRightPanel: () => void;
 	shortcuts: Record<string, Shortcut>;
-	sessions: Session[];
 	groups?: Group[];
 	onDraftChange?: (draft: string, groupChatId: string) => void;
 	onOpenPromptComposer?: () => void;
@@ -92,7 +90,6 @@ export function GroupChatPanel({
 	rightPanelOpen,
 	onToggleRightPanel,
 	shortcuts,
-	sessions,
 	groups,
 	onDraftChange,
 	onOpenPromptComposer,
@@ -157,7 +154,6 @@ export function GroupChatPanel({
 				state={state}
 				onSend={onSendMessage}
 				participants={groupChat.participants}
-				sessions={sessions}
 				groups={groups}
 				groupChatId={groupChat.id}
 				draftMessage={groupChat.draftMessage}

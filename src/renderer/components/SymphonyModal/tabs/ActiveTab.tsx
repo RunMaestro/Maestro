@@ -1,14 +1,32 @@
 import { memo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { RefreshCw, Music } from 'lucide-react';
-import type { Theme, Session } from '../../../types';
+import type { Theme } from '../../../types';
 import type { ActiveContribution } from '../../../../shared/symphony-types';
 import { ActiveContributionCard } from '../components/ActiveContributionCard';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { useSessionStore } from '../../../stores/sessionStore';
+
+type SessionDisplay = { name: string; accountName?: string };
+
+function sessionDisplayMapEquality(
+	a: Map<string, SessionDisplay>,
+	b: Map<string, SessionDisplay>
+): boolean {
+	if (a === b) return true;
+	if (a.size !== b.size) return false;
+	for (const [id, display] of a) {
+		const other = b.get(id);
+		if (!other || other.name !== display.name || other.accountName !== display.accountName) {
+			return false;
+		}
+	}
+	return true;
+}
 
 export interface ActiveTabProps {
 	theme: Theme;
 	activeContributions: ActiveContribution[];
-	sessions: Session[];
 	prStatusMessage: string | null;
 	isCheckingPRStatuses: boolean;
 	syncingContributionId: string | null;
@@ -23,7 +41,6 @@ export interface ActiveTabProps {
 export const ActiveTab = memo(function ActiveTab({
 	theme,
 	activeContributions,
-	sessions,
 	prStatusMessage,
 	isCheckingPRStatuses,
 	syncingContributionId,
@@ -35,6 +52,18 @@ export const ActiveTab = memo(function ActiveTab({
 	onCloseModal,
 }: ActiveTabProps) {
 	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos);
+	// Narrow id-to-display map so streaming logs do not re-render this tab.
+	const sessionDisplays = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => {
+			const map = new Map<string, SessionDisplay>();
+			for (const sess of s.sessions) {
+				map.set(sess.id, { name: sess.name, accountName: sess.accountName });
+			}
+			return map;
+		},
+		sessionDisplayMapEquality
+	);
 	return (
 		<div className="flex-1 flex flex-col overflow-hidden">
 			{/* Header with refresh button */}
@@ -93,7 +122,9 @@ export const ActiveTab = memo(function ActiveTab({
 				) : (
 					<div className="grid grid-cols-2 gap-4">
 						{activeContributions.map((contribution) => {
-							const session = sessions.find((s) => s.id === contribution.sessionId);
+							const sessionDisplay = sessionDisplays.get(contribution.sessionId);
+							const sessionName = sessionDisplay?.name ?? null;
+							const hasSession = !!sessionDisplay;
 							return (
 								<ActiveContributionCard
 									key={contribution.id}
@@ -102,11 +133,11 @@ export const ActiveTab = memo(function ActiveTab({
 									onFinalize={() => onFinalize(contribution.id)}
 									onSync={() => onSyncContribution(contribution.id)}
 									isSyncing={syncingContributionId === contribution.id}
-									sessionName={session?.name ?? null}
-									accountName={virtuososEnabled ? session?.accountName : undefined}
+									sessionName={sessionName}
+									accountName={virtuososEnabled ? sessionDisplay?.accountName : undefined}
 									onNavigateToSession={() => {
-										if (session) {
-											onSelectSession(session.id);
+										if (hasSession) {
+											onSelectSession(contribution.sessionId);
 											onCloseModal();
 										}
 									}}

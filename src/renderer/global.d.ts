@@ -67,6 +67,9 @@ interface ProcessConfig {
 	sessionCustomContextWindow?: number;
 	// Account multiplexing
 	accountId?: string;
+	// Session additional directories. Providers that support it get native grant
+	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
+	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -234,7 +237,7 @@ interface MaestroAPI {
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
-		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
 		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
@@ -919,14 +922,14 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
-				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				// Error pause fields - surfaced to web/mobile so they can show recovery UI
 				errorPaused?: boolean;
 				errorMessage?: string;
 				errorType?: string;
 				errorRecoverable?: boolean;
 				errorDocumentIndex?: number;
 				errorTaskDescription?: string;
-				// Goal-Driven mode fields — surfaced so web/mobile show goal percent + iteration
+				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
 				goalMode?: boolean;
 				goalProgress?: number;
 				goalRationale?: string;
@@ -1333,7 +1336,7 @@ interface MaestroAPI {
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
-		// Capability snapshots — persisted per-agent readiness + version info.
+		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
 			agentId: string,
 			sshRemoteId?: string
@@ -1727,7 +1730,7 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts — keep in sync */
+		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
 			callback: (deepLink: {
 				action: 'focus' | 'session' | 'group';
@@ -3222,7 +3225,7 @@ interface MaestroAPI {
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
 	};
-	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Cue Stats API (Phase 03 - Cue Dashboard aggregation query)
 	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
@@ -4217,7 +4220,7 @@ interface MaestroAPI {
 	browserSession: {
 		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
 	};
-	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// Multi-window API - enumerate/create/focus/close windows and inspect or
 	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
 	windows: {
 		create: (

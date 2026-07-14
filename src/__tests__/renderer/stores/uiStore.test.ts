@@ -1,36 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-
-/**
- * Reset the Zustand store to initial state between tests.
- * Zustand stores are singletons, so state persists across tests unless explicitly reset.
- */
-function resetStore() {
-	useUIStore.setState({
-		leftSidebarOpen: true,
-		rightPanelOpen: true,
-		activeFocus: 'main',
-		activeRightTab: 'files',
-		bookmarksCollapsed: false,
-		showUnreadOnly: false,
-		showUnreadAgentsOnly: false,
-		preFilterActiveTabId: null,
-		preTerminalFileTabId: null,
-		selectedSidebarIndex: 0,
-		outputSearchByKey: {},
-		sessionFilterOpen: false,
-		historySearchFilterOpen: false,
-		draggingSessionId: null,
-		editingGroupId: null,
-		editingSessionId: null,
-		usageDashboardViewMode: 'overview',
-	});
-}
+import { resetStore } from '../../helpers';
 
 describe('uiStore', () => {
 	beforeEach(() => {
-		resetStore();
+		resetStore(useUIStore);
 	});
 
 	describe('initial state', () => {

@@ -53,7 +53,7 @@ export interface AppShellProps {
 	logViewer: ReactNode | null;
 	groupChatView: ReactNode | null;
 
-	sessions: Session[];
+	hasSessions: boolean;
 	sessionsLoaded: boolean;
 	emptyStateProps: Omit<EmptyStateViewProps, 'theme'>;
 
@@ -93,7 +93,7 @@ export function AppShell({
 	logViewerOpen,
 	logViewer,
 	groupChatView,
-	sessions,
+	hasSessions,
 	sessionsLoaded,
 	emptyStateProps,
 	sessionListProps,
@@ -193,15 +193,15 @@ export function AppShell({
 			{modals}
 			{standaloneModals}
 
-			{sessions.length === 0 && !sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && !sessionsLoaded && !isMobileLandscape ? (
 				<AgentsLoadingView theme={theme} />
 			) : null}
 
-			{sessions.length === 0 && sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && sessionsLoaded && !isMobileLandscape ? (
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 
-			{!isMobileLandscape && sessions.length > 0 && (
+			{!isMobileLandscape && hasSessions && (
 				<ErrorBoundary>
 					<SessionList {...sessionListProps} />
 				</ErrorBoundary>
@@ -213,7 +213,7 @@ export function AppShell({
 				className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
 			/>
 
-			{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
+			{isNarrowViewport && hasSessions && (leftSidebarOpen || rightPanelOpen) && (
 				<div
 					className="maestro-mobile-backdrop"
 					onClick={onCloseDrawers}
@@ -241,7 +241,7 @@ export function AppShell({
 
 			{groupChatView}
 
-			{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+			{hasSessions && !activeGroupChatId && !logViewerOpen && (
 				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 			)}
 
@@ -251,7 +251,7 @@ export function AppShell({
 				className="flex flex-col flex-1 min-w-0 overflow-hidden"
 			/>
 
-			{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+			{!isMobileLandscape && hasSessions && !activeGroupChatId && !logViewerOpen && (
 				<ErrorBoundary>
 					<RightPanel ref={rightPanelRef} {...rightPanelProps} />
 				</ErrorBoundary>

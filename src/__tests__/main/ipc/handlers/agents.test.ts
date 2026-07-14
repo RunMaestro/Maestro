@@ -393,6 +393,29 @@ describe('agents IPC handlers', () => {
 			expect(result).toEqual([]);
 		});
 
+		it('should strip every arg-builder function so the payload survives IPC', async () => {
+			// A definition carries arg builders (including ones added after this test was
+			// written). Leaving even one behind makes the whole response fail to structured
+			// clone, which strands the agent pickers on "Loading agents..." forever.
+			mockAgentDetector.detectAgents.mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					binaryName: 'claude',
+					available: true,
+					resumeArgs: (id: string) => ['--resume', id],
+					additionalDirArgs: (dirs: unknown[]) => dirs.map(() => '--add-dir'),
+					configOptions: [{ id: 'model', argBuilder: (v: string) => ['--model', v] }],
+				},
+			]);
+
+			const handler = handlers.get('agents:detect');
+			const result = await handler!({} as any);
+
+			expect(() => structuredClone(result)).not.toThrow();
+			expect(result[0].id).toBe('claude-code');
+		});
+
 		it('should include agent id and path for each detected agent', async () => {
 			const mockAgents = [
 				{

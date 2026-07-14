@@ -329,7 +329,8 @@ describe('EditAgentModal', () => {
 				undefined,
 				undefined,
 				true,
-				true
+				true,
+				undefined // additionalDirectories
 			);
 		});
 
@@ -423,7 +424,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPPath
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
-			true // retryOnTokenExhaustion
+			true, // retryOnTokenExhaustion
+			undefined // additionalDirectories
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -654,7 +656,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPPath
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
-			true // retryOnTokenExhaustion
+			true, // retryOnTokenExhaustion
+			undefined // additionalDirectories
 		);
 	});
 
@@ -725,7 +728,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPPath
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
-			true // retryOnTokenExhaustion
+			true, // retryOnTokenExhaustion
+			undefined // additionalDirectories
 		);
 	});
 
@@ -802,7 +806,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPPath
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
-			true // retryOnTokenExhaustion
+			true, // retryOnTokenExhaustion
+			undefined // additionalDirectories
 		);
 	});
 

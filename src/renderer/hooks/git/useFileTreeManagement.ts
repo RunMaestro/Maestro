@@ -102,8 +102,6 @@ export type { SshContext } from '../../utils/fileExplorer';
  * Dependencies for the useFileTreeManagement hook.
  */
 export interface UseFileTreeManagementDeps {
-	/** Current sessions array */
-	sessions: Session[];
 	/** Ref to sessions for accessing latest state without triggering effect re-runs */
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Session state setter */
@@ -172,7 +170,6 @@ export function useFileTreeManagement(
 	deps: UseFileTreeManagementDeps
 ): UseFileTreeManagementReturn {
 	const {
-		sessions,
 		sessionsRef,
 		setSessions,
 		activeSessionId,
@@ -521,7 +518,7 @@ export function useFileTreeManagement(
 	const refreshGitFileState = useCallback(
 		async (sessionId: string) => {
 			const seq = nextSeq(sessionId);
-			const session = sessions.find((s) => s.id === sessionId);
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return;
 
 			// Use projectRoot for file tree (consistent with Files tab header)
@@ -637,7 +634,7 @@ export function useFileTreeManagement(
 			}
 		},
 		[
-			sessions,
+			sessionsRef,
 			setSessions,
 			rightPanelRef,
 			sshContextOptions,

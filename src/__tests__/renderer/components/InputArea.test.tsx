@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, within, waitFor } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -212,6 +213,7 @@ const createDefaultProps = (
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [] });
 	});
 
 	afterEach(() => {
@@ -423,16 +425,16 @@ describe('InputArea', () => {
 		});
 
 		it('renders ThinkingStatusPill when items are thinking', () => {
-			// ThinkingStatusPill only renders when there are thinking items
-			// PERF: InputArea now expects pre-filtered thinkingItems prop
+			// ThinkingStatusPill only renders when there are thinking items.
+			// InputArea self-sources via useThinkingItems from the session store.
 			const thinkingSession = createMockSession({
 				inputMode: 'ai',
 				state: 'busy',
 				busySource: 'ai',
 			});
+			useSessionStore.setState({ sessions: [thinkingSession] });
 			const props = createDefaultProps({
 				session: thinkingSession,
-				thinkingItems: [{ session: thinkingSession, tab: null }],
 			});
 			render(<InputArea {...props} />);
 
