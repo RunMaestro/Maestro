@@ -81,13 +81,12 @@ export async function handleProcessSpawn(
 	// Native OMP uses a dedicated, long-lived JSONL RPC process instead of the
 	// one-shot CLI spawner. It is deliberately gated on the first-party plugin:
 	// without it the legacy batch path below remains untouched.
-	if (
-		config.toolType === 'omp' &&
-		isPluginsFeatureEnabled() &&
-		getActivePluginManager()
-			?.getActiveRecords()
-			.some((record) => record.id === 'com.maestro.omp')
-	) {
+	const pluginsFeatureEnabled = isPluginsFeatureEnabled();
+	const activePluginManager = getActivePluginManager();
+	const ompPluginActive =
+		activePluginManager?.getActiveRecords().some((record) => record.id === 'com.maestro.omp') ??
+		false;
+	if (config.toolType === 'omp' && pluginsFeatureEnabled && ompPluginActive) {
 		const send = (channel: string, ...args: unknown[]) => {
 			if (safeSend) {
 				safeSend(channel, ...args);
@@ -117,6 +116,13 @@ export async function handleProcessSpawn(
 			);
 			return { success: false, pid: 0 };
 		}
+	}
+	if (config.toolType === 'omp') {
+		logger.warn('OMP native spawn gate failed; falling back to legacy one-shot CLI', LOG_CONTEXT, {
+			pluginsFeatureEnabled,
+			activePluginManagerPresent: activePluginManager !== null,
+			ompPluginActive,
+		});
 	}
 
 	// Get agent definition to access config options and argument builders

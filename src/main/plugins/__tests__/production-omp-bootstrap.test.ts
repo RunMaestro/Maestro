@@ -7,15 +7,52 @@ import {
 	buildPluginArtifact,
 	type ImmutableTrustRoot,
 } from '../../omp-distribution/plugin-artifact';
-import { createProductionOmpBootstrap } from '../production-omp-bootstrap';
+import {
+	createProductionOmpBootstrap,
+	type ProductionOmpBootstrap,
+} from '../production-omp-bootstrap';
 import { computePluginContentHash } from '../plugin-signature';
 import type { PinnedOmpRelease } from '../../omp-distribution/production-omp-runtime-resolver';
 import type {
 	ManagedRuntimeResolver,
 	VerifiedRuntimeLaunch,
 } from '../plugin-managed-runtime-service';
+import { PluginManager } from '../plugin-manager';
+import { resolvePluginAuthorizationIdentity } from '../plugin-identity';
+import {
+	AuthorizationStore,
+	type Anchor,
+	type AnchorStore,
+	type SealProvider,
+	shouldDisablePluginForVerifyResult,
+} from '../authorization-ledger';
 import type { RuntimeActivationContext } from '../native-workspace-root-service';
 
+function fakeSeal(): SealProvider {
+	const marker = 'SEALED\u0000';
+	return {
+		available: () => true,
+		seal: (plaintext) => Buffer.from(marker + plaintext, 'utf-8'),
+		unseal: (blob) => {
+			const plaintext = blob.toString('utf-8');
+			if (!plaintext.startsWith(marker)) throw new Error('invalid test seal');
+			return plaintext.slice(marker.length);
+		},
+	};
+}
+
+function fakeAnchor(holder: { value: Anchor | null }): AnchorStore {
+	return {
+		available: () => true,
+		read: () => holder.value,
+		write: (anchor) => {
+			holder.value = { ...anchor };
+		},
+		clear: () => {
+			holder.value = null;
+		},
+	};
+}
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -111,19 +148,10 @@ describe('production OMP bootstrap', () => {
 			chooseDirectory: async () => null,
 		});
 
-		const manager = {
-			installOrUpdateArchive: vi.fn((request) => {
-				bootstrap.ompArchiveInstaller.installOrUpdateArchive(request);
-				return { success: true };
-			}),
-		};
+		const manager = { refresh: vi.fn() };
 		const installed = bootstrap.bootstrapBundledArchive(manager);
 		expect(installed.success).toBe(true);
-		expect(manager.installOrUpdateArchive).toHaveBeenCalledWith({
-			archivePath: input.archivePath,
-			expectedSha256: input.expectedSha256,
-			owner: 'bundle',
-		});
+		expect(manager.refresh).toHaveBeenCalledOnce();
 		await expect(bootstrap.managedRuntime.requestWorkspaceRoot()).rejects.toThrow(
 			'interactive runtime owner is unavailable'
 		);
@@ -141,7 +169,106 @@ describe('production OMP bootstrap', () => {
 				grants: [],
 			},
 		};
+
 		expect(await bootstrap.managedRuntime.requestWorkspaceRoot()).toBeNull();
+	});
+
+	it('keeps a consented bundled plugin runnable after restart with persisted plugins enabled', async () => {
+		const input = await writeArtifact();
+		const priorUserData = process.env.MAESTRO_USER_DATA;
+		process.env.MAESTRO_USER_DATA = input.directory;
+		try {
+			const anchorHolder = { value: null as Anchor | null };
+			const ledgerPath = join(input.directory, 'plugin-authorizations.bin');
+			const persistedSettings = { encoreFeatures: { plugins: true } };
+			const makeBootstrap = (): ProductionOmpBootstrap =>
+				createProductionOmpBootstrap({
+					pluginsDir: join(input.directory, 'plugins'),
+					archivePath: input.archivePath,
+					expectedArchiveSha256: input.expectedSha256,
+					trustRoot: input.trustRoot,
+					verifySignature: input.verifySignature,
+					pinnedRelease,
+					resolver: {
+						resolveSystem: async () => null,
+						managedInstallAllowed: () => false,
+						resolveManaged: async () => {
+							throw new Error('managed installation is disabled');
+						},
+					},
+					activation: () => null,
+					chooseDirectory: async () => null,
+				});
+			const makeAuthorizationStore = (): AuthorizationStore =>
+				new AuthorizationStore({
+					seal: fakeSeal(),
+					anchor: fakeAnchor(anchorHolder),
+					ledgerPath,
+					now: () => 1,
+					newSecret: () => 'restart-test-secret',
+				});
+			const makeManager = (
+				bootstrap: ProductionOmpBootstrap,
+				authorization: AuthorizationStore
+			): PluginManager => {
+				const manager = new PluginManager({
+					isEnabled: () => persistedSettings.encoreFeatures.plugins,
+					snapshotFor: bootstrap.snapshotFor,
+					resolveBundledPluginTrust: bootstrap.resolveBundledPluginTrust,
+					getGrants: (pluginId) => authorization.readGrants(pluginId),
+					verifyRecord: (record) => {
+						const identity = resolvePluginAuthorizationIdentity(record, [], (candidate) =>
+							manager.getVerifiedBundledExecutionSnapshot(candidate)
+						);
+						if (!identity) return { disable: true };
+						return {
+							disable: shouldDisablePluginForVerifyResult(
+								authorization.verify(
+									record.id,
+									identity,
+									(record.manifest?.permissions ?? []).map((permission) => permission.capability)
+								)
+							),
+						};
+					},
+				});
+				return manager;
+			};
+
+			const firstBootstrap = makeBootstrap();
+			const firstAuthorization = makeAuthorizationStore();
+			const firstManager = makeManager(firstBootstrap, firstAuthorization);
+			firstBootstrap.bootstrapBundledArchive({ refresh: () => firstManager.refresh() });
+			const firstRecord = firstManager
+				.getRegistry()
+				.records.find((record) => record.id === 'com.maestro.omp');
+			expect(firstRecord).toBeDefined();
+			const consentIdentity = resolvePluginAuthorizationIdentity(firstRecord!, [], (candidate) =>
+				firstManager.getVerifiedBundledExecutionSnapshot(candidate)
+			);
+			expect(consentIdentity).not.toBeNull();
+			firstAuthorization.mint('com.maestro.omp', [], consentIdentity!);
+			firstManager.setEnabled('com.maestro.omp', true);
+			expect(
+				firstManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
+			).toBe(true);
+
+			const restartedBootstrap = makeBootstrap();
+			const restartedAuthorization = makeAuthorizationStore();
+			const restartedManager = makeManager(restartedBootstrap, restartedAuthorization);
+			restartedManager.refresh();
+			expect(restartedManager.getActiveRecords()).toEqual([]);
+
+			restartedBootstrap.bootstrapBundledArchive({ refresh: () => restartedManager.refresh() });
+
+			expect(restartedAuthorization.isEnabled('com.maestro.omp')).toBe(true);
+			expect(
+				restartedManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
+			).toBe(true);
+		} finally {
+			if (priorUserData === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = priorUserData;
+		}
 	});
 
 	it('derives production resource authorization identity from the same canonical file hash as installation', async () => {
@@ -163,21 +290,14 @@ describe('production OMP bootstrap', () => {
 			activation: () => null,
 			chooseDirectory: async () => null,
 		});
-		bootstrap.bootstrapBundledArchive({
-			installOrUpdateArchive: (request) => {
-				bootstrap.ompArchiveInstaller.installOrUpdateArchive(request);
-				return { success: true };
-			},
-		});
+		bootstrap.bootstrapBundledArchive({ refresh: () => undefined });
 
 		const snapshot = bootstrap.snapshotFor('com.maestro.omp');
 		expect(snapshot).not.toBeNull();
 		expect(snapshot?.identity.authorizationContentHash).toBe(
 			computePluginContentHash(join(input.directory, 'plugins', 'com.maestro.omp'))
 		);
-		expect(snapshot?.identity.authorizationContentHash).not.toBe(
-			snapshot?.identity.artifactDigest
-		);
+		expect(snapshot?.identity.authorizationContentHash).not.toBe(snapshot?.identity.artifactDigest);
 		expect(snapshot?.identity.authorizationSignerKey).toBe(input.trustRoot.publicKey);
 		expect(snapshot?.identity.authorizationSignerKey).not.toBe(snapshot?.identity.signerKeyId);
 	});
@@ -333,14 +453,9 @@ describe('production OMP bootstrap', () => {
 			activation: () => null,
 			chooseDirectory: async () => null,
 		});
-		expect(() =>
-			bootstrap.bootstrapBundledArchive({
-				installOrUpdateArchive: (request) => {
-					bootstrap.ompArchiveInstaller.installOrUpdateArchive(request);
-					return { success: true };
-				},
-			})
-		).toThrow('trust root mismatch');
+		expect(() => bootstrap.bootstrapBundledArchive({ refresh: () => undefined })).toThrow(
+			'trust root mismatch'
+		);
 	});
 
 	it('revokes root authority before managed runtime teardown', async () => {

@@ -72,8 +72,13 @@ export type ProductionOmpBootstrapConfiguration = Omit<
 	'activation' | 'chooseDirectory'
 >;
 
+/**
+ * Rebuilds the live registry after immutable bundled bytes have been verified
+ * and activated. Refreshing here is security-critical: it re-verifies the
+ * persisted consent grant against this process's new canonical snapshot.
+ */
 export interface ProductionOmpArchiveBootstrapManager {
-	readonly installOrUpdateArchive: (request: OmpArchiveInstallRequest) => InstallResult;
+	readonly refresh: () => unknown;
 }
 
 export interface ProductionOmpBootstrap {
@@ -154,8 +159,11 @@ export function createProductionOmpBootstrap(
 		workspaceRoots,
 		managedRuntime,
 		...(ompSandboxHandlers ? { ompSandboxHandlers } : {}),
-		bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) =>
-			installRequired(manager, bundledRequest),
+		bootstrapBundledArchive: (manager: ProductionOmpArchiveBootstrapManager) => {
+			const installed = installRequired(trustService, bundledRequest);
+			manager.refresh();
+			return installed;
+		},
 		resolveBundledPluginTrust: (record: Readonly<PluginRecord>) =>
 			trustService.getVerifiedBundledPluginTrust(record),
 		teardown: async (ownerPluginId: string, reason: InteractiveStopReason = 'shutdown') => {
@@ -178,13 +186,11 @@ function resolveRuntimeResolver(input: ProductionOmpBootstrapInput): ManagedRunt
 }
 
 function installRequired(
-	manager: ProductionOmpArchiveBootstrapManager,
+	installer: Pick<OmpPluginTrustRootService, 'installOrUpdateArchive'>,
 	request: OmpArchiveInstallRequest
 ): InstallResult {
-	const result = manager.installOrUpdateArchive(request);
-	if (!result.success)
-		throw new Error(result.error ?? 'verified bundled OMP archive installation failed');
-	return result;
+	installer.installOrUpdateArchive(request);
+	return { success: true };
 }
 
 function assertProductionInput(input: ProductionOmpBootstrapInput): void {
