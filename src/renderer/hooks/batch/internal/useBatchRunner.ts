@@ -58,7 +58,7 @@ type SpawnAgentFn = (
 
 export interface UseBatchRunnerDeps {
 	// Refs
-	sessionsRef: MutableRefObject<Session[]>;
+	getSessions: () => Session[];
 	audioFeedbackEnabledRef: MutableRefObject<boolean | undefined>;
 	audioFeedbackCommandRef: MutableRefObject<string | undefined>;
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
@@ -106,7 +106,7 @@ export interface UseBatchRunnerReturn {
  * remains a ref so the long-running async loop survives HMR re-renders.
  */
 export function useBatchRunner({
-	sessionsRef,
+	getSessions,
 	audioFeedbackEnabledRef,
 	audioFeedbackCommandRef,
 	autoRunFlushStateRefs,
@@ -163,10 +163,9 @@ export function useBatchRunner({
 				worktreeEnabled: config.worktree?.enabled,
 			});
 
-			// Use sessionsRef first, then fall back to Zustand store for sessions just created
-			// (sessionsRef updates on React re-render, but Zustand store updates synchronously)
+			// Prefer getSessions(), then the store for just-created sessions.
 			const session =
-				sessionsRef.current.find((s) => s.id === sessionId) ||
+				getSessions().find((s) => s.id === sessionId) ||
 				selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) {
 				const worktreeInfo = config.worktreeTarget
@@ -185,7 +184,7 @@ export function useBatchRunner({
 					{
 						sessionId,
 						worktreeTargetMode: config.worktreeTarget?.mode,
-						availableSessionIds: sessionsRef.current.map((s) => s.id),
+						availableSessionIds: getSessions().map((s) => s.id),
 					}
 				);
 				return;
@@ -768,7 +767,7 @@ export function useBatchRunner({
 							readDocAndCountTasks,
 							updateBatchState: (sid, updater, immediate) =>
 								updateBatchStateAndBroadcastRef.current!(sid, updater, immediate),
-							getSessions: () => sessionsRef.current,
+							getSessions,
 							onUpdateSession,
 						});
 						await progressPoll.start();
@@ -1394,7 +1393,7 @@ export function useBatchRunner({
 			) {
 				// For worktree-dispatched runs, the main repo is the parent session's cwd
 				const mainRepoCwd = config.worktreeTarget
-					? sessionsRef.current.find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
+					? getSessions().find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
 					: session.cwd;
 
 				const prResult = await worktreeManager.createPR({
@@ -1599,7 +1598,7 @@ export function useBatchRunner({
 			onUpdateSession,
 			pauseBatchOnError,
 			readDocAndCountTasks,
-			sessionsRef,
+			getSessions,
 			stopRequestedRefs,
 			timeTracking,
 			updateBatchStateAndBroadcastRef,

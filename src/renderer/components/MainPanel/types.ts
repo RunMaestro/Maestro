@@ -60,7 +60,6 @@ export interface MainPanelProps {
 	agentSessionsOpen: boolean;
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
-	activeSession: Session | null;
 	theme: Theme;
 	isMobileLandscape?: boolean;
 	stagedImages: string[];

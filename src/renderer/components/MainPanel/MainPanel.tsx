@@ -78,8 +78,6 @@ export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
 		// PERF: Self-source the full active Session so streaming log/token updates
 		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
-		// App may still pass `activeSession` (chrome-equality slice) for prop-memo
-		// deps; ignore it for paint.
 		const activeSession = useSessionStore(selectActiveSession);
 
 		const {
@@ -87,7 +85,6 @@ export const MainPanel = React.memo(
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession: _activeSessionFromApp,
 			theme,
 			stagedImages,
 			commandHistoryOpen,

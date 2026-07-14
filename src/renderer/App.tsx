@@ -1385,6 +1385,14 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 	} = useSummarizeAndContinue(activeSession ?? null);
 
+	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
+	const computeCanSummarizeActiveTab = () => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session?.activeTabId) return false;
+		const tab = session.aiTabs.find((t) => t.id === session.activeTabId);
+		return canSummarize(session.contextUsage, tab?.logs);
+	};
+
 	// Combine custom AI commands with bundled methodology commands for input processing.
 	const allCustomCommands = useMemo((): CustomAICommand[] => {
 		const speckitAsCustom: CustomAICommand[] = speckitCommands.map((cmd) => ({
@@ -2216,7 +2224,8 @@ function MaestroConsoleInner() {
 			sessionsRef,
 			setSessions,
 			activeSessionId,
-			activeSession,
+			// PERF: Omit activeSession - hook self-sources fileTree. Chrome equality
+			// deliberately excludes fileTree; passing that slice would stale the panel.
 			rightPanelRef,
 			sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
 			sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
@@ -2512,10 +2521,7 @@ function MaestroConsoleInner() {
 		setSendToAgentModalOpen,
 		// Summarize and continue (getter: evaluated lazily only when shortcut fires)
 		get canSummarizeActiveTab() {
-			const session = selectActiveSession(useSessionStore.getState());
-			if (!session?.activeTabId) return false;
-			const tab = session.aiTabs.find((t) => t.id === session.activeTabId);
-			return canSummarize(session.contextUsage, tab?.logs);
+			return computeCanSummarizeActiveTab();
 		},
 		summarizeAndContinue: handleSummarizeAndContinue,
 
@@ -3306,15 +3312,7 @@ function MaestroConsoleInner() {
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
 					onRunPromptMacro={handleRunPromptMacro}
-					canSummarizeActiveTab={(() => {
-						// Fresh snapshot: chrome equality ignores contextUsage / logs.
-						const session = selectActiveSession(useSessionStore.getState());
-						if (!session) return false;
-						return canSummarize(
-							session.contextUsage,
-							session.aiTabs.find((t) => t.id === session.activeTabId)?.logs
-						);
-					})()}
+					canSummarizeActiveTab={computeCanSummarizeActiveTab()}
 					onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}

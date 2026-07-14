@@ -426,13 +426,13 @@ describe('MainPanel', () => {
 		...overrides,
 	});
 
+	const defaultSession = createSession();
 	const defaultProps = {
 		// State
 		logViewerOpen: false,
 		agentSessionsOpen: false,
 		memoryViewerOpen: false,
 		activeAgentSessionId: null,
-		activeSession: createSession(),
 		thinkingItems: [] as ThinkingItem[],
 		theme,
 		isMobileLandscape: false,
@@ -501,15 +501,21 @@ describe('MainPanel', () => {
 		} as never);
 	}
 
-	function renderMainPanel(overrides: Partial<typeof defaultProps> = {}) {
-		const props = { ...defaultProps, ...overrides };
-		const session = props.activeSession as Session | null | undefined;
+	function renderMainPanel(
+		overrides: Partial<typeof defaultProps> & { activeSession?: Session | null } = {}
+	) {
+		const { activeSession: sessionOverride, ...rest } = overrides;
+		const props = { ...defaultProps, ...rest };
+		const session = sessionOverride !== undefined ? sessionOverride : defaultSession;
 		seedSessionStore(session);
-		const result = render(<MainPanel {...(props as any)} />);
-		const rerenderMainPanel = (nextOverrides: Partial<typeof defaultProps> = {}) => {
-			const nextProps = { ...defaultProps, ...nextOverrides };
-			seedSessionStore(nextProps.activeSession as Session | null | undefined);
-			result.rerender(<MainPanel {...(nextProps as any)} />);
+		const result = render(<MainPanel {...(props as never)} />);
+		const rerenderMainPanel = (
+			nextOverrides: Partial<typeof defaultProps> & { activeSession?: Session | null } = {}
+		) => {
+			const { activeSession: nextSession, ...nextRest } = nextOverrides;
+			const nextProps = { ...defaultProps, ...nextRest };
+			seedSessionStore(nextSession !== undefined ? nextSession : session);
+			result.rerender(<MainPanel {...(nextProps as never)} />);
 		};
 		return { ...result, rerender: rerenderMainPanel };
 	}
@@ -649,7 +655,7 @@ describe('MainPanel', () => {
 				makeWindowState({ id: 'win-2', sessionIds: [], activeSessionId: null })
 			);
 
-			seedSessionStore(defaultProps.activeSession as Session);
+			seedSessionStore(defaultSession);
 			render(
 				<WindowProvider>
 					<MainPanel {...defaultProps} />
@@ -669,7 +675,7 @@ describe('MainPanel', () => {
 			);
 			vi.mocked(window.maestro.windows.list).mockResolvedValue([]);
 
-			seedSessionStore(defaultProps.activeSession as Session);
+			seedSessionStore(defaultSession);
 			render(
 				<WindowProvider>
 					<MainPanel {...defaultProps} />

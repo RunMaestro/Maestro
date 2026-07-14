@@ -18,6 +18,9 @@ export type TabCompletionFilter = 'all' | 'history' | 'branch' | 'tag' | 'file';
  */
 const MAX_FILE_TREE_ENTRIES = 50_000;
 
+/** Stable empty tree so `storeFileTree ?? EMPTY_FILE_TREE` does not allocate per render. */
+const EMPTY_FILE_TREE: FileNode[] = [];
+
 export interface UseTabCompletionReturn {
 	getSuggestions: (input: string, filter?: TabCompletionFilter) => TabCompletionSuggestion[];
 }
@@ -94,7 +97,7 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 		: {
 				cwd: storeCwd ?? '',
 				shellCwd: storeShellCwd,
-				fileTree: storeFileTree ?? [],
+				fileTree: storeFileTree ?? EMPTY_FILE_TREE,
 				shellCommandHistory: storeShellHistory,
 				isGitRepo: storeIsGitRepo ?? false,
 				gitBranches: storeGitBranches,

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect, useMemo, type MutableRefObject } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import type {
 	BatchRunState,
 	BatchRunConfig,
@@ -172,20 +172,7 @@ export function useBatchProcessor({
 	// PERF: Read sessions at event time via getState() so App (this hook's
 	// caller) does not re-render on streaming session updates. Downstream
 	// runners already fall back to the store when a session is missing.
-	// Setter is a no-op so accidental `sessionsRef.current = ...` writes cannot
-	// replace the getter.
-	const sessionsRef = useMemo(
-		() =>
-			({
-				get current(): Session[] {
-					return useSessionStore.getState().sessions;
-				},
-				set current(_value: Session[]) {
-					/* store is the source of truth */
-				},
-			}) as MutableRefObject<Session[]>,
-		[]
-	);
+	const getSessions = useCallback(() => useSessionStore.getState().sessions, []);
 
 	// Refs to always have access to latest audio feedback settings (fixes stale closure during batch run)
 	// Without refs, toggling settings off during a batch run won't take effect until the next run
@@ -304,7 +291,7 @@ export function useBatchProcessor({
 
 	// Document/task-driven Auto Run orchestrator.
 	const { startBatchRun: startDocumentBatchRun } = useBatchRunner({
-		sessionsRef,
+		getSessions,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
 		autoRunFlushStateRefs,
@@ -332,7 +319,7 @@ export function useBatchProcessor({
 	// Goal-Driven Auto Run orchestrator. Shares the same lifecycle dependency
 	// surface so stop/kill/pause controls and state behavior stay consistent.
 	const { startGoalRun } = useGoalRunner({
-		sessionsRef,
+		getSessions,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
 		autoRunFlushStateRefs,

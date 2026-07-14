@@ -187,12 +187,15 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
  * modal flags has changed. Streaming fields (logs, tokens, contextUsage, fileTree,
  * workLog, etc.) are ignored so log/token flushes do not re-render the whole console.
  *
+ * Invariant: any consumer of this chrome-gated slice must not read fields absent
+ * from this comparator (or those fields go silently stale). Paint/data leaves that
+ * need omitted fields (MainPanel logs, useFileTreeManagement.fileTree, summarize
+ * eligibility via contextUsage/logs) must self-subscribe with their own selector
+ * or read getState() at event time - same pattern as MainPanel.
+ *
  * Tab-strip chrome includes `isGeneratingName`, tab `agentError`, presence of
  * `pendingMergedContext`, and browser `customTitle` so rename / error / naming
  * spinners stay live under this equality.
- *
- * Paint leaves that need live logs (MainPanel chat) must self-subscribe with
- * `selectActiveSession` (default Object.is) instead of this equality.
  */
 export function activeSessionChromeEquality(a: Session | null, b: Session | null): boolean {
 	if (a === b) return true;
