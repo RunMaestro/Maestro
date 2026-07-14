@@ -2,6 +2,7 @@ import React, {
 	useState,
 	useRef,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useCallback,
 	forwardRef,
@@ -154,7 +155,20 @@ export const FilePreview = React.memo(
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
-		const [showStatsBar, setShowStatsBar] = useState(true);
+		const [showStatsBar, setShowStatsBar] = useState(
+			() => initialScrollTop === undefined || initialScrollTop <= 10
+		);
+		// Track which file last drove showStatsBar so we can reset during render
+		// (before paint) when the reused scroll container switches files. An
+		// effect-only reset flashes one frame of the previous file's hidden state.
+		const showStatsBarPathRef = useRef<string | undefined>(file?.path);
+		if (file?.path !== showStatsBarPathRef.current) {
+			showStatsBarPathRef.current = file?.path;
+			const atTop = initialScrollTop === undefined || initialScrollTop <= 10;
+			if (showStatsBar !== atTop) {
+				setShowStatsBar(atTop);
+			}
+		}
 		const [tokenCount, setTokenCount] = useState<number | null>(null);
 		const [showRemoteImages, setShowRemoteImages] = useState(false);
 		const [showFullContent, setShowFullContent] = useState(false);
@@ -1054,23 +1068,29 @@ export const FilePreview = React.memo(
 		);
 
 		// Track scroll position to show/hide stats bar and report changes.
-		// Hysteresis: only hide when overflow is larger than the collapsing chrome
-		// (stats row + path line). When content is just barely taller than the
-		// viewport, hiding that chrome grows clientHeight, clamps scrollTop to 0,
-		// re-shows the bar, and the cycle jitters forever.
+		// Collapsing the stats row + path grows the viewport. Hide only when both
+		// overflow and scrollTop clear that chrome height with room to spare, so
+		// the layout change can't clamp scrollTop back into the "show" band and
+		// bounce the bar once (or forever on barely overflowing files).
 		useEffect(() => {
 			const contentEl = contentRef.current;
 			if (!contentEl) return;
 
 			// Stats subbar (~28px) + directory path row (~20px) + cushion.
-			const STATS_CHROME_HIDE_MIN_OVERFLOW = 64;
+			const STATS_CHROME_PX = 64;
+			const AT_TOP_PX = 10;
 
 			const handleScroll = () => {
 				const { scrollTop, scrollHeight, clientHeight } = contentEl;
 				const overflow = scrollHeight - clientHeight;
 				setShowStatsBar((prev) => {
-					if (scrollTop <= 10) return true;
-					if (overflow > STATS_CHROME_HIDE_MIN_OVERFLOW) return false;
+					if (scrollTop <= AT_TOP_PX) return true;
+					// Require scrollTop past chrome+at-top so after the header
+					// collapses we remain below the show threshold even if the
+					// browser preserves content position by reducing scrollTop.
+					if (overflow > STATS_CHROME_PX && scrollTop > STATS_CHROME_PX + AT_TOP_PX) {
+						return false;
+					}
 					return prev;
 				});
 
@@ -1098,9 +1118,11 @@ export const FilePreview = React.memo(
 		}, [onScrollPositionChange]);
 
 		// Restore scroll position when initialScrollTop is provided (file tab switching)
-		// Use a ref to track if we've already restored for this file to avoid re-scrolling on re-renders
+		// Use a ref to track if we've already restored for this file to avoid re-scrolling on re-renders.
+		// useLayoutEffect so leftover scrollTop from the previous file is cleared
+		// before paint (the container is reused and was not previously reset).
 		const hasRestoredScrollRef = useRef<string | null>(null);
-		useEffect(() => {
+		useLayoutEffect(() => {
 			const contentEl = contentRef.current;
 			if (!contentEl || !file?.path) return;
 
@@ -1110,13 +1132,11 @@ export const FilePreview = React.memo(
 				initialScrollTop > 0 &&
 				hasRestoredScrollRef.current !== file.path
 			) {
-				// Use requestAnimationFrame to ensure DOM is ready
-				requestAnimationFrame(() => {
-					contentEl.scrollTop = initialScrollTop;
-				});
+				contentEl.scrollTop = initialScrollTop;
 				hasRestoredScrollRef.current = file.path;
 			} else if (hasRestoredScrollRef.current !== file.path) {
 				// New file without saved scroll position - reset to top
+				contentEl.scrollTop = 0;
 				hasRestoredScrollRef.current = file.path;
 			}
 		}, [file?.path, initialScrollTop]);

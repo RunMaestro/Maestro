@@ -1667,7 +1667,7 @@ print("world")
 			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
 			expect(container).not.toBeNull();
 
-			// Barely overflowing — hiding the stats chrome would clamp scrollTop to 0
+			// Barely overflowing - hiding the stats chrome would clamp scrollTop to 0
 			// and re-show the bar (the jitter loop). Stay visible instead.
 			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 520 });
 			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
@@ -1681,7 +1681,7 @@ print("world")
 			expect(screen.getByText('Lines:')).toBeInTheDocument();
 		});
 
-		it('hides the stats bar when scrolled with enough leftover overflow', () => {
+		it('hides the stats bar when scrolled past the chrome height with enough overflow', () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -1704,6 +1704,65 @@ print("world")
 			fireEvent.scroll(container);
 
 			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+		});
+
+		it('does not hide the stats bar on a shallow scroll that would bounce after collapse', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			// Large overflow, but scrollTop is still inside the chrome band. Hiding
+			// here would collapse the header and clamp scrollTop back to "at top".
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 40,
+			});
+			fireEvent.scroll(container);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+		});
+
+		it('resets the stats bar visible when switching to a new file at the top', () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'tall.md', content: 'Some content\n'.repeat(20), path: '/test/tall.md' }}
+				/>
+			);
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			expect(container).not.toBeNull();
+
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 100,
+			});
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'small.md', content: 'Short\n', path: '/test/small.md' }}
+					initialScrollTop={0}
+				/>
+			);
+
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
 		});
 	});
 
