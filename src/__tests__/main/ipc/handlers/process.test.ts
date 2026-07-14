@@ -382,6 +382,9 @@ describe('process IPC handlers', () => {
 				'process:spawnTerminalTab',
 				'process:runCommand',
 				'permission:respond',
+				'process:respond-approval',
+				'process:set-agent-control',
+				'process:branch-session',
 			];
 
 			for (const channel of expectedChannels) {
