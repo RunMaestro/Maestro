@@ -11,7 +11,7 @@ function createMockStore(initial?: Partial<AccountStoreData>) {
 		assignments: {},
 		switchConfig: { ...ACCOUNT_SWITCH_DEFAULTS },
 		rotationOrder: [],
-		rotationIndex: 0,
+		rotationIndex: {},
 		...initial,
 	};
 
@@ -408,6 +408,34 @@ describe('AccountRegistry', () => {
 			// Should cycle through accounts
 			expect([first?.id, second?.id]).toContain(a.id);
 			expect([first?.id, second?.id]).toContain(b.id);
+		});
+
+		it('should maintain independent round-robin cursors for each provider', () => {
+			registry.updateSwitchConfig({ selectionStrategy: 'round-robin' });
+			const claudeA = registry.add(makeParams({ email: 'claude-a@example.com' }));
+			const claudeB = registry.add(makeParams({ email: 'claude-b@example.com' }));
+			registry.add({
+				...makeParams({ email: 'codex-a@example.com', configDir: '/home/user/.codex-a' }),
+				agentType: 'codex',
+			});
+			const codexB = registry.add({
+				...makeParams({ email: 'codex-b@example.com', configDir: '/home/user/.codex-b' }),
+				agentType: 'codex',
+			});
+
+			expect(registry.selectNextAccount([], undefined, 'claude-code')?.id).toBe(claudeB.id);
+			expect(registry.selectNextAccount([], undefined, 'codex')?.id).toBe(codexB.id);
+			expect(registry.selectNextAccount([], undefined, 'claude-code')?.id).toBe(claudeA.id);
+		});
+
+		it('should migrate a legacy numeric round-robin cursor when selecting', () => {
+			registry.updateSwitchConfig({ selectionStrategy: 'round-robin' });
+			const first = registry.add(makeParams({ email: 'first@example.com' }));
+			registry.add(makeParams({ email: 'second@example.com' }));
+			store.set('rotationIndex', 1);
+
+			expect(registry.selectNextAccount()?.id).toBe(first.id);
+			expect(store.get('rotationIndex')).toEqual({ 'claude-code': 0 });
 		});
 
 		describe('capacity-aware selection', () => {

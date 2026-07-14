@@ -123,6 +123,22 @@ describe('ProviderErrorTracker', () => {
 			const stats = tracker.getProviderStats('claude-code');
 			expect(stats.activeErrorCount).toBe(1);
 		});
+
+		it('should attribute a switched session to its new provider', () => {
+			tracker.recordError('session-1', 'claude-code', {
+				type: 'rate_limited',
+				message: 'Claude rate limited',
+				recoverable: true,
+			});
+			tracker.recordError('session-1', 'codex', {
+				type: 'network_error',
+				message: 'Codex network error',
+				recoverable: true,
+			});
+
+			expect(tracker.getProviderStats('claude-code').activeErrorCount).toBe(0);
+			expect(tracker.getProviderStats('codex').activeErrorCount).toBe(2);
+		});
 	});
 
 	describe('failover suggestion', () => {
@@ -323,11 +339,11 @@ describe('ProviderErrorTracker', () => {
 			});
 			expect(onFailoverSuggest).not.toHaveBeenCalled();
 
-			// Lower threshold to 2 — the session already has 2 errors
+			// Lower threshold to 2; the session already has 2 errors
 			// Next error should trigger with the new threshold (need to hit new threshold)
 			tracker.updateConfig({ ...defaultConfig, errorThreshold: 2 });
 
-			// The existing 2 errors don't re-check — but the session already has 2 errors,
+			// The existing 2 errors don't re-check; the session already has 2 errors,
 			// and failoverSuggested is still false, so the next check should trigger
 			// Actually, errors are already recorded. Let's clear and re-record.
 			tracker.clearSession('session-1');
@@ -369,7 +385,7 @@ describe('ProviderErrorTracker', () => {
 			// Wait for the window to expire
 			return new Promise<void>((resolve) => {
 				setTimeout(() => {
-					// Record another error — old ones should be pruned
+					// Record another error; old ones should be pruned
 					shortWindowTracker.recordError('session-1', 'claude-code', {
 						type: 'rate_limited',
 						message: 'Rate limited 3',

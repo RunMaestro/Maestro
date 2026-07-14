@@ -58,6 +58,17 @@ export interface UsageTotals {
 	totalCostUsd: number;
 }
 
+const EMPTY_TOTALS: UsageTotals = {
+	queryCount: 0,
+	totalTokens: 0,
+	totalCostUsd: 0,
+};
+
+export interface UseProviderHealthOptions {
+	enabled?: boolean;
+	refreshIntervalMs?: number;
+}
+
 export interface UseProviderHealthResult {
 	providers: ProviderHealth[];
 	isLoading: boolean;
@@ -145,25 +156,22 @@ function aggregateUsageByProvider(
 
 export function useProviderHealth(
 	sessions: Session[] | undefined,
-	refreshIntervalMs: number = DEFAULT_REFRESH_INTERVAL
+	{ enabled = true, refreshIntervalMs = DEFAULT_REFRESH_INTERVAL }: UseProviderHealthOptions = {}
 ): UseProviderHealthResult {
 	const [providers, setProviders] = useState<ProviderHealth[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>('day');
-	const [totals, setTotals] = useState<UsageTotals>({
-		queryCount: 0,
-		totalTokens: 0,
-		totalCostUsd: 0,
-	});
+	const [totals, setTotals] = useState<UsageTotals>(EMPTY_TOTALS);
 	const [failoverThreshold, setFailoverThreshold] = useState(
 		DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold
 	);
-	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const intervalRef = useRef<NodeJS.Timeout | number | undefined>(undefined);
 	const timeRangeRef = useRef(timeRange);
 	timeRangeRef.current = timeRange;
 
 	const refresh = useCallback(async () => {
+		if (!enabled) return;
 		try {
 			// Fetch availability, error stats, failover config, and usage stats in parallel
 			const [agents, errorStatsRecord, savedConfig, queryEvents] = await Promise.all([
@@ -242,25 +250,30 @@ export function useProviderHealth(
 			console.warn('[useProviderHealth] Failed to refresh:', err);
 			setIsLoading(false);
 		}
-	}, [sessions]);
+	}, [sessions, enabled]);
 
 	// Initial fetch + polling interval
 	useEffect(() => {
+		if (!enabled) return;
+
 		refresh();
 
 		intervalRef.current = setInterval(refresh, refreshIntervalMs);
 		return () => {
-			if (intervalRef.current) clearInterval(intervalRef.current);
+			clearInterval(intervalRef.current);
 		};
-	}, [refresh, refreshIntervalMs]);
+	}, [enabled, refresh, refreshIntervalMs]);
 
 	// Re-fetch when time range changes
 	useEffect(() => {
+		if (!enabled) return;
 		refresh();
-	}, [timeRange]);
+	}, [enabled, refresh, timeRange]);
 
 	// Subscribe to failover suggestions for immediate refresh (Task 4)
 	useEffect(() => {
+		if (!enabled) return;
+
 		const cleanups: (() => void)[] = [];
 
 		const c1 = window.maestro.providers?.onFailoverSuggest?.(() => refresh());
@@ -270,12 +283,27 @@ export function useProviderHealth(
 		if (c2) cleanups.push(c2);
 
 		return () => cleanups.forEach((fn) => fn());
-	}, [refresh]);
+	}, [enabled, refresh]);
 
 	const hasDegradedProvider = providers.some(
 		(p) => p.status === 'degraded' || p.status === 'failing'
 	);
 	const hasFailingProvider = providers.some((p) => p.status === 'failing');
+
+	if (!enabled) {
+		return {
+			providers: [],
+			isLoading: false,
+			lastUpdated: null,
+			timeRange: 'day',
+			setTimeRange: () => {},
+			refresh,
+			failoverThreshold: DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold,
+			hasDegradedProvider: false,
+			hasFailingProvider: false,
+			totals: EMPTY_TOTALS,
+		};
+	}
 
 	return {
 		providers,

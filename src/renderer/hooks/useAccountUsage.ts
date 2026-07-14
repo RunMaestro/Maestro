@@ -61,6 +61,10 @@ const DEFAULT_INTERVAL_MS = 30_000;
 const URGENT_INTERVAL_MS = 5_000;
 const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+export interface UseAccountUsageOptions {
+	enabled?: boolean;
+}
+
 const EMPTY_RATE_METRICS: RateMetrics = {
 	tokensPerHour: 0,
 	tokensPerDay: 0,
@@ -247,14 +251,14 @@ export function calculateRateMetrics(
  * Also fetches billing window history once on mount for P90 prediction
  * and recalculates predictions when the current window's usage changes.
  */
-export function useAccountUsage(): {
+export function useAccountUsage({ enabled = true }: UseAccountUsageOptions = {}): {
 	metrics: Record<string, AccountUsageMetrics>;
 	loading: boolean;
 	refresh: () => void;
 } {
 	const [metrics, setMetrics] = useState<Record<string, AccountUsageMetrics>>({});
 	const [loading, setLoading] = useState(true);
-	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const intervalRef = useRef<NodeJS.Timeout | number | undefined>(undefined);
 	const currentIntervalMs = useRef(DEFAULT_INTERVAL_MS);
 	const windowHistoriesRef = useRef<
 		Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>>
@@ -319,6 +323,7 @@ export function useAccountUsage(): {
 	);
 
 	const recalculate = useCallback(() => {
+		if (!enabled) return;
 		setMetrics((prev) => {
 			const updated: Record<string, AccountUsageMetrics> = {};
 			for (const [id, m] of Object.entries(prev)) {
@@ -338,9 +343,10 @@ export function useAccountUsage(): {
 
 			return updated;
 		});
-	}, [calculateDerivedMetrics]);
+	}, [calculateDerivedMetrics, enabled]);
 
 	const fetchUsage = useCallback(async () => {
+		if (!enabled) return;
 		try {
 			const allUsage = await window.maestro.accounts.getAllUsage();
 			if (!allUsage || typeof allUsage !== 'object') return;
@@ -369,10 +375,12 @@ export function useAccountUsage(): {
 			console.warn('[useAccountUsage] Failed to fetch usage data:', err);
 			setLoading(false);
 		}
-	}, [calculateDerivedMetrics]);
+	}, [calculateDerivedMetrics, enabled]);
 
 	// Load window histories once on mount for P90 predictions
 	useEffect(() => {
+		if (!enabled) return;
+
 		async function loadHistories() {
 			try {
 				const accounts = await window.maestro.accounts.list();
@@ -412,9 +420,11 @@ export function useAccountUsage(): {
 			}
 		}
 		loadHistories();
-	}, []);
+	}, [enabled]);
 
 	useEffect(() => {
+		if (!enabled) return;
+
 		fetchUsage();
 
 		// Subscribe to real-time usage updates
@@ -448,19 +458,21 @@ export function useAccountUsage(): {
 
 		return () => {
 			unsub();
-			if (intervalRef.current) clearInterval(intervalRef.current);
+			clearInterval(intervalRef.current);
 		};
-	}, [fetchUsage, calculateDerivedMetrics, recalculate]);
+	}, [enabled, fetchUsage, calculateDerivedMetrics, recalculate]);
+
+	if (!enabled) return { metrics: {}, loading: false, refresh: fetchUsage };
 
 	return { metrics, loading, refresh: fetchUsage };
 }
 
 /**
  * Format milliseconds into a human-readable time string.
- * Examples: "2h 34m", "45m", "4m 32s", "< 1m", "—" (if 0 or negative)
+ * Examples: "2h 34m", "45m", "4m 32s", "< 1m", "-" (if 0 or negative)
  */
 export function formatTimeRemaining(ms: number): string {
-	if (ms <= 0) return '—';
+	if (ms <= 0) return '-';
 	const hours = Math.floor(ms / (1000 * 60 * 60));
 	const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
 	if (hours > 0) return `${hours}h ${minutes}m`;

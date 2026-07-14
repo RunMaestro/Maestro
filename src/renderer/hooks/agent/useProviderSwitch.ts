@@ -49,7 +49,7 @@ export interface ProviderSwitchRequest {
 	/**
 	 * When set, reactivate this archived session instead of creating a new one.
 	 * The groomed context from the source is appended to the target session's logs.
-	 * Mutually exclusive with createMergedSession — uses session mutation instead.
+	 * Mutually exclusive with createMergedSession; uses session mutation instead.
 	 */
 	mergeBackInto?: Session;
 }
@@ -352,7 +352,7 @@ export function useProviderSwitch(): UseProviderSwitchResult {
 				let resultTabId: string;
 
 				if (mergeBackInto) {
-					// Step 4a: Merge-back mode — reactivate the archived session
+					// Step 4a: Merge-back mode: reactivate the archived session
 					useOperationStore.getState().setTransferState({
 						state: 'creating',
 						progress: {

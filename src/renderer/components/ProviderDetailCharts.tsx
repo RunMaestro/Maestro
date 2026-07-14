@@ -153,7 +153,7 @@ function QueryVolumeTrendChart({
 		return Array.from({ length: tickCount }, (_, i) => Math.round((yMax / (tickCount - 1)) * i));
 	}, [maxVal]);
 
-	// X-axis labels — show max 7
+	// X-axis labels: show max 7
 	const xLabelInterval = useMemo(
 		() => Math.max(1, Math.ceil(dailyTrend.length / 7)),
 		[dailyTrend.length]

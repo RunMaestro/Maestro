@@ -4,6 +4,7 @@ import * as os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import { shellEscapeForDoubleQuotes } from '../utils/shell-escape';
 import type { MultiplexableAgent } from '../../shared/account-types';
 import {
 	ACCOUNT_PROVIDER_META,
@@ -13,6 +14,24 @@ import {
 
 const LOG_CONTEXT = 'account-setup';
 const execFileAsync = promisify(execFile);
+
+function validateManagedAccountDirectory(configDir: string): string | null {
+	const resolvedConfigDir = path.resolve(configDir);
+	const resolvedHomeDir = path.resolve(os.homedir());
+	if (path.dirname(resolvedConfigDir) !== resolvedHomeDir) {
+		return 'Safety check failed: directory must be a direct child of the home directory';
+	}
+
+	const basename = path.basename(resolvedConfigDir);
+	const managedPrefixes = Object.values(ACCOUNT_PROVIDER_META)
+		.map((m) => m.dirPrefix)
+		.filter((p): p is string => !!p);
+	if (!managedPrefixes.some((prefix) => basename.startsWith(prefix))) {
+		return `Safety check failed: directory name must start with one of ${managedPrefixes.join(', ')}`;
+	}
+
+	return null;
+}
 
 /**
  * Resources symlinked from the provider's base dir into each account directory
@@ -58,7 +77,7 @@ export async function validateBaseClaudeDir(): Promise<{
 		errors.push(`${baseDir} does not exist. Run 'claude' at least once to create it.`);
 	}
 
-	// Check for auth tokens — Claude Code uses .credentials.json (current) or .claude.json (legacy)
+	// Check for auth tokens; Claude Code uses .credentials.json (current) or .claude.json (legacy)
 	try {
 		await fs.access(path.join(baseDir, '.credentials.json'));
 	} catch {
@@ -66,7 +85,7 @@ export async function validateBaseClaudeDir(): Promise<{
 			await fs.access(path.join(baseDir, '.claude.json'));
 		} catch {
 			errors.push(
-				'No .credentials.json or .claude.json found — Claude Code may not be authenticated.'
+				'No .credentials.json or .claude.json found; Claude Code may not be authenticated.'
 			);
 		}
 	}
@@ -84,7 +103,7 @@ interface ProviderDiscoveryConfig {
 	dirPrefix?: string;
 	/** Single config dir to detect as an account (e.g., '.codex' matches ~/.codex) */
 	singleDir?: string;
-	/** Auth files to check (relative to config dir) — first found wins */
+	/** Auth files to check (relative to config dir); first found wins */
 	authFiles: string[];
 	/** Extract identity from auth/config file content */
 	extractIdentity: (content: string) => string | null;
@@ -185,7 +204,7 @@ export async function discoverExistingAccounts(): Promise<
 					});
 				}
 			} catch {
-				// Directory doesn't exist — skip
+				// Directory doesn't exist; skip
 			}
 		}
 	}
@@ -219,7 +238,7 @@ function extractCodexIdentity(content: string): string | null {
 		const json = JSON.parse(content);
 		return json.email || json.user?.email || json.account?.email || null;
 	} catch {
-		// Not JSON — might be config.toml, no identity info there
+		// Not JSON; might be config.toml, no identity info there
 		return null;
 	}
 }
@@ -247,7 +266,7 @@ function extractGeminiIdentity(content: string): string | null {
 
 /**
  * Extract the email address from a .claude.json file content.
- * The structure may vary — look for common fields like "email", "accountEmail", etc.
+ * The structure may vary; look for common fields like "email", "accountEmail", etc.
  */
 function extractEmailFromClaudeJson(content: string): string | null {
 	try {
@@ -314,7 +333,7 @@ export async function createAccountDirectory(
 			await fs.access(configDir);
 			return { success: false, configDir, error: `Directory ${configDir} already exists` };
 		} catch {
-			// Good — doesn't exist yet
+			// Good; doesn't exist yet
 		}
 
 		// Claude requires an authenticated base dir because core resources are symlinked from it.
@@ -340,15 +359,15 @@ export async function createAccountDirectory(
 				// Check if target already exists
 				try {
 					await fs.lstat(target);
-					// Already exists (maybe from a previous attempt) — skip
+					// Already exists (maybe from a previous attempt); skip
 					continue;
 				} catch {
-					// Doesn't exist — create symlink
+					// Doesn't exist; create symlink
 				}
 				await fs.symlink(source, target);
 				logger.info(`Symlinked ${resource}`, LOG_CONTEXT);
 			} catch {
-				// Source doesn't exist — not all resources are required
+				// Source doesn't exist; not all resources are required
 				logger.warn(`Skipped symlink for ${resource} (source not found)`, LOG_CONTEXT);
 			}
 		}
@@ -386,14 +405,14 @@ export async function validateAccountSymlinks(configDir: string): Promise<{
 					broken.push(resource);
 				}
 			}
-			// Not a symlink — could be a real file/dir, which is fine
+			// Not a symlink; could be a real file/dir, which is fine
 		} catch {
-			// Missing entirely — check if source exists
+			// Missing entirely; check if source exists
 			try {
 				await fs.access(path.join(baseDir, resource));
 				missing.push(resource);
 			} catch {
-				// Source also doesn't exist — OK, resource is optional
+				// Source also doesn't exist; OK, resource is optional
 			}
 		}
 	}
@@ -408,6 +427,9 @@ export async function repairAccountSymlinks(configDir: string): Promise<{
 	repaired: string[];
 	errors: string[];
 }> {
+	const safetyError = validateManagedAccountDirectory(configDir);
+	if (safetyError) return { repaired: [], errors: [safetyError] };
+
 	const agentType = inferProviderFromDir(configDir);
 	const baseDir = path.join(os.homedir(), getAccountProviderMeta(agentType).baseDirName);
 	const { broken, missing } = await validateAccountSymlinks(configDir);
@@ -519,17 +541,9 @@ export async function removeAccountDirectory(configDir: string): Promise<{
 	error?: string;
 }> {
 	try {
-		// Safety check: only remove Maestro-managed account dirs (~/.claude-*, ~/.codex-*, ...).
-		// Bare base dirs (~/.claude, ~/.codex, ~/.gemini) never match a prefix and are protected.
-		const basename = path.basename(configDir);
-		const managedPrefixes = Object.values(ACCOUNT_PROVIDER_META)
-			.map((m) => m.dirPrefix)
-			.filter((p): p is string => !!p);
-		if (!managedPrefixes.some((prefix) => basename.startsWith(prefix))) {
-			return {
-				success: false,
-				error: `Safety check failed: directory name must start with one of ${managedPrefixes.join(', ')}`,
-			};
+		const safetyError = validateManagedAccountDirectory(configDir);
+		if (safetyError) {
+			return { success: false, error: safetyError };
 		}
 
 		await fs.rm(configDir, { recursive: true, force: true });
@@ -562,9 +576,11 @@ export async function validateRemoteAccountDir(
 	if (sshConfig.port) sshArgs.push('-p', String(sshConfig.port));
 	sshArgs.push(sshTarget);
 
+	const escapedConfigDir = shellEscapeForDoubleQuotes(configDir);
+
 	try {
 		// Check directory exists
-		const checkCmd = `test -d "${configDir}" && echo "DIR_EXISTS" || echo "DIR_MISSING"`;
+		const checkCmd = `test -d "${escapedConfigDir}" && echo "DIR_EXISTS" || echo "DIR_MISSING"`;
 		const { stdout: dirCheck } = await execFileAsync('ssh', [...sshArgs, checkCmd], {
 			timeout: 10000,
 		});
@@ -574,14 +590,14 @@ export async function validateRemoteAccountDir(
 		}
 
 		// Check .claude.json exists (auth)
-		const authCmd = `test -f "${configDir}/.claude.json" && echo "AUTH_EXISTS" || echo "AUTH_MISSING"`;
+		const authCmd = `test -f "${escapedConfigDir}/.claude.json" && echo "AUTH_EXISTS" || echo "AUTH_MISSING"`;
 		const { stdout: authCheck } = await execFileAsync('ssh', [...sshArgs, authCmd], {
 			timeout: 10000,
 		});
 		const hasAuth = authCheck.trim() === 'AUTH_EXISTS';
 
 		// Check symlinks (projects/ is the critical one for --resume)
-		const symlinkCmd = `test -L "${configDir}/projects" && test -d "${configDir}/projects" && echo "SYMLINKS_OK" || echo "SYMLINKS_BROKEN"`;
+		const symlinkCmd = `test -L "${escapedConfigDir}/projects" && test -d "${escapedConfigDir}/projects" && echo "SYMLINKS_OK" || echo "SYMLINKS_BROKEN"`;
 		const { stdout: symlinkCheck } = await execFileAsync('ssh', [...sshArgs, symlinkCmd], {
 			timeout: 10000,
 		});

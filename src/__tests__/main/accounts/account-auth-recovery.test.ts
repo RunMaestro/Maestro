@@ -94,6 +94,7 @@ describe('AccountAuthRecovery', () => {
 	let recovery: AccountAuthRecovery;
 	let mockProcessManager: {
 		kill: ReturnType<typeof vi.fn>;
+		getAll: ReturnType<typeof vi.fn>;
 	};
 	let mockAccountRegistry: {
 		get: ReturnType<typeof vi.fn>;
@@ -110,6 +111,7 @@ describe('AccountAuthRecovery', () => {
 
 		mockProcessManager = {
 			kill: vi.fn().mockReturnValue(true),
+			getAll: vi.fn().mockReturnValue([]),
 		};
 
 		mockAccountRegistry = {
@@ -151,6 +153,21 @@ describe('AccountAuthRecovery', () => {
 			await promise;
 
 			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-1');
+		});
+
+		it('should kill suffixed AI processes when the base session is not running', async () => {
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+			mockProcessManager.kill.mockReturnValueOnce(false).mockReturnValueOnce(true);
+			mockProcessManager.getAll.mockReturnValue([{ sessionId: 'session-1-ai-tab-1' }]);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			await promise;
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-1-ai-tab-1');
 		});
 
 		it('should spawn claude login with correct CLAUDE_CONFIG_DIR', async () => {

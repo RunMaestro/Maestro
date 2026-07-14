@@ -506,7 +506,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 																		style={{ color: theme.colors.error }}
 																	>
 																		<AlertTriangle className="w-3 h-3" />
-																		OAuth token expired — run:{' '}
+																		OAuth token expired. Run:{' '}
 																		<code
 																			className="font-mono select-all px-1 py-0.5 rounded"
 																			style={{

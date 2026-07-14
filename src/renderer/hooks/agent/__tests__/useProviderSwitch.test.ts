@@ -9,7 +9,7 @@ import { findArchivedPredecessor } from '../useProviderSwitch';
 import type { Session, ToolType } from '../../../types';
 
 // ---------------------------------------------------------------------------
-// Minimal session factory — only the fields findArchivedPredecessor touches
+// Minimal session factory; only the fields findArchivedPredecessor touches
 // ---------------------------------------------------------------------------
 
 function makeSession(overrides: Partial<Session> & { id: string; toolType: ToolType }): Session {
@@ -105,7 +105,7 @@ describe('findArchivedPredecessor', () => {
 			id: 'parent',
 			toolType: 'claude-code',
 			migratedFromSessionId: 'gp',
-			// NOT archived — was reactivated
+			// NOT archived; was reactivated
 		});
 		const current = makeSession({
 			id: 'current',
@@ -149,7 +149,7 @@ describe('findArchivedPredecessor', () => {
 		const current = makeSession({
 			id: 'current',
 			toolType: 'claude-code',
-			archivedByMigration: true, // Matches everything — but is the current session
+			archivedByMigration: true, // Matches everything, but is the current session
 		});
 		const sessions = [current];
 

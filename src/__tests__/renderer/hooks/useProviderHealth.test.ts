@@ -74,9 +74,29 @@ beforeEach(() => {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useProviderHealth', () => {
+	it('returns inert defaults without fetching or subscribing when disabled', async () => {
+		const { result } = renderHook(() => useProviderHealth([], { enabled: false }));
+
+		expect(result.current).toMatchObject({
+			providers: [],
+			isLoading: false,
+			lastUpdated: null,
+			totals: { queryCount: 0, totalTokens: 0, totalCostUsd: 0 },
+		});
+		await act(async () => {
+			result.current.refresh();
+		});
+		expect(window.maestro.agents.detect).not.toHaveBeenCalled();
+		expect(window.maestro.providers.getAllErrorStats).not.toHaveBeenCalled();
+		expect(window.maestro.providers.onFailoverSuggest).not.toHaveBeenCalled();
+		expect(window.maestro.stats.onStatsUpdate).not.toHaveBeenCalled();
+	});
+
 	it('loads providers on mount and sets loading state', async () => {
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		expect(result.current.isLoading).toBe(true);
 
@@ -95,7 +115,9 @@ describe('useProviderHealth', () => {
 
 	it('computes healthy status for available providers with 0 errors', async () => {
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -109,7 +131,9 @@ describe('useProviderHealth', () => {
 
 	it('computes not_installed status for unavailable providers', async () => {
 		const sessions: Session[] = [];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -122,7 +146,9 @@ describe('useProviderHealth', () => {
 
 	it('computes idle status for available providers with 0 sessions', async () => {
 		const sessions: Session[] = [];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -146,7 +172,9 @@ describe('useProviderHealth', () => {
 		vi.mocked(window.maestro.providers.getAllErrorStats).mockResolvedValue(errorStats);
 
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -172,7 +200,9 @@ describe('useProviderHealth', () => {
 		vi.mocked(window.maestro.providers.getAllErrorStats).mockResolvedValue(errorStats);
 
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -190,7 +220,9 @@ describe('useProviderHealth', () => {
 			createSession('s2', 'claude-code'),
 			createSession('s3', 'claude-code', { archivedByMigration: true }),
 		];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -206,7 +238,9 @@ describe('useProviderHealth', () => {
 		});
 
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -217,7 +251,7 @@ describe('useProviderHealth', () => {
 
 	it('subscribes to failover suggest events', async () => {
 		const sessions = [createSession('s1', 'claude-code')];
-		renderHook(() => useProviderHealth(sessions, 600_000));
+		renderHook(() => useProviderHealth(sessions, { refreshIntervalMs: 600_000 }));
 
 		await waitFor(() => {
 			expect(window.maestro.providers.onFailoverSuggest).toHaveBeenCalled();
@@ -226,7 +260,9 @@ describe('useProviderHealth', () => {
 
 	it('refreshes on failover suggest event', async () => {
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -257,7 +293,9 @@ describe('useProviderHealth', () => {
 
 	it('sets lastUpdated timestamp after refresh', async () => {
 		const sessions: Session[] = [];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -269,7 +307,9 @@ describe('useProviderHealth', () => {
 
 	it('provides a manual refresh function', async () => {
 		const sessions: Session[] = [];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
@@ -301,7 +341,9 @@ describe('useProviderHealth', () => {
 		vi.mocked(window.maestro.providers.getAllErrorStats).mockResolvedValue(errorStats);
 
 		const sessions = [createSession('s1', 'claude-code')];
-		const { result } = renderHook(() => useProviderHealth(sessions, 600_000));
+		const { result } = renderHook(() =>
+			useProviderHealth(sessions, { refreshIntervalMs: 600_000 })
+		);
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);

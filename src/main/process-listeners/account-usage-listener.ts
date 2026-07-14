@@ -42,10 +42,10 @@ export function setupAccountUsageListener(
 
 			// Look up the account assigned to this session
 			const assignment = accountRegistry.getAssignment(sessionId);
-			if (!assignment) return; // No account assigned — skip
+			if (!assignment) return; // No account assigned; skip
 
 			const account = accountRegistry.get(assignment.accountId);
-			if (!account) return; // Account was deleted — skip
+			if (!account) return; // Account was deleted; skip
 
 			const statsDb = getStatsDB();
 			if (!statsDb.isReady()) return; // Stats DB not ready

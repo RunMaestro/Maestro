@@ -128,7 +128,7 @@ function computeP95(durations: number[]): number {
 }
 
 // Rough cost estimation per token type (Claude Code default pricing)
-// These are approximations — actual costs vary by model
+// These are approximations; actual costs vary by model
 const INPUT_COST_PER_TOKEN = 0.000003;
 const OUTPUT_COST_PER_TOKEN = 0.000015;
 const CACHE_READ_COST_PER_TOKEN = 0.0000003;
@@ -184,7 +184,7 @@ export function useProviderDetail(
 
 	const refresh = useCallback(async () => {
 		try {
-			// Fetch all data in parallel — includes failover config for threshold + all error stats for comparison
+			// Fetch all data in parallel; includes failover config for threshold + all error stats for comparison
 			const [agents, errorStats, allErrorStats, savedConfig, queryEvents, aggregation] =
 				await Promise.all([
 					window.maestro.agents.detect() as Promise<Array<{ id: string; available: boolean }>>,
@@ -274,7 +274,7 @@ export function useProviderDetail(
 				avgDurationMs: d.count > 0 ? Math.round(d.duration / d.count) : 0,
 			}));
 
-			// Hourly pattern — use per-agent aggregation from SQL (consistent with daily trend)
+			// Hourly pattern: use per-agent aggregation from SQL (consistent with daily trend)
 			const hourlyData = aggregation.byAgentByHour?.[toolType] ?? [];
 			const hourlyMap = new Map<number, { count: number; duration: number }>();
 			for (let h = 0; h < 24; h++) {
@@ -329,7 +329,7 @@ export function useProviderDetail(
 			}
 			migrations.sort((a, b) => b.timestamp - a.timestamp);
 
-			// P95 response time — only meaningful with >= 20 data points
+			// P95 response time: only meaningful with >= 20 data points
 			const p95 = durations.length >= 20 ? computeP95(durations) : usage.avgDurationMs;
 
 			// Cross-provider comparison from byAgent aggregation
@@ -340,12 +340,12 @@ export function useProviderDetail(
 
 			for (const [agentId, data] of Object.entries(byAgent)) {
 				totalQueriesAll += data.count;
-				// Cost isn't in byAgent — we accumulate a rough estimate from duration ratio
+				// Cost isn't in byAgent; we accumulate a rough estimate from duration ratio
 				const avgMs = data.count > 0 ? Math.round(data.duration / data.count) : 0;
 				avgResponseRanking.push({ provider: getAgentDisplayName(agentId as ToolType), avgMs });
 			}
 
-			// For cost, we need per-provider data — use usage stats for this provider
+			// For cost, we need per-provider data; use usage stats for this provider
 			// and aggregate from byAgent counts as proxy (actual cost only available for this provider)
 			// A simpler approach: total cost from aggregation isn't per-provider, so use the
 			// current provider's cost and approximate others from query ratios

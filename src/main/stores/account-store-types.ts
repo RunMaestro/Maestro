@@ -13,6 +13,6 @@ export interface AccountStoreData {
 	switchConfig: AccountSwitchConfig;
 	/** Ordered list of account IDs for round-robin assignment */
 	rotationOrder: string[];
-	/** Index of the last account used in round-robin rotation */
-	rotationIndex: number;
+	/** Last account used in round-robin rotation, keyed by agent type */
+	rotationIndex: Record<string, number>;
 }

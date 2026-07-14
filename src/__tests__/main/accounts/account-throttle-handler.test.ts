@@ -245,10 +245,11 @@ describe('AccountThrottleHandler', () => {
 		expect(mockRegistry.setStatus).not.toHaveBeenCalled();
 	});
 
-	it('should skip if stats DB is not ready', () => {
+	it('should continue throttle handling when stats DB is not ready', () => {
 		const account = createMockAccount();
 		mockRegistry.get.mockReturnValue(account);
 		mockStatsDb.isReady.mockReturnValue(false);
+		mockRegistry.getSwitchConfig.mockReturnValue(createMockSwitchConfig({ enabled: false }));
 
 		handler.handleThrottle({
 			sessionId: 'session-1',
@@ -258,7 +259,11 @@ describe('AccountThrottleHandler', () => {
 		});
 
 		expect(mockStatsDb.insertThrottleEvent).not.toHaveBeenCalled();
-		expect(mockRegistry.setStatus).not.toHaveBeenCalled();
+		expect(mockRegistry.setStatus).toHaveBeenCalledWith('acct-1', 'throttled');
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:throttled',
+			expect.objectContaining({ tokensAtThrottle: 0 })
+		);
 	});
 
 	it('should catch and log errors without throwing', () => {

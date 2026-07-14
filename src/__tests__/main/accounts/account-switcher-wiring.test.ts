@@ -313,7 +313,7 @@ describe('AccountSwitcher wiring', () => {
 			const handler = handlers.get('process:write')!;
 			const result = await handler({}, 'session-1', 'Hello');
 
-			// Should succeed without error — graceful degradation
+			// Should succeed without error; graceful degradation
 			expect(result).toBe(true);
 			expect(mockProcessManager.write).toHaveBeenCalledWith('session-1', 'Hello');
 		});

@@ -398,7 +398,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
 									</span>
 								)}
-								{/* Account badge — Virtuosos Encore flag + session has an account assigned */}
+								{/* Account badge: Virtuosos Encore flag + session has an account assigned */}
 								{(() => {
 									if (!virtuososEnabled) return null;
 									const sess = sessions.find((s) => s.id === node.agentSessionId);

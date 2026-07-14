@@ -170,6 +170,7 @@ import {
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
+import { useOwnedSessionGate } from './hooks/agent/internal/useOwnedSessionGate';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
@@ -178,7 +179,7 @@ import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import services
-// gitService — now used in useModalHandlers (Tier 3C)
+// gitService - now used in useModalHandlers (Tier 3C)
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
@@ -214,6 +215,7 @@ import {
 	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from './utils/spawnHelpers';
 import { buildThinkingItems } from './utils/thinkingItems';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -232,7 +234,7 @@ function MaestroConsoleInner() {
 		// Settings Modal
 		settingsModalOpen,
 		setSettingsModalOpen,
-		// settingsTab — now self-sourced in AppStandaloneModals
+		// settingsTab - now self-sourced in AppStandaloneModals
 		setSettingsTab,
 		// New Instance Modal
 		newInstanceModalOpen,
@@ -242,7 +244,7 @@ function MaestroConsoleInner() {
 		setEditAgentModalOpen,
 		editAgentSession,
 		setEditAgentSession,
-		// Delete Agent Modal — open state and session now self-sourced in AppStandaloneModals
+		// Delete Agent Modal - open state and session now self-sourced in AppStandaloneModals
 		// Shortcuts Help Modal
 		shortcutsHelpOpen,
 		setShortcutsHelpOpen,
@@ -262,7 +264,7 @@ function MaestroConsoleInner() {
 		setFeedbackModalOpen,
 		// Update Check Modal
 		setUpdateCheckModalOpen,
-		// standingOvationData, firstRunCelebrationData — now self-sourced in AppOverlays (Tier 1A)
+		// standingOvationData, firstRunCelebrationData - now self-sourced in AppOverlays (Tier 1A)
 		// Log Viewer
 		logViewerOpen,
 		setLogViewerOpen,
@@ -272,14 +274,14 @@ function MaestroConsoleInner() {
 		// Usage Dashboard
 		setUsageDashboardOpen,
 		setAgentRunDashboardOpen,
-		// pendingKeyboardMasteryLevel — now self-sourced in AppOverlays (Tier 1A)
-		// Playground Panel — playgroundOpen now self-sourced in AppStandaloneModals
+		// pendingKeyboardMasteryLevel - now self-sourced in AppOverlays (Tier 1A)
+		// Playground Panel - playgroundOpen now self-sourced in AppStandaloneModals
 		setPlaygroundOpen,
-		// Debug Package Modal — debugPackageModalOpen now self-sourced in AppStandaloneModals
+		// Debug Package Modal - debugPackageModalOpen now self-sourced in AppStandaloneModals
 		setDebugPackageModalOpen,
-		// Debug Application Stats Modal — self-sourced in AppStandaloneModals
+		// Debug Application Stats Modal - self-sourced in AppStandaloneModals
 		setDebugApplicationStatsOpen,
-		// Windows Warning Modal — windowsWarningModalOpen now self-sourced in AppStandaloneModals
+		// Windows Warning Modal - windowsWarningModalOpen now self-sourced in AppStandaloneModals
 		// Confirmation Modal
 		confirmModalOpen,
 		setConfirmModalOpen,
@@ -326,10 +328,10 @@ function MaestroConsoleInner() {
 		setBatchRunnerModalOpen,
 		// Auto Run Setup Modal
 		setAutoRunSetupModalOpen,
-		// Marketplace Modal — marketplaceModalOpen now self-sourced in AppStandaloneModals
+		// Marketplace Modal - marketplaceModalOpen now self-sourced in AppStandaloneModals
 		setMarketplaceModalOpen,
-		// Wizard Resume Modal — open state and resume state now self-sourced in AppStandaloneModals
-		// setWizardResumeModalOpen, setWizardResumeState — now used in useWizardHandlers (Tier 3D)
+		// Wizard Resume Modal - open state and resume state now self-sourced in AppStandaloneModals
+		// setWizardResumeModalOpen, setWizardResumeState - now used in useWizardHandlers (Tier 3D)
 		// Agent Error Modal
 		// Worktree Modals
 		createWorktreeSession,
@@ -356,17 +358,17 @@ function MaestroConsoleInner() {
 		// Git Log Viewer
 		gitLogOpen,
 		setGitLogOpen,
-		// Tour Overlay — tourOpen, tourFromWizard now self-sourced in AppStandaloneModals
+		// Tour Overlay - tourOpen, tourFromWizard now self-sourced in AppStandaloneModals
 		// setTourFromWizard now used in useWizardHandlers via getModalActions()
-		// Symphony Modal — symphonyModalOpen now self-sourced in AppStandaloneModals
+		// Symphony Modal - symphonyModalOpen now self-sourced in AppStandaloneModals
 		setSymphonyModalOpen,
-		// Director's Notes Modal — directorNotesOpen now self-sourced in AppStandaloneModals
+		// Director's Notes Modal - directorNotesOpen now self-sourced in AppStandaloneModals
 		setDirectorNotesOpen,
-		// Maestro Cue Modal — cueModalOpen now self-sourced in AppStandaloneModals
+		// Maestro Cue Modal - cueModalOpen now self-sourced in AppStandaloneModals
 		setCueModalOpen,
-		// Pianola Modal — pianolaModalOpen now self-sourced in AppStandaloneModals
+		// Pianola Modal - pianolaModalOpen now self-sourced in AppStandaloneModals
 		setPianolaModalOpen,
-		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
+		// Maestro Cue YAML Editor - open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
 		// Virtuosos Modal
 		virtuososOpen,
@@ -524,7 +526,7 @@ function MaestroConsoleInner() {
 	});
 
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---
-	// Reactive values — each selector triggers re-render only when its specific value changes
+	// Reactive values - each selector triggers re-render only when its specific value changes
 	const sessions = useSessionStore((s) => s.sessions);
 	// PERF: Sidebar-stable view of `sessions` for the sort/navigation pipeline.
 	// `sidebarSessionEquality` ignores log/usage/cycle counters, so the array
@@ -547,7 +549,7 @@ function MaestroConsoleInner() {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const activeSession = useActiveSession();
 
-	// Actions — stable references from store, never trigger re-renders
+	// Actions - stable references from store, never trigger re-renders
 	const {
 		setSessions,
 		setGroups,
@@ -555,12 +557,12 @@ function MaestroConsoleInner() {
 		setRemovedWorktreePaths,
 	} = useMemo(() => useSessionStore.getState(), []);
 
-	// batchedUpdater — React hook for timer lifecycle (reads store directly)
+	// batchedUpdater - React hook for timer lifecycle (reads store directly)
 	const batchedUpdater = useBatchedSessionUpdates();
 	const batchedUpdaterRef = useRef(batchedUpdater);
 	batchedUpdaterRef.current = batchedUpdater;
 
-	// setActiveSessionId wrapper — flushes batched updates before switching
+	// setActiveSessionId wrapper - flushes batched updates before switching
 	const setActiveSessionIdFromContext = useCallback(
 		(id: string) => {
 			batchedUpdaterRef.current.flushNow();
@@ -569,7 +571,7 @@ function MaestroConsoleInner() {
 		[storeSetActiveSessionId]
 	);
 
-	// Ref-like getters — read current state from store without stale closures
+	// Ref-like getters - read current state from store without stale closures
 	// Used by 106 callback sites that need current state (e.g., sessionsRef.current)
 	const sessionsRef = useMemo(
 		() => ({
@@ -589,9 +591,9 @@ function MaestroConsoleInner() {
 		[]
 	) as React.MutableRefObject<string>;
 
-	// initialLoadComplete — provided by useSessionRestoration hook
+	// initialLoadComplete - provided by useSessionRestoration hook
 
-	// cyclePositionRef — Proxy bridges ref API to store number
+	// cyclePositionRef - Proxy bridges ref API to store number
 	const cyclePositionRef = useMemo(() => {
 		const ref = { current: useSessionStore.getState().cyclePosition };
 		return new Proxy(ref, {
@@ -657,7 +659,7 @@ function MaestroConsoleInner() {
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
-	// flashNotification, successFlashNotification — now self-sourced in AppStandaloneModals
+	// flashNotification, successFlashNotification - now self-sourced in AppStandaloneModals
 	const selectedSidebarIndex = useUIStore((s) => s.selectedSidebarIndex);
 	const sidebarExtraSelection = useUIStore((s) => s.sidebarExtraSelection);
 
@@ -730,6 +732,7 @@ function MaestroConsoleInner() {
 	// the single-window app / web / isolation tests fall back to "show here".
 	const windowCtx = useWindowContextOptional();
 	const currentWindowId = windowCtx?.windowId ?? null;
+	const ownedSessionGate = useOwnedSessionGate();
 
 	// Stable actions from groupChatStore (non-reactive)
 	const {
@@ -809,11 +812,11 @@ function MaestroConsoleInner() {
 	} = useInputContext();
 
 	// File Explorer State (reads from fileExplorerStore)
-	// isGraphViewOpen, graphFocusFilePath — now self-sourced in AppStandaloneModals
+	// isGraphViewOpen, graphFocusFilePath - now self-sourced in AppStandaloneModals
 	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
 	const [gistPublishModalOpen, setGistPublishModalOpen] = useState(false);
-	// tabGistContent — now self-sourced in AppStandaloneModals
+	// tabGistContent - now self-sourced in AppStandaloneModals
 	const fileGistUrls = useTabStore((s) => s.fileGistUrls);
 
 	// Note: Delete Agent Modal State is now self-sourced in AppStandaloneModals
@@ -861,7 +864,7 @@ function MaestroConsoleInner() {
 	// Note: Images are now stored per-tab in AITab.stagedImages
 	// See stagedImages/setStagedImages computed from active tab below
 
-	// Global Live Mode — extracted to useLiveMode hook (Tier 3B)
+	// Global Live Mode - extracted to useLiveMode hook (Tier 3B)
 	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode();
 
 	// Auto Run document management state (from batchStore)
@@ -878,7 +881,7 @@ function MaestroConsoleInner() {
 
 	// Startup effects (splash, GitHub CLI, Windows warning, gist URLs, beta updates,
 	// update check, leaderboard sync, SpecKit/OpenSpec/BMAD loading, SSH configs, stats DB check,
-	// notification settings sync, playground debug) — provided by useAppInitialization hook
+	// notification settings sync, playground debug) - provided by useAppInitialization hook
 
 	// Expose debug helpers to window for console access
 	// No dependency array - always keep functions fresh
@@ -1072,7 +1075,7 @@ function MaestroConsoleInner() {
 			notifyToast({
 				type: 'info',
 				title: 'Re-authenticating Virtuoso',
-				message: `Auth expired for ${data.accountName} — attempting automatic re-login`,
+				message: `Auth expired for ${data.accountName} - attempting automatic re-login`,
 				duration: 8_000,
 			});
 		});
@@ -1101,7 +1104,7 @@ function MaestroConsoleInner() {
 			notifyToast({
 				type: 'success',
 				title: 'Virtuoso Re-authenticated',
-				message: `${data.accountName} logged in again — agent resumed`,
+				message: `${data.accountName} logged in again - agent resumed`,
 				duration: 5_000,
 			});
 		});
@@ -1148,9 +1151,17 @@ function MaestroConsoleInner() {
 				lastPrompt,
 				reason,
 			} = data;
+			if (!ownedSessionGate.current?.(switchSessionId)) return;
 
-			// Find the session that needs respawning (match by base session ID)
-			const session = sessionsRef.current.find((s) => switchSessionId.startsWith(s.id));
+			const eventImages =
+				'images' in data && Array.isArray(data.images)
+					? data.images.filter((image): image is string => typeof image === 'string')
+					: undefined;
+
+			// Find the session that needs respawning, preferring the longest matching id.
+			const session = sessionsRef.current
+				.filter((s) => switchSessionId === s.id || switchSessionId.startsWith(`${s.id}-ai-`))
+				.sort((a, b) => b.id.length - a.id.length)[0];
 			if (!session) {
 				console.error('[AccountSwitch] Session not found for respawn:', switchSessionId);
 				return;
@@ -1164,7 +1175,7 @@ function MaestroConsoleInner() {
 				cancelRetry(session.id, tab.id);
 			}
 
-			// Update session with new account info and CLAUDE_CONFIG_DIR
+			// Update session with new account info and CLAUDE_CONFIG_DIR.
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== session.id) return s;
@@ -1185,7 +1196,7 @@ function MaestroConsoleInner() {
 			// the new account could repeat side effects. The next user message
 			// picks up the new account via session.accountId + CLAUDE_CONFIG_DIR.
 			// Automatic switches (throttle / auth recovery) resume the interrupted
-			// turn — but only when there is a recorded prompt to resume.
+			// turn, but only when there is a recorded prompt to resume.
 			if (reason === 'manual' || !lastPrompt) {
 				notifyToast({
 					type: 'info',
@@ -1197,26 +1208,38 @@ function MaestroConsoleInner() {
 			}
 
 			try {
-				// Get agent config for respawn
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
 					console.error('[AccountSwitch] Agent not found for respawn:', session.toolType);
 					return;
 				}
 
-				// Get the active tab's agent session ID for --resume
-				const tab = getActiveTab(session);
+				const tabPrefix = `${session.id}-ai-`;
+				const throttledTabId = switchSessionId.startsWith(tabPrefix)
+					? switchSessionId.slice(tabPrefix.length)
+					: undefined;
+				const throttledTab = throttledTabId
+					? session.aiTabs?.find((candidate) => candidate.id === throttledTabId)
+					: undefined;
+				const tab = throttledTab ?? getActiveTab(session);
 				const tabAgentSessionId = tab?.agentSessionId;
 				const commandToUse = agent.path ?? agent.command ?? '';
 				const agentArgs = agent.args ?? [];
+				const interruptedImages = eventImages ?? tab?.stagedImages;
+				const hasImages = !!interruptedImages?.length;
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: tab?.id,
+				});
+				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+					isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					hasImages,
+				});
 
-				// Determine the target session ID (with tab suffix)
+				// Switch events do not currently include images. Reuse staged tab images
+				// when available so an interrupted image turn retains its attachments.
 				const targetSessionId = `${session.id}-ai-${tab?.id || 'default'}`;
-
-				// Respawn as a normal batch turn: prompt in the spawn config (batch
-				// agents never read stdin), --resume for conversation continuity,
-				// and the tab's permission mode preserved. The main process builds
-				// agent-specific args exactly like a user-initiated turn.
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -1224,25 +1247,30 @@ function MaestroConsoleInner() {
 					command: commandToUse,
 					args: agentArgs,
 					prompt: lastPrompt,
+					images: hasImages ? interruptedImages : undefined,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					permissionMode: tab?.permissionMode,
-					readOnlyMode: tab?.permissionMode === 'readonly',
+					readOnlyMode: tab?.readOnlyMode === true || tab?.permissionMode === 'readonly',
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
 					sessionCustomEnvVars: {
 						...session.customEnvVars,
 						CLAUDE_CONFIG_DIR: configDir,
 					},
-					sessionCustomModel: session.customModel,
+					sessionCustomModel: tab?.customModel ?? session.customModel,
+					sessionCustomEffort: tab?.customEffort ?? session.customEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					accountId: toAccountId,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					sendPromptViaStdin,
+					sendPromptViaStdinRaw,
 				});
 
 				notifyToast({
 					type: 'info',
 					title: 'Account Switched',
-					message: `Switched to account ${toAccountName} (${reason}) — resuming interrupted turn`,
+					message: `Switched to account ${toAccountName} (${reason}): resuming interrupted turn`,
 					duration: 5_000,
 				});
 			} catch (error) {
@@ -1266,14 +1294,23 @@ function MaestroConsoleInner() {
 		});
 
 		const unsubSwitchExecute = window.maestro.accounts.onSwitchExecute(async (data) => {
-			// Auto-switch mode: execute the switch immediately
-			const { sessionId: switchSessionId, fromAccountId, toAccountId, reason } = data as any;
+			// Auto-switch mode: execute the switch immediately.
+			const { sessionId, fromAccountId, toAccountId, reason } = data;
+			if (
+				typeof sessionId !== 'string' ||
+				typeof fromAccountId !== 'string' ||
+				typeof toAccountId !== 'string'
+			) {
+				return;
+			}
+			if (!ownedSessionGate.current?.(sessionId)) return;
+
 			try {
 				await window.maestro.accounts.executeSwitch({
-					sessionId: switchSessionId,
+					sessionId,
 					fromAccountId,
 					toAccountId,
-					reason: reason ?? 'throttled',
+					reason: typeof reason === 'string' ? reason : 'throttled',
 					automatic: true,
 				});
 			} catch (error) {
@@ -1286,7 +1323,7 @@ function MaestroConsoleInner() {
 			unsubSwitchFailed();
 			unsubSwitchExecute();
 		};
-	}, [encoreFeatures.virtuosos]);
+	}, [encoreFeatures.virtuosos, ownedSessionGate]);
 
 	// Subscribe to account switch prompt events (user confirmation needed)
 	useEffect(() => {
@@ -1885,7 +1922,7 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
-	// Flat list of (session, tab) pairs — one entry per busy tab across the agents this window owns.
+	// Flat list of (session, tab) pairs - one entry per busy tab across the agents this window owns.
 	// This allows the ThinkingStatusPill to show all active work, even when multiple tabs
 	// within the same agent are busy in parallel.
 	// Multi-window: gate on WindowContext.ownsSession so a window's pill never surfaces an agent
@@ -1934,7 +1971,7 @@ function MaestroConsoleInner() {
 			showFlash: showSuccessFlash,
 		});
 
-	// handleDirectorNotesResumeSession — extracted to useModalHandlers (Tier 3C)
+	// handleDirectorNotesResumeSession - extracted to useModalHandlers (Tier 3C)
 	// Bridge: keep handleResumeSessionRef in sync for useModalHandlers
 	handleResumeSessionRef.current = handleResumeSession;
 
@@ -2247,12 +2284,12 @@ function MaestroConsoleInner() {
 		[]
 	);
 
-	// toggleBookmark — provided by useSessionCrud hook
+	// toggleBookmark - provided by useSessionCrud hook
 
 	const handleFocusFileInGraph = useFileExplorerStore.getState().focusFileInGraph;
 	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
 
-	// Tab export handlers (copy context, export HTML, publish gist) — extracted to useTabExportHandlers
+	// Tab export handlers (copy context, export HTML, publish gist) - extracted to useTabExportHandlers
 	const {
 		handleCopyContext,
 		handleExportHtml,
@@ -2278,7 +2315,7 @@ function MaestroConsoleInner() {
 
 	// Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now updated in useAgentExecution hook
 
-	// Inline wizard context — hook needs the full context, App.tsx retains pass-through refs
+	// Inline wizard context - hook needs the full context, App.tsx retains pass-through refs
 	const inlineWizardContext = useInlineWizardContext();
 	const {
 		clearError: clearInlineWizardError,
@@ -2289,7 +2326,7 @@ function MaestroConsoleInner() {
 	} = inlineWizardContext;
 
 	// --- WIZARD HANDLERS (extracted hook) ---
-	// Refs for circular deps — set after useInputHandlers/useAutoRunHandlers
+	// Refs for circular deps - set after useInputHandlers/useAutoRunHandlers
 	const handleAutoRunRefreshRef = useRef<(() => void) | null>(null);
 	const setInputValueRef = useRef<((value: string) => void) | null>(null);
 
@@ -2380,7 +2417,7 @@ function MaestroConsoleInner() {
 	);
 
 	// In-place recovery from session_not_found errors. The hook drives the
-	// inline SessionRecoveryCard surfaced by useAgentErrorListener — it grooms
+	// inline SessionRecoveryCard surfaced by useAgentErrorListener - it grooms
 	// (or passes raw) the tab's prior conversation, sets pendingMergedContext,
 	// and re-sends the failed prompt via processInputRef so the existing
 	// spawn path stands up a fresh session on the same tab.
@@ -2393,7 +2430,7 @@ function MaestroConsoleInner() {
 	// Force Send: dispatch a queued item immediately with forceParallel=true.
 	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
 	// but as a single click. Only useful when another tab in this agent is busy
-	// AND this tab is idle — processInput(forceParallel:true) then sends now.
+	// AND this tab is idle - processInput(forceParallel:true) then sends now.
 	const handleForceSendQueuedItem = useCallback(
 		(itemId: string) => {
 			const sessionId = activeSessionIdRef.current;
@@ -2609,7 +2646,7 @@ function MaestroConsoleInner() {
 	);
 
 	// Session lifecycle operations (rename, delete, star, unread, groups persistence, nav tracking)
-	// — provided by useSessionLifecycle hook (Phase 2H)
+	// - provided by useSessionLifecycle hook (Phase 2H)
 	const {
 		handleSaveEditAgent,
 		handleRenameTab,
@@ -2631,7 +2668,7 @@ function MaestroConsoleInner() {
 
 	// NOTE: File tree scroll restore is now handled by useFileExplorerEffects hook (Phase 2.6)
 
-	// Navigation history tracking — provided by useSessionLifecycle hook (Phase 2H)
+	// Navigation history tracking - provided by useSessionLifecycle hook (Phase 2H)
 
 	// Auto Run document loading (list, tree, task counts, file watching)
 	useAutoRunDocumentLoader();
@@ -2650,7 +2687,7 @@ function MaestroConsoleInner() {
 		ownsSession,
 	});
 
-	// cycleSession — provided by useCycleSession hook
+	// cycleSession - provided by useCycleSession hook
 	const { cycleSession } = useCycleSession({
 		sortedSessions,
 		handleOpenGroupChat,
@@ -2711,7 +2748,7 @@ function MaestroConsoleInner() {
 		showUnreadAgentsOnly,
 	});
 
-	// goToNextUnreadTab — jump to the next agent with unread tabs, clearing current agent's unreads
+	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
 	const goToNextUnreadTab = useCallback(() => {
 		const currentActiveId = useSessionStore.getState().activeSessionId;
 		// Treat a tab with an active inline wizard as a draft target: an unfinished
@@ -2748,19 +2785,19 @@ function MaestroConsoleInner() {
 		}
 	}, [sortedSessions, setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
 
-	// showConfirmation, performDeleteSession — provided by useSessionLifecycle hook (Phase 2H)
-	// deleteSession, deleteWorktreeGroup — provided by useSessionCrud hook
+	// showConfirmation, performDeleteSession - provided by useSessionLifecycle hook (Phase 2H)
+	// deleteSession, deleteWorktreeGroup - provided by useSessionCrud hook
 
-	// addNewSession, createNewSession — provided by useSessionCrud hook
+	// addNewSession, createNewSession - provided by useSessionCrud hook
 
 	// handleWizardLaunchSession now in useWizardHandlers hook
 
-	// toggleInputMode — extracted to useInputMode hook (Tier 3A)
+	// toggleInputMode - extracted to useInputMode hook (Tier 3A)
 	const { toggleInputMode } = useInputMode({ setTabCompletionOpen, setSlashCommandOpen });
 
-	// toggleUnreadFilter, toggleTabStar, toggleTabUnread — provided by useSessionLifecycle hook (Phase 2H)
+	// toggleUnreadFilter, toggleTabStar, toggleTabUnread - provided by useSessionLifecycle hook (Phase 2H)
 
-	// toggleGlobalLive, restartWebServer — extracted to useLiveMode hook (Tier 3B)
+	// toggleGlobalLive, restartWebServer - extracted to useLiveMode hook (Tier 3B)
 
 	// --- REMOTE HANDLERS (remote command processing, SSH name mapping) ---
 	const { handleQuickActionsToggleRemoteControl, sessionSshRemoteNames } = useRemoteHandlers({
@@ -2774,26 +2811,26 @@ function MaestroConsoleInner() {
 		sshRemoteConfigs,
 	});
 
-	// handleViewGitDiff — extracted to useModalHandlers (Tier 3C)
+	// handleViewGitDiff - extracted to useModalHandlers (Tier 3C)
 
-	// startRenamingSession, finishRenamingSession — provided by useSessionCrud hook
+	// startRenamingSession, finishRenamingSession - provided by useSessionCrud hook
 
-	// handleDragStart, handleDragOver — provided by useSessionCrud hook
+	// handleDragStart, handleDragOver - provided by useSessionCrud hook
 
 	// Note: processInput has been extracted to useInputProcessing hook (see line ~2128)
 
 	// Note: handleRemoteCommand effect extracted to useRemoteHandlers hook (Phase 2K)
 
-	// Tour actions (right panel control from tour overlay) — extracted to useTourActions hook
+	// Tour actions (right panel control from tour overlay) - extracted to useTourActions hook
 	useTourActions();
 
-	// Idle notification — fires configured command when all agents/batches finish
+	// Idle notification - fires configured command when all agents/batches finish
 	useIdleNotification();
 
-	// Restart-when-idle — installs a downloaded update once the app is idle
+	// Restart-when-idle - installs a downloaded update once the app is idle
 	useRestartWhenIdle();
 
-	// Queue processing (execution, startup recovery) — extracted to useQueueProcessing hook
+	// Queue processing (execution, startup recovery) - extracted to useQueueProcessing hook
 	const { processQueuedItem } = useQueueProcessing({
 		conductorProfile,
 		customAICommandsRef,
@@ -2804,7 +2841,7 @@ function MaestroConsoleInner() {
 	// Bridge: keep the original processQueuedItemRef in sync
 	processQueuedItemRef.current = processQueuedItem;
 
-	// handleInterrupt — provided by useInterruptHandler hook
+	// handleInterrupt - provided by useInterruptHandler hook
 	const { handleInterrupt } = useInterruptHandler({
 		sessionsRef,
 		cancelPendingSynopsis,
@@ -2913,7 +2950,7 @@ function MaestroConsoleInner() {
 		handleCloseCreateGroupModal();
 	}, [clearPendingMoveToGroup, handleCloseCreateGroupModal]);
 
-	// Prompt Composer modal handlers — extracted to usePromptComposerHandlers hook
+	// Prompt Composer modal handlers - extracted to usePromptComposerHandlers hook
 	const {
 		handlePromptComposerSubmit,
 		handlePromptComposerSend,
@@ -2927,7 +2964,7 @@ function MaestroConsoleInner() {
 		setInputValue,
 	});
 
-	// Quick Actions modal handlers — extracted to useQuickActionsHandlers hook
+	// Quick Actions modal handlers - extracted to useQuickActionsHandlers hook
 	const {
 		handleQuickActionsToggleReadOnlyMode,
 		handleQuickActionsToggleTabEnterToSend,
@@ -2960,7 +2997,7 @@ function MaestroConsoleInner() {
 		handlePublishTabGist,
 	});
 
-	// Queue browser handlers — extracted to useQueueHandlers hook
+	// Queue browser handlers - extracted to useQueueHandlers hook
 	const {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
@@ -2969,7 +3006,7 @@ function MaestroConsoleInner() {
 		handleEditQueueItem,
 	} = useQueueHandlers();
 
-	// Symphony contribution handler — extracted to useSymphonyContribution hook
+	// Symphony contribution handler - extracted to useSymphonyContribution hook
 	const { handleStartContribution } = useSymphonyContribution({
 		startBatchRun,
 		inputRef,
@@ -3758,7 +3795,7 @@ function MaestroConsoleInner() {
 				}
 				modals={
 					<AppModals
-						// Common props (sessions/groups/groupChats + modal booleans self-sourced from stores — Tier 1B)
+						// Common props (sessions/groups/groupChats + modal booleans self-sourced from stores - Tier 1B)
 						theme={theme}
 						shortcuts={shortcuts}
 						tabShortcuts={tabShortcuts}
@@ -4166,16 +4203,18 @@ function MaestroConsoleInner() {
 				/>
 			)}
 			{/* Virtuosos Modal */}
-			<VirtuososModal
-				isOpen={virtuososOpen && encoreFeatures.virtuosos === true}
-				onClose={() => setVirtuososOpen(false)}
-				theme={theme}
-				sessions={sessions}
-				onSelectSession={(sessionId) => {
-					setVirtuososOpen(false);
-					setActiveSessionId(sessionId);
-				}}
-			/>
+			{encoreFeatures.virtuosos === true && (
+				<VirtuososModal
+					isOpen={virtuososOpen}
+					onClose={() => setVirtuososOpen(false)}
+					theme={theme}
+					sessions={sessions}
+					onSelectSession={(sessionId) => {
+						setVirtuososOpen(false);
+						setActiveSessionId(sessionId);
+					}}
+				/>
+			)}
 			{/* Provider Switch Modal (Virtuosos vertical swapping) */}
 			{switchProviderSession && (
 				<SwitchProviderModal
@@ -4207,7 +4246,7 @@ function MaestroConsoleInner() {
 }
 
 /**
- * GitStatusProviderFromStore — reads sessions/activeSessionId from the store
+ * GitStatusProviderFromStore - reads sessions/activeSessionId from the store
  * so GitStatusProvider can sit ABOVE MaestroConsoleInner. Required because
  * useModalHandlers (called inside MaestroConsoleInner) consumes useGitDetail,
  * and a context provider must wrap its consumer.

@@ -150,13 +150,13 @@ export interface ProcessListenerDependencies {
 	};
 	/** Stats database getter */
 	getStatsDB: () => StatsDB;
-	/** Account registry getter (optional — only needed for account multiplexing) */
+	/** Account registry getter (optional; only needed for account multiplexing) */
 	getAccountRegistry?: () => AccountRegistry | null;
-	/** Account throttle handler getter (optional — only needed for account multiplexing) */
+	/** Account throttle handler getter (optional; only needed for account multiplexing) */
 	getThrottleHandler?: () => AccountThrottleHandler | null;
-	/** Account auth recovery getter (optional — only needed for account multiplexing) */
+	/** Account auth recovery getter (optional; only needed for account multiplexing) */
 	getAuthRecovery?: () => import('../accounts/account-auth-recovery').AccountAuthRecovery | null;
-	/** Provider error tracker (optional — only needed for Virtuosos provider failover) */
+	/** Provider error tracker (optional; only needed for Virtuosos provider failover) */
 	getProviderErrorTracker?: () =>
 		| import('../providers/provider-error-tracker').ProviderErrorTracker
 		| null;

@@ -484,7 +484,7 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 
 				const account = registry.get(assignment.accountId);
 				if (!account) {
-					// Account was removed — clear the assignment
+					// Account was removed; clear the assignment
 					registry.removeAssignment(sessionId);
 					corrections.push({
 						sessionId,
@@ -494,7 +494,7 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 						status: 'removed',
 					});
 				} else if (account.status !== 'active') {
-					// Account exists but is throttled/disabled — still usable but warn
+					// Account exists but is throttled/disabled; still usable but warn
 					corrections.push({
 						sessionId,
 						accountId: account.id,

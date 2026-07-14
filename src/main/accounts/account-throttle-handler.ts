@@ -13,6 +13,7 @@ import type { AccountRegistry } from './account-registry';
 import type { StatsDB } from '../stats';
 import { DEFAULT_TOKEN_WINDOW_MS } from '../../shared/account-types';
 import { getWindowBounds } from './account-utils';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'account-throttle';
 
@@ -48,19 +49,20 @@ export class AccountThrottleHandler {
 			if (!account) return;
 
 			const statsDb = this.getStatsDB();
-			if (!statsDb.isReady()) return;
-
-			const windowMs = account.tokenWindowMs || DEFAULT_TOKEN_WINDOW_MS;
-			const now = Date.now();
-			const { start, end } = getWindowBounds(now, windowMs);
-
-			// Get tokens at time of throttle
-			const usage = statsDb.getAccountUsageInWindow(accountId, start, end);
-			const tokensAtThrottle =
-				usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-
-			// Record throttle event
-			statsDb.insertThrottleEvent(accountId, sessionId, errorType, tokensAtThrottle, start, end);
+			const statsDbReady = statsDb.isReady();
+			let tokensAtThrottle = 0;
+			if (statsDbReady) {
+				const windowMs = account.tokenWindowMs || DEFAULT_TOKEN_WINDOW_MS;
+				const now = Date.now();
+				const { start, end } = getWindowBounds(now, windowMs);
+				const usage = statsDb.getAccountUsageInWindow(accountId, start, end);
+				tokensAtThrottle =
+					usage.inputTokens +
+					usage.outputTokens +
+					usage.cacheReadTokens +
+					usage.cacheCreationTokens;
+				statsDb.insertThrottleEvent(accountId, sessionId, errorType, tokensAtThrottle, start, end);
+			}
 
 			// 2. Mark account as throttled
 			this.accountRegistry.setStatus(accountId, 'throttled');
@@ -73,7 +75,7 @@ export class AccountThrottleHandler {
 			// 3. Determine if auto-switch should occur
 			const switchConfig = this.accountRegistry.getSwitchConfig();
 			if (!switchConfig.enabled) {
-				// Auto-switching disabled — just notify
+				// Auto-switching disabled; just notify
 				this.safeSend('account:throttled', {
 					accountId,
 					accountName: account.name,
@@ -87,10 +89,9 @@ export class AccountThrottleHandler {
 			}
 
 			// 4. Find next available account of the SAME provider (capacity-aware when stats are available)
-			const statsDb2 = this.getStatsDB();
 			const nextAccount = this.accountRegistry.selectNextAccount(
 				[accountId],
-				statsDb2.isReady() ? statsDb2 : undefined,
+				statsDbReady ? statsDb : undefined,
 				account.agentType ?? 'claude-code'
 			);
 			if (!nextAccount) {
@@ -134,6 +135,7 @@ export class AccountThrottleHandler {
 				});
 			}
 		} catch (error) {
+			void captureException(error, { sessionId, accountId });
 			this.logger.error('Failed to handle throttle', LOG_CONTEXT, {
 				error: String(error),
 				sessionId,

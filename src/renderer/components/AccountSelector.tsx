@@ -55,10 +55,12 @@ export function AccountSelector({
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [isOpen, setIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
-	const { metrics: usageMetrics } = useAccountUsage();
+	const { metrics: usageMetrics } = useAccountUsage({ enabled: virtuososEnabled });
 
 	// Fetch accounts on mount and when dropdown opens (refresh)
 	useEffect(() => {
+		if (!virtuososEnabled) return;
+
 		let cancelled = false;
 		(async () => {
 			try {
@@ -74,7 +76,7 @@ export function AccountSelector({
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen, currentAccountId, agentType]);
+	}, [virtuososEnabled, isOpen, currentAccountId, agentType]);
 
 	// Close dropdown on outside click
 	useEffect(() => {

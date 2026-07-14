@@ -38,13 +38,6 @@ export function UnarchiveConflictModal({
 		onClose();
 	}, [onDeleteConflicting, onClose]);
 
-	const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
-		if (e.key === 'Enter') {
-			e.stopPropagation();
-			action();
-		}
-	};
-
 	const providerName = getAgentDisplayName(archivedSession.toolType);
 	const conflictName = conflictingSession.name || 'Unnamed Agent';
 
@@ -63,7 +56,6 @@ export function UnarchiveConflictModal({
 					<button
 						type="button"
 						onClick={onClose}
-						onKeyDown={(e) => handleKeyDown(e, onClose)}
 						className="px-3 py-1.5 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap mr-auto"
 						style={{
 							borderColor: theme.colors.border,
@@ -76,7 +68,6 @@ export function UnarchiveConflictModal({
 						ref={archiveButtonRef}
 						type="button"
 						onClick={handleArchiveConflicting}
-						onKeyDown={(e) => handleKeyDown(e, handleArchiveConflicting)}
 						className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 						style={{
 							backgroundColor: theme.colors.accent,
@@ -88,7 +79,6 @@ export function UnarchiveConflictModal({
 					<button
 						type="button"
 						onClick={handleDeleteConflicting}
-						onKeyDown={(e) => handleKeyDown(e, handleDeleteConflicting)}
 						className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 						style={{
 							backgroundColor: theme.colors.error,

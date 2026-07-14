@@ -173,7 +173,7 @@ describe('account-setup', () => {
 			const result = await validateBaseClaudeDir();
 			expect(result.valid).toBe(false);
 			expect(result.errors).toContain(
-				'No .credentials.json or .claude.json found — Claude Code may not be authenticated.'
+				'No .credentials.json or .claude.json found; Claude Code may not be authenticated.'
 			);
 		});
 	});
@@ -300,6 +300,14 @@ describe('account-setup', () => {
 			const result = await removeAccountDirectory('/home/user/important-stuff');
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Safety check');
+		});
+
+		it('should reject managed directories outside the home directory', async () => {
+			const result = await removeAccountDirectory('/tmp/.claude-test');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('direct child of the home directory');
+			expect(mockRm).not.toHaveBeenCalled();
 		});
 
 		it('should remove valid .claude- directories', async () => {
@@ -467,9 +475,20 @@ describe('account-setup', () => {
 			mockUnlink.mockResolvedValue(undefined);
 			mockSymlink.mockResolvedValue(undefined);
 
-			const result = await repairAccountSymlinks('/fake/.claude-test');
+			const result = await repairAccountSymlinks(path.join(TEST_HOME, '.claude-test'));
 			expect(result.errors).toHaveLength(0);
 			expect(result.repaired.length).toBeGreaterThan(0);
+		});
+
+		it('should reject repairs outside managed account directories', async () => {
+			const result = await repairAccountSymlinks('/tmp/.claude-test');
+
+			expect(result.repaired).toEqual([]);
+			expect(result.errors).toContain(
+				'Safety check failed: directory must be a direct child of the home directory'
+			);
+			expect(mockUnlink).not.toHaveBeenCalled();
+			expect(mockSymlink).not.toHaveBeenCalled();
 		});
 	});
 
@@ -494,6 +513,29 @@ describe('account-setup', () => {
 			expect(result.exists).toBe(true);
 			expect(result.hasAuth).toBe(true);
 			expect(result.symlinksValid).toBe(true);
+		});
+
+		it('should escape config directory values in every remote command', async () => {
+			mockExecFile.mockImplementation(
+				(
+					_cmd: string,
+					args: string[],
+					_opts: unknown,
+					callback: (error: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const command = args[args.length - 1];
+					if (command.includes('DIR_EXISTS')) callback(null, 'DIR_EXISTS\n', '');
+					else if (command.includes('AUTH_EXISTS')) callback(null, 'AUTH_EXISTS\n', '');
+					else callback(null, 'SYMLINKS_OK\n', '');
+				}
+			);
+
+			await validateRemoteAccountDir({ host: 'example.com' }, '/home/dev/.claude-"$unsafe');
+
+			const remoteCommands = mockExecFile.mock.calls.map(([, args]) => args[args.length - 1]);
+			for (const command of remoteCommands) {
+				expect(command).toContain('/home/dev/.claude-\\"\\$unsafe');
+			}
 		});
 
 		it('should detect missing remote directory', async () => {

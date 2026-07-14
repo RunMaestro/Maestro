@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as os from 'os';
 import type { AccountProfile, AccountStatus } from '../../shared/account-types';
 import type { AccountStoreData } from '../../main/stores/account-store-types';
+import { ACCOUNT_PROVIDER_META } from '../../shared/accountProviderMeta';
 
 export interface CLIAccountInfo {
 	id: string;
@@ -89,12 +90,12 @@ export async function readAccountsFromStore(): Promise<CLIAccountInfo[]> {
 		}
 	}
 
-	// Store file doesn't exist at any path — try filesystem discovery
+	// Store file doesn't exist at any path: try filesystem discovery
 	return discoverAccountsFromFilesystem();
 }
 
 /**
- * Discover accounts by scanning for ~/.claude-* directories.
+ * Discover accounts by scanning Maestro-managed account directories.
  * Fallback when electron-store is not available.
  */
 async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
@@ -111,10 +112,14 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
-		if (!entry.name.startsWith('.claude-')) continue;
+
+		const provider = Object.values(ACCOUNT_PROVIDER_META).find(
+			({ dirPrefix }) => dirPrefix && entry.name.startsWith(dirPrefix)
+		);
+		if (!provider?.dirPrefix) continue;
 
 		const configDir = path.join(homeDir, entry.name);
-		const name = entry.name.replace('.claude-', '');
+		const name = entry.name.slice(provider.dirPrefix.length);
 
 		// Check for auth info
 		let email = '';
@@ -133,7 +138,7 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 			configDir,
 			status: 'active',
 			isDefault: false,
-			agentType: 'claude-code',
+			agentType: provider.agentType,
 		});
 	}
 

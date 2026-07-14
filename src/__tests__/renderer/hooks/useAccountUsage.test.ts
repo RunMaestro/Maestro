@@ -17,6 +17,19 @@ describe('useAccountUsage', () => {
 		vi.useRealTimers();
 	});
 
+	it('returns inert defaults without fetching or subscribing when disabled', async () => {
+		const { result } = renderHook(() => useAccountUsage({ enabled: false }));
+
+		expect(result.current).toMatchObject({ metrics: {}, loading: false });
+		await act(async () => {
+			result.current.refresh();
+		});
+		expect(window.maestro.accounts.list).not.toHaveBeenCalled();
+		expect(window.maestro.accounts.getAllUsage).not.toHaveBeenCalled();
+		expect(window.maestro.accounts.getWindowHistory).not.toHaveBeenCalled();
+		expect(window.maestro.accounts.onUsageUpdate).not.toHaveBeenCalled();
+	});
+
 	it('returns loading true initially and false after fetch', async () => {
 		vi.mocked(window.maestro.accounts.getAllUsage).mockResolvedValue({});
 
@@ -302,9 +315,9 @@ describe('calculatePrediction', () => {
 });
 
 describe('formatTimeRemaining', () => {
-	it('returns "—" for zero or negative values', () => {
-		expect(formatTimeRemaining(0)).toBe('—');
-		expect(formatTimeRemaining(-1000)).toBe('—');
+	it('returns "-" for zero or negative values', () => {
+		expect(formatTimeRemaining(0)).toBe('-');
+		expect(formatTimeRemaining(-1000)).toBe('-');
 	});
 
 	it('formats hours and minutes', () => {

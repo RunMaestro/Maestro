@@ -47,7 +47,6 @@ export function setupProcessListeners(
 	setupSessionIdListener(processManager, deps);
 
 	// Agent error listener (account throttle/auth recovery + provider failover)
-	const providerErrorTracker = deps.getProviderErrorTracker?.() ?? undefined;
 	setupErrorListener(
 		processManager,
 		deps,
@@ -58,14 +57,14 @@ export function setupProcessListeners(
 					getAuthRecovery: deps.getAuthRecovery,
 				}
 			: undefined,
-		providerErrorTracker
+		deps.getProviderErrorTracker
 	);
 
 	// Reset provider error tracking on successful query completion so only
 	// CONSECUTIVE failures accumulate toward the failover threshold.
-	if (providerErrorTracker) {
+	if (deps.getProviderErrorTracker) {
 		processManager.on('query-complete', (sessionId: string) => {
-			providerErrorTracker.clearSession(sessionId);
+			deps.getProviderErrorTracker?.()?.clearSession(sessionId);
 		});
 	}
 

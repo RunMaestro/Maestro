@@ -26,7 +26,7 @@ describe('getWindowBounds', () => {
 	});
 
 	it('places a mid-window timestamp inside the correct window', () => {
-		// 7h after midnight → second 5h window (5h–10h)
+		// 7h after midnight: second 5h window (5h-10h)
 		const ts = dayStart + 7 * HOUR;
 		const { start, end } = getWindowBounds(ts, FIVE_HOURS);
 		expect(start).toBe(dayStart + FIVE_HOURS);
@@ -40,7 +40,7 @@ describe('getWindowBounds', () => {
 	});
 
 	it('the last window of the day can extend past midnight', () => {
-		// 23h with 5h windows → window 4 spans 20h–25h (crosses midnight)
+		// 23h with 5h windows: window 4 spans 20h-25h (crosses midnight)
 		const ts = dayStart + 23 * HOUR;
 		const { start, end } = getWindowBounds(ts, FIVE_HOURS);
 		expect(start).toBe(dayStart + 20 * HOUR);

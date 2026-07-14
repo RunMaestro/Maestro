@@ -33,7 +33,7 @@ export function setupErrorListener(
 		getThrottleHandler: () => AccountThrottleHandler | null;
 		getAuthRecovery?: () => AccountAuthRecovery | null;
 	},
-	providerErrorTracker?: ProviderErrorTracker
+	getProviderErrorTracker?: () => ProviderErrorTracker | null
 ): void {
 	const { safeSend, logger } = deps;
 
@@ -49,6 +49,7 @@ export function setupErrorListener(
 		safeSend('agent:error', sessionId, agentError);
 
 		// Feed into provider error tracker for failover detection (Virtuosos)
+		const providerErrorTracker = getProviderErrorTracker?.();
 		if (providerErrorTracker && agentError.agentId) {
 			providerErrorTracker.recordError(sessionId, agentError.agentId as ToolType, {
 				type: agentError.type,

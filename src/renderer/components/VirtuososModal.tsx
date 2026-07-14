@@ -2,9 +2,9 @@
  * VirtuososModal - Standalone modal for account (Virtuoso) management
  *
  * Three-tab layout:
- * 1. Accounts — AccountsPanel (account CRUD, discovery, plan presets, auto-switch)
- * 2. Providers — ProviderPanel (provider status, failover config, migration history)
- * 3. Usage — VirtuosoUsageView (real-time metrics, predictions, history, throttle events)
+ * 1. Accounts: AccountsPanel (account CRUD, discovery, plan presets, auto-switch)
+ * 2. Providers: ProviderPanel (provider status, failover config, migration history)
+ * 3. Usage: VirtuosoUsageView (real-time metrics, predictions, history, throttle events)
  */
 
 import { useState, useEffect } from 'react';
@@ -41,7 +41,9 @@ export function VirtuososModal({
 	onSelectSession,
 }: VirtuososModalProps) {
 	const [activeTab, setActiveTab] = useState<VirtuosoTab>('config');
-	const { hasDegradedProvider, hasFailingProvider } = useProviderHealth(sessions);
+	const { hasDegradedProvider, hasFailingProvider } = useProviderHealth(sessions, {
+		enabled: isOpen,
+	});
 
 	// Keyboard navigation: Cmd/Ctrl+Shift+[ and Cmd/Ctrl+Shift+]
 	useEffect(() => {

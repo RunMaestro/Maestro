@@ -649,7 +649,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								/>
 							</span>
 							<span className="text-xs" style={{ color: theme.colors.accent }}>
-								Waiting for virtuoso recovery — will auto-resume
+								Waiting for virtuoso recovery; will auto-resume
 							</span>
 							<button
 								onClick={() => window.maestro.accounts.checkRecovery()}

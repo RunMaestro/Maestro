@@ -321,7 +321,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 							newSession.accountName = defaultAccount.name;
 						}
 					} catch {
-						// Accounts not configured or unavailable — proceed without assignment
+						// Accounts not configured or unavailable; proceed without assignment
 					}
 				}
 

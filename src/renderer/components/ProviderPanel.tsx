@@ -2,9 +2,9 @@
  * ProviderPanel - Provider status, failover configuration, and migration history
  *
  * Three sections:
- * 1. Provider Status Grid — shows detected agents with availability and session counts
- * 2. Failover Configuration — controls for automatic provider failover
- * 3. Migration History — timeline of past provider switches
+ * 1. Provider Status Grid: shows detected agents with availability and session counts
+ * 2. Failover Configuration: controls for automatic provider failover
+ * 3. Migration History: timeline of past provider switches
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -148,7 +148,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 
 		for (const session of sessions) {
 			if (session.migratedFromSessionId && session.migratedAt) {
-				// This session was created by migration — find source
+				// This session was created by migration; find source
 				const source = sessions.find((s) => s.id === session.migratedFromSessionId);
 				if (source) {
 					entries.push({

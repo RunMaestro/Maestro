@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Users, Activity, AlertTriangle, Zap, TrendingUp, ArrowRightLeft } from 'lucide-react';
 import { useAccountUsage } from '../../hooks/useAccountUsage';
 import { AccountTrendChart } from './AccountTrendChart';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { Theme, Session } from '../../types';
 import type {
 	AccountProfile,
@@ -86,10 +87,12 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 	const [throttleEvents, setThrottleEvents] = useState<ThrottleEvent[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const { metrics: accountMetrics } = useAccountUsage();
+	const virtuososEnabled = useSettingsStore((s) => s.encoreFeatures.virtuosos === true);
+	const { metrics: accountMetrics } = useAccountUsage({ enabled: virtuososEnabled });
 
 	// Fetch all data on mount
 	const fetchData = useCallback(async () => {
+		if (!virtuososEnabled) return;
 		try {
 			const [accountList, allUsage, allAssignments, events] = await Promise.all([
 				window.maestro.accounts.list() as Promise<AccountProfile[]>,
@@ -108,9 +111,11 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [virtuososEnabled]);
 
 	useEffect(() => {
+		if (!virtuososEnabled) return;
+
 		fetchData();
 
 		// Poll every 30 seconds
@@ -154,7 +159,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 			clearInterval(pollInterval);
 			unsubUsage();
 		};
-	}, [fetchData]);
+	}, [virtuososEnabled, fetchData]);
 
 	// Build session lookup map
 	const sessionMap = useMemo(() => {
@@ -361,7 +366,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 									<div>
 										<div style={{ color: theme.colors.textDim }}>Window</div>
 										<div style={{ color: theme.colors.textMain, fontWeight: 'bold' }}>
-											{timeRemaining > 0 ? formatTimeRemaining(timeRemaining) : '—'}
+											{timeRemaining > 0 ? formatTimeRemaining(timeRemaining) : '-'}
 										</div>
 									</div>
 									<div>
@@ -407,7 +412,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 												>
 													{acctMetrics.estimatedTimeToLimitMs !== null
 														? formatTimeRemaining(acctMetrics.estimatedTimeToLimitMs)
-														: '—'}
+														: '-'}
 												</div>
 											</div>
 											<div>
@@ -512,7 +517,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 												{account?.email || assignment.accountId.slice(0, 8)}
 											</td>
 											<td className="px-3 py-2" style={{ color: theme.colors.textDim }}>
-												{session?.toolType || '—'}
+												{session?.toolType || '-'}
 											</td>
 											<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 												{new Date(assignment.assignedAt).toLocaleTimeString()}
@@ -543,7 +548,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 				)}
 			</div>
 
-			{/* Section 3: Usage Timeline (simplified — bar chart per account) */}
+			{/* Section 3: Usage Timeline (simplified bar chart per account) */}
 			<div>
 				<h3
 					className="text-xs font-bold uppercase mb-3 flex items-center gap-2"

@@ -142,6 +142,24 @@ describe('injectAccountEnv', () => {
 		expect(mockRegistry.selectNextAccount).not.toHaveBeenCalled();
 	});
 
+	it('should reject an explicitly selected inactive account', async () => {
+		const injectAccountEnv = await loadInjector();
+		mockRegistry.get.mockReturnValue(createMockAccount({ status: 'throttled' }));
+		const env: Record<string, string | undefined> = {};
+
+		const result = injectAccountEnv(
+			'sess-1',
+			'claude-code',
+			env,
+			mockRegistry as unknown as AccountRegistry,
+			'acct-1'
+		);
+
+		expect(result).toBeNull();
+		expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+		expect(mockRegistry.assignToSession).not.toHaveBeenCalled();
+	});
+
 	it('should call selectNextAccount without statsDB when getStatsDB is not provided', async () => {
 		const injectAccountEnv = await loadInjector();
 		mockRegistry.getDefaultAccount.mockReturnValue(null);

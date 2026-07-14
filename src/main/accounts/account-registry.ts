@@ -13,7 +13,7 @@ import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
 import { getWindowBounds } from './account-utils';
 
-/** Minimal interface for usage stats queries — avoids hard dependency on StatsDB */
+/** Minimal interface for usage stats queries; avoids hard dependency on StatsDB */
 export interface AccountUsageStatsProvider {
 	getAccountUsageInWindow(
 		id: string,
@@ -34,7 +34,7 @@ const LOG_CONTEXT = 'AccountRegistry';
 // `${base}-terminal`, `${base}-synopsis-${ts}`, `${base}-batch-${n}`) while the
 // renderer's manual assign/cleanup/reconcile paths use the bare agent ID.
 // Assignments are per-AGENT (mirroring Session.accountId), so every key is
-// normalized to the base ID — otherwise a spawn-time assignment under
+// normalized to the base ID; otherwise a spawn-time assignment under
 // `x-ai-tab1` is invisible to a lookup for `x` and vice versa. Patterns mirror
 // src/renderer/utils/sessionIdParser.ts.
 const REGEX_AI_TAB_SUFFIX = /^(.+)-ai-.+$/;
@@ -269,8 +269,20 @@ export class AccountRegistry {
 				.get('rotationOrder', [])
 				.filter((id) => available.some((a) => a.id === id));
 			if (order.length === 0) return available[0];
-			const idx = (this.store.get('rotationIndex', 0) + 1) % order.length;
-			this.store.set('rotationIndex', idx);
+			const storedRotationIndex: unknown = this.store.get('rotationIndex', {});
+			const rotationIndexByAgentType: Record<string, number> =
+				typeof storedRotationIndex === 'number'
+					? { 'claude-code': storedRotationIndex }
+					: storedRotationIndex &&
+						  typeof storedRotationIndex === 'object' &&
+						  !Array.isArray(storedRotationIndex)
+						? Object.fromEntries(
+								Object.entries(storedRotationIndex).filter(([, value]) => typeof value === 'number')
+							)
+						: {};
+			const rotationKey = agentType ?? 'claude-code';
+			const idx = ((rotationIndexByAgentType[rotationKey] ?? 0) + 1) % order.length;
+			this.store.set('rotationIndex', { ...rotationIndexByAgentType, [rotationKey]: idx });
 			return available.find((a) => a.id === order[idx]) ?? available[0];
 		}
 
@@ -334,7 +346,7 @@ export class AccountRegistry {
 				return (b.remainingCapacity as number) - (a.remainingCapacity as number);
 			});
 		} else {
-			// No limits configured on any account — fall back to LRU
+			// No limits configured on any account; fall back to LRU
 			scored.sort((a, b) => a.account.lastUsedAt - b.account.lastUsedAt);
 		}
 
@@ -355,12 +367,12 @@ export class AccountRegistry {
 		for (const [key, assignment] of Object.entries(assignments)) {
 			const baseId = normalizeAssignmentSessionId(key);
 			if (!activeSessionIds.has(baseId)) {
-				// Session no longer exists — drop the raw key (bypass the
+				// Session no longer exists; drop the raw key (bypass the
 				// normalizing removeAssignment so legacy suffixed keys are hit).
 				delete assignments[key];
 				changed++;
 			} else if (key !== baseId) {
-				// Legacy suffixed key for a live session — migrate to the base ID
+				// Legacy suffixed key for a live session; migrate to the base ID
 				// (an existing base entry wins; it is the newer keying scheme).
 				if (!assignments[baseId]) {
 					assignments[baseId] = { ...assignment, sessionId: baseId };

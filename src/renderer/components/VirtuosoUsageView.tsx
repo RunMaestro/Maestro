@@ -2,9 +2,9 @@
  * VirtuosoUsageView - Usage tab content for the VirtuososModal
  *
  * Presents account usage data in three sections:
- * A) Current Window Overview — aggregate summary + per-account usage cards
- * B) Predictions — linear/P90 time-to-limit estimates
- * C) Historical — per-account expandable history + throttle event timeline
+ * A) Current Window Overview: aggregate summary + per-account usage cards
+ * B) Predictions: linear/P90 time-to-limit estimates
+ * C) Historical: per-account expandable history + throttle event timeline
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -24,6 +24,7 @@ import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks
 import { AccountUsageHistory } from './AccountUsageHistory';
 import { AccountTrendChart } from './UsageDashboard/AccountTrendChart';
 import { AccountRateMetrics } from './UsageDashboard/AccountRateMetrics';
+import { formatCost } from '../../shared/formatters';
 
 interface ThrottleEvent {
 	id: string;
@@ -153,7 +154,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 				</div>
 				<div>
 					<div className="text-lg font-bold" style={{ color: theme.colors.textMain }}>
-						${totalCostThisWindow.toFixed(2)}
+						{formatCost(totalCostThisWindow)}
 					</div>
 					<div className="text-xs" style={{ color: theme.colors.textDim }}>
 						Cost This Window
@@ -299,7 +300,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 											<div>
 												Cost:{' '}
 												<span style={{ color: theme.colors.textMain }}>
-													${usage.costUsd.toFixed(2)}
+													{formatCost(usage.costUsd)}
 												</span>
 											</div>
 											<div>
@@ -425,7 +426,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 											<span style={{ color: theme.colors.textMain }}>
 												{pred.linearTimeToLimitMs
 													? formatTimeRemaining(pred.linearTimeToLimitMs)
-													: '—'}
+													: '-'}
 											</span>
 										</div>
 										<div>
@@ -433,7 +434,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 											<span style={{ color: theme.colors.textMain }}>
 												{pred.weightedTimeToLimitMs
 													? formatTimeRemaining(pred.weightedTimeToLimitMs)
-													: '—'}
+													: '-'}
 											</span>
 										</div>
 										<div>
@@ -447,7 +448,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 											<span style={{ color: theme.colors.textMain }}>
 												{pred.windowsRemainingP90 !== null
 													? pred.windowsRemainingP90.toFixed(1)
-													: '—'}
+													: '-'}
 											</span>
 										</div>
 									</div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Theme } from '../types';
 import { formatTokenCount } from '../hooks/useAccountUsage';
+import { formatCost } from '../../shared/formatters';
 
 interface AccountDailyUsage {
 	date: string;
@@ -74,16 +75,18 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
+		let cancelled = false;
+
 		async function load() {
 			setLoading(true);
 			try {
 				if (view === 'monthly') {
 					const data = await window.maestro.accounts.getMonthlyUsage(accountId, 6);
-					setMonthlyData(data as AccountMonthlyUsage[]);
+					if (!cancelled) setMonthlyData(data as AccountMonthlyUsage[]);
 				} else {
 					const days = view === '7d' ? 7 : 30;
 					const data = await window.maestro.accounts.getDailyUsage(accountId, days);
-					setDailyData(data as AccountDailyUsage[]);
+					if (!cancelled) setDailyData(data as AccountDailyUsage[]);
 				}
 
 				// Fetch throttle events for displayed time range
@@ -92,13 +95,17 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 						? Date.now() - 6 * 30 * 24 * 60 * 60 * 1000
 						: Date.now() - (view === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000;
 				const events = await window.maestro.accounts.getThrottleEvents(accountId, sinceMs);
-				setThrottleCount(events.length);
+				if (!cancelled) setThrottleCount(events.length);
 			} catch (err) {
 				console.warn('[AccountUsageHistory] Failed to load usage history:', err);
+			} finally {
+				if (!cancelled) setLoading(false);
 			}
-			setLoading(false);
 		}
 		load();
+		return () => {
+			cancelled = true;
+		};
 	}, [accountId, view]);
 
 	const data: Array<{
@@ -225,7 +232,7 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 									className="w-14 text-right tabular-nums"
 									style={{ color: theme.colors.textDim }}
 								>
-									${row.costUsd.toFixed(2)}
+									{formatCost(row.costUsd)}
 								</span>
 								<span
 									className="w-12 text-right tabular-nums"

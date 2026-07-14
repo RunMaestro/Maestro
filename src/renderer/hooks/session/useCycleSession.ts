@@ -1,5 +1,5 @@
 /**
- * useCycleSession — extracted from App.tsx
+ * useCycleSession, extracted from App.tsx
  *
  * Provides session cycling functionality (Cmd+Shift+[/]):
  *   - Cycles through sessions and group chats in visual sidebar order

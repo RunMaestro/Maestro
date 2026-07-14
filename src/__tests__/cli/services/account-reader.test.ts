@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import type { AccountProfile } from '../../../shared/account-types';
 
 // Mock the fs module
@@ -33,13 +34,15 @@ import {
 	getAccountByIdOrName,
 } from '../../../cli/services/account-reader';
 
+const TEST_HOME = path.join(path.sep, 'home', 'testuser');
+
 // Helper to build a mock AccountProfile
 function mockProfile(overrides: Partial<AccountProfile> = {}): AccountProfile {
 	return {
 		id: 'acc-1',
 		name: 'personal',
 		email: 'user@example.com',
-		configDir: '/home/testuser/.claude-personal',
+		configDir: path.join(TEST_HOME, '.claude-personal'),
 		agentType: 'claude-code',
 		status: 'active',
 		authMethod: 'oauth',
@@ -58,7 +61,7 @@ describe('account-reader', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
 		vi.mocked(os.platform).mockReturnValue('linux');
-		vi.mocked(os.homedir).mockReturnValue('/home/testuser');
+		vi.mocked(os.homedir).mockReturnValue(TEST_HOME);
 	});
 
 	describe('readAccountsFromStore', () => {
@@ -68,7 +71,7 @@ describe('account-reader', () => {
 				id: 'acc-2',
 				name: 'work',
 				email: 'work@corp.com',
-				configDir: '/home/testuser/.claude-work',
+				configDir: path.join(TEST_HOME, '.claude-work'),
 				isDefault: false,
 			});
 
@@ -128,7 +131,7 @@ describe('account-reader', () => {
 			expect(accounts[0]).toMatchObject({
 				id: 'personal',
 				name: 'personal',
-				configDir: '/home/testuser/.claude-personal',
+				configDir: path.join(TEST_HOME, '.claude-personal'),
 				status: 'active',
 			});
 		});
@@ -150,6 +153,32 @@ describe('account-reader', () => {
 			expect(accounts[0].email).toBe('dev@company.com');
 		});
 
+		it('infers provider agent types from discovered directory prefixes', async () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+			vi.mocked(fs.promises.readdir).mockResolvedValue([
+				{ name: '.codex-personal', isDirectory: () => true } as unknown as fs.Dirent,
+				{ name: '.opencode-work', isDirectory: () => true } as unknown as fs.Dirent,
+			]);
+			vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('ENOENT'));
+
+			const accounts = await readAccountsFromStore();
+
+			expect(accounts).toEqual([
+				expect.objectContaining({
+					id: 'personal',
+					configDir: path.join(TEST_HOME, '.codex-personal'),
+					agentType: 'codex',
+				}),
+				expect.objectContaining({
+					id: 'work',
+					configDir: path.join(TEST_HOME, '.opencode-work'),
+					agentType: 'opencode',
+				}),
+			]);
+		});
+
 		it('handles macOS store path', async () => {
 			vi.mocked(os.platform).mockReturnValue('darwin');
 
@@ -164,7 +193,7 @@ describe('account-reader', () => {
 
 			// Should try macOS path first
 			expect(fs.readFileSync).toHaveBeenCalledWith(
-				'/home/testuser/Library/Application Support/Maestro/maestro-accounts.json',
+				path.join(TEST_HOME, 'Library', 'Application Support', 'Maestro', 'maestro-accounts.json'),
 				'utf-8'
 			);
 		});

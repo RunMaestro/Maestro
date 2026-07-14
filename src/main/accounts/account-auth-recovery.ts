@@ -5,7 +5,7 @@
  * an expired OAuth token:
  * 1. Kills the failed agent process
  * 2. Spawns the provider's login command with the account's config-dir env var
- * 3. Browser opens for OAuth — user clicks "Authorize"
+ * 3. Browser opens for OAuth; user clicks "Authorize"
  * 4. Credentials are refreshed in the account directory
  * 5. Sends respawn event to renderer (reuses account:switch-respawn channel)
  *
@@ -94,7 +94,14 @@ export class AccountAuthRecovery {
 			this.accountRegistry.setStatus(accountId, 'expired');
 
 			// 2. Kill the current agent process
-			const killed = this.processManager.kill(sessionId);
+			let killed = this.processManager.kill(sessionId);
+			if (!killed && typeof this.processManager.getAll === 'function') {
+				for (const process of this.processManager.getAll()) {
+					if (process.sessionId.startsWith(`${sessionId}-ai`)) {
+						if (this.processManager.kill(process.sessionId)) killed = true;
+					}
+				}
+			}
 			if (!killed) {
 				logger.warn('Could not kill process (may have already exited)', LOG_CONTEXT, { sessionId });
 			}
@@ -184,7 +191,7 @@ export class AccountAuthRecovery {
 			accountName,
 		});
 
-		// Reuse the switch-respawn channel — renderer already handles it
+		// Reuse the switch-respawn channel; renderer already handles it
 		this.safeSend('account:switch-respawn', {
 			sessionId,
 			toAccountId: accountId,

@@ -25,7 +25,7 @@ export interface AccountProfile {
 	id: AccountId;
 	/** Display name derived from OAuth email (e.g., "dr3@example.com") */
 	name: string;
-	/** OAuth email identity — used as the unique natural key */
+	/** OAuth email identity, used as the unique natural key */
 	email: string;
 	/** Absolute path to the account's config directory (e.g., "/home/user/.claude-personal") */
 	configDir: string;

@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { Theme } from '../../types';
 import { formatTokenCount } from '../../hooks/useAccountUsage';
+import { formatCost } from '../../../shared/formatters';
 
 type TimeRange = '24h' | '7d' | '30d' | 'monthly';
 
@@ -94,7 +95,7 @@ async function fetchRangeData(accountId: string, range: TimeRange): Promise<Data
 		}));
 	}
 
-	// 7d or 30d — daily aggregation
+	// 7d or 30d: daily aggregation
 	const days = range === '7d' ? 7 : 30;
 	const daily = (await window.maestro.accounts.getDailyUsage(accountId, days)) as Array<{
 		date: string;
@@ -427,7 +428,7 @@ export function AccountTrendChart({
 									{formatXLabel(hovered.data.label, range)}
 								</div>
 								<div>{formatTokenCount(hovered.data.totalTokens)} tokens</div>
-								<div>${hovered.data.costUsd.toFixed(2)}</div>
+								<div>{formatCost(hovered.data.costUsd)}</div>
 							</div>
 						</foreignObject>
 					</>

@@ -5,7 +5,7 @@
  * and navigates back to the card grid on back button or Escape key.
  */
 
-import { useEffect } from 'react';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { ArrowLeft, ArrowRightLeft } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type { ToolType, AgentErrorType } from '../../shared/types';
@@ -66,7 +66,7 @@ function getStatusColor(status: HealthStatus, theme: Theme): string {
 }
 
 function formatDurationMs(ms: number): string {
-	if (ms === 0) return '—';
+	if (ms === 0) return '-';
 	if (ms < 1000) return `${Math.round(ms)}ms`;
 	return `${(ms / 1000).toFixed(1)}s`;
 }
@@ -107,18 +107,14 @@ export function ProviderDetailView({
 }: ProviderDetailViewProps) {
 	const { detail, isLoading } = useProviderDetail(toolType, sessions, timeRange);
 
-	// Handle Escape key to go back
-	useEffect(() => {
-		function handleKeyDown(e: KeyboardEvent) {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				e.stopPropagation();
-				onBack();
-			}
+	// Handle Escape key to go back.
+	useEventListener('keydown', (event) => {
+		const keyEvent = event as KeyboardEvent;
+		if (keyEvent.key === 'Escape') {
+			keyEvent.preventDefault();
+			onBack();
 		}
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [onBack]);
+	});
 
 	const statusColor = detail ? getStatusColor(detail.status, theme) : theme.colors.textDim;
 
@@ -252,7 +248,7 @@ export function ProviderDetailView({
 				</div>
 			</div>
 
-			{/* Summary stats row — 8 key metrics */}
+			{/* Summary stats row - 8 key metrics */}
 			<div
 				style={{
 					display: 'grid',
@@ -451,7 +447,7 @@ function MetricCard({
 }
 
 // ============================================================================
-// ComparisonBar — benchmarks vs other providers
+// ComparisonBar - benchmarks vs other providers
 // ============================================================================
 
 function ComparisonBar({ theme, detail }: { theme: Theme; detail: ProviderDetail }) {
@@ -580,7 +576,7 @@ function ComparisonRow({
 }
 
 // ============================================================================
-// ActiveSessionsList — clickable sessions that navigate to the session
+// ActiveSessionsList - clickable sessions that navigate to the session
 // ============================================================================
 
 function ActiveSessionsList({
@@ -669,7 +665,7 @@ function ActiveSessionsList({
 }
 
 // ============================================================================
-// MigrationTimeline — provider-scoped migration history
+// MigrationTimeline - provider-scoped migration history
 // ============================================================================
 
 function MigrationTimeline({

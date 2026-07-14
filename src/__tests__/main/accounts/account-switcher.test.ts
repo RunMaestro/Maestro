@@ -34,21 +34,29 @@ describe('AccountSwitcher', () => {
 	let mockProcessManager: {
 		kill: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
+		on: ReturnType<typeof vi.fn>;
+		off: ReturnType<typeof vi.fn>;
 	};
 	let mockRegistry: {
 		get: ReturnType<typeof vi.fn>;
 		assignToSession: ReturnType<typeof vi.fn>;
 	};
 	let mockSafeSend: ReturnType<typeof vi.fn>;
+	let exitListener: ((sessionId: string, exitCode: number) => void) | null;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 
+		exitListener = null;
 		mockProcessManager = {
 			kill: vi.fn().mockReturnValue(true),
 			// Used by the prefix-matching kill fallback when the exact-ID kill misses
 			getAll: vi.fn().mockReturnValue([]),
+			on: vi.fn((event: string, listener: (sessionId: string, exitCode: number) => void) => {
+				if (event === 'exit') exitListener = listener;
+			}),
+			off: vi.fn(),
 		};
 
 		mockRegistry = {
@@ -99,8 +107,8 @@ describe('AccountSwitcher', () => {
 			automatic: true,
 		});
 
-		// Advance past SWITCH_DELAY_MS (1000ms)
-		await vi.advanceTimersByTimeAsync(1100);
+		expect(exitListener).not.toBeNull();
+		exitListener?.('session-1', 0);
 
 		const result = await switchPromise;
 
@@ -190,7 +198,6 @@ describe('AccountSwitcher', () => {
 			automatic: false,
 		});
 
-		await vi.advanceTimersByTimeAsync(1100);
 		const result = await switchPromise;
 
 		expect(result).not.toBeNull();
@@ -217,7 +224,8 @@ describe('AccountSwitcher', () => {
 			automatic: false,
 		});
 
-		await vi.advanceTimersByTimeAsync(1100);
+		expect(exitListener).not.toBeNull();
+		exitListener?.('session-1', 0);
 		await switchPromise;
 
 		expect(mockSafeSend).toHaveBeenCalledWith(

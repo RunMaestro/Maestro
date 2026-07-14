@@ -190,7 +190,7 @@ describe('Account Usage Listener', () => {
 		});
 
 		it('emits limit-warning between warning and auto-switch thresholds', () => {
-			setWindowUsage(850); // 85% — between 80 (warning) and 95 (auto-switch)
+			setWindowUsage(850); // 85%; between 80 (warning) and 95 (auto-switch)
 			const handler = setup();
 			handler('s1', USAGE);
 

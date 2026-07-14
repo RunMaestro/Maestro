@@ -80,13 +80,17 @@ export class ProviderErrorTracker {
 	): void {
 		if (!this.config.enabled) return;
 
+		let state = this.sessions.get(sessionId);
+		if (state && state.toolType !== toolType) {
+			state.toolType = toolType;
+		}
+
 		// Only count recoverable, failover-worthy errors
 		if (!error.recoverable || !FAILOVER_WORTHY_ERRORS.has(error.type)) {
 			return;
 		}
 
 		// Get or create session error state
-		let state = this.sessions.get(sessionId);
 		if (!state) {
 			state = {
 				sessionId,

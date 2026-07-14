@@ -69,7 +69,7 @@ const ACCOUNT_STORE_DEFAULTS: AccountStoreData = {
 	assignments: {},
 	switchConfig: ACCOUNT_SWITCH_DEFAULTS,
 	rotationOrder: [],
-	rotationIndex: 0,
+	rotationIndex: {},
 };
 
 // Cached paths after initialization

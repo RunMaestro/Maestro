@@ -17,6 +17,7 @@ import type { SafeSendFn } from '../utils/safe-send';
 import { syncCredentialsFromBase } from './account-setup';
 import { getAccountProviderMeta, isMultiplexingCapable } from '../../shared/accountProviderMeta';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'account-env-injector';
 
@@ -40,7 +41,7 @@ interface SpawnEnv {
  * @param accountId - Pre-assigned account ID (optional, auto-assigns if missing)
  * @param safeSend - Optional safeSend function to notify renderer of assignment
  * @param getStatsDB - Optional function to get stats DB for capacity-aware selection
- * @returns The account ID used (or null if no accounts configured)
+ * @param options - Controls whether the resolved account is recorded on the session
  */
 export function injectAccountEnv(
 	sessionId: string,
@@ -49,7 +50,8 @@ export function injectAccountEnv(
 	accountRegistry: AccountRegistry,
 	accountId?: string | null,
 	safeSend?: SafeSendFn,
-	getStatsDB?: () => AccountUsageStatsProvider | null
+	getStatsDB?: () => AccountUsageStatsProvider | null,
+	options?: { recordAssignment?: boolean }
 ): string | null {
 	if (!isMultiplexingCapable(agentType)) return null;
 	const meta = getAccountProviderMeta(agentType);
@@ -95,7 +97,13 @@ export function injectAccountEnv(
 	}
 
 	const account = accountRegistry.get(resolvedAccountId);
-	if (!account || (account.agentType ?? 'claude-code') !== agentType) return null;
+	if (
+		!account ||
+		account.status !== 'active' ||
+		(account.agentType ?? 'claude-code') !== agentType
+	) {
+		return null;
+	}
 
 	// Ensure credentials exist in the account dir before spawning.
 	// If missing, attempt a best-effort sync from the provider's base dir.
@@ -107,7 +115,7 @@ export function injectAccountEnv(
 			sessionId,
 			configDir: account.configDir,
 		});
-		// Fire-and-forget — don't block spawn on this
+		// Fire-and-forget; don't block spawn on this
 		syncCredentialsFromBase(account.configDir)
 			.then((result) => {
 				if (result.success) {
@@ -116,14 +124,23 @@ export function injectAccountEnv(
 					logger.warn(`Credential sync failed: ${result.error}`, LOG_CONTEXT);
 				}
 			})
-			.catch(() => {});
+			.catch((error) => {
+				void captureException(error, {
+					sessionId,
+					accountId: account.id,
+					configDir: account.configDir,
+				});
+				logger.warn(`Credential sync threw unexpectedly: ${String(error)}`, LOG_CONTEXT);
+			});
 	}
 
 	// Inject the env var
 	env[envVar] = account.configDir;
 
 	// Create/update assignment
-	accountRegistry.assignToSession(sessionId, resolvedAccountId);
+	if (options?.recordAssignment !== false) {
+		accountRegistry.assignToSession(sessionId, resolvedAccountId);
+	}
 
 	// Notify renderer if safeSend is available
 	if (safeSend) {
@@ -134,6 +151,6 @@ export function injectAccountEnv(
 		});
 	}
 
-	logger.info(`Assigned account ${account.name} to session ${sessionId}`, LOG_CONTEXT);
+	logger.info(`Assigned account ${account.id} to session ${sessionId}`, LOG_CONTEXT);
 	return resolvedAccountId;
 }

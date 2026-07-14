@@ -13,11 +13,12 @@ import type { AccountRegistry } from './account-registry';
 import type { AccountSwitchEvent } from '../../shared/account-types';
 import type { SafeSendFn } from '../utils/safe-send';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'account-switcher';
 
-/** Delay between killing old process and sending respawn event (ms) */
-const SWITCH_DELAY_MS = 1000;
+/** Maximum time to wait for a killed process to emit exit (ms) */
+const PROCESS_EXIT_TIMEOUT_MS = 3000;
 
 export class AccountSwitcher {
 	/** Tracks the last user prompt per session for re-sending after switch */
@@ -28,6 +29,21 @@ export class AccountSwitcher {
 		private accountRegistry: AccountRegistry,
 		private safeSend: SafeSendFn
 	) {}
+
+	private async waitForProcessExit(sessionId: string): Promise<void> {
+		const { promise, resolve } = Promise.withResolvers<void>();
+		const onExit = (exitedSessionId: string) => {
+			if (exitedSessionId === sessionId || exitedSessionId.startsWith(`${sessionId}-ai`)) {
+				resolve();
+			}
+		};
+		this.processManager.on('exit', onExit);
+		const timeout = setTimeout(resolve, PROCESS_EXIT_TIMEOUT_MS);
+
+		await promise;
+		clearTimeout(timeout);
+		this.processManager.off('exit', onExit);
+	}
 
 	/**
 	 * Record the last user prompt sent to a session.
@@ -66,7 +82,7 @@ export class AccountSwitcher {
 			const lastPrompt = this.lastPrompts.get(sessionId);
 
 			logger.info(
-				`Switching session ${sessionId} from ${fromAccount?.name ?? fromAccountId} to ${toAccount.name}`,
+				`Switching session ${sessionId} from ${fromAccount?.id ?? fromAccountId} to ${toAccount.id}`,
 				LOG_CONTEXT
 			);
 
@@ -80,7 +96,7 @@ export class AccountSwitcher {
 
 			// 1. Kill the current agent process(es). Manual switches pass the base
 			// agent ID while running processes are keyed by suffixed IDs
-			// (`${base}-ai-${tabId}`), so fall back to prefix matching — otherwise
+			// (`${base}-ai-${tabId}`), so fall back to prefix matching; otherwise
 			// an in-flight turn keeps running on the old account.
 			let killed = this.processManager.kill(sessionId);
 			if (!killed && typeof this.processManager.getAll === 'function') {
@@ -94,8 +110,9 @@ export class AccountSwitcher {
 				logger.warn('Could not kill process (may have already exited)', LOG_CONTEXT, { sessionId });
 			}
 
-			// Wait for process cleanup
-			await new Promise((resolve) => setTimeout(resolve, SWITCH_DELAY_MS));
+			if (killed) {
+				await this.waitForProcessExit(sessionId);
+			}
 
 			// 2. Update the account assignment
 			this.accountRegistry.assignToSession(sessionId, toAccountId);
@@ -130,13 +147,14 @@ export class AccountSwitcher {
 			});
 
 			logger.info(`Account switch completed for session ${sessionId}`, LOG_CONTEXT, {
-				from: fromAccount?.name,
-				to: toAccount.name,
+				from: fromAccount?.id,
+				to: toAccount.id,
 				reason,
 			});
 
 			return switchEvent;
 		} catch (error) {
+			void captureException(error, { sessionId, fromAccountId, toAccountId });
 			logger.error('Account switch failed', LOG_CONTEXT, {
 				error: String(error),
 				sessionId,
