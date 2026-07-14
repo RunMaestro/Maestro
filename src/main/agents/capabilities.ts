@@ -282,7 +282,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: true,
 		supportsImageInputOnResume: true,
 		supportsSlashCommands: true,
-		supportsSessionStorage: false,
+		supportsSessionStorage: true, // ~/.omp/agent/sessions/<project>/ JSONL transcripts - Verified
 		supportsCostTracking: true,
 		supportsUsageStats: true,
 		supportsBatchMode: true,

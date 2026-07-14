@@ -1,6 +1,8 @@
 import React from 'react';
 
 import { Spinner } from '../ui/Spinner';
+import { AgentApprovals } from '../AgentApprovals/AgentApprovals';
+import { SessionInspector } from '../SessionInspector/SessionInspector';
 import { TerminalOutput } from '../TerminalOutput';
 import {
 	TerminalView,
@@ -631,6 +633,35 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.inputMode !== 'terminal' &&
 		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
 
+	const respondToApproval = React.useCallback(
+		({
+			sessionId,
+			requestId,
+			optionId,
+		}: {
+			sessionId: string;
+			requestId: string;
+			optionId: string;
+		}) => {
+			void window.maestro.process
+				.respondApproval(sessionId, requestId, optionId)
+				.then((responded) => {
+					if (!responded) return;
+					updateSessionWith(activeSession.id, (session) => ({
+						...session,
+						pendingApprovals: session.pendingApprovals?.filter(
+							(approval) => approval.id !== requestId
+						),
+					}));
+				});
+		},
+		[activeSession.id]
+	);
+
+	const branchSession = React.useCallback((sessionId: string, entryId: string) => {
+		void window.maestro.process.branchSession(sessionId, entryId);
+	}, []);
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
@@ -1129,6 +1160,17 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					</div>
 				);
 			})}
+			<SessionInspector
+				sessionId={activeSession.id}
+				runtimeFeatures={activeSession.runtimeFeatures}
+				theme={theme}
+				onBranchSession={branchSession}
+			/>
+			<AgentApprovals
+				theme={theme}
+				approvals={activeSession.pendingApprovals ?? []}
+				onRespond={respondToApproval}
+			/>
 		</div>
 	);
 });

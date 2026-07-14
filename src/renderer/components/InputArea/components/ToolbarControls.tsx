@@ -22,6 +22,7 @@ import {
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 } from '../../../../shared/agentMetadata';
+import { AgentRuntimeControls } from './AgentRuntimeControls';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -235,6 +236,11 @@ export const ToolbarControls = memo(function ToolbarControls({
 					effortMenuOpen={effortMenuOpen}
 					setEffortMenuOpen={setEffortMenuOpen}
 					effortMenuRef={effortMenuRef}
+				/>
+				<AgentRuntimeControls
+					sessionId={session.id}
+					controls={session.runtimeFeatures?.controls}
+					theme={theme}
 				/>
 			</div>
 
