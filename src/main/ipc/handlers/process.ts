@@ -150,7 +150,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					optionId: string;
 				};
 				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
-				return adapter ? adapter.respondApproval(requestId, optionId) : false;
+				const responded = adapter ? await adapter.respondApproval(requestId, optionId) : false;
+				if (!responded)
+					logger.warn('OMP approval response was rejected', LOG_CONTEXT, {
+						sessionId,
+						requestId,
+						optionId,
+					});
+				return responded;
 			}
 		)
 	);

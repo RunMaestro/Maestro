@@ -92,6 +92,7 @@ describe('OmpNativeSessionAdapter', () => {
 		emit(child, {
 			type: 'extension_ui_request',
 			id: 'approval-1',
+			method: 'select',
 			title: 'Approve tool?',
 			options: [{ id: 'yes', label: 'Yes', kind: 'approve' }],
 		});
@@ -179,4 +180,138 @@ describe('OmpNativeSessionAdapter', () => {
 		).toHaveLength(2);
 		expect(child.kill).not.toHaveBeenCalled();
 	});
+	it('preserves callback option IDs, rejects mismatches without consuming approval, and ignores resolved replays', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-approval',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'approval-opaque',
+			method: 'select',
+			title: 'Continue?',
+			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+		});
+
+		expect(send).toHaveBeenCalledWith('process:approval-request', {
+			id: 'approval-opaque',
+			sessionId: 'tab-approval',
+			toolType: 'omp',
+			title: 'Continue?',
+			detail: undefined,
+			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+			createdAt: expect.any(String),
+		});
+		await expect(adapter.respondApproval('approval-opaque', 'unknown-option')).resolves.toBe(false);
+		expect(extensionResponses(child)).toEqual([]);
+
+		await expect(adapter.respondApproval('approval-opaque', 'option:deny/opaque')).resolves.toBe(
+			true
+		);
+		expect(extensionResponses(child)).toEqual([
+			{ type: 'extension_ui_response', id: 'approval-opaque', confirmed: false },
+		]);
+		await expect(adapter.respondApproval('approval-opaque', 'option:deny/opaque')).resolves.toBe(
+			false
+		);
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'approval-opaque',
+			method: 'select',
+			title: 'Continue?',
+			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+		});
+		expect(
+			send.mock.calls.filter(([channel]) => channel === 'process:approval-request')
+		).toHaveLength(1);
+	});
+
+	it('acknowledges noninteractive extension UI callbacks without creating pending approvals', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-noninteractive',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		for (const method of [
+			'notify',
+			'setStatus',
+			'setWidget',
+			'setTitle',
+			'set_editor_text',
+			'open_url',
+			'input',
+			'editor',
+		]) {
+			emit(child, {
+				type: 'extension_ui_request',
+				id: `noninteractive-${method}`,
+				method,
+				title: 'Extension request',
+			});
+		}
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(
+			send.mock.calls.filter(([channel]) => channel === 'process:approval-request')
+		).toHaveLength(0);
+		expect(extensionResponses(child)).toEqual(
+			expect.arrayContaining([
+				{ type: 'extension_ui_response', id: 'noninteractive-notify', cancelled: true },
+				{ type: 'extension_ui_response', id: 'noninteractive-open_url', cancelled: true },
+				{ type: 'extension_ui_response', id: 'noninteractive-input', cancelled: true },
+				{ type: 'extension_ui_response', id: 'noninteractive-editor', cancelled: true },
+			])
+		);
+		await expect(adapter.respondApproval('noninteractive-notify', 'approve')).resolves.toBe(false);
+	});
+
+	function extensionResponses(child: FakeChild): unknown[] {
+		return child.stdin.write.mock.calls
+			.map(([frame]) => JSON.parse(frame as string))
+			.filter((frame) => frame.type === 'extension_ui_response');
+	}
 });

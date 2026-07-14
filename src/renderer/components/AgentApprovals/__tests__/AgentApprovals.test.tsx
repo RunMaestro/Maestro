@@ -55,7 +55,7 @@ describe('AgentApprovals', () => {
 				approvals={[
 					approval({
 						options: [
-							{ id: 'skip', label: 'Skip this', kind: 'custom' },
+							{ id: 'option:skip/opaque', label: 'Skip this', kind: 'custom' },
 							{ id: 'approve', label: 'Approve', kind: 'approve' },
 						],
 					}),
@@ -68,7 +68,7 @@ describe('AgentApprovals', () => {
 		expect(onRespond).toHaveBeenCalledWith({
 			sessionId: 'session-1',
 			requestId: 'approval-1',
-			optionId: 'skip',
+			optionId: 'option:skip/opaque',
 		});
 	});
 

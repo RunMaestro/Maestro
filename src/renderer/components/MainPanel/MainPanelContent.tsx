@@ -25,6 +25,7 @@ import {
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -288,6 +289,25 @@ export interface MainPanelContentProps {
 	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+}
+
+type ApprovalResponse = { sessionId: string; requestId: string; optionId: string };
+
+export async function respondToAgentApproval(
+	{ sessionId, requestId, optionId }: ApprovalResponse,
+	respondApproval: (sessionId: string, requestId: string, optionId: string) => Promise<boolean>,
+	onResolved: () => void,
+	onRejected: () => void
+): Promise<void> {
+	try {
+		if (await respondApproval(sessionId, requestId, optionId)) {
+			onResolved();
+			return;
+		}
+	} catch {
+		// The request remains pending so the user can retry.
+	}
+	onRejected();
 }
 
 export const MainPanelContent = React.memo(function MainPanelContent(props: MainPanelContentProps) {
@@ -633,30 +653,26 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.inputMode !== 'terminal' &&
 		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
 
-	const respondToApproval = React.useCallback(
-		({
-			sessionId,
-			requestId,
-			optionId,
-		}: {
-			sessionId: string;
-			requestId: string;
-			optionId: string;
-		}) => {
-			void window.maestro.process
-				.respondApproval(sessionId, requestId, optionId)
-				.then((responded) => {
-					if (!responded) return;
-					updateSessionWith(activeSession.id, (session) => ({
-						...session,
-						pendingApprovals: session.pendingApprovals?.filter(
-							(approval) => approval.id !== requestId
-						),
-					}));
-				});
-		},
-		[activeSession.id]
-	);
+	const respondToApproval = React.useCallback((response: ApprovalResponse) => {
+		void respondToAgentApproval(
+			response,
+			(sessionId, requestId, optionId) =>
+				window.maestro.process.respondApproval(sessionId, requestId, optionId),
+			() =>
+				updateSessionWith(response.sessionId, (session) => ({
+					...session,
+					pendingApprovals: session.pendingApprovals?.filter(
+						(approval) => approval.id !== response.requestId
+					),
+				})),
+			() =>
+				notifyToast({
+					type: 'error',
+					title: 'Approval response failed',
+					message: 'The approval request is still pending. Please try again.',
+				})
+		);
+	}, []);
 
 	const branchSession = React.useCallback((sessionId: string, entryId: string) => {
 		void window.maestro.process.branchSession(sessionId, entryId);

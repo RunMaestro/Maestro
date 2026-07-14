@@ -37,6 +37,7 @@ export class OmpNativeSessionAdapter {
 	private readonly client: OmpRpcClient;
 	private readonly child: ChildProcessWithoutNullStreams;
 	private readonly approvals = new Map<string, OmpRpcEvent>();
+	private readonly resolvedApprovals = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
 
@@ -112,17 +113,20 @@ export class OmpNativeSessionAdapter {
 		await this.initialized;
 		const request = this.approvals.get(requestId);
 		if (!request) return false;
-		this.approvals.delete(requestId);
 		const options = approvalOptions(request);
 		const selected = options.find((option) => option.id === optionId);
 		if (!selected) return false;
-		await this.client.send({
-			type: 'extension_ui_response',
-			id: requestId,
-			confirmed: selected.kind === 'approve',
-			cancelled: selected.kind === 'deny' ? true : undefined,
-			value: selected.kind === 'custom' ? optionId : undefined,
-		});
+		await this.client.send(
+			selected.kind === 'custom'
+				? { type: 'extension_ui_response', id: requestId, value: selected.id }
+				: {
+						type: 'extension_ui_response',
+						id: requestId,
+						confirmed: selected.kind === 'approve',
+					}
+		);
+		this.approvals.delete(requestId);
+		this.resolvedApprovals.add(requestId);
 		return true;
 	}
 
@@ -262,9 +266,16 @@ export class OmpNativeSessionAdapter {
 		}
 		if (callback.type === 'extension_ui_request') {
 			const id = stringAt(callback, 'id');
-			if (!id) return;
-			this.approvals.set(id, callback);
-			this.options.send('process:approval-request', approvalFrom(callback, this.options.sessionId));
+			if (!id || this.resolvedApprovals.has(id)) return;
+			if (isChoiceRequest(stringAt(callback, 'method')) && approvalOptions(callback).length > 0) {
+				this.approvals.set(id, callback);
+				this.options.send(
+					'process:approval-request',
+					approvalFrom(callback, this.options.sessionId)
+				);
+				return;
+			}
+			this.rejectExtensionUiRequest(id, callback);
 			return;
 		}
 		if (
@@ -273,6 +284,30 @@ export class OmpNativeSessionAdapter {
 			callback.type === 'config_update'
 		)
 			void this.refreshFeatures();
+	}
+
+	private rejectExtensionUiRequest(id: string, callback: OmpRpcEvent): void {
+		const method = stringAt(callback, 'method');
+		if (method === 'notify' || method === 'extension_ui.notify') {
+			const notification = stringAt(callback, 'message') ?? stringAt(callback, 'title');
+			if (notification)
+				this.options.send(
+					'process:stderr',
+					this.options.sessionId,
+					`OMP notification: ${notification}`
+				);
+		}
+		if (isRuntimeFeatureRequest(method)) void this.refreshFeatures();
+		void this.client
+			.send({ type: 'extension_ui_response', id, cancelled: true })
+			.then(() => this.resolvedApprovals.add(id))
+			.catch((error: unknown) => {
+				this.options.send(
+					'process:stderr',
+					this.options.sessionId,
+					error instanceof Error ? error.message : String(error)
+				);
+			});
 	}
 
 	private completeTurn(): void {
@@ -453,23 +488,41 @@ function usageFromStats(stats: Record<string, number | string> | null): {
 
 function approvalOptions(callback: OmpRpcEvent): AgentApprovalRequest['options'] {
 	const raw = Array.isArray(callback.options) ? callback.options : [];
-	const options: AgentApprovalRequest['options'] = raw.map((item, index) => {
+	const options: AgentApprovalRequest['options'] = [];
+	for (const item of raw) {
 		const option = asRecord(item);
-
-		const id = stringAt(option, 'id') ?? String(index);
+		const id = stringAt(option, 'id');
+		if (id === undefined) continue;
 		const kind = stringAt(option, 'kind');
-		return {
+		options.push({
 			id,
 			label: stringAt(option, 'label') ?? id,
 			kind: kind === 'approve' || kind === 'deny' ? kind : 'custom',
-		};
-	});
-	return options.length
-		? options
-		: [
-				{ id: 'approve', label: 'Approve', kind: 'approve' },
-				{ id: 'deny', label: 'Deny', kind: 'deny' },
-			];
+		});
+	}
+	return options;
+}
+
+function isChoiceRequest(method: string | undefined): boolean {
+	return (
+		method === 'select' ||
+		method === 'confirm' ||
+		method === 'extension_ui.select' ||
+		method === 'extension_ui.confirm'
+	);
+}
+
+function isRuntimeFeatureRequest(method: string | undefined): boolean {
+	return (
+		method === 'setStatus' ||
+		method === 'setWidget' ||
+		method === 'setTitle' ||
+		method === 'set_editor_text' ||
+		method === 'extension_ui.setStatus' ||
+		method === 'extension_ui.setWidget' ||
+		method === 'extension_ui.setTitle' ||
+		method === 'extension_ui.set_editor_text'
+	);
 }
 
 function approvalFrom(callback: OmpRpcEvent, sessionId: string): AgentApprovalRequest {
