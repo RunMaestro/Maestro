@@ -97,47 +97,51 @@ function parseTranscript(content: string): OmpTranscript | null {
  * ~/.omp/agent/sessions/<home-relative-project-path>/<run>/<agent>.jsonl.
  * The project-root JSONL files are run indexes, not individual transcripts.
  *
- * The project directory omits the home-directory prefix and replaces path
  * separators with dashes, e.g. ~/Software/Maestro -> -Software-Maestro.
+ * Absolute paths outside the home directory use OMP's --C--path-- encoding.
  */
 export class OmpSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'omp';
 
 	private getProjectSessionDir(projectPath: string): string {
-		const relativePath = path.relative(os.homedir(), path.resolve(projectPath));
-		if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return '';
-		return path.join(
-			os.homedir(),
-			'.omp',
-			'agent',
-			'sessions',
-			`-${relativePath.replace(/[\\/]+/g, '-')}`
-		);
+		const resolvedProjectPath = path.resolve(projectPath);
+		const relativePath = path.relative(os.homedir(), resolvedProjectPath);
+		if (!relativePath) return '';
+
+		const directoryName =
+			relativePath.startsWith('..') || path.isAbsolute(relativePath)
+				? `--${resolvedProjectPath.replace(/[:\\/]/g, '-')}--`
+				: `-${relativePath.replace(/[\\/]+/g, '-')}`;
+		return path.join(os.homedir(), '.omp', 'agent', 'sessions', directoryName);
 	}
+
 	private async collectTranscriptPaths(projectDir: string): Promise<string[]> {
+		let runEntries: Dirent[];
+		try {
+			runEntries = await fs.readdir(projectDir, { withFileTypes: true });
+		} catch {
+			return [];
+		}
+
 		const transcriptPaths: string[] = [];
+		for (const runEntry of runEntries) {
+			if (!runEntry.isDirectory()) continue;
 
-		const walk = async (directory: string, includeFiles: boolean): Promise<void> => {
-			let entries: Dirent[];
+			let transcriptEntries: Dirent[];
 			try {
-				entries = await fs.readdir(directory, { withFileTypes: true });
+				transcriptEntries = await fs.readdir(path.join(projectDir, runEntry.name), {
+					withFileTypes: true,
+				});
 			} catch {
-				return;
+				continue;
 			}
 
-			for (const entry of entries) {
-				const entryPath = path.join(directory, entry.name);
-				if (entry.isDirectory()) {
-					await walk(entryPath, true);
-					continue;
-				}
-				if (includeFiles && entry.isFile() && entry.name.endsWith(SESSION_FILE_EXTENSION)) {
-					transcriptPaths.push(entryPath);
+			for (const transcriptEntry of transcriptEntries) {
+				if (transcriptEntry.isFile() && transcriptEntry.name.endsWith(SESSION_FILE_EXTENSION)) {
+					transcriptPaths.push(path.join(projectDir, runEntry.name, transcriptEntry.name));
 				}
 			}
-		};
-
-		await walk(projectDir, false);
+		}
 		return transcriptPaths;
 	}
 

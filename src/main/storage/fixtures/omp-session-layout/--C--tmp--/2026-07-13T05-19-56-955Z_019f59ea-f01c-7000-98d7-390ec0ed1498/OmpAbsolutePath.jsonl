@@ -1,0 +1,5 @@
+{"type":"title","v":1,"title":"Bind ethernet card to VM","source":"auto","updatedAt":"2026-07-13T05:20:23.223Z"}
+{"type":"session","version":3,"id":"019f59ea-f01c-7000-98d7-390ec0ed1498","timestamp":"2026-07-13T05:19:56.955Z","cwd":"C:\\tmp","title":"Bind ethernet card to VM","titleSource":"auto"}
+{"type":"model_change","id":"2dcaed60","parentId":null,"timestamp":"2026-07-13T05:19:57.089Z","model":"anthropic/claude-fable-5"}
+{"type":"message","id":"user-1","parentId":"2dcaed60","timestamp":"2026-07-13T05:20:23.235Z","message":{"role":"user","content":[{"type":"text","text":"Bind the ethernet card to the virtual machine."}],"attribution":"user"}}
+{"type":"message","id":"assistant-1","parentId":"user-1","timestamp":"2026-07-13T05:20:24.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I will inspect the host network configuration."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-fable-5"}}
