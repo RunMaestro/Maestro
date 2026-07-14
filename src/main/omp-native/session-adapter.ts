@@ -48,6 +48,7 @@ export class OmpNativeSessionAdapter {
 	private readonly resolvedApprovals = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
+	private autoRetryEnabled = true;
 
 	private constructor(private readonly options: OmpNativeSessionOptions) {
 		const spawn = options.spawn ?? spawnChild;
@@ -148,6 +149,7 @@ export class OmpNativeSessionAdapter {
 		if (!command) return false;
 		try {
 			await this.client.command(command);
+			if (controlId === 'auto-retry') this.autoRetryEnabled = value as boolean;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			this.options.send(
@@ -236,7 +238,7 @@ export class OmpNativeSessionAdapter {
 			: [];
 		const statsProjection = statsFromData(stats.data);
 		const features: AgentRuntimeFeatureState = {
-			controls: controlsFromState(stateData, modelOptions),
+			controls: controlsFromState(stateData, modelOptions, this.autoRetryEnabled),
 			tree: treeFromMessages(asRecord(messages.data).messages),
 			todos: todosFromState(stateData),
 			subagents: subagentsFromData(asRecord(subagents.data).subagents),
@@ -407,7 +409,8 @@ function commandName(value: unknown): string | undefined {
 
 function controlsFromState(
 	state: Record<string, unknown>,
-	modelOptions: AgentControl['options']
+	modelOptions: AgentControl['options'],
+	autoRetryEnabled: boolean
 ): AgentControl[] {
 	const model = asRecord(state.model);
 	const modelValue = stringAt(model, 'id');
@@ -443,7 +446,7 @@ function controlsFromState(
 			id: 'auto-retry',
 			label: 'Auto-retry',
 			kind: 'toggle',
-			value: state.autoRetryEnabled === true,
+			value: autoRetryEnabled,
 		},
 	];
 }

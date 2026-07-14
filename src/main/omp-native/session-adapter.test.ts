@@ -561,7 +561,6 @@ describe('OmpNativeSessionAdapter', () => {
 										thinkingLevel: 'high',
 										steeringMode: 'one-at-a-time',
 										autoCompactionEnabled: true,
-										autoRetryEnabled: true,
 										todoPhases: [
 											{ id: 'phase-1', label: 'Build inspector', status: 'in_progress' },
 										],
@@ -655,10 +654,17 @@ describe('OmpNativeSessionAdapter', () => {
 		const features = send.mock.calls
 			.filter(([channel]) => channel === 'process:runtime-features')
 			.at(-1)?.[2] as {
+			controls: Array<{ id: string; value: string | boolean }>;
 			todos: unknown;
 			subagents: unknown;
 			stats: unknown;
 		};
+		expect(features.controls).toContainEqual({
+			id: 'auto-retry',
+			label: 'Auto-retry',
+			kind: 'toggle',
+			value: true,
+		});
 		expect(features).toMatchObject({
 			todos: [
 				{
@@ -680,6 +686,13 @@ describe('OmpNativeSessionAdapter', () => {
 				contextWindow: 1000000,
 			},
 		});
+		await adapter.setControl('auto-retry', false);
+		const postMutationFeatures = send.mock.calls
+			.filter(([channel]) => channel === 'process:runtime-features')
+			.at(-1)?.[2] as { controls: Array<{ id: string; value: string | boolean }> };
+		expect(postMutationFeatures.controls).toContainEqual(
+			expect.objectContaining({ id: 'auto-retry', value: false })
+		);
 	});
 
 	it('reports rejected controls and does not refresh the feature state as if they applied', async () => {
