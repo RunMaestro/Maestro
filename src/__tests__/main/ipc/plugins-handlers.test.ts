@@ -127,6 +127,7 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 
 		await expect(handler!(event)).resolves.toEqual({
 			hostApiVersion: expect.any(String),
+			subsystemEnabled: false,
 			plugins: [],
 		});
 		expect(manager.getRegistry).toHaveBeenCalledTimes(1);

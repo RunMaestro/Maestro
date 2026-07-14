@@ -2323,6 +2323,7 @@ describe('SettingsModal', () => {
 				},
 			});
 			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				subsystemEnabled: true,
 				plugins: [
 					{
 						id: pluginId,
@@ -2415,6 +2416,7 @@ describe('SettingsModal', () => {
 				},
 			});
 			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				subsystemEnabled: true,
 				plugins: [
 					{
 						id: pluginId,

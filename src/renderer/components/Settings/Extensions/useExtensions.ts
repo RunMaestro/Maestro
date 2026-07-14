@@ -23,6 +23,7 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../../../shared/plugins/first-party';
 import type { PermissionRequest } from '../../../../shared/plugins/permissions';
+import { isProvidedPluginId } from '../../../../shared/plugins/provided';
 import { buildExtensions, type UnifiedExtension } from './extensionModel';
 
 /** Is this Encore flag one of the five first-party plugin-backed features? */
@@ -68,7 +69,9 @@ export function useExtensions(): UseExtensionsResult {
 
 	const [plugins, setPlugins] = useState<PluginRecord[]>([]);
 	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
-	const [pluginsSubsystemEnabled, setPluginsSubsystemEnabled] = useState(true);
+	const [pluginsSubsystemEnabled, setPluginsSubsystemEnabled] = useState(
+		() => encoreFeatures.plugins === true
+	);
 	const [loading, setLoading] = useState(false);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [pendingEnable, setPendingEnable] = useState<PendingBuiltinEnable | null>(null);
@@ -77,8 +80,14 @@ export function useExtensions(): UseExtensionsResult {
 		setLoading(true);
 		try {
 			const snap: PluginListSnapshot = await window.maestro.plugins.list();
-			setPlugins(snap.plugins);
-			const runtimeEnabled = encoreFeatures.plugins === true;
+			const runtimeEnabled = snap.subsystemEnabled;
+			setPlugins(
+				runtimeEnabled
+					? snap.plugins
+					: snap.plugins.filter(
+							(record) => record.installOwner === 'bundle' && isProvidedPluginId(record.id)
+						)
+			);
 			setPluginsSubsystemEnabled(runtimeEnabled);
 			if (runtimeEnabled) {
 				try {
@@ -197,6 +206,30 @@ export function useExtensions(): UseExtensionsResult {
 	const togglePlugin = useCallback(
 		async (record: PluginRecord) => {
 			if (record.loadStatus !== 'ok') return;
+			const isProvidedPlugin = record.installOwner === 'bundle' && isProvidedPluginId(record.id);
+			if (!pluginsSubsystemEnabled && !isProvidedPlugin) return;
+
+			// A provided plugin is the one consent-led path allowed while the
+			// community runtime is off. Main enables the runtime atomically before
+			// presenting its consent window; the renderer then mirrors that settled
+			// gate in the settings store.
+			if (!pluginsSubsystemEnabled && isProvidedPlugin) {
+				try {
+					await window.maestro.plugins.requestConsent(record.id);
+					if (!encoreFeatures.plugins) {
+						setEncoreFeatures({ ...encoreFeatures, plugins: true });
+						setPluginsSubsystemEnabled(true);
+					}
+				} catch (err) {
+					notifyToast({
+						color: 'red',
+						title: 'Extensions',
+						message: `Could not open the permission prompt: ${String(err)}`,
+					});
+				}
+				return;
+			}
+
 			// Disabling is always immediate; enabling a tier-0 (data) plugin applies
 			// directly. Enabling a code-tier plugin routes through the host-owned
 			// consent window, which mints the grant and enables the plugin itself.
@@ -233,10 +266,11 @@ export function useExtensions(): UseExtensionsResult {
 				});
 			}
 		},
-		[encoreFeatures, setEncoreFeatures]
+		[encoreFeatures, pluginsSubsystemEnabled, setEncoreFeatures]
 	);
 
 	const installPlugin = useCallback(async () => {
+		if (!pluginsSubsystemEnabled) return;
 		const dir = await window.maestro.dialog.selectFolder();
 		if (!dir) return;
 		setLoading(true);
@@ -261,10 +295,11 @@ export function useExtensions(): UseExtensionsResult {
 		} finally {
 			setLoading(false);
 		}
-	}, [reload]);
+	}, [pluginsSubsystemEnabled, reload]);
 
 	const uninstallPlugin = useCallback(
 		async (record: PluginRecord) => {
+			if (!pluginsSubsystemEnabled) return;
 			setBusyId(record.id);
 			try {
 				const result = await window.maestro.plugins.uninstall(record.id);
@@ -288,11 +323,12 @@ export function useExtensions(): UseExtensionsResult {
 				setBusyId(null);
 			}
 		},
-		[reload]
+		[pluginsSubsystemEnabled, reload]
 	);
 
 	const revokePlugin = useCallback(
 		async (id: string) => {
+			if (!pluginsSubsystemEnabled) return;
 			setBusyId(id);
 			try {
 				await window.maestro.plugins.revokeGrants(id);
@@ -308,12 +344,15 @@ export function useExtensions(): UseExtensionsResult {
 				setBusyId(null);
 			}
 		},
-		[reload]
+		[pluginsSubsystemEnabled, reload]
 	);
 
 	const getGrants = useCallback(
-		(id: string): Promise<PluginGrantsSnapshot> => window.maestro.plugins.getGrants(id),
-		[]
+		(id: string): Promise<PluginGrantsSnapshot> =>
+			pluginsSubsystemEnabled
+				? window.maestro.plugins.getGrants(id)
+				: Promise.resolve({ requested: [], granted: [] }),
+		[pluginsSubsystemEnabled]
 	);
 
 	const extensions = buildExtensions(encoreFeatures, plugins);

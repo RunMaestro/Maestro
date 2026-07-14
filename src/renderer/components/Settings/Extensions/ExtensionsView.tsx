@@ -74,8 +74,9 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<button
 					type="button"
 					data-testid="extensions-install"
+					disabled={!pluginsSubsystemEnabled}
 					onClick={() => void installPlugin()}
-					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				>
 					<FolderPlus className="w-3.5 h-3.5" /> Install plugin…

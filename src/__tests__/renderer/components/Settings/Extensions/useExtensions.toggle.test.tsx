@@ -16,6 +16,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 import { FIRST_PARTY_PLUGINS } from '../../../../../shared/plugins/first-party';
+import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry';
 
 const setEncoreFeatures = vi.fn();
 const setStatsCollectionEnabled = vi.fn();
@@ -53,6 +54,31 @@ const FIRST_PARTY_FLAGS = [
 ] as const;
 
 const setFirstPartyEnabled = vi.fn();
+const setEnabled = vi.fn();
+const requestConsent = vi.fn();
+const uninstall = vi.fn();
+const revokeGrants = vi.fn();
+
+function pluginRecord(id: string, installOwner?: 'bundle'): PluginRecord {
+	return {
+		id,
+		source: `/plugins/${id}`,
+		folderName: id,
+		enabled: false,
+		loadStatus: 'ok',
+		errors: [],
+		manifest: {
+			id,
+			name: id === 'com.maestro.omp' ? 'OMP' : 'Community plugin',
+			version: '1.0.0',
+			tier: 1,
+			maestro: { minHostApi: '1.0.0' },
+			entry: 'main.js',
+			category: 'automation',
+		},
+		...(installOwner ? { installOwner } : {}),
+	};
+}
 
 // The mount `reload()` effect resolves its mocked IPC (list → contributions)
 // across several microtask ticks and calls setState AFTER a synchronous test
@@ -72,7 +98,11 @@ beforeEach(() => {
 	setFirstPartyEnabled.mockResolvedValue({ enabled: true, authorized: true });
 	(window as unknown as { maestro: unknown }).maestro = {
 		plugins: {
-			list: vi.fn().mockResolvedValue({ hostApiVersion: '1.0.0', plugins: [] }),
+			list: vi.fn().mockResolvedValue({
+				hostApiVersion: '1.0.0',
+				subsystemEnabled: true,
+				plugins: [],
+			}),
 			contributions: vi.fn().mockResolvedValue({
 				themes: [],
 				iconPacks: [],
@@ -87,6 +117,10 @@ beforeEach(() => {
 			}),
 			onChanged: vi.fn(() => () => {}),
 			setFirstPartyEnabled,
+			setEnabled,
+			requestConsent,
+			uninstall,
+			revokeGrants,
 		},
 	};
 });
@@ -260,5 +294,71 @@ describe('useExtensions.toggleBuiltin — immediate commits (no modal)', () => {
 		await waitFor(() => {
 			expect(setEncoreFeatures).toHaveBeenCalledWith({ ...encoreFeatures, pianola: false });
 		});
+	});
+});
+
+describe('useExtensions plugin subsystem gate', () => {
+	it('keeps provided OMP visible and consentable while hiding and disabling community plugins', async () => {
+		encoreFeatures.plugins = false;
+		const omp = pluginRecord('com.maestro.omp', 'bundle');
+		const community = pluginRecord('com.example.community');
+		vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+			hostApiVersion: '1.0.0',
+			subsystemEnabled: false,
+			plugins: [omp, community],
+		});
+
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		expect(result.current.pluginsSubsystemEnabled).toBe(false);
+		expect(result.current.extensions).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: 'com.maestro.omp',
+					kind: 'plugin',
+					provided: true,
+				}),
+			])
+		);
+		expect(result.current.extensions.some((extension) => extension.id === community.id)).toBe(
+			false
+		);
+		expect(window.maestro.plugins.contributions).not.toHaveBeenCalled();
+
+		await act(async () => {
+			await result.current.togglePlugin(community);
+			await result.current.uninstallPlugin(community);
+			await result.current.revokePlugin(community.id);
+		});
+
+		expect(requestConsent).not.toHaveBeenCalled();
+		expect(setEnabled).not.toHaveBeenCalled();
+		expect(uninstall).not.toHaveBeenCalled();
+		expect(revokeGrants).not.toHaveBeenCalled();
+
+		await act(async () => {
+			await result.current.togglePlugin(omp);
+		});
+
+		expect(requestConsent).toHaveBeenCalledWith(omp.id);
+	});
+	it('keeps community records and contributions active when the snapshot enables the subsystem', async () => {
+		encoreFeatures.plugins = true;
+		const community = pluginRecord('com.example.community');
+		vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+			hostApiVersion: '1.0.0',
+			subsystemEnabled: true,
+			plugins: [community],
+		});
+
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		expect(result.current.pluginsSubsystemEnabled).toBe(true);
+		expect(result.current.extensions).toEqual(
+			expect.arrayContaining([expect.objectContaining({ id: community.id, kind: 'plugin' })])
+		);
+		expect(window.maestro.plugins.contributions).toHaveBeenCalledTimes(1);
 	});
 });

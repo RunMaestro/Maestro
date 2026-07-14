@@ -39,6 +39,8 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 /** Serializable snapshot returned by list/toggle channels. */
 export interface PluginListSnapshot {
 	hostApiVersion: string;
+	/** True when the community plugin runtime accepts gated IPC operations. */
+	subsystemEnabled: boolean;
 	plugins: PluginRecord[];
 }
 
@@ -81,8 +83,8 @@ function isPluginsEnabled(settingsStore: { get: (key: string) => unknown }): boo
 	return ef.plugins === true;
 }
 
-function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
-	return { hostApiVersion: HOST_API_VERSION, plugins: registry.records };
+function snapshotOf(registry: PluginRegistry, subsystemEnabled: boolean): PluginListSnapshot {
+	return { hostApiVersion: HOST_API_VERSION, subsystemEnabled, plugins: registry.records };
 }
 
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
@@ -90,7 +92,8 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
-		async (): Promise<PluginListSnapshot> => snapshotOf(manager.getRegistry())
+		async (): Promise<PluginListSnapshot> =>
+			snapshotOf(manager.getRegistry(), isPluginsEnabled(settingsStore))
 	);
 	const wrappedSetEnabled = withIpcErrorLogging(
 		handlerOpts('setEnabled'),
@@ -106,7 +109,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				// window via plugins:request-consent). The renderer cannot flip it on.
 				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
 			}
-			return snapshotOf(manager.setEnabled(id, enabled));
+			return snapshotOf(manager.setEnabled(id, enabled), isPluginsEnabled(settingsStore));
 		}
 	);
 	const wrappedInstall = withIpcErrorLogging(
@@ -124,7 +127,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			if (typeof sourceDir !== 'string' || sourceDir.length === 0) {
 				throw new Error('InvalidSourceDir');
 			}
-			return snapshotOf(await manager.update(sourceDir));
+			return snapshotOf(await manager.update(sourceDir), isPluginsEnabled(settingsStore));
 		}
 	);
 	const wrappedUninstall = withIpcErrorLogging(
