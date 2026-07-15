@@ -120,8 +120,13 @@ const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
 /** Default local ignore patterns for new installations (includes .git, node_modules, __pycache__) */
 export const DEFAULT_LOCAL_IGNORE_PATTERNS = ['.git', 'node_modules', '__pycache__'];
 
-/** Default maximum recursion depth when indexing the file tree. */
-export const DEFAULT_FILE_EXPLORER_MAX_DEPTH = 5;
+/**
+ * Default maximum recursion depth when indexing the file tree. The entry cap
+ * (not this) is the memory guard - once it's hit, the walk stops recursing - so
+ * this can be generous. At depth 5 a normal repo layout
+ * (`src/renderer/components/Settings/tabs/...`) already falls off the tree.
+ */
+export const DEFAULT_FILE_EXPLORER_MAX_DEPTH = 10;
 /** Minimum allowed maximum recursion depth. */
 export const FILE_EXPLORER_MIN_DEPTH = 1;
 /** Maximum allowed maximum recursion depth. */
