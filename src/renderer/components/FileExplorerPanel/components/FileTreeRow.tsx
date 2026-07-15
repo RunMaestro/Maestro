@@ -124,7 +124,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 	const { node, path: fullPath, depth, globalIndex } = item;
 	const absolutePath = `${session.fullPath}/${fullPath}`;
 	const isFolder = node.type === 'folder';
-	// Match against the full relative path — `path.includes(node.name)` used
+	// Match against the full relative path - `path.includes(node.name)` used
 	// to false-match files with identical leaf names. (#611)
 	const changeType: FileChangeType | undefined = isFolder ? undefined : changeMap.get(fullPath);
 	// Folders highlight when any descendant is changed (VSCode-style walk).
@@ -360,7 +360,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 							node.name,
 							theme,
 							// Per #611 follow-up: don't tint the icon based on change
-							// state — let the dot + filename color carry that signal so
+							// state - let the dot + filename color carry that signal so
 							// the icon set stays visually consistent across themes.
 							undefined,
 							fileExplorerIconTheme,

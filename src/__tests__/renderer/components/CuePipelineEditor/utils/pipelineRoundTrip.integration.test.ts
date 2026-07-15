@@ -134,7 +134,7 @@ describe('round-trip: multi-trigger prompt isolation', () => {
 		const incomingEdges = reconstructed.edges.filter((e) => e.target === agentNode.id);
 		expect(incomingEdges).toHaveLength(2);
 
-		// Each edge kept its own prompt — no leakage.
+		// Each edge kept its own prompt - no leakage.
 		const prompts = incomingEdges.map((e) => e.prompt).sort();
 		expect(prompts).toEqual(['handle issue number {{CUE_GH_NUMBER}}', 'review PR {{CUE_GH_URL}}']);
 	});
@@ -180,7 +180,7 @@ describe('round-trip: pipeline color persistence', () => {
 		expect(colorsByName1.bravo).toBe('#8b5cf6');
 		expect(colorsByName1.charlie).toBe('#f59e0b');
 
-		// Pass 2 — simulates "save, reload, save again, reload"
+		// Pass 2 - simulates "save, reload, save again, reload"
 		const r2 = roundTrip(r1, sessions);
 		const colorsByName2 = Object.fromEntries(r2.map((p) => [p.name, p.color]));
 		expect(colorsByName2).toEqual(colorsByName1);
@@ -230,7 +230,7 @@ describe('round-trip: agent identity stability', () => {
 			.map((n) => (n.data as AgentNodeData).sessionName);
 		expect(agentNames).toContain('RenamedAgent');
 		expect(agentNames).toContain('Downstream');
-		// No error nodes — ID resolution succeeded.
+		// No error nodes - ID resolution succeeded.
 		const errors = reconstructed.nodes.filter((n) => n.type === 'error');
 		expect(errors).toHaveLength(0);
 	});
@@ -254,7 +254,7 @@ describe('round-trip: agent identity stability', () => {
 			return { ...(rest as Partial<CueSubscription>), enabled: true, prompt } as CueSubscription;
 		});
 
-		// The agent has been deleted — no matching session.
+		// The agent has been deleted - no matching session.
 		const emptySessions: Array<{ id: string; name: string; toolType: 'claude-code' }> = [];
 		const [reconstructed] = subscriptionsToPipelines(subs, emptySessions);
 

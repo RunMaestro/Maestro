@@ -18,7 +18,7 @@ export interface UseProcessKeyboardNavResult {
 }
 
 // Translates keyboard events into selection / expansion / detail / refresh actions.
-// Stateless — all state and mutators are passed in.
+// Stateless - all state and mutators are passed in.
 export function useProcessKeyboardNav(
 	input: UseProcessKeyboardNavInput
 ): UseProcessKeyboardNavResult {

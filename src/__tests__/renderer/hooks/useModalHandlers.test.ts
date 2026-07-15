@@ -1939,7 +1939,7 @@ describe('useModalHandlers', () => {
 				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
 			});
 
-			// Should not throw — no-op
+			// Should not throw - no-op
 			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
 		});
 	});

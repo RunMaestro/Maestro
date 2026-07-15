@@ -1,12 +1,12 @@
 /**
- * `maestro-cli cue schedule` — author one-shot `time.once` subscriptions in
+ * `maestro-cli cue schedule` - author one-shot `time.once` subscriptions in
  * an agent's `.maestro/cue.yaml`. The CLI is the primary surface for the
  * `time.once` event (Phase 03 of the Cue once-trigger feature). Agents use
  * this command whenever a user asks for a delayed prompt or reminder (e.g.
  * "in 20 minutes do X" or "remind me at 4pm to push the rc branch").
  *
  * Three modes are selected by flags (modes #2 and #3 are filled in by the
- * companion task in this phase — list/cancel land in a follow-up edit):
+ * companion task in this phase - list/cancel land in a follow-up edit):
  *  - default: create one or two `time.once` subscriptions (one per action).
  *  - `--list`: enumerate every pending `time.once` task across all agents.
  *  - `--cancel <name>`: remove a specific pending task by name.
@@ -69,7 +69,7 @@ function parseDuration(input: string): number | null {
  */
 function parseAt(input: string): Date | null {
 	const trimmed = input.trim();
-	// Local naive form — explicitly construct in local TZ so the resulting
+	// Local naive form - explicitly construct in local TZ so the resulting
 	// Date matches the user's wall clock.
 	const local = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
 	if (local) {
@@ -83,7 +83,7 @@ function parseAt(input: string): Date | null {
 		return Number.isFinite(date.getTime()) ? date : null;
 	}
 	// ISO-8601 (with or without TZ offset). Date.parse handles both, but we
-	// rely on the trimmed string carrying a TZ — the engine validator
+	// rely on the trimmed string carrying a TZ - the engine validator
 	// rejects naive ISO timestamps anyway, so we don't try to second-guess.
 	const ms = Date.parse(trimmed);
 	if (!Number.isFinite(ms)) return null;
@@ -148,7 +148,7 @@ function resolveAgent(input: string, sessions: SessionInfo[]): SessionInfo | nul
 	if (idPrefixMatches.length === 1) return idPrefixMatches[0];
 	if (idPrefixMatches.length > 1) {
 		throw new Error(
-			`Ambiguous agent identifier "${input}" — matches multiple IDs (${idPrefixMatches
+			`Ambiguous agent identifier "${input}" - matches multiple IDs (${idPrefixMatches
 				.map((s) => `${s.id.slice(0, 8)} (${s.name})`)
 				.join(', ')})`
 		);
@@ -283,7 +283,7 @@ interface PendingTaskRow {
 
 /**
  * Collect every `time.once` subscription across all configured agents. Skips
- * agents whose cue.yaml is missing — that's the normal "no scheduled tasks"
+ * agents whose cue.yaml is missing - that's the normal "no scheduled tasks"
  * state. Parse / schema errors are surfaced as warnings on stderr but do not
  * abort the listing of valid agents.
  */

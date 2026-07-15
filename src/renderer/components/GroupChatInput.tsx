@@ -595,7 +595,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								type="button"
 								onClick={(e) => {
 									e.stopPropagation();
-									// Match by content rather than captured `idx` — index can
+									// Match by content rather than captured `idx` - index can
 									// shift if the user removes another staged image while the
 									// annotator is open.
 									useImageAnnotatorStore

@@ -1,5 +1,5 @@
 /**
- * CueYamlEditor — Modal for editing .maestro/cue.yaml configuration.
+ * CueYamlEditor - Modal for editing .maestro/cue.yaml configuration.
  *
  * Thin shell: load/save, validation, modal coordination.
  * Sub-components handle YAML editing, AI chat, and pattern browsing.
@@ -75,7 +75,7 @@ export function CueYamlEditor({
 						setValidationErrors(validationResult.errors);
 					}
 				} catch (err: unknown) {
-					// Gate the Save button when validation fails to actually run —
+					// Gate the Save button when validation fails to actually run -
 					// otherwise isValid keeps its initial `true` and the user
 					// could save unvalidated YAML. Surface the error to telemetry
 					// AND to the user via setValidationErrors so they know what
@@ -144,7 +144,7 @@ export function CueYamlEditor({
 	const handleSave = useCallback(async () => {
 		if (!isValid) return;
 		await cueService.writeYaml(projectRoot, yamlContent);
-		// Write succeeded, so the YAML IS on disk — but if refreshSession
+		// Write succeeded, so the YAML IS on disk - but if refreshSession
 		// fails the engine keeps serving the stale config until the next app
 		// start. Surface that as a toast so the user knows to retry rather
 		// than thinking the save silently reverted.
@@ -159,7 +159,7 @@ export function CueYamlEditor({
 				title: 'Cue config saved but engine did not reload',
 				message:
 					err instanceof Error
-						? `${err.message} — reopen the editor to retry.`
+						? `${err.message} - reopen the editor to retry.`
 						: 'Reopen the editor to retry the reload.',
 			});
 		}
@@ -172,7 +172,7 @@ export function CueYamlEditor({
 	const refreshYamlFromDisk = useCallback(async () => {
 		try {
 			const content = await cueService.readYaml(projectRoot);
-			// `if (content)` would skip an intentionally empty YAML — an empty
+			// `if (content)` would skip an intentionally empty YAML - an empty
 			// string is a legitimate result (e.g. user cleared the file) and
 			// should still trigger state updates and revalidation. Only skip
 			// when the read returned null (no file on disk).
@@ -254,7 +254,7 @@ export function CueYamlEditor({
 	if (!isOpen) return null;
 
 	const isDirty = yamlContent !== originalContent;
-	const modalTitle = `Edit .maestro/cue.yaml${session?.name ? ` — ${session.name}` : ''}`;
+	const modalTitle = `Edit .maestro/cue.yaml${session?.name ? ` - ${session.name}` : ''}`;
 
 	// Custom header with nav buttons when opened directly (not from CueModal)
 	const directNavHeader = openedDirectly ? (

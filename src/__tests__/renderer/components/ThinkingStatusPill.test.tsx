@@ -864,7 +864,7 @@ describe('ThinkingStatusPill', () => {
 
 		it('shows +N badge for force-parallel / plan-mode tabs on the same session during AutoRun', () => {
 			// AutoRun does NOT put its own tab into thinkingItems (it never sets state='busy'),
-			// so the only entries are the real concurrent tabs — e.g. a force-parallel write tab
+			// so the only entries are the real concurrent tabs - e.g. a force-parallel write tab
 			// and a plan-mode read-only tab running alongside AutoRun on the same session.
 			const parallelTab = createThinkingItemWithTab(
 				{ id: 'active-session', name: 'SANS AI Pentesting' },

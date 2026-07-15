@@ -4,13 +4,13 @@
  * Enabling a first-party Encore feature that declares real capabilities no
  * longer mints synchronously: it stages a `pendingEnable` (the modal's data)
  * and mints NOTHING until the user confirms. The gate is the whole point, so
- * these tests assert the NEGATIVE first — `setFirstPartyEnabled` is not called
- * on toggle — and only the confirm path routes through the host-owned
+ * these tests assert the NEGATIVE first - `setFirstPartyEnabled` is not called
+ * on toggle - and only the confirm path routes through the host-owned
  * lifecycle bridge (plugins:first-party-set-enabled). The renderer store syncs
  * from the bridge's SETTLED state (which may be OFF when the grant mint failed
  * closed); only a bridge REJECTION falls back to a direct settings write, and
  * loudly. Cancel mints nothing. Disable (and non-first-party enable) still
- * commit immediately — there is nothing to review when removing access.
+ * commit immediately - there is nothing to review when removing access.
  */
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -56,7 +56,7 @@ const setFirstPartyEnabled = vi.fn();
 
 // The mount `reload()` effect resolves its mocked IPC (list → contributions)
 // across several microtask ticks and calls setState AFTER a synchronous test
-// body returns — a late update that both warns and can bleed into the next
+// body returns - a late update that both warns and can bleed into the next
 // test. Sync-shaped tests await this to settle the mount inside act().
 async function flushMountEffects(): Promise<void> {
 	await act(async () => {
@@ -95,7 +95,7 @@ afterEach(() => {
 	(window as unknown as { maestro: unknown }).maestro = undefined;
 });
 
-describe('useExtensions.toggleBuiltin — the pre-enable permission gate', () => {
+describe('useExtensions.toggleBuiltin - the pre-enable permission gate', () => {
 	it.each(FIRST_PARTY_FLAGS)(
 		'"%s": enable stages pendingEnable and mints NOTHING until confirm',
 		async (flag) => {
@@ -154,7 +154,7 @@ describe('useExtensions.toggleBuiltin — the pre-enable permission gate', () =>
 	);
 });
 
-describe('confirmPendingEnable — bridge routing & failure semantics', () => {
+describe('confirmPendingEnable - bridge routing & failure semantics', () => {
 	it('syncs the store from the bridge state even when the mint fails closed', async () => {
 		// Grant mint under-delivered: the bridge settles OFF despite enable=true.
 		setFirstPartyEnabled.mockResolvedValue({ enabled: false, authorized: false });
@@ -230,7 +230,7 @@ describe('confirmPendingEnable — bridge routing & failure semantics', () => {
 	});
 });
 
-describe('useExtensions.toggleBuiltin — immediate commits (no modal)', () => {
+describe('useExtensions.toggleBuiltin - immediate commits (no modal)', () => {
 	it('non-first-party flags (plugins subsystem) disable directly, no bridge, no modal', async () => {
 		const { result } = renderHook(() => useExtensions());
 
@@ -245,7 +245,7 @@ describe('useExtensions.toggleBuiltin — immediate commits (no modal)', () => {
 	});
 
 	it('an already-enabled first-party flag disables through the bridge with no modal', async () => {
-		// Pianola is ON: toggling it is a DISABLE — nothing to review, so it
+		// Pianola is ON: toggling it is a DISABLE - nothing to review, so it
 		// commits immediately through the bridge and never stages a modal.
 		encoreFeatures.pianola = true;
 		setFirstPartyEnabled.mockResolvedValue({ enabled: false, authorized: false });

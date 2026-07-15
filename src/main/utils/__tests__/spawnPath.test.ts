@@ -1,5 +1,5 @@
 /**
- * Tests for buildSpawnPath() — the spawn-time PATH builder that merges
+ * Tests for buildSpawnPath() - the spawn-time PATH builder that merges
  * Maestro's hardcoded expanded PATH with the user's cached login-shell PATH
  * and caller-supplied extra dirs.
  *
@@ -68,7 +68,7 @@ describe('buildSpawnPath', () => {
 		// Use a small bash command to populate the shell PATH cache deterministically
 		process.env.SHELL = '/bin/sh';
 		process.env.PATH = '/usr/bin';
-		// refreshShellPath spawns the shell — we can't control that in CI, so we
+		// refreshShellPath spawns the shell - we can't control that in CI, so we
 		// instead rely on it returning *something* and assert structural ordering.
 		try {
 			await refreshShellPath();
@@ -109,7 +109,7 @@ describe('buildSpawnPath', () => {
 	});
 
 	it('drops non-absolute extras to avoid prepending "." or relative dirs', () => {
-		// path.dirname("codex") returns "." — if a caller ever forwards a bare
+		// path.dirname("codex") returns "." - if a caller ever forwards a bare
 		// binary name, we must NOT prepend cwd to PATH (it would let a binary
 		// in cwd shadow system tools).
 		process.env.PATH = '/usr/bin';

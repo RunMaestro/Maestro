@@ -1,11 +1,11 @@
 /**
  * @file authorization-ledger.test.ts
- * @description Security tests for the sealed authorization ledger — the plugin
+ * @description Security tests for the sealed authorization ledger - the plugin
  * authorization gate. Proves the contract: nothing on disk authorizes a plugin
  * without a mint, and a file-writer cannot forge, roll back, or revive
  * authorization. Uses fakes for the seal and the credential-store anchor so the
  * anchor persists (like a real keyring) while the ledger file is independently
- * rolled back — the exact rollback attack.
+ * rolled back - the exact rollback attack.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -42,7 +42,7 @@ function fakeSeal(available = true): SealProvider {
 	};
 }
 
-/** In-memory anchor backed by an external holder — simulates the OS credential
+/** In-memory anchor backed by an external holder - simulates the OS credential
  * vault, which is NOT rolled back when the ledger file is restored. */
 function fakeAnchor(holder: { value: Anchor | null }, available = true): AnchorStore {
 	return {
@@ -132,7 +132,7 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('AuthorizationStore — mint / revoke', () => {
+describe('AuthorizationStore - mint / revoke', () => {
 	it('mint enables and grants exactly the approved caps; unminted plugins get nothing', () => {
 		const holder = { value: null as Anchor | null };
 		const store = makeStore(fakeSeal(), fakeAnchor(holder));
@@ -161,7 +161,7 @@ describe('AuthorizationStore — mint / revoke', () => {
 	});
 });
 
-describe('AuthorizationStore — persistence', () => {
+describe('AuthorizationStore - persistence', () => {
 	it('persists across instances when sealed + anchored', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('storage:write'), ident('hash-a'));
@@ -173,7 +173,7 @@ describe('AuthorizationStore — persistence', () => {
 	});
 });
 
-describe('AuthorizationStore — anti-rollback (the contract)', () => {
+describe('AuthorizationStore - anti-rollback (the contract)', () => {
 	it('rejects a restored OLD sealed ledger (epoch regression) → re-consent, grant NOT honored', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('fs:write', '/d'), ident('hash-a'));
@@ -248,7 +248,7 @@ describe('AuthorizationStore — anti-rollback (the contract)', () => {
 	});
 });
 
-describe('AuthorizationStore — session-only fail-safe', () => {
+describe('AuthorizationStore - session-only fail-safe', () => {
 	it('no seal → in-memory grants this session, nothing persisted', () => {
 		const holder = { value: null as Anchor | null };
 		const store = makeStore(fakeSeal(false), fakeAnchor(holder));
@@ -269,7 +269,7 @@ describe('AuthorizationStore — session-only fail-safe', () => {
 	});
 });
 
-describe('AuthorizationStore — persist failure (locked keyring) fails safe', () => {
+describe('AuthorizationStore - persist failure (locked keyring) fails safe', () => {
 	it('an anchor write that throws degrades to session-only, not a crash', () => {
 		const holder = { value: null as Anchor | null };
 		const throwingAnchor: AnchorStore = {
@@ -317,7 +317,7 @@ describe('AuthorizationStore — persist failure (locked keyring) fails safe', (
 	});
 });
 
-describe('AuthorizationStore — verify (refresh-time gate)', () => {
+describe('AuthorizationStore - verify (refresh-time gate)', () => {
 	const newStore = () => makeStore(fakeSeal(), fakeAnchor({ value: null as Anchor | null }));
 
 	it('authorizes when identity matches and caps are still requested', () => {

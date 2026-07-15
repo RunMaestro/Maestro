@@ -1,5 +1,5 @@
 /**
- * Consent minter — anti-forgery core (main process).
+ * Consent minter - anti-forgery core (main process).
  *
  * Authorization can only be minted through a consent prompt the MAIN process
  * itself opened. This registry issues a one-time, short-lived nonce when the
@@ -9,9 +9,9 @@
  * never-offered request is rejected.
  *
  * This is the part that's pure and exhaustively testable. The IPC layer adds the
- * other two checks the contract requires — the sender is the trusted, host-owned
+ * other two checks the contract requires - the sender is the trusted, host-owned
  * consent surface (`event.senderFrame`), and the confirm carries a real user
- * activation — neither of which any plugin-controlled surface can satisfy.
+ * activation - neither of which any plugin-controlled surface can satisfy.
  */
 
 import { randomBytes } from 'crypto';
@@ -83,14 +83,14 @@ export class ConsentNonceRegistry {
 		return approved.every((c) => offered.has(c));
 	}
 
-	/** Number of outstanding (issued, unconsumed) nonces — for tests / diagnostics. */
+	/** Number of outstanding (issued, unconsumed) nonces - for tests / diagnostics. */
 	outstanding(): number {
 		return this.tickets.size;
 	}
 }
 
 /** A frame-level identity for the consent surface. A bare webContents id is not
- * enough — a subframe or an in-frame navigation could share it — so we bind to the
+ * enough - a subframe or an in-frame navigation could share it - so we bind to the
  * specific frame (routing id) and its URL. The IPC layer builds this from
  * `event.senderFrame`; `openPrompt` returns the consent window's own token. */
 export interface ConsentSender {
@@ -106,7 +106,7 @@ export function sameConsentSender(a: ConsentSender, b: ConsentSender): boolean {
 }
 
 /** The main-owned consent prompt currently open. The recorded `sender` is the
- * frame of the consent window the main process itself created — the ONLY frame
+ * frame of the consent window the main process itself created - the ONLY frame
  * whose confirm is trusted. */
 export interface OpenConsentPrompt {
 	pluginId: string;
@@ -117,13 +117,13 @@ export interface OpenConsentPrompt {
 	nonce: string;
 }
 
-/** Why a confirm did not mint — surfaced for the audit log, never to a plugin. */
+/** Why a confirm did not mint - surfaced for the audit log, never to a plugin. */
 export type MintRejection =
 	| 'no-prompt' // no consent prompt is open
 	| 'untrusted-sender' // confirm came from a frame that is not the consent window
 	| 'plugin-mismatch' // confirm names a different plugin than the open prompt
 	| 'bad-nonce' // nonce missing/expired/replayed, or approved ⊄ offered
-	| 'no-identity' // the plugin dir is unhashable (symlink) — never mintable
+	| 'no-identity' // the plugin dir is unhashable (symlink) - never mintable
 	| 'conflict' // transcripts:read + egress on an untrusted plugin
 	| 'bundled-act-verb' // an act verb rode the plain approved[] channel (forgery/spoof)
 	| 'bad-high-risk' // approvedHighRisk carried a non-act-verb capability
@@ -135,14 +135,14 @@ export type MintOutcome =
 
 export interface ConsentMinterDeps {
 	registry: ConsentNonceRegistry;
-	/** The sealed authorization ledger — the only thing that creates trust. */
+	/** The sealed authorization ledger - the only thing that creates trust. */
 	store: { mint: (pluginId: string, caps: PermissionGrant[], identity: AuthIdentity) => void };
 	/** The plugin's manifest-requested permissions (capability + scope + reason). */
 	requested: (pluginId: string) => PermissionRequest[];
 	/** The plugin's CURRENT identity (content digest + signature), or null if unhashable. */
 	identityOf: (pluginId: string) => AuthIdentity | null;
 	/** Open the main-owned consent window for {pluginId, offered, nonce}; resolves
-	 * with the consent window's own frame token — the only trusted confirmer. */
+	 * with the consent window's own frame token - the only trusted confirmer. */
 	openPrompt: (req: {
 		pluginId: string;
 		offered: readonly PluginCapability[];
@@ -156,10 +156,10 @@ export interface ConsentMinterDeps {
  * trust, enforcing the three checks the contract requires:
  *
  *  1. The nonce is issued ONLY inside the main-owned open path (`requestConsent`),
- *     never via a renderer-callable endpoint — so possessing a nonce proves the
+ *     never via a renderer-callable endpoint - so possessing a nonce proves the
  *     main process opened the prompt.
  *  2. The confirm is accepted ONLY from the consent window's recorded frame
- *     (`sender`) — no plugin-controlled surface can be that frame.
+ *     (`sender`) - no plugin-controlled surface can be that frame.
  *  3. No renderer-supplied "user activation" flag is trusted; trust derives from
  *     the sender-frame identity + one-time nonce alone.
  *
@@ -201,7 +201,7 @@ export class ConsentMinter {
 	 *
 	 * Phase 4 (plugin-phase4-high-risk-verbs.md §1+§8): the act verbs travel a
 	 * DISTINCT `approvedHighRisk` channel. An act verb arriving in the plain
-	 * `approved` array is REJECTED outright — the real consent page can never
+	 * `approved` array is REJECTED outright - the real consent page can never
 	 * produce that shape, so it is a forgery, not a UI mistake. The revocable
 	 * `unattended` flag is minted ONLY from the explicit `unattended` list (the
 	 * nested no-user-present checkbox), which must itself be a subset of the
@@ -235,7 +235,7 @@ export class ConsentMinter {
 			return { ok: false, reason: 'bundled-act-verb' };
 		}
 		const approvedHighRisk = (req.approvedHighRisk ?? []).filter(isPluginCapability);
-		// The high-risk channel carries ONLY act verbs — a plain capability here
+		// The high-risk channel carries ONLY act verbs - a plain capability here
 		// would dodge the (future) per-channel wording/audit trail.
 		if (!approvedHighRisk.every(isHighRiskActCapability)) {
 			return { ok: false, reason: 'bad-high-risk' };
@@ -258,7 +258,7 @@ export class ConsentMinter {
 		const toGrant = this.deps.requested(req.pluginId).filter((r) => approvedSet.has(r.capability));
 		const unattendedSet = new Set(unattended);
 		// The separate, revocable unattended flag is minted ONLY from the
-		// explicit unattended acceptance — never inferred from the grant itself.
+		// explicit unattended acceptance - never inferred from the grant itself.
 		const grants = grantsFromRequests(toGrant, this.now()).map((g) =>
 			unattendedSet.has(g.capability) ? { ...g, unattended: true } : g
 		);

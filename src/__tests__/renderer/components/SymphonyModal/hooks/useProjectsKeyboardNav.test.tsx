@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/useProjectsKeyboardNav — repository tile-grid
+ * Tests for SymphonyModal/hooks/useProjectsKeyboardNav - repository tile-grid
  * keyboard nav (Arrows / Enter / "/" / Esc-blur).
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';

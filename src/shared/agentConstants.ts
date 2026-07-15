@@ -11,7 +11,7 @@ import type { AgentCapabilitiesSnapshot } from './agentCapabilities';
 /**
  * Default context window sizes for different agents.
  * Used as fallback when the agent doesn't report its context window size.
- * Not all agents have a known default — agents without an entry here
+ * Not all agents have a known default - agents without an entry here
  * should configure contextWindow via their configOptions in definitions.ts.
  */
 export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
@@ -80,8 +80,8 @@ export function isAdaptiveModeDefaultOn(_agentId: string): boolean {
 /**
  * Agent Resilience (auto-retry on availability / token-exhaustion errors) is ON
  * by default for every agent. The persisted flags (`retryOnAvailabilityErrors`,
- * `retryOnTokenExhaustion`) are optional, so `undefined` — the state for every
- * pre-existing agent and any newly created one that didn't touch the toggle —
+ * `retryOnTokenExhaustion`) are optional, so `undefined` - the state for every
+ * pre-existing agent and any newly created one that didn't touch the toggle -
  * reads as enabled. Only an explicit `false` opts out. This read-time default
  * means no storage migration is needed.
  */
@@ -120,7 +120,7 @@ export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
  * pattern appears so context-window changes shipped by an agent vendor flow
  * into Maestro automatically once a snapshot has captured them.
  *
- * Caller migration of existing readers is deferred to a follow-up PR — this
+ * Caller migration of existing readers is deferred to a follow-up PR - this
  * helper coexists with the old constant readers and is safe to land first.
  */
 export function getContextWindowForAgent(

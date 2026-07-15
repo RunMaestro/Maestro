@@ -889,7 +889,7 @@ describe('BatchRunnerModal', () => {
 
 			render(<BatchRunnerModal {...createDefaultProps()} />);
 
-			// Import Playbook is a top-level button — no need to open the
+			// Import Playbook is a top-level button - no need to open the
 			// Load Playbook dropdown first.
 			await waitFor(() => screen.getByRole('button', { name: 'Import Playbook' }));
 			fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
@@ -900,7 +900,7 @@ describe('BatchRunnerModal', () => {
 		});
 
 		// Regression test for the bug where Import Playbook was buried inside
-		// the Load Playbook dropdown — which only renders when
+		// the Load Playbook dropdown - which only renders when
 		// `playbooks.length > 0 || loadedPlaybook`. First-time users (fresh
 		// worktree, never created a playbook) had no entry point to import a
 		// .maestro-playbook.zip and the button appeared to do nothing because
@@ -1039,7 +1039,7 @@ describe('BatchRunnerModal', () => {
 		it('hides the documents panel and shows goal inputs when Goal-Driven is selected', async () => {
 			render(<BatchRunnerModal {...createDefaultProps()} />);
 
-			// Spec mode by default — documents panel is visible.
+			// Spec mode by default - documents panel is visible.
 			expect(screen.getByText('test-doc.md')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Add Docs' })).toBeInTheDocument();
 
@@ -1081,7 +1081,7 @@ describe('BatchRunnerModal', () => {
 			expect(screen.getByText('to copy document')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
 
-			// Switch to Goal-Driven — none of these apply without checklist documents.
+			// Switch to Goal-Driven - none of these apply without checklist documents.
 			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
 
 			await waitFor(() => {
@@ -1618,7 +1618,7 @@ describe('Agent Prompt Validation in UI', () => {
 			expect(screen.getByText('5')).toBeInTheDocument();
 		});
 
-		// Default prompt should be valid — Go should be enabled
+		// Default prompt should be valid - Go should be enabled
 		const goButton = screen.getByRole('button', { name: 'Go' });
 		expect(goButton).not.toBeDisabled();
 	});
@@ -2289,7 +2289,7 @@ describe('Click Outside Dropdown Handlers', () => {
 		fireEvent.mouseDown(document.body);
 
 		await waitFor(() => {
-			// Dropdown should be closed — the playbook list item disappears.
+			// Dropdown should be closed - the playbook list item disappears.
 			// (Import Playbook is now a top-level button outside the
 			// dropdown, so it remains visible regardless of dropdown state.)
 			expect(screen.queryByText('Test Playbook')).not.toBeInTheDocument();
@@ -2834,7 +2834,7 @@ describe('Worktree Loading State', () => {
 			expect(screen.getByText('Create New Worktree')).toBeInTheDocument();
 		});
 
-		// Click Go — should show "Preparing Worktree..." since mode is create-new
+		// Click Go - should show "Preparing Worktree..." since mode is create-new
 		const goButton = screen.getByRole('button', { name: 'Go' });
 		await act(async () => {
 			fireEvent.click(goButton);
@@ -2868,7 +2868,7 @@ describe('Worktree Loading State', () => {
 			expect(screen.getByText('5')).toBeInTheDocument();
 		});
 
-		// Click Go without worktree enabled — should call onGo and onClose immediately
+		// Click Go without worktree enabled - should call onGo and onClose immediately
 		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 		expect(props.onGo).toHaveBeenCalled();
@@ -2937,7 +2937,7 @@ describe('Auto Run Fresh-Context Mode Auto-Selection', () => {
 
 		// Use a task count >= 20 so the task-count-based recommendation
 		// agrees with the small-context-window default of Task. (Below 20
-		// tasks/doc the recommendation flips to Document — covered separately.)
+		// tasks/doc the recommendation flips to Document - covered separately.)
 		const props = createDefaultProps();
 		props.getDocumentTaskCount = vi.fn().mockResolvedValue(25);
 
@@ -3015,7 +3015,7 @@ describe('Auto Run Fresh-Context Mode Auto-Selection', () => {
 			expect(screen.getByRole('button', { name: 'Document' })).toHaveClass('ring-2');
 		});
 
-		// User overrides to Task — recommendation now disagrees, warning shows.
+		// User overrides to Task - recommendation now disagrees, warning shows.
 		fireEvent.click(screen.getByRole('button', { name: 'Task' }));
 
 		await waitFor(() => {

@@ -145,7 +145,7 @@ describe('orphan prompt file pruning', () => {
 	});
 
 	it('preserves non-.md files (only markdown is managed)', () => {
-		// Someone may have dropped a README.txt or similar next to prompts —
+		// Someone may have dropped a README.txt or similar next to prompts -
 		// pruning should not touch anything that isn't a .md file, since only
 		// .md files are produced by the prompt-file writer.
 		writeCuePromptFile(projectRoot, '.maestro/prompts/referenced.md', 'x');
@@ -215,7 +215,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 			fs.readFileSync(path.join(projectRoot, '.maestro/prompts/output-phase2.md'), 'utf-8')
 		).toBe('phase-2 body');
 
-		// Simulate deleting one subscription and pruning — only referenced files remain
+		// Simulate deleting one subscription and pruning - only referenced files remain
 		const removed = pruneOrphanedPromptFiles(projectRoot, [
 			'.maestro/prompts/morning.md',
 			'.maestro/prompts/output.md',
@@ -227,7 +227,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 
 	it('overwriting YAML+prompts preserves the rest of .maestro/', () => {
 		// User may have unrelated files (e.g. director-notes, other tooling)
-		// in .maestro/ — we must not blow them away.
+		// in .maestro/ - we must not blow them away.
 		const maestroDir = path.join(projectRoot, '.maestro');
 		fs.mkdirSync(maestroDir, { recursive: true });
 		fs.writeFileSync(path.join(maestroDir, 'director-notes.md'), 'notes', 'utf-8');

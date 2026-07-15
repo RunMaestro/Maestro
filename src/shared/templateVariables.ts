@@ -99,14 +99,14 @@ import type { AdditionalDirectory } from './types';
  *
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
- *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
+ *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
  */
 
 /**
  * Detect the current platform in both Node.js (main process / CLI) and
- * renderer (browser) contexts.  The renderer has no `process` global —
+ * renderer (browser) contexts.  The renderer has no `process` global -
  * platform is exposed via the preload bridge at `window.maestro.platform`.
  */
 function getCurrentPlatform(): string {
@@ -255,10 +255,10 @@ export interface TemplateContext {
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
-		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
+		// Unified upstream-agent session ID - `sourceSessionId` for agent.completed,
 		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
 		fromAgent?: string;
-		// time.once fields — originally-scheduled fire timestamp (ISO-8601 with TZ).
+		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
 	};
 }
@@ -296,7 +296,7 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_FROM_AGENT}}',
 		description:
-			'Upstream agent/session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
+			'Upstream agent/session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
@@ -481,7 +481,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		// Path variables
 		CWD: session.cwd,
 		// Renders the whole "## Additional Directories" section, or '' when the
-		// agent has no grants — an empty heading reads like a failed load.
+		// agent has no grants - an empty heading reads like a failed load.
 		ADDITIONAL_DIRECTORIES: formatAdditionalDirectoriesForPrompt(session.additionalDirectories),
 		AUTORUN_FOLDER:
 			autoRunFolder ||

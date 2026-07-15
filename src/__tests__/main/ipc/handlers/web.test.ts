@@ -384,7 +384,7 @@ describe('web handlers', () => {
 		});
 
 		it('should bail out and keep the existing server if stop() fails during rotation', async () => {
-			// If stop() throws, the old server may still be bound to its port —
+			// If stop() throws, the old server may still be bound to its port -
 			// dropping the reference would leak it and the next start() would either
 			// collide on a custom port or run a second server in parallel. The
 			// handler must preserve the handle and surface the error.
@@ -527,7 +527,7 @@ describe('web handlers', () => {
 		});
 
 		// A discovery-file write failure (disk full, unwritable config dir, …)
-		// must not mask a genuinely-running server — `ensureCliServer` treats
+		// must not mask a genuinely-running server - `ensureCliServer` treats
 		// the write as non-fatal and `live:startServer` should too.
 		it('should still report success when discovery write fails after a fresh start', async () => {
 			mockWebServer.isActive.mockReturnValue(false);
@@ -930,7 +930,7 @@ describe('web handlers', () => {
 		it('stops firing after stopCliDiscoveryWatchdog is called', () => {
 			vi.useFakeTimers();
 			mockWebServer.isActive.mockReturnValue(true);
-			lastWrittenInfo = null; // missing — would normally trigger a write
+			lastWrittenInfo = null; // missing - would normally trigger a write
 
 			startCliDiscoveryWatchdog(buildDeps(), 1000);
 			stopCliDiscoveryWatchdog();

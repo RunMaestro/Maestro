@@ -215,7 +215,7 @@ describe('DEFAULT_TRIGGER_LABELS', () => {
 describe('validatePipelines', () => {
 	it('flags an empty pipeline (no nodes) so the save surfaces feedback', () => {
 		// Previously this returned [] and save silently succeeded without
-		// persisting anything — the "didn't save" class of user-reported bugs.
+		// persisting anything - the "didn't save" class of user-reported bugs.
 		const errors = validatePipelines([makePipeline({ name: 'Empty' })]);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toMatch(/Empty.*add a trigger and an agent/);
@@ -518,7 +518,7 @@ describe('usePipelineState', () => {
 	});
 
 	it('deletePipeline does not remove when confirm is not accepted', () => {
-		// Don't invoke onConfirm — simulates user clicking "Cancel"
+		// Don't invoke onConfirm - simulates user clicking "Cancel"
 		mockShowConfirmation.mockImplementationOnce(() => {});
 		const { result } = renderHook(() => usePipelineState(createDefaultParams()));
 
@@ -942,7 +942,7 @@ describe('usePipelineState', () => {
 		// Used by trigger-node animation: each trigger node knows its exact
 		// subscription name (e.g. "Pipeline 1-chain-2") and compares against
 		// the pipeline's running-subs set. Stripping the suffix would collapse
-		// chain triggers with the initial trigger — making every trigger icon
+		// chain triggers with the initial trigger - making every trigger icon
 		// spin when any sub in the pipeline runs (the pre-fix bug).
 		const { result } = renderHook(() =>
 			usePipelineState(
@@ -1051,7 +1051,7 @@ describe('usePipelineState', () => {
 	it('validation errors persist across subsequent re-renders (regression: dirty-tracking wipe)', async () => {
 		// Previously the dirty-tracking effect depended on the `persistence` object
 		// identity, which changes every render. When handleSave set validationErrors
-		// and React re-rendered, the effect fired and immediately cleared them —
+		// and React re-rendered, the effect fired and immediately cleared them -
 		// the banner flashed for one frame. Guard: errors survive a post-save
 		// re-render so the user can actually read them.
 		const { result, rerender } = renderHook(() =>

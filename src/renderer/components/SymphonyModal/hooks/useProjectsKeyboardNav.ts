@@ -22,7 +22,7 @@ export interface UseProjectsKeyboardNavParams {
  *  - Arrow keys move the selected tile (clamped at edges, no wrap)
  *  - Enter activates the highlighted tile
  *
- * All listeners attach to `window` (not the modal root) — matches today's
+ * All listeners attach to `window` (not the modal root) - matches today's
  * behavior. The hook is a no-op when the modal is closed, when we're on a
  * different tab, or when the detail view is open.
  */

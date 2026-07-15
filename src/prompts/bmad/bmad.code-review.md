@@ -71,7 +71,7 @@ review_mode: '' # set at runtime: "full" or "no-spec"
 ## RULES
 
 - YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`
-- The prompt that triggered this workflow IS the intent — not a hint.
+- The prompt that triggered this workflow IS the intent - not a hint.
 - Do not modify any files. This step is read-only.
 
 ## INSTRUCTIONS
@@ -81,7 +81,7 @@ review_mode: '' # set at runtime: "full" or "no-spec"
    - "uncommitted" / "working tree" / "all changes" → Uncommitted changes (staged + unstaged)
    - "branch diff" / "vs main" / "against main" / "compared to {branch}" → Branch diff (extract base branch if mentioned)
    - "commit range" / "last N commits" / "{sha}..{sha}" → Specific commit range
-   - "this diff" / "provided diff" / "paste" → User-provided diff (do not match bare "diff" — it appears in other modes)
+   - "this diff" / "provided diff" / "paste" → User-provided diff (do not match bare "diff" - it appears in other modes)
    - When multiple phrases match, prefer the most specific match (e.g., "branch diff" over bare "diff").
    - **If a clear match is found:** Announce the detected mode (e.g., "Detected intent: review staged changes only") and proceed directly to constructing `{diff_output}` using the corresponding sub-case from instruction 3. Skip to instruction 4 (spec question).
    - **If no match from invocation text, check sprint tracking.** Look for a sprint status file (`*sprint-status*`) in `{implementation_artifacts}` or `{planning_artifacts}`. If found, scan for any story with status `review`. Handle as follows:
@@ -134,7 +134,7 @@ failed_layers: '' # set at runtime: comma-separated list of layers that failed o
 ## RULES
 
 - YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`
-- The Blind Hunter subagent receives NO project context — diff only.
+- The Blind Hunter subagent receives NO project context - diff only.
 - The Edge Case Hunter subagent receives diff and project read access.
 - The Acceptance Auditor subagent receives diff, spec, and context docs.
 
@@ -150,7 +150,7 @@ failed_layers: '' # set at runtime: comma-separated list of layers that failed o
 
 2. **Subagent failure handling**: If any subagent fails, times out, or returns empty results, append the layer name to `{failed_layers}` (comma-separated) and proceed with findings from the remaining layers.
 
-3. If `{review_mode}` = `"no-spec"`, note to the user: "Acceptance Auditor skipped — no spec file provided."
+3. If `{review_mode}` = `"no-spec"`, note to the user: "Acceptance Auditor skipped - no spec file provided."
 
 4. **Fallback** (if subagents are not available): Generate prompt files in `{implementation_artifacts}` -- one per active reviewer:
    - `review-blind-hunter.md` (always)

@@ -42,7 +42,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 }));
 
 // Mock the CLI system-prompt builder. Real-impl would read the bundled
-// `maestro-system-prompt` template from disk + call git — neither is
+// `maestro-system-prompt` template from disk + call git - neither is
 // available or interesting under unit tests. We can still observe whether
 // runPlaybook calls it and what it produces by tweaking the mock per test.
 vi.mock('../../../cli/services/system-prompt', () => ({
@@ -364,7 +364,7 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(session);
-			// Spawn call #0 is the task spawn — must carry appendSystemPrompt
+			// Spawn call #0 is the task spawn - must carry appendSystemPrompt
 			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
 			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
 		});
@@ -382,7 +382,7 @@ describe('batch-processor', () => {
 
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
-			// Spawn call #0 is the task spawn — its prompt must start with the message.
+			// Spawn call #0 is the task spawn - its prompt must start with the message.
 			const taskPrompt = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(taskPrompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
 		});
@@ -407,7 +407,7 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			// Two spawns: index 0 = task spawn, index 1 = synopsis (resume).
-			// Synopsis spawn must NOT carry appendSystemPrompt — matches the
+			// Synopsis spawn must NOT carry appendSystemPrompt - matches the
 			// desktop `spawnBackgroundSynopsis` path which omits it on resume.
 			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
 			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
@@ -429,7 +429,7 @@ describe('batch-processor', () => {
 
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
-			// Called exactly once for the playbook, not per-task — important for
+			// Called exactly once for the playbook, not per-task - important for
 			// avoiding repeated git execFile + prompt-read overhead inside the
 			// task loop.
 			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledTimes(1);
@@ -1218,8 +1218,8 @@ describe('batch-processor', () => {
 	describe('runPlaybook - mid-execution halt marker', () => {
 		it('emits halt event and stops dispatch when the agent writes the marker', async () => {
 			// Calls 1-4: initial scan, pre-scan halt check, doc-loop initial count,
-			// in-loop content read for prompt template — all clean.
-			// Call 5: post-spawn re-read — agent has written the halt marker.
+			// in-loop content read for prompt template - all clean.
+			// Call 5: post-spawn re-read - agent has written the halt marker.
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
 				callCount++;
@@ -1272,7 +1272,7 @@ describe('batch-processor', () => {
 				if (callCount <= 3) {
 					return { content: '- [ ] Task one', taskCount: 1 };
 				}
-				// Same task count — agent left it unchecked but wrote the marker
+				// Same task count - agent left it unchecked but wrote the marker
 				return {
 					content: '- [ ] Task one\n<!-- maestro:halt: cannot proceed -->',
 					taskCount: 1,

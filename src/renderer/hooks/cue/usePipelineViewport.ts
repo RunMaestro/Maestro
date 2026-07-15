@@ -1,22 +1,22 @@
 /**
- * usePipelineViewport — Viewport choreography for the pipeline editor.
+ * usePipelineViewport - Viewport choreography for the pipeline editor.
  *
  * Owns:
- *   - stableYOffsets memo (keyed on pipeline STRUCTURE only — node counts and
- *     ids, NOT positions — so dragging a node does NOT shift all pipelines
+ *   - stableYOffsets memo (keyed on pipeline STRUCTURE only - node counts and
+ *     ids, NOT positions - so dragging a node does NOT shift all pipelines
  *     below). Critical correctness invariant: both convertToReactFlowNodes
  *     (display) and onNodeDragStop (write-back) must use the same offsets.
  *   - stableYOffsetsRef: render-mirror ref so canvas callbacks can read the
  *     latest offsets without adding them to dep arrays (which would break
  *     ReactFlow memoisation).
- *   - Initial viewport application — either restore saved viewport (fires
+ *   - Initial viewport application - either restore saved viewport (fires
  *     immediately, doesn't need node measurement) or fall back to fitView
  *     (must wait for useNodesInitialized()).
  *   - Re-fit on pipeline-selection change, with a 150ms delay to account
  *     for React render → ReactFlow measurement cycle. First change is
  *     suppressed so a saved viewport isn't overwritten on mount.
  *
- * INVARIANT: This hook must be called INSIDE a ReactFlowProvider — it uses
+ * INVARIANT: This hook must be called INSIDE a ReactFlowProvider - it uses
  * useNodesInitialized() which requires the ReactFlow context.
  */
 
@@ -51,7 +51,7 @@ export function usePipelineViewport({
 	pendingSavedViewportRef,
 	reactFlowInstance,
 }: UsePipelineViewportParams): UsePipelineViewportReturn {
-	// Structure key includes node ids + counts but NOT positions — prevents
+	// Structure key includes node ids + counts but NOT positions - prevents
 	// the feedback loop where dragging a node would shift all pipelines below.
 	const pipelineStructureKey = useMemo(
 		() =>
@@ -95,7 +95,7 @@ export function usePipelineViewport({
 		if (hasInitialFitRef.current) return;
 		const saved = pendingSavedViewportRef.current;
 		if (saved) {
-			// Restore immediately — setViewport doesn't depend on measurement.
+			// Restore immediately - setViewport doesn't depend on measurement.
 			pendingSavedViewportRef.current = null;
 			reactFlowInstance.setViewport(saved);
 			hasInitialFitRef.current = true;

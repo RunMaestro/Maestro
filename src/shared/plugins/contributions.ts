@@ -550,7 +550,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
  * (should be impossible since ids are plugin-scoped, but defended anyway) the
  * first wins and the duplicate is recorded as an error. Pass `hasCapabilityFor`
  * (the verified per-plugin grants) to gate capability-scoped contributions
- * (`ui:contribute` items, `ui:panel` panels) DURING aggregation — the secure
+ * (`ui:contribute` items, `ui:panel` panels) DURING aggregation - the secure
  * default for the production path, so a render host can't forget to filter.
  */
 export function aggregateContributions(

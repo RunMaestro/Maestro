@@ -1,5 +1,5 @@
 /**
- * useAgentStderrListener — registers `window.maestro.process.onStderr`
+ * useAgentStderrListener - registers `window.maestro.process.onStderr`
  *
  * Routes stderr chunks to the matching session/tab via the batched updater
  * with the `isStderr` flag set so the renderer can style them differently

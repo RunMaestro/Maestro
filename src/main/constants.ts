@@ -23,7 +23,7 @@ import { DEFAULT_MODEL_PRICING } from '../shared/modelPricing';
 // contain literal "-participant-" substrings; the old greedy capture would
 // backtrack to the LAST occurrence and parse to the wrong (groupChatId,
 // participantName) pair, which could cause output chunks buffered in
-// group-chat/output-buffer.ts to be flushed against the wrong owner — the
+// group-chat/output-buffer.ts to be flushed against the wrong owner - the
 // suspected root cause for group-chat content leaking into Cue pipeline output.
 const UUID_PATTERN = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 

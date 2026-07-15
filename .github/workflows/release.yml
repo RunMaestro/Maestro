@@ -214,7 +214,7 @@ jobs:
       # macOS: Skip initial rebuild - architecture-specific rebuilds happen before each packaging step
       # This prevents arm64 binaries from contaminating x64 builds (GitHub issue #719)
 
-      # Verify native module architectures after initial rebuild (Linux only — macOS rebuilds per-arch before packaging)
+      # Verify native module architectures after initial rebuild (Linux only - macOS rebuilds per-arch before packaging)
       - name: Verify native module architecture (Linux x64)
         if: matrix.platform == 'linux'
         run: .github/scripts/verify-native-arch.sh x64

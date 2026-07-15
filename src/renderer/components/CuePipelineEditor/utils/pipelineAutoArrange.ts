@@ -1,10 +1,10 @@
 /**
- * pipelineAutoArrange — pure layout helpers for the canvas layout buttons.
+ * pipelineAutoArrange - pure layout helpers for the canvas layout buttons.
  *
  * Single-pipeline view exposes two buttons that differ only in how they order
  * nodes WITHIN each flow-depth column:
  *
- *  1. arrangePipelineNodes(pipeline) — "Tidy"
+ *  1. arrangePipelineNodes(pipeline) - "Tidy"
  *     Lays each weakly-connected component out as its OWN horizontal band
  *     (left→right columns by data-flow depth), then KEEPS the column-groups the
  *     user already built: bands are clustered by their current left edge, so a
@@ -15,7 +15,7 @@
  *     the graph's topology. Within a band, nodes keep their CURRENT top-to-bottom
  *     order, so edge crossings within a component are left as-is.
  *
- *  2. untanglePipelineNodes(pipeline, widths, viewport) — "Arrange"
+ *  2. untanglePipelineNodes(pipeline, widths, viewport) - "Arrange"
  *     Same per-component banding and centering, but (a) reorders nodes within
  *     each column to MINIMIZE edge crossings (the Sugiyama ordering phase:
  *     barycenter sweeps + adjacent-swap transpose refinement, seeded by the
@@ -26,7 +26,7 @@
  *  3. arrangePipelineGroups(pipelines, currentOffsets)
  *     All-Pipelines view. Packs each pipeline's group card into a balanced
  *     grid by returning a `viewOffset` per pipeline. Internal node positions
- *     are left untouched — only the cards move. There are no edges between
+ *     are left untouched - only the cards move. There are no edges between
  *     cards to cross, so Tidy and Arrange both route here.
  *
  * Both single-pipeline layouts snap nodes onto one orthogonal grid: columns keep
@@ -750,7 +750,7 @@ function groupInfo(
  * Why masonry instead of a uniform grid: a rigid grid sizes every column to the
  * widest card and every row to its tallest card. With one large pipeline (e.g. a
  * 27-node graph that's ~1600px wide and ~3000px tall), that blows out EVERY cell
- * — narrow two-node pipelines inherit the giant's column width and the giant's
+ * - narrow two-node pipelines inherit the giant's column width and the giant's
  * row inherits its height, stranding small cards in a sea of whitespace (the
  * "Arrange didn't straighten anything" complaint). Masonry sidesteps both:
  *

@@ -926,7 +926,7 @@ describe('useAutoRunDocumentLoader', () => {
 			});
 
 			mockListDocs.mockResolvedValue({ success: true, files: ['active-doc'], tree: [] });
-			// The loader reads each doc once per pass — content captured during the
+			// The loader reads each doc once per pass - content captured during the
 			// task-count pass is reused for the selected file (no separate content fetch).
 			// 1. initial pass for 'active-doc'
 			// 2. file-change refresh for 'active-doc'
@@ -997,7 +997,7 @@ describe('useAutoRunDocumentLoader', () => {
 				fileChangedCallback!({ folderPath: '/docs', filename: 'doc-b' });
 			});
 
-			// content should remain the same — only listDocs + task counts reload
+			// content should remain the same - only listDocs + task counts reload
 			const afterContent = useSessionStore
 				.getState()
 				.sessions.find((s) => s.id === 'session-1')?.autoRunContent;

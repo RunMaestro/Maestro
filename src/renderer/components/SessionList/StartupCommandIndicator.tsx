@@ -15,7 +15,7 @@ const TERMINAL_STYLE = { color: '#a3e635' } as const;
  * Surfaces that this agent has at least one terminal tab configured to re-run a
  * sticky command every time the PTY spawns (e.g. `npm run dev`, `btop`).
  *
- * Renders null when inactive so the caller can mount it unconditionally —
+ * Renders null when inactive so the caller can mount it unconditionally -
  * matches the CueIndicator / WizardIndicator pattern.
  */
 export const StartupCommandIndicator = memo(function StartupCommandIndicator({

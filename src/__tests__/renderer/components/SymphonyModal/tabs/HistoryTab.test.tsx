@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/tabs/HistoryTab — stats summary gating, completed
+ * Tests for SymphonyModal/tabs/HistoryTab - stats summary gating, completed
  * grid, empty state, merged-badge surfacing.
  */
 import { describe, it, expect, vi } from 'vitest';

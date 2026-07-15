@@ -110,7 +110,7 @@ export async function* runPlaybook(
 		}
 
 		// Calculate initial total tasks and detect any pre-existing halt markers
-		// in the same pass. We refuse to start if a stale marker is found — the
+		// in the same pass. We refuse to start if a stale marker is found - the
 		// previous run halted intentionally and the user must resolve it before
 		// re-running. Folding both checks into one scan keeps the read count
 		// per-document stable for callers/mocks.
@@ -465,7 +465,7 @@ export async function* runPlaybook(
 					// embedded in turn 1 for agents lacking native support) so
 					// the agent sees the same Maestro context as a desktop Auto
 					// Run task. Synopsis spawn below intentionally omits this
-					// — it's a resume into the same agent that already has the
+					// - it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
 					const result = await captureCliRun(
 						{
@@ -602,7 +602,7 @@ export async function* runPlaybook(
 						}
 					}
 
-					// Halt marker detected — agent has signaled early exit. Stop the
+					// Halt marker detected - agent has signaled early exit. Stop the
 					// entire playbook now: no further tasks in this document, no
 					// further documents, no further loop iterations.
 					if (haltMarker.halted) {

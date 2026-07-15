@@ -35,7 +35,7 @@ export interface BuildEditorExtensionsOptions {
  *   - DOM-level keydown is forwarded so the host can keep its Cmd+S handler
  *   - gutter line numbers expose a contextmenu hook for "copy deep link"
  *
- * Search panel is intentionally omitted — the host app provides its own
+ * Search panel is intentionally omitted - the host app provides its own
  * search bar that drives the editor via the imperative handle, identical to
  * how the Giant tier handles it.
  */
@@ -89,7 +89,7 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 			EditorView.domEventHandlers({
 				keydown(event) {
 					opts.onKeyDown?.(event);
-					return false; // never swallow — host may not preventDefault
+					return false; // never swallow - host may not preventDefault
 				},
 			})
 		);

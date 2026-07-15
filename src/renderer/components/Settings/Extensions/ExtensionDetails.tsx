@@ -172,7 +172,7 @@ export function ExtensionDetails({
 
 	// First-party tiles surface their supervised background services; status
 	// derives from the definition + the bridge-written flag state (enable
-	// reconciles, disable stops) — no live process polling.
+	// reconciles, disable stops) - no live process polling.
 	const firstPartyServices =
 		!isPlugin && ext.firstParty && ext.flag && ext.flag in FIRST_PARTY_PLUGINS
 			? FIRST_PARTY_PLUGINS[ext.flag as keyof typeof FIRST_PARTY_PLUGINS].backgroundServices
@@ -241,7 +241,7 @@ export function ExtensionDetails({
 
 			{/* FC1 Option-B gate: code execution requires a trusted signature.
 			    unsigned/untrusted: code never runs, declarative contributions still
-			    apply. invalid (tampered): the plugin is fully inert — getActiveRecords
+			    apply. invalid (tampered): the plugin is fully inert - getActiveRecords
 			    excludes it, so even declarative contributions are dropped. */}
 			{isPlugin && isCodeTier && ext.trust === 'invalid' && (
 				<p
@@ -259,7 +259,7 @@ export function ExtensionDetails({
 					className="text-xs mt-2"
 					style={{ color: theme.colors.warning }}
 				>
-					Code execution requires a trusted signature — this plugin is{' '}
+					Code execution requires a trusted signature - this plugin is{' '}
 					{(ext.trust ?? 'unsigned') === 'unsigned' ? 'unsigned' : 'signed by an untrusted key'}.
 					Its code will not run; declarative contributions (themes, prompts) still apply.
 				</p>
@@ -449,7 +449,7 @@ export function ExtensionDetails({
 					{/* First-party permission disclosure: the capabilities the feature's
 			    definition declares. Grants are minted host-side by the lifecycle
 			    bridge when the tile is enabled (trusted by construction), so this
-			    is static disclosure — no ledger round-trip. */}
+			    is static disclosure - no ledger round-trip. */}
 					{!isPlugin && (ext.permissions?.length ?? 0) > 0 && (
 						<div className="mt-5">
 							<div
@@ -504,7 +504,7 @@ export function ExtensionDetails({
 			)}
 
 			{/* Settings sub-tab: first-party config body, plugin config editor, or
-			    Pianola's modal entry — whichever applies to this extension. */}
+			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
 					{/* First-party feature with an inline config body */}

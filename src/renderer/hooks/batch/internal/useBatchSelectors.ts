@@ -20,7 +20,7 @@ export interface UseBatchSelectorsReturn {
  * need React to trigger re-renders when state changes. The ref is used
  * internally for synchronous access in debounced callbacks.
  *
- * Array selectors use `useMemo` to avoid infinite re-renders — Zustand's
+ * Array selectors use `useMemo` to avoid infinite re-renders - Zustand's
  * `Object.is` comparison treats freshly-derived arrays as changed and
  * would otherwise produce a render loop.
  */

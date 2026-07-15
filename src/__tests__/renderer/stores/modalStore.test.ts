@@ -854,7 +854,7 @@ describe('modalStore', () => {
 
 			const stateBefore = useModalStore.getState().modals;
 
-			// Close again — should be a no-op
+			// Close again - should be a no-op
 			closeModal('settings');
 
 			const stateAfter = useModalStore.getState().modals;
@@ -881,7 +881,7 @@ describe('modalStore', () => {
 			openModal('settings', { tab: 'general' });
 			const stateBefore = useModalStore.getState().modals;
 
-			// Different data object — should update even if contents look the same
+			// Different data object - should update even if contents look the same
 			openModal('settings', { tab: 'general' });
 			const stateAfter = useModalStore.getState().modals;
 
@@ -925,7 +925,7 @@ describe('modalStore', () => {
 
 			const initialRenderCount = renderCount;
 
-			// Close a modal that's not open — no-op, should not re-render
+			// Close a modal that's not open - no-op, should not re-render
 			act(() => {
 				useModalStore.getState().closeModal('settings');
 			});
@@ -1047,7 +1047,7 @@ describe('modalStore', () => {
 			actions1.setSettingsModalOpen(true);
 			expect(useModalStore.getState().isOpen('settings')).toBe(true);
 
-			// Close via second reference — should affect same store
+			// Close via second reference - should affect same store
 			actions2.setSettingsModalOpen(false);
 			expect(useModalStore.getState().isOpen('settings')).toBe(false);
 		});
@@ -1071,7 +1071,7 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.settingsModalOpen).toBe(false);
-			// settingsTab is undefined when no explicit tab was requested —
+			// settingsTab is undefined when no explicit tab was requested -
 			// SettingsModal restores the last in-session tab and only falls
 			// back to 'general' on first open.
 			expect(result.current.settingsTab).toBeUndefined();
@@ -1195,7 +1195,7 @@ describe('modalStore', () => {
 			store.cyclePromptComposer();
 
 			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
-			// Opening must not change the size — it stays in its last-used mode.
+			// Opening must not change the size - it stays in its last-used mode.
 			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
 		});
 

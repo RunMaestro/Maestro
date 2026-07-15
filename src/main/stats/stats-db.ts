@@ -700,7 +700,7 @@ export class StatsDB {
 		// Always ensure a valid database exists after recovery attempt
 		try {
 			if (!fs.existsSync(this.dbPath)) {
-				// No file exists (recovery may not have restored a backup) — create fresh
+				// No file exists (recovery may not have restored a backup) - create fresh
 				const db = new Database(this.dbPath);
 				logger.info('Fresh database created after corruption recovery', LOG_CONTEXT);
 				return db;

@@ -6,7 +6,7 @@ import type React from 'react';
  *
  * When Alt is held, the main key is derived from e.code rather than e.key.
  * This recovers the physical key name across layouts where Alt rewrites the
- * character — most notably macOS (Alt+L = ¬, Alt+P = π) but also AltGr-based
+ * character - most notably macOS (Alt+L = ¬, Alt+P = π) but also AltGr-based
  * layouts on Windows/Linux. Applied unconditionally so recording stays
  * symmetric with isShortcut's matching path in useKeyboardShortcutHelpers.ts.
  */

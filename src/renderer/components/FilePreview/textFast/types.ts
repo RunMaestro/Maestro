@@ -50,7 +50,7 @@ export interface TextPreviewFastHandle {
  * pages render as plain monospaced lines.
  *
  * Bionify is intentionally NOT a prop here: Fast tier never runs Bionify
- * (per the Phase 3 design — incompatible with virtualization at scale). The
+ * (per the Phase 3 design - incompatible with virtualization at scale). The
  * tier-override chip lets users escape to Rich tier if they need it.
  */
 export interface TextPreviewFastProps {

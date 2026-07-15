@@ -25,7 +25,7 @@ function renderToc(
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
 		return (
 			<div>
-				{/* Empty heading containers — text intentionally omitted so screen
+				{/* Empty heading containers - text intentionally omitted so screen
 				    queries against the TOC entry labels match only the TOC button,
 				    not the fixture document. */}
 				<div ref={markdownContainerRef} data-testid="markdown-container">
@@ -93,7 +93,7 @@ describe('FilePreviewToc', () => {
 			renderToc({
 				tocEntries: [{ level: 1, text: 'Missing', slug: 'does-not-exist' }],
 			});
-			// Should not throw — silently no-op.
+			// Should not throw - silently no-op.
 			expect(() => fireEvent.click(screen.getByText('Missing'))).not.toThrow();
 		});
 	});

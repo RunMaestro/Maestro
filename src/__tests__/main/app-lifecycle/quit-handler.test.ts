@@ -351,7 +351,7 @@ describe('app-lifecycle/quit-handler', () => {
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
-			// confirmQuit() is the auto-updater path — on Windows/Linux the graceful
+			// confirmQuit() is the auto-updater path - on Windows/Linux the graceful
 			// teardown must proceed so electron-updater can apply the update.
 			quitHandler.confirmQuit();
 
@@ -524,7 +524,7 @@ describe('app-lifecycle/quit-handler', () => {
 			// mockQuit called once from confirmHandler
 			expect(mockQuit).toHaveBeenCalledTimes(1);
 
-			// Advance past timeout — should NOT trigger a second quit
+			// Advance past timeout - should NOT trigger a second quit
 			vi.advanceTimersByTime(5000);
 			expect(mockQuit).toHaveBeenCalledTimes(1);
 
@@ -546,7 +546,7 @@ describe('app-lifecycle/quit-handler', () => {
 			const pendingHandler = ipcHandlers.get('app:quitConfirmationPending')!;
 			pendingHandler();
 
-			// Advance well past the 5s timeout — the app must NOT force-quit while
+			// Advance well past the 5s timeout - the app must NOT force-quit while
 			// the user is deciding at the open modal.
 			vi.advanceTimersByTime(5000);
 			expect(mockQuit).not.toHaveBeenCalled();
@@ -570,7 +570,7 @@ describe('app-lifecycle/quit-handler', () => {
 			const cancelHandler = ipcHandlers.get('app:quitCancelled')!;
 			cancelHandler();
 
-			// Advance past timeout — should NOT force quit
+			// Advance past timeout - should NOT force quit
 			vi.advanceTimersByTime(5000);
 			expect(mockQuit).not.toHaveBeenCalled();
 
@@ -621,7 +621,7 @@ describe('app-lifecycle/quit-handler', () => {
 			// bypassing the native teardown that deadlocks on addon TSFN finalizers.
 			vi.advanceTimersByTime(750);
 			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
-			// app.exit() must NOT be used on this path — it runs FreeEnvironment and
+			// app.exit() must NOT be used on this path - it runs FreeEnvironment and
 			// can deadlock; it is only the fallback if process.kill throws.
 			expect(mockExit).not.toHaveBeenCalled();
 

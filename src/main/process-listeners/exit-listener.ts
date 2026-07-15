@@ -188,7 +188,7 @@ export function setupExitListener(
 							debugLog('GroupChat:Debug', ` Read-only state: ${readOnly}`);
 							const pm = getProcessManager();
 							const ad = getAgentDetector();
-							// Await routing — it manages state transitions internally
+							// Await routing - it manages state transitions internally
 							await groupChatRouter.routeModeratorResponse(
 								groupChatId,
 								parsedText,
@@ -282,7 +282,7 @@ export function setupExitListener(
 
 			// Refresh on-disk usage for copilot-cli participants. Copilot in batch
 			// mode only writes the session.shutdown event (the sole carrier of
-			// per-turn token counts) to events.jsonl on disk — it never appears
+			// per-turn token counts) to events.jsonl on disk - it never appears
 			// on stdout, so the streaming usage path can't see it. Without this,
 			// the participant's context gauge stays at 0% forever.
 			void refreshCopilotUsageAfterExit(groupChatId, participantName);
@@ -523,7 +523,7 @@ export function setupExitListener(
 		//   - Cue's agent.completed subscriptions (which would fire spuriously
 		//     on every group-chat turn, since group-chat agents are driven by
 		//     the router, not the user's pipeline)
-		// We do not rely on early-return ordering of the branches above — this
+		// We do not rely on early-return ordering of the branches above - this
 		// guard is load-bearing and must stay here.
 		if (isGroupChatSession) {
 			logger.warn(

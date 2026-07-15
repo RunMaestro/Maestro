@@ -62,7 +62,7 @@ export function migrateApiModeDefault(store: Store<MaestroSettings>): void {
 
 	store.set(API_MODE_DEFAULT_MIGRATION_MARKER, true);
 	logger.info(
-		`API Mode default migration complete — reset ${updated} existing Claude Code agent(s) to the API token source`,
+		`API Mode default migration complete - reset ${updated} existing Claude Code agent(s) to the API token source`,
 		'Migration'
 	);
 }

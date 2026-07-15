@@ -27,9 +27,9 @@ export function attachMainWindowNavigationGuards(
 	// cannot stop such a frame from navigating ITSELF to a remote URL and
 	// leaking data through it, so block any subframe navigation away from its
 	// initial document here (the top frame is handled by `will-navigate`
-	// below). Plugin panels are NOT subframes anymore — they are <webview>
+	// below). Plugin panels are NOT subframes anymore - they are <webview>
 	// guests with their own webContents, locked down separately in
-	// attachPluginPanelGuestSecurity (did-attach-webview) — but this guard
+	// attachPluginPanelGuestSecurity (did-attach-webview) - but this guard
 	// stays as defense in depth for any srcDoc frame in the app window.
 	browserWindow.webContents.on('will-frame-navigate', (event) => {
 		if (!blocksSubframeNavigation(event.isMainFrame, event.url)) return;
@@ -37,13 +37,13 @@ export function attachMainWindowNavigationGuards(
 		logger.warn(`Blocked subframe navigation to: ${event.url}`, 'Window');
 	});
 
-	// Deny all popup/new-window requests — external links use IPC shell:openExternal
+	// Deny all popup/new-window requests - external links use IPC shell:openExternal
 	browserWindow.webContents.setWindowOpenHandler(({ url }) => {
 		logger.warn(`Blocked window.open request: ${url}`, 'Window');
 		return { action: 'deny' };
 	});
 
-	// Restrict navigation to the app itself — prevent renderer from navigating away.
+	// Restrict navigation to the app itself - prevent renderer from navigating away.
 	// Both the dev-server URL and the renderer entry's file:// URL are constants
 	// for the lifetime of this window, so compute them once at setup time rather
 	// than on every navigation event. The production guard only allows the

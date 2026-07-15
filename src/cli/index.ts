@@ -138,7 +138,7 @@ program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
 	setVerbosity({ quiet: Boolean(opts.quiet), verbose: Boolean(opts.verbose) });
 });
-// AgentRun and campaign commands — neutral ledger/read-model spine for external
+// AgentRun and campaign commands - neutral ledger/read-model spine for external
 // agent work. Pianola remains the authoritative orchestrator; these commands
 // record and inspect runs/campaigns without replacing `pianola plan`.
 const agentRun = program.command('agent-run').description('Record and inspect agent runs');
@@ -346,13 +346,13 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)'
 	)
 	.action(dispatch);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
-// left off without owning a persistent channel — pair with `dispatch` to write
+// left off without owning a persistent channel - pair with `dispatch` to write
 // and `session show` to follow up.
 const session = program
 	.command('session')
@@ -511,8 +511,8 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
 
-// Cue schedule — author / inspect / cancel one-shot `time.once` subscriptions.
-// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" — writes
+// Cue schedule - author / inspect / cancel one-shot `time.once` subscriptions.
+// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" - writes
 // directly to the agent's `.maestro/cue.yaml` so it works without the desktop
 // app running. See `cue-schedule.ts` for the full flag matrix.
 cue
@@ -538,7 +538,7 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueSchedule);
 
-// Cue pipeline subcommands — manage entries in cue-pipeline-layout.json.
+// Cue pipeline subcommands - manage entries in cue-pipeline-layout.json.
 // Designed for batch scaffolding (e.g. PowerShell scripts that bootstrap
 // a fleet of project agents with a templated pipeline). All mutations go
 // through the daemon so they don't race with the desktop app's own writes.
@@ -1181,7 +1181,7 @@ pianolaSupervise
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((id, options) => pianolaSuperviseSetEnabled(id, false, options));
 
-// Prompts command — read Maestro's bundled or user-customized system prompts.
+// Prompts command - read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`
 // and the agent retrieves the full content on demand with `prompts get _name`.
 const prompts = program.command('prompts').description('Read Maestro system prompts');
@@ -1198,7 +1198,7 @@ prompts
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
 
-// Gist commands — publish agent session transcripts to GitHub gists via the
+// Gist commands - publish agent session transcripts to GitHub gists via the
 // running Maestro desktop app. Grouped as a subcommand so we can add more gist
 // operations (list, show, delete, etc.) later.
 const gist = program.command('gist').description('Publish session context to GitHub gists');
@@ -1212,7 +1212,7 @@ gist
 	.option('-p, --public', 'Create a public gist (default: private)')
 	.action(gistCreate);
 
-// Notify commands — surface notifications in the Maestro desktop app
+// Notify commands - surface notifications in the Maestro desktop app
 const notify = program
 	.command('notify')
 	.description('Show notifications in the Maestro desktop app');
@@ -1227,7 +1227,7 @@ notify
 	)
 	.option(
 		'--dismissible',
-		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout'
+		'Sticky toast - no auto-dismiss; user must click to close. Cannot combine with --timeout'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
 	.option(
@@ -1236,7 +1236,7 @@ notify
 	)
 	.option(
 		'--tab <id>',
-		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
+		'AI tab ID within the agent - clicking jumps to that tab (requires --agent)'
 	)
 	.option(
 		'--action-url <url>',
@@ -1256,7 +1256,7 @@ notify
 
 notify
 	.command('flash <message>')
-	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.description('Show a center-screen flash (momentary, exclusive - replaces any active flash)')
 	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
 	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')

@@ -1,5 +1,5 @@
 /**
- * usePipelinePersistence — Save / discard / validation lifecycle for the pipeline editor.
+ * usePipelinePersistence - Save / discard / validation lifecycle for the pipeline editor.
  *
  * Owns handleSave (partition by project root, write YAML with read-back
  * verification, clear orphaned roots, refresh engine sessions, toast) and
@@ -7,7 +7,7 @@
  * validationErrors live here too.
  *
  * Shared refs (savedStateRef, lastWrittenRootsRef) are OWNED by the composition
- * hook (usePipelineState) and passed in here — they are also read/written by
+ * hook (usePipelineState) and passed in here - they are also read/written by
  * usePipelineLayout during initial restore, so a single owner must hold them.
  */
 
@@ -50,7 +50,7 @@ export interface UsePipelinePersistenceParams {
 		 * Live mirror of pipelineState.pipelines updated during render by the
 		 * composition hook. handleSave reads through this ref AFTER yielding
 		 * to the microtask queue so it observes setState writes produced by
-		 * `flushAllPendingEdits()` — which are batched and invisible in a
+		 * `flushAllPendingEdits()` - which are batched and invisible in a
 		 * closure-captured `pipelineState.pipelines`.
 		 */
 		pipelinesRef: React.MutableRefObject<CuePipelineState['pipelines']>;
@@ -67,7 +67,7 @@ export interface UsePipelinePersistenceParams {
 		setPipelineState: React.Dispatch<React.SetStateAction<CuePipelineState>>;
 		setIsDirty: React.Dispatch<React.SetStateAction<boolean>>;
 		persistLayout: () => void;
-		/** Optional callback fired after a successful save — used by CueModal
+		/** Optional callback fired after a successful save - used by CueModal
 		 *  to refresh graph data so the dashboard reflects post-save state. */
 		onSaveSuccess?: () => void;
 	};
@@ -125,7 +125,7 @@ export function usePipelinePersistence({
 			notifyToast({
 				type: 'warning',
 				title: 'Cue settings still loading',
-				message: 'Settings have not finished loading — try again in a moment.',
+				message: 'Settings have not finished loading - try again in a moment.',
 			});
 			return;
 		}
@@ -133,7 +133,7 @@ export function usePipelinePersistence({
 		// Flush pending debounced prompt edits from the config panels so the
 		// save reads up-to-date state. Clicking Save within the 300ms debounce
 		// window used to persist stale (often empty) prompts, which produced
-		// YAML that failed validation on next load — the user saw their
+		// YAML that failed validation on next load - the user saw their
 		// pipeline "vanish" after a tab switch, plus a "make sure each agent
 		// has a prompt" error on the manual Play button. Wrapping the flush
 		// in `flushSync` forces React to process the setState writes produced
@@ -173,8 +173,8 @@ export function usePipelinePersistence({
 		// aborting the entire save. Error nodes are emitted by yamlToPipeline when
 		// `agent_id` / `source_session_ids` reference deleted sessions; we must not
 		// write them to YAML (the heuristic fallback would silently pick a wrong
-		// agent). But blocking the whole save was wrong: other valid changes —
-		// including deletions of unrelated pipelines — were silently discarded,
+		// agent). But blocking the whole save was wrong: other valid changes -
+		// including deletions of unrelated pipelines - were silently discarded,
 		// making it impossible to clean up a workspace without first fixing every
 		// error pipeline.
 		const pipelinesWithErrors = currentPipelines.filter((p) =>
@@ -231,7 +231,7 @@ export function usePipelinePersistence({
 			if (!result.ok) {
 				if (result.reason === 'unresolved') {
 					errors.push(
-						`"${pipeline.name}": one or more agents/commands have no resolvable project root — assign a working directory to the bound session(s) or remove the dangling reference.`
+						`"${pipeline.name}": one or more agents/commands have no resolvable project root - assign a working directory to the bound session(s) or remove the dangling reference.`
 					);
 				}
 				// 'no-bindings' pipelines are caught by validatePipelines elsewhere.
@@ -241,7 +241,7 @@ export function usePipelinePersistence({
 			writablePipelines.push(pipeline);
 		}
 
-		// Union of every owner cwd across every writable pipeline — the set
+		// Union of every owner cwd across every writable pipeline - the set
 		// of yaml files we'll touch on this save.
 		const currentRoots = new Set<string>();
 		for (const cwds of ownerCwdsByPipeline.values()) {
@@ -249,7 +249,7 @@ export function usePipelinePersistence({
 		}
 
 		// Compute roots that are still referenced by error-node pipelines. These
-		// roots must NOT be deleted during orphaned-root cleanup — the pipeline
+		// roots must NOT be deleted during orphaned-root cleanup - the pipeline
 		// still exists in the editor; it just can't be written until the user
 		// fixes the unresolved agent references.
 		const errorPipelineRoots = new Set<string>();
@@ -265,7 +265,7 @@ export function usePipelinePersistence({
 		// with no effect. Surface that rather than masking it as "Saved".
 		if (validPipelines.length > 0 && currentRoots.size === 0 && errors.length === 0) {
 			errors.push(
-				'Nothing to save — pipelines are empty. Add a trigger and an agent, then try again.'
+				'Nothing to save - pipelines are empty. Add a trigger and an agent, then try again.'
 			);
 		}
 
@@ -284,7 +284,7 @@ export function usePipelinePersistence({
 		// Use the project roots written by the previous successful save (or
 		// seeded from the initial load). Re-deriving roots from savedStateRef
 		// at save time fails when an agent has been renamed or removed since
-		// the previous save — its sessionId/Name no longer resolves to a
+		// the previous save - its sessionId/Name no longer resolves to a
 		// projectRoot, so the stale YAML at that root would never be cleared.
 		const previousRoots = new Set(lastWrittenRootsRef.current);
 
@@ -315,7 +315,7 @@ export function usePipelinePersistence({
 			// name only (empty/stale sessionId on a legacy pipeline) still emits
 			// a live agent_id instead of failing the save with <missing>. The
 			// validation gate above already accepts these nodes by name; without
-			// this the emitter would reject them — the exact asymmetry behind the
+			// this the emitter would reject them - the exact asymmetry behind the
 			// "Unresolvable agent_id" save failure.
 			const resolveOwnerId = (
 				id: string | undefined,
@@ -331,7 +331,7 @@ export function usePipelinePersistence({
 			// Preserve each target root's existing per-root owner_agent_id. The
 			// editor doesn't manage ownership (it's set via Edit YAML for shared
 			// roots), and the global cueSettings intentionally no longer carries
-			// owner_agent_id — so without re-reading it here a full-overwrite save
+			// owner_agent_id - so without re-reading it here a full-overwrite save
 			// would drop a shared root's owner and revert it to fragile
 			// "first agent wins" ownership.
 			const ownerAgentIdByCwd = new Map<string, string>();
@@ -347,7 +347,7 @@ export function usePipelinePersistence({
 			// emit. owner_agent_id is per-root (preserved via ownerAgentIdByCwd
 			// above); it must never ride along in the global block. An older main
 			// process whose getSettings() still leaks the first session's
-			// owner_agent_id would otherwise re-stamp it into every cwd on save —
+			// owner_agent_id would otherwise re-stamp it into every cwd on save -
 			// the exact mechanism that poisoned every project's cue.yaml. This
 			// keeps the renderer correct regardless of the main-process version.
 			const { owner_agent_id: _droppedGlobalOwner, ...globalSettingsForEmit } = cueSettings;
@@ -478,7 +478,7 @@ export function usePipelinePersistence({
 				})
 			);
 
-			// Refs MUST update before setIsDirty(false) — the dirty-tracking
+			// Refs MUST update before setIsDirty(false) - the dirty-tracking
 			// effect compares against savedStateRef.current, so flipping dirty
 			// false before the ref is fresh would immediately flip it back true.
 			savedStateRef.current = JSON.stringify(validPipelines);
@@ -489,7 +489,7 @@ export function usePipelinePersistence({
 			lastWrittenRootsRef.current = new Set([...currentRoots, ...errorPipelineRoots]);
 			setIsDirty(false);
 
-			// Nothing was written and nothing was cleared — happens when all
+			// Nothing was written and nothing was cleared - happens when all
 			// pipelines have error nodes and there are no previous roots to clean
 			// up. Avoid a misleading "Saved 0 pipelines to 0 projects" toast.
 			if (totalPipelinesWritten === 0 && rootsCleared === 0) {
@@ -504,7 +504,7 @@ export function usePipelinePersistence({
 			scheduleIdle(SAVE_SUCCESS_IDLE_DELAY_MS);
 
 			// Explicit confirmation so the user cannot miss the brief in-button
-			// status flash — "didn't save" used to happen when the 2-second
+			// status flash - "didn't save" used to happen when the 2-second
 			// success indicator was blinked past without the user noticing.
 			const rootLabel = currentRoots.size === 1 ? 'project' : 'projects';
 			const pipelineLabel = totalPipelinesWritten === 1 ? 'pipeline' : 'pipelines';
@@ -565,7 +565,7 @@ export function usePipelinePersistence({
 			}
 			// Re-derive the written-roots set from what was just loaded so the
 			// next save knows which roots to clear if pipelines disappear again.
-			// Both agent and command nodes contribute roots — see handleSave's
+			// Both agent and command nodes contribute roots - see handleSave's
 			// partitioning loop for the full rationale.
 			const sessionsById = new Map(sessions.map((s) => [s.id, s]));
 			const sessionsByName = new Map(sessions.map((s) => [s.name, s]));

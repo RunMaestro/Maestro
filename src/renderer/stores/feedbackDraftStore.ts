@@ -1,5 +1,5 @@
 /**
- * feedbackDraftStore — Tracks the Feedback modal's minimize/draft state so the
+ * feedbackDraftStore - Tracks the Feedback modal's minimize/draft state so the
  * sidebar Feedback button can show a "draft in progress" indicator and the
  * modal can preserve work across minimize/restore.
  *

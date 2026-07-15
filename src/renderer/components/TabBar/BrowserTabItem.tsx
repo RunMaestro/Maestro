@@ -524,7 +524,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 									</>
 								)}
 
-								{/* Content actions — operate on the rendered text of the page */}
+								{/* Content actions - operate on the rendered text of the page */}
 								{onCopyContent && (
 									<button
 										onClick={handleCopyContentClick}

@@ -1,7 +1,7 @@
 /**
  * The ONE place a plugin-contributed panel renders.
  *
- * A panel is hosted in an Electron `<webview>` guest — a separate renderer
+ * A panel is hosted in an Electron `<webview>` guest - a separate renderer
  * process with a per-plugin in-memory session (partition `plugin:<pluginId>`),
  * so panels can never see the app's storage nor another plugin's. Everything
  * security-relevant is enforced in the MAIN process, not here:
@@ -47,7 +47,7 @@ interface PluginPanelFrameProps {
 	frameClassName?: string;
 }
 
-/** The <webview> element surface this component uses (structural — the real
+/** The <webview> element surface this component uses (structural - the real
  * element is Electron's WebViewElement, unavailable to renderer types). */
 interface PanelWebviewElement extends HTMLElement {
 	addEventListener(type: string, listener: (event: Event) => void): void;

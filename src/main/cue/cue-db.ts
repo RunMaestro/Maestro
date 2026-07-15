@@ -1,5 +1,5 @@
 /**
- * Cue Database — lightweight SQLite persistence for Cue events and heartbeat.
+ * Cue Database - lightweight SQLite persistence for Cue events and heartbeat.
  *
  * Uses the same `better-sqlite3` pattern as `src/main/stats/stats-db.ts`.
  * Stores event history (for the activity journal) and a single-row heartbeat
@@ -35,7 +35,7 @@ export interface CueEventRecord {
 	 * Provider session id (e.g. Claude's `session_id`) the run produced, parsed
 	 * from agent stdout and written on completion. Distinct from `sessionId`
 	 * (the Maestro agent id). Token attribution in the stats dashboard joins on
-	 * this — the agents' on-disk session files are keyed by it. NULL until the
+	 * this - the agents' on-disk session files are keyed by it. NULL until the
 	 * run finishes, for command/shell runs, or when stdout carried no id.
 	 */
 	providerSessionId?: string | null;
@@ -43,7 +43,7 @@ export interface CueEventRecord {
 	 * Failure reason for a non-completed run (trimmed stderr / agent error
 	 * envelope). NULL for successful runs and for rows that never finished.
 	 * Written on run completion so the activity log can explain WHY a dispatch
-	 * failed without a DB dig — previously only `status` + the trigger payload
+	 * failed without a DB dig - previously only `status` + the trigger payload
 	 * were stored, which is what made the maestro-p 300s-timeout bug opaque.
 	 */
 	errorMessage?: string | null;
@@ -86,7 +86,7 @@ const CREATE_CUE_EVENTS_SQL = `
 // to record events. `provider_session_id`, `error_message`, and `exit_code`
 // are written on run completion (NULL at record time, and for command/shell
 // runs that carry no equivalent). Each entry carries its own column type
-// (`exit_code` is INTEGER; the rest are TEXT) — same shape as the
+// (`exit_code` is INTEGER; the rest are TEXT) - same shape as the
 // `cue_github_seen` additive set. The migration block in initCueDb() ALTERs
 // existing databases to match the CREATE TABLE schema.
 const CUE_EVENTS_ADDITIVE_COLUMNS = [
@@ -131,7 +131,7 @@ const CREATE_CUE_GITHUB_SEEN_INDEX_SQL = `
  * Additive columns added to `cue_github_seen` to support per-item re-trigger
  * tracking. `last_revision` stores the GitHub `updatedAt` value at the last
  * fire (so the poller can detect new activity since then). `fire_count` counts
- * re-trigger fires only — the initial discovery fire is always allowed and
+ * re-trigger fires only - the initial discovery fire is always allowed and
  * does NOT increment this counter. Migrated via ALTER TABLE on existing DBs
  * to keep schema in sync with CREATE TABLE.
  */
@@ -143,7 +143,7 @@ const CUE_GITHUB_SEEN_ADDITIVE_COLUMNS = [
 	},
 ] as const;
 
-// Phase 12A — persisted queue table. Rows here survive engine shutdown / crash
+// Phase 12A - persisted queue table. Rows here survive engine shutdown / crash
 // so the queue can be reconstructed on next start. Stores the full serialized
 // event plus every param needed to redispatch via runManager.execute.
 const CREATE_CUE_EVENT_QUEUE_SQL = `
@@ -175,7 +175,7 @@ const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_queued ON cue_event_queue(queued_at)
 `;
 
-// Telemetry outbox — buffers telemetry events between flushes. Rows are
+// Telemetry outbox - buffers telemetry events between flushes. Rows are
 // inserted from the dispatch / run-completion hot paths, read in batches by
 // the submitter, and deleted only after a successful POST to runmaestro.ai.
 // Failed flushes leave rows in place so the next flush retries them. Bounded
@@ -232,7 +232,7 @@ export function initCueDb(
 	// Tighten permissions so only the current user can read/write the DB. On
 	// NTFS/Windows POSIX modes are largely ignored (near no-op); on network
 	// mounts without POSIX support chmod can throw EPERM/ENOTSUP. Either way
-	// this is best-effort — log and continue rather than failing DB init.
+	// this is best-effort - log and continue rather than failing DB init.
 	try {
 		fs.chmodSync(dbPath, 0o600);
 	} catch (err) {
@@ -288,7 +288,7 @@ export function isCueDbReady(): boolean {
 // ============================================================================
 
 function getDb(): Database.Database {
-	if (!db) throw new Error('Cue database not initialized — call initCueDb() first');
+	if (!db) throw new Error('Cue database not initialized - call initCueDb() first');
 	return db;
 }
 
@@ -403,12 +403,12 @@ export interface CueEventFailureInfo {
  *
  * When `providerSessionId` is provided (non-null/undefined), the run's parsed
  * provider session id is stamped on the row so stats can attribute token usage.
- * Omitting it leaves the column untouched — callers that don't have a session
+ * Omitting it leaves the column untouched - callers that don't have a session
  * id (command/shell runs, or status flips that aren't run completions) simply
  * don't pass it rather than clobbering a previously-written value with NULL.
  *
  * When `failure` is provided, `error_message` and `exit_code` are written too
- * (NULL is fine for a success — these are completion-time writes). Status flips
+ * (NULL is fine for a success - these are completion-time writes). Status flips
  * that aren't run completions (e.g. 'stopped') omit it and leave both columns
  * untouched. This is what lets the activity log explain WHY a dispatch failed
  * without a DB dig.
@@ -441,11 +441,11 @@ export function updateCueEventStatus(
 
 /**
  * Safe wrapper: records a Cue event; logs warn on failure instead of throwing.
- * Non-fatal — callers must not rely on successful persistence.
+ * Non-fatal - callers must not rely on successful persistence.
  */
 export function safeRecordCueEvent(event: Parameters<typeof recordCueEvent>[0]): void {
 	if (!db) {
-		// Expected during shutdown or before init completes — log and skip Sentry.
+		// Expected during shutdown or before init completes - log and skip Sentry.
 		log('warn', `Dropping safeRecordCueEvent (id=${event.id}): Cue DB not initialized`);
 		return;
 	}
@@ -456,7 +456,7 @@ export function safeRecordCueEvent(event: Parameters<typeof recordCueEvent>[0]):
 			'warn',
 			`Failed to record Cue event (id=${event.id}): ${err instanceof Error ? err.message : String(err)}`
 		);
-		// Persist warns to Sentry too — DB write failures here are silent at
+		// Persist warns to Sentry too - DB write failures here are silent at
 		// runtime (callers must remain non-fatal) but accumulate observability
 		// gaps if not surfaced; keep returning without throwing.
 		// Strip event.payload before reporting: for agent.completed runs it
@@ -478,7 +478,7 @@ export function safeRecordCueEvent(event: Parameters<typeof recordCueEvent>[0]):
 
 /**
  * Safe wrapper: updates Cue event status; logs warn on failure instead of throwing.
- * Non-fatal — callers must not rely on successful persistence.
+ * Non-fatal - callers must not rely on successful persistence.
  */
 export function safeUpdateCueEventStatus(
 	id: string,
@@ -487,7 +487,7 @@ export function safeUpdateCueEventStatus(
 	failure?: CueEventFailureInfo
 ): void {
 	if (!db) {
-		// Expected during shutdown or before init completes — log and skip Sentry.
+		// Expected during shutdown or before init completes - log and skip Sentry.
 		log(
 			'warn',
 			`Dropping safeUpdateCueEventStatus (id=${id}, status=${status}): Cue DB not initialized`
@@ -506,7 +506,7 @@ export function safeUpdateCueEventStatus(
 }
 
 /**
- * Count all Cue events in the journal — lifetime total used by the dashboard.
+ * Count all Cue events in the journal - lifetime total used by the dashboard.
  * Returns 0 if the database isn't initialized yet so the UI can render the
  * stats row before the engine boots, instead of throwing.
  */
@@ -683,7 +683,7 @@ export function getGitHubItemState(
 /**
  * Record a re-trigger fire: bump `fire_count` and update `last_revision` so
  * subsequent polls only fire on activity newer than this point. Caller is
- * responsible for the cap check — this helper always advances state.
+ * responsible for the cap check - this helper always advances state.
  */
 export function recordGitHubRetrigger(
 	subscriptionId: string,
@@ -738,7 +738,7 @@ export function clearGitHubSeenForSubscription(subscriptionId: string): void {
 }
 
 // ============================================================================
-// Phase 12A — Queue Persistence
+// Phase 12A - Queue Persistence
 // ============================================================================
 
 export interface CueQueuedEventRecord {
@@ -753,14 +753,14 @@ export interface CueQueuedEventRecord {
 	commandJson: string | null;
 	chainDepth: number;
 	queuedAt: number;
-	/** Phase 01 — chain root identity copied from the parent run, NULL for roots
+	/** Phase 01 - chain root identity copied from the parent run, NULL for roots
 	 *  and for queue rows persisted before usageStats was enabled. */
 	chainRootId: string | null;
-	/** Phase 01 — immediate parent's runId, NULL for roots. */
+	/** Phase 01 - immediate parent's runId, NULL for roots. */
 	parentEventId: string | null;
 }
 
-/** Persist a queued event. Throws on DB failure — use safePersistQueuedEvent for
+/** Persist a queued event. Throws on DB failure - use safePersistQueuedEvent for
  *  non-fatal semantics in the run-manager hot path. */
 export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 	getDb()
@@ -850,7 +850,7 @@ export function clearPersistedQueue(sessionId?: string): void {
 
 /** Safe wrapper: persist a queued event; logs warn and reports to Sentry on
  *  failure instead of throwing. The in-memory queue is unaffected by a failed
- *  persist — the only loss surface is app crash before a successful persist. */
+ *  persist - the only loss surface is app crash before a successful persist. */
 export function safePersistQueuedEvent(record: CueQueuedEventRecord): void {
 	try {
 		persistQueuedEvent(record);
@@ -859,7 +859,7 @@ export function safePersistQueuedEvent(record: CueQueuedEventRecord): void {
 			'warn',
 			`Failed to persist queued event (id=${record.id}): ${err instanceof Error ? err.message : String(err)}`
 		);
-		// Strip prompt + payload before reporting — they may carry user content.
+		// Strip prompt + payload before reporting - they may carry user content.
 		const sanitized = {
 			id: record.id,
 			sessionId: record.sessionId,
@@ -898,7 +898,7 @@ export interface CueTelemetryOutboxRow {
 }
 
 /**
- * Insert a telemetry event into the outbox. Failures are non-fatal — the
+ * Insert a telemetry event into the outbox. Failures are non-fatal - the
  * dispatch / run-completion hot paths must never throw because of telemetry.
  * A dropped row means at most one missed event in the next batch.
  */

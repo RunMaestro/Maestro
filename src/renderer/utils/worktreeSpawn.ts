@@ -3,7 +3,7 @@
  *
  * Originally lived as a private helper in useAutoRunHandlers; extracted here so
  * the remote (mobile/web) AutoRun launch path in useAppRemoteEventListeners can
- * spawn a child session against the launching parent — instead of relying on
+ * spawn a child session against the launching parent - instead of relying on
  * the chokidar watcher in useWorktreeHandlers, which attaches to whichever
  * sibling agent's basePath matches first and produces wrong-parent children.
  */
@@ -92,7 +92,7 @@ export async function spawnWorktreeAgentAndDispatch(
 
 		// Step 2: Create worktree on disk. Pass baseBranch so the new branch is
 		// rooted at the user-selected base (e.g. "rc") instead of the main repo's
-		// current HEAD — historically this was dropped and the UI's "Base Branch"
+		// current HEAD - historically this was dropped and the UI's "Base Branch"
 		// dropdown only affected PR target.
 		let result;
 		try {
@@ -176,7 +176,7 @@ export async function spawnWorktreeAgentAndDispatch(
 	// gitService.getBranches uses createIpcMethod with defaultValue: [] and no
 	// rethrow, so the IPC wrapper already logs and reports failures to Sentry.
 	// We swallow any leftover rejection here without a second captureException
-	// (would be a duplicate report) — git info is nice-to-have and a failure
+	// (would be a duplicate report) - git info is nice-to-have and a failure
 	// must not abort the spawn flow.
 	let gitBranches: string[] | undefined;
 	try {

@@ -151,7 +151,7 @@ describe('EncoreTab section components', () => {
 			/>
 		);
 
-		// Chromeless body: no card header/state pill/Manage — the detail pane
+		// Chromeless body: no card header/state pill/Manage - the detail pane
 		// owns those. The config controls render directly.
 		expect(document.querySelector('[data-setting-id="encore-usage-stats"]')).toBeInTheDocument();
 		expect(screen.queryByTestId('encore-feature-header')).not.toBeInTheDocument();

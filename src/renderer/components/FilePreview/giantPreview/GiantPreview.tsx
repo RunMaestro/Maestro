@@ -17,7 +17,7 @@ import type { GiantPreviewHandle, GiantPreviewProps } from './types';
  * mount instantly. Built-in search panel + CodeMirror language packs cover
  * find / syntax highlighting.
  *
- * Thin React shell — the heavy lifting (extension composition, theme
+ * Thin React shell - the heavy lifting (extension composition, theme
  * mapping, language loading, search bridge) lives in sibling modules.
  *
  * Lifecycle:
@@ -25,7 +25,7 @@ import type { GiantPreviewHandle, GiantPreviewProps } from './types';
  *      (read-only, search, line numbers) + theme. Document mounts immediately.
  *   2. Async: kick off `loadLanguageExtension(language)`. When it resolves,
  *      dispatch a `reconfigure` to inject the language extension. The text
- *      already on screen re-tokenizes — usually unnoticeable.
+ *      already on screen re-tokenizes - usually unnoticeable.
  *   3. Cleanup: `view.destroy()` on unmount.
  *
  * Content / theme changes: rather than mutating the existing state we
@@ -40,7 +40,7 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 	const viewRef = useRef<EditorView | null>(null);
 	const [_isReady, setIsReady] = useState(false);
 
-	// Base extensions don't depend on content — memoize to avoid rebuilding on each render.
+	// Base extensions don't depend on content - memoize to avoid rebuilding on each render.
 	const baseExtensions = useMemo<Extension[]>(
 		() => [buildBaseExtensions(), buildEditorTheme(theme)],
 		[theme]
@@ -50,7 +50,7 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 	// doesn't freeze the renderer. Lines under the threshold pass through
 	// unchanged. The insertion map lets the search handle navigate CM6 to
 	// the correct (wrapped) offset for a hit located against the ORIGINAL
-	// content — so a query that straddles a wrap boundary still matches.
+	// content - so a query that straddles a wrap boundary still matches.
 	const wrap = useMemo(() => softWrapLongLines(content, SOFT_WRAP_MAX_LINE_LENGTH), [content]);
 	const displayContent = wrap.wrapped;
 
@@ -110,7 +110,7 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 				// Search the ORIGINAL content (not view.state.doc which has the
 				// soft-wrap newlines). This keeps matches that straddle a wrap
 				// boundary findable. The search is pure on `content`, so it
-				// must run even before CM6 has mounted — scrollToMatch handles
+				// must run even before CM6 has mounted - scrollToMatch handles
 				// mount-state on its own.
 				return findAllInDoc(content, query, options);
 			},

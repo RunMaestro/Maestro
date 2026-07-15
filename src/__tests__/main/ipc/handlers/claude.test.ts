@@ -2236,7 +2236,7 @@ not valid json at all
 			const fs = await import('fs/promises');
 
 			// A permission error on the skills directory must NOT be silently
-			// swallowed — it should propagate so Sentry captures it.
+			// swallowed - it should propagate so Sentry captures it.
 			vi.mocked(fs.default.readdir).mockImplementation(async () => {
 				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
 			});
@@ -2256,7 +2256,7 @@ not valid json at all
 				}
 				return [] as any;
 			});
-			// The skill dir lists fine but SKILL.md is locked — this must
+			// The skill dir lists fine but SKILL.md is locked - this must
 			// surface, not be silently dropped as "skill not found".
 			vi.mocked(fs.default.readFile).mockImplementation(async () => {
 				throw Object.assign(new Error('IO error'), { code: 'EIO' });

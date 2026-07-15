@@ -11,7 +11,7 @@
  * version-manager and Homebrew paths but NOT the user's custom shell
  * additions.
  *
- * Result: Maestro could detect an agent it couldn't actually run — the
+ * Result: Maestro could detect an agent it couldn't actually run - the
  * script's shebang (e.g. `#!/usr/bin/env node`) couldn't find `node` in the
  * narrower spawn PATH. See issue #1016 for the codex-exit-127 repro.
  *
@@ -27,7 +27,7 @@ import { peekShellPath } from '../runtime/getShellPath';
 
 /**
  * Build a spawn PATH that merges the user's cached shell PATH and any extra
- * dirs into Maestro's expanded PATH. Synchronous — uses the cached shell
+ * dirs into Maestro's expanded PATH. Synchronous - uses the cached shell
  * PATH; returns the bare expanded PATH if no probe has completed.
  */
 export function buildSpawnPath(extraPaths?: string[]): string {
@@ -38,7 +38,7 @@ export function buildSpawnPath(extraPaths?: string[]): string {
 	const shellPath = peekShellPath();
 	const shellParts = shellPath ? shellPath.split(delimiter).filter(Boolean) : [];
 
-	// Only absolute paths are safe to prepend — a "." or other relative dir
+	// Only absolute paths are safe to prepend - a "." or other relative dir
 	// would let a binary in the spawn cwd shadow system tools.
 	const extras = (extraPaths || []).filter((p) => Boolean(p) && path.isAbsolute(p));
 

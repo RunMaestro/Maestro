@@ -173,7 +173,7 @@ describe('stats IPC handlers', () => {
 			const beforeQuitCalls = vi.mocked(app.on).mock.calls.filter((c) => c[0] === 'before-quit');
 			expect(beforeQuitCalls.length).toBeGreaterThanOrEqual(1);
 
-			// Capture the most-recently-registered before-quit handler — the
+			// Capture the most-recently-registered before-quit handler - the
 			// stats handler is one of several modules that may register on
 			// this event, so we don't assume length === 1.
 			const handler = beforeQuitCalls[beforeQuitCalls.length - 1][1] as () => void;
@@ -193,7 +193,7 @@ describe('stats IPC handlers', () => {
 				throw new Error('disk full');
 			});
 
-			// Should NOT propagate — failing to flush stats must not block
+			// Should NOT propagate - failing to flush stats must not block
 			// app shutdown. Sentry capture is fire-and-forget inside the catch.
 			expect(() => handler()).not.toThrow();
 		});

@@ -393,7 +393,7 @@ describe('WebSocketMessageHandler', () => {
 		it('accepts image-only sends in AI mode (no command, images present)', async () => {
 			// The web composer allows submitting in AI mode when only images
 			// are staged (no typed text). The server must not reject those
-			// requests as "missing command" — instead it forwards an empty
+			// requests as "missing command" - instead it forwards an empty
 			// command alongside the images so the renderer can attach them
 			// to a default image-only prompt.
 			const images = ['data:image/png;base64,abc'];
@@ -935,7 +935,7 @@ describe('WebSocketMessageHandler', () => {
 		});
 
 		it('should forward paths that resolve outside the worktree', async () => {
-			// Opening files outside the worktree is intentionally allowed — a paired
+			// Opening files outside the worktree is intentionally allowed - a paired
 			// client already has shell-level access (execute_command), so confining
 			// preview tabs to the worktree gated nothing the connection token didn't.
 			handler.handleMessage(client, {
@@ -2147,7 +2147,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	// ============================================================
-	// Auto Run parity — reset tasks + playbook CRUD validation
+	// Auto Run parity - reset tasks + playbook CRUD validation
 	// These tests pin the path-safety rules called out in the PR
 	// review: neither the web client nor a compromised dev tool may
 	// escape the Auto Run root via absolute / traversal filenames.
@@ -2266,7 +2266,7 @@ describe('WebSocketMessageHandler', () => {
 		});
 
 		it('rejects non-boolean resetOnCompletion rather than coercing it', () => {
-			// Review feedback — a truthy non-boolean value was being silently
+			// Review feedback - a truthy non-boolean value was being silently
 			// flipped to true. The validator now refuses anything that isn't
 			// strictly a boolean.
 			handler.handleMessage(client, {
@@ -2430,7 +2430,7 @@ describe('WebSocketMessageHandler', () => {
 
 		// Coderabbit feedback: defensive validation must reject any traversal
 		// segment / backslash in playbookPath at the entry point, not just
-		// absolute / tilde / Windows-drive prefixes — downstream resolvers
+		// absolute / tilde / Windows-drive prefixes - downstream resolvers
 		// have other guards but shouldn't be relied on in isolation.
 		it.each([
 			['../../etc/passwd', 'parent traversal'],
@@ -2608,7 +2608,7 @@ describe('WebSocketMessageHandler', () => {
 			// Unknown-type echo would confuse the CLI's request/response pairing
 			// (`MaestroClient` matches by responseType). Returning the empty
 			// success shape keeps the wire contract intact even when the desktop
-			// hasn't wired up the callback yet — older builds on a newer CLI.
+			// hasn't wired up the callback yet - older builds on a newer CLI.
 			callbacks.listDesktopSessions = undefined;
 			handler.setCallbacks(callbacks);
 

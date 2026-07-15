@@ -211,7 +211,7 @@ export function useAutoRunHandlers(
 				return;
 			}
 
-			// Determine target session ID — may differ from activeSession when running in a worktree
+			// Determine target session ID - may differ from activeSession when running in a worktree
 			let targetSessionId = activeSession.id;
 			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
 				// Verify the target session still exists (could have been removed while modal was open)

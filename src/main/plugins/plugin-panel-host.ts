@@ -10,16 +10,16 @@
  *   renderer-supplied preload stripped and replaced with the broker-only
  *   panel preload (`plugin-panel-preload.js`) whose entire surface is a
  *   one-way forward of the panel's `maestro:invokeCommand` postMessage to the
- *   embedder — the message contract of the old srcdoc iframe, unchanged.
+ *   embedder - the message contract of the old srcdoc iframe, unchanged.
  * - **Session** (`hardenPluginPanelSession`): a per-session protocol handler
  *   serves ONLY that plugin's own panel documents (grant-gated via the
  *   injected provider) with a restrictive CSP header + meta; `webRequest`
  *   cancels every request that is not a `plugin-panel:` document fetch
- *   (session-level egress denial — fetch/XHR/WS/beacon/subresources all die
+ *   (session-level egress denial - fetch/XHR/WS/beacon/subresources all die
  *   here even if CSP were bypassed); all permission requests/checks denied.
  * - **Guest webContents** (`attachPluginPanelGuestSecurity`, applied in
  *   `did-attach-webview`): `window.open` denied, and ALL navigations and
- *   redirects denied — the guest lives and dies on its initial panel
+ *   redirects denied - the guest lives and dies on its initial panel
  *   document, closing the self-navigation exfil channel the srcdoc iframe
  *   could only mitigate. The main window's `will-frame-navigate` backstop
  *   (`blocksSubframeNavigation`) stays in place for the remaining srcdoc
@@ -28,7 +28,7 @@
  *
  * The panel HTML provider is injected (`setPanelHtmlProvider`) from the
  * plugins IPC registration site, where the PluginManager and the feature flag
- * live — the provider itself re-checks the `plugins` Encore flag and the
+ * live - the provider itself re-checks the `plugins` Encore flag and the
  * grant-gated contribution set on EVERY document fetch, so a revoke or
  * disable takes effect on the next load with no cached authority. Until a
  * provider is set the host serves nothing (default deny).
@@ -56,7 +56,7 @@ export function setPanelHtmlProvider(provider: PanelHtmlProvider): void {
 	panelHtmlProvider = provider;
 }
 
-/** Minimal structural view of Electron.Session — keeps this testable. */
+/** Minimal structural view of Electron.Session - keeps this testable. */
 interface PanelSessionLike {
 	protocol: {
 		handle(scheme: string, handler: (request: { url: string }) => Response): void;
@@ -134,7 +134,7 @@ export function hardenPluginPanelSession(
 		}
 		const html = panelHtmlProvider(panelId);
 		if (html === null) {
-			// Unknown panel, plugins flag off, or ui:panel not granted — deny.
+			// Unknown panel, plugins flag off, or ui:panel not granted - deny.
 			return new Response(null, { status: 404 });
 		}
 		return new Response(withPanelCsp(html), {
@@ -180,7 +180,7 @@ export interface PluginPanelGuestContents {
  * Lock down an attached panel guest: no popups, no navigation of any kind.
  * The initial document load is programmatic (the <webview> `src` attribute →
  * loadURL) and does NOT emit these events, so a blanket deny is safe: after
- * first paint the guest can never go anywhere else — the self-navigation
+ * first paint the guest can never go anywhere else - the self-navigation
  * exfil channel is closed in the main process, not just mitigated by CSP.
  */
 export function attachPluginPanelGuestSecurity(guestContents: PluginPanelGuestContents): void {

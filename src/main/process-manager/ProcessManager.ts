@@ -192,7 +192,7 @@ export class ProcessManager extends EventEmitter {
 	private shouldUseOpencodeServer(config: ProcessConfig): boolean {
 		return (
 			// Default-off plugin gate (encoreFeatures.opencodeServer). While it is
-			// off, OpenCode stays on the CLI path — which keeps the Coworking MCP
+			// off, OpenCode stays on the CLI path - which keeps the Coworking MCP
 			// working, since the serve transport can't inject per-session env.
 			this.isOpencodeServerEnabled() &&
 			config.toolType === 'opencode' &&
@@ -355,7 +355,7 @@ export class ProcessManager extends EventEmitter {
 	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
 	 * onExit listener. This collapses the window in which node-pty's worker
 	 * thread is still posting via napi_threadsafe_function while Electron
-	 * begins tearing down the Node environment — that race aborts inside
+	 * begins tearing down the Node environment - that race aborts inside
 	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
 	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
 	 * shutdown anyway since the user has already confirmed quit.
@@ -414,7 +414,7 @@ export class ProcessManager extends EventEmitter {
 								{ sessionId, pid }
 							);
 						} catch {
-							// Process already exited — expected after normal SIGTERM
+							// Process already exited - expected after normal SIGTERM
 						}
 					}, PTY_KILL_ESCALATION_MS);
 

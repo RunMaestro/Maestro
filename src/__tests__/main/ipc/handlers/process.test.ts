@@ -220,7 +220,7 @@ vi.mock('fs/promises', () => ({
 	unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock sentry — captureException is asserted on by the new cleanup-error
+// Mock sentry - captureException is asserted on by the new cleanup-error
 // tests; addBreadcrumb is a no-op stub so existing tests don't hit real Sentry.
 vi.mock('../../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -720,7 +720,7 @@ describe('process IPC handlers', () => {
 		// Batch Mode default-off: when `enableMaestroP` isn't set on the spawn
 		// config, the resolver is skipped entirely and API-mode args pass through.
 		// (Tests for the toggle-on path live in claude-mode-selector.test.ts and the
-		// integration story for the binary swap is exercised via manual QA — the
+		// integration story for the binary swap is exercised via manual QA - the
 		// swap depends on fs.existsSync + an actual snapshot which is awkward to
 		// stub at the IPC layer.)
 		describe('Batch Mode gating', () => {
@@ -2313,7 +2313,7 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
 
 			// Regression for #1016: when SSH is enabled, no local dirs should be
-			// injected via extraPathDirs — those would leak macOS paths into the
+			// injected via extraPathDirs - those would leak macOS paths into the
 			// remote spawn env (the SSH command itself runs locally, but the script
 			// it runs on the remote builds its own PATH).
 			expect(spawnCall.extraPathDirs).toBeUndefined();
@@ -2323,7 +2323,7 @@ describe('process IPC handlers', () => {
 			// Regression for #1016: when codex (or any node-script agent) was
 			// installed alongside a non-standard `node` (e.g. /Users/me/opt/node/bin),
 			// Maestro detected it via shell PATH but spawned with a narrower PATH
-			// that didn't include that bin dir — the `#!/usr/bin/env node` shebang
+			// that didn't include that bin dir - the `#!/usr/bin/env node` shebang
 			// then failed with exit 127. Fix: prepend dirname(agent.path) so the
 			// co-located runtime is reachable.
 			const mockAgent = {
@@ -2347,7 +2347,7 @@ describe('process IPC handlers', () => {
 				cwd: '/home/devuser/project',
 				command: '/Users/me/opt/node/bin/codex',
 				args: ['exec', '--json'],
-				// NOTE: no sessionSshRemoteConfig — this is a local spawn
+				// NOTE: no sessionSshRemoteConfig - this is a local spawn
 			});
 
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
@@ -2356,7 +2356,7 @@ describe('process IPC handlers', () => {
 
 		it('should prefer sessionCustomPath over agent.path when deriving extraPathDirs (local)', async () => {
 			// When the user overrides the binary, the co-located runtime lives
-			// next to *that* binary — not the auto-detected one. Per CodeRabbit
+			// next to *that* binary - not the auto-detected one. Per CodeRabbit
 			// + Greptile review on #1021.
 			const mockAgent = {
 				id: 'codex',
@@ -2384,7 +2384,7 @@ describe('process IPC handlers', () => {
 		});
 
 		it('should not inject extraPathDirs when the spawn binary path is not absolute', async () => {
-			// path.dirname("codex") would return "." — prepending that to PATH
+			// path.dirname("codex") would return "." - prepending that to PATH
 			// would let a binary in the spawn cwd shadow system tools.
 			// Per Greptile review on #1021.
 			const mockAgent = {
@@ -3072,7 +3072,7 @@ describe('process IPC handlers', () => {
 			// --append-system-prompt should NOT be in args (agent doesn't support it)
 			expect(spawnCall.args).not.toContain('--append-system-prompt');
 			// System prompt should NOT be embedded in the user prompt on resume.
-			// The Copilot preamble is independent and rides on every batch turn —
+			// The Copilot preamble is independent and rides on every batch turn -
 			// strip it before comparing the appendSystemPrompt behavior.
 			expect(spawnCall.prompt).not.toContain('Maestro system prompt');
 			expect(spawnCall.prompt).not.toContain('# User Request');
@@ -3105,7 +3105,7 @@ describe('process IPC handlers', () => {
 				args: [],
 				prompt: 'First message',
 				appendSystemPrompt: 'You are Maestro system prompt content',
-				// No agentSessionId — this is a fresh session
+				// No agentSessionId - this is a fresh session
 			});
 
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
@@ -3246,7 +3246,7 @@ describe('process IPC handlers', () => {
 				const handler = handlers.get('process:spawn');
 				await handler!({} as any, buildSpawnConfig());
 
-				// Unlink not called yet — timer hasn't fired
+				// Unlink not called yet - timer hasn't fired
 				expect(fsp.unlink).not.toHaveBeenCalled();
 
 				await vi.advanceTimersByTimeAsync(30_001);
@@ -3428,7 +3428,7 @@ describe('process IPC handlers', () => {
 				args: [],
 				prompt: 'Do work.',
 				appendSystemPrompt: 'You are Maestro system prompt content',
-				// No agentSessionId — first-turn path embeds appendSystemPrompt.
+				// No agentSessionId - first-turn path embeds appendSystemPrompt.
 			});
 
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];

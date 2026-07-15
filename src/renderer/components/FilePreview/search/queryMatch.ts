@@ -3,10 +3,10 @@
  *
  * The bar has three search kinds, toggled by the chip on the left of the input
  * (only shown for line-numbered code/text views):
- *   - 'text'  — literal substring match (the historical default; the query is
+ *   - 'text'  - literal substring match (the historical default; the query is
  *               escaped so regex metacharacters are matched verbatim).
- *   - 'regex' — the query is a JS regular expression source, used as-is.
- *   - 'line'  — the query is a 1-based line number; navigation jumps the
+ *   - 'regex' - the query is a JS regular expression source, used as-is.
+ *   - 'line'  - the query is a 1-based line number; navigation jumps the
  *               viewport to that line instead of finding text matches.
  *
  * Centralizing here keeps every tier (Rich DOM walk, Fast text/code, Giant CM6,

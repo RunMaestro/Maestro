@@ -126,7 +126,7 @@ describe('isPermitted (default deny + scope matching)', () => {
 	});
 });
 
-describe('allowlist scope matching (Phase-4 act verbs — exhaustive set membership)', () => {
+describe('allowlist scope matching (Phase-4 act verbs - exhaustive set membership)', () => {
 	const at = 1;
 	const grant = (capability: string, scope?: string, unattended?: boolean): PermissionGrant =>
 		({
@@ -175,7 +175,7 @@ describe('allowlist scope matching (Phase-4 act verbs — exhaustive set members
 
 	it('never treats a wildcard-looking member as a pattern', () => {
 		// Even if a '*' member were somehow minted, it matches ONLY the literal
-		// string '*' — never "anything".
+		// string '*' - never "anything".
 		const g = [grant('process:spawn', '*')];
 		expect(isPermitted(g, 'process:spawn', 'tool')).toBe(false);
 	});

@@ -65,14 +65,14 @@ export interface ProcessConfig {
 	/** Extra directories to prepend to the spawn-time PATH. Typically the
 	 *  parent directory of the detected agent binary, so co-located runtimes
 	 *  (e.g. the `node` next to an npm-installed `codex`) resolve via the
-	 *  script's `#!/usr/bin/env node` shebang. Local spawn only — SSH builds
+	 *  script's `#!/usr/bin/env node` shebang. Local spawn only - SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
 	/** Agent-reported session id when this spawn is resuming a prior session
 	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
 	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that
 	 *  needs to inspect on-disk session state (Copilot's events.jsonl) can run
-	 *  even when the resumed stream never re-announces the sessionId — Copilot
+	 *  even when the resumed stream never re-announces the sessionId - Copilot
 	 *  in particular emits `session.resume` (no sessionId) on resume rather
 	 *  than `session.start`, so without this seed the disk reconciliation
 	 *  never runs and the renderer falls back to streamed commentary instead
@@ -135,7 +135,7 @@ export interface ManagedProcess {
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
 	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
-	 *  Inherited system env is NOT included — this is the actionable set shown in the
+	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */
 	maestroEnvVars?: Record<string, string>;
 	/** Kill/interrupt handle for server-backed processes (OpenCode SDK path). When

@@ -261,7 +261,7 @@ function AgentRunDashboardBody({
 							<option value="all">all campaigns</option>
 							{campaigns.map((campaign) => (
 								<option key={campaign.id} value={campaign.id}>
-									{campaign.title} — {campaign.id}
+									{campaign.title} - {campaign.id}
 								</option>
 							))}
 						</select>

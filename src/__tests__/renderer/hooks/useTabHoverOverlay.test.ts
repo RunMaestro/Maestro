@@ -128,7 +128,7 @@ describe('useTabHoverOverlay', () => {
 		expect(result.current.isOverOverlayRef.current).toBe(false);
 	});
 
-	it('respects shouldOpen guard — does not open when guard returns false', () => {
+	it('respects shouldOpen guard - does not open when guard returns false', () => {
 		const { result } = renderHook(() => useTabHoverOverlay({ shouldOpen: () => false }));
 
 		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
@@ -209,7 +209,7 @@ describe('useTabHoverOverlay', () => {
 			result.current.handleMouseLeave();
 		});
 
-		// Advance past original 400ms — overlay should NOT open
+		// Advance past original 400ms - overlay should NOT open
 		act(() => {
 			vi.advanceTimersByTime(300);
 		});
@@ -228,7 +228,7 @@ describe('useTabHoverOverlay', () => {
 
 		const { result } = renderHook(() => useTabHoverOverlay());
 
-		// Tab near right edge — overlay would start at left: 700
+		// Tab near right edge - overlay would start at left: 700
 		const mockTab = { getBoundingClientRect: () => ({ bottom: 40, left: 700, width: 80 }) };
 		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
 			mockTab as unknown as HTMLDivElement;
@@ -339,7 +339,7 @@ describe('useTabHoverOverlay', () => {
 		});
 
 		expect(result.current.overlayOpen).toBe(true);
-		// No clamping needed — position unchanged
+		// No clamping needed - position unchanged
 		expect(result.current.overlayPosition).toEqual({ top: 40, left: 100, tabWidth: 120 });
 		expect(result.current.positionReady).toBe(true);
 	});
@@ -551,7 +551,7 @@ describe('useTabHoverOverlay', () => {
 			result.current.overlayMouseEnter();
 		});
 
-		// Advance past 100ms — overlay should still be open
+		// Advance past 100ms - overlay should still be open
 		act(() => {
 			vi.advanceTimersByTime(100);
 		});

@@ -386,7 +386,7 @@ describe('tabHelpers', () => {
 
 			const result = createTab(session)!;
 
-			// Active tab is tab-a at index 0 — new tab should land at index 1
+			// Active tab is tab-a at index 0 - new tab should land at index 1
 			expect(result.session.unifiedTabOrder).toEqual([
 				{ type: 'ai', id: 'tab-a' },
 				{ type: 'ai', id: result.tab.id },
@@ -625,7 +625,7 @@ describe('tabHelpers', () => {
 			const result = closeTab(session, 'tab-busy');
 
 			expect(result).not.toBeNull();
-			// Session stays busy — the underlying agent process is still running
+			// Session stays busy - the underlying agent process is still running
 			// even though the tab is no longer visible.
 			expect(result!.session.state).toBe('busy');
 			expect(result!.session.busySource).toBe('ai');
@@ -704,7 +704,7 @@ describe('tabHelpers', () => {
 			// A fresh idle tab was created to replace the closed one
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].state).toBe('idle');
-			// Session stays busy — the orphaned tab is still thinking in the background.
+			// Session stays busy - the orphaned tab is still thinking in the background.
 			expect(result!.session.state).toBe('busy');
 			expect(result!.session.busySource).toBe('ai');
 			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
@@ -3302,7 +3302,7 @@ describe('tabHelpers', () => {
 			});
 
 			// From the active file tab, Next should wrap past the hidden non-active file tab
-			// and land back on the AI tab, then on the active file tab again — confirming the
+			// and land back on the AI tab, then on the active file tab again - confirming the
 			// active file is the only file ref in the filtered list.
 			const result = navigateToNextUnifiedTab(session, true);
 
@@ -3449,7 +3449,7 @@ describe('tabHelpers', () => {
 			expect(forward!.type).toBe('ai');
 			expect(forward!.id).toBe('ai-unread');
 
-			// From Terminal 2, prev should land on Terminal 1 — the hidden AI tab
+			// From Terminal 2, prev should land on Terminal 1 - the hidden AI tab
 			// between them must be skipped.
 			const backward = navigateToPrevUnifiedTab(session, true);
 			expect(backward!.type).toBe('terminal');
@@ -3751,7 +3751,7 @@ describe('tabHelpers', () => {
 			const session = createMockSession({
 				aiTabs: [aiTab],
 				browserTabs: [browserTab],
-				activeTabId: 'ai-1', // Stale — points at the AI tab we're about to navigate to
+				activeTabId: 'ai-1', // Stale - points at the AI tab we're about to navigate to
 				activeBrowserTabId: 'browser-1', // What the user is actually on
 				activeFileTabId: null,
 				activeTerminalTabId: null,
@@ -4223,7 +4223,7 @@ describe('tabHelpers', () => {
 			});
 
 			const result = getRepairedUnifiedTabOrder(session);
-			// Only the standalone tab and the group remain — no individual member refs.
+			// Only the standalone tab and the group remain - no individual member refs.
 			expect(result).toEqual([
 				{ type: 'ai', id: 'tab-1' },
 				{ type: 'group', id: 'g1' },
@@ -4426,7 +4426,7 @@ describe('tabHelpers', () => {
 			expect(result).not.toBeNull();
 			expect(result!.type).toBe('terminal');
 			// ai-2 is at index 2, term-1 is at index 0 (dist=2), term-2 is at index 4 (dist=2)
-			// Equal distance — first found wins (term-1)
+			// Equal distance - first found wins (term-1)
 			expect(result!.id).toBe('term-1');
 		});
 
@@ -4736,7 +4736,7 @@ describe('tabHelpers', () => {
 		});
 
 		it('does not report clearedCurrent when the only draft tab is the active one', () => {
-			// The active tab's draft is what the user is composing — we don't
+			// The active tab's draft is what the user is composing - we don't
 			// jump anywhere and we don't clear unread/draft state.
 			const sessions = [
 				createMockSession({

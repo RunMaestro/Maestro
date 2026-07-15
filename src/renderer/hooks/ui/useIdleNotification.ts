@@ -9,7 +9,7 @@ import { useNotificationStore, selectConfig } from '../../stores/notificationSto
  * Auto Run batch is running. Cue tasks are explicitly excluded from this
  * check (they don't set session state to busy or create batch runs).
  *
- * The notification only fires on the *transition* to idle — not on mount,
+ * The notification only fires on the *transition* to idle - not on mount,
  * not when already idle. A ref tracks the previous "was active" state to
  * detect the edge.
  */

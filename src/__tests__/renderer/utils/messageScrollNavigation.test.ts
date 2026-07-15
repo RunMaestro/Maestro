@@ -76,13 +76,13 @@ describe('jumpToMessageEdge', () => {
 	});
 
 	it('returns false when going down past the last visible message', () => {
-		// Both messages already above container top — nothing below to jump to.
+		// Both messages already above container top - nothing below to jump to.
 		const { container } = buildContainer({ count: 2, firstTop: -200 });
 		expect(jumpToMessageEdge(container, '[data-log-index]', 'down')).toBe(false);
 	});
 
 	it('returns false when going up and no message is above the container top', () => {
-		// All messages at or below container top — nothing above to jump to.
+		// All messages at or below container top - nothing above to jump to.
 		const { container } = buildContainer({ count: 2, firstTop: 50 });
 		expect(jumpToMessageEdge(container, '[data-log-index]', 'up')).toBe(false);
 	});
@@ -108,7 +108,7 @@ describe('jumpToMessageEdge', () => {
 	});
 
 	it('ignores messages within the small edge tolerance band (treats them as "current")', () => {
-		// First message sits 2px below container top — within EDGE_TOLERANCE_PX (4).
+		// First message sits 2px below container top - within EDGE_TOLERANCE_PX (4).
 		// Down navigation should skip it and pick the next one at y=102.
 		const { container } = buildContainer({ count: 2, firstTop: 2 });
 		const result = jumpToMessageEdge(container, '[data-log-index]', 'down');

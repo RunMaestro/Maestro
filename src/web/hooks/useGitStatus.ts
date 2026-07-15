@@ -80,7 +80,7 @@ export function useGitStatus(
 					setStatus(response.status);
 				}
 			} catch {
-				// Status fetch failed — will retry on next call
+				// Status fetch failed - will retry on next call
 			} finally {
 				setIsLoading(false);
 			}
@@ -105,7 +105,7 @@ export function useGitStatus(
 					setDiff(response.diff);
 				}
 			} catch {
-				// Diff fetch failed — will retry on next call
+				// Diff fetch failed - will retry on next call
 			} finally {
 				setIsLoading(false);
 			}
@@ -133,7 +133,7 @@ export function useGitStatus(
 					setDiff(diffResponse.diff);
 				}
 			} catch {
-				// Refresh failed — will retry on next call
+				// Refresh failed - will retry on next call
 			} finally {
 				setIsLoading(false);
 			}

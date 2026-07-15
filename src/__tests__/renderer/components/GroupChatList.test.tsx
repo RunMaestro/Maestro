@@ -1,5 +1,5 @@
 /**
- * Tests for GroupChatList — left-sidebar list of Group Chats.
+ * Tests for GroupChatList - left-sidebar list of Group Chats.
  *
  * Characterization tests for Tier 2 listener-hygiene refactor: pin down the
  * GroupChatContextMenu Escape-key behaviour and listener cleanup before
@@ -51,7 +51,7 @@ function renderList(overrides: Partial<Parameters<typeof GroupChatList>[0]> = {}
 
 function openContextMenu(container: HTMLElement) {
 	// Walk up from the chat name to the row element that owns the onContextMenu
-	// handler (the row has py-1.5; the section header has py-2 — distinguish by
+	// handler (the row has py-1.5; the section header has py-2 - distinguish by
 	// closeting on the cursor-pointer class plus walking up from the name).
 	const nameSpan = container.querySelector('span.text-sm.truncate');
 	expect(nameSpan).not.toBeNull();

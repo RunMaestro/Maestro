@@ -251,7 +251,7 @@ describe('DirectorNotesModal', () => {
 				expect(screen.getByText('AI Overview')).toBeInTheDocument();
 			});
 
-			// Click the AI Overview tab (disabled during generation — click is a no-op)
+			// Click the AI Overview tab (disabled during generation - click is a no-op)
 			const overviewTabButton = screen.getByText('AI Overview').closest('button');
 			fireEvent.click(overviewTabButton!);
 
@@ -545,7 +545,7 @@ describe('DirectorNotesModal', () => {
 				expect(overviewTabButton).toBeDisabled();
 			});
 
-			// Trigger ready — tab should become enabled
+			// Trigger ready - tab should become enabled
 			await act(async () => {
 				fireEvent.click(screen.getByTestId('trigger-synopsis-ready'));
 			});

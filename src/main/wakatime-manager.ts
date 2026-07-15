@@ -423,7 +423,7 @@ export class WakaTimeManager {
 			if (result.exitCode !== 0) return;
 			const currentVersion = result.stdout.trim();
 
-			// Compare — latestTag is like "v1.73.1", currentVersion is like "wakatime-cli 1.73.1" or "v1.73.1"
+			// Compare - latestTag is like "v1.73.1", currentVersion is like "wakatime-cli 1.73.1" or "v1.73.1"
 			// Normalize both to just the numeric version
 			const normalize = (v: string) => v.replace(/^(wakatime-cli\s+|v)/i, '').trim();
 			const latest = normalize(latestTag);
@@ -472,7 +472,7 @@ export class WakaTimeManager {
 		const cached = this.languageCache.get(sessionId);
 		if (cached !== undefined) return cached || null;
 
-		// Ordered by specificity — first match wins
+		// Ordered by specificity - first match wins
 		const markers: [string, string][] = [
 			['tsconfig.json', 'TypeScript'],
 			['package.json', 'JavaScript'],
@@ -523,7 +523,7 @@ export class WakaTimeManager {
 	/**
 	 * Detect the current git branch for a project directory.
 	 * Successful results are cached per session with a TTL so branch switches
-	 * are picked up. Failures are never cached — the next heartbeat retries.
+	 * are picked up. Failures are never cached - the next heartbeat retries.
 	 */
 	private async detectBranch(sessionId: string, cwd: string): Promise<string | null> {
 		const cached = this.branchCache.get(sessionId);
@@ -536,7 +536,7 @@ export class WakaTimeManager {
 		if (branch) {
 			this.branchCache.set(sessionId, { branch, timestamp: Date.now() });
 		} else {
-			// Don't cache failures — retry on next heartbeat
+			// Don't cache failures - retry on next heartbeat
 			this.branchCache.delete(sessionId);
 		}
 		return branch || null;
@@ -566,7 +566,7 @@ export class WakaTimeManager {
 
 		// Ensure CLI is available (auto-installs if needed)
 		if (!(await this.ensureCliInstalled())) {
-			logger.warn('WakaTime CLI not available — skipping heartbeat', LOG_CONTEXT);
+			logger.warn('WakaTime CLI not available - skipping heartbeat', LOG_CONTEXT);
 			return;
 		}
 
@@ -637,7 +637,7 @@ export class WakaTimeManager {
 		if (!apiKey) return;
 
 		if (!(await this.ensureCliInstalled())) {
-			logger.warn('WakaTime CLI not available — skipping file heartbeats', LOG_CONTEXT);
+			logger.warn('WakaTime CLI not available - skipping file heartbeats', LOG_CONTEXT);
 			return;
 		}
 

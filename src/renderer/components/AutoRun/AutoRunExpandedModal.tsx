@@ -191,7 +191,7 @@ export function AutoRunExpandedModal({
 		return () => clearTimeout(timer);
 	}, []);
 
-	// Re-claim focus whenever this modal becomes the topmost layer again — e.g.
+	// Re-claim focus whenever this modal becomes the topmost layer again - e.g.
 	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
 	// it. Without this, focus falls back to the body and Cmd+E starts targeting
 	// the right-panel AutoRun behind us instead of the expanded view.
@@ -204,7 +204,7 @@ export function AutoRunExpandedModal({
 		// Wait a tick so the closing modal has finished tearing down its focus trap.
 		const timer = setTimeout(() => {
 			const active = document.activeElement as HTMLElement | null;
-			// Only steal focus when it's idling on the body (or detached) — don't
+			// Only steal focus when it's idling on the body (or detached) - don't
 			// yank it out of an input the user has deliberately focused.
 			if (!active || active === document.body) {
 				autoRunRef.current?.focus();
@@ -424,7 +424,7 @@ export function AutoRunExpandedModal({
 								Run
 							</button>
 						)}
-						{/* Playbook Exchange button — full name fits in the expanded header
+						{/* Playbook Exchange button - full name fits in the expanded header
 						    (the right-panel AutoRun shortens it to "PlayBooks"). */}
 						{onOpenMarketplace && (
 							<button

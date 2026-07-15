@@ -10,7 +10,7 @@
  * auto-populated from the first trigger's connection). This leaked the first
  * trigger's prompt into every subsequent trigger's textarea.
  *
- * After the fix, the fallback is `defaultPromptFor(eventType)` — each
+ * After the fix, the fallback is `defaultPromptFor(eventType)` - each
  * trigger gets its own barebones template for its event type and the
  * agent-level `inputPrompt` is never consulted at per-edge resolution time.
  */
@@ -61,7 +61,7 @@ function mouseEvent() {
 	return { stopPropagation: () => {} } as unknown as React.MouseEvent;
 }
 
-describe('usePipelineSelection — multi-trigger prompt isolation', () => {
+describe('usePipelineSelection - multi-trigger prompt isolation', () => {
 	it('returns distinct prompts for two triggers when both have edge.prompt set', () => {
 		const triggerA = makeTriggerNode('tA', 'github.issue');
 		const triggerB = makeTriggerNode('tB', 'github.pull_request');
@@ -89,7 +89,7 @@ describe('usePipelineSelection — multi-trigger prompt isolation', () => {
 		// Simulate the legacy auto-populate that used to set inputPrompt from the first trigger.
 		const agent = makeAgentNode('a1', { inputPrompt: 'ISSUE PROMPT TEMPLATE' });
 		const edgeA = makeEdge('eA', 'tA', 'a1', { prompt: 'user-edited issue prompt' });
-		const edgeB = makeEdge('eB', 'tB', 'a1'); // no prompt — this is the leakage vector
+		const edgeB = makeEdge('eB', 'tB', 'a1'); // no prompt - this is the leakage vector
 		const pipeline = makePipeline('p1', [triggerA, triggerB, agent], [edgeA, edgeB]);
 		const state: CuePipelineState = { pipelines: [pipeline as any], selectedPipelineId: 'p1' };
 

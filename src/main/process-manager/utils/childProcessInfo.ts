@@ -120,12 +120,12 @@ function parsePs(stdout: string): ChildProcessInfo[] {
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
-		// Format: "  PID COMMAND" — split on first whitespace
+		// Format: "  PID COMMAND" - split on first whitespace
 		const match = trimmed.match(/^\s*(\d+)\s+(.+)$/);
 		if (match) {
 			const pid = parseInt(match[1], 10);
 			const command = match[2].trim();
-			// Filter out the shell itself (zsh, bash, etc.) — we already show "Terminal Shell"
+			// Filter out the shell itself (zsh, bash, etc.) - we already show "Terminal Shell"
 			if (!isShellProcess(command)) {
 				children.push({ pid, command });
 			}

@@ -90,7 +90,7 @@ describe('storage service', () => {
 		vi.clearAllMocks();
 		// Reset environment
 		process.env = { ...originalEnv };
-		// Strip MAESTRO_USER_DATA if set in the test runner's shell — getConfigDir()
+		// Strip MAESTRO_USER_DATA if set in the test runner's shell - getConfigDir()
 		// honors it as an override, so leaving it set would shadow the mocked
 		// homedir/platform paths these tests assert against.
 		delete process.env.MAESTRO_USER_DATA;

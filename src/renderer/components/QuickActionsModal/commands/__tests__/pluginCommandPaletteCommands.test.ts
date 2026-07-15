@@ -116,7 +116,7 @@ describe('buildPluginCommandPaletteCommands', () => {
 	});
 });
 
-describe('buildPluginCommandPaletteCommands — uiItems (menu surface)', () => {
+describe('buildPluginCommandPaletteCommands - uiItems (menu surface)', () => {
 	it('surfaces a menu uiItem and invokes its namespaced command', async () => {
 		const invokeCommand = vi.fn().mockResolvedValue({ dispatched: true });
 		const setQuickActionOpen = vi.fn();

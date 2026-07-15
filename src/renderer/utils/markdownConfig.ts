@@ -454,7 +454,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// Block code: rendered via the shared Prism code-block leaf (custom
 		// language renderers like mermaid + theme-aware syntax highlighting).
 		pre: createPrismCodeBlock({ theme, customLanguageRenderers, codeBlockStyle }),
-		// Inline code only — block code is handled by the pre component above.
+		// Inline code only - block code is handled by the pre component above.
 		code: ({ node: _node, className, children, style, ...props }: any) =>
 			React.createElement(InlineCode, { className, style, passthrough: props, children }),
 	};

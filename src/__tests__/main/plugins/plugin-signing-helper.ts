@@ -15,7 +15,7 @@ import {
 } from '../../../shared/plugins/signing';
 
 export interface TestSigningKeys {
-	/** base64 SPKI public key — register via the manager's `trustedKeys` dep. */
+	/** base64 SPKI public key - register via the manager's `trustedKeys` dep. */
 	publicKeyB64: string;
 	privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
 }
@@ -43,7 +43,7 @@ function collectFiles(root: string, dir: string, files: Record<string, string>):
 }
 
 /** (Re-)write `signature.json` over the CURRENT contents of `dir`. Call again
- * after every fixture edit — the exact-file-set check makes stale signatures
+ * after every fixture edit - the exact-file-set check makes stale signatures
  * `invalid`, which the trust gate treats as never-run. */
 export function signPluginDir(dir: string, keys: TestSigningKeys): void {
 	const files: Record<string, string> = {};

@@ -1,5 +1,5 @@
 /**
- * Cue Queue Persistence — Phase 12A.
+ * Cue Queue Persistence - Phase 12A.
  *
  * Thin façade over cue-db's queue-row CRUD that owns serialization and
  * rehydration. Lets cue-run-manager stay narrowly focused on concurrency and
@@ -24,7 +24,7 @@ import {
 } from './cue-db';
 import { captureException } from '../utils/sentry';
 
-/** Shape matching cue-run-manager's QueuedEvent (subset — only what's persisted). */
+/** Shape matching cue-run-manager's QueuedEvent (subset - only what's persisted). */
 export interface PersistableQueueEntry {
 	event: CueEvent;
 	subscriptionName: string;
@@ -35,7 +35,7 @@ export interface PersistableQueueEntry {
 	command?: CueCommand;
 	chainDepth?: number;
 	queuedAt: number;
-	/** Phase 01 — chain lineage propagated from the parent run so a restored
+	/** Phase 01 - chain lineage propagated from the parent run so a restored
 	 *  queue entry stays attached to its chain root after a crash. Undefined
 	 *  for root events (and for any entry queued while usageStats is off). */
 	chainRootId?: string;
@@ -56,11 +56,11 @@ export interface CueQueuePersistence {
 
 export interface CueQueuePersistenceDeps {
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
-	/** Per-session timeout — used to discard stale rows at restore time. */
+	/** Per-session timeout - used to discard stale rows at restore time. */
 	getSessionTimeoutMs: (sessionId: string) => number;
 	/** Membership check: drop persisted entries whose session is no longer registered. */
 	knownSessionIds: () => Set<string>;
-	/** Override for testing — defaults to Date.now. */
+	/** Override for testing - defaults to Date.now. */
 	now?: () => number;
 }
 
@@ -125,7 +125,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			void captureException(err, { operation: 'cueQueuePersistence.restoreAll' });
 			deps.onLog(
 				'warn',
-				`[CUE] Failed to read persisted queue — starting empty: ${err instanceof Error ? err.message : String(err)}`
+				`[CUE] Failed to read persisted queue - starting empty: ${err instanceof Error ? err.message : String(err)}`
 			);
 			return new Map();
 		}
@@ -169,7 +169,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 
 		for (const row of rows) {
-			// Drop rows whose session is no longer registered — they'd just be
+			// Drop rows whose session is no longer registered - they'd just be
 			// dead weight in the DB otherwise. Record the drop so a user
 			// inspecting history after deleting/recreating a session still
 			// sees what happened to their queued events.
@@ -190,7 +190,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
-			// Deserialize. Any JSON failure is a data integrity problem — drop the
+			// Deserialize. Any JSON failure is a data integrity problem - drop the
 			// row so it doesn't stall restore every time the engine starts.
 			let event: CueEvent;
 			let cliOutput: { target: string } | undefined;

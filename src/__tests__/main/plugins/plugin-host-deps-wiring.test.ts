@@ -14,7 +14,7 @@
  * acceptable, so weakening any one of them fails the build and forces a
  * security review:
  *  - the spawn sink consumes the host-owned registry (`resolveSpawnBinary`
- *    wired alongside `spawn` — never one without the other);
+ *    wired alongside `spawn` - never one without the other);
  *  - the registry construction ships EMPTY in production (only the DEMO_MODE
  *    e2e blessing exists, env-gated);
  *  - `execFile` is used with `shell: false` (never a shell).
@@ -80,7 +80,7 @@ function registryRegisterCallCount(): number {
 	return count;
 }
 
-describe('production host-handler deps wiring (FC2 — wired and gated)', () => {
+describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 	const keys = depsObjectKeys();
 
 	it('wires the act-verb sinks TOGETHER with the host-owned registry resolver', () => {
@@ -96,7 +96,7 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		// Direct plugin dispatch is definitionally "nobody at the keyboard", so the
 		// handler requires the unattended consent on top of the interactive
 		// allowlist grant. Removing the wired predicate would silently drop that
-		// gate — this pins it so doing so fails the build and forces a review.
+		// gate - this pins it so doing so fails the build and forces a review.
 		if (keys.includes('dispatch')) {
 			expect(keys).toContain('dispatchUnattendedAllowed');
 		}
@@ -113,7 +113,7 @@ describe('production host-handler deps wiring (FC2 — wired and gated)', () => 
 		expect(keys).toContain('forwardHostView');
 	});
 
-	it('production blesses NO spawn binaries — the only register() site is the env-gated DEMO blessing', () => {
+	it('production blesses NO spawn binaries - the only register() site is the env-gated DEMO blessing', () => {
 		// Exactly one register call may exist, and it must sit behind both the
 		// DEMO_MODE flag and the harness env var. Adding a second call site (or
 		// removing the gate) is a security review, not a refactor.
@@ -137,7 +137,7 @@ describe('production net:connect wiring (persistent socket sink)', () => {
 
 	it('wires netConnect / netSend / netClose TOGETHER (never a partial surface)', () => {
 		// A partial surface (e.g. connect without close) would leak sockets or make
-		// live-revoke unenforceable — either is a security review, not a refactor.
+		// live-revoke unenforceable - either is a security review, not a refactor.
 		const wired = keys.filter((k) => k === 'netConnect' || k === 'netSend' || k === 'netClose');
 		// Either all three are wired, or none are (the inert Phase-1 state).
 		expect(wired.length === 0 || wired.length === 3).toBe(true);

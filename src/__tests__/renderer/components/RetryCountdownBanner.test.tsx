@@ -1,5 +1,5 @@
 /**
- * Tests for RetryCountdownBanner — the live countdown shown above the composer
+ * Tests for RetryCountdownBanner - the live countdown shown above the composer
  * while an Agent Resilience auto-retry is pending for the active tab.
  *
  * Renders against real retryStore state (set directly) so the label, countdown

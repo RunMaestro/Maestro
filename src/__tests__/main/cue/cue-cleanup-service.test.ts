@@ -72,7 +72,7 @@ describe('createCueCleanupService', () => {
 		vi.useFakeTimers();
 	});
 
-	describe('sweep — no-op cases', () => {
+	describe('sweep - no-op cases', () => {
 		it('returns zero counts when no trackers or keys exist', () => {
 			const deps = makeDeps();
 			const service = createCueCleanupService(deps);
@@ -89,7 +89,7 @@ describe('createCueCleanupService', () => {
 			const deps = makeDeps({
 				fanInTracker: tracker,
 				getSessions: () => [{ id: 'session-1' }],
-				getSessionTimeoutMs: () => 30 * 60 * 1000, // 30 min — 2× = 60 min
+				getSessionTimeoutMs: () => 30 * 60 * 1000, // 30 min - 2× = 60 min
 			});
 			const service = createCueCleanupService(deps);
 			const result = service.sweep();
@@ -99,7 +99,7 @@ describe('createCueCleanupService', () => {
 		});
 	});
 
-	describe('sweep — fan-in eviction', () => {
+	describe('sweep - fan-in eviction', () => {
 		it('evicts a fan-in tracker whose owner session is no longer active', () => {
 			const tracker = makeMockTracker({
 				getActiveTrackerKeys: vi.fn(() => ['removed-session:sub-a']),
@@ -158,7 +158,7 @@ describe('createCueCleanupService', () => {
 		});
 	});
 
-	describe('sweep — scheduled key eviction', () => {
+	describe('sweep - scheduled key eviction', () => {
 		it('reports evicted scheduled key count from registry.sweepStaleScheduledKeys', () => {
 			const registry = makeMockRegistry({
 				sweepStaleScheduledKeys: vi.fn(() => 3),
@@ -231,14 +231,14 @@ describe('createCueCleanupService', () => {
 		});
 	});
 
-	describe('sweep — direct invocation', () => {
+	describe('sweep - direct invocation', () => {
 		it('sweep() bypasses the tick counter and runs immediately', () => {
 			const registry = makeMockRegistry({ sweepStaleScheduledKeys: vi.fn(() => 0) });
 			const tracker = makeMockTracker({ getActiveTrackerKeys: vi.fn(() => []) });
 			const deps = makeDeps({ registry, fanInTracker: tracker });
 			const service = createCueCleanupService(deps);
 
-			// No ticks fired — sweep still runs when called directly
+			// No ticks fired - sweep still runs when called directly
 			service.sweep();
 
 			expect(tracker.getActiveTrackerKeys).toHaveBeenCalledTimes(1);

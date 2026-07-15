@@ -111,7 +111,7 @@ describe('buildBlocks', () => {
 		expect(blocks.length).toBe(5_000);
 	});
 
-	it('output is deterministic — same input produces identical blocks twice', () => {
+	it('output is deterministic - same input produces identical blocks twice', () => {
 		const source = '# A\n\nparagraph\n\n```\ncode\n```';
 		const first = buildBlocks(source);
 		const second = buildBlocks(source);

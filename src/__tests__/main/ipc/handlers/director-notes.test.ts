@@ -948,7 +948,7 @@ describe('director-notes IPC handlers', () => {
 				.mockReturnValueOnce('/data/history/recent-session.json')
 				.mockReturnValueOnce('/data/history/stale-session.json');
 			// stale-session only has entries far outside the 7-day window and must be
-			// left out of the manifest — otherwise the grooming agent burns its whole
+			// left out of the manifest - otherwise the grooming agent burns its whole
 			// timeout reading out-of-range history files and emits no synopsis.
 			vi.mocked(mockHistoryManager.getEntries)
 				.mockReturnValueOnce([createMockEntry({ timestamp: Date.now() })])

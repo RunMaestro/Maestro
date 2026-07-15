@@ -768,7 +768,7 @@ describe('persistence IPC handlers', () => {
 			it('does not broadcast when cliActivity reference changes but fields match', async () => {
 				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
 				const handler = handlers.get('sessions:setAll');
-				// New object, same field values — should be treated as unchanged.
+				// New object, same field values - should be treated as unchanged.
 				await handler!({} as any, [{ ...baseSession, cliActivity: { ...playbookA } }]);
 				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
 			});
@@ -1090,7 +1090,7 @@ describe('persistence IPC handlers', () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 
 			const handler = handlers.get('sessions:setMany');
-			// New object with identical primitives — should be silent.
+			// New object with identical primitives - should be silent.
 			await handler!({} as any, [{ ...baseSession }], []);
 
 			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();

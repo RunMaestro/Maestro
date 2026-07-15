@@ -10,7 +10,7 @@ The Usage Dashboard (`src/renderer/components/UsageDashboard/`) provides analyti
 
 ```
 src/renderer/components/UsageDashboard/
-├── UsageDashboardModal.tsx      # Main modal — view tabs: Overview, Agents, Agent Overview, Activity, Auto Run (+ Cue when both Encore flags are on)
+├── UsageDashboardModal.tsx      # Main modal - view tabs: Overview, Agents, Agent Overview, Activity, Auto Run (+ Cue when both Encore flags are on)
 ├── SummaryCards.tsx             # 12 metric cards (queries, duration, top agent, streak, best day, active days, worktree %, etc.)
 ├── AgentOverviewCards.tsx       # Per-agent overview cards (Agents tab)
 ├── SessionStats.tsx             # Session statistics (Agent Overview tab)
@@ -89,7 +89,7 @@ statsCollectionEnabled: boolean; // Enable/disable stats collection (default: tr
 defaultStatsTimeRange: 'day' | 'week' | 'month' | 'year' | 'all'; // Default time filter
 colorBlindMode: boolean; // Use accessible color palettes
 preventSleepEnabled: boolean; // Prevent system sleep while agents are busy (default: false)
-showSessionIdPill: boolean; // Show session UUID pill in main panel header (default: false — opt-in)
+showSessionIdPill: boolean; // Show session UUID pill in main panel header (default: false - opt-in)
 showSessionCostPill: boolean; // Show cost pill in main panel header (default: true)
 ```
 

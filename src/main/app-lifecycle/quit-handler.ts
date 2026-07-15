@@ -134,7 +134,7 @@ interface QuitHandlerState {
 	quitConfirmed: boolean;
 	/** Whether we're currently waiting for quit confirmation from renderer */
 	isRequestingConfirmation: boolean;
-	/** Safety timeout for quit confirmation — forces quit if renderer never responds */
+	/** Safety timeout for quit confirmation - forces quit if renderer never responds */
 	confirmationTimeout: ReturnType<typeof setTimeout> | null;
 	/**
 	 * Whether this quit is the auto-updater installing an update. On that path we
@@ -222,7 +222,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			// repeat quit attempts stay suppressed; the eventual confirm/cancel from
 			// the modal clears it.
 			ipcMain.on('app:quitConfirmationPending', () => {
-				logger.info('Quit confirmation pending — user deciding, disarming timeout', 'Window');
+				logger.info('Quit confirmation pending - user deciding, disarming timeout', 'Window');
 				clearConfirmationTimeout();
 			});
 
@@ -255,7 +255,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 						state.confirmationTimeout = setTimeout(() => {
 							if (state.isRequestingConfirmation) {
 								logger.warn(
-									'Quit confirmation timed out — renderer did not respond, forcing quit',
+									'Quit confirmation timed out - renderer did not respond, forcing quit',
 									'Window'
 								);
 								state.isRequestingConfirmation = false;
@@ -406,13 +406,13 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 
 		// Flush Cue telemetry outbox before quit so events captured between the
 		// last autorun and shutdown aren't deferred to the next launch (or lost
-		// if the user uninstalls). Fire-and-forget — performCleanup is sync and
+		// if the user uninstalls). Fire-and-forget - performCleanup is sync and
 		// the network call may not finish before quit, but unflushed rows
 		// survive in SQLite for the next session.
 		flushTelemetry({ reason: 'app-quit' }).catch((error) => {
 			// Errors already logged inside flushTelemetry; report unexpected
 			// failures to Sentry so we can spot regressions, but don't rethrow
-			// — a network failure during shutdown shouldn't crash cleanup.
+			// - a network failure during shutdown shouldn't crash cleanup.
 			captureException(error, {
 				context: 'quit-handler.performCleanup.flushTelemetry',
 			});

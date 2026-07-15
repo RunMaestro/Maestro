@@ -67,7 +67,7 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
 
 1. **Orient.** On the first iteration, review CLAUDE.md / AGENTS.md (when available) and inspect the relevant code to understand the project's structure, conventions, and the current state of the goal.
 
-2. **Make real, incremental progress — this iteration only.** Do a meaningful, self-contained chunk of work toward the goal. Then **EXIT**. Do NOT try to finish the entire goal in one shot — another iteration will automatically continue from where you left off. Smaller, verified steps beat a sprawling half-broken change.
+2. **Make real, incremental progress - this iteration only.** Do a meaningful, self-contained chunk of work toward the goal. Then **EXIT**. Do NOT try to finish the entire goal in one shot - another iteration will automatically continue from where you left off. Smaller, verified steps beat a sprawling half-broken change.
 
 3. **Verify before you claim progress.** Run the relevant build, lint, type-check, and tests for what you changed. If something you wrote is broken, fixing it IS this iteration's progress.
 
@@ -77,8 +77,8 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:progress N | one-line rationale -->
    ```
 
-   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded — base it on what is actually built and verified, not on how much you intend to do.
-   - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged — it shows up in the progress UI.
+   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged - it shows up in the progress UI.
    - This marker is how the engine drives the progress bar and decides whether to run another iteration. **A response with no progress marker is treated as zero progress** and counts toward a stall.
 
 5. **Declare completion only when genuinely done.** When the goal is fully achieved and the exit criteria are satisfied, end your response with both a 100 progress marker and the completion marker:
@@ -88,9 +88,9 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:goal-complete -->
    ```
 
-   A progress of `100` on its own is also treated as completion, but emit the explicit `goal-complete` marker when you are certain. Do not declare completion prematurely — if work or verification remains, report a lower number and keep going.
+   A progress of `100` on its own is also treated as completion, but emit the explicit `goal-complete` marker when you are certain. Do not declare completion prematurely - if work or verification remains, report a lower number and keep going.
 
-6. **Declare a deadlock only for a true blocker.** If you hit something that genuinely prevents any further progress toward the goal — a missing dependency or credential you cannot obtain, a contradiction in the goal itself, a destructive action you refuse to take, or a hard external blocker — stop and end your response with:
+6. **Declare a deadlock only for a true blocker.** If you hit something that genuinely prevents any further progress toward the goal - a missing dependency or credential you cannot obtain, a contradiction in the goal itself, a destructive action you refuse to take, or a hard external blocker - stop and end your response with:
 
    ```html
    <!-- maestro:deadlock: brief reason you cannot proceed -->

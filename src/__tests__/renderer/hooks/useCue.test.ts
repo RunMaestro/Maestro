@@ -233,7 +233,7 @@ describe('useCue', () => {
 			expect(globalThis.clearInterval).toHaveBeenCalled();
 		});
 
-		// Phase 14A — visibility-aware polling
+		// Phase 14A - visibility-aware polling
 		it('honors a custom pollIntervalMs override', async () => {
 			await act(async () => {
 				renderHook(() => useCue({ pollIntervalMs: 30_000 }));
@@ -265,7 +265,7 @@ describe('useCue', () => {
 			visibilitySpy.mockRestore();
 		});
 
-		// Phase 12B — queueOverflow activity payload triggers a toast
+		// Phase 12B - queueOverflow activity payload triggers a toast
 		it('fires a warning toast when a queueOverflow activity payload is received', async () => {
 			// Capture the onActivityUpdate callback so we can deliver a payload.
 			let activityCallback: ((p: unknown) => void) | null = null;
@@ -318,7 +318,7 @@ describe('useCue', () => {
 			await renderAndSettle();
 
 			// Pick an instant whose ISO form contains a recognizable substring
-			// we can grep for in the title — `2026-04-21T10:11:12.345Z`.
+			// we can grep for in the title - `2026-04-21T10:11:12.345Z`.
 			const queuedAt = Date.UTC(2026, 3, 21, 10, 11, 12, 345);
 			act(() => {
 				activityCallback?.({
@@ -332,7 +332,7 @@ describe('useCue', () => {
 
 			expect(notifySpy).toHaveBeenCalledTimes(1);
 			const call = notifySpy.mock.calls[0][0] as { title: string };
-			// No raw ISO substrings — both the date prefix and the trailing
+			// No raw ISO substrings - both the date prefix and the trailing
 			// "Z" leaked through square brackets in the original bug.
 			expect(call.title).not.toMatch(/2026-04-21T/);
 			expect(call.title).not.toMatch(/\[.*Z\]/);

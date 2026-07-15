@@ -414,7 +414,7 @@ export const AITab = memo(function AITab({
 	);
 
 	// Memoize display name to avoid recalculation on every render.
-	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) —
+	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) -
 	// using [tab] would invalidate on every logs/state change which is too aggressive.
 	const displayName = useMemo(
 		() => getTabDisplayName(tab, sessionAgentSessionId),

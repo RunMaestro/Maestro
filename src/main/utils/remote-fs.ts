@@ -131,7 +131,7 @@ const SSH_COMMAND_TIMEOUT_MS = 30000;
  * SSH-via-cloudflared (and similar tunneled transports) rate-limit aggressive
  * connection bursts. A naive recursive file walk over a large tree can spawn
  * hundreds of fresh SSH connections in seconds, saturating the tunnel and
- * starving unrelated SSH traffic — agent spawn, terminal start, git ops.
+ * starving unrelated SSH traffic - agent spawn, terminal start, git ops.
  *
  * 4 in-flight per host steady-state is well below cloudflared's burst threshold
  * while still keeping a multi-thousand-directory walk progressing acceptably
@@ -168,7 +168,7 @@ class HostLimiter {
 	}
 }
 
-/** Limiters keyed by stable host identifier — see {@link sshHostKey}. */
+/** Limiters keyed by stable host identifier - see {@link sshHostKey}. */
 const hostLimiters = new Map<string, HostLimiter>();
 
 /** Stable key for per-host limiting. Different users/ports on the same host get separate limiters. */
@@ -330,7 +330,7 @@ export async function readDirRemote(
 	// that consumers can recurse into them.  The marker line __SYMDIR__
 	// separates the two outputs.
 	//
-	// Implementation choices (both matter — each guards against a real failure
+	// Implementation choices (both matter - each guards against a real failure
 	// we hit in production):
 	//
 	// 1. `find -mindepth 1 -maxdepth 1 -type l` rather than shell globs,
@@ -467,7 +467,7 @@ export async function listDirWithStatsRemote(
 
 	// Portable bulk stat: GNU (`stat --printf`) falls back to BSD (`stat -f`).
 	// Output format: <size>|<mtime-seconds>|<name>\n
-	// Using `|` as a separator — both UUID-style session names and common
+	// Using `|` as a separator - both UUID-style session names and common
 	// filenames never contain it, and neither does whitespace in tab form.
 	// The leading `cd` scopes `*.jsonl` expansion to the target dir so file
 	// names come back as basenames rather than full paths.
@@ -518,7 +518,7 @@ export async function listDirWithStatsRemote(
  *
  * Returned entries use the parent subdirectory name (the session id, in
  * Copilot's case) as `name`. Subdirectories that lack the file are silently
- * omitted — the caller decides how to treat them.
+ * omitted - the caller decides how to treat them.
  */
 export async function bulkStatFileInSubdirsRemote(
 	parentDir: string,
@@ -726,7 +726,7 @@ export async function readFileTailRemote(
 }
 
 /**
- * Read a remote file with abort support — used for user-initiated file previews
+ * Read a remote file with abort support - used for user-initiated file previews
  * where the user may close the tab mid-load to cancel the SSH read.
  *
  * Unlike readFileRemote (which buffers via execFile), this spawns ssh+cat
@@ -1227,7 +1227,7 @@ export interface ListTreeOptions {
 	excludePaths?: string[];
 	/**
 	 * Soft cap on file entries. Files beyond the cap are dropped server-side via
-	 * `head -n`. Directories are never capped — the structure is always complete
+	 * `head -n`. Directories are never capped - the structure is always complete
 	 * to `maxDepth`. Omit for unlimited.
 	 */
 	maxFiles?: number;

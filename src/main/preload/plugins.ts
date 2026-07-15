@@ -41,7 +41,7 @@ export function createPluginsApi() {
 		 * Enable/disable a first-party Encore feature through its host-owned
 		 * lifecycle bridge (grant mint + supervised-service reconcile/stop), not a
 		 * bare settings write. Returns the settled bridge state. NOT gated on the
-		 * `plugins` subsystem flag — first-party features are independent of it.
+		 * `plugins` subsystem flag - first-party features are independent of it.
 		 */
 		setFirstPartyEnabled: (
 			flag: FirstPartyEncoreFlag,

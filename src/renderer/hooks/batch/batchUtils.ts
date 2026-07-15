@@ -157,7 +157,7 @@ export interface HitlGate {
  * Detect a pending HITL (human-in-the-loop) gate in playbook content.
  *
  * A gate is "pending" when an unchecked task appears below a HITL marker
- * with no checked task between them — the human hasn't acknowledged the
+ * with no checked task between them - the human hasn't acknowledged the
  * gate yet by ticking the approval checkbox. Once the user checks the box
  * (or any task between the marker and the next unchecked task), the marker
  * is considered "consumed" and the next call returns null.
@@ -199,7 +199,7 @@ export function findPendingHitlGate(content: string): HitlGate | null {
 
 		if (inFencedCode) continue;
 
-		// Checked tasks consume any pending marker — the user already approved
+		// Checked tasks consume any pending marker - the user already approved
 		// (or someone other than the user; either way the gate has been passed).
 		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
 			firstMarkerInPendingChain = null;

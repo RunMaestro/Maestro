@@ -69,7 +69,7 @@ describe('useFileOperations', () => {
 		act(() => {
 			result.current.openRenameModal(fileNode, 'App.tsx');
 		});
-		// Same name — no-op
+		// Same name - no-op
 		await act(async () => {
 			await result.current.handleRename();
 		});

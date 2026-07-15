@@ -37,7 +37,7 @@ vi.mock('../../../main/cue/cue-file-watcher', () => ({
 
 // Mock the config repository so the runtime's "is this session a Cue
 // candidate?" probe (resolveCueConfigPath) participates in the same fake
-// filesystem the yaml loader does — without it, ownership candidate filtering
+// filesystem the yaml loader does - without it, ownership candidate filtering
 // would always see zero candidates in tests and the gate would silently no-op.
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	resolveCueConfigPath: (projectRoot: string) =>
@@ -195,7 +195,7 @@ describe('CueEngine completion chains', () => {
 		});
 
 		// Regression: the exit-listener production path calls
-		// notifyAgentCompleted with ONLY { status, exitCode } — no stdout.
+		// notifyAgentCompleted with ONLY { status, exitCode } - no stdout.
 		// sourceOutput MUST become the empty string in that case. Any fallback
 		// that pulls from a session-level output store or group-chat buffer
 		// would leak whatever that buffer happens to contain into the
@@ -621,7 +621,7 @@ describe('CueEngine completion chains', () => {
 
 			vi.clearAllMocks();
 
-			// Only two distinct session completions — but the YAML lists three
+			// Only two distinct session completions - but the YAML lists three
 			// entries. Fan-in must fire once the two unique sources are in.
 			engine.notifyAgentCompleted('agent-a', { sessionName: 'Agent A', stdout: 'output-a' });
 			engine.notifyAgentCompleted('agent-b', { sessionName: 'Agent B', stdout: 'output-b' });
@@ -918,7 +918,7 @@ describe('CueEngine completion chains', () => {
 				},
 			});
 			// Target agent needs its own cue config so getSessionSettings() finds
-			// max_concurrent: 2 for agent-a — otherwise the queue_size=0 default
+			// max_concurrent: 2 for agent-a - otherwise the queue_size=0 default
 			// drops the second dispatch instead of running it concurrently.
 			const targetConfig = createMockConfig({
 				settings: {
@@ -1187,11 +1187,11 @@ describe('CueEngine completion chains', () => {
 			vi.clearAllMocks();
 			engine.notifyAgentCompleted('agent-a', { stdout: 'output-a' });
 
-			// Advance 29 minutes — should not fire yet
+			// Advance 29 minutes - should not fire yet
 			vi.advanceTimersByTime(29 * 60 * 1000);
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 
-			// Advance 1 more minute + buffer — should fire at 30 minutes
+			// Advance 1 more minute + buffer - should fire at 30 minutes
 			vi.advanceTimersByTime(1 * 60 * 1000 + 100);
 			expect(deps.onCueRun).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1403,7 +1403,7 @@ describe('CueEngine completion chains', () => {
 			// Mirrors the Cmd → Agent self-loop scenario: the chain sub's
 			// source_session matches (Agent A is in the same session) but the
 			// completion came from Agent A's OWN run, not from its upstream
-			// command — so the filter must block the re-fire.
+			// command - so the filter must block the re-fire.
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1422,7 +1422,7 @@ describe('CueEngine completion chains', () => {
 			engine.start();
 
 			vi.clearAllMocks();
-			// Agent A's own completion — triggeredBy is the chain sub itself,
+			// Agent A's own completion - triggeredBy is the chain sub itself,
 			// not the upstream command.
 			engine.notifyAgentCompleted('agent-a', {
 				sessionName: 'Agent A',
@@ -1436,7 +1436,7 @@ describe('CueEngine completion chains', () => {
 		it('accepts any upstream name when source_sub is an array and one matches', () => {
 			// Fan-in case: Main depends on both Agent1 and Agent2 via their
 			// respective chain subs. Main's source_sub must accept either
-			// upstream sub name — but NOT e.g. the command sub that ran
+			// upstream sub name - but NOT e.g. the command sub that ran
 			// before them.
 			const config = createMockConfig({
 				subscriptions: [
@@ -1468,7 +1468,7 @@ describe('CueEngine completion chains', () => {
 		it('skips when triggeredBy is an upstream command, not the expected agent sub', () => {
 			// The cross-fire case. Source session matches (cmd and agent
 			// share owner), but the chain only wants the agent's
-			// completion — not the command's.
+			// completion - not the command's.
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -1531,7 +1531,7 @@ describe('CueEngine completion chains', () => {
 			// by `exit-listener` for external (non-Cue) process exits. Manual
 			// triggers and bootstrap events dispatch through `dispatchService`
 			// directly, so they never land here. That means an undefined
-			// `triggeredBy` indicates an external completion — bypassing
+			// `triggeredBy` indicates an external completion - bypassing
 			// `source_sub` for those would partially re-open the self-loop /
 			// cross-fire window the filter exists to close.
 			const config = createMockConfig({
@@ -1566,7 +1566,7 @@ describe('CueEngine completion chains', () => {
 		it('skips unowned agent.completed subs for non-owner sessions', async () => {
 			// Two agents share /vault. Both load the same cue.yaml with an
 			// unowned agent.completed subscription. Without the gate, both
-			// would dispatch when Source completes — exactly the duplication
+			// would dispatch when Source completes - exactly the duplication
 			// the ownership feature is designed to prevent.
 			const sessions = [
 				createMockSession({ id: 'owner', name: 'Owner', projectRoot: '/vault' }),

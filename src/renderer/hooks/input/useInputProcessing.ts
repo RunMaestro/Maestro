@@ -379,7 +379,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// AutoRun runs in isolation and doesn't set session to busy, so we check it explicitly
 							const isAutoRunActive = getBatchState(activeSession.id).isRunning;
 							// Forced parallel: explicit user override (Cmd+Shift+Enter / Force Send button).
-							// Mirrors the regular message path — only THIS tab's state matters; cross-tab
+							// Mirrors the regular message path - only THIS tab's state matters; cross-tab
 							// busyness and AutoRun are intentionally bypassed.
 							const forceParallel =
 								options?.forceParallel === true &&
@@ -688,7 +688,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
-			// override — skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
+			// override - skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
 			const activeTabForEntry = currentMode === 'ai' ? resolveTargetTab(activeSession) : null;
 			const currentBatchState = getBatchState(activeSession.id);
 			const isForceParallelEntry =
@@ -920,7 +920,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				namingNotInFlight
 			) {
 				// Build the naming prompt from accumulated user messages plus the current one,
-				// capped at 2000 chars. Mirrors the manual Auto handler — richer context produces
+				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
 				// more reliable LLM output that survives extractTabName's filters.
 				const MAX_PROMPT_CHARS = 2000;
 				const priorUserMessages: string[] = [];
@@ -1186,7 +1186,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 						// Check CURRENT session's Auto Run state (not any session's) and respect worktree bypass.
 						// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an
-						// explicit override — skip the Auto Run gate, but still honor the tab's own
+						// explicit override - skip the Auto Run gate, but still honor the tab's own
 						// readOnlyMode setting.
 						const currentSessionBatchState = getBatchState(resolvedSessionId);
 						const isAutoRunReadOnly =
@@ -1263,7 +1263,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:
 						//  - Native --append-system-prompt agents (e.g. Claude Code): re-send every
-						//    invocation — the flag isn't persisted into the session transcript.
+						//    invocation - the flag isn't persisted into the session transcript.
 						//  - Fallback-embed agents (e.g. Copilot-CLI, Codex): embed only on first
 						//    turn; on resume the prompt is already in the transcript.
 						const appendSystemPrompt = await prepareMaestroSystemPrompt({

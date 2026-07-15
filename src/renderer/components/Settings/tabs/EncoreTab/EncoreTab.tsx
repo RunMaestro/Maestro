@@ -20,7 +20,7 @@ import type { EncoreTabProps, StatsTimeRange } from './types';
 export type { EncoreTabProps } from './types';
 
 /**
- * The Plugins tab. The Extensions marketplace IS the tab — every built-in
+ * The Plugins tab. The Extensions marketplace IS the tab - every built-in
  * feature and community plugin is a managed tile. Per-feature configuration
  * lives INSIDE each tile's detail pane (a Settings sub-tab), not in a separate
  * list. This component owns the config-section state hooks and hands the
@@ -52,7 +52,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	});
 
 	// Config bodies for the detail pane's Settings sub-tab, keyed by Encore
-	// flag. Features absent from this map (pianola) have no inline config —
+	// flag. Features absent from this map (pianola) have no inline config -
 	// the detail pane falls back to their own affordance (Open Pianola).
 	const settingsBodies: Partial<Record<keyof EncoreFeatureFlags, ReactNode>> = {
 		usageStats: (

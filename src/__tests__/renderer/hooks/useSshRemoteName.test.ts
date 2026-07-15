@@ -129,7 +129,7 @@ describe('useSshRemoteName', () => {
 			expect(result.current).toBe('Server B');
 		});
 
-		// Now resolve A (stale) — should NOT overwrite B
+		// Now resolve A (stale) - should NOT overwrite B
 		resolveA!({ success: true, configs: [{ id: 'remote-A', name: 'Server A' }] });
 		// Give a tick for the stale promise to settle
 		await waitFor(() => {

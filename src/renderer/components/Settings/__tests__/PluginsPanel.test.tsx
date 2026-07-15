@@ -48,7 +48,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('PluginsPanel — plugins:changed subscription', () => {
+describe('PluginsPanel - plugins:changed subscription', () => {
 	it('subscribes to onChanged and reloads the list when the event fires', async () => {
 		render(<PluginsPanel theme={theme} />);
 

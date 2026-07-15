@@ -865,7 +865,7 @@ export function formatDirectorNotesHistory(
 	// Header
 	const period =
 		lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
-	lines.push(bold(c('cyan', "DIRECTOR'S NOTES — HISTORY")) + dim(` (${period})`));
+	lines.push(bold(c('cyan', "DIRECTOR'S NOTES - HISTORY")) + dim(` (${period})`));
 	lines.push('');
 
 	// Stats

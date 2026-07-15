@@ -349,7 +349,7 @@ export async function groomContext(
 			if (!resolved) {
 				resolved = true;
 				// `agent-error` emits an AgentError plain object (sessionId, type,
-				// message, ...), not a real Error — `String(error)` would yield
+				// message, ...), not a real Error - `String(error)` would yield
 				// "[object Object]". Pull `.message` out when present.
 				const errorMsg =
 					error instanceof Error

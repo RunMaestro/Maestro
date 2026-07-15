@@ -61,7 +61,7 @@ interface CopilotRawMessage {
 		/** Set on assistant.message events emitted BY a delegated subagent in response
 		 *  to a parent's `task` tool call. The subagent's reply is plumbed into the
 		 *  parent's events.jsonl for visibility, but it must NOT be treated as the
-		 *  parent's own final answer — the parent's real conclusion comes later. */
+		 *  parent's own final answer - the parent's real conclusion comes later. */
 		parentToolCallId?: string;
 		/** Output tokens for this assistant turn (Copilot CLI ≥1.0.39 reports this on `assistant.message`).
 		 *  Copilot does not currently report input or cache tokens at the per-message level. */
@@ -222,7 +222,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 	 *
 	 *  Subagent gate: messages with `parentToolCallId` are the replies of a
 	 *  delegated subagent (Copilot's `task` tool), serialized into the parent's
-	 *  events.jsonl for visibility. They are NOT the parent's final answer —
+	 *  events.jsonl for visibility. They are NOT the parent's final answer -
 	 *  the parent will produce its own conclusion after aggregating subagent
 	 *  results. Treating a subagent's `final_answer` as the parent's result
 	 *  causes StdoutHandler to set `resultEmitted = true` on the first
@@ -252,7 +252,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			});
 
 		// Per-turn output tokens reported by Copilot CLI ≥1.0.39. Copilot does not report
-		// input/cache tokens, so those stay 0 — partial picture, but better than nothing.
+		// input/cache tokens, so those stay 0 - partial picture, but better than nothing.
 		// StdoutHandler skips delta-normalization for copilot-cli, so each turn's value
 		// is summed into the running total in useBatchedSessionUpdates.
 		const outputTokens = msg.data?.outputTokens;
@@ -264,8 +264,8 @@ export class CopilotOutputParser implements AgentOutputParser {
 		// Final answer: either the explicit phase (legacy) OR the structural
 		// pattern used by modern Copilot CLI (no phase field, non-empty
 		// content, no pending tool calls). Phase values like 'commentary'
-		// opt out — they mark the message as an intermediate narration.
-		// Subagent replies (parentToolCallId set) are excluded — see the
+		// opt out - they mark the message as an intermediate narration.
+		// Subagent replies (parentToolCallId set) are excluded - see the
 		// docstring above; they would otherwise race the parent's final answer
 		// and the parent's real conclusion gets dropped.
 		const isFinalAnswer =
@@ -283,7 +283,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Intermediate turn with tool calls — forward the tool blocks. The
+		// Intermediate turn with tool calls - forward the tool blocks. The
 		// accompanying text (if any) was already streamed via deltas and will
 		// be finalized when the session-ending assistant.message arrives.
 		if (toolUseBlocks.length > 0) {
@@ -296,7 +296,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Empty content, no tools — pure signal event, nothing to render.
+		// Empty content, no tools - pure signal event, nothing to render.
 		return {
 			type: 'system',
 			usage,
@@ -335,7 +335,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 	 *  Deltas are forwarded as partial text with isReasoning=true so
 	 *  StdoutHandler can display them in thinking UI without accumulating
 	 *  them into the final response. The summary (assistant.reasoning)
-	 *  repeats content already streamed via deltas — when deltas were received,
+	 *  repeats content already streamed via deltas - when deltas were received,
 	 *  the summary is skipped to avoid double-accumulation.
 	 *
 	 *  Subagent gate: same as `parseAssistantMessageDelta`. Subagent reasoning
@@ -365,7 +365,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		// No deltas preceded — use the content directly
+		// No deltas preceded - use the content directly
 		const content = extractTextValue(msg.data?.content);
 		if (content) {
 			return {
@@ -495,7 +495,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		return event.usage || null;
 	}
 
-	/** Extract slash commands from events. Returns null — Copilot slash commands are interactive-only. */
+	/** Extract slash commands from events. Returns null - Copilot slash commands are interactive-only. */
 	extractSlashCommands(_event: ParsedEvent): string[] | null {
 		return null;
 	}

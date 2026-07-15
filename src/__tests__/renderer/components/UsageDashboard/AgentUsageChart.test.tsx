@@ -142,7 +142,7 @@ describe('AgentUsageChart', () => {
 
 		it('falls back to a prettified key when no matching session exists', () => {
 			// "claude-code" is the canonical agent id, so prettifyAgentType returns
-			// "Claude Code" — used as the legend label when no session is registered
+			// "Claude Code" - used as the legend label when no session is registered
 			// for this stat key.
 			const data = dataForSessions({
 				'claude-code': [{ date: '2024-12-20', count: 5, duration: 60_000 }],

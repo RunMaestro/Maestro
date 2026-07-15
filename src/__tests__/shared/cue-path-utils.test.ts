@@ -67,7 +67,7 @@ describe('isDescendantOrEqual', () => {
 	});
 
 	it('returns false for partial prefix match that is not a directory boundary', () => {
-		// /a/bar is NOT a descendant of /a/b — the prefix match is not at a separator
+		// /a/bar is NOT a descendant of /a/b - the prefix match is not at a separator
 		expect(isDescendantOrEqual('/a/bar', '/a/b')).toBe(false);
 	});
 
@@ -78,12 +78,12 @@ describe('isDescendantOrEqual', () => {
 });
 
 // Regression: this utility is imported by the renderer pipeline save flow.
-// Do NOT let anyone reintroduce a Node `path` dependency — the renderer
+// Do NOT let anyone reintroduce a Node `path` dependency - the renderer
 // strips it and saves fail with "path.resolve is not a function".
 describe('cue-path-utils (renderer-safe)', () => {
 	it('does not reference Node built-in modules at import time', async () => {
 		// A pure-JS module imports and evaluates without `require`/`import` of
-		// Node built-ins. Dynamic import alone only catches crashes — a silent
+		// Node built-ins. Dynamic import alone only catches crashes - a silent
 		// tree-shake could still hide a `path` reference the renderer rejects
 		// at runtime. Assert against the source too so a review can't miss it.
 		const sourcePath = path.resolve(__dirname, '../../shared/cue-path-utils.ts');
@@ -118,7 +118,7 @@ describe('cue-path-utils (renderer-safe)', () => {
 	describe('UNC paths', () => {
 		it('preserves the `\\\\` UNC prefix through normalize', () => {
 			// A path that equals itself is the cheapest proof the prefix
-			// didn't get collapsed — if normalize mangled `\\\\`, this
+			// didn't get collapsed - if normalize mangled `\\\\`, this
 			// isDescendantOrEqual call would return false.
 			expect(isDescendantOrEqual('\\\\server\\share\\path', '\\\\server\\share\\path')).toBe(true);
 		});

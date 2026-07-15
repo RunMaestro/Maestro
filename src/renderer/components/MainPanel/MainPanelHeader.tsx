@@ -120,7 +120,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSidebarOpener = leftSidebarHidden || (isWebDesktop() && isXs && !leftSidebarOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
-	// Code session — the source account is always derivable from session env
+	// Code session - the source account is always derivable from session env
 	// vars (override > agent default > implicit ~/.claude), so the popover
 	// doesn't need a separate account picker. The snapshot is keyed by
 	// canonical CLAUDE_CONFIG_DIR. When the spawner has already stamped
@@ -662,7 +662,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								}
 							}}
 						>
-							{/* Plain-text readout: "X% context remaining" — clearer than a
+							{/* Plain-text readout: "X% context remaining" - clearer than a
 							    gauge bar at narrow widths and avoids redundant label+bar. */}
 							<span
 								className="text-xs font-mono font-medium tabular-nums whitespace-nowrap"
@@ -825,7 +825,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 
-												{/* TUI usage limits — shown for Claude Code tabs driving the TUI
+												{/* TUI usage limits - shown for Claude Code tabs driving the TUI
 												    (Adaptive Mode toggle OR static maestro-p Path) when a usage
 												    snapshot is cached. Bar color rules match the Usage Dashboard
 												    so the same percent reads the same way in both places:
@@ -876,7 +876,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																	●
 																</span>
 																<span>
-																	Not logged in — run{' '}
+																	Not logged in - run{' '}
 																	<code style={{ color: theme.colors.accent }}>/login</code>.
 																</span>
 															</div>

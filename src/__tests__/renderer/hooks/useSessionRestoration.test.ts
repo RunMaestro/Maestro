@@ -142,10 +142,10 @@ afterEach(() => {
 });
 
 // ============================================================================
-// restoreSession — Migration logic
+// restoreSession - Migration logic
 // ============================================================================
 
-describe('restoreSession — Migration logic', () => {
+describe('restoreSession - Migration logic', () => {
 	it('sets projectRoot to cwd when missing', async () => {
 		const session = createMockSession({ projectRoot: undefined, cwd: '/my/path' });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -578,10 +578,10 @@ describe('restoreSession — Migration logic', () => {
 });
 
 // ============================================================================
-// restoreSession — Corruption recovery
+// restoreSession - Corruption recovery
 // ============================================================================
 
-describe('restoreSession — Corruption recovery', () => {
+describe('restoreSession - Corruption recovery', () => {
 	it('creates default tab when aiTabs is empty', async () => {
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -717,10 +717,10 @@ describe('restoreSession — Corruption recovery', () => {
 });
 
 // ============================================================================
-// restoreSession — Runtime state reset
+// restoreSession - Runtime state reset
 // ============================================================================
 
-describe('restoreSession — Runtime state reset', () => {
+describe('restoreSession - Runtime state reset', () => {
 	it('resets aiPid to 0 (lazy spawn)', async () => {
 		const session = createMockSession({ aiPid: 999 });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -965,7 +965,7 @@ describe('restoreSession — Runtime state reset', () => {
 		});
 
 		// When unifiedTabOrder is undefined and terminalTabs is missing,
-		// restoration builds order from AI tabs only — no default terminal tab is created.
+		// restoration builds order from AI tabs only - no default terminal tab is created.
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
 		expect(restored!.terminalTabs).toHaveLength(0);
 	});
@@ -984,10 +984,10 @@ describe('restoreSession — Runtime state reset', () => {
 });
 
 // ============================================================================
-// restoreSession — Git info for local sessions
+// restoreSession - Git info for local sessions
 // ============================================================================
 
-describe('restoreSession — Git info (local sessions)', () => {
+describe('restoreSession - Git info (local sessions)', () => {
 	it('fetches git info synchronously for local sessions', async () => {
 		const session = createMockSession({
 			sshRemoteId: undefined,
@@ -1068,10 +1068,10 @@ describe('restoreSession — Git info (local sessions)', () => {
 });
 
 // ============================================================================
-// restoreSession — Error handling
+// restoreSession - Error handling
 // ============================================================================
 
-describe('restoreSession — Error handling', () => {
+describe('restoreSession - Error handling', () => {
 	it('returns idle session even when agent is unavailable (validated in background)', async () => {
 		const session = createMockSession();
 		const { result } = renderHook(() => useSessionRestoration());
@@ -1646,10 +1646,10 @@ describe('Session & Group loading effect', () => {
 });
 
 // ============================================================================
-// restoreSession — Terminal tab persistence
+// restoreSession - Terminal tab persistence
 // ============================================================================
 
-describe('restoreSession — Terminal tab persistence', () => {
+describe('restoreSession - Terminal tab persistence', () => {
 	it('preserves terminal tab metadata (name, shellType, cwd, createdAt) across restart', async () => {
 		const createdAt = 1700000000000;
 		const session = createMockSession({
@@ -1797,7 +1797,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		// Migration only ensures the array exists — it does not add a default tab
+		// Migration only ensures the array exists - it does not add a default tab
 		expect(restored!.terminalTabs).toHaveLength(0);
 		expect(restored!.activeTerminalTabId).toBeNull();
 	});

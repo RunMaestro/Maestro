@@ -49,7 +49,7 @@ export function ForcedParallelWarningModal({
 				<div>
 					<p className="text-sm leading-relaxed mb-3" style={{ color: theme.colors.textMain }}>
 						This lets you queue messages that skip the cross-tab wait. Your message still waits for
-						the current tab to finish, but dispatches immediately afterward — without waiting for
+						the current tab to finish, but dispatches immediately afterward - without waiting for
 						other tabs to clear.
 					</p>
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>

@@ -162,7 +162,7 @@ interface LoadingState {
 	budgetUsed: number;
 	/** True once we've hit the entry cap and started skipping further files. */
 	truncated: boolean;
-	/** Optional abort signal — when aborted, the recursion stops issuing new readDir calls. */
+	/** Optional abort signal - when aborted, the recursion stops issuing new readDir calls. */
 	signal?: AbortSignal;
 }
 
@@ -202,15 +202,15 @@ export interface LocalFileTreeOptions {
  * Load file tree from directory recursively.
  *
  * Applies two independent limits:
- * - `maxDepth` — hard cap on recursion depth. Enforced the same way at every
+ * - `maxDepth` - hard cap on recursion depth. Enforced the same way at every
  *   level.
- * - `maxEntries` — soft cap on the number of file entries (folders are not
+ * - `maxEntries` - soft cap on the number of file entries (folders are not
  *   counted). Once reached, further files are skipped and the returned result
  *   is flagged `truncated`. Pass `Infinity` to disable.
  *
  * Entries listed in {@link ALWAYS_VISIBLE_FILES} (e.g. `.maestro`) are
  * processed before other entries at every level and walked with an unlimited
- * budget — their files do not count toward `maxEntries`. This guarantees that
+ * budget - their files do not count toward `maxEntries`. This guarantees that
  * project-critical content survives even on SSH remotes where the cap has
  * been reduced.
  *
@@ -267,7 +267,7 @@ export async function loadFileTree(
 					ignorePatterns = [...ignorePatterns, ...parseGitignoreContent(content)];
 				}
 			} catch {
-				// .gitignore may not exist or be readable — not an error
+				// .gitignore may not exist or be readable - not an error
 			}
 		}
 	}
@@ -347,7 +347,7 @@ async function loadFileTreeRecursive(
 		const seen = new Set<string>();
 
 		// Process always-visible directories (e.g. `.maestro`) first so they're
-		// loaded ahead of bulk content — important on SSH where each dir is its
+		// loaded ahead of bulk content - important on SSH where each dir is its
 		// own round-trip and the entry cap may be reduced.
 		const orderedEntries = [...entries].sort((a, b) => {
 			const aPriority = a.isDirectory && ALWAYS_VISIBLE_FILES.has(a.name) ? 0 : 1;
@@ -461,7 +461,7 @@ export function getAllFolderPaths(nodes: FileTreeNode[], currentPath = ''): stri
  * the flat output of `find`.
  *
  * Folders without an explicit parent in the directory list are attached to the
- * root — this can happen when `excludePaths` prunes a parent or when the entry
+ * root - this can happen when `excludePaths` prunes a parent or when the entry
  * cap drops mid-tree files whose ancestor dirs are still listed.
  */
 export function buildTreeFromPaths(directories: string[], files: string[]): FileTreeNode[] {
@@ -543,7 +543,7 @@ export function buildTreeFromPaths(directories: string[], files: string[]): File
 /**
  * Splice a `.maestro` subtree (loaded in its own phase) into the rest-of-tree
  * result. The rest tree should have been loaded with `excludePaths: ['.maestro']`
- * so it doesn't already contain `.maestro` — this helper guards against that
+ * so it doesn't already contain `.maestro` - this helper guards against that
  * anyway by filtering it out.
  */
 export function spliceMaestroIntoTree(
@@ -579,7 +579,7 @@ export interface RemoteBatchedLoadOptions {
 	sshRemoteId: string;
 	/** Aborts pending phases when fired. */
 	signal?: AbortSignal;
-	/** Progress callback — fired at phase boundaries. */
+	/** Progress callback - fired at phase boundaries. */
 	onProgress?: FileTreeProgressCallback;
 	/**
 	 * Optional callback fired when an intermediate phase completes, so the
@@ -596,16 +596,16 @@ export interface RemoteBatchedLoadOptions {
  * Load a remote file tree using batched `find` calls.
  *
  * Issues two SSH round-trips total:
- *  1. **Maestro phase** — enumerate `<root>/.maestro` (unlimited budget). Loads
+ *  1. **Maestro phase** - enumerate `<root>/.maestro` (unlimited budget). Loads
  *     first because `.maestro` drives Cue, playbooks, and other features that
  *     should be available as soon as possible.
- *  2. **Rest phase** — enumerate the rest of the tree with the file cap and
+ *  2. **Rest phase** - enumerate the rest of the tree with the file cap and
  *     `.maestro` pruned out (we already have it).
  *
  * Replaces the per-directory recursive `readDir` walk that issued one SSH call
  * per remote directory (hundreds of calls on a moderately-sized project).
  *
- * The shallow top-level paint is **not** handled here — the caller fires that
+ * The shallow top-level paint is **not** handled here - the caller fires that
  * separately for instant first paint, then awaits this for the full result.
  */
 export async function loadFileTreeRemoteBatched(
@@ -631,7 +631,7 @@ export async function loadFileTreeRemoteBatched(
 			const gitignorePatterns = await fetchRemoteGitignorePatterns(rootPath, sshRemoteId);
 			effectiveIgnorePatterns = [...effectiveIgnorePatterns, ...gitignorePatterns];
 		} catch {
-			// .gitignore may not exist or be readable — not an error
+			// .gitignore may not exist or be readable - not an error
 		}
 	}
 
@@ -671,7 +671,7 @@ export async function loadFileTreeRemoteBatched(
 		onPhase?.('maestro', partial);
 	} catch (err) {
 		if (err instanceof FileTreeAbortError) throw err;
-		// .maestro missing/unreadable — log and continue with empty subtree
+		// .maestro missing/unreadable - log and continue with empty subtree
 		logger.debug('[loadFileTreeRemoteBatched] .maestro phase failed:', undefined, err);
 	}
 

@@ -7,7 +7,7 @@
  * writes into pipelineState to avoid re-rendering the whole graph on every
  * keystroke. Clicking Save within the debounce window would otherwise read
  * stale pipelineState and persist an invalid YAML (missing prompts) that the
- * loader rejects on next open — the user-visible "pipeline vanished after
+ * loader rejects on next open - the user-visible "pipeline vanished after
  * save" symptom. Each panel registers a flush callback; handleSave calls
  * flushAllPendingEdits() before validating/writing.
  */

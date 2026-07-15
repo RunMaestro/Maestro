@@ -60,7 +60,7 @@ function applyMaestroPromptFixes(id: string, prompt: string): string {
 
 	if (id === 'retrospective') {
 		fixed = fixed.replace(
-			`- No time estimates — NEVER mention hours, days, weeks, months, or ANY time-based predictions. AI has fundamentally changed development speed.`,
+			`- No time estimates \u2014 NEVER mention hours, days, weeks, months, or ANY time-based predictions. AI has fundamentally changed development speed.`,
 			`- Do not invent time estimates or predictions. Only mention hours, days, sprints, or timelines when they are already present in project artifacts or completed work.`
 		);
 	}

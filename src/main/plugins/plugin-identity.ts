@@ -19,7 +19,7 @@ import type { AuthIdentity } from './authorization-ledger';
 /**
  * Compute a plugin directory's current `AuthIdentity` (content digest + signature
  * status + signer key). Returns null when the directory cannot be hashed (e.g. it
- * contains a symlink or is unreadable) — an unhashable tree can never be granted
+ * contains a symlink or is unreadable) - an unhashable tree can never be granted
  * an authorization.
  */
 export function pluginIdentity(dir: string, trustedKeys: readonly string[]): AuthIdentity | null {

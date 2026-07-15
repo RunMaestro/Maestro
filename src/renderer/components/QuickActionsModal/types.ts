@@ -177,13 +177,13 @@ export interface QuickActionsModalProps {
 	onNewBrowserTab?: () => void;
 	onNewTerminalTab?: () => void;
 	/**
-	 * Shared "Next Unread / Draft Tab" action — same callback bound to the
+	 * Shared "Next Unread / Draft Tab" action - same callback bound to the
 	 * Alt+Cmd+Down keyboard shortcut in App.tsx so both invocation paths use
 	 * the sidebar's visible ordering.
 	 */
 	onGoToNextUnread?: () => void;
 	/**
-	 * Shared session/tab history navigation — same callbacks bound to the
+	 * Shared session/tab history navigation - same callbacks bound to the
 	 * Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts in App.tsx so the palette and
 	 * keyboard walk the same navigation history.
 	 */

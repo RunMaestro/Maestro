@@ -1,5 +1,5 @@
 /**
- * RetryStatusCard — the collapsed Agent Resilience "outage" bubble in the chat
+ * RetryStatusCard - the collapsed Agent Resilience "outage" bubble in the chat
  * transcript. When an agent turn fails with a recoverable upstream error and
  * resilience auto-retries, ALL of the repeated attempts collapse into this one
  * live card instead of spraying a wall of error bubbles. It shows, at a glance:
@@ -34,7 +34,7 @@ interface RetryStatusCardProps {
 	fallbackText?: string;
 }
 
-/** Constitutional "stuck / backing off" hue — pulsing orange, distinct from thinking-yellow. */
+/** Constitutional "stuck / backing off" hue - pulsing orange, distinct from thinking-yellow. */
 const OUTAGE_COLOR = '#ff8800';
 
 function StatBlock({

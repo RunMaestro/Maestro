@@ -1,4 +1,4 @@
-// `prompts get <id>` — print a Maestro prompt's content to stdout.
+// `prompts get <id>` - print a Maestro prompt's content to stdout.
 // Honors the same customization precedence as the Electron app, so an agent
 // fetching `_maestro-cue` (etc.) sees what the user actually edits in Settings.
 

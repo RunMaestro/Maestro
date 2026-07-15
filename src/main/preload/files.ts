@@ -122,7 +122,7 @@ export function createHistoryApi() {
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
 
 		// Cached graph buckets for a single session. The lookback parameter
-		// controls the window — `null` for "all time", or hours back from
+		// controls the window - `null` for "all time", or hours back from
 		// "now". Each (bucketCount, lookback) pair gets its own cached
 		// aggregate keyed by source-file fingerprint.
 		getGraphData: (

@@ -1403,7 +1403,7 @@ describe('useBatchHandlers', () => {
 			expect(stats.currentBadgeLevel).toBe(5);
 		});
 
-		it('does not preserve existing higher badge level — synced value overwrites', () => {
+		it('does not preserve existing higher badge level - synced value overwrites', () => {
 			// The sync function unconditionally sets badge tracking to the synced level.
 			// This tests that existing higher values are overwritten (server is source of truth).
 			useSettingsStore.setState({
@@ -1622,7 +1622,7 @@ describe('useBatchHandlers', () => {
 
 			// IPC history.add should still be called
 			expect(window.maestro.history.add).toHaveBeenCalled();
-			// Should not throw — no crash from null ref
+			// Should not throw - no crash from null ref
 		});
 	});
 

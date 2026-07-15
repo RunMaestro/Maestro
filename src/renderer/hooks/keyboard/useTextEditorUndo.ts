@@ -6,7 +6,7 @@ import { useEffect } from 'react';
  *
  * Maestro's Edit menu intentionally omits `role: 'undo'` / `role: 'redo'`
  * so the image annotator can claim Cmd+Z for stroke undo. On macOS that
- * also disables native textarea/input undo inside Electron — Chromium
+ * also disables native textarea/input undo inside Electron - Chromium
  * relies on the Edit menu role to deliver Cmd+Z to the focused editable
  * element. This hook restores that behavior in the renderer.
  *

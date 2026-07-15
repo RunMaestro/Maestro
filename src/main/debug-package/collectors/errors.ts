@@ -24,7 +24,7 @@ export interface ErrorsInfo {
 }
 
 /**
- * Sanitize an error log entry — same approach as the logs collector.
+ * Sanitize an error log entry - same approach as the logs collector.
  */
 function sanitizeErrorEntry(entry: LogEntry): SanitizedLogEntry {
 	return {

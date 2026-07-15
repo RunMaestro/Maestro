@@ -1,5 +1,5 @@
 /**
- * CueAiChat — Chat interface for AI-assisted YAML configuration.
+ * CueAiChat - Chat interface for AI-assisted YAML configuration.
  *
  * Shows message history, streaming indicator, and input field.
  */

@@ -218,7 +218,7 @@ describe('createCodeHighlighter', () => {
 	});
 
 	it('no-ops gracefully when IntersectionObserver is unavailable', () => {
-		// @ts-expect-error — simulate older environment.
+		// @ts-expect-error - simulate older environment.
 		delete globalThis.IntersectionObserver;
 		const root = makeBlock('<pre><code class="language-ts">x</code></pre>');
 		const handle = createCodeHighlighter({ theme: mockTheme });

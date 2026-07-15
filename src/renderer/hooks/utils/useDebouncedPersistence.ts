@@ -13,7 +13,7 @@
  *    using reference equality per session, then ship only the changed
  *    sessions plus the ids of any removed sessions via
  *    `sessions:setMany`. With Zustand's immutable update pattern, every
- *    mutated session gets a fresh object reference — so the diff catches
+ *    mutated session gets a fresh object reference - so the diff catches
  *    every real change in O(N) without needing per-mutator dirty
  *    tracking.
  *
@@ -86,7 +86,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	// When a wizard completes, wizardState is cleared (set to undefined) and the tab
 	// becomes a regular session that should persist.
 	//
-	// Note: aiTabs may be missing or empty (edge case — shouldn't happen
+	// Note: aiTabs may be missing or empty (edge case - shouldn't happen
 	// after migration). We don't early-return for that case anymore: the
 	// shared sanitization below (terminal/browser tab cleanup, runtime-field
 	// stripping, SSH state reset) must still run regardless of aiTabs
@@ -100,7 +100,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const isLimitPause =
 		!!session.agentError && session.agentErrorPaused === true && isLimitError(session.agentError);
 
-	// "All tabs were wizard tabs" fallback — only fires when there were
+	// "All tabs were wizard tabs" fallback - only fires when there were
 	// originally tabs but every one was a wizard. For truly-empty input
 	// (aiTabs missing or already empty) we keep aiTabs empty rather than
 	// invent a synthetic tab the caller never had.
@@ -239,7 +239,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		sshRemote: undefined,
 		sshRemoteId: undefined,
 		remoteCwd: undefined,
-		// Don't persist file tree — it's ephemeral cache data, not state.
+		// Don't persist file tree - it's ephemeral cache data, not state.
 		// Trees re-scan automatically on session activation via useFileTreeManagement.
 		// For users with large working directories (100K+ files), persisting the tree
 		// caused sessions.json to balloon to 300MB+.
@@ -256,7 +256,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// auto-loader from making a fresh attempt.
 		fileTreeError: undefined,
 		fileTreeRetryAt: undefined,
-		// Don't persist file preview history — stores full file content that can be
+		// Don't persist file preview history - stores full file content that can be
 		// re-read from disk on demand. Another major contributor to session file bloat.
 		filePreviewHistory: undefined,
 		filePreviewHistoryIndex: undefined,
@@ -294,7 +294,7 @@ export const DEFAULT_DEBOUNCE_DELAY = 2000;
  * (tombstones).
  *
  * Reference equality works because mutators always create new session
- * objects via spread (`{ ...session, ...updates }`) — that's the React/Zustand
+ * objects via spread (`{ ...session, ...updates }`) - that's the React/Zustand
  * paradigm and the same constraint that React.memo relies on.
  */
 function diffSessions(
@@ -354,7 +354,7 @@ export function useDebouncedPersistence(
 	const flushingRef = useRef(false);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
-	// Starts null — the first flush after load uses setAll to seed the main
+	// Starts null - the first flush after load uses setAll to seed the main
 	// process and captures the snapshot. Every subsequent flush diffs the
 	// current sessions array against this snapshot and ships only the
 	// changed subset via setMany.
@@ -362,7 +362,7 @@ export function useDebouncedPersistence(
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
-	 * whether to clear the pending flag — without that, a transient ENOSPC
+	 * whether to clear the pending flag - without that, a transient ENOSPC
 	 * would silently mark dirty sessions as persisted AND clear isPending,
 	 * leaving beforeunload with no signal to attempt one more retry before
 	 * the window closes.
@@ -374,10 +374,10 @@ export function useDebouncedPersistence(
 	 *   resolves truthy.
 	 * - On rejection or `ok === false`: leave previouslyPersistedRef
 	 *   untouched (so the next diff retries the still-dirty sessions) and
-	 *   throw — caller decides whether to surface and how to handle.
+	 *   throw - caller decides whether to surface and how to handle.
 	 *
 	 * Sync callers (unmount, beforeunload) wrap the returned Promise in a
-	 * .catch — those contexts can't propagate the throw anyway, but they
+	 * .catch - those contexts can't propagate the throw anyway, but they
 	 * still need to log so the failure is visible.
 	 */
 	const persistInternal = useCallback(async (): Promise<void> => {
@@ -393,7 +393,7 @@ export function useDebouncedPersistence(
 		}
 		const { dirty, tombstones } = diffSessions(previouslyPersistedRef.current, current);
 		if (dirty.length === 0 && tombstones.length === 0) {
-			// Nothing changed — safe to advance the baseline (it would be
+			// Nothing changed - safe to advance the baseline (it would be
 			// identical anyway).
 			previouslyPersistedRef.current = current;
 			return;
@@ -409,12 +409,12 @@ export function useDebouncedPersistence(
 	/**
 	 * Wrapper invoked by the debounce timer and flushNow. Awaits
 	 * persistInternal and ONLY clears `isPending` when the persist
-	 * actually succeeded — otherwise the beforeunload listener (which
+	 * actually succeeded - otherwise the beforeunload listener (which
 	 * gates its sync flush on `isPending`) would never get the chance to
 	 * retry.
 	 *
 	 * Failures are logged + reported to Sentry but not rethrown to the
-	 * timer callback — there's no caller above that could meaningfully
+	 * timer callback - there's no caller above that could meaningfully
 	 * handle it, and an unhandled rejection here would just produce noise.
 	 */
 	const persistSessions = useCallback(async () => {
@@ -443,7 +443,7 @@ export function useDebouncedPersistence(
 					extra: { operation: 'useDebouncedPersistence.persistSessions' },
 				});
 			}
-			// Deliberately do NOT setIsPending(false) — the failed write is
+			// Deliberately do NOT setIsPending(false) - the failed write is
 			// still pending. Next mutation OR beforeunload will retry.
 		} finally {
 			flushingRef.current = false;
@@ -493,7 +493,7 @@ export function useDebouncedPersistence(
 				return;
 			}
 
-			// Mark pending once per dirty streak — avoid setState on every stream tick
+			// Mark pending once per dirty streak - avoid setState on every stream tick
 			if (!isPendingRef.current) {
 				isPendingRef.current = true;
 				setIsPending(true);
@@ -565,7 +565,7 @@ export function useDebouncedPersistence(
 	useEffect(() => {
 		const handleBeforeUnload = () => {
 			if (isPendingRef.current) {
-				// Synchronous flush for beforeunload — uses the same dirty-only
+				// Synchronous flush for beforeunload - uses the same dirty-only
 				// path as the debounce timer (see persistInternal).
 				// Swallow rejections: the window is closing, there's no caller
 				// above to handle them.

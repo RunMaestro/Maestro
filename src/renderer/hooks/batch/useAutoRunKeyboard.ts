@@ -24,7 +24,7 @@ export interface UseAutoRunKeyboardParams {
  * continuation on Enter.
  *
  * Returns a plain function (not useCallback) to match the original
- * behavior — it recreates on every render.
+ * behavior - it recreates on every render.
  */
 export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 	const {

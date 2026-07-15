@@ -428,7 +428,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Structured error event that didn't match a known pattern —
+		// Structured error event that didn't match a known pattern -
 		// still report it rather than silently dropping
 		if (parsedJson) {
 			return {

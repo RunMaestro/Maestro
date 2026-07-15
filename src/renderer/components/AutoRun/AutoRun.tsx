@@ -11,13 +11,13 @@ import ReactMarkdown from 'react-markdown';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
-// Module-level constant — react-markdown re-parses the document if rehypePlugins
+// Module-level constant - react-markdown re-parses the document if rehypePlugins
 // changes by reference, so the array must be hoisted out of render.
 const REHYPE_PLUGINS = [rehypeSlug];
 
 // Memoized ReactMarkdown wrapper. AutoRunInner re-renders on every keystroke in
 // the AI input (input state lives in App.tsx and cascades down), and ReactMarkdown
-// has no internal memo — re-parsing a 100KB+ doc on each keystroke cost ~170ms
+// has no internal memo - re-parsing a 100KB+ doc on each keystroke cost ~170ms
 // per keystroke. Shallow-compare so the parse is skipped when content, plugins,
 // and components are reference-equal. The hook already memoizes the latter two.
 const MemoizedMarkdownPreview = memo(function MemoizedMarkdownPreview(props: {
@@ -550,7 +550,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Keep the document selector badge in sync with the bottom-panel counter.
 	// The file watcher's refresh path can be stale (debounced/missed events, SSH poll lag),
-	// but savedContent for the selected doc is always authoritative — mirror it into the store.
+	// but savedContent for the selected doc is always authoritative - mirror it into the store.
 	useEffect(() => {
 		if (!selectedFile || !savedContent) return;
 		useBatchStore.getState().updateTaskCount(selectedFile, taskCounts.completed, taskCounts.total);

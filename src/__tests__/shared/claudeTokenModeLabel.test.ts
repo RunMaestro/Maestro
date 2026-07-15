@@ -1,5 +1,5 @@
 /**
- * Tests for shared/claudeTokenModeLabel.ts — the Claude "token source" pill
+ * Tests for shared/claudeTokenModeLabel.ts - the Claude "token source" pill
  * label/title helper. Pure function, so exhaustively cover the label matrix
  * (mode × adaptive) plus the tooltip wording per reason.
  */

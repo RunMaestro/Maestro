@@ -7,7 +7,7 @@
  *
  *  1. dedupes via the registry's `markOnceFired` so a hot-reload that
  *     re-creates the source mid-poll cannot double-fire;
- *  2. checks the missed-fire grace window — if `fire_at` is already past the
+ *  2. checks the missed-fire grace window - if `fire_at` is already past the
  *     grace boundary, the sub self-destructs WITHOUT firing (the user
  *     presumably no longer wants the reminder); and
  *  3. emits a single `time.once` event, then calls `requestSelfDestruct` so
@@ -38,7 +38,7 @@ export function createCueOnceTriggerSource(ctx: CueTriggerSourceContext): CueTri
 	if (!Number.isFinite(targetMs)) {
 		ctx.onLog(
 			'warn',
-			`[CUE] "${ctx.subscription.name}" has an unparseable fire_at "${fireAtIso}" — disabling`
+			`[CUE] "${ctx.subscription.name}" has an unparseable fire_at "${fireAtIso}" - disabling`
 		);
 		return null;
 	}
@@ -80,7 +80,7 @@ export function createCueOnceTriggerSource(ctx: CueTriggerSourceContext): CueTri
 		if (graceMs <= 0 || elapsed > graceMs) {
 			ctx.onLog(
 				'cue',
-				`[CUE] "${ctx.subscription.name}" missed its fire window (fired_at: ${fireAtIso}, grace: ${graceMinutes}m) — self-destructing without firing`
+				`[CUE] "${ctx.subscription.name}" missed its fire window (fired_at: ${fireAtIso}, grace: ${graceMinutes}m) - self-destructing without firing`
 			);
 			ctx.requestSelfDestruct?.(ctx.subscription.name, 'missed-grace');
 			stopInternal();

@@ -1,5 +1,5 @@
 /**
- * useQueueHandlers — extracted from App.tsx
+ * useQueueHandlers - extracted from App.tsx
  *
  * Provides handlers for managing the execution queue UI:
  *   - Remove a queued item from a session

@@ -235,7 +235,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
 
-				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				// Batch tasks always spawn fresh sessions - prepare Maestro system prompt
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: getActiveTab(session)?.id,

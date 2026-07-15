@@ -8,7 +8,7 @@
 
 import { isMacOSPlatform } from './platformUtils';
 
-// Detect if running on macOS — uses window.maestro.platform (Electron preload bridge)
+// Detect if running on macOS - uses window.maestro.platform (Electron preload bridge)
 function isMac(): boolean {
 	return isMacOSPlatform();
 }

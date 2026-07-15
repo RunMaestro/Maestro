@@ -26,7 +26,7 @@ export interface ActivityGraphProps {
 	/**
 	 * Time range that `precomputedBuckets` actually spans. When the buckets
 	 * come from the server's all-time aggregate, the renderer's loaded
-	 * `entries` won't contain the earliest entry — so deriving the axis
+	 * `entries` won't contain the earliest entry - so deriving the axis
 	 * range from `entries` would mismatch the buckets. Pass the server's
 	 * earliest/latest here to keep them aligned.
 	 */
@@ -104,7 +104,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		}
 	}, [entries, endTime, lookbackHours, lookbackConfig.bucketCount, precomputedRange]);
 
-	// Group entries into buckets — use precomputed data from backend when available
+	// Group entries into buckets - use precomputed data from backend when available
 	const bucketData = useMemo(() => {
 		// Prefer backend-computed buckets (covers all entries, not just first page)
 		const rawBuckets =
@@ -385,7 +385,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				className="flex items-end gap-px h-6 rounded border px-1 pt-1 relative"
 				style={{ borderColor: theme.colors.border }}
 			>
-				{/* Viewport position indicator — shows where you are in the history */}
+				{/* Viewport position indicator - shows where you are in the history */}
 				{viewportIndicatorPercent !== null && (
 					<div
 						className="absolute top-0 bottom-0 pointer-events-none z-20"

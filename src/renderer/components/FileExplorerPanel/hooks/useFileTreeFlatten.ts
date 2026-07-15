@@ -23,7 +23,7 @@ export function useFileTreeFlatten({
 	showHiddenFiles,
 }: UseFileTreeFlattenArgs): UseFileTreeFlattenResult {
 	// Filter hidden files from the tree based on showHiddenFiles setting.
-	// Invariant: `.maestro` is ALWAYS visible regardless of the dotfiles toggle —
+	// Invariant: `.maestro` is ALWAYS visible regardless of the dotfiles toggle -
 	// it's the project's Maestro workspace (playbooks, cue config, etc.) and
 	// hiding it strands users who don't realize their config is "hidden". This
 	// has regressed before; if you change the dotfile filter, keep the carve-out.

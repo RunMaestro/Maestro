@@ -1,5 +1,5 @@
 /**
- * BackupTab — Cue modal "Backup" tab.
+ * BackupTab - Cue modal "Backup" tab.
  *
  * Lets the user snapshot every workspace's `.maestro/cue.yaml` plus the
  * contents of `.maestro/prompts/` into a zip stored under userData. Existing
@@ -89,7 +89,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 	 * Per-backup diff status (workspaceId::relativePath -> 'unchanged' |
 	 * 'changed' | 'missing-live'). Lazily fetched the first time a backup is
 	 * expanded so we only pay the read cost for backups the user inspects.
-	 * `null` means "loading" — render the row without action buttons until the
+	 * `null` means "loading" - render the row without action buttons until the
 	 * status arrives so we never flash unactionable buttons that disappear.
 	 */
 	const [diffStatus, setDiffStatus] = useState<Record<string, CueBackupDiffStatusMap | null>>({});
@@ -143,7 +143,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 		} catch (err) {
 			captureException(err, { extra: { context: 'BackupTab.fetchDiffStatus' } });
 			// On failure, default to an empty map so all files render as
-			// "changed" via the lookup helper — better to show a button that
+			// "changed" via the lookup helper - better to show a button that
 			// errors on click than to hide actionable rows.
 			setDiffStatus((prev) => ({ ...prev, [filePath]: {} }));
 		}
@@ -358,7 +358,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					<Archive className="w-6 h-6" />
-					<p>No backups yet — click "Create Backup" to take your first snapshot.</p>
+					<p>No backups yet - click "Create Backup" to take your first snapshot.</p>
 				</div>
 			) : (
 				<div className="space-y-2">
@@ -465,7 +465,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 									>
 										{wsCount === 0 ? (
 											<div className="text-xs py-2" style={{ color: theme.colors.textDim }}>
-												This backup contains no workspaces — none of your agents had a{' '}
+												This backup contains no workspaces - none of your agents had a{' '}
 												<code>.maestro/cue.yaml</code> or prompt files at the time it was created.
 											</div>
 										) : (
@@ -547,7 +547,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 																					backgroundColor: `${theme.colors.accent}22`,
 																					color: theme.colors.accent,
 																				}}
-																				title="No live file at this path — restoring will recreate it"
+																				title="No live file at this path - restoring will recreate it"
 																			>
 																				missing live
 																			</span>

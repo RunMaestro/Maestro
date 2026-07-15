@@ -30,7 +30,7 @@ import type { Session, Group, Theme } from '../types';
 /**
  * True when a Claude Code agent has not bound to any provider session yet.
  *
- * `Session.agentSessionId` was deprecated by commit 505ce17c6 — Claude Code
+ * `Session.agentSessionId` was deprecated by commit 505ce17c6 - Claude Code
  * stopped writing it to avoid storing throwaway fork IDs that break `--resume`.
  * Per-tab `aiTabs[].agentSessionId` is now the source of truth, so check both:
  * the agent is only "unbound" when no tab has an ID either.
@@ -300,7 +300,7 @@ export const SessionItem = memo(function SessionItem({
 						onBlur={(e) => onFinishRename(e.target.value)}
 						onKeyDown={(e) => {
 							e.stopPropagation();
-							// Commit through onBlur only — calling onFinishRename here AND
+							// Commit through onBlur only - calling onFinishRename here AND
 							// letting blur fire would double-fire the IPC. Forcing blur on
 							// Enter funnels both code paths through the single handler.
 							if (e.key === 'Enter') {

@@ -72,7 +72,7 @@ describe('useAutoRefresh', () => {
 			.fn()
 			.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100000)));
 		renderHook(() => useAutoRefresh({ ...defaultArgs, autoRefreshInterval: 5, refreshFileTree }));
-		// Advance two intervals — second tick should be skipped
+		// Advance two intervals - second tick should be skipped
 		await act(async () => {
 			vi.advanceTimersByTime(5000);
 		});

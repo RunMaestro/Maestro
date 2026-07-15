@@ -45,7 +45,7 @@ export const EVENT_LABELS = CUE_EVENT_LABELS;
  * unrelated agent-level prompt (which used to cause prompt leakage across
  * multiple triggers feeding the same agent).
  *
- * Values may be empty strings when no useful barebones template exists —
+ * Values may be empty strings when no useful barebones template exists -
  * callers treat "" as "show an empty textarea" rather than a missing entry.
  */
 export const DEFAULT_EVENT_PROMPTS: Record<CueEventType, string> = {
@@ -76,7 +76,7 @@ Labels: {{CUE_GH_LABELS}}
 
 /**
  * Returns the default prompt template for a given trigger event type.
- * Used to seed new trigger→agent edge prompts. Never returns undefined —
+ * Used to seed new trigger→agent edge prompts. Never returns undefined -
  * every event type maps to at least an empty string.
  */
 export function defaultPromptFor(eventType: CueEventType): string {

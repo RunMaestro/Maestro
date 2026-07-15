@@ -56,7 +56,7 @@ describe('tokensToBlocks', () => {
 	});
 
 	it('keeps nested list items inside their containing list block', () => {
-		// A list with nested items should be one block, not many — the inner
+		// A list with nested items should be one block, not many - the inner
 		// items live at level > 0 and are skipped by the outer walker.
 		const blocks = parseToBlocks('- a\n  - a1\n  - a2\n- b');
 		expect(blocks.length).toBe(1);

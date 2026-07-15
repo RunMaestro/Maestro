@@ -1,5 +1,5 @@
 /**
- * useAgentErrorListener — registers `window.maestro.process.onAgentError`
+ * useAgentErrorListener - registers `window.maestro.process.onAgentError`
  *
  * Three branches:
  *  1. Group chat errors → routed to `groupChatStore.setGroupChatError` and
@@ -197,7 +197,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					if (s.id !== actualSessionId) return s;
 
 					// If the error is for a tab the user closed mid-thinking, drop the
-					// orphan entry — there's no tab UI to surface the error on, and the
+					// orphan entry - there's no tab UI to surface the error on, and the
 					// pill should stop showing this thinking item.
 					const isOrphanError =
 						!!tabIdFromSession &&
@@ -238,7 +238,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// "API". The same tagger runs on assistant output in
 					// useBatchedSessionUpdates; errors live in their own listener and
 					// need parity here. system-source entries (session_not_found
-					// recovery) stay untagged — they aren't real Claude turns.
+					// recovery) stay untagged - they aren't real Claude turns.
 					const isInteractive = s.claudeInteractive?.mode === 'interactive';
 					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
 					// Limit pauses keep the normal error log (message + agentError), but
@@ -269,7 +269,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							: {}),
 					};
 					// On a continued outage (attempt > 0) the card already lives in the
-					// transcript — just strip the transient progress log, append nothing.
+					// transcript - just strip the transient progress log, append nothing.
 					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
 					const updatedAiTabs = targetTab
 						? s.aiTabs.map((tab) =>

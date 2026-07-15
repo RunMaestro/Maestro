@@ -81,7 +81,7 @@ export interface SessionStoreActions {
 
 	/**
 	 * Set the active session ID from persisted state on startup.
-	 * Updates local state only — does not write back to disk.
+	 * Updates local state only - does not write back to disk.
 	 */
 	hydrateActiveSessionId: (id: string) => void;
 
@@ -237,7 +237,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
 		// Fire-and-forget: persist to disk for restore on next launch.
-		// Not awaited — UI state must update synchronously; if the write
+		// Not awaited - UI state must update synchronously; if the write
 		// fails the only consequence is the session won't be pre-selected
 		// on next launch (falls back to first session).
 		window.maestro?.sessions?.setActiveSessionId(id);
@@ -411,7 +411,7 @@ export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
  * Convenience helper for call sites that need a full session → session transform
  * rather than just a Partial<Session> update.
  *
- * Operates directly on the store outside of React — safe to call from callbacks.
+ * Operates directly on the store outside of React - safe to call from callbacks.
  *
  * @example
  * updateSessionWith(activeSession.id, (s) => ({ ...s, batchRunnerPrompt: prompt }));
@@ -426,7 +426,7 @@ export function updateSessionWith(sessionId: string, updater: (session: Session)
  * Update a specific AI tab within a session using a mapper function.
  * Convenience helper for tab-level updates that need a full tab → tab transform.
  *
- * Operates directly on the store outside of React — safe to call from callbacks.
+ * Operates directly on the store outside of React - safe to call from callbacks.
  *
  * @example
  * updateAiTab(sessionId, tabId, (tab) => ({ ...tab, autoSendOnActivate: false }));

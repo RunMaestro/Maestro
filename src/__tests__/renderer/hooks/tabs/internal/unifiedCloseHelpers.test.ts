@@ -76,7 +76,7 @@ describe('unifiedCloseHelpers', () => {
 		const ai3 = createMockAITab({ id: 'ai-3' });
 		setupSession({
 			aiTabs: [ai1, ai2, ai3],
-			// Active is the LAST tab — a naive "close right of active" would close nothing.
+			// Active is the LAST tab - a naive "close right of active" would close nothing.
 			activeTabId: ai3.id,
 			unifiedTabOrder: [
 				{ type: 'ai', id: ai1.id },

@@ -1,5 +1,5 @@
 /**
- * Tests for useWindowScopedActiveSession — keeping a window's active agent to one
+ * Tests for useWindowScopedActiveSession - keeping a window's active agent to one
  * it owns so a restored window never shows the false "No agents" empty state.
  *
  * Covers:

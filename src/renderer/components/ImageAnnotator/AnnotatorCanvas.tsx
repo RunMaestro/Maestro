@@ -1,5 +1,5 @@
 /**
- * AnnotatorCanvas — Pan/zoomable image with an SVG overlay for freehand strokes
+ * AnnotatorCanvas - Pan/zoomable image with an SVG overlay for freehand strokes
  * and geometric shapes (rect / ellipse / arrow).
  *
  * Stroke and shape coordinates are stored in native image space (the SVG's
@@ -209,11 +209,11 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 
 		const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 		const [isShiftHeld, setIsShiftHeld] = useState(false);
-		// Shift pans for every tool except the pen — there, shift constrains the
+		// Shift pans for every tool except the pen - there, shift constrains the
 		// freehand stroke to a straight line (handled in the pointermove path).
 		const panEnabled = isSpaceHeld || tool === 'pan' || (isShiftHeld && tool !== 'pen');
 
-		// Latest view in a ref — the wheel handler is attached imperatively
+		// Latest view in a ref - the wheel handler is attached imperatively
 		// (see below) and needs the current view without re-binding.
 		const viewRef = useRef(view);
 		viewRef.current = view;
@@ -401,14 +401,14 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 
 		const handleSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
 			if (!imgSize || e.button !== 0 || panEnabled) return;
-			// Text — clicking empty area places a new text label at the cursor and
+			// Text - clicking empty area places a new text label at the cursor and
 			// opens its inline editor. Clicks on an existing text are handled by
 			// the text's own pointerdown (which stops propagation).
 			if (tool === 'text') {
 				e.stopPropagation();
 				e.preventDefault();
 				// Commit any in-progress editor first, then place a new label in
-				// the same gesture — typing → click-elsewhere should "finish and
+				// the same gesture - typing → click-elsewhere should "finish and
 				// start a new one," not "finish; click again to start a new one."
 				if (editingTextId) commitTextEditing();
 				const pt = clientToImage(e.clientX, e.clientY);
@@ -422,7 +422,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				}
 				return;
 			}
-			// Pen — freehand stroke.
+			// Pen - freehand stroke.
 			if (tool === 'pen') {
 				e.stopPropagation();
 				e.preventDefault();
@@ -432,7 +432,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				if (pt) beginStroke([pt[0], pt[1], e.pressure || 0.5]);
 				return;
 			}
-			// Shape draw — empty-area click in a shape tool starts a new shape.
+			// Shape draw - empty-area click in a shape tool starts a new shape.
 			if (SHAPE_TOOLS.has(tool)) {
 				e.stopPropagation();
 				e.preventDefault();
@@ -452,7 +452,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				}
 				return;
 			}
-			// Eraser/pan — fall through; eraser hits are handled per-stroke /
+			// Eraser/pan - fall through; eraser hits are handled per-stroke /
 			// per-shape, pan is handled on the wrapper.
 		};
 
@@ -652,7 +652,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			};
 		};
 
-		// Live options for the in-progress freehand stroke only — committed
+		// Live options for the in-progress freehand stroke only - committed
 		// strokes use the per-stroke style captured at endStroke time.
 		const liveStrokeOptions = {
 			size: penSize,
@@ -686,7 +686,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			tool === 'text' || tool === 'eraser' ? 'auto' : 'none';
 
 		// Visual sizing for selection handles + fill toggle. We want them to
-		// look ~constant on screen across zoom levels — divide by view.scale.
+		// look ~constant on screen across zoom levels - divide by view.scale.
 		const HANDLE_PX = 12;
 		const TOGGLE_PX = 22;
 		const handleSize = HANDLE_PX / view.scale;
@@ -801,7 +801,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		};
 
 		const renderFillToggle = (shape: Shape): React.ReactNode => {
-			// Arrows ignore the fill/outline toggle — head is always solid.
+			// Arrows ignore the fill/outline toggle - head is always solid.
 			if (shape.kind === 'arrow') return null;
 			const { x, y, w } = bboxOf(shape);
 			const cx = x + w + toggleSize;
@@ -878,7 +878,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		// Rough bounding box for a text label, in image space. SVG text doesn't
 		// give us layout-free measurement, so we estimate from line count and
 		// max line length. Good enough for dashed selection chrome and the
-		// editor backing box — pixel-perfect width isn't worth a DOM measure.
+		// editor backing box - pixel-perfect width isn't worth a DOM measure.
 		const textBBoxOf = (textBox: TextBox) => {
 			const lines = textBox.value.split('\n');
 			const longest = lines.reduce(
@@ -1093,7 +1093,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 									{renderTextElement(t)}
 								</g>
 							))}
-							{/* Selection chrome — render last so handles + toggle stack on
+							{/* Selection chrome - render last so handles + toggle stack on
 							    top of the shape body. The `data-annotator-chrome` flag is
 							    used by `compositeAnnotatedImage` to strip these elements
 							    out before serializing for save/copy, so the user never
@@ -1108,7 +1108,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 							{selectedText && !editingText && (
 								<g data-annotator-chrome="true">{renderTextSelectionOutline(selectedText)}</g>
 							)}
-							{/* Inline text editor — a `<foreignObject>` containing a styled
+							{/* Inline text editor - a `<foreignObject>` containing a styled
 							    `<textarea>`, positioned in image space so it tracks pan/zoom
 							    along with everything else. Chrome-flagged so it's stripped
 							    from the saved image. */}
@@ -1142,7 +1142,7 @@ interface TextEditorProps {
 /**
  * Inline editor for a text label. Lives inside the SVG as a `<foreignObject>`
  * (so it tracks pan/zoom with the rest of the canvas) but is flagged as
- * annotator chrome so it never bakes into the saved image — the underlying
+ * annotator chrome so it never bakes into the saved image - the underlying
  * `<text>` element provides the rendered output.
  *
  * Commit happens on blur, Escape, and Cmd/Ctrl+Enter. Backed by `requestAnimationFrame`
@@ -1153,7 +1153,7 @@ function TextEditor({ textBox, onChange, onCommit, bbox }: TextEditorProps) {
 	const setRef = useCallback((el: HTMLTextAreaElement | null) => {
 		if (!el) return;
 		// Defer to next frame so the foreignObject layout has settled before
-		// focusing — otherwise some browsers scroll the SVG container.
+		// focusing - otherwise some browsers scroll the SVG container.
 		requestAnimationFrame(() => {
 			el.focus({ preventScroll: true });
 			el.select();

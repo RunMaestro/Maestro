@@ -25,7 +25,7 @@ const AIOverviewTab = lazy(() =>
 interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
-	// Session navigation — jumps to an agent's session tab (closes modal first)
+	// Session navigation - jumps to an agent's session tab (closes modal first)
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
@@ -57,7 +57,7 @@ export function DirectorNotesModal({
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
 
-	// "Director's Notes Since Friday May 8th" — updates live when the
+	// "Director's Notes Since Friday May 8th" - updates live when the
 	// user changes the lookback period in the activity graph. "All time"
 	// suppresses the suffix.
 	const titleText = useMemo(() => {

@@ -213,7 +213,7 @@ Ready to create/update your project context. This will help AI agents implement 
 
 [C] Continue to context generation"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ## SUCCESS METRICS:
 
@@ -535,7 +535,7 @@ After each category, show the generated rules and present choices:
 [P] Party Mode - Review from different implementation perspectives
 [C] Continue - Save these rules and move to next category"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 10. Handle Menu Selection
 

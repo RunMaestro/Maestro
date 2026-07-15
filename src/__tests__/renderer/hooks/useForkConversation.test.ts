@@ -2,7 +2,7 @@
  * Tests for useForkConversation hook.
  *
  * Locks in the behavior that fork creates a NEW AI TAB within the existing
- * session — it must NOT create a new session. Also covers:
+ * session - it must NOT create a new session. Also covers:
  * - Tab inserted immediately after the source tab
  * - unifiedTabOrder has the new tab inserted directly after the source (not appended)
  * - Session marked busy, new tab active, source session.id preserved

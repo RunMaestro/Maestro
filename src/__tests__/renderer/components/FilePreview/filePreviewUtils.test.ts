@@ -384,7 +384,7 @@ describe('filePreviewUtils', () => {
 		});
 
 		it('keeps the user-reported 300k-line markdown case in Fast (rendered) tier', () => {
-			// 300k lines × ~20 bytes ≈ 6MB — under the 8MB / 500k-line giant
+			// 300k lines × ~20 bytes ≈ 6MB - under the 8MB / 500k-line giant
 			// threshold so rendered markdown still wins. Truly enormous files
 			// (>8MB or >500k lines) fall through to Giant for source view.
 			expect(pickPreviewTier(6 * 1024 * 1024, 300_000)).toBe('fast');

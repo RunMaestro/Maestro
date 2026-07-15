@@ -187,7 +187,7 @@ describe('buildAgentArgs', () => {
 
 	// -- workingDirArgs --
 	it('prepends workingDirArgs when cwd provided', () => {
-		// Codex treats `-C` as a root-level global flag — it must appear before
+		// Codex treats `-C` as a root-level global flag - it must appear before
 		// any subcommand (e.g. `exec`) or it is silently ignored (#959).
 		const agent = makeAgent({
 			workingDirArgs: (dir: string) => ['-C', dir],
@@ -445,7 +445,7 @@ describe('buildAgentArgs', () => {
 			agentSessionId: 'abc',
 		});
 
-		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true —
+		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true -
 		// batch mode args grant write/approval permissions that conflict with read-only.
 		// workingDirArgs (-C /tmp) is prepended so the directory flag lands before
 		// the batchModePrefix subcommand (#959).

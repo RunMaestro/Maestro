@@ -1,5 +1,5 @@
 /**
- * Extensions (Encore) marketplace — the unified surface that lists first-party
+ * Extensions (Encore) marketplace - the unified surface that lists first-party
  * Encore features AND community plugins as one tiled grid with category
  * filters, a search box, an "only installed" toggle, and a details pane.
  * Mounted in EncoreTab in place of the old plugins-only section.

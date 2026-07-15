@@ -163,7 +163,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 				if (hasUserMessages || hasInput || hasImages) {
 					setShowExitConfirm(true);
 				} else {
-					// No interaction — close the tab if safe, otherwise just exit wizard
+					// No interaction - close the tab if safe, otherwise just exit wizard
 					const { setSessions } = useSessionStore.getState();
 					const activeTabId = session.activeTabId;
 					if (activeTabId && session.aiTabs.length > 1) {
@@ -181,7 +181,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 				return;
 			}
 			// Block Enter (any modifier combo) from triggering send while the wizard is
-			// busy — otherwise the message gets eaten by processInput's clear and the
+			// busy - otherwise the message gets eaten by processInput's clear and the
 			// user's draft is lost. Shift+Enter is allowed so newlines still work.
 			if (isBusy && e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();

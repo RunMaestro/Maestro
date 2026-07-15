@@ -1,7 +1,7 @@
 /**
- * useAgentThinkingListener — registers `window.maestro.process.onThinkingChunk`
+ * useAgentThinkingListener - registers `window.maestro.process.onThinkingChunk`
  *
- * High-frequency stream — chunks are buffered and flushed inside a single
+ * High-frequency stream - chunks are buffered and flushed inside a single
  * `requestAnimationFrame` to coalesce up to 60Hz worth of writes into one
  * setSessions pass. The buffer + RAF id are owned by this hook (not shared
  * with any other listener), so cleanup is local.
