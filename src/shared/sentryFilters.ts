@@ -28,11 +28,18 @@ interface MinimalSentryEvent {
  * (OS env issues, native crashes, user-typed bad paths, third-party JS injection).
  */
 export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
-	const firstException = event.exception?.values?.[0];
+	const values = event.exception?.values ?? [];
+	const firstException = values[0];
 	const value = firstException?.value ?? '';
 	const type = firstException?.type ?? '';
 	const message = event.message ?? '';
-	const haystack = `${type}: ${value}\n${message}`;
+	// Match against EVERY exception in the chain, not just values[0]. Sentry's
+	// LinkedErrors integration expands an Error's `cause` into extra entries and
+	// orders them root-cause-first, so when we wrap a low-level failure the
+	// wrapper we actually named a rule after lands at the END of the array. That
+	// made the MarketplaceFetchError rule in section 5 dead on arrival: it only
+	// ever saw the underlying `TypeError: fetch failed` at values[0]. (MAESTRO-MR)
+	const haystack = [...values.map((v) => `${v.type ?? ''}: ${v.value ?? ''}`), message].join('\n');
 
 	// ---- 1. OS / filesystem environment ----
 
@@ -130,6 +137,11 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// ---- 5. Network failures (user offline) ----
 
 	if (/MarketplaceFetchError: Network error fetching .*: fetch failed/i.test(haystack)) return true;
+
+	// GitHub raw rate-limits us (429) and serves 5xx during its own incidents.
+	// The import still fails visibly in the UI; there's nothing to fix on our
+	// side, and a 404 is raised as a distinct "not found" error. (MAESTRO-TY)
+	if (/MarketplaceFetchError: Failed to fetch [^:]+: (429|5\d\d) /i.test(haystack)) return true;
 	if (
 		/error connecting to api\.github\.com/i.test(haystack) ||
 		/check your internet connection/i.test(haystack) ||
