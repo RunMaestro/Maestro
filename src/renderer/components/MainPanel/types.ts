@@ -60,7 +60,6 @@ export interface MainPanelProps {
 	agentSessionsOpen: boolean;
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
-	activeSession: Session | null;
 	theme: Theme;
 	isMobileLandscape?: boolean;
 	stagedImages: string[];
@@ -226,6 +225,8 @@ export interface MainPanelProps {
 	onAtBottomChange?: (isAtBottom: boolean) => void;
 	// Input blur handler for persisting AI input state
 	onInputBlur?: () => void;
+	/** Capture composer owner on focus so blur can pin the write target */
+	onComposerFocus?: () => void;
 	// Prompt composer modal
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)

@@ -99,7 +99,7 @@ type SpawnBackgroundSynopsisFn = (
 
 export interface UseGoalRunnerDeps {
 	// Refs (shared with useBatchRunner so lifecycle behavior stays consistent)
-	sessionsRef: MutableRefObject<Session[]>;
+	getSessions: () => Session[];
 	audioFeedbackEnabledRef: MutableRefObject<boolean | undefined>;
 	audioFeedbackCommandRef: MutableRefObject<string | undefined>;
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
@@ -194,7 +194,7 @@ function exitReasonLabel(reason: GoalExitReason): string {
  * completion / deadlock / max-iterations / stall / user-stop.
  */
 export function useGoalRunner({
-	sessionsRef,
+	getSessions,
 	audioFeedbackEnabledRef,
 	audioFeedbackCommandRef,
 	autoRunFlushStateRefs,
@@ -240,14 +240,14 @@ export function useGoalRunner({
 				return;
 			}
 
-			// Resolve the session (sessionsRef first, then the store for just-created sessions).
+			// Prefer getSessions(), then the store for just-created sessions.
 			const session =
-				sessionsRef.current.find((s) => s.id === sessionId) ||
+				getSessions().find((s) => s.id === sessionId) ||
 				selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) {
 				window.maestro.logger.log('error', 'Session not found for goal run', 'GoalRunner', {
 					sessionId,
-					availableSessionIds: sessionsRef.current.map((s) => s.id),
+					availableSessionIds: getSessions().map((s) => s.id),
 				});
 				return;
 			}
@@ -877,7 +877,7 @@ export function useGoalRunner({
 			onProcessQueueAfterCompletion,
 			onSpawnAgent,
 			spawnBackgroundSynopsis,
-			sessionsRef,
+			getSessions,
 			stopRequestedRefs,
 			timeTracking,
 			updateBatchStateAndBroadcastRef,

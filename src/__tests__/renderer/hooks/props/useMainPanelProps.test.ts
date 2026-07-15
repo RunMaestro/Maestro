@@ -1,14 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useMainPanelProps, type UseMainPanelPropsDeps } from '../../../../renderer/hooks/props';
 import type { Session, QueuedItem } from '../../../../renderer/types';
 
-// The props object is memoized with a primitive dependency array (id, activeTabId,
-// inputMode, projectRoot, cwd, executionQueue, ...) rather than the full session
-// object. This test guards the specific regression where editing a queued item
-// left the inline QUEUED list stale because `executionQueue` was NOT tracked: the
-// memo kept returning the previous `activeSession` reference even though the store
-// had a fresh one with the edited text.
+// MainPanel self-sources the full Session for paint (including executionQueue).
+// useMainPanelProps must not re-export activeSession; doing so would either
+// reintroduce App-level streaming wakes or leave a stale chrome slice on the
+// prop bag. These tests guard that contract and the remaining session-field deps.
 
 function makeQueuedItem(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	return {
@@ -21,56 +19,72 @@ function makeQueuedItem(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	};
 }
 
-function makeSession(executionQueue: QueuedItem[]): Session {
+function makeSession(overrides: Partial<Session> = {}): Session {
 	return {
 		id: 's1',
 		activeTabId: 't1',
 		inputMode: 'ai',
 		projectRoot: '/repo',
 		cwd: '/repo',
-		executionQueue,
+		executionQueue: [makeQueuedItem()],
+		...overrides,
 	} as unknown as Session;
 }
 
-// Only `activeSession` matters for this regression; the rest of the (very large)
-// deps surface is intentionally omitted and read as undefined by the memo body.
+const stableCancelTab = vi.fn();
+const stableCancelMergeTab = vi.fn();
+
 function makeDeps(activeSession: Session): UseMainPanelPropsDeps {
-	return { activeSession } as unknown as UseMainPanelPropsDeps;
+	return {
+		activeSession,
+		cancelTab: stableCancelTab,
+		cancelMergeTab: stableCancelMergeTab,
+	} as unknown as UseMainPanelPropsDeps;
 }
 
 describe('useMainPanelProps', () => {
-	it('recomputes activeSession when the execution queue reference changes', () => {
-		const first = makeSession([makeQueuedItem({ text: 'original' })]);
+	it('does not pass activeSession (MainPanel self-sources for paint)', () => {
+		const session = makeSession();
+		const { result } = renderHook(() => useMainPanelProps(makeDeps(session)));
 
+		expect(result.current).not.toHaveProperty('activeSession');
+	});
+
+	it('does not recompute when only executionQueue changes', () => {
+		// Queue edits must not wake this memo - MainPanel's store subscription
+		// repaints the QUEUED list. Tracking executionQueue here would couple
+		// App chrome props to a field chrome equality ignores.
+		const first = makeSession({ executionQueue: [makeQueuedItem({ text: 'original' })] });
 		const { result, rerender } = renderHook(
 			(session: Session) => useMainPanelProps(makeDeps(session)),
-			{
-				initialProps: first,
-			}
+			{ initialProps: first }
 		);
+		const firstProps = result.current;
 
-		expect(result.current.activeSession).toBe(first);
-		expect(result.current.activeSession?.executionQueue?.[0]?.text).toBe('original');
+		rerender(makeSession({ executionQueue: [makeQueuedItem({ text: 'edited' })] }));
+		expect(result.current).toBe(firstProps);
+	});
 
-		// Simulate an in-place queue edit: same session id/tab, brand-new session
-		// object and a brand-new executionQueue array carrying the edited text.
-		const edited = makeSession([makeQueuedItem({ text: 'edited' })]);
-		rerender(edited);
+	it('recomputes when a tracked session field like activeTabId changes', () => {
+		const first = makeSession({ activeTabId: 't1' });
+		const { result, rerender } = renderHook(
+			(session: Session) => useMainPanelProps(makeDeps(session)),
+			{ initialProps: first }
+		);
+		const firstProps = result.current;
 
-		// Without executionQueue in the memo deps this would still be `first`.
-		expect(result.current.activeSession).toBe(edited);
-		expect(result.current.activeSession?.executionQueue?.[0]?.text).toBe('edited');
+		rerender(makeSession({ activeTabId: 't2' }));
+		expect(result.current).not.toBe(firstProps);
 	});
 
 	it('keeps the memoized props stable when nothing tracked changes', () => {
-		const session = makeSession([makeQueuedItem()]);
+		const session = makeSession();
 
 		const { result, rerender } = renderHook((s: Session) => useMainPanelProps(makeDeps(s)), {
 			initialProps: session,
 		});
 
 		const firstProps = result.current;
-		// Re-render with the exact same session reference: memo must not recompute.
 		rerender(session);
 		expect(result.current).toBe(firstProps);
 	});

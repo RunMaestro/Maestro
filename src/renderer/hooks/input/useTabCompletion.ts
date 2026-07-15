@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 
 export interface TabCompletionSuggestion {
 	value: string;
@@ -17,8 +18,32 @@ export type TabCompletionFilter = 'all' | 'history' | 'branch' | 'tag' | 'file';
  */
 const MAX_FILE_TREE_ENTRIES = 50_000;
 
+/** Stable empty tree so `storeFileTree ?? EMPTY_FILE_TREE` does not allocate per render. */
+const EMPTY_FILE_TREE: FileNode[] = [];
+
 export interface UseTabCompletionReturn {
 	getSuggestions: (input: string, filter?: TabCompletionFilter) => TabCompletionSuggestion[];
+}
+
+/**
+ * Non-streaming session fields used for tab completion.
+ * Callers must not rely on a full Session with logs / tokens.
+ */
+export type TabCompletionSessionFields = Pick<
+	Session,
+	'cwd' | 'shellCwd' | 'fileTree' | 'shellCommandHistory' | 'isGitRepo' | 'gitBranches' | 'gitTags'
+>;
+
+function pickTabCompletionFields(session: Session): TabCompletionSessionFields {
+	return {
+		cwd: session.cwd,
+		shellCwd: session.shellCwd,
+		fileTree: session.fileTree,
+		shellCommandHistory: session.shellCommandHistory,
+		isGitRepo: session.isGitRepo,
+		gitBranches: session.gitBranches,
+		gitTags: session.gitTags,
+	};
 }
 
 /**
@@ -27,19 +52,65 @@ export interface UseTabCompletionReturn {
  * 2. Current directory file tree (relative to shell CWD)
  * 3. Git branches and tags (for git commands in git repos)
  *
+ * PERF: Prefer calling with no args. Then this hook subscribes only to
+ * non-streaming fields on the active session (cwd, shellCwd, fileTree,
+ * shellCommandHistory, isGitRepo, gitBranches, gitTags). Passing a Session
+ * (or null) keeps the injected-session API for tests and other call sites;
+ * when injected, store selectors return stable sentinels so streaming updates
+ * do not re-render through those subscriptions.
+ *
  * Performance optimizations:
  * - fileNames is memoized to avoid re-traversing tree on every render
  * - shellHistory is memoized separately to avoid recreating on file tree changes
  * - getSuggestions is wrapped in useCallback to maintain referential equality
  */
-export function useTabCompletion(session: Session | null): UseTabCompletionReturn {
+export function useTabCompletion(session?: Session | null): UseTabCompletionReturn {
+	const injected = session !== undefined;
+
+	// Narrow store selectors (ignored when a session is injected). When injected,
+	// each selector returns a stable undefined so Object.is bails out on stream
+	// updates and this hook does not re-render solely due to store notifications.
+	const storeCwd = useSessionStore((s) => (injected ? undefined : selectActiveSession(s)?.cwd));
+	const storeShellCwd = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.shellCwd
+	);
+	const storeFileTree = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.fileTree
+	);
+	const storeShellHistory = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.shellCommandHistory
+	);
+	const storeIsGitRepo = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.isGitRepo
+	);
+	const storeGitBranches = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.gitBranches
+	);
+	const storeGitTags = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.gitTags
+	);
+
+	const fields: TabCompletionSessionFields | null = injected
+		? session
+			? pickTabCompletionFields(session)
+			: null
+		: {
+				cwd: storeCwd ?? '',
+				shellCwd: storeShellCwd,
+				fileTree: storeFileTree ?? EMPTY_FILE_TREE,
+				shellCommandHistory: storeShellHistory,
+				isGitRepo: storeIsGitRepo ?? false,
+				gitBranches: storeGitBranches,
+				gitTags: storeGitTags,
+			};
+
 	// Compute relative path from project root (cwd) to shell working directory (shellCwd)
 	const shellRelativePath = useMemo(() => {
-		if (!session?.cwd || !session?.shellCwd) return '';
+		if (!fields?.cwd || !fields?.shellCwd) return '';
 
 		// Normalize paths
-		const projectRoot = session.cwd.replace(/\/$/, '');
-		const shellDir = session.shellCwd.replace(/\/$/, '');
+		const projectRoot = fields.cwd.replace(/\/$/, '');
+		const shellDir = fields.shellCwd.replace(/\/$/, '');
 
 		// If shell is at project root, no relative path needed
 		if (shellDir === projectRoot) return '';
@@ -51,12 +122,12 @@ export function useTabCompletion(session: Session | null): UseTabCompletionRetur
 
 		// Shell is outside project root - can't use file tree
 		return null;
-	}, [session?.cwd, session?.shellCwd]);
+	}, [fields?.cwd, fields?.shellCwd]);
 
 	// Build a flat list of file/folder names from the file tree
 	// Filtered to show only files relative to the shell's current working directory
 	const fileNames = useMemo(() => {
-		if (!session?.fileTree) return [];
+		if (!fields?.fileTree) return [];
 		// If shell is outside project, return empty
 		if (shellRelativePath === null) return [];
 
@@ -82,7 +153,7 @@ export function useTabCompletion(session: Session | null): UseTabCompletionRetur
 		// If we have a relative path, find that subtree first
 		if (shellRelativePath) {
 			const pathParts = shellRelativePath.split('/');
-			let currentNodes: FileNode[] = session.fileTree;
+			let currentNodes: FileNode[] = fields.fileTree;
 
 			// Navigate to the shell's current directory in the tree
 			for (const part of pathParts) {
@@ -99,21 +170,21 @@ export function useTabCompletion(session: Session | null): UseTabCompletionRetur
 			traverse(currentNodes);
 		} else {
 			// Shell is at project root - traverse entire tree
-			traverse(session.fileTree);
+			traverse(fields.fileTree);
 		}
 
 		return names;
-	}, [session?.fileTree, shellRelativePath]);
+	}, [fields?.fileTree, shellRelativePath]);
 
 	// Memoize shell history reference to avoid unnecessary getSuggestions re-creation
 	const shellHistory = useMemo(() => {
-		return session?.shellCommandHistory || [];
-	}, [session?.shellCommandHistory]);
+		return fields?.shellCommandHistory || [];
+	}, [fields?.shellCommandHistory]);
 
 	// PERF: Memoize git-related data separately to avoid getSuggestions re-creation
-	const isGitRepo = session?.isGitRepo ?? false;
-	const gitBranches = useMemo(() => session?.gitBranches || [], [session?.gitBranches]);
-	const gitTags = useMemo(() => session?.gitTags || [], [session?.gitTags]);
+	const isGitRepo = fields?.isGitRepo ?? false;
+	const gitBranches = useMemo(() => fields?.gitBranches || [], [fields?.gitBranches]);
+	const gitTags = useMemo(() => fields?.gitTags || [], [fields?.gitTags]);
 
 	// PERF: Only depend on memoized values, NOT the session object itself
 	// This prevents callback recreation on every session state change

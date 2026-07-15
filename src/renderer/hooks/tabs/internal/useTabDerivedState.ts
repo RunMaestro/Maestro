@@ -1,11 +1,22 @@
 import { useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
+import { activeSessionChromeEquality } from '../../../stores/sessionEquality';
 import type { BrowserTab, FilePreviewTab, UnifiedTab } from '../../../types';
 import { buildUnifiedTabs, getActiveTab } from '../../../utils/tabHelpers';
 import type { TabDerivedState } from './types';
 
+/**
+ * PERF: Subscribe with activeSessionChromeEquality so streaming log/token
+ * updates do not re-render MaestroConsoleInner (this hook is App-mounted via
+ * useTabHandlers). MainPanel self-sources the full session for live chat.
+ */
 export function useTabDerivedState(): TabDerivedState {
-	const activeSession = useSessionStore(selectActiveSession);
+	const activeSession = useStoreWithEqualityFn(
+		useSessionStore,
+		selectActiveSession,
+		activeSessionChromeEquality
+	);
 
 	const activeFileTabHistory = useMemo(() => {
 		if (!activeSession?.activeFileTabId) return [];

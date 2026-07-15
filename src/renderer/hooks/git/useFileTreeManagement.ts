@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -18,7 +19,7 @@ import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
 import { logger } from '../../utils/logger';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import {
 	DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 	FILE_EXPLORER_MIN_ENTRIES,
@@ -38,6 +39,33 @@ const FILE_TREE_RETRY_DELAY_MS = 20000;
  */
 const EMPTY_FILE_TREE: FileTreeNode[] = [];
 
+/**
+ * Equality for the active Session slice this hook self-subscribes to.
+ *
+ * Compares fileTree by reference (refresh replaces the array) plus the load /
+ * SSH fields effects need. Ignores logs/tokens so App (this hook's host) does
+ * not re-render on streaming flushes - those are omitted from
+ * activeSessionChromeEquality and must not ride that slice either.
+ */
+function fileTreeActiveSessionEquality(a: Session | null, b: Session | null): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	return (
+		a.id === b.id &&
+		a.cwd === b.cwd &&
+		a.projectRoot === b.projectRoot &&
+		a.fileTree === b.fileTree &&
+		a.fileTreeStats === b.fileTreeStats &&
+		a.fileTreeLoading === b.fileTreeLoading &&
+		a.fileTreeError === b.fileTreeError &&
+		a.fileTreeRetryAt === b.fileTreeRetryAt &&
+		a.fileTreeTruncated === b.fileTreeTruncated &&
+		a.fileTreeLoadedCap === b.fileTreeLoadedCap &&
+		a.sshRemoteId === b.sshRemoteId &&
+		a.sessionSshRemoteConfig?.remoteId === b.sessionSshRemoteConfig?.remoteId &&
+		a.sessionSshRemoteConfig?.enabled === b.sessionSshRemoteConfig?.enabled
+	);
+}
 /**
  * Options for building SSH context
  */
@@ -108,8 +136,13 @@ export interface UseFileTreeManagementDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Currently active session ID */
 	activeSessionId: string | null;
-	/** Currently active session (derived from sessions) */
-	activeSession: Session | null;
+	/**
+	 * Optional injected active session (tests). Prefer omitting so this hook
+	 * self-sources fileTree from the store with fileTreeActiveSessionEquality;
+	 * do not pass App's chrome-equality slice (fileTree is deliberately omitted
+	 * there and would go stale after refresh).
+	 */
+	activeSession?: Session | null;
 	/** Ref to RightPanel for refreshing history */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
 	/** SSH remote ignore patterns (glob patterns) */
@@ -173,7 +206,7 @@ export function useFileTreeManagement(
 		sessionsRef,
 		setSessions,
 		activeSessionId,
-		activeSession,
+		activeSession: activeSessionProp,
 		rightPanelRef,
 		sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
@@ -184,6 +217,16 @@ export function useFileTreeManagement(
 		sshReduceEntryCapEnabled,
 		sshReduceEntryCapFraction,
 	} = deps;
+
+	// PERF: Self-source when App omits activeSession. Narrow equality includes
+	// fileTree by reference so refresh/create/delete repaint the Files panel
+	// without waking App on streaming log/token flushes.
+	const storeActiveSession = useStoreWithEqualityFn(
+		useSessionStore,
+		selectActiveSession,
+		fileTreeActiveSessionEquality
+	);
+	const activeSession = activeSessionProp !== undefined ? activeSessionProp : storeActiveSession;
 
 	// Fall back to the canonical defaults from settingsStore when deps omit these values
 	// (e.g. in tests that don't wire the full settings state through).
@@ -1028,7 +1071,7 @@ export function useFileTreeManagement(
 	 */
 	const filteredFileTree = useMemo(() => {
 		if (!activeSession || !fileTreeFilter || !activeSession.fileTree) {
-			return activeSession?.fileTree || [];
+			return activeSession?.fileTree || EMPTY_FILE_TREE;
 		}
 
 		const filterTree = (nodes: FileNode[]): FileNode[] => {

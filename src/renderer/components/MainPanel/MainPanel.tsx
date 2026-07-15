@@ -76,12 +76,15 @@ function EmptyMainPanel({ theme }: { theme: Theme }) {
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
+		// PERF: Self-source the full active Session so streaming log/token updates
+		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
+		const activeSession = useSessionStore(selectActiveSession);
+
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession,
 			theme,
 			stagedImages,
 			commandHistoryOpen,
@@ -852,11 +855,12 @@ export const MainPanel = React.memo(
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
+			props.onComposerFocus?.();
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
 				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId]);
+		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
 		// Memoized session click handler for InputArea's ThinkingStatusPill
 		// Avoids creating new function reference on every render

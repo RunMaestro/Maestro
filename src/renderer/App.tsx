@@ -166,8 +166,8 @@ import {
 	sidebarSessionEquality,
 	gitPollSessionEquality,
 	projectRootSessionEquality,
+	activeSessionChromeEquality,
 } from './stores/sessionEquality';
-import { useActiveSession } from './hooks/session/useActiveSession';
 import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
@@ -534,7 +534,14 @@ function MaestroConsoleInner() {
 	// to show a loading spinner instead of flashing the empty "create your first
 	// agent" state while sessions stream in over the WebSocket bridge.
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const activeSession = useActiveSession();
+	// PERF: Chrome equality ignores logs/tokens/contextUsage. Streaming must not
+	// re-render MaestroConsoleInner. MainPanel self-sources the full Session for
+	// live chat; App keeps this slice only for shell chrome / prop assembly.
+	const activeSession = useStoreWithEqualityFn(
+		useSessionStore,
+		selectActiveSession,
+		activeSessionChromeEquality
+	);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -1378,6 +1385,14 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 	} = useSummarizeAndContinue(activeSession ?? null);
 
+	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
+	const computeCanSummarizeActiveTab = () => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session?.activeTabId) return false;
+		const tab = session.aiTabs.find((t) => t.id === session.activeTabId);
+		return canSummarize(session.contextUsage, tab?.logs);
+	};
+
 	// Combine custom AI commands with bundled methodology commands for input processing.
 	const allCustomCommands = useMemo((): CustomAICommand[] => {
 		const speckitAsCustom: CustomAICommand[] = speckitCommands.map((cmd) => ({
@@ -1725,6 +1740,7 @@ function MaestroConsoleInner() {
 		processInput,
 		processInputRef,
 		handleInputKeyDown,
+		handleMainPanelInputFocus,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
 		handlePaste,
@@ -2208,7 +2224,8 @@ function MaestroConsoleInner() {
 			sessionsRef,
 			setSessions,
 			activeSessionId,
-			activeSession,
+			// PERF: Omit activeSession - hook self-sources fileTree. Chrome equality
+			// deliberately excludes fileTree; passing that slice would stale the panel.
 			rightPanelRef,
 			sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
 			sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
@@ -2504,9 +2521,7 @@ function MaestroConsoleInner() {
 		setSendToAgentModalOpen,
 		// Summarize and continue (getter: evaluated lazily only when shortcut fires)
 		get canSummarizeActiveTab() {
-			if (!activeSession || !activeSession.activeTabId) return false;
-			const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
-			return canSummarize(activeSession.contextUsage, activeTab?.logs);
+			return computeCanSummarizeActiveTab();
 		},
 		summarizeAndContinue: handleSummarizeAndContinue,
 
@@ -2762,6 +2777,7 @@ function MaestroConsoleInner() {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleMainPanelInputBlur,
+		handleMainPanelInputFocus,
 		handleOpenPromptComposer,
 		handleReplayMessage,
 		handleForkConversation,
@@ -3296,14 +3312,7 @@ function MaestroConsoleInner() {
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
 					onRunPromptMacro={handleRunPromptMacro}
-					canSummarizeActiveTab={
-						activeSession
-							? canSummarize(
-									activeSession.contextUsage,
-									activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId)?.logs
-								)
-							: false
-					}
+					canSummarizeActiveTab={computeCanSummarizeActiveTab()}
 					onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}

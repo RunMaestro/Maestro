@@ -1,5 +1,5 @@
 /**
- * useInputHandlers — extracted from App.tsx (Phase 2J)
+ * useInputHandlers - extracted from App.tsx (Phase 2J)
  *
  * Orchestrates all input-related state and handlers by:
  *   - Managing dual input state (AI per-tab + terminal per-session)
@@ -8,6 +8,12 @@
  *   - Computing memoized completion suggestions
  *   - Owning tab/session switching effects for input persistence
  *   - Providing paste, drop, blur, and replay handlers
+ *
+ * PERF: Does not subscribe to the full active Session. Streaming log / token
+ * updates must not re-render MaestroConsoleInner via this hook. Reactive
+ * subscriptions are limited to primitives (activeSessionId, inputMode,
+ * activeTabId) and stable field refs (stagedImages). Handlers and sync
+ * callbacks resolve the live session via getState() / sessionsRef at event time.
  *
  * Reads from: sessionStore, settingsStore, groupChatStore, uiStore,
  *             fileExplorerStore, InputContext
@@ -57,6 +63,7 @@ function isImagePath(path: string): boolean {
 // value on every render while the `@` picker is closed - no re-render churn.
 const EMPTY_SESSIONS: Session[] = [];
 const EMPTY_GROUPS: Group[] = [];
+const EMPTY_STAGED_IMAGES: string[] = [];
 
 /**
  * Convert an absolute filesystem path into the form used inside an `@` mention:
@@ -151,13 +158,21 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
+	processInput: (
+		text?: string,
+		options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+	) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
+	/** Capture the agent/tab that owns the composer when the input gains focus */
+	handleMainPanelInputFocus: () => void;
 	/** Handler for input blur (persists input to session state) */
 	handleMainPanelInputBlur: () => void;
 	/** Replay a message (optionally with images) */
@@ -209,11 +224,25 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		spawnBackgroundSynopsis,
 	} = deps;
 
-	// --- Store subscriptions (reactive) ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// --- Store subscriptions (reactive, narrow) ---
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// re-render MaestroConsoleInner on every chunk.
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const activeSessionInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
+	const activeTabId = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? getActiveTab(session)?.id : undefined;
+	});
+	const stagedImages = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		if (!session || session.inputMode !== 'ai') return EMPTY_STAGED_IMAGES;
+		const images = getActiveTab(session)?.stagedImages;
+		// Empty arrays are truthy - without this, every stream flush that rebuilds
+		// the tab with `stagedImages: []` returns a new [] ref and re-renders App.
+		if (!images || images.length === 0) return EMPTY_STAGED_IMAGES;
+		return images;
+	});
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
-	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const setGroupChatStagedImages = useMemo(
 		() => useGroupChatStore.getState().setGroupChatStagedImages,
 		[]
@@ -250,9 +279,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
 
 	// --- Derived values ---
-	const activeTab = activeSession ? getActiveTab(activeSession) : null;
-	const isAiMode = activeSession?.inputMode === 'ai';
-	const activeSessionInputMode = activeSession?.inputMode;
+	const isAiMode = activeSessionInputMode === 'ai';
 
 	// ====================================================================
 	// Input State
@@ -268,7 +295,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Ref-mirror of activeTab.id so the live-draft mirror attributes text to the
 	// correct tab, and the tab-switch effect can flush the OLD tab's text without
 	// re-triggering on tab-switch alone.
-	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+	const activeTabIdRef = useRef<string | undefined>(activeTabId);
 
 	// Ref-mirror of the current mode so non-reactive readers (getInputValue) pick
 	// the right slice at call time without subscribing.
@@ -281,7 +308,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// on screen for the active tab (tab.inputValue only updates on blur/submit).
 	// Subscribing outside React render keeps this off the re-render path.
 	useEffect(() => {
-		activeTabIdRef.current = activeTab?.id;
+		activeTabIdRef.current = activeTabId;
 		const mirror = (aiValue: string) => {
 			const currentTabId = activeTabIdRef.current;
 			if (currentTabId) setLiveDraft(currentTabId, aiValue);
@@ -290,7 +317,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return useComposerInputStore.subscribe((state, prev) => {
 			if (state.aiValue !== prev.aiValue) mirror(state.aiValue);
 		});
-	}, [activeTab?.id]);
+	}, [activeTabId]);
 
 	// Read the live value non-reactively (at call time) for handlers and sub-hooks
 	// so they never need a reactive `inputValue` dependency.
@@ -302,26 +329,22 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Memoized setter that dispatches to the correct slice based on current mode.
 	const setInputValue = useCallback(
 		(value: string | ((prev: string) => string)) => {
-			if (activeSession?.inputMode === 'ai') {
+			if (activeSessionInputMode === 'ai') {
 				setAiValue(value);
 			} else {
 				setTerminalValue(value);
 			}
 		},
-		[activeSession?.inputMode, setAiValue, setTerminalValue]
+		[activeSessionInputMode, setAiValue, setTerminalValue]
 	);
 
 	// ====================================================================
 	// Staged Images
 	// ====================================================================
 
-	const stagedImages = useMemo(() => {
-		if (!activeSession || activeSession.inputMode !== 'ai') return [];
-		return activeTab?.stagedImages || [];
-	}, [activeTab?.stagedImages, activeSession?.inputMode]);
-
 	const setStagedImages = useCallback(
 		(imagesOrUpdater: string[] | ((prev: string[]) => string[])) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			setSessions((prev) =>
 				prev.map((s) => {
@@ -341,48 +364,49 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				})
 			);
 		},
-		[activeSession]
+		[setSessions]
 	);
 
 	// ====================================================================
 	// Sub-hook calls
 	// ====================================================================
 
-	// Input sync handlers
-	const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(activeSession, {
+	// Input sync handlers (resolve session via getState inside callbacks)
+	const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync({
 		setSessions,
 	});
 
-	// Tab completion
-	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion(activeSession);
-
-	// @ mention completion
-	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion(activeSession);
+	// Tab / @mention completion: no-arg form subscribes only to non-streaming fields
+	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion();
+	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion();
 
 	// ====================================================================
 	// Tab/Session switching effects
 	// ====================================================================
 
-	const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
-	const prevActiveSessionIdRef = useRef<string | undefined>(activeSession?.id);
+	const prevActiveTabIdRef = useRef<string | undefined>(activeTabId);
+	const prevActiveSessionIdRef = useRef<string | undefined>(activeSessionId ?? undefined);
 	const didHydrateAiInputRef = useRef(false);
 	const didHydrateTerminalInputRef = useRef(false);
 
 	useEffect(() => {
-		if (!activeTab || didHydrateAiInputRef.current) return;
-		setAiValue(activeTab.inputValue ?? '');
+		if (!activeTabId || didHydrateAiInputRef.current) return;
+		const session = selectActiveSession(useSessionStore.getState());
+		const tab = session ? getActiveTab(session) : null;
+		setAiValue(tab?.inputValue ?? '');
 		didHydrateAiInputRef.current = true;
-	}, [activeTab?.id, setAiValue]);
+	}, [activeTabId, setAiValue]);
 
 	useEffect(() => {
-		if (!activeSession || didHydrateTerminalInputRef.current) return;
-		setTerminalValue(activeSession.terminalDraftInput ?? '');
+		if (!activeSessionId || didHydrateTerminalInputRef.current) return;
+		const session = selectActiveSession(useSessionStore.getState());
+		setTerminalValue(session?.terminalDraftInput ?? '');
 		didHydrateTerminalInputRef.current = true;
-	}, [activeSession?.id, setTerminalValue]);
+	}, [activeSessionId, setTerminalValue]);
 
 	// Sync local AI input with tab's persisted value when switching tabs
 	useEffect(() => {
-		if (activeTab && activeTab.id !== prevActiveTabIdRef.current) {
+		if (activeTabId && activeTabId !== prevActiveTabIdRef.current) {
 			const prevTabId = prevActiveTabIdRef.current;
 
 			// Save current AI input to the PREVIOUS tab
@@ -399,28 +423,30 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			}
 
 			// Load new tab's persisted input value
-			setAiValue(activeTab.inputValue ?? '');
-			prevActiveTabIdRef.current = activeTab.id;
+			const session = selectActiveSession(useSessionStore.getState());
+			const activeTab = session ? getActiveTab(session) : null;
+			setAiValue(activeTab?.inputValue ?? '');
+			prevActiveTabIdRef.current = activeTabId;
 
 			// Clear hasUnread indicator on newly active tab
-			if (activeTab.hasUnread && activeSession) {
+			if (activeTab?.hasUnread && session) {
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== activeSession.id) return s;
+						if (s.id !== session.id) return s;
 						return {
 							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === activeTab.id ? { ...t, hasUnread: false } : t)),
+							aiTabs: s.aiTabs.map((t) => (t.id === activeTabId ? { ...t, hasUnread: false } : t)),
 						};
 					})
 				);
 			}
 		}
-		// Intentionally only depend on activeTab?.id, NOT inputValue
-	}, [activeTab?.id]);
+		// Intentionally only depend on activeTabId, NOT inputValue
+	}, [activeTabId]);
 
 	// Sync terminal input when switching sessions
 	useEffect(() => {
-		if (activeSession && activeSession.id !== prevActiveSessionIdRef.current) {
+		if (activeSessionId && activeSessionId !== prevActiveSessionIdRef.current) {
 			const prevSessionId = prevActiveSessionIdRef.current;
 
 			// Save terminal input to the previous session (including empty string to persist cleared input)
@@ -434,10 +460,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			}
 
 			// Load terminal input from the new session
-			setTerminalValue(activeSession.terminalDraftInput ?? '');
-			prevActiveSessionIdRef.current = activeSession.id;
+			const session = selectActiveSession(useSessionStore.getState());
+			setTerminalValue(session?.terminalDraftInput ?? '');
+			prevActiveSessionIdRef.current = activeSessionId;
 		}
-	}, [activeSession?.id]);
+	}, [activeSessionId]);
 
 	// ====================================================================
 	// Completion suggestions (memoized)
@@ -569,7 +596,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	);
 
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
-		activeSession,
+		// PERF: Omit activeSession; processInput resolves via sessionsRef / getState.
 		activeSessionId,
 		setSessions,
 		getInputValue,
@@ -597,16 +624,19 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onCrossAgentMentions: handleCrossAgentMentions,
 	});
 
-	// processInputRef — maintained for access in memoized callbacks without stale closures
+	// processInputRef - maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);
 
 	// ====================================================================
-	// useInputKeyDown (absorb — keyboard handler for input textarea)
+	// useInputKeyDown (absorb - keyboard handler for input textarea)
 	// ====================================================================
 
 	const { handleInputKeyDown } = useInputKeyDown({
@@ -626,14 +656,30 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Handlers
 	// ====================================================================
 
+	// Agent/tab that owned the composer when it last gained focus. Blur must write
+	// here - not to the live active agent (click can switch focus before blur runs).
+	const composerFocusTargetRef = useRef<{ sessionId: string; tabId?: string } | null>(null);
+
+	const handleMainPanelInputFocus = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		const tab = session ? getActiveTab(session) : null;
+		composerFocusTargetRef.current = session ? { sessionId: session.id, tabId: tab?.id } : null;
+	}, []);
+
 	const handleMainPanelInputBlur = useCallback(() => {
+		const target = composerFocusTargetRef.current;
+		const blurSessionId = target?.sessionId ?? activeSessionIdRef.current;
 		const currentIsAiMode =
-			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
+			sessionsRef.current.find((s) => s.id === blurSessionId)?.inputMode === 'ai';
 		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
-			syncAiInputToSession(composer.aiValue);
+			if (target?.sessionId) {
+				syncAiInputToSession(composer.aiValue, target);
+			} else {
+				syncAiInputToSession(composer.aiValue);
+			}
 		} else {
-			syncTerminalInputToSession(composer.terminalValue);
+			syncTerminalInputToSession(composer.terminalValue, blurSessionId || undefined);
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
@@ -641,29 +687,39 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		(text: string, images?: string[]) => {
 			// Preserve draft input so replay doesn't clobber what the user was typing
 			const draftInput = useComposerInputStore.getState().aiValue;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const activeTab = activeSession ? getActiveTab(activeSession) : null;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
+			const pin = activeSession ? { sessionId: activeSession.id, tabId: activeTab?.id } : undefined;
 
 			if (images && images.length > 0) {
 				setStagedImages(images);
 			}
 			setTimeout(() => {
-				processInputRef.current(text);
+				// Pin the agent/tab from click time so a focus change before the
+				// timeout cannot retarget the replay. Images were staged above.
+				processInputRef.current(text, pin);
 				// Restore draft input after processInput clears it
 				if (draftInput) {
 					setInputValue(draftInput);
-					syncAiInputToSession(draftInput);
+					if (pin) {
+						syncAiInputToSession(draftInput, pin);
+					} else {
+						syncAiInputToSession(draftInput);
+					}
 				}
 				if (draftImages.length > 0) {
 					setStagedImages(draftImages);
 				}
 			}, 0);
 		},
-		[setStagedImages, setInputValue, syncAiInputToSession, activeTab?.stagedImages]
+		[setStagedImages, setInputValue, syncAiInputToSession]
 	);
 
 	const handlePaste = useCallback(
 		(e: React.ClipboardEvent) => {
-			const isGroupChatActive = !!activeGroupChatId;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			const items = e.clipboardData.items;
@@ -728,7 +784,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setInputValue, setStagedImages]
+		[setInputValue, setStagedImages]
 	);
 
 	const appendMentionsToAiInput = useCallback(
@@ -771,7 +827,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			dragCounterRef.current = 0;
 			setIsDraggingFile(false);
 
-			const isGroupChatActive = !!activeGroupChatId;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			// Files-panel drag: image files are staged as image attachments;
@@ -796,7 +853,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							internalPaths = parsed.filter((p): p is string => typeof p === 'string');
 						}
 					} catch {
-						// Malformed payload — fall back to the single path below.
+						// Malformed payload - fall back to the single path below.
 					}
 				}
 				if (internalPaths.length === 0 && internalSingle) internalPaths = [internalSingle];
@@ -900,13 +957,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[
-			activeGroupChatId,
-			activeSession,
-			setStagedImages,
-			appendMentionsToAiInput,
-			appendMentionsToGroupChatDraft,
-		]
+		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft]
 	);
 
 	// ====================================================================
@@ -920,6 +971,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		processInput,
 		processInputRef,
 		handleInputKeyDown,
+		handleMainPanelInputFocus,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
 		handlePaste,
