@@ -86,7 +86,7 @@ export type SettingsTab =
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
-export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
+export type LLMProvider = 'openrouter' | 'requesty' | 'anthropic' | 'ollama';
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
