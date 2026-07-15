@@ -37,7 +37,6 @@ import type {
 	BatchRunState,
 	BrowserTab,
 	FilePreviewTab,
-	ThinkingItem,
 	QueuedItem,
 	UnifiedTabRef,
 	PaneRects,
@@ -179,7 +178,6 @@ export interface MainPanelContentProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
-	thinkingItems: ThinkingItem[];
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
@@ -371,7 +369,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
-		thinkingItems,
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
@@ -937,7 +934,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onInputFocus={handleInputFocus}
 						onInputBlur={onInputBlur}
 						isAutoModeActive={isCurrentSessionAutoMode}
-						thinkingItems={thinkingItems}
 						onSessionClick={handleSessionClick}
 						autoRunState={currentSessionBatchState || undefined}
 						onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}

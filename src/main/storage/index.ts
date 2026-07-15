@@ -10,6 +10,7 @@ export { OpenCodeSessionStorage } from './opencode-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
 export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 export { CopilotSessionStorage } from './copilot-session-storage';
+export { OmpSessionStorage } from './omp-session-storage';
 export { GrokSessionStorage } from './grok-session-storage';
 
 import Store from 'electron-store';
@@ -19,6 +20,7 @@ import { OpenCodeSessionStorage } from './opencode-session-storage';
 import { CodexSessionStorage } from './codex-session-storage';
 import { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 import { CopilotSessionStorage } from './copilot-session-storage';
+import { OmpSessionStorage } from './omp-session-storage';
 import { GrokSessionStorage } from './grok-session-storage';
 
 /**
@@ -41,5 +43,6 @@ export function initializeSessionStorages(options?: InitializeSessionStoragesOpt
 	registerSessionStorage(new CodexSessionStorage());
 	registerSessionStorage(new FactoryDroidSessionStorage());
 	registerSessionStorage(new CopilotSessionStorage());
+	registerSessionStorage(new OmpSessionStorage());
 	registerSessionStorage(new GrokSessionStorage());
 }

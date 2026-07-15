@@ -95,7 +95,6 @@ export interface AppStandaloneModalsProps {
 	onMarketplaceImportComplete: (folderName: string) => Promise<void>;
 
 	// --- Symphony ---
-	sessions: Session[];
 	setActiveSessionId: (id: string) => void;
 	onStartContribution: (data: SymphonyContributionData) => Promise<void>;
 	encoreFeatures: EncoreFeatureFlags;
@@ -175,7 +174,6 @@ function AppStandaloneModalsInner({
 	// Marketplace
 	onMarketplaceImportComplete,
 	// Symphony
-	sessions,
 	setActiveSessionId,
 	onStartContribution,
 	encoreFeatures,
@@ -370,7 +368,6 @@ function AppStandaloneModalsInner({
 						theme={theme}
 						isOpen={symphonyModalOpen}
 						onClose={() => setSymphonyModalOpen(false)}
-						sessions={sessions}
 						onSelectSession={(sessionId) => {
 							setActiveSessionId(sessionId);
 							setSymphonyModalOpen(false);
@@ -407,7 +404,7 @@ function AppStandaloneModalsInner({
 					<CueModal
 						theme={theme}
 						onClose={() => setCueModalOpen(false)}
-						cueShortcutKeys={shortcuts.maestroCue?.keys}
+						cueShortcutKeys={shortcuts.openCue?.keys}
 					/>
 				</Suspense>
 			)}

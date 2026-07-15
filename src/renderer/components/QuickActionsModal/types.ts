@@ -11,6 +11,7 @@ import type {
 } from '../../types';
 import type { WizardStep } from '../Wizard/WizardContext';
 import type { MainPanelHandle } from '../MainPanel/types';
+import type { ShortcutId, TabShortcutId } from '../../constants/shortcuts';
 
 export type QuickActionMode = 'main' | 'move-to-group' | 'agents';
 
@@ -59,7 +60,7 @@ export interface QuickActionsModalProps {
 	activeSessionId: string;
 	groups: Group[];
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
-	shortcuts: Record<string, Shortcut>;
+	shortcuts: Record<ShortcutId, Shortcut>;
 	initialMode?: QuickActionMode;
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
@@ -96,7 +97,7 @@ export interface QuickActionsModalProps {
 	onToggleTabShowThinking?: () => void;
 	onToggleTabEnterToSend?: () => void;
 	onOpenTabSwitcher?: () => void;
-	tabShortcuts?: Record<string, Shortcut>;
+	tabShortcuts?: Record<TabShortcutId, Shortcut>;
 	isAiMode?: boolean;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onRefreshGitFileState?: () => Promise<void>;

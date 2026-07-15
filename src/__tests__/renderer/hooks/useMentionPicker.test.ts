@@ -67,6 +67,23 @@ describe('useMentionPicker', () => {
 		expect(dir?.value).toBe('@src/lib/');
 	});
 
+	it('quotes file and directory tokens whose path carries spaces', () => {
+		const { items } = pick({
+			category: 'all',
+			fileSuggestions: [
+				fileSug('Meetings/MEET-07-13 - Diagnostics App.md', 'file'),
+				fileSug('My Notes', 'folder'),
+			],
+		});
+
+		const file = items.find((i) => i.kind === 'file');
+		const dir = items.find((i) => i.kind === 'directory');
+		// Quoted, so the whole path scans back out as ONE mention instead of dying
+		// at the first space.
+		expect(file?.value).toBe('@"Meetings/MEET-07-13 - Diagnostics App.md" ');
+		expect(dir?.value).toBe('@"My Notes/"');
+	});
+
 	it('computes per-category counts independent of the active category', () => {
 		const { counts } = pick({
 			category: 'files',
@@ -150,6 +167,53 @@ describe('buildMentionAccept', () => {
 		expect(res.nextFilter).toBe('src/');
 		// Caret sits just past the `/` so the drill-in filter keeps typing inside it.
 		expect(res.caretPos).toBe('@src/'.length);
+	});
+
+	it('splices a quoted file token over a quoted filter', () => {
+		const quotedFile: MentionPickerItem = {
+			kind: 'file',
+			value: '@"my notes.md" ',
+			displayText: 'my notes.md',
+			fullPath: 'my notes.md',
+			score: 0,
+		};
+		const res = buildMentionAccept('see @"my no', 4, '"my no', quotedFile);
+		expect(res.value).toBe('see @"my notes.md" ');
+		expect(res.caretPos).toBe(res.value.length);
+		expect(res.keepOpen).toBe(false);
+	});
+
+	it('drills into a quoted directory with the caret parked inside the quotes', () => {
+		const quotedDir: MentionPickerItem = {
+			kind: 'directory',
+			value: '@"My Notes/"',
+			displayText: 'My Notes',
+			fullPath: 'My Notes',
+			score: 0,
+		};
+		const res = buildMentionAccept('@My', 0, 'My', quotedDir);
+		expect(res.value).toBe('@"My Notes/"');
+		expect(res.keepOpen).toBe(true);
+		// Re-filter keeps the opening quote (it is part of the raw span), and the
+		// caret sits BEFORE the closing quote so the next keystrokes land inside it.
+		expect(res.nextFilter).toBe('"My Notes/');
+		expect(res.caretPos).toBe('@"My Notes/'.length);
+	});
+
+	it('swallows the stale closing quote when accepting inside a quoted directory', () => {
+		const quotedFile: MentionPickerItem = {
+			kind: 'file',
+			value: '@"My Notes/todo list.md" ',
+			displayText: 'todo list.md',
+			fullPath: 'My Notes/todo list.md',
+			score: 0,
+		};
+		// Mid drill-in: caret sits before the directory token's closing quote.
+		const res = buildMentionAccept('@"My Notes/to"', 0, '"My Notes/to', quotedFile);
+		// The accepted token brings its own closing quote - the stale one is consumed,
+		// not doubled.
+		expect(res.value).toBe('@"My Notes/todo list.md" ');
+		expect(res.caretPos).toBe(res.value.length);
 	});
 
 	it('preserves text after the mention when accepting', () => {

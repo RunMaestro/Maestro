@@ -76,7 +76,6 @@ const createDeps = (
 	state: ReturnType<typeof createSessionsState>,
 	overrides: Partial<UseFileTreeManagementDeps> = {}
 ): UseFileTreeManagementDeps => ({
-	sessions: state.getSessions(),
 	sessionsRef: state.sessionsRef,
 	setSessions: state.setSessions,
 	activeSessionId: state.getSessions()[0]?.id ?? null,
@@ -783,5 +782,41 @@ describe('useFileTreeManagement', () => {
 		if (originalFs) {
 			window.maestro.fs = originalFs;
 		}
+	});
+
+	it('repaints filteredFileTree when store fileTree refreshes without an injected activeSession', () => {
+		const initialTree: FileNode[] = [{ name: 'old.txt', type: 'file' }];
+		const nextTree: FileNode[] = [{ name: 'new.txt', type: 'file' }];
+		const session = createMockSession({ fileTree: initialTree });
+
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+			sessionsLoaded: true,
+		});
+
+		const state = createSessionsState([session]);
+		const { result } = renderHook(() =>
+			useFileTreeManagement({
+				sessionsRef: state.sessionsRef,
+				setSessions: state.setSessions,
+				activeSessionId: session.id,
+				// Omit activeSession: exercise the self-sourced store path.
+				rightPanelRef: {
+					current: { refreshHistoryPanel: vi.fn() },
+				} as RefObject<RightPanelHandle | null>,
+			})
+		);
+
+		expect(result.current.filteredFileTree).toEqual(initialTree);
+
+		act(() => {
+			useSessionStore.setState({
+				sessions: [{ ...session, fileTree: nextTree }],
+				activeSessionId: session.id,
+			});
+		});
+
+		expect(result.current.filteredFileTree).toEqual(nextTree);
 	});
 });

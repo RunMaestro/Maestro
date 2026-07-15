@@ -273,9 +273,10 @@ describe('reconcileMissedTimeEvents', () => {
 		});
 
 		const sleepDuration = 60 * 60 * 1000; // 1 hour
+		const wakeTimeMs = Date.now();
 		const config = makeConfig({
-			sleepStartMs: Date.now() - sleepDuration,
-			wakeTimeMs: Date.now(),
+			sleepStartMs: wakeTimeMs - sleepDuration,
+			wakeTimeMs,
 			sessions,
 		});
 

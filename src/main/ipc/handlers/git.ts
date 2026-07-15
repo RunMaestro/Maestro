@@ -40,6 +40,19 @@ import { markStaleForDeletedWorktreeUsingStore } from '../../agent-run/worktree-
 const LOG_CONTEXT = '[Git]';
 
 /**
+ * Directory-scan failures that are environmental rather than bugs: the path was
+ * moved or deleted out from under us (ENOENT/ENOTDIR), or we don't hold read
+ * permission on it (EACCES, or EPERM for macOS TCC-protected locations like
+ * Documents and Desktop). The scan skips the directory and reports `scanFailed`;
+ * none of these are worth a Sentry report.
+ */
+const EXPECTED_SCAN_ERROR_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
+
+function isExpectedScanError(code: string | undefined): boolean {
+	return code !== undefined && EXPECTED_SCAN_ERROR_CODES.has(code);
+}
+
+/**
  * Dependencies for Git handlers
  */
 export interface GitHandlerDependencies {
@@ -1370,7 +1383,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 									return await scanLevel(subdirPath, depthRemaining - 1);
 								} catch (err) {
 									const code = (err as NodeJS.ErrnoException | undefined)?.code;
-									if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'ENOTDIR') {
+									if (!isExpectedScanError(code)) {
 										logger.warn(`${LOG_CONTEXT} Failed to recurse into ${subdirPath}: ${err}`);
 									}
 									return [];
@@ -1387,10 +1400,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					const gitSubdirs = await scanLevel(parentPath, MAX_DEPTH);
 					return { gitSubdirs };
 				} catch (err) {
-					// ENOENT is expected when the configured parent path has been moved
-					// or deleted from disk — surface to logs but don't pollute Sentry.
+					// The configured parent path is user-supplied, so failing to read it is
+					// an environment condition rather than a bug: ENOENT when it's been moved
+					// or deleted, and EPERM/EACCES when it sits behind macOS TCC (Documents,
+					// Desktop) or has permissions we simply don't hold. Both surface to logs
+					// and to `scanFailed` below; neither should pollute Sentry. (MAESTRO-VQ)
 					const code = (err as NodeJS.ErrnoException | undefined)?.code;
-					if (code !== 'ENOENT') {
+					if (!isExpectedScanError(code)) {
 						void captureException(err);
 					}
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);

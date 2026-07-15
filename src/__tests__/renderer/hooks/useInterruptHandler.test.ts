@@ -357,8 +357,8 @@ describe('useInterruptHandler', () => {
 			});
 
 			const sessions = useSessionStore.getState().sessions;
-			expect(sessions[0].state).toBe('idle'); // active — interrupted
-			expect(sessions[1].state).toBe('busy'); // other — unchanged
+			expect(sessions[0].state).toBe('idle'); // active - interrupted
+			expect(sessions[1].state).toBe('busy'); // other - unchanged
 		});
 	});
 

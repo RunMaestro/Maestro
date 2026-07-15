@@ -69,3 +69,6 @@ export type {
 	UseSessionSwitchCallbacksDeps,
 	UseSessionSwitchCallbacksReturn,
 } from './useSessionSwitchCallbacks';
+
+// Thinking status pill items (narrow store subscription)
+export { useThinkingItems } from './useThinkingItems';

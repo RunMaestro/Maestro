@@ -5,6 +5,11 @@ import {
 	useAgentMentionCompletion,
 	type AgentMentionSuggestion,
 } from './useAgentMentionCompletion';
+import {
+	formatFileMention,
+	mentionQuoteChar,
+	stripMentionQuotes,
+} from '../../../shared/mentionPatterns';
 
 /**
  * The four filter scopes of the unified `@` picker. `all` interleaves every
@@ -23,6 +28,11 @@ export const MENTION_CATEGORY_CYCLE: MentionCategory[] = ['all', 'files', 'direc
  * A file or directory row. `value` is the *full literal token* to splice into
  * the textarea: `@path ` for files (trailing space, closes the picker) and
  * `@path/` for directories (trailing slash, no space, drills in and re-filters).
+ *
+ * A path carrying spaces is quoted (`@"my notes.md" `, `@"my folder/"`) so it
+ * scans back out as ONE mention - see `formatFileMention`. For a quoted
+ * directory the caret is parked INSIDE the closing quote (see
+ * {@link buildMentionAccept}) so drilling in keeps typing within the quotes.
  */
 export interface FileMentionItem {
 	kind: 'file' | 'directory';
@@ -93,6 +103,11 @@ export function useMentionPicker(params: UseMentionPickerParams): UseMentionPick
 	);
 
 	return useMemo(() => {
+		// The stored filter is raw (it may carry the opening quote of a quoted
+		// mention); agents are searched on the bare text. Files are already filtered
+		// upstream against the same bare term.
+		const searchTerm = stripMentionQuotes(filter);
+
 		// Split/tag the file hook output into file vs directory rows, building the
 		// full `@...` token up front so acceptance is a uniform splice.
 		const fileItems: MentionPickerItem[] = [];
@@ -101,7 +116,7 @@ export function useMentionPicker(params: UseMentionPickerParams): UseMentionPick
 			if (f.type === 'folder') {
 				dirItems.push({
 					kind: 'directory',
-					value: `@${f.value}/`,
+					value: formatFileMention(`${f.value}/`),
 					displayText: f.displayText,
 					fullPath: f.fullPath,
 					score: f.score,
@@ -110,7 +125,7 @@ export function useMentionPicker(params: UseMentionPickerParams): UseMentionPick
 			} else {
 				fileItems.push({
 					kind: 'file',
-					value: `@${f.value} `,
+					value: `${formatFileMention(f.value)} `,
 					displayText: f.displayText,
 					fullPath: f.fullPath,
 					score: f.score,
@@ -119,7 +134,7 @@ export function useMentionPicker(params: UseMentionPickerParams): UseMentionPick
 			}
 		}
 
-		const agentItems: MentionPickerItem[] = getAgentSuggestions(filter);
+		const agentItems: MentionPickerItem[] = getAgentSuggestions(searchTerm);
 
 		const counts: Record<MentionCategory, number> = {
 			all: fileItems.length + dirItems.length + agentItems.length,
@@ -177,6 +192,11 @@ export interface MentionAcceptResult {
  * Compute the textarea update for accepting a picker item. Replaces the
  * `@<filter>` span at `startIndex` with the item's literal `value`. Directories
  * drill in (keep open, re-filter inside the folder); everything else closes.
+ *
+ * Quoted mentions (paths with spaces) add one wrinkle: while drilled into a
+ * quoted directory the caret sits INSIDE the quotes, so the closing quote of the
+ * previous token still sits just past the filter. The accepted token brings its
+ * own closing quote, so that stale one is swallowed instead of doubled.
  */
 export function buildMentionAccept(
 	inputValue: string,
@@ -185,15 +205,24 @@ export function buildMentionAccept(
 	item: MentionPickerItem
 ): MentionAcceptResult {
 	const beforeAt = inputValue.substring(0, startIndex);
-	const afterFilter = inputValue.substring(startIndex + 1 + filter.length);
+	let afterIndex = startIndex + 1 + filter.length;
+	const openQuote = mentionQuoteChar(filter);
+	if (openQuote && inputValue[afterIndex] === openQuote) afterIndex += 1;
+	const afterFilter = inputValue.substring(afterIndex);
 	const value = beforeAt + item.value + afterFilter;
-	// Caret lands immediately after the spliced token (past its trailing space
-	// for files/agents; past the `/` for directories).
-	const caretPos = startIndex + item.value.length;
 
 	if (item.kind === 'directory') {
-		// `item.value` is `@path/`; the re-filter drops the leading `@`.
-		return { value, caretPos, keepOpen: true, nextFilter: item.value.slice(1) };
+		// A quoted directory (`@"my folder/"`) parks the caret before its closing
+		// quote so the next keystrokes land inside the quotes; the re-filter is the
+		// token minus the leading `@` and that closing quote (`"my folder/`).
+		const quoted = !!mentionQuoteChar(item.value.slice(1));
+		return {
+			value,
+			caretPos: startIndex + item.value.length - (quoted ? 1 : 0),
+			keepOpen: true,
+			nextFilter: quoted ? item.value.slice(1, -1) : item.value.slice(1),
+		};
 	}
-	return { value, caretPos, keepOpen: false, nextFilter: '' };
+	// Caret lands immediately after the spliced token, past its trailing space.
+	return { value, caretPos: startIndex + item.value.length, keepOpen: false, nextFilter: '' };
 }

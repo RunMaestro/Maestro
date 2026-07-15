@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
 	AGENT_MENTION_PATTERN_SOURCE,
+	formatFileMention,
 	isFileMentionBody,
+	mentionQuoteChar,
+	stripMentionQuotes,
 	tokenizeMentions,
 	type MentionSegment,
 } from '../../shared/mentionPatterns';
@@ -48,6 +51,55 @@ describe('isFileMentionBody', () => {
 	it('rejects bare words', () => {
 		expect(isFileMentionBody('todo')).toBe(false);
 		expect(isFileMentionBody('review-bot')).toBe(false);
+	});
+});
+
+describe('formatFileMention', () => {
+	it('leaves a space-free path bare', () => {
+		expect(formatFileMention('src/main/index.ts')).toBe('@src/main/index.ts');
+	});
+
+	it('quotes a path that carries spaces', () => {
+		expect(formatFileMention('Meetings/MEET-07-13 - Diagnostics App.md')).toBe(
+			'@"Meetings/MEET-07-13 - Diagnostics App.md"'
+		);
+	});
+
+	it('falls back to single quotes when the path itself holds a double quote', () => {
+		expect(formatFileMention('odd/say "hi" here.md')).toBe(`@'odd/say "hi" here.md'`);
+	});
+
+	it('emits a path holding BOTH quote characters bare rather than mis-delimiting it', () => {
+		const path = `odd/it's "quoted".md`;
+		expect(formatFileMention(path)).toBe(`@${path}`);
+	});
+
+	it('round-trips through the tokenizer for a spaced path', () => {
+		const path = 'Meetings/MEET-07-13 - Diagnostics App.md';
+		const segments = tokenizeMentions(formatFileMention(path));
+		expect(segments).toEqual([
+			{
+				kind: 'file',
+				value: `@"${path}"`,
+				path,
+				extension: 'md',
+			},
+		]);
+	});
+});
+
+describe('mentionQuoteChar / stripMentionQuotes', () => {
+	it('reports the opening quote of a quoted filter', () => {
+		expect(mentionQuoteChar('"my no')).toBe('"');
+		expect(mentionQuoteChar("'my no")).toBe("'");
+		expect(mentionQuoteChar('src/in')).toBeNull();
+	});
+
+	it('bares a filter for searching, closed or not', () => {
+		expect(stripMentionQuotes('"my notes')).toBe('my notes');
+		expect(stripMentionQuotes('"my notes.md"')).toBe('my notes.md');
+		expect(stripMentionQuotes('src/index.ts')).toBe('src/index.ts');
+		expect(stripMentionQuotes('"')).toBe('');
 	});
 });
 
@@ -153,6 +205,47 @@ describe('tokenizeMentions', () => {
 	it('leaves a bare @word as plain text', () => {
 		expect(tokenizeMentions('@todo later', KNOWN)).toEqual([
 			{ kind: 'text', value: '@todo later' },
+		]);
+	});
+
+	it('tokenizes a quoted file mention whole, spaces and all', () => {
+		const input = 'read @"Meetings/MEET-07-13 - Diagnostics App.md" then reply';
+		expect(tokenizeMentions(input, KNOWN)).toEqual([
+			{ kind: 'text', value: 'read ' },
+			{
+				kind: 'file',
+				value: '@"Meetings/MEET-07-13 - Diagnostics App.md"',
+				path: 'Meetings/MEET-07-13 - Diagnostics App.md',
+				extension: 'md',
+			},
+			{ kind: 'text', value: ' then reply' },
+		]);
+		// The overlay invariant still holds: segments concatenate back to the input.
+		expect(reconstruct(tokenizeMentions(input, KNOWN))).toBe(input);
+	});
+
+	it('keeps the closing quote of a quoted mention (never trims it as punctuation)', () => {
+		const [seg] = tokenizeMentions('@"my notes.md"');
+		expect(seg).toEqual({
+			kind: 'file',
+			value: '@"my notes.md"',
+			path: 'my notes.md',
+			extension: 'md',
+		});
+	});
+
+	it('accepts a single-quoted body too', () => {
+		expect(tokenizeMentions(`open @'my notes.md'`)).toEqual([
+			{ kind: 'text', value: 'open ' },
+			{ kind: 'file', value: `@'my notes.md'`, path: 'my notes.md', extension: 'md' },
+		]);
+	});
+
+	it('leaves an unclosed quoted mention as plain text', () => {
+		// Mid-typing state: nothing chips until the quote closes, and the unclosed
+		// quote never swallows the rest of the message.
+		expect(tokenizeMentions('@"my notes and more prose', KNOWN)).toEqual([
+			{ kind: 'text', value: '@"my notes and more prose' },
 		]);
 	});
 

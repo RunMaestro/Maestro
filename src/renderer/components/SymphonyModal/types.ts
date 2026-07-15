@@ -1,4 +1,4 @@
-import type { Theme, Session } from '../../types';
+import type { Theme } from '../../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../../shared/symphony-types';
 
 export interface SymphonyContributionData {
@@ -22,7 +22,6 @@ export interface SymphonyModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	onStartContribution: (data: SymphonyContributionData) => void;
-	sessions: Session[];
 	onSelectSession: (sessionId: string) => void;
 }
 

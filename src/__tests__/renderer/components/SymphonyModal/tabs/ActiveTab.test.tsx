@@ -2,7 +2,7 @@
  * Tests for SymphonyModal/tabs/ActiveTab — empty state CTA, count display,
  * Check PR Status button, sync routing, session jump.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 
 vi.mock('lucide-react', () => {
@@ -34,13 +34,13 @@ vi.mock('../../../../../renderer/components/ui/Spinner', () => ({
 }));
 
 import { ActiveTab } from '../../../../../renderer/components/SymphonyModal/tabs/ActiveTab';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { mockTheme, makeActiveContribution } from '../_fixtures';
 import type { Session } from '../../../../../renderer/types';
 
 const baseProps = (overrides: Partial<React.ComponentProps<typeof ActiveTab>> = {}) => ({
 	theme: mockTheme,
 	activeContributions: [],
-	sessions: [] as Session[],
 	prStatusMessage: null,
 	isCheckingPRStatuses: false,
 	syncingContributionId: null,
@@ -54,6 +54,10 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof ActiveTab>> = 
 });
 
 describe('ActiveTab', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] });
+	});
+
 	it('renders the empty-state CTA when there are no contributions', () => {
 		const onSwitchToProjects = vi.fn();
 		const { getByText } = render(<ActiveTab {...baseProps({ onSwitchToProjects })} />);
@@ -104,11 +108,12 @@ describe('ActiveTab', () => {
 	it('resolves sessionName by sessionId and triggers select + close on jump', () => {
 		const onSelectSession = vi.fn();
 		const onCloseModal = vi.fn();
-		const sessions = [{ id: 'session-1', name: 'my-agent' } as unknown as Session];
+		useSessionStore.setState({
+			sessions: [{ id: 'session-1', name: 'my-agent' } as unknown as Session],
+		});
 		const { getByText } = render(
 			<ActiveTab
 				{...baseProps({
-					sessions,
 					onSelectSession,
 					onCloseModal,
 					activeContributions: [makeActiveContribution({ id: 'c1', sessionId: 'session-1' })],

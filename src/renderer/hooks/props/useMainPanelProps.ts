@@ -20,7 +20,6 @@ import type {
 	AITab,
 	UnifiedTab,
 	FilePreviewTab,
-	ThinkingItem,
 	AgentError,
 	QueuedItem,
 } from '../../types';
@@ -47,7 +46,6 @@ export interface UseMainPanelPropsDeps {
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
 	activeSession: Session | null;
-	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape: boolean;
 	stagedImages: string[];
@@ -233,6 +231,7 @@ export interface UseMainPanelPropsDeps {
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
 	handleMainPanelInputBlur: () => void;
+	handleMainPanelInputFocus: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
 	handleForkConversation: (logId: string) => void;
@@ -335,8 +334,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			agentSessionsOpen: deps.agentSessionsOpen,
 			memoryViewerOpen: deps.memoryViewerOpen,
 			activeAgentSessionId: deps.activeAgentSessionId,
-			activeSession: deps.activeSession,
-			thinkingItems: deps.thinkingItems,
 			theme: deps.theme,
 			isMobileLandscape: deps.isMobileLandscape,
 			stagedImages: deps.stagedImages,
@@ -453,6 +450,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onScrollPositionChange: deps.handleScrollPositionChange,
 			onAtBottomChange: deps.handleAtBottomChange,
 			onInputBlur: deps.handleMainPanelInputBlur,
+			onComposerFocus: deps.handleMainPanelInputFocus,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
 			onForkConversation: deps.handleForkConversation,
@@ -575,12 +573,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.activeSession?.inputMode,
 			deps.activeSession?.projectRoot,
 			deps.activeSession?.cwd,
-			// Track the execution-queue reference so editing/removing/pausing/reordering
-			// a queued item recomputes this memo and the inline QUEUED list re-renders.
-			// Without it, queue mutations while the agent is idle (no other tracked dep
-			// changing) leave the transcript showing a stale queued message.
-			deps.activeSession?.executionQueue,
-			deps.thinkingItems,
+			// executionQueue is NOT tracked here: MainPanel self-sources the full
+			// Session for paint, so queue edits repaint without this memo.
 			deps.theme,
 			deps.isMobileLandscape,
 			deps.stagedImages,
@@ -713,6 +707,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleScrollPositionChange,
 			deps.handleAtBottomChange,
 			deps.handleMainPanelInputBlur,
+			deps.handleMainPanelInputFocus,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
 			deps.handleForkConversation,
