@@ -220,6 +220,8 @@ describe('Git IPC handlers', () => {
 				'git:unwatchWorktreeDirectory',
 				'git:removeWorktree',
 				'git:createGist',
+				'git:graph',
+				'git:switch',
 			];
 
 			expect(handlers.size).toBe(expectedChannels.length);

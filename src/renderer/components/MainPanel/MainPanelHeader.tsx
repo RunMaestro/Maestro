@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
 	Wand2,
 	ExternalLink,
@@ -16,12 +16,14 @@ import {
 	Brain,
 	Menu,
 	Command,
+	History,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { remoteUrlToBrowserUrl } from '../../../shared/gitUtils';
 import { GitStatusWidget } from '../GitStatusWidget';
+import { BranchSwitcherDropdown } from './BranchSwitcherDropdown';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -41,6 +43,7 @@ import {
 } from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { captureException } from '../../utils/sentry';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -131,6 +134,56 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const headerRef = useRef<HTMLDivElement>(null);
 	const gitTooltip = useHoverTooltip(150);
 	const contextTooltip = useHoverTooltip(150);
+	const [branchSwitcherOpen, setBranchSwitcherOpen] = useState(false);
+	const branchChipContainerRef = useRef<HTMLDivElement>(null);
+	const branchClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Single click → open git log (delayed to differentiate from a double click).
+	// Double click → open branch switcher dropdown.
+	const handleBranchChipClick = () => {
+		if (!activeSession.isGitRepo) return;
+		void refreshGitStatus().catch((error) => {
+			captureException(error, {
+				extra: { source: 'MainPanelHeader.handleBranchChipClick' },
+			});
+		});
+		gitTooltip.close();
+		if (branchClickTimerRef.current) clearTimeout(branchClickTimerRef.current);
+		branchClickTimerRef.current = setTimeout(() => {
+			branchClickTimerRef.current = null;
+			setGitLogOpen?.(true);
+		}, 220);
+	};
+
+	const handleBranchChipDoubleClick = () => {
+		if (!activeSession.isGitRepo) return;
+		if (branchClickTimerRef.current) {
+			clearTimeout(branchClickTimerRef.current);
+			branchClickTimerRef.current = null;
+		}
+		gitTooltip.close();
+		setBranchSwitcherOpen((v) => !v);
+	};
+
+	// Keyboard a11y: Shift+Enter on the chip opens the branch switcher, mirroring double-click.
+	// Plain Enter falls through to the default button activation, which fires onClick.
+	const handleBranchChipKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+		if (e.key === 'Enter' && e.shiftKey) {
+			e.preventDefault();
+			handleBranchChipDoubleClick();
+		}
+	};
+
+	// Cancel the 220ms single-click debounce on unmount so the callback can't
+	// fire against a stale parent (resource leak / React 17 setState warning).
+	useEffect(() => {
+		return () => {
+			if (branchClickTimerRef.current) {
+				clearTimeout(branchClickTimerRef.current);
+				branchClickTimerRef.current = null;
+			}
+		};
+	}, []);
 
 	return (
 		<div
@@ -177,6 +230,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						/>
 					)}
 					<div
+						ref={branchChipContainerRef}
 						className="relative shrink-0 flex items-center gap-2"
 						onMouseEnter={
 							activeSession.isGitRepo ? gitTooltip.triggerHandlers.onMouseEnter : undefined
@@ -194,14 +248,16 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] outline-none ${
 									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
 								}`}
-								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
+								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch} - click / Enter: log, double-click / Shift+Enter: switch branch)` : ''}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									if (activeSession.isGitRepo) {
-										refreshGitStatus(); // Refresh git info immediately on click
-										setGitLogOpen?.(true);
-									}
+									handleBranchChipClick();
 								}}
+								onDoubleClick={(e) => {
+									e.stopPropagation();
+									handleBranchChipDoubleClick();
+								}}
+								onKeyDown={activeSession.isGitRepo ? handleBranchChipKeyDown : undefined}
 							>
 								<Server className="w-3 h-3 shrink-0" />
 								<span className="truncate uppercase">{sshRemoteName}</span>
@@ -215,12 +271,18 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									if (activeSession.isGitRepo) {
-										refreshGitStatus(); // Refresh git info immediately on click
-										setGitLogOpen?.(true);
-									}
+									handleBranchChipClick();
 								}}
-								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}
+								onDoubleClick={(e) => {
+									e.stopPropagation();
+									handleBranchChipDoubleClick();
+								}}
+								onKeyDown={activeSession.isGitRepo ? handleBranchChipKeyDown : undefined}
+								title={
+									activeSession.isGitRepo && gitInfo?.branch
+										? `${gitInfo.branch} - click / Enter: log, double-click / Shift+Enter: switch branch`
+										: undefined
+								}
 							>
 								{activeSession.isGitRepo ? (
 									<>
@@ -258,7 +320,37 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									</span>
 								</button>
 							)}
-						{activeSession.isGitRepo && gitTooltip.isOpen && gitInfo && (
+						{/* Branch switcher dropdown (portaled to body to escape header overflow:hidden) */}
+						{branchSwitcherOpen && activeSession.isGitRepo && gitInfo && (
+							<BranchSwitcherDropdown
+								cwd={
+									activeSession.inputMode === 'terminal'
+										? activeSession.shellCwd || activeSession.cwd
+										: activeSession.cwd
+								}
+								currentBranch={gitInfo.branch}
+								theme={theme}
+								sshRemoteId={
+									activeSession.sshRemoteId ||
+									(activeSession.sessionSshRemoteConfig?.enabled
+										? activeSession.sessionSshRemoteConfig.remoteId
+										: undefined) ||
+									undefined
+								}
+								anchorEl={branchChipContainerRef.current}
+								onClose={() => setBranchSwitcherOpen(false)}
+								onSwitched={() => {
+									void refreshGitStatus().catch((error) => {
+										captureException(error, {
+											extra: {
+												source: 'MainPanelHeader.BranchSwitcherDropdown.onSwitched',
+											},
+										});
+									});
+								}}
+							/>
+						)}
+						{activeSession.isGitRepo && gitTooltip.isOpen && gitInfo && !branchSwitcherOpen && (
 							<>
 								{/* Invisible bridge to prevent hover gap */}
 								<div
@@ -392,6 +484,24 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 
 										{/* Worktree Actions */}
 										<div className="p-2 space-y-1">
+											{/* View commit history (was the chip's previous click action) */}
+											{setGitLogOpen && (
+												<button
+													onClick={(e) => {
+														e.stopPropagation();
+														setGitLogOpen(true);
+														gitTooltip.close();
+													}}
+													className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs hover:bg-white/10 transition-colors"
+													style={{ color: theme.colors.textDim }}
+												>
+													<History
+														className="w-3.5 h-3.5"
+														style={{ color: theme.colors.textDim }}
+													/>
+													View commit history
+												</button>
+											)}
 											{/* Configure Worktrees - only for parent sessions (not worktree children) */}
 											{!isWorktreeChild && onOpenWorktreeConfig && (
 												<button

@@ -353,7 +353,7 @@ export function useKeyboardNavigation(
 				return false;
 			}
 
-			// Skip if Cmd/Ctrl+Arrow is pressed (with or without Alt) — could be a user-configured
+			// Skip if Cmd/Ctrl+Arrow is pressed (with or without Alt) - could be a user-configured
 			// tab navigation shortcut (e.g. Cmd+Left/Right) or layout toggle (Alt+Cmd+Arrow).
 			// Plain ArrowLeft/Right (no modifiers) is reserved for group collapse/expand.
 			const isModifiedArrow =
