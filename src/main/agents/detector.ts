@@ -26,6 +26,7 @@ import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
+import { setOmpModelCatalog } from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -488,11 +489,13 @@ export class AgentDetector {
 						);
 						return [];
 					}
-					let parsed: { models?: Array<{ id?: string; selector?: string }> };
+					let parsed: {
+						models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+					};
 					try {
-						parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
-							result.stdout
-						);
+						parsed = parseJsonWithBom<{
+							models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+						}>(result.stdout);
 					} catch (parseError) {
 						captureException(parseError, {
 							operation: 'agent:modelDiscovery',
@@ -503,6 +506,9 @@ export class AgentDetector {
 						});
 						return [];
 					}
+					// Feed the context-window catalog off the same call, so the usage
+					// path can resolve a model's real window without a second fetch.
+					setOmpModelCatalog(parsed.models ?? []);
 					const seen = new Set<string>();
 					const models: string[] = [];
 					for (const entry of parsed.models ?? []) {

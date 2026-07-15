@@ -54,6 +54,11 @@ import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
+import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
+import {
+	setOmpModelCatalog,
+	__resetOmpModelCatalogForTests,
+} from '../../../../main/agents/omp-model-catalog';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -960,6 +965,7 @@ describe('StdoutHandler', () => {
 				costUsd?: number;
 				contextWindow?: number;
 				reasoningTokens?: number;
+				model?: string;
 			} | null
 		) {
 			return {
@@ -1149,6 +1155,68 @@ describe('StdoutHandler', () => {
 				cacheCreationInputTokens: 180,
 				reasoningTokens: 0,
 			});
+		});
+
+		it('resolves the omp model window from the local catalog and flags it authoritative', () => {
+			__resetOmpModelCatalogForTests();
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }]);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				// Agent-level configured fallback (the misleading 200k default).
+				contextWindow: 200000,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(1_000_000);
+			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('keeps the configured window for an SSH omp process (local catalog not trusted remotely)', () => {
+			__resetOmpModelCatalogForTests();
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }]);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				sshRemoteId: 'remote-1',
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(200000);
+			expect(stats.contextWindowResolved).toBeUndefined();
 		});
 
 		it('should detect non-monotonic decrease and switch to raw mode', () => {

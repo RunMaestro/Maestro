@@ -19,13 +19,14 @@
  * "Clear" wipes the focused session's recorded points.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { Gauge, Minus, X, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
 	selectPoints,
 	type ContextTimelinePoint,
+	type TimelineAnchorRect,
 } from '../stores/contextTimelineStore';
 import { useSessionStore } from '../stores/sessionStore';
 // IMPORTANT: the context-backed accessor, NOT hooks/ui/useLayerStack (which
@@ -37,6 +38,39 @@ import { formatTokensCompact, formatCost } from '../../shared/formatters';
 interface ContextTimelinePanelProps {
 	theme: Theme;
 }
+
+const PANEL_WIDTH = 360;
+const PANEL_MAX_HEIGHT = 600;
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 8;
+
+/** Position the panel near the element that opened it, clamped to the viewport. */
+function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const width = Math.min(PANEL_WIDTH, vw - VIEWPORT_MARGIN * 2);
+	const height = Math.min(PANEL_MAX_HEIGHT, Math.round(vh * 0.7));
+	// Right-align the panel under the trigger and open downward by default.
+	let left = anchor.right - width;
+	let top = anchor.bottom + ANCHOR_GAP;
+	// If it would run off the bottom, flip to open above the trigger instead.
+	if (top + height > vh - VIEWPORT_MARGIN) {
+		top = anchor.top - ANCHOR_GAP - height;
+	}
+	left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
+	top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
+	return { top, left, width, height };
+}
+
+/** Default dock (bottom-left) used when the panel was opened without an anchor. */
+const FALLBACK_STYLE: CSSProperties = {
+	bottom: 16,
+	left: 16,
+	width: PANEL_WIDTH,
+	maxWidth: 'calc(100vw - 2rem)',
+	height: '70vh',
+	maxHeight: PANEL_MAX_HEIGHT,
+};
 
 /** Time-of-day stamp for a turn (e.g. "3:42:07 PM"). */
 function formatPointTime(ts: number): string {
@@ -60,6 +94,7 @@ function TokenChip({ label, value, color }: { label: string; value: number; colo
 
 export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const panelSessionId = useContextTimelineStore((s) => s.panelSessionId);
+	const anchorRect = useContextTimelineStore((s) => s.anchorRect);
 	const minimized = useContextTimelineStore((s) => s.minimized);
 	const points = useContextTimelineStore(selectPoints(panelSessionId));
 	const buffer = useContextTimelineStore((s) =>
@@ -109,12 +144,9 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	return (
 		<div
-			className="fixed bottom-4 left-4 z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
+			className="fixed z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
 			style={{
-				width: 360,
-				maxWidth: 'calc(100vw - 2rem)',
-				height: '70vh',
-				maxHeight: 600,
+				...(anchorRect ? anchoredStyle(anchorRect) : FALLBACK_STYLE),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}

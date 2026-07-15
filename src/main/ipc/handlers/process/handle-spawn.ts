@@ -41,6 +41,7 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { primeOmpModelCatalog } from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -709,6 +710,18 @@ export async function handleProcessSpawn(
 		localSpawnBinaryPath && path.isAbsolute(localSpawnBinaryPath)
 			? path.dirname(localSpawnBinaryPath)
 			: undefined;
+
+	// Warm the omp model -> context-window catalog for local runs so the first
+	// turn's usage can resolve the model's real window (e.g. opus 1M) rather than
+	// the static fallback. Fire-and-forget, deduped, best-effort; uses the
+	// absolute binary path so it never depends on the spawn PATH. SSH remotes are
+	// skipped (their catalog may differ) and fall back to the configured window.
+	if (config.toolType === 'omp' && localAgentBinDir && localSpawnBinaryPath) {
+		void primeOmpModelCatalog(localSpawnBinaryPath, {
+			...process.env,
+			...customEnvVarsToPass,
+		});
+	}
 
 	const result = processManager.spawn({
 		...config,

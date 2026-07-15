@@ -70,6 +70,9 @@ describe('OmpOutputParser', () => {
 		expect(totalTokens).toBe(14449);
 
 		expect(usage!.costUsd).toBeCloseTo(0.0904, 4);
+
+		// The per-turn model rides along so downstream can resolve its real window.
+		expect(usage!.model).toBe('claude-opus-4-8');
 	});
 
 	it('treats agent_end as the authoritative final result', () => {

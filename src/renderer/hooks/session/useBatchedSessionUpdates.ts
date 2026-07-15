@@ -371,6 +371,7 @@ export function useBatchedSessionUpdates(
 								reasoningTokens:
 									(existing?.reasoningTokens || 0) + (sessionUsageDelta.reasoningTokens || 0),
 								contextWindow: sessionUsageDelta.contextWindow,
+								contextWindowResolved: sessionUsageDelta.contextWindowResolved,
 							},
 						};
 					}
@@ -413,6 +414,9 @@ export function useBatchedSessionUpdates(
 											? (existing?.cacheCreationInputTokens ?? 0)
 											: tabUsageDelta.cacheCreationInputTokens,
 										contextWindow: tabUsageDelta.contextWindow || existing?.contextWindow || 0,
+										contextWindowResolved: tabUsageDelta.contextWindow
+											? tabUsageDelta.contextWindowResolved
+											: existing?.contextWindowResolved,
 										outputTokens: tabUsageDelta.outputTokens, // Current (not accumulated)
 										totalCostUsd: (existing?.totalCostUsd || 0) + tabUsageDelta.totalCostUsd,
 										reasoningTokens: tabUsageDelta.reasoningTokens,
@@ -582,6 +586,7 @@ export function useBatchedSessionUpdates(
 						cacheReadInputTokens: usage.cacheReadInputTokens,
 						cacheCreationInputTokens: usage.cacheCreationInputTokens,
 						contextWindow: usage.contextWindow,
+						contextWindowResolved: usage.contextWindowResolved,
 						outputTokens: usage.outputTokens,
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: usage.reasoningTokens,
@@ -597,6 +602,7 @@ export function useBatchedSessionUpdates(
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: (existing.reasoningTokens || 0) + (usage.reasoningTokens || 0),
 						contextWindow: usage.contextWindow,
+						contextWindowResolved: usage.contextWindowResolved,
 					});
 				}
 			} else {

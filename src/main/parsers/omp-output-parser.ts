@@ -52,6 +52,9 @@ interface OmpMessage {
 	role?: string;
 	content?: string | OmpContentBlock[];
 	usage?: OmpUsage;
+	// Assistant messages carry the resolved model (e.g. `claude-opus-4-8`),
+	// which downstream maps to the model's real context window.
+	model?: string;
 	errorMessage?: string;
 }
 
@@ -350,6 +353,7 @@ export class OmpOutputParser implements AgentOutputParser {
 			cacheReadTokens: usage.cacheRead || 0,
 			cacheCreationTokens: usage.cacheWrite || 0,
 			costUsd: typeof usage.cost === 'number' ? usage.cost : usage.cost?.total || 0,
+			...(message.model ? { model: message.model } : {}),
 		};
 	}
 

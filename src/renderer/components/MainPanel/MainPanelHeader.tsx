@@ -30,7 +30,10 @@ import { useUIStore } from '../../stores/uiStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { isWebDesktop } from '../../utils/runtimeContext';
-import { useContextTimelineStore } from '../../stores/contextTimelineStore';
+import {
+	useContextTimelineStore,
+	type TimelineAnchorRect,
+} from '../../stores/contextTimelineStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
@@ -44,6 +47,19 @@ import {
 import { formatFutureTime } from '../../../shared/formatters';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { captureException } from '../../utils/sentry';
+
+/** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
+function rectOf(el: HTMLElement): TimelineAnchorRect {
+	const r = el.getBoundingClientRect();
+	return {
+		top: r.top,
+		left: r.left,
+		bottom: r.bottom,
+		right: r.right,
+		width: r.width,
+		height: r.height,
+	};
+}
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -654,11 +670,17 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							tabIndex={0}
 							aria-label="Open context timeline"
 							{...contextTooltip.triggerHandlers}
-							onClick={() => useContextTimelineStore.getState().openPanel(activeSession.id)}
+							onClick={(e) =>
+								useContextTimelineStore
+									.getState()
+									.openPanel(activeSession.id, rectOf(e.currentTarget))
+							}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
-									useContextTimelineStore.getState().openPanel(activeSession.id);
+									useContextTimelineStore
+										.getState()
+										.openPanel(activeSession.id, rectOf(e.currentTarget));
 								}
 							}}
 						>

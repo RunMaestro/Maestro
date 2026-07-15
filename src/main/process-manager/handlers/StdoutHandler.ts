@@ -8,6 +8,7 @@ import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggreg
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
 import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -737,9 +738,10 @@ export class StdoutHandler {
 			costUsd?: number;
 			contextWindow?: number;
 			reasoningTokens?: number;
+			model?: string;
 		}
 	): UsageStats {
-		return {
+		const stats: UsageStats = {
 			inputTokens: usage.inputTokens,
 			outputTokens: usage.outputTokens,
 			cacheReadInputTokens: usage.cacheReadTokens || 0,
@@ -750,6 +752,19 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+		// Oh My Pi's window is model-dependent and reported per turn, so resolve the
+		// per-turn model against the local `omp models` catalog and let that
+		// authoritative value win over the static per-agent fallback/config (e.g.
+		// so opus's 1M isn't masked by the 200k default). Local runs only; remotes
+		// have their own catalog and keep the configured/fallback window.
+		if (managedProcess.toolType === 'omp' && !managedProcess.sshRemoteId && usage.model) {
+			const resolved = getOmpModelContextWindow(usage.model);
+			if (resolved && resolved > 0) {
+				stats.contextWindow = resolved;
+				stats.contextWindowResolved = true;
+			}
+		}
+		return stats;
 	}
 
 	/** Emit session-id event at most once per managed process lifecycle. */

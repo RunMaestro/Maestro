@@ -73,18 +73,34 @@ export const MAX_POINTS_PER_SESSION = 2000;
 /** Fields the listener supplies for a new point (id/timestamp are stamped here). */
 export type ContextTimelinePointInput = Omit<ContextTimelinePoint, 'id' | 'timestamp'>;
 
+/**
+ * A plain (structured-clone-safe) copy of the trigger element's viewport rect,
+ * so the panel can anchor itself to the header gauge that opened it instead of
+ * always docking bottom-left. Stored as plain numbers - never a live DOMRect.
+ */
+export interface TimelineAnchorRect {
+	top: number;
+	left: number;
+	bottom: number;
+	right: number;
+	width: number;
+	height: number;
+}
+
 interface ContextTimelineState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
 	/** Whether the visible panel is minimized to a status pill. */
 	minimized: boolean;
+	/** Viewport rect of the element that opened the panel (null = dock bottom-left). */
+	anchorRect: TimelineAnchorRect | null;
 	/** Per-session capture buffers (capture runs for all sessions, always). */
 	buffers: Record<string, ContextTimelineBuffer>;
 
 	/** Record one turn's context accounting (always-on; no capture gate). */
 	appendPoint: (sessionId: string, point: ContextTimelinePointInput) => void;
-	/** Open (or refocus) the inspector for a session. */
-	openPanel: (sessionId: string) => void;
+	/** Open (or refocus) the inspector for a session, optionally anchored to a rect. */
+	openPanel: (sessionId: string, anchorRect?: TimelineAnchorRect | null) => void;
 	/** Collapse the panel to a status pill; the buffer is untouched. */
 	minimizePanel: () => void;
 	/** Restore the panel from the minimized pill. */
@@ -100,6 +116,7 @@ interface ContextTimelineState {
 export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 	panelSessionId: null,
 	minimized: false,
+	anchorRect: null,
 	buffers: {},
 
 	appendPoint: (sessionId, point) =>
@@ -120,10 +137,11 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 			return { buffers: { ...state.buffers, [sessionId]: { points, trimmed } } };
 		}),
 
-	openPanel: (sessionId) =>
+	openPanel: (sessionId, anchorRect = null) =>
 		set((state) => ({
 			panelSessionId: sessionId,
 			minimized: false,
+			anchorRect,
 			// Preserve any history already captured for this session.
 			buffers: state.buffers[sessionId]
 				? state.buffers
@@ -134,7 +152,7 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 
 	restorePanel: () => set({ minimized: false }),
 
-	closePanel: () => set({ panelSessionId: null, minimized: false }),
+	closePanel: () => set({ panelSessionId: null, minimized: false, anchorRect: null }),
 
 	clearSession: (sessionId) =>
 		set((state) => ({
