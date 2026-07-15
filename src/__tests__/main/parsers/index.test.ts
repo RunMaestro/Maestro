@@ -12,6 +12,7 @@ import {
 	PiOutputParser,
 	OmpOutputParser,
 	QwenOutputParser,
+	GrokOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -84,21 +85,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('omp')).toBe(true);
 		});
 
-		it('should register exactly 8 parsers', () => {
+		it('should register Grok parser', () => {
+			expect(hasOutputParser('grok')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('grok')).toBe(true);
+		});
+
+		it('should register exactly 9 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(8);
+			expect(parsers.length).toBe(9);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(8);
+			expect(getAllOutputParsers().length).toBe(9);
 
-			// Second initialization should still have exactly 8
+			// Second initialization should still have exactly 9
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(8);
+			expect(getAllOutputParsers().length).toBe(9);
 		});
 	});
 
@@ -157,6 +166,12 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(QwenOutputParser);
 		});
+
+		it('should return GrokOutputParser for grok', () => {
+			const parser = getOutputParser('grok');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(GrokOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -192,6 +207,11 @@ describe('parsers/index', () => {
 		it('should export QwenOutputParser class', () => {
 			const parser = new QwenOutputParser();
 			expect(parser.agentId).toBe('qwen3-coder');
+		});
+
+		it('should export GrokOutputParser class', () => {
+			const parser = new GrokOutputParser();
+			expect(parser.agentId).toBe('grok');
 		});
 	});
 

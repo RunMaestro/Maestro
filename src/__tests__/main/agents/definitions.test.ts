@@ -359,6 +359,58 @@ describe('agent-definitions', () => {
 			expect(reasoningEffort?.argBuilder?.('')).toEqual([]);
 		});
 
+		it('should run Grok batch with --always-approve matching yoloModeArgs', () => {
+			const grok = getAgentDefinition('grok');
+			// batchModeArgs must equal yoloModeArgs (same pattern as Copilot's
+			// --allow-all) so the CLI spawner's read-only filter strips the approve
+			// flag: grok's clap hard-errors on a repeated --permission-mode
+			// ("cannot be used multiple times"), so batchModeArgs must never carry
+			// ['--permission-mode', 'bypassPermissions'] alongside readOnlyArgs'
+			// ['--permission-mode', 'plan'].
+			expect(grok?.batchModeArgs).toEqual(['--always-approve']);
+			expect(grok?.yoloModeArgs).toEqual(['--always-approve']);
+			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan']);
+		});
+
+		it('should define the Grok model option as a dynamic select with static fallback', () => {
+			const grok = getAgentDefinition('grok');
+			expect(grok?.configOptions).toBeDefined();
+
+			const modelOption = grok?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('select');
+			expect((modelOption as any)?.dynamic).toBe(true);
+			// Static fallback for fresh installs where ~/.grok/models_cache.json
+			// hasn't been written yet (per `grok models` v0.2.93).
+			expect((modelOption as any)?.options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast']);
+			expect(modelOption?.default).toBe('');
+			expect(modelOption?.argBuilder?.('grok-4.5')).toEqual(['-m', 'grok-4.5']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+		});
+
+		it('should expose the full Grok reasoning-effort ladder the CLI accepts', () => {
+			const grok = getAgentDefinition('grok');
+			const reasoningEffort = grok?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+			expect(reasoningEffort?.type).toBe('select');
+			// Empirically discovered from grok v0.2.93: passing a bogus value errors
+			// with "Use none, minimal, low, medium, high, xhigh, max, or a model menu
+			// option id".
+			expect((reasoningEffort as any)?.options).toEqual([
+				'',
+				'none',
+				'minimal',
+				'low',
+				'medium',
+				'high',
+				'xhigh',
+				'max',
+			]);
+			expect(reasoningEffort?.default).toBe('');
+			expect(reasoningEffort?.argBuilder?.('xhigh')).toEqual(['--reasoning-effort', 'xhigh']);
+			expect(reasoningEffort?.argBuilder?.('')).toEqual([]);
+			expect(reasoningEffort?.argBuilder?.('  ')).toEqual([]);
+		});
+
 		it('should run Copilot batch with --allow-all (no --silent, no per-flag toggles)', () => {
 			const copilot = getAgentDefinition('copilot-cli');
 			expect(copilot?.batchModeArgs).toEqual(['--allow-all']);

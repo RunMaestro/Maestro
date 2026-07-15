@@ -21,6 +21,7 @@ import type {
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { isExpectedRemoteError } from './remote-error-utils';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
 
@@ -625,7 +626,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		);
 		const stats = new Map<string, { size: number; mtime: number }>();
 		if (!result.success || !result.data) {
-			if (result.error && !this.isExpectedRemoteError(result.error)) {
+			if (result.error && !isExpectedRemoteError(result.error)) {
 				logger.warn(
 					`Unexpected SSH failure bulk-stating Copilot events: ${result.error}`,
 					LOG_CONTEXT
@@ -727,26 +728,13 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		}
 	}
 
-	/** Check if a remote-fs error indicates a benign not-found/permission case vs an unexpected SSH failure. */
-	private isExpectedRemoteError(error?: string): boolean {
-		if (!error) return false;
-		const lower = error.toLowerCase();
-		return (
-			lower.includes('not found') ||
-			lower.includes('not accessible') ||
-			lower.includes('no such file') ||
-			lower.includes('permission denied') ||
-			lower.includes('does not exist')
-		);
-	}
-
 	/** List all session directory names from the session state directory. */
 	private async listSessionIds(sshConfig?: SshRemoteConfig): Promise<string[]> {
 		const sessionStateDir = this.getSessionStateDir(sshConfig);
 		if (sshConfig) {
 			const result = await readDirRemote(sessionStateDir, sshConfig);
 			if (!result.success || !result.data) {
-				if (!this.isExpectedRemoteError(result.error)) {
+				if (!isExpectedRemoteError(result.error)) {
 					logger.warn(
 						`Unexpected SSH failure listing Copilot sessions: ${result.error}`,
 						LOG_CONTEXT
@@ -910,7 +898,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	): Promise<string | null> {
 		const result = await readFileRemote(filePath, sshConfig);
 		if (result.success && result.data != null) return result.data;
-		if (!this.isExpectedRemoteError(result.error)) {
+		if (!isExpectedRemoteError(result.error)) {
 			logger.warn(`Unexpected SSH failure reading ${filePath}: ${result.error}`, LOG_CONTEXT);
 			captureException(new Error(result.error || 'readFileRemote failed'), {
 				operation: 'copilotStorage:readRemoteFile',
@@ -927,7 +915,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	): Promise<number> {
 		const result = await directorySizeRemote(sessionDir, sshConfig);
 		if (result.success && result.data != null) return result.data;
-		if (!this.isExpectedRemoteError(result.error)) {
+		if (!isExpectedRemoteError(result.error)) {
 			logger.warn(`Unexpected SSH failure sizing ${sessionDir}: ${result.error}`, LOG_CONTEXT);
 			captureException(new Error(result.error || 'directorySizeRemote failed'), {
 				operation: 'copilotStorage:getRemoteDirectorySize',

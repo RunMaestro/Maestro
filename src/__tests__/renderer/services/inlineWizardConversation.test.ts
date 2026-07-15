@@ -340,6 +340,110 @@ describe('inlineWizardConversation', () => {
 				})
 			);
 		});
+
+		it('should apply Grok discovery-safe args and join text deltas for structured replies', async () => {
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			// Discovery needs read/fetch: no plan mode / no web-search ban.
+			// Cap turns + no subagents to avoid silent freezes; always-approve for headless.
+			expect(spawnCall.args).toEqual(
+				expect.arrayContaining(['--always-approve', '--max-turns', '8', '--no-subagents'])
+			);
+			expect(spawnCall.args).not.toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+			expect(spawnCall.args).not.toContain('--disable-web-search');
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Thought deltas must not pollute the structured JSON body
+			dataCallback(session.sessionId, '{"type":"thought","data":"planning response"}\n');
+			dataCallback(
+				session.sessionId,
+				'{"type":"text","data":"{\\"confidence\\":88,\\"ready\\":true,"}\n'
+			);
+			dataCallback(
+				session.sessionId,
+				'{"type":"text","data":"\\"message\\":\\"Ready to build the playbook\\"}"}\n'
+			);
+			dataCallback(
+				session.sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"req-1"}\n'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					agentSessionId: '019f47fa-e297-7993-a1f6-adfaf940ba8c',
+					response: expect.objectContaining({
+						confidence: 88,
+						ready: true,
+						message: 'Ready to build the playbook',
+					}),
+				})
+			);
+		});
+
+		it('should accept a parseable Grok reply even when the process exits non-zero', async () => {
+			// --max-turns can exit 1 after useful structured text; do not drop it.
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Production path: process:data gets assembled text, not raw JSONL
+			dataCallback(
+				session.sessionId,
+				'{"confidence":55,"ready":false,"message":"What is the acceptance criteria?"}'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 1);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: expect.objectContaining({
+						confidence: 55,
+						ready: false,
+						message: 'What is the acceptance criteria?',
+					}),
+				})
+			);
+		});
 	});
 
 	describe('activity-based timeout', () => {

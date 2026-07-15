@@ -25,6 +25,7 @@ import {
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
+import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
 
 /**
  * Configuration for starting a conversation
@@ -744,6 +745,13 @@ class ConversationManager {
 				return args;
 			}
 
+			case 'grok': {
+				// Shared discovery caps with inline wizard (see grokWizard.ts).
+				const args = [...(agent.args || [])];
+				args.push(...GROK_WIZARD_DISCOVERY_ARGS);
+				return args;
+			}
+
 			default: {
 				// For unknown agents, use base args
 				return [...(agent.args || [])];
@@ -852,6 +860,12 @@ class ConversationManager {
 				if (textParts.length > 0) {
 					return textParts.join('');
 				}
+			}
+
+			// For Grok: join text deltas only (skip thought); end has no body
+			if (agentType === 'grok') {
+				const grokText = extractGrokTextFromJsonl(lines);
+				if (grokText) return grokText;
 			}
 
 			// For Copilot: look for the final assistant message

@@ -387,5 +387,55 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			await messagePromise;
 			await conversationManager.endConversation();
 		});
+
+		it('should apply Grok discovery args and extract structured replies from text deltas', async () => {
+			// Pins dual-path parity with inlineWizardConversation (shared GROK_WIZARD_DISCOVERY_ARGS).
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(mockMaestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.args).toEqual(
+				expect.arrayContaining(['--always-approve', '--max-turns', '8', '--no-subagents'])
+			);
+			expect(spawnCall.args).not.toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Thought must not pollute structured JSON; only text deltas join.
+			dataCallback(sessionId, '{"type":"thought","data":"planning"}\n');
+			dataCallback(sessionId, '{"type":"text","data":"{\\"confidence\\":90,\\"ready\\":true,"}\n');
+			dataCallback(sessionId, '{"type":"text","data":"\\"message\\":\\"Onboarding ready\\"}"}\n');
+			dataCallback(
+				sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"req-1"}\n'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+			expect(result.response?.parseSuccess).toBe(true);
+			expect(result.response?.structured?.ready).toBe(true);
+			expect(result.response?.structured?.message).toContain('Onboarding ready');
+
+			await conversationManager.endConversation();
+		});
 	});
 });
