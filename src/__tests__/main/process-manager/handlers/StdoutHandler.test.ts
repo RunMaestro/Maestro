@@ -57,6 +57,7 @@ import { logger } from '../../../../main/utils/logger';
 import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
 import {
 	setOmpModelCatalog,
+	computeOmpCatalogKey,
 	__resetOmpModelCatalogForTests,
 } from '../../../../main/agents/omp-model-catalog';
 
@@ -1159,7 +1160,8 @@ describe('StdoutHandler', () => {
 
 		it('resolves the omp model window from the local catalog and flags it authoritative', () => {
 			__resetOmpModelCatalogForTests();
-			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }]);
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
 			const parser = createOutputParserMock({
 				inputTokens: 1000,
 				outputTokens: 500,
@@ -1175,6 +1177,7 @@ describe('StdoutHandler', () => {
 				toolType: 'omp',
 				// Agent-level configured fallback (the misleading 200k default).
 				contextWindow: 200000,
+				ompModelCatalogKey: catalogKey,
 				outputParser: parser as unknown as AgentOutputParser,
 			});
 
@@ -1188,9 +1191,44 @@ describe('StdoutHandler', () => {
 			expect(stats.contextWindowResolved).toBe(true);
 		});
 
+		it('does not resolve a mismatched-identity catalog (different binary/env)', () => {
+			__resetOmpModelCatalogForTests();
+			// Catalog primed for one identity...
+			setOmpModelCatalog(
+				[{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }],
+				computeOmpCatalogKey('/opt/other/omp', undefined)
+			);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+			// ...but this process ran a DIFFERENT binary, so it must not reuse it.
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				ompModelCatalogKey: computeOmpCatalogKey('/usr/local/bin/omp', undefined),
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(200000);
+			expect(stats.contextWindowResolved).toBeUndefined();
+		});
+
 		it('keeps the configured window for an SSH omp process (local catalog not trusted remotely)', () => {
 			__resetOmpModelCatalogForTests();
-			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }]);
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
 			const parser = createOutputParserMock({
 				inputTokens: 1000,
 				outputTokens: 500,
@@ -1201,11 +1239,14 @@ describe('StdoutHandler', () => {
 				model: 'claude-opus-4-8',
 			});
 
+			// Even with a matching catalog + key, an SSH remote must NOT resolve from
+			// the local catalog and keeps the configured window.
 			const { handler, emitter, sessionId } = createTestContext({
 				isStreamJsonMode: true,
 				toolType: 'omp',
 				contextWindow: 200000,
 				sshRemoteId: 'remote-1',
+				ompModelCatalogKey: catalogKey,
 				outputParser: parser as unknown as AgentOutputParser,
 			});
 

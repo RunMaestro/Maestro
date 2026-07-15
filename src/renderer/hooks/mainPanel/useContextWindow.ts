@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calculateContextDisplay } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
+import { getModelContextWindowOverride } from '../../../shared/agentConstants';
 import type { Session, AITab } from '../../types';
 
 /**
@@ -36,6 +37,11 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		// Explicit per-session override always wins.
 		const sessionOverride = activeSession?.customContextWindow ?? 0;
 		if (sessionOverride > 0) return sessionOverride;
+		// A `[1m]` marker on the session's custom model is an explicit model choice
+		// and outranks a runtime-resolved window, matching useAgentUsageListener's
+		// precedence so the header gauge and the timeline never disagree.
+		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;
+		if (modelMarker > 0) return modelMarker;
 		const reported = activeTab?.usageStats?.contextWindow ?? 0;
 		// A genuinely provider/model-resolved window (omp's per-turn model catalog,
 		// flagged via `contextWindowResolved`) is the ACTUAL window, so it beats the
@@ -47,6 +53,7 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		activeTab?.usageStats?.contextWindow,
 		activeTab?.usageStats?.contextWindowResolved,
 		activeSession?.customContextWindow,
+		activeSession?.customModel,
 	]);
 
 	// Hold the last trustworthy result per tab so an untrustworthy frame

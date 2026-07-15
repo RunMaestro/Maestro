@@ -80,6 +80,50 @@ describe('useContextWindow', () => {
 		});
 	});
 
+	it('lets a resolved runtime window beat the configured fallback', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
+		const session = makeSession({ toolType: 'omp' });
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		// Let the agent config (200k fallback) actually resolve, so we prove the
+		// resolved window beats a REAL configured value, not merely an unresolved 0.
+		await waitFor(() => expect(mockGetConfig).toHaveBeenCalled());
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
+	it('keeps a [1m] custom-model marker above a resolved window', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
+		// An explicit [1m] model choice is authoritative and must outrank a
+		// runtime-resolved window, matching useAgentUsageListener's precedence.
+		const session = makeSession({ customModel: 'opus[1m]' });
+		const tab = {
+			usageStats: {
+				contextWindow: 200000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		// The `[1m]` marker is resolved synchronously and short-circuits the config
+		// lookup, so the value is 1M from first render; confirm it never yields to
+		// the runtime-resolved window.
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+		// The marker path short-circuits before the agent-config lookup.
+		expect(mockGetConfig).not.toHaveBeenCalled();
+	});
+
 	it('calculates context tokens and usage percentage', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		const session = makeSession();

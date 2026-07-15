@@ -19,7 +19,7 @@
  * "Clear" wipes the focused session's recorded points.
  */
 
-import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Gauge, Minus, X, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import {
@@ -34,6 +34,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { getContextColor } from '../utils/theme';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
+import { useEventListener } from '../hooks/utils/useEventListener';
 
 interface ContextTimelinePanelProps {
 	theme: Theme;
@@ -43,6 +44,8 @@ const PANEL_WIDTH = 360;
 const PANEL_MAX_HEIGHT = 600;
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
+/** The header context gauge that opens this panel; re-queried for its live rect. */
+const HEADER_CONTEXT_WIDGET_SELECTOR = '[data-testid="header-context-widget"]';
 
 /** Position the panel near the element that opened it, clamped to the viewport. */
 function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
@@ -104,6 +107,12 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const closePanel = useContextTimelineStore((s) => s.closePanel);
 	const clearSession = useContextTimelineStore((s) => s.clearSession);
 
+	// Reclamp the anchored position on viewport resize so an open panel never ends
+	// up partly offscreen after the Electron window changes size (anchoredStyle
+	// reads the live window dimensions, so a re-render is all it needs).
+	const [, bumpResizeTick] = useState(0);
+	useEventListener('resize', () => bumpResizeTick((n) => n + 1));
+
 	const sessionName = useSessionStore((s) =>
 		panelSessionId ? s.sessions.find((sess) => sess.id === panelSessionId)?.name : undefined
 	);
@@ -142,11 +151,19 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	const label = sessionName || panelSessionId.slice(0, 8);
 
+	// Prefer the gauge's LIVE rect so the panel stays attached to it through layout
+	// shifts and resizes (the resize listener above forces this re-render); fall
+	// back to the click-time rect if the gauge is no longer in the DOM.
+	const liveAnchor: TimelineAnchorRect | null = anchorRect
+		? (document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR)?.getBoundingClientRect() ??
+			anchorRect)
+		: null;
+
 	return (
 		<div
 			className="fixed z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
 			style={{
-				...(anchorRect ? anchoredStyle(anchorRect) : FALLBACK_STYLE),
+				...(liveAnchor ? anchoredStyle(liveAnchor) : FALLBACK_STYLE),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}

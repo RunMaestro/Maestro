@@ -753,12 +753,18 @@ export class StdoutHandler {
 			reasoningTokens: usage.reasoningTokens,
 		};
 		// Oh My Pi's window is model-dependent and reported per turn, so resolve the
-		// per-turn model against the local `omp models` catalog and let that
-		// authoritative value win over the static per-agent fallback/config (e.g.
-		// so opus's 1M isn't masked by the 200k default). Local runs only; remotes
-		// have their own catalog and keep the configured/fallback window.
-		if (managedProcess.toolType === 'omp' && !managedProcess.sshRemoteId && usage.model) {
-			const resolved = getOmpModelContextWindow(usage.model);
+		// per-turn model against the catalog primed for THIS process's binary + env
+		// (ompModelCatalogKey) and let that authoritative value win over the static
+		// per-agent fallback/config (e.g. so opus's 1M isn't masked by the 200k
+		// default). Local runs only; remotes have their own catalog and keep the
+		// configured/fallback window.
+		if (
+			managedProcess.toolType === 'omp' &&
+			!managedProcess.sshRemoteId &&
+			usage.model &&
+			managedProcess.ompModelCatalogKey
+		) {
+			const resolved = getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey);
 			if (resolved && resolved > 0) {
 				stats.contextWindow = resolved;
 				stats.contextWindowResolved = true;

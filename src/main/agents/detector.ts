@@ -26,7 +26,7 @@ import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
-import { setOmpModelCatalog } from './omp-model-catalog';
+import { setOmpModelCatalog, computeOmpCatalogKey } from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -506,9 +506,11 @@ export class AgentDetector {
 						});
 						return [];
 					}
-					// Feed the context-window catalog off the same call, so the usage
-					// path can resolve a model's real window without a second fetch.
-					setOmpModelCatalog(parsed.models ?? []);
+					// Feed the context-window catalog off the same call, so the usage path
+					// can resolve a model's real window without a second fetch. Key it to
+					// the default identity (this binary, no env overrides) so it warms
+					// only same-config sessions; custom-path/env sessions prime their own.
+					setOmpModelCatalog(parsed.models ?? [], computeOmpCatalogKey(command, undefined));
 					const seen = new Set<string>();
 					const models: string[] = [];
 					for (const entry of parsed.models ?? []) {
