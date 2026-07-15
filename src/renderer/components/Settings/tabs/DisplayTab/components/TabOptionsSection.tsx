@@ -82,7 +82,7 @@ export function TabOptionsSection({
 				<ToggleSettingRow
 					theme={theme}
 					title="Scroll tabs with the mouse wheel"
-					description="When the tab strip overflows, hover over it and scroll the mouse wheel to pan the tabs left and right. Disable to ignore the wheel over the tab bar."
+					description="When the tab strip overflows, hover over it and scroll the mouse wheel to pan the tabs left and right. Disable to stop translating vertical wheel movement into tab scrolling; native horizontal gestures like trackpad swipes are unaffected."
 					checked={tabBarWheelScroll}
 					onChange={setTabBarWheelScroll}
 					ariaLabel="Scroll tabs with the mouse wheel"

@@ -21,6 +21,7 @@ import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
@@ -192,22 +193,30 @@ function TabBarInner({
 	// Pan the horizontally-overflowing tab strip with the mouse wheel. A plain
 	// vertical wheel (deltaY) is translated into horizontal scroll, matching the
 	// VS Code convention; trackpads and Shift+wheel emit deltaX, so we follow
-	// whichever axis the device reports. Attached as a native, non-passive
-	// listener because React's synthetic onWheel runs passively and cannot call
-	// preventDefault — without it the wheel would also scroll an outer container.
-	useEffect(() => {
-		const el = tabBarRef.current;
-		if (!el || !tabBarWheelScroll) return;
-		const handleWheel = (e: WheelEvent) => {
-			if (el.scrollWidth <= el.clientWidth) return; // nothing to pan
+	// whichever axis the device reports. Bound with passive: false because the
+	// handler calls preventDefault(), which passive wheel listeners (the browser
+	// default, and React's synthetic onWheel) are not allowed to do.
+	useEventListener(
+		'wheel',
+		(event) => {
+			const el = tabBarRef.current;
+			if (!el) return;
+			const e = event as WheelEvent;
 			const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
 			if (delta === 0) return;
+			// Only claim the event when the strip can actually move in the delta's
+			// direction. At a clamped edge (or with no overflow at all) the wheel
+			// falls through to the surrounding content instead of being swallowed.
+			// The 1px slack absorbs fractional scrollLeft values.
+			const maxScrollLeft = el.scrollWidth - el.clientWidth;
+			const canPan =
+				maxScrollLeft > 0 && (delta > 0 ? el.scrollLeft < maxScrollLeft - 1 : el.scrollLeft > 1);
+			if (!canPan) return;
 			el.scrollLeft += delta;
 			e.preventDefault();
-		};
-		el.addEventListener('wheel', handleWheel, { passive: false });
-		return () => el.removeEventListener('wheel', handleWheel);
-	}, [tabBarWheelScroll]);
+		},
+		{ target: tabBarRef.current, enabled: tabBarWheelScroll, passive: false }
+	);
 
 	// Filter tabs for display. Memoized so the filter only re-runs when the
 	// inputs actually change - without this, every TabBar render (e.g. on input

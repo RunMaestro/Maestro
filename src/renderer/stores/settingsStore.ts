@@ -2700,8 +2700,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showBrowserTabDomain'] !== undefined)
 			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
 
-		if (allSettings['tabBarWheelScroll'] !== undefined)
-			patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'] as boolean;
+		if (typeof allSettings['tabBarWheelScroll'] === 'boolean')
+			patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'];
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)

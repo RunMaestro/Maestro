@@ -25,6 +25,13 @@ export interface UseEventListenerOptions {
 	 * `false` re-attaches / detaches the listener cleanly. Defaults to `true`.
 	 */
 	enabled?: boolean;
+	/**
+	 * Passed through as `AddEventListenerOptions.passive`. Set to `false` for
+	 * handlers that must call `preventDefault()` on events browsers treat as
+	 * passive by default (wheel, touchstart, touchmove). Left undefined, the
+	 * browser default applies.
+	 */
+	passive?: boolean;
 }
 
 /**
@@ -50,7 +57,11 @@ export function useEventListener(
 	handler: (event: Event) => void,
 	options?: UseEventListenerOptions
 ): void {
-	const { target = typeof window !== 'undefined' ? window : null, enabled = true } = options ?? {};
+	const {
+		target = typeof window !== 'undefined' ? window : null,
+		enabled = true,
+		passive,
+	} = options ?? {};
 
 	// Keep a stable ref to the handler so the effect only re-runs when
 	// eventType / target / enabled change, not on every render where the
@@ -61,9 +72,10 @@ export function useEventListener(
 	useEffect(() => {
 		if (!enabled || !target) return;
 		const listener = (event: Event) => handlerRef.current(event);
-		target.addEventListener(eventType, listener);
+		const listenerOptions = passive === undefined ? undefined : { passive };
+		target.addEventListener(eventType, listener, listenerOptions);
 		return () => {
 			target.removeEventListener(eventType, listener);
 		};
-	}, [eventType, target, enabled]);
+	}, [eventType, target, enabled, passive]);
 }
