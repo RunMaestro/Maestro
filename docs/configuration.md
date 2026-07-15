@@ -177,12 +177,12 @@ agent). The provider for these features is configured under **Settings → LLM**
 **LLM Provider** dropdown, a **Model Slug** field, and an **API Key** field. A **Test
 Connection** button sends a short prompt to verify connectivity and configuration.
 
-| Provider   | Base URL                              | API style        | Example model slug          |
-| ---------- | ------------------------------------- | ---------------- | --------------------------- |
-| OpenRouter | `https://openrouter.ai/api/v1`        | OpenAI-compatible | `anthropic/claude-3.5-sonnet` |
-| Requesty   | `https://router.requesty.ai/v1`       | OpenAI-compatible | `openai/gpt-4o-mini`        |
-| Anthropic  | `https://api.anthropic.com/v1`        | Messages API     | `claude-3-5-sonnet-20241022` |
-| Ollama     | `http://localhost:11434`              | Ollama (local)   | `llama3:latest`             |
+| Provider   | Base URL                        | API style         | Example model slug            |
+| ---------- | ------------------------------- | ----------------- | ----------------------------- |
+| OpenRouter | `https://openrouter.ai/api/v1`  | OpenAI-compatible | `anthropic/claude-3.5-sonnet` |
+| Requesty   | `https://router.requesty.ai/v1` | OpenAI-compatible | `openai/gpt-4o-mini`          |
+| Anthropic  | `https://api.anthropic.com/v1`  | Messages API      | `claude-3-5-sonnet-20241022`  |
+| Ollama     | `http://localhost:11434`        | Ollama (local)    | `llama3:latest`               |
 
 OpenRouter and Requesty both use OpenAI-compatible `provider/model` slugs and a
 `Bearer` API key. For Requesty, create a key at
