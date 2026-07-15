@@ -289,7 +289,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: true,
 		supportsImageInputOnResume: true,
 		supportsSlashCommands: false,
-		supportsSessionStorage: false,
+		supportsSessionStorage: true, // ~/.omp/agent/sessions/<cwd-slug>/*.jsonl (local; SSH is a follow-up)
 		supportsCostTracking: true,
 		supportsUsageStats: true,
 		supportsBatchMode: true,
