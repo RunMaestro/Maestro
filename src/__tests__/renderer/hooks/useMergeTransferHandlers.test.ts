@@ -760,25 +760,26 @@ describe('useMergeTransferHandlers', () => {
 	// ----------------------------------------------------------------
 
 	describe('sub-hook callbacks', () => {
-		it('passes sessions and setSessions to useMergeSessionWithSessions', () => {
+		it('passes setSessions and activeTabId to useMergeSessionWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockMerge = vi.mocked(useMergeSessionWithSessions);
 			const callArgs = mockMerge.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
+			expect(callArgs).toHaveProperty('activeTabId');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 			expect(callArgs).toHaveProperty('onMergeComplete');
 		});
 
-		it('passes sessions and setSessions to useSendToAgentWithSessions', () => {
+		it('passes setSessions to useSendToAgentWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockTransfer = vi.mocked(useSendToAgentWithSessions);
 			const callArgs = mockTransfer.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 		});
