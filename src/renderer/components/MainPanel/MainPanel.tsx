@@ -295,6 +295,7 @@ export const MainPanel = React.memo(
 			activeBrowserTabId,
 			onFileTabSelect,
 			onFileTabClose,
+			onFileTabRename,
 			onNewFileTab,
 			onNewBrowserTab,
 			onBrowserTabSelect,
@@ -1089,6 +1090,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={pianolaView === 'dashboard' ? null : activeBrowserTabId}
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1169,6 +1171,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}

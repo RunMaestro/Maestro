@@ -285,6 +285,25 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
+			// If this is a file preview tab, set a user-assigned name that locks the
+			// displayed label. An empty value clears it, falling back to the filename
+			// (and the ambiguity-disambiguated label) again.
+			if (activeSession.filePreviewTabs?.some((t) => t.id === renameTabId)) {
+				const nextCustomName = newName.trim() || undefined;
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						return {
+							...s,
+							filePreviewTabs: (s.filePreviewTabs || []).map((t) =>
+								t.id === renameTabId ? { ...t, customName: nextCustomName } : t
+							),
+						};
+					})
+				);
+				return;
+			}
+
 			// If this is a browser tab, set a user-assigned name that locks the
 			// displayed label. An empty value clears it, letting the website set the
 			// tab title again. We never touch `title` so the live page title stays

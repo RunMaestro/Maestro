@@ -189,6 +189,7 @@ export interface MainPanelProps {
 	activeBrowserTab?: BrowserTab | null;
 	onFileTabSelect?: (tabId: string) => void;
 	onFileTabClose?: (tabId: string) => void;
+	onFileTabRename?: (tabId: string) => void;
 	onNewFileTab?: () => void;
 	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onBrowserTabSelect?: (tabId: string) => void;

@@ -724,6 +724,26 @@ export function useModalHandlers(
 				actions.setRenameTabInitialName(termTab.name || '');
 				actions.setRenameTabModalOpen(true);
 			}
+		} else if (currentSession.activeFileTabId) {
+			// File tabs keep inputMode 'ai' but outrank the AI tab in render
+			// precedence, so target the visible file tab before falling through.
+			const fileTab = currentSession.filePreviewTabs?.find(
+				(t) => t.id === currentSession.activeFileTabId
+			);
+			if (fileTab) {
+				actions.setRenameTabId(fileTab.id);
+				actions.setRenameTabInitialName(fileTab.customName ?? '');
+				actions.setRenameTabModalOpen(true);
+			}
+		} else if (currentSession.activeBrowserTabId) {
+			const browserTab = currentSession.browserTabs?.find(
+				(t) => t.id === currentSession.activeBrowserTabId
+			);
+			if (browserTab) {
+				actions.setRenameTabId(browserTab.id);
+				actions.setRenameTabInitialName(browserTab.customTitle ?? '');
+				actions.setRenameTabModalOpen(true);
+			}
 		} else if (currentSession.inputMode === 'ai' && currentSession.activeTabId) {
 			const activeTab = currentSession.aiTabs?.find((t) => t.id === currentSession.activeTabId);
 			if (activeTab) {

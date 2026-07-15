@@ -24,7 +24,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab } from '../../helpers/mockTab';
+import { createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 
@@ -543,6 +543,47 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0].browserTabs![0];
 			expect(updated.customTitle).toBeUndefined();
 			expect(updated.title).toBe('Example Domain');
+		});
+
+		it('locks a file tab name via customName without touching name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'service' });
+			const session = createMockSession({ id: 'session-1', filePreviewTabs: [fileTab] });
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'file-1', initialName: '' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('  My File  ');
+			});
+
+			const updated = useSessionStore.getState().sessions[0].filePreviewTabs[0];
+			expect(updated.customName).toBe('My File');
+			// Underlying filename is preserved so it reappears once the name is cleared
+			expect(updated.name).toBe('service');
+		});
+
+		it('clears a file tab custom name when renamed to empty', () => {
+			const fileTab = createMockFileTab({
+				id: 'file-1',
+				name: 'service',
+				customName: 'My File',
+			});
+			const session = createMockSession({ id: 'session-1', filePreviewTabs: [fileTab] });
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'file-1', initialName: 'My File' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('   ');
+			});
+
+			const updated = useSessionStore.getState().sessions[0].filePreviewTabs[0];
+			expect(updated.customName).toBeUndefined();
+			expect(updated.name).toBe('service');
 		});
 
 		it('returns early if no active session', () => {
