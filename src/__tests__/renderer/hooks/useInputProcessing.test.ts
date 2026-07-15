@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-// Mock hasCapabilityCached — batch mode agents should return true for supportsBatchMode
+// Mock hasCapabilityCached - batch mode agents should return true for supportsBatchMode
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 	const actual = await vi.importActual('../../../renderer/hooks/agent/useAgentCapabilities');
 	return {
@@ -519,7 +519,7 @@ describe('useInputProcessing', () => {
 					await result.current.processInput(undefined, { forceParallel: true });
 				});
 
-				// Should enqueue, not dispatch — setting gate prevents the override.
+				// Should enqueue, not dispatch - setting gate prevents the override.
 				expect(mockSetSessions).toHaveBeenCalled();
 				const setSessionsCall = mockSetSessions.mock.calls[0][0];
 				const updatedSessions = setSessionsCall([session]);
@@ -1079,7 +1079,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
-			// Tab is idle — should send immediately, skipping cross-tab wait
+			// Tab is idle - should send immediately, skipping cross-tab wait
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 
@@ -1105,7 +1105,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
-			// Tab is idle — should send immediately, skipping AutoRun wait
+			// Tab is idle - should send immediately, skipping AutoRun wait
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 
@@ -1164,7 +1164,7 @@ describe('useInputProcessing', () => {
 			it('spawn payload includes images from options when text + image', async () => {
 				useSettingsStore.setState({ forcedParallelExecution: true } as any);
 
-				// Active tab idle, another tab busy — Force Send dispatches now.
+				// Active tab idle, another tab busy - Force Send dispatches now.
 				const session = createMockSession({
 					state: 'busy',
 					aiTabs: [
@@ -1176,7 +1176,7 @@ describe('useInputProcessing', () => {
 				const deps = createDeps({
 					activeSession: session,
 					sessionsRef: { current: [session] },
-					inputValue: '', // input is empty — staged images must come from options
+					inputValue: '', // input is empty - staged images must come from options
 					stagedImages: [], // active tab has no staged images at click time
 				});
 				const { result } = renderHook(() => useInputProcessing(deps));
@@ -1218,7 +1218,7 @@ describe('useInputProcessing', () => {
 
 				const queuedImage = 'data:image/png;base64,BBBB';
 
-				// Empty text + image-only — must not bail, must still spawn with images.
+				// Empty text + image-only - must not bail, must still spawn with images.
 				await act(async () => {
 					await result.current.processInput('', {
 						forceParallel: true,
@@ -1247,7 +1247,7 @@ describe('useInputProcessing', () => {
 					activeSession: session,
 					sessionsRef: { current: [session] },
 					inputValue: 'hello',
-					// Tab has a different staged image — Force Send should use the
+					// Tab has a different staged image - Force Send should use the
 					// queued item's images, not whatever's currently staged on the tab.
 					stagedImages: ['data:image/png;base64,STAGED'],
 				});
@@ -1961,7 +1961,7 @@ describe('useInputProcessing', () => {
 			const updater = mockSetSessions.mock.calls[0][0];
 			const [updated] = updater([erroredSession]);
 
-			// Session transitions to busy with AI source — required by thinking pill
+			// Session transitions to busy with AI source - required by thinking pill
 			expect(updated.state).toBe('busy');
 			expect(updated.busySource).toBe('ai');
 			// Prior error fields are wiped so late onAgentError/onExit branches

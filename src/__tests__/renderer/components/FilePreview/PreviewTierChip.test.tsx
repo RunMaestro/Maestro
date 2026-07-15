@@ -127,7 +127,7 @@ describe('PreviewTierChip', () => {
 			});
 
 			it('still describes Auto correctly when an override is active', () => {
-				// Override is Rich; Auto would still pick Fast — the row text
+				// Override is Rich; Auto would still pick Fast - the row text
 				// must reflect Auto behavior, not the override.
 				renderChip({ autoTier: 'fast', override: 'rich' });
 				fireEvent.click(screen.getByTestId('preview-tier-chip-button'));
@@ -273,7 +273,7 @@ describe('PreviewTierChip', () => {
 				/>
 			);
 			// iconOnly mode renders the tooltip via <HoverTooltip>, which mounts
-			// its content into a portal only after mouseenter — so hover the
+			// its content into a portal only after mouseenter - so hover the
 			// wrapper, then assert the portaled tooltip text.
 			const btn = screen.getByTestId('preview-tier-chip-button');
 			fireEvent.mouseEnter(btn.parentElement as HTMLElement);

@@ -2,7 +2,7 @@
 //
 // Vite's `define` inlines `process.env.NODE_ENV` at build time, but bundled
 // vendor libs (e.g. Sentry, prop-types, scheduler) read other keys at runtime
-// — `process.env.SENTRY_RELEASE`, `process.platform`, `typeof process`, etc.
+// - `process.env.SENTRY_RELEASE`, `process.platform`, `typeof process`, etc.
 // Without `process` defined, those throw `ReferenceError: process is not
 // defined` in the renderer sandbox (MAESTRO-K8). Setting it to a benign stub
 // before any module loads lets those reads return `undefined` instead.

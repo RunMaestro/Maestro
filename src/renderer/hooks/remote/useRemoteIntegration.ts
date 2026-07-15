@@ -93,7 +93,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				force?: boolean,
 				images?: string[]
 			) => {
-				// Log metadata only at info level — remote commands can carry
+				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
 				// main process applies in web-server-factory; the truncated
 				// preview moves to debug, which only opted-in users enable.
@@ -356,7 +356,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "new AI tab with prompt" from CLI (send --live --new-tab).
 		// Atomically creates a fresh AI tab, makes it active, and dispatches the
 		// prompt through the same maestro:remoteCommand event path that --live
-		// uses — so downstream spawn/history/state flows are identical.
+		// uses - so downstream spawn/history/state flows are identical.
 		// flushSync forces React to commit the new tab as active before we fire
 		// the event; without it the downstream handler reads stale activeTabId
 		// and writes the prompt into the previously-active tab.
@@ -408,7 +408,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 				// Pass the new tab id explicitly so the renderer writes into the tab
-				// we just created — without it, useRemoteHandlers would fall back to
+				// we just created - without it, useRemoteHandlers would fall back to
 				// activeTabId, which is correct here but would race in any future
 				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
@@ -602,7 +602,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				clickAction,
 			} = params;
 			// Resolve agent metadata for the header strip. Only stamp a tab on
-			// the toast when the caller explicitly passed one — otherwise the
+			// the toast when the caller explicitly passed one - otherwise the
 			// agent's currently-focused tab would leak onto every agent-scoped
 			// toast (e.g. cron-fired notifications), which is misleading.
 			// An explicit `sourceAgent` label wins over the store-resolved name:
@@ -791,7 +791,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle remote set Auto Run folder from web interface — repoints a session
+	// Handle remote set Auto Run folder from web interface - repoints a session
 	// at a different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
 	// + `handleAutoRunFolderSelected` flow.
 	useEffect(() => {
@@ -1337,7 +1337,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				} catch (error) {
 					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
 					logger.error('[Remote Cue Trigger] Failed:', undefined, [subscriptionName, error]);
-					// Never send the raw prompt to telemetry — remote-triggered
+					// Never send the raw prompt to telemetry - remote-triggered
 					// Cue prompts can carry user-authored content with PII or
 					// secrets. Send length/presence so we can correlate failures
 					// against payload size without leaking the body.
@@ -1411,7 +1411,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const message = error instanceof Error ? error.message : String(error);
 					// Known recoverable modes (session missing, empty history, `gh`
 					// not installed/authenticated) already returned above as
-					// structured results. Anything that lands here is unexpected —
+					// structured results. Anything that lands here is unexpected -
 					// report to Sentry without the transcript/description/filename,
 					// which can carry PII/secrets.
 					captureException(error, {

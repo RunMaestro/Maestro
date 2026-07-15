@@ -1,5 +1,5 @@
 /**
- * getSvgPathFromStroke — Canonical helper from perfect-freehand's README.
+ * getSvgPathFromStroke - Canonical helper from perfect-freehand's README.
  *
  * Converts the outline-points array returned by `getStroke()` into an SVG
  * `d` attribute string using quadratic Bézier curves between midpoints,

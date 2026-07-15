@@ -1051,14 +1051,14 @@ describe('error-patterns', () => {
 		});
 
 		it('skips the regex bank for chunks shorter than the threshold', () => {
-			// "abc" is 3 chars — below threshold. Even if the patterns somehow
+			// "abc" is 3 chars - below threshold. Even if the patterns somehow
 			// matched, the length guard short-circuits before any regex runs.
 			const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'abc');
 			expect(result).toBeNull();
 		});
 
 		it('honors a caller-supplied minLength override (0 disables the guard)', () => {
-			// "rate limit" — would match rate_limited under the default guard
+			// "rate limit" - would match rate_limited under the default guard
 			// because it's 10 chars. With minLength: 0 the same behavior holds;
 			// just verifying the option is wired.
 			const noGuard = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
@@ -1069,7 +1069,7 @@ describe('error-patterns', () => {
 		});
 
 		it('honors a caller-supplied minLength that is higher than default', () => {
-			// "rate limit exceeded" is 19 chars — well above default. Pass a
+			// "rate limit exceeded" is 19 chars - well above default. Pass a
 			// minLength of 100 to force the guard to short-circuit.
 			const guarded = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
 				minLength: 100,

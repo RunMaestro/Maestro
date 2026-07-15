@@ -140,7 +140,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * the arbitrary-code-execution-grade act verbs: a grant names EXACTLY which
  * agent ids / host-blessed binary names are permitted (set membership, never
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
- * DENIED — the opposite of path/host, where unscoped means broadest.
+ * DENIED - the opposite of path/host, where unscoped means broadest.
  */
 type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
 
@@ -222,7 +222,7 @@ export interface PermissionRequest {
 	 * plugin asks for the unscoped (broadest) form, which the consent UI must
 	 * present as such. For allowlist capabilities the scope is a comma-separated
 	 * list of EXACT names (agent ids / host-blessed binary names) and is
-	 * REQUIRED — an unscoped act-verb request is a wildcard and is rejected.
+	 * REQUIRED - an unscoped act-verb request is a wildcard and is rejected.
 	 */
 	scope?: string;
 	/** Optional human-readable justification shown at the consent prompt. */
@@ -366,14 +366,14 @@ function hostScopeCovers(scope: string, target: string): boolean {
 /**
  * Characters that could smuggle pattern semantics or confuse audit logs out of
  * an allowlist member name. Allowlist members are opaque EXACT tokens (agent
- * ids, host-blessed binary names) — never patterns, paths, or shell text.
+ * ids, host-blessed binary names) - never patterns, paths, or shell text.
  */
 const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0]/;
 
 /**
  * Parse an allowlist scope string into its member set: comma-separated EXACT
  * names, trimmed, empties dropped. Returns null when the scope is absent or
- * yields no valid members (which callers must treat as deny — an act-verb
+ * yields no valid members (which callers must treat as deny - an act-verb
  * grant without named members is a wildcard and is forbidden).
  */
 export function parseAllowlistScope(scope: string | undefined): readonly string[] | null {
@@ -405,7 +405,7 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 }
 
 /**
- * Does an allowlist `scope` cover `target`? EXACT set membership only —
+ * Does an allowlist `scope` cover `target`? EXACT set membership only -
  * case-sensitive string equality against the parsed member set. No substring,
  * no prefix, no wildcard, no case folding. An absent/empty scope covers
  * nothing (an act-verb grant must name its targets).
@@ -485,7 +485,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
-			return 'Make the named agents run on its behalf — agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
+			return 'Make the named agents run on its behalf - agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
 		case 'notifications:toast':
 			return 'Show notifications';
 		case 'settings:read':
@@ -517,7 +517,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'shell:openExternal':
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
-			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
+			return 'Run the named host-approved programs on your machine - this is ARBITRARY CODE EXECUTION (not just "run a command")';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':
@@ -537,7 +537,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
-			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
+			return "Render its own custom UI with full access to Maestro's interface (advanced - only enable for authors you fully trust)";
 	}
 }
 

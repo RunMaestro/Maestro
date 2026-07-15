@@ -19,7 +19,7 @@
  *
  * Section-body rendering (labels, slider, markers) is covered by the section
  * component suite; the config hooks are covered by the hooks suite. This suite
- * does NOT restate either — it defends only the tab's wiring + integration.
+ * does NOT restate either - it defends only the tab's wiring + integration.
  */
 
 import React from 'react';
@@ -274,7 +274,7 @@ describe('EncoreTab', () => {
 			expect(screen.getByTestId('settings-body-symphony')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-maestroCue')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-directorNotes')).toBeInTheDocument();
-			// Pianola configures via its own modal — no inline body in the map.
+			// Pianola configures via its own modal - no inline body in the map.
 			expect(screen.queryByTestId('settings-body-pianola')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('settings-body-plugins')).not.toBeInTheDocument();
 		});

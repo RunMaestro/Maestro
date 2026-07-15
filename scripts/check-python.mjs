@@ -1,7 +1,7 @@
 // Warn early if the Python that node-gyp will pick up is 3.12+ without
 // `setuptools` installed. node-gyp (pulled in transitively by better-sqlite3
 // and node-pty) still imports `distutils`, which was removed from the
-// standard library in Python 3.12 — so package installs die with
+// standard library in Python 3.12 - so package installs die with
 // `ModuleNotFoundError: No module named 'distutils'` during the postinstall
 // electron-rebuild step. See https://github.com/RunMaestro/Maestro/issues/170.
 
@@ -28,7 +28,7 @@ function resolvePython() {
 
 const python = resolvePython();
 if (!python) {
-	// No Python found — let node-gyp raise its own error if it actually needs one.
+	// No Python found - let node-gyp raise its own error if it actually needs one.
 	process.exit(0);
 }
 
@@ -58,7 +58,7 @@ console.warn(
 		`${yellow}${bold}[maestro] Python toolchain warning${reset}`,
 		`  Detected ${python.raw} at '${python.bin}', but \`setuptools\` is not installed.`,
 		`  node-gyp (via better-sqlite3 / node-pty) still imports \`distutils\`, which was`,
-		`  removed from Python's standard library in 3.12 — your install is likely to fail`,
+		`  removed from Python's standard library in 3.12 - your install is likely to fail`,
 		`  during the electron-rebuild postinstall step with:`,
 		`    ModuleNotFoundError: No module named 'distutils'`,
 		'',
@@ -70,5 +70,5 @@ console.warn(
 		'',
 	].join('\n')
 );
-// Warn only — don't block installs for users who know what they're doing.
+// Warn only - don't block installs for users who know what they're doing.
 process.exit(0);

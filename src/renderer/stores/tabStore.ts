@@ -4,10 +4,10 @@
  * Tab DATA (aiTabs, filePreviewTabs, unifiedTabOrder, etc.) lives inside Session
  * objects in sessionStore. This store provides:
  *
- * 1. Tab operation actions — wrap tabHelpers.ts pure functions + sessionStore mutations,
+ * 1. Tab operation actions - wrap tabHelpers.ts pure functions + sessionStore mutations,
  *    replacing ~43 callbacks currently threaded through App.tsx props
- * 2. Tab-specific UI state — gist content/URLs (the only tab state still in App.tsx)
- * 3. Selectors — derived tab state (activeTab, activeFileTab, unifiedTabs)
+ * 2. Tab-specific UI state - gist content/URLs (the only tab state still in App.tsx)
+ * 3. Selectors - derived tab state (activeTab, activeFileTab, unifiedTabs)
  *
  * Why tab data stays in sessionStore:
  * - Tab arrays are deeply embedded in the Session type (200+ call sites)

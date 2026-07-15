@@ -161,12 +161,12 @@ This codebase uses **tabs for indentation**, not spaces. Always match existing f
 
 ### Writing Style: No Em-Dashes or En-Dashes
 
-**NEVER use em-dashes (`—`, U+2014) or en-dashes (`–`, U+2013) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em-dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
+**NEVER use U+2014 (em dash) or U+2013 (en dash) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
 
 - A spaced hyphen (`-`) for an aside or appositive.
 - A comma, colon, or parentheses to set off a clause.
 - Two separate sentences when the clauses stand on their own.
-- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`, not `10–20`).
+- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`; do not use U+2013 for ranges).
 
 This is non-negotiable. If you catch an em-dash or en-dash in anything you produce or edit, replace it.
 

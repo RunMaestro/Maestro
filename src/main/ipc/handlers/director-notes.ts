@@ -73,7 +73,7 @@ async function countAgentsAndSessions(
 ): Promise<{ agentCount: number; sessionCount: number }> {
 	const agentSet = new Set<string>();
 	const providerSessionSet = new Set<string>();
-	// Parallel reads — independent files. Falls through to flat() so we can
+	// Parallel reads - independent files. Falls through to flat() so we can
 	// associate each result with its sessionId in the loop below.
 	const allEntriesArrays = await Promise.all(
 		sessionIds.map((sid) => historyManager.getEntries(sid))
@@ -266,7 +266,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 			> => {
 				const { lookbackDays, filter, limit, offset, graphBucketCount } = options;
 				const now = Date.now();
-				// lookbackDays <= 0 means "all time" — no cutoff
+				// lookbackDays <= 0 means "all time" - no cutoff
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
 				// Get all session IDs from history manager
@@ -417,10 +417,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				// Stats need session/agent counts that aren't part of the bucket
 				// aggregate. Compute them once per cache miss; on hit, derive
 				// what we can from the cached aggregate and re-walk only when
-				// stats are stale (rare — they invalidate with the buckets).
+				// stats are stale (rare - they invalidate with the buckets).
 				const hit = await cache.get(cacheKey, fp);
 				if (hit) {
-					// agent/session counts aren't in the cache schema — re-walk
+					// agent/session counts aren't in the cache schema - re-walk
 					// once. Cheap relative to bucketing.
 					const { agentCount, sessionCount } = await countAgentsAndSessions(
 						historyManager,
@@ -466,7 +466,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				}
 
 				const agg = buildBucketAggregate(allEntries, safeBucketCount, { lookbackMs });
-				// Fire-and-forget the disk write — the renderer doesn't need to
+				// Fire-and-forget the disk write - the renderer doesn't need to
 				// wait for it; the in-memory cache layer was already updated.
 				void cache.set({
 					version: HISTORY_BUCKET_CACHE_VERSION,
@@ -560,14 +560,14 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const { lookbackDays } = options;
 				const bucketCount = Math.max(1, (options.bucketCount ?? 24) | 0);
 				const now = Date.now();
-				// lookbackDays <= 0 means "all time" — no cutoff (matches getUnifiedHistory).
+				// lookbackDays <= 0 means "all time" - no cutoff (matches getUnifiedHistory).
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 				const lookbackMs = lookbackDays > 0 ? lookbackDays * 24 * 60 * 60 * 1000 : null;
 
 				const sessionIds = await historyManager.listSessionsWithHistory();
 				const sessionNameMap = buildSessionNameMap();
 
-				// Parallel reads — independent files.
+				// Parallel reads - independent files.
 				const sessionEntries = await Promise.all(
 					sessionIds.map((sid) => historyManager.getEntries(sid))
 				);

@@ -316,7 +316,7 @@ export function useAgentConfiguration(
 		}
 	}, [agentFilter]);
 
-	// Handle agent selection change — resets customizations and agent-scoped state
+	// Handle agent selection change - resets customizations and agent-scoped state
 	const handleAgentChange = useCallback(
 		(agentId: string) => {
 			// Invalidate any in-flight loadAgentConfig requests

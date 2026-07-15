@@ -49,7 +49,7 @@ export function useAgentSessionsResume({
 			e.stopPropagation();
 			const isStarred = starredSessions.has(session.sessionId);
 			const usageStats = buildUsageStats(session);
-			// Empty messages array — history loads lazily when the live tab opens
+			// Empty messages array - history loads lazily when the live tab opens
 			onResumeSession(session.sessionId, [], session.sessionName, isStarred, usageStats);
 			onClose();
 		},

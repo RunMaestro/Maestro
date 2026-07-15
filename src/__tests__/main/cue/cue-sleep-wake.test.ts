@@ -162,7 +162,7 @@ describe('CueEngine sleep/wake detection', () => {
 		const callCount = mockUpdateHeartbeat.mock.calls.length;
 		engine.stop();
 
-		// Advance time — no more heartbeats should fire
+		// Advance time - no more heartbeats should fire
 		vi.advanceTimersByTime(60_000);
 		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(callCount);
 	});

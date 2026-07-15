@@ -3,7 +3,7 @@
  * @description End-to-end-ish integration test for Goal-Driven Auto Run.
  *
  * Drives a goal run through the *public* `useBatchProcessor.startBatchRun` entry
- * point — the same surface the UI calls — with a `goalConfig` and a mocked agent
+ * point - the same surface the UI calls - with a `goalConfig` and a mocked agent
  * whose `<!-- maestro:progress N -->` markers climb to 100%. Unlike the focused
  * `useGoalRunner` unit test, this exercises the full routing + reducer +
  * broadcast + time-tracking wiring and asserts the externally observable
@@ -246,7 +246,7 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 	});
 
 	it('stops a flat run with goalExitReason "stalled" and fires onComplete once', async () => {
-		// Agent never moves the needle off 50% — STALL_THRESHOLD (3) flat
+		// Agent never moves the needle off 50% - STALL_THRESHOLD (3) flat
 		// iterations must trip the stall exit instead of looping forever.
 		mockOnSpawnAgent.mockResolvedValue({
 			success: true,

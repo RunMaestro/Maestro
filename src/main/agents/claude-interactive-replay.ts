@@ -9,7 +9,7 @@
  *
  * Flow on exit code 2:
  *   (a) refresh the `claudeUsageStore` snapshot for the relevant
- *       `configDirKey` (best-effort — failures don't block replay);
+ *       `configDirKey` (best-effort - failures don't block replay);
  *   (b) persist `session.claudeInteractive = { mode: 'api',
  *       modeReason: 'limit' }` via the injected write-through;
  *   (c) re-emit `process:claude-mode-resolved` so the renderer mirror
@@ -20,7 +20,7 @@
  * Replay-once semantics: the exit listener removes itself before running
  * the flow, so a duplicate `exit` (process manager re-fires, hook errors,
  * etc.) cannot re-trigger the replay. The replay's own spawn is a
- * fresh, non-interactive turn — it does not re-register the controller.
+ * fresh, non-interactive turn - it does not re-register the controller.
  *
  * Pure-EventEmitter API: the controller takes an `EventEmitter` and a
  * handful of pure-function callbacks, with no electron / electron-store
@@ -33,7 +33,7 @@ import { EventEmitter } from 'events';
 /**
  * Per-session replay context, captured when an interactive turn is spawned.
  *
- * `prompt` is the user-message text the interactive turn was launched with —
+ * `prompt` is the user-message text the interactive turn was launched with -
  * the controller passes it back into the API-mode replay so the user's
  * intent is preserved through the mode swap.
  *
@@ -68,7 +68,7 @@ export interface ResolvedResolution {
 	configDirKey: string;
 }
 
-/** Minimal logger shape — passed in so we don't import the main-process logger. */
+/** Minimal logger shape - passed in so we don't import the main-process logger. */
 export interface ReplayLogger {
 	debug?(message: string, ...args: unknown[]): void;
 	info?(message: string, ...args: unknown[]): void;
@@ -80,7 +80,7 @@ export interface InteractiveReplayDeps<TSpawnConfig> {
 	emitter: EventEmitter;
 	/**
 	 * Trigger an immediate `sampleUsage()` refresh for the relevant config
-	 * dir. Failures must not abort the replay flow — a stale snapshot is
+	 * dir. Failures must not abort the replay flow - a stale snapshot is
 	 * acceptable so long as the user's prompt still lands.
 	 */
 	sampleUsage(configDirKey: string): Promise<void>;
@@ -184,13 +184,13 @@ export function createInteractiveReplayController<TSpawnConfig>(
 		ctx: InteractiveReplayContext<TSpawnConfig>
 	): Promise<void> {
 		// (a) Refresh the usage snapshot in the BACKGROUND. It only feeds the usage
-		// dashboard and the next turn's resolver — the replay spawn below does not
+		// dashboard and the next turn's resolver - the replay spawn below does not
 		// depend on it. Awaiting it here blocked re-sending the user's prompt on a
 		// `maestro-p --status` spawn (which can take ~30s), so a limit-hit Dynamic
 		// turn looked like it produced no response for half a minute after the
 		// mode-switch banner. Fire-and-forget so the API replay spawns immediately.
 		// Wrapped in Promise.resolve().then() so a SYNCHRONOUS throw from
-		// sampleUsage funnels into the same .catch() as an async rejection — a bare
+		// sampleUsage funnels into the same .catch() as an async rejection - a bare
 		// `sampleUsage().catch()` would let a sync throw escape as an unhandled error.
 		void Promise.resolve()
 			.then(() => deps.sampleUsage(ctx.configDirKey))

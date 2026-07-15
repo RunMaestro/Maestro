@@ -540,7 +540,7 @@ describe('tabStore', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			setupSessionWithTabs([tab1]);
 
-			// Out of bounds — should be a no-op
+			// Out of bounds - should be a no-op
 			useTabStore.getState().reorderTabs(0, 5);
 			useTabStore.getState().reorderTabs(-1, 0);
 

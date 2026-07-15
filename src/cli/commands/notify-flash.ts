@@ -1,4 +1,4 @@
-// Notify-flash command — show a center-screen flash in the Maestro desktop app.
+// Notify-flash command - show a center-screen flash in the Maestro desktop app.
 
 import { withMaestroClient } from '../services/maestro-client';
 
@@ -12,7 +12,7 @@ interface NotifyFlashOptions {
 const ALLOWED_COLORS = ['green', 'yellow', 'orange', 'red', 'theme'] as const;
 type AllowedColor = (typeof ALLOWED_COLORS)[number];
 
-/** Hard cap for CLI-triggered flashes — keep external notifications brief. */
+/** Hard cap for CLI-triggered flashes - keep external notifications brief. */
 const MAX_TIMEOUT_SECONDS = 5;
 
 export async function notifyFlash(message: string, options: NotifyFlashOptions): Promise<void> {

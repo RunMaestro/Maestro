@@ -66,7 +66,7 @@ export function ExecutionQueueBrowser({
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
 	// The queued item currently being edited (with its owning session), or null.
 	// While set, this browser suspends its own Escape layer so the edit modal's
-	// layer stack (edit < lightbox < annotator) resolves Escape correctly — the
+	// layer stack (edit < lightbox < annotator) resolves Escape correctly - the
 	// browser sits at a much higher priority (670) than the edit modal (145).
 	const [editing, setEditing] = useState<{ sessionId: string; item: QueuedItem } | null>(null);
 	// Drag-to-reorder orchestration shared with the inline queued-items list.
@@ -316,7 +316,7 @@ export function ExecutionQueueBrowser({
 				</div>
 			</div>
 
-			{/* Edit modal — rendered outside the card so a click inside it doesn't
+			{/* Edit modal - rendered outside the card so a click inside it doesn't
 			    bubble to the backdrop's onClick (which would close the browser).
 			    Stops propagation so backdrop clicks behind it are also contained. */}
 			{editing && onEditItem && (

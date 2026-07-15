@@ -1,5 +1,5 @@
 /**
- * Tests for shared/directorNotesNarrative.ts — the Director's Notes structured
+ * Tests for shared/directorNotesNarrative.ts - the Director's Notes structured
  * narrative parser.
  *
  * `parseDirectorNotesNarrative` is the single source of truth for turning the

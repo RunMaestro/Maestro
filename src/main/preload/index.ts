@@ -206,7 +206,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// App lifecycle API
 	app: createAppApi(),
 
-	// Synchronous platform string — process.platform never changes at runtime
+	// Synchronous platform string - process.platform never changes at runtime
 	platform: process.platform,
 
 	// Resolved on-disk maestro-cli.js path (dev vs packaged), or null. Used by
@@ -234,7 +234,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
-	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)
@@ -259,7 +259,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Browser Session API (clear per-partition browsing data)
 	browserSession: createBrowserSessionApi(),
 
-	// Multi-window API (window.maestro.windows.* — enumerate/create/move windows)
+	// Multi-window API (window.maestro.windows.* - enumerate/create/move windows)
 	windows: createWindowsApi(),
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)

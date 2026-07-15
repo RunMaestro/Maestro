@@ -1,5 +1,5 @@
 /**
- * Agent Metadata — Shared display names and classification sets.
+ * Agent Metadata - Shared display names and classification sets.
  *
  * This module provides UI-facing metadata that is safe to import from both
  * the main process and the renderer (via shared/).  All agent display names

@@ -460,7 +460,7 @@ describe('UsageDashboardModal', () => {
 		});
 	});
 
-	// The drill-down filter feature was removed — the dashboard no longer
+	// The drill-down filter feature was removed - the dashboard no longer
 	// renders a filter bar or a clickable filter affordance on chart rows.
 
 	describe('View Mode Tabs', () => {
@@ -1782,7 +1782,7 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Click on the "Agents" tab by name — its index drifted when
+			// Click on the "Agents" tab by name - its index drifted when
 			// "Agent Overview" was inserted above it, so look up by label.
 			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
@@ -1847,7 +1847,7 @@ describe('UsageDashboardModal', () => {
 			lastSection.focus();
 			fireEvent.keyDown(lastSection, { key: 'Home' });
 
-			// Should focus first section (year-in-pixels — added as the new hero strip)
+			// Should focus first section (year-in-pixels - added as the new hero strip)
 			await waitFor(() => {
 				expect(document.activeElement).toBe(screen.getByTestId('section-year-in-pixels'));
 			});
@@ -1899,7 +1899,7 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to the "Agents" tab by name — index-based clicks broke
+			// Switch to the "Agents" tab by name - index-based clicks broke
 			// when "Agent Overview" was inserted above it.
 			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 

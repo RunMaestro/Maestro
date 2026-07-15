@@ -147,7 +147,7 @@ describe('setupPluginEventListener', () => {
 
 	describe('agent.completed (FC4 terminal event)', () => {
 		it('emits beside agent.exited with minimal payload when no metadata is known', () => {
-			const pm = makePm(); // get() returns undefined — process already gone
+			const pm = makePm(); // get() returns undefined - process already gone
 			const emit = vi.fn<(e: PluginEvent) => void>();
 			setupPluginEventListener(pm, { emitPluginEvent: emit });
 
@@ -207,7 +207,7 @@ describe('setupPluginEventListener', () => {
 				durationMs: expect.any(Number),
 			});
 			expect(completedPayloads(emit)[0].durationMs).toBeGreaterThanOrEqual(5000);
-			// Metadata only — no output/content field may survive.
+			// Metadata only - no output/content field may survive.
 			expect(JSON.stringify(completed.payload)).not.toMatch(SECRET_MARKER);
 		});
 

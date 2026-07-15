@@ -142,7 +142,7 @@ describe('buildCueRunSummary', () => {
 			}),
 		});
 		expect(buildCueRunSummary(result)).toBe(
-			'"Maestro" · rc #2 — #891 Feature: Support arbitrary CLI agents'
+			'"Maestro" · rc #2 - #891 Feature: Support arbitrary CLI agents'
 		);
 	});
 
@@ -157,7 +157,7 @@ describe('buildCueRunSummary', () => {
 			}),
 		});
 		expect(buildCueRunSummary(result)).toBe(
-			'"PR Triage Main" · rc #2 — #891 Feature: Support arbitrary CLI agents'
+			'"PR Triage Main" · rc #2 - #891 Feature: Support arbitrary CLI agents'
 		);
 	});
 
@@ -168,7 +168,7 @@ describe('buildCueRunSummary', () => {
 			pipelineName: undefined,
 			event: makeEvent({ type: 'agent.completed', payload: { sourceSession: 'builder' } }),
 		});
-		expect(buildCueRunSummary(result)).toBe('"Maestro" · rc (fan-in) — from builder');
+		expect(buildCueRunSummary(result)).toBe('"Maestro" · rc (fan-in) - from builder');
 	});
 
 	it('handles fan-in tracker colon-keyed names by taking the first segment', () => {
@@ -268,7 +268,7 @@ describe('extractCueOutputExcerpt', () => {
 	it('handles bullet-list output by treating list lines as a single flowed sentence', () => {
 		// stripMarkdown turns "- item" into "- item"; whitespace normalization
 		// joins the lines. Without terminal punctuation, the whole thing reads
-		// as one "sentence" — verify we still return something useful and don't
+		// as one "sentence" - verify we still return something useful and don't
 		// crash.
 		const stdout = '# Briefing\n\n- Item one\n- Item two\n- Item three';
 		const out = extractCueOutputExcerpt(stdout, { maxChars: 240 });

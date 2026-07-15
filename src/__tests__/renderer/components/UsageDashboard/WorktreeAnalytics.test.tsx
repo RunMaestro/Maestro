@@ -97,9 +97,9 @@ describe('WorktreeAnalytics', () => {
 	});
 
 	describe('ratio badge', () => {
-		it('shows an em dash when no agents exist', () => {
+		it('shows a hyphen placeholder when no agents exist', () => {
 			render(<WorktreeAnalytics sessions={[]} data={buildData()} theme={theme} />);
-			expect(screen.getByTestId('worktree-ratio-badge').textContent).toBe('—');
+			expect(screen.getByTestId('worktree-ratio-badge').textContent).toBe('-');
 		});
 
 		it('shows the worktree-to-parent ratio with two decimals', () => {

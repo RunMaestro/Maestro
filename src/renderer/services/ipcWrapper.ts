@@ -91,7 +91,7 @@ export type IpcMethodOptions<T> = IpcMethodOptionsWithDefault<T> | IpcMethodOpti
 export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<T> {
 	// Only catch the IPC call itself. The previous shape wrapped the transform
 	// in the same try/catch, which silently converted programmer errors in
-	// transform() into the swallow-path defaultValue — masking real bugs. The
+	// transform() into the swallow-path defaultValue - masking real bugs. The
 	// transform now runs outside the catch so its exceptions propagate.
 	let result: T;
 	try {
@@ -103,7 +103,7 @@ export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<
 			throw error;
 		}
 		// Swallow path: the caller never sees this error, so report it to
-		// Sentry here — otherwise IPC failures behind read methods (return
+		// Sentry here - otherwise IPC failures behind read methods (return
 		// default on error) would be invisible in production.
 		void captureException(error, { extra: { context: options.errorContext } });
 		return options.defaultValue as T;

@@ -1,10 +1,10 @@
 /**
- * Tests for shouldDropSentryEvent — the shared classifier used by both the
+ * Tests for shouldDropSentryEvent - the shared classifier used by both the
  * main and renderer Sentry initializers to suppress noise events we cannot
  * fix from inside the app.
  *
  * Strategy: one representative event per documented category gets dropped,
- * and a "real bug" exception passes through. Don't enumerate every regex —
+ * and a "real bug" exception passes through. Don't enumerate every regex -
  * the file's comment block is authoritative on which categories exist; we
  * just confirm the dispatch table works.
  */
@@ -163,7 +163,7 @@ describe('shouldDropSentryEvent', () => {
 		// Regression (MAESTRO-MR): MarketplaceFetchError carries the original failure
 		// as its `cause`, so Sentry's LinkedErrors integration ships TWO exception
 		// values ordered root-cause-first. The classifier used to read values[0]
-		// only, saw the bare `TypeError: fetch failed`, and let the event through —
+		// only, saw the bare `TypeError: fetch failed`, and let the event through -
 		// the rule above looked correct but never fired in the field.
 		it('drops marketplace fetch failures when Sentry expanded the cause chain', () => {
 			expect(

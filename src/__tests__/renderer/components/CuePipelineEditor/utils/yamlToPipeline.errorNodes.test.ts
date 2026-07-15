@@ -21,7 +21,7 @@ function errorNodes(nodes: PipelineNode[]): PipelineNode[] {
 	return nodes.filter((n) => n.type === 'error');
 }
 
-describe('yamlToPipeline — error nodes for unresolved agents', () => {
+describe('yamlToPipeline - error nodes for unresolved agents', () => {
 	it('emits a missing-target error node when agent_id references a deleted session (initial trigger)', () => {
 		const subs: CueSubscription[] = [
 			{
@@ -131,7 +131,7 @@ describe('yamlToPipeline — error nodes for unresolved agents', () => {
 				agent_id: 'sess-down',
 			},
 		];
-		// ID misses but name matches a live session (different uuid — a
+		// ID misses but name matches a live session (different uuid - a
 		// recreated agent that reused the name). We must NOT silently adopt
 		// it as the resolved source.
 		const sessions = makeSessions([
@@ -214,7 +214,7 @@ describe('yamlToPipeline — error nodes for unresolved agents', () => {
 				agent_id: 'sess-c',
 			},
 		];
-		// Reversed order — chain-2 first, then chain-1, then trigger.
+		// Reversed order - chain-2 first, then chain-1, then trigger.
 		const subs2: CueSubscription[] = [subs1[2], subs1[1], subs1[0]];
 
 		const sessions = makeSessions([
@@ -275,7 +275,7 @@ describe('yamlToPipeline — error nodes for unresolved agents', () => {
 				source_session: ['Up'],
 				source_session_ids: ['sess-up'],
 				// References a subscription that does NOT exist in this
-				// pipeline — must produce an error node, NOT a phantom agent.
+				// pipeline - must produce an error node, NOT a phantom agent.
 				source_sub: ['Stale Ghost Sub'],
 				agent_id: 'sess-down',
 			},
@@ -305,7 +305,7 @@ describe('yamlToPipeline — error nodes for unresolved agents', () => {
 	});
 
 	it('emits a missing-source error node for a command-target chain when source_sub is unknown', () => {
-		// Same regression as above for the command-action branch — the new
+		// Same regression as above for the command-action branch - the new
 		// `!knownSubNames.has(subRef)` guard exists in two places in
 		// `yamlToPipeline.ts` and both should be locked in.
 		const subs: CueSubscription[] = [

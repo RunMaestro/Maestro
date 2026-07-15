@@ -218,7 +218,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					windowStateStore.set('isMaximized', isMaximized);
 					windowStateStore.set('isFullScreen', isFullScreen);
 				} catch {
-					// Ignore ENFILE/ENOSPC errors during window close — non-critical
+					// Ignore ENFILE/ENOSPC errors during window close - non-critical
 				}
 			};
 

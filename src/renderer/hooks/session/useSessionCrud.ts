@@ -1,5 +1,5 @@
 /**
- * useSessionCrud — extracted from App.tsx
+ * useSessionCrud - extracted from App.tsx
  *
  * Handles session create/read/update/delete operations:
  *   - addNewSession (opens modal)
@@ -99,7 +99,7 @@ export interface UseSessionCrudReturn {
 	handleCreateGroupAndMove: (sessionId: string) => void;
 	/** Clears a pending move when the create-group modal is cancelled. */
 	clearPendingMoveToGroup: () => void;
-	/** Callback when a group is created — moves pending session to it */
+	/** Callback when a group is created - moves pending session to it */
 	handleGroupCreated: (groupId: string) => void;
 	/** The session ID pending move to a newly created group */
 	pendingMoveToGroupSessionId: string | null;
@@ -137,14 +137,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	);
 
 	// ========================================================================
-	// addNewSession — opens the new agent choice modal (Manual vs Wizard)
+	// addNewSession - opens the new agent choice modal (Manual vs Wizard)
 	// ========================================================================
 	const addNewSession = useCallback(() => {
 		useModalStore.getState().openModal('newAgentChoice');
 	}, []);
 
 	// ========================================================================
-	// createNewSession — core session creation logic
+	// createNewSession - core session creation logic
 	// ========================================================================
 	const createNewSession = useCallback(
 		async (
@@ -337,7 +337,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	);
 
 	// ========================================================================
-	// deleteSession — opens the delete agent confirmation modal
+	// deleteSession - opens the delete agent confirmation modal
 	// ========================================================================
 	const deleteSession = useCallback(
 		(id: string) => {
@@ -349,7 +349,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	);
 
 	// ========================================================================
-	// deleteWorktreeGroup — removes group + all agents
+	// deleteWorktreeGroup - removes group + all agents
 	// ========================================================================
 	const deleteWorktreeGroup = useCallback(
 		(groupId: string) => {
@@ -377,7 +377,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						} catch (error) {
 							logger.error('Failed to kill terminal process:', undefined, error);
 						}
-						// Kill terminal tab PTYs — each tab has its own PTY
+						// Kill terminal tab PTYs - each tab has its own PTY
 						for (const tab of session.terminalTabs || []) {
 							try {
 								await (window as any).maestro.process.kill(

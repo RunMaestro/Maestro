@@ -10,9 +10,9 @@ export interface UseGhCliPreflightResult {
 	status: GhCliStatus | null;
 	/** Begin the pre-flight check + open the dialog. */
 	start: () => void;
-	/** Confirm path — closes dialog and triggers callback. */
+	/** Confirm path - closes dialog and triggers callback. */
 	confirm: (onConfirmed: () => void) => void;
-	/** Cancel/close path — closes dialog without side effects. */
+	/** Cancel/close path - closes dialog without side effects. */
 	cancel: () => void;
 }
 
@@ -21,7 +21,7 @@ export interface UseGhCliPreflightResult {
  *
  * Invariant: `start()` opens the dialog synchronously and only THEN issues the
  * gh-CLI probe. This is critical because the spinner is gated on
- * `isChecking && isOpen` — both must be true within the same React render.
+ * `isChecking && isOpen` - both must be true within the same React render.
  */
 export function useGhCliPreflight(checkGhCli: () => Promise<GhCliStatus>): UseGhCliPreflightResult {
 	const [isOpen, setIsOpen] = useState(false);
@@ -31,7 +31,7 @@ export function useGhCliPreflight(checkGhCli: () => Promise<GhCliStatus>): UseGh
 	const start = useCallback(() => {
 		// 1) Reset previous status BEFORE we open, so a stale "all clear" doesn't flash.
 		setStatus(null);
-		// 2) Toggle isChecking on, then open the dialog — both in this render pass.
+		// 2) Toggle isChecking on, then open the dialog - both in this render pass.
 		setIsChecking(true);
 		setIsOpen(true);
 		// 3) Probe gh. fall back to "not installed" on rejection so the user

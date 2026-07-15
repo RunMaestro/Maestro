@@ -66,8 +66,8 @@ describe('useAgentUsageListener', () => {
 		};
 		// 'sess-1' has no `-ai-` suffix, so parseSessionId returns
 		// { actualSessionId: 'sess-1', tabId: null, baseSessionId: 'sess-1' }.
-		// The hook fires updateUsage twice — once for the tab (here null) and
-		// once for the session (always null) — so each session-id event
+		// The hook fires updateUsage twice - once for the tab (here null) and
+		// once for the session (always null) - so each session-id event
 		// produces two distinct routing calls.
 		handler!('sess-1', usage);
 

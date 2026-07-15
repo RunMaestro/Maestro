@@ -5,7 +5,7 @@
  * composes them into a single flat list for cross-tab search.
  *
  * When adding or editing an entry, ensure `keywords` covers every visible
- * string a user would type after seeing the section in the UI — section
+ * string a user would type after seeing the section in the UI - section
  * headings, sub-headings, and notable button labels. The DOM-parity test in
  * searchableSettings.test.ts catches missing entries, but it cannot catch
  * keyword drift from rendered text. Add a query to the `it.each` block in
@@ -153,7 +153,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Auto Run Inactivity Timeout',
 		description:
-			'Auto Run force-kills a task if the agent produces no output for this many minutes — useful for long refactors, heavy test runs, or web-research tasks',
+			'Auto Run force-kills a task if the agent produces no output for this many minutes - useful for long refactors, heavy test runs, or web-research tasks',
 		keywords: [
 			'autorun',
 			'auto run',
@@ -216,7 +216,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Default Thinking Mode',
 		description:
-			'Show AI thinking/reasoning content for new tabs — Off, On, or Sticky. Off shows only final responses.',
+			'Show AI thinking/reasoning content for new tabs - Off, On, or Sticky. Off shows only final responses.',
 		keywords: [
 			'thinking',
 			'reasoning',
@@ -1200,7 +1200,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Maestro Cue',
 		description:
-			'Event-driven automation (Beta) — trigger agent prompts on timers, file changes, agent completions, GitHub PRs/issues, and pending tasks',
+			'Event-driven automation (Beta) - trigger agent prompts on timers, file changes, agent completions, GitHub PRs/issues, and pending tasks',
 		keywords: [
 			'cue',
 			'automation',
@@ -1371,7 +1371,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Plugins',
 		description:
-			'Community plugin subsystem (Alpha) — discover, enable, disable, install, and uninstall plugins. Foundation only: plugins are listed and managed but do not execute code yet',
+			'Community plugin subsystem (Alpha) - discover, enable, disable, install, and uninstall plugins. Foundation only: plugins are listed and managed but do not execute code yet',
 		keywords: [
 			'plugin',
 			'plugins',
@@ -1398,7 +1398,7 @@ export const PROMPTS_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Maestro Prompts',
 		label: 'Maestro Prompts',
 		description:
-			'Edit core system prompts by category — Wizard, Inline Wizard, Auto Run, Group Chat, Context, and other Maestro reference includes',
+			'Edit core system prompts by category - Wizard, Inline Wizard, Auto Run, Group Chat, Context, and other Maestro reference includes',
 		keywords: [
 			'prompt',
 			'system prompt',
@@ -1427,7 +1427,7 @@ export const ABOUT_SETTINGS: SearchableSetting[] = [
 		tab: 'about',
 		tabLabel: 'About',
 		label: 'About Maestro',
-		description: 'Maestro version, tagline, and origin — born on Nov 26, 2025 in Austin, TX',
+		description: 'Maestro version, tagline, and origin - born on Nov 26, 2025 in Austin, TX',
 		keywords: [
 			'about',
 			'version',

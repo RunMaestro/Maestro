@@ -44,7 +44,7 @@ export class ExitHandler {
 	 *
 	 * Async because some agents need post-exit reconciliation against
 	 * on-disk session state before the renderer is told the agent is
-	 * done (currently: Copilot CLI — see `awaitCopilotShutdown`).
+	 * done (currently: Copilot CLI - see `awaitCopilotShutdown`).
 	 * Callers fire-and-forget, so errors are caught internally.
 	 */
 	async handleExit(sessionId: string, code: number): Promise<void> {
@@ -85,7 +85,7 @@ export class ExitHandler {
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
 		// `exit`. Copilot can keep working in subagent processes after our
 		// parent process closes, and `session.shutdown` is only ever
-		// written to `events.jsonl` — never to stdout in batch mode. If
+		// written to `events.jsonl` - never to stdout in batch mode. If
 		// we emit `exit` immediately, the renderer flips to idle while
 		// Copilot is still doing real work; the user has to manually poke
 		// the tab to discover work is ongoing. When the shutdown marker
@@ -170,7 +170,7 @@ export class ExitHandler {
 			managedProcess.sshRemoteId &&
 			(code !== 0 || managedProcess.stderrBuffer)
 		) {
-			// Only check stderr for SSH errors — NOT stdout.
+			// Only check stderr for SSH errors - NOT stdout.
 			// Stdout contains structured JSONL agent output whose text content (e.g.,
 			// assistant messages quoting shell commands) can false-positive match SSH
 			// error patterns like "command not found". Real SSH transport errors appear

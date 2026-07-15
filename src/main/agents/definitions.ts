@@ -147,7 +147,7 @@ export interface AgentConfig extends BaseAgentConfig {
 
 	/**
 	 * Binary used when this agent is spawned in interactive mode. For `claude-code`, this is
-	 * `maestro-p` — a wrapper that drives Claude's TUI to preserve the user's Max plan quota.
+	 * `maestro-p` - a wrapper that drives Claude's TUI to preserve the user's Max plan quota.
 	 * SSH-enabled tabs always skip this and use `apiCommand` instead, since interactive mode
 	 * requires the real claude TUI binary to be present locally.
 	 */
@@ -213,7 +213,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Disable Claude Code's background-task feature across every spawn path (desktop UI, CLI batch, --live, SSH).
 		// Two motivations: (a) batch sessions exit before background tasks finish, losing results (#861); and (b) the
 		// `Bash run_in_background` + `Monitor` poll wrapper deadlocks on a self-matching `pgrep -f` when the watched
-		// regex appears in the wrapper's own argv — observed multiple times in long-running desktop tabs, where the
+		// regex appears in the wrapper's own argv - observed multiple times in long-running desktop tabs, where the
 		// claude process sits forever waiting on a zsh `until` loop that can never satisfy its exit predicate.
 		// Users who need background tasks can override via Shell Configuration or per-agent customEnvVars.
 		defaultEnvVars: {
@@ -276,7 +276,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'read-only',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
-		], // Read-only/plan mode — includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
+		], // Read-only/plan mode - includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
 		// Codex's `--add-dir` is narrower than Claude's: it adds a WRITABLE root to
 		// the sandbox ("Additional directories that should be writable alongside the

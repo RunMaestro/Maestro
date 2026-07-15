@@ -514,7 +514,7 @@ async function activate(maestro) {
 
 ## 7. Panels (HTML + the postMessage bridge)
 
-A panel renders in an isolated Electron `<webview>` guest with a per-plugin in-memory session (partition `plugin:<pluginId>`): no Node, contextIsolation, OS sandbox, opaque origin, and a restrictive CSP served by the host (`connect-src 'none'`, etc.). Navigation and network egress are denied in the main process — the panel lives on its initial document.
+A panel renders in an isolated Electron `<webview>` guest with a per-plugin in-memory session (partition `plugin:<pluginId>`): no Node, contextIsolation, OS sandbox, opaque origin, and a restrictive CSP served by the host (`connect-src 'none'`, etc.). Navigation and network egress are denied in the main process - the panel lives on its initial document.
 
 **A panel CANNOT make network requests directly.** No `fetch`/XHR/WebSocket. To cause any effect, post a command to the parent; the plugin's registered command handler runs in the sandbox and uses the brokered SDK from there.
 
@@ -533,7 +533,7 @@ parent.postMessage(
 );
 ```
 
-The host's guest preload accepts the message only from the panel document's own window, namespaces it to `<pluginId>/<commandId>`, and forwards it over the broker-gated `invokeCommand` RPC to your `maestro.commands.register('say-hello', ...)` handler. (In the panel, `parent === window` — existing panels keep working unchanged.)
+The host's guest preload accepts the message only from the panel document's own window, namespaces it to `<pluginId>/<commandId>`, and forwards it over the broker-gated `invokeCommand` RPC to your `maestro.commands.register('say-hello', ...)` handler. (In the panel, `parent === window` - existing panels keep working unchanged.)
 
 ### Minimal panel.html
 

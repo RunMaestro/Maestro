@@ -25,7 +25,7 @@ export function isCueActive(): boolean {
  * Flip the active flag. Called from the `cue:setActive` IPC handler in
  * response to renderer-side `visibilitychange` events.
  *
- * Setting it to `false` does NOT stop any in-flight work — scanners check
+ * Setting it to `false` does NOT stop any in-flight work - scanners check
  * the flag at the start of each tick. This is intentional: stopping mid-tick
  * could leave partial state (open file handles, in-progress HTTP requests).
  */
@@ -33,7 +33,7 @@ export function setCueActive(active: boolean): void {
 	cueActive = active;
 }
 
-/** Test-only — reset to the default. */
+/** Test-only - reset to the default. */
 export function resetCueActiveForTests(): void {
 	cueActive = true;
 }

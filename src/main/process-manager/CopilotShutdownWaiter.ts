@@ -87,7 +87,7 @@ export interface CopilotShutdownWaitOptions {
 	maxWaitMs?: number;
 	inactivityMs?: number;
 	pollIntervalMs?: number;
-	/** Override for testing — defaults to `~/.copilot` (or $COPILOT_CONFIG_DIR). */
+	/** Override for testing - defaults to `~/.copilot` (or $COPILOT_CONFIG_DIR). */
 	configDir?: string;
 	/** When set, read the events file from this remote host over SSH instead of locally. */
 	sshRemote?: SshRemoteConfig | null;
@@ -137,11 +137,11 @@ export interface CopilotShutdownUsage {
  * `waitForCopilotShutdownRemote`.
  *
  * Return values:
- *  - `observed`  — shutdown marker found; Copilot is truly done
- *  - `inactive`  — file went idle for `inactivityMs` without a shutdown marker
+ *  - `observed`  - shutdown marker found; Copilot is truly done
+ *  - `inactive`  - file went idle for `inactivityMs` without a shutdown marker
  *                  (likely a crash; safe to stop waiting)
- *  - `timeout`   — `maxWaitMs` elapsed; hard cap to avoid stuck `busy` state
- *  - `missing`   — file never appeared (e.g. Copilot crashed before
+ *  - `timeout`   - `maxWaitMs` elapsed; hard cap to avoid stuck `busy` state
+ *  - `missing`   - file never appeared (e.g. Copilot crashed before
  *                  `session.start` could be persisted)
  */
 export async function waitForCopilotShutdown(
@@ -370,7 +370,7 @@ export async function readCopilotFinalAnswer(
 				if (typeof data.content !== 'string' || data.content.length === 0) continue;
 				if (data.toolRequests && data.toolRequests.length > 0) continue;
 				if (data.phase !== undefined && data.phase !== 'final_answer') continue;
-				// Skip subagent replies — they live in the same events.jsonl as the
+				// Skip subagent replies - they live in the same events.jsonl as the
 				// parent's messages but are not the parent's conclusion.
 				if (data.parentToolCallId) continue;
 				latest = data.content;
@@ -379,7 +379,7 @@ export async function readCopilotFinalAnswer(
 				latest = data.summary;
 			}
 		} catch {
-			// Malformed line — skip.
+			// Malformed line - skip.
 		}
 	}
 
@@ -439,7 +439,7 @@ export async function readCopilotShutdownUsage(
 				latest = evt.data;
 			}
 		} catch {
-			// Malformed line — skip.
+			// Malformed line - skip.
 		}
 	}
 
@@ -452,7 +452,7 @@ export async function readCopilotShutdownUsage(
 	// one entry keyed on `currentModel`, but Copilot allows mid-session model
 	// switches that can leave multiple rows behind; summing keeps the picture
 	// honest. Cache fields are subsets of inputs at the Copilot reporting
-	// layer (combined-context semantics) — see COMBINED_CONTEXT_AGENTS.
+	// layer (combined-context semantics) - see COMBINED_CONTEXT_AGENTS.
 	let outputTokens = 0;
 	let cacheReadInputTokens = 0;
 	let cacheCreationInputTokens = 0;

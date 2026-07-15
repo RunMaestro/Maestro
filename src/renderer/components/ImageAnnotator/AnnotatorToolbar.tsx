@@ -1,5 +1,5 @@
 /**
- * AnnotatorToolbar — Top-center floating toolbar for the image annotator.
+ * AnnotatorToolbar - Top-center floating toolbar for the image annotator.
  *
  * Pure UI: tool selection (pen / eraser / pan), undo, clear-with-inline-confirm,
  * settings drawer toggle, copy-to-clipboard, save, and cancel. Compositing and
@@ -107,7 +107,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	// other modals' useEventListener hooks, etc.) are registered. This is
 	// defensive: the main keyboard handler already early-returns when the
 	// annotator's modal layer is open, but we don't want to depend on that
-	// invariant — annotator shortcuts should be self-contained.
+	// invariant - annotator shortcuts should be self-contained.
 	const undoRef = useRef(undo);
 	undoRef.current = undo;
 	const onSaveRef = useRef(onSave);
@@ -135,7 +135,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				void onSaveRef.current();
 			} else if (key === 'c') {
 				// In annotation mode there's no selectable text to copy, so we
-				// hijack Cmd/Ctrl+C to copy the annotated composite — matching
+				// hijack Cmd/Ctrl+C to copy the annotated composite - matching
 				// what the toolbar's copy button does (including success flash).
 				event.preventDefault();
 				event.stopImmediatePropagation();

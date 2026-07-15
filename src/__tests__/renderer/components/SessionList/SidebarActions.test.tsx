@@ -87,7 +87,7 @@ describe('SidebarActions', () => {
 
 		const collapseBtn = screen.getByTitle('Add an agent first to collapse sidebar');
 		fireEvent.click(collapseBtn);
-		// Disabled button — no state change.
+		// Disabled button - no state change.
 		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 	});
 

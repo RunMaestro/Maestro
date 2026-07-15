@@ -1,5 +1,5 @@
 /**
- * Tests for cue-queue-persistence — Phase 12A.
+ * Tests for cue-queue-persistence - Phase 12A.
  *
  * Uses the in-memory cue-db mirror to exercise round-trip + restore semantics.
  */

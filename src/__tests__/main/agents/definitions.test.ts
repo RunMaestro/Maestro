@@ -152,7 +152,7 @@ describe('agent-definitions', () => {
 			// Background tasks are disabled across every spawn path (desktop UI, CLI batch, --live, SSH).
 			// Two motivations: short-lived batch sessions exit before background tasks finish (#861), and
 			// the run_in_background + Monitor poll wrapper deadlocks on a self-matching `pgrep -f` when
-			// the watched regex appears in the wrapper's own argv — observed in long-running desktop tabs.
+			// the watched regex appears in the wrapper's own argv - observed in long-running desktop tabs.
 			const claudeCode = AGENT_DEFINITIONS.find((def) => def.id === 'claude-code');
 			expect(claudeCode?.defaultEnvVars).toBeDefined();
 			expect(claudeCode?.defaultEnvVars?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');

@@ -1,13 +1,13 @@
 // Argument resolution for maestro-p.
 //
 // Walks argv once and partitions tokens into three buckets:
-//   (a) consumed   — maestro-p's own flags (-p/--print/--prompt, --status,
+//   (a) consumed   - maestro-p's own flags (-p/--print/--prompt, --status,
 //                    --stream-thinking, --max-wait, --help, --version) and
 //                    their values.
-//   (b) stripped   — headless-mode flags that would corrupt the TUI spawn
+//   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
 //                    (--output-format, --input-format, --verbose). Dropped
 //                    silently with a one-line stderr warning.
-//   (c) passthrough — everything else, forwarded verbatim to the spawned
+//   (c) passthrough - everything else, forwarded verbatim to the spawned
 //                    `claude` TUI.
 //
 // `--resume <id>` is special: it is forwarded to claude AND surfaced on a
@@ -38,7 +38,7 @@
 // with `-`. This is what protects the opt-in maestro-p route: when a user
 // points their Claude Code custom path at `maestro-p`, Maestro spawns it with
 // the full API-mode arg sequence `--print --verbose --output-format
-// stream-json --dangerously-skip-permissions <prompt>` — and without the
+// stream-json --dangerously-skip-permissions <prompt>` - and without the
 // guard, `--print` greedily eats `--verbose` as its prompt value, the real
 // prompt sloshes into passthrough, and the TUI types "--verbose" as the
 // user message. Callers that genuinely need a flag-looking value must use
@@ -105,7 +105,7 @@ const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
 const STRIPPED_VALUE_FLAGS = new Set(['--output-format']);
 const STRIPPED_BOOLEAN_FLAGS = new Set(['--verbose']);
 
-// Long flags that claude treats as booleans — the parser must NOT swallow the
+// Long flags that claude treats as booleans - the parser must NOT swallow the
 // next argv slot when one of these appears. Out-of-date entries here only cause
 // a UX glitch (a true positional after the unknown boolean gets misclassified
 // as the flag's value); the runner still works if the user uses `-p`.
@@ -302,7 +302,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		if (STRIPPED_VALUE_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} — headless-mode flag, not forwarded to the TUI.`);
+			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
 			if (inlineValue === undefined && i + 1 < argv.length) {
 				i += 1;
 			}
@@ -313,7 +313,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		if (flag === '--input-format') {
 			const value = consumeValue();
 			if (value === 'stream-json') {
-				// Don't forward to the TUI (claude TUI doesn't accept this flag —
+				// Don't forward to the TUI (claude TUI doesn't accept this flag -
 				// it's --print-only). Instead, record the intent so runMode
 				// JSON-parses stdin and rewrites the prompt with @path image
 				// mentions before sending to the TUI.
@@ -322,14 +322,14 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 				warn(`maestro-p: --input-format requires a value; ignoring.`);
 			} else {
 				warn(
-					`maestro-p: ignoring --input-format ${value} — only stream-json is recognized; stdin will be treated as plain text.`
+					`maestro-p: ignoring --input-format ${value} - only stream-json is recognized; stdin will be treated as plain text.`
 				);
 			}
 			i += 1;
 			continue;
 		}
 		if (STRIPPED_BOOLEAN_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} — headless-mode flag, not forwarded to the TUI.`);
+			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
 			i += 1;
 			continue;
 		}
@@ -343,7 +343,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 				passThroughArgs.push(raw, argv[i + 1]);
 				i += 1;
 			} else {
-				// No value — pass the bare flag through and let claude error.
+				// No value - pass the bare flag through and let claude error.
 				passThroughArgs.push(raw);
 			}
 			i += 1;
@@ -363,7 +363,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 
-		// Pass-through short flag — always treated as boolean (claude's short
+		// Pass-through short flag - always treated as boolean (claude's short
 		// flags are bool-only at time of writing).
 		if (raw.startsWith('-') && raw.length > 1) {
 			passThroughArgs.push(raw);

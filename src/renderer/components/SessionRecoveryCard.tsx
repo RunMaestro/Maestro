@@ -1,11 +1,11 @@
 /**
- * SessionRecoveryCard — inline expandable card rendered inside a session_not_found
+ * SessionRecoveryCard - inline expandable card rendered inside a session_not_found
  * system log entry. Lets the user reconstitute the dead session in place by
  * sending the prior conversation (optionally groomed) as context plus the
  * prompt that originally hit the dead session.
  *
  * The card is rendered directly inside TerminalOutput when a LogEntry carries
- * `recoveryAction`. It is NOT a floating modal — it sits in the conversation
+ * `recoveryAction`. It is NOT a floating modal - it sits in the conversation
  * flow next to the error that explains why it exists. The grooming pipeline
  * is the exact same `contextGroomingService` used by SendToAgent and
  * MergeSession; we just point it at the same agent (in-place recovery).

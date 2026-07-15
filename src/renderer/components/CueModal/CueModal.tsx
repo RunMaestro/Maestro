@@ -1,5 +1,5 @@
 /**
- * CueModal — Main modal for Maestro Cue dashboard and pipeline editor.
+ * CueModal - Main modal for Maestro Cue dashboard and pipeline editor.
  *
  * Thin shell: layer stack, tab switching, help overlay, unsaved changes
  * confirmation. Delegates:
@@ -93,7 +93,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const showHelpRef = useRef(false);
 	showHelpRef.current = showHelp;
 
-	// Activity Log search state — lifted here so the modal layer escape handler
+	// Activity Log search state - lifted here so the modal layer escape handler
 	// can clear it before the layer stack closes the modal.
 	const [activitySearchQuery, setActivitySearchQuery] = useState('');
 	const activitySearchInputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +112,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 			setActivitySearchQuery('');
 			return;
 		}
-		// Skip the dirty-changes confirmation when a save is already in flight —
+		// Skip the dirty-changes confirmation when a save is already in flight -
 		// the save promise lives in the persistence hook and continues running
 		// after CueModal unmounts (it toasts success/failure when it lands).
 		// Forcing the user to wait or discard would defeat the whole point of
@@ -232,7 +232,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const [activeRunsExpanded, setActiveRunsExpanded] = useState(true);
 
 	// Wrap tab switching so navigating away from the pipeline tab clears the
-	// pending selection token — prevents a stale nonce from re-snapping the editor
+	// pending selection token - prevents a stale nonce from re-snapping the editor
 	// to the "View in Pipeline" target on the next remount.
 	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
 		if (tab !== 'pipeline') setPendingPipelineId(null);

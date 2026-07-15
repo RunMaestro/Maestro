@@ -1617,7 +1617,7 @@ describe('MarkdownRenderer', () => {
 		it('does not parse $...$ as math by default (document semantics)', () => {
 			const content = 'price is $5 and $10 today';
 			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
-			// No KaTeX rendering — `$` characters stay as literal text
+			// No KaTeX rendering - `$` characters stay as literal text
 			expect(container.querySelector('.katex')).toBeNull();
 			expect(container.textContent).toContain('$5');
 			expect(container.textContent).toContain('$10');

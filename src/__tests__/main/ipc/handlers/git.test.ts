@@ -105,7 +105,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	readDirRemote: vi.fn(),
 }));
 
-// Mock the stores module — git.ts now imports getSshRemoteById from here
+// Mock the stores module - git.ts now imports getSshRemoteById from here
 // instead of receiving it via dependency injection. We delegate to the
 // mockSettingsStore so existing tests can still drive SSH remote lookups
 // by configuring `mockSettingsStore.get.mockReturnValue([...])`.
@@ -2212,7 +2212,7 @@ export function Component() {
 				'/worktrees/existing',
 				'already-exists',
 				undefined,
-				'rc' // baseBranch — ignored when branch already exists
+				'rc' // baseBranch - ignored when branch already exists
 			);
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
@@ -2493,8 +2493,8 @@ export function Component() {
 
 		it('should recover when branch is already checked out at another worktree', async () => {
 			// fs.access is called twice:
-			//  1) for the requested /worktrees/feature path (must reject — doesn't exist)
-			//  2) for the recovered /existing/wt/feature-branch path (must resolve — does exist)
+			//  1) for the requested /worktrees/feature path (must reject - doesn't exist)
+			//  2) for the recovered /existing/wt/feature-branch path (must resolve - does exist)
 			const fsPromises = await import('fs/promises');
 			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
 				if (String(p) === '/existing/wt/feature-branch') return undefined;
@@ -4530,7 +4530,7 @@ branch refs/heads/bugfix-123
 
 			expect(result.gitSubdirs).toHaveLength(1);
 			expect((result.gitSubdirs as Array<{ name: string }>)[0].name).toBe('good-flat');
-			// Whole-scan failure must NOT be flagged — that would trigger the renderer's
+			// Whole-scan failure must NOT be flagged - that would trigger the renderer's
 			// removal-skip fallback; we only flag scanFailed for the top-level read.
 			expect(result.scanFailed).toBeFalsy();
 		});
@@ -5144,7 +5144,7 @@ branch refs/heads/bugfix-123
 			// Start unwatch (will await watcher.close() which we control)
 			const unwatchPromise = unwatchHandler!({} as any, 'race-session');
 
-			// Before unwatch resolves, start watch — this creates watcher B
+			// Before unwatch resolves, start watch - this creates watcher B
 			const watchPromise = watchHandler!({} as any, 'race-session', '/some/path');
 
 			// Now let watcher A's close resolve (unwatch resumes)
@@ -5152,7 +5152,7 @@ branch refs/heads/bugfix-123
 			await unwatchPromise;
 			await watchPromise;
 
-			// Watcher B should still be functional — the late-resolving unwatch
+			// Watcher B should still be functional - the late-resolving unwatch
 			// must NOT have removed it from the map
 			expect(mockWatcherB.close).not.toHaveBeenCalled();
 

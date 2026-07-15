@@ -124,7 +124,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						{tunnelStatus === 'connected' ? (
 							<span className="text-blue-400">
 								{' '}
-								Remote tunnel active — access Maestro from anywhere, even outside your network.
+								Remote tunnel active - access Maestro from anywhere, even outside your network.
 							</span>
 						) : (
 							<span>

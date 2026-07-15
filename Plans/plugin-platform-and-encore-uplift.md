@@ -1,4 +1,4 @@
-# Plugin Platform + Encore Uplift — build plan
+# Plugin Platform + Encore Uplift - build plan
 
 Goal: make the plugin system a **complete extension surface** for Maestro, **lift each Encore feature
 into a plugin**, and **surface plugins as "Encore Features"** in a tiled marketplace (category filters ·
@@ -22,7 +22,7 @@ and the Pianola first-party plugin lift.
 
 ## Workstreams (layered; each WS = one worktree/branch + an acceptance test that extends the e2e harness)
 
-### P0 — Contracts (done; single owner = main; everyone rebases)
+### P0 - Contracts (done; single owner = main; everyone rebases)
 
 Pure additive contract changes are implemented so feature worktrees build against stable types.
 
@@ -35,7 +35,7 @@ Pure additive contract changes are implemented so feature worktrees build agains
   `@maestro/plugin-sdk` mirror is re-vendored and drift-tested.
   _Acceptance verified:_ `bunx vitest run src/__tests__/shared/plugins/plugin-manifest.test.ts src/__tests__/shared/plugins/plugin-dispatch-gate.test.ts src/__tests__/main/plugins/plugin-host-handlers.test.ts src/__tests__/main/plugins/plugin-event-bus.test.ts src/__tests__/main/ipc/plugin-session-events.test.ts` (5 files, 73 tests passed) and `bunx vitest run --config vitest.config.ts src/__tests__/drift.test-d.ts src/__tests__/sdk.test.ts` in `packages/plugin-sdk` (2 files, 9 tests passed, type errors 0).
 
-### P1 — Foundations (parallel worktrees, buildable now, independent)
+### P1 - Foundations (parallel worktrees, buildable now, independent)
 
 - **WS-ui-command**: DONE. Renderer command registry + plugin `ui:command` bridge are integrated; the
   harness covers command dispatch and the palette still works.
@@ -64,7 +64,7 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
   the agent registry. _Acceptance:_ trusted+granted panel renders; untrusted/ungranted denied; contributed
   agent appears in the appropriate UI.
 
-### P2 — High-power act verbs (parallel after P0; trust+consent+risk-gated)
+### P2 - High-power act verbs (parallel after P0; trust+consent+risk-gated)
 
 - **WS-act-verbs**: wire the `agents:dispatch` + `process:spawn` host handlers (inject `deps.dispatch` /
   `deps.spawn`) gated on trusted-signed + consent + the Pianola risk gate; `process:spawn` scoped to a
@@ -73,7 +73,7 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
 - **WS-scheduler-sink** (after act-verbs): wire the scheduler auto-send dispatch + runtime-session
   addressing so `cueTrigger`s act, not just notify. _Acceptance:_ an eligible cueTrigger auto-dispatches.
 
-### P3 — Host-API breadth (parallel after P0; the act parts after P2)
+### P3 - Host-API breadth (parallel after P0; the act parts after P2)
 
 - **WS-sessions-tabs**: `sessions.create`/modify + `tabs:manage`. _Acceptance:_ plugin creates a session/tab.
 - **WS-history-transcripts**: global `history:read` + `transcripts:write`/`decisions:write` +
@@ -84,7 +84,7 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
 - **WS-background-service**: persistent background-worker registration (beyond the 30s poll scheduler) with
   crash-restart + health. _Acceptance:_ a plugin background service survives + restarts.
 
-### P4 — Feature lifts (each gated on its prereqs; parallel across features once unblocked)
+### P4 - Feature lifts (each gated on its prereqs; parallel across features once unblocked)
 
 1. **E-directorNotes** ← P1(ui-command, settings-ui, render-host) + P3(history-transcripts) +
    a read-only batch-agent dispatch sink (P2). Lift AI Overview + Unified History.
@@ -111,12 +111,12 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
 Each lift keeps a thin host shim where required and ships the feature behind its plugin; the legacy Encore
 flag becomes a "first-party plugin" entry in the marketplace.
 
-## The "Encore Features" marketplace UI (WS-marketplace-ui — buildable now)
+## The "Encore Features" marketplace UI (WS-marketplace-ui - buildable now)
 
 Unified Extensions surface listing built-in Encore features **and** plugins as tiles. Data/actions already
 exist via `window.maestro.plugins.*` + the `encoreFeatures` flags.
 
-- **Tiled grid** (`ExtensionsGrid`): card per entry — icon, name, one-line desc, **category badge**, state
+- **Tiled grid** (`ExtensionsGrid`): card per entry - icon, name, one-line desc, **category badge**, state
   pill (Not installed / Installed / Enabled), tier + trust (signed/unsigned) badge. First-party Encore
   features toggle their `encoreFeatures.<flag>`; plugins come from `plugins.list()`.
 - **Category filter bar**: All · Automation · Agents · UI/Themes · Data/Insights · Dev Tools (from the new
@@ -129,7 +129,7 @@ exist via `window.maestro.plugins.*` + the `encoreFeatures` flags.
   (`requestConsent` + the contributed settings) · Revoke (`revokeGrants`).
 - Promoted from the current Encore section (`Settings/tabs/EncoreTab.tsx` + `PluginsPanel.tsx`) to its own
   Extensions view.
-- _Acceptance:_ extend `e2e/plugins.spec.ts` — seed 2 plugins, assert grid render, category filter,
+- _Acceptance:_ extend `e2e/plugins.spec.ts` - seed 2 plugins, assert grid render, category filter,
   only-installed toggle, details permissions list, install→enable→configure→uninstall round-trip.
 
 ## Worktree decomposition + merge strategy
@@ -137,17 +137,17 @@ exist via `window.maestro.plugins.*` + the `encoreFeatures` flags.
 - **Integration branch**: `feat/autonomous-manager-agent` (current).
 - **Order**: P0 contracts → merge → rebase. Then P1 + P3(read-only parts) + marketplace-ui in **parallel
   worktrees**; P2 act-verbs after P0; P4 lifts per-feature as prereqs land.
-- **Collision hotspots** (contracts-first minimizes them): `src/main/index.ts` (HostHandlerDeps wiring —
+- **Collision hotspots** (contracts-first minimizes them): `src/main/index.ts` (HostHandlerDeps wiring -
   each WS adds one dep line), `permissions.ts`, `rpc-protocol.ts`, `events.ts`, `host-api.ts`. WS-contracts
   lands all vocab/method/event additions first; feature worktrees only _consume_ them.
 - **Per-worktree contract**: branch from integration; skip project-wide gates; extend the e2e harness with
   its acceptance probe; PR back; **Linux CI is the merge gate**.
-- **Regression spine**: the e2e plugin harness is the living regression suite — every new capability gets a
+- **Regression spine**: the e2e plugin harness is the living regression suite - every new capability gets a
   fixture probe (PASS/INERT/DENY), every event a delivery test, every UI piece an e2e.
 
 ## First wave (executing now)
 
-1. **WS-contracts** (P0) — land on the branch first (main owns it).
+1. **WS-contracts** (P0) - land on the branch first (main owns it).
 2. Parallel worktrees: **WS-ui-command**, **WS-marketplace-ui**, **WS-settings-ui**, **WS-keybindings**,
    **WS-grant-ledger**, **WS-act-verbs**.
 3. Integrate each (verify with the harness) and merge back.

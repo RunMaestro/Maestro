@@ -22,7 +22,7 @@ export interface UseSortedSessionsDeps {
 	 * useSessionCategories so jump numbers and Alt+Cmd+N shortcuts match the rendered list.
 	 */
 	showUnreadAgentsOnly?: boolean;
-	/** Active session id — kept visible even when the unread filter would exclude it */
+	/** Active session id - kept visible even when the unread filter would exclude it */
 	activeSessionId?: string | null;
 }
 
@@ -172,7 +172,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		}
 		const bmSize = idx;
 
-		// 2. Group sessions (same order as sortedSessions — all members including bookmarked)
+		// 2. Group sessions (same order as sortedSessions - all members including bookmarked)
 		const navSortedGroups = [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 		for (const group of navSortedGroups) {
 			const groupSessions = sessions

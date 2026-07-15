@@ -1,5 +1,5 @@
 /**
- * Tests for groupChatStore — Group chat state management
+ * Tests for groupChatStore - Group chat state management
  *
  * Tests entity data (chats, active chat), active chat state (messages, state,
  * participants, usage), all-chats tracking (Maps), execution queue, UI state,

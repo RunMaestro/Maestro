@@ -1961,7 +1961,7 @@ describe('ExecutionQueueBrowser', () => {
 			);
 			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
 			const mouseupAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'mouseup');
-			// Exactly one keydown listener — the modal-level Cmd+Shift+[/] tab-cycle
+			// Exactly one keydown listener - the modal-level Cmd+Shift+[/] tab-cycle
 			// handler. The per-row drag listeners (Escape-to-cancel keydown + mouseup)
 			// stay detached until a drag is actually in progress.
 			expect(keydownAdds).toHaveLength(1);

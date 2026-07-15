@@ -1,5 +1,5 @@
 /**
- * ImageAnnotator — Modal root for the freehand image annotator.
+ * ImageAnnotator - Modal root for the freehand image annotator.
  *
  * Self-sources `isOpen`, `imageDataUrl`, `onSave`, and `closeAnnotator` from
  * `useImageAnnotatorStore`, so callers (input area, lightbox, Auto Run
@@ -8,7 +8,7 @@
  * `useModalLayer` registration stays stable across open/close cycles via the
  * `enabled` flag.
  *
- * Save and copy compositing live here (not in the toolbar) — the toolbar emits
+ * Save and copy compositing live here (not in the toolbar) - the toolbar emits
  * `onSave` / `onCopy` callbacks and the parent owns the SVG ref + image data
  * URL needed by `compositeAnnotatedImage`. The drawer body is a placeholder
  * for phase 03.
@@ -58,7 +58,7 @@ export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 	// Remount canvas + state on each open so a fresh session starts clean.
 	const sessionKey = useMemo(() => (isOpen ? imageDataUrl : null), [isOpen, imageDataUrl]);
 
-	// Left arrow opens the settings drawer, Right arrow closes it — but only
+	// Left arrow opens the settings drawer, Right arrow closes it - but only
 	// when focus isn't on a form control (range sliders inside the drawer use
 	// Left/Right natively to adjust their value).
 	const drawerOpenRef = useRef(drawerOpen);
@@ -122,7 +122,7 @@ function ImageAnnotatorContent({
 	const state = useAnnotatorState();
 	const svgRef = useRef<SVGSVGElement>(null);
 
-	// Any committed annotation counts as unsaved work — strokes, geometric
+	// Any committed annotation counts as unsaved work - strokes, geometric
 	// shapes, and text labels. An in-progress (uncommitted) freehand stroke
 	// or shape doesn't, because it hasn't survived a pointerup yet.
 	const hasUnsavedChanges =
@@ -164,7 +164,7 @@ function ImageAnnotatorContent({
 		focusTrap: 'lenient',
 	});
 
-	// X / Cancel button: same guard as Escape — never close out from under the
+	// X / Cancel button: same guard as Escape - never close out from under the
 	// user when there's committed work that hasn't been saved.
 	const handleCancel = useCallback(() => {
 		if (hasChangesRef.current) {
@@ -220,7 +220,7 @@ function ImageAnnotatorContent({
 			if (!dataUrl) return;
 			onSave?.(dataUrl);
 			closeAnnotator();
-			// Best-effort stats recording — never block save on telemetry failure.
+			// Best-effort stats recording - never block save on telemetry failure.
 			void window.maestro.stats.recordImageAnnotation(Date.now()).catch((err: unknown) => {
 				logger.warn('Failed to record image annotation stat', undefined, err);
 			});
@@ -294,7 +294,7 @@ interface DiscardConfirmDialogProps {
 /**
  * Confirms "discard your annotations" before closing the annotator. Default
  * focus lands on `Keep editing` so an accidental space/enter does the safe
- * thing — discarding requires an explicit click on the destructive button.
+ * thing - discarding requires an explicit click on the destructive button.
  */
 function DiscardConfirmDialog({ theme, onKeepEditing, onDiscard }: DiscardConfirmDialogProps) {
 	return (
@@ -304,7 +304,7 @@ function DiscardConfirmDialog({ theme, onKeepEditing, onDiscard }: DiscardConfir
 			aria-label="Discard annotations?"
 			className="fixed inset-0 flex items-center justify-center select-none"
 			style={{ zIndex: 180, backgroundColor: 'rgba(0,0,0,0.55)' }}
-			// Backdrop click = keep editing (same as Esc) — never silently discard.
+			// Backdrop click = keep editing (same as Esc) - never silently discard.
 			onMouseDown={onKeepEditing}
 		>
 			<div

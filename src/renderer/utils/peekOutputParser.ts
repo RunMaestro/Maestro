@@ -39,7 +39,7 @@ export function parsePeekOutput(rawOutput: string): PeekLine[] {
 				}
 				jsonBuffer = '';
 			} catch {
-				// Still incomplete — keep buffering
+				// Still incomplete - keep buffering
 			}
 			continue;
 		}
@@ -53,7 +53,7 @@ export function parsePeekOutput(rawOutput: string): PeekLine[] {
 					lines.push(...parsed);
 				}
 			} catch {
-				// Incomplete JSON — start buffering to reassemble across lines
+				// Incomplete JSON - start buffering to reassemble across lines
 				jsonBuffer = trimmed;
 			}
 			continue;

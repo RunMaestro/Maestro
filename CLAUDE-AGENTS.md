@@ -31,7 +31,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `supportsCostTracking`        | Reports token costs                      | Cost widget                |
 | `supportsUsageStats`          | Reports token counts                     | Context window widget      |
 | `supportsBatchMode`           | Runs per-message                         | Batch processing           |
-| `requiresPromptToStart`       | No eager spawn — needs prompt            | Deferred spawn             |
+| `requiresPromptToStart`       | No eager spawn - needs prompt            | Deferred spawn             |
 | `supportsStreaming`           | Streams output                           | Real-time display          |
 | `supportsModelSelection`      | Supports --model flag                    | Model dropdown             |
 | `supportsResultMessages`      | Distinguishes final result               | Message classification     |
@@ -57,8 +57,8 @@ Each agent declares capabilities that control UI feature availability. See `src/
 
 Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
-- `getAgentDisplayName(agentId)` — human-readable name with fallback
-- `isBetaAgent(agentId)` — beta badge check
+- `getAgentDisplayName(agentId)` - human-readable name with fallback
+- `isBetaAgent(agentId)` - beta badge check
 
 The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
 

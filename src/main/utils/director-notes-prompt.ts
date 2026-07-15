@@ -3,11 +3,11 @@
  *
  * Shared by the desktop IPC handler (`ipc/handlers/director-notes.ts`) and the
  * web/CLI command callback (`web-server/web-server-factory.ts`). Both previously
- * carried their own copy of this logic — and the same bug: they listed EVERY
+ * carried their own copy of this logic - and the same bug: they listed EVERY
  * history file in the manifest and only applied the lookback window to the stat
  * counters. With a large history corpus (e.g. 160+ files / tens of MB) the
  * batch grooming agent burned its entire timeout reading multi-MB JSON files
- * that were out of range, never emitting synopsis text — surfacing to the user
+ * that were out of range, never emitting synopsis text - surfacing to the user
  * as "Grooming timed out with no response".
  *
  * The manifest is now scoped to sessions that actually have at least one entry

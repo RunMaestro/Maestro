@@ -1,5 +1,5 @@
 /**
- * Narrative simulation tying the marker parser and exit evaluator together —
+ * Narrative simulation tying the marker parser and exit evaluator together -
  * the runnable "it works" demo for the Goal-Driven core engine.
  *
  * Each scenario scripts a sequence of fake agent responses (with embedded
@@ -33,7 +33,7 @@ function renderBar(progress: number, width = 10): string {
 }
 
 /**
- * Convert one iteration's parsed markers into a history record — the same
+ * Convert one iteration's parsed markers into a history record - the same
  * normalization a real engine would perform: a missing progress report carries
  * the previous value forward, and a deadlock reason is folded into `rationale`
  * (the record's only free-text field) so the evaluator can surface it.
@@ -78,11 +78,11 @@ function runScenario(label: string, responses: string[]): ScenarioResult {
 		lastResponseIndex = i;
 
 		const note = record.deadlock
-			? `DEADLOCK — ${record.rationale ?? 'no reason given'}`
+			? `DEADLOCK - ${record.rationale ?? 'no reason given'}`
 			: (record.rationale ?? '(no rationale)');
 		// eslint-disable-next-line no-console
 		console.log(
-			`  iter ${record.iteration}: [${renderBar(record.progress)}] ${record.progress}% — ${note}`
+			`  iter ${record.iteration}: [${renderBar(record.progress)}] ${record.progress}% - ${note}`
 		);
 
 		decision = evaluateGoalExit(history, CONFIG);
@@ -143,7 +143,7 @@ describe('goal-driven run simulation', () => {
 		const responses = [
 			'Made initial headway.\n<!-- maestro:progress 30 | initial headway -->',
 			'Pushed a bit further.\n<!-- maestro:progress 55 | more done -->',
-			'Cannot proceed — the upstream service has no documented contract.\n' +
+			'Cannot proceed - the upstream service has no documented contract.\n' +
 				'<!-- maestro:deadlock: upstream service contract is undocumented -->',
 		];
 

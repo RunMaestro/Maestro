@@ -66,7 +66,7 @@ export function NarrativeParseError({ theme, error, rawOutput }: NarrativeParseE
 						{error}
 					</p>
 
-					{/* Raw-output disclosure — the unparsed text stays reachable. */}
+					{/* Raw-output disclosure - the unparsed text stays reachable. */}
 					<button
 						type="button"
 						onClick={() => setShowRaw((v) => !v)}

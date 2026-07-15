@@ -1,5 +1,5 @@
 /**
- * IPC Bridge — generic Web↔Main mirror of Electron's window.maestro.*
+ * IPC Bridge - generic Web↔Main mirror of Electron's window.maestro.*
  *
  * Lets a web client invoke any registered ipcMain handler and receive every
  * webContents.send push the desktop renderer would have received. This is the
@@ -10,7 +10,7 @@
  *   server→client  { type: 'bridge.response', requestId, ok, result|error }
  *   server→client  { type: 'bridge.event',    channel, args }
  *
- * No per-channel subscription tracking yet — every webContents.send is fanned
+ * No per-channel subscription tracking yet - every webContents.send is fanned
  * out to all WS clients as bridge.event. Clients filter via their own ipcRenderer.on.
  */
 
@@ -56,7 +56,7 @@ let broadcastSink: ((channel: string, args: unknown[]) => void) | null = null;
  *
  * The earlier implementation monkey-patched `WebContents.prototype.send` to
  * intercept main→renderer pushes implicitly. That broke when the Electron
- * `mainWindow` wasn't yet attached (or was destroyed) — `safeSend` gates
+ * `mainWindow` wasn't yet attached (or was destroyed) - `safeSend` gates
  * every call on the window's existence, so the patched prototype never
  * fired and web-desktop clients silently missed every push. Routing the
  * fanout explicitly from `safeSend` removes that race.
@@ -103,7 +103,7 @@ export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
 }
 
 /**
- * Handle a bridge.invoke message — dispatch to the registered ipcMain handler
+ * Handle a bridge.invoke message - dispatch to the registered ipcMain handler
  * and send a bridge.response back to the originating client.
  */
 export async function handleBridgeInvoke(

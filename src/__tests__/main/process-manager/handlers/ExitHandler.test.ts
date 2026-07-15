@@ -234,7 +234,7 @@ describe('ExitHandler', () => {
 		// Regression (MAESTRO-V9): in plain batch mode the whole jsonBuffer is
 		// JSON.parse'd at exit. Agents that ignore the JSON output flag answer with
 		// prose or a box-drawing TUI frame instead, which threw a SyntaxError that
-		// we reported to Sentry on every occurrence — even though the raw-buffer
+		// we reported to Sentry on every occurrence - even though the raw-buffer
 		// fallback below already recovers the output for the user.
 		describe('batch mode exit with non-JSON output', () => {
 			beforeEach(() => {
@@ -263,7 +263,7 @@ describe('ExitHandler', () => {
 
 			it('still reports a non-SyntaxError fault raised while handling valid JSON', async () => {
 				// A genuine bug downstream of the parse (here: a throwing usage
-				// aggregator) must keep reaching Sentry — only SyntaxError is expected.
+				// aggregator) must keep reaching Sentry - only SyntaxError is expected.
 				const { aggregateModelUsage } = await import('../../../../main/parsers/usage-aggregator');
 				vi.mocked(aggregateModelUsage).mockImplementationOnce(() => {
 					throw new TypeError('usage aggregation blew up');
@@ -425,7 +425,7 @@ describe('ExitHandler', () => {
 
 		it('should NOT false-positive when agent response text contains SSH error keywords', async () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
-			// Return null — no SSH error in stderr
+			// Return null - no SSH error in stderr
 			mockedMatchSsh.mockReturnValue(null);
 
 			const proc = createMockProcess({

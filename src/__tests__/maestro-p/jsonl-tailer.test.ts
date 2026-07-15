@@ -1,12 +1,12 @@
 /**
  * @file jsonl-tailer.test.ts
- * @description Tests for src/maestro-p/jsonl-tailer.ts — the poll-based
+ * @description Tests for src/maestro-p/jsonl-tailer.ts - the poll-based
  * tailer that reads Claude's live session JSONL and emits structured
  * `entry` / `parse-error` events.
  *
  * Strategy: drive against real temp files with `fs.mkdtempSync` for
  * isolation and a 10ms poll interval for snappy assertions. No fake timers
- * — the tailer's contract is about real filesystem behavior, and these
+ * - the tailer's contract is about real filesystem behavior, and these
  * tests should fail if cross-platform fs semantics change in an
  * incompatible way.
  */
@@ -139,7 +139,7 @@ describe('JsonlTailer', () => {
 			const { tailer, filePath, entries, parseErrors } = makeHarness('partial.jsonl');
 			fs.writeFileSync(filePath, '');
 			await tailer.start();
-			// First write leaves a partial trailing line — the tailer must
+			// First write leaves a partial trailing line - the tailer must
 			// emit only the completed entry and buffer the rest, NOT throw a
 			// parse-error on the half-formed `{"b":`.
 			fs.appendFileSync(filePath, '{"a":1}\n{"b":');
@@ -207,7 +207,7 @@ describe('JsonlTailer', () => {
 	});
 
 	describe('stop()', () => {
-		it('halts polling — no further events fire after stop(), even on new appends', async () => {
+		it('halts polling - no further events fire after stop(), even on new appends', async () => {
 			const { tailer, filePath, entries } = makeHarness('stop.jsonl');
 			fs.writeFileSync(filePath, '{"i":1}\n');
 			await tailer.start();

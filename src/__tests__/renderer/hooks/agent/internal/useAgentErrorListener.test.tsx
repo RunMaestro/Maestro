@@ -287,7 +287,7 @@ describe('useAgentErrorListener', () => {
 		renderHook(() => useAgentErrorListener(makeDeps()));
 		handler!('sess-1-ai-tab-1', overloadError);
 
-		// No blocking error state / modal — the retry engine owns it.
+		// No blocking error state / modal - the retry engine owns it.
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.state).not.toBe('error');
 		expect(updated.agentError).toBeUndefined();
@@ -321,7 +321,7 @@ describe('useAgentErrorListener', () => {
 		const outageId = useRetryStore.getState().retries['sess-1:tab-1']?.outageId;
 
 		// A second failure for the same outage (the resend failed again) must NOT
-		// append another transcript entry — the live card already covers it.
+		// append another transcript entry - the live card already covers it.
 		handler!('sess-1-ai-tab-1', overloadError);
 
 		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;

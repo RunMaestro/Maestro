@@ -42,7 +42,7 @@ function readCopilotConfiguredModel(): string | null {
 			return config.model;
 		}
 	} catch {
-		// Config may not exist or be malformed — fall through to null.
+		// Config may not exist or be malformed - fall through to null.
 	}
 	return null;
 }
@@ -199,7 +199,7 @@ export class AgentDetector {
 
 			// Mirror detection into the capability snapshot store so the
 			// renderer has a persisted readiness pill for every agent. Skip
-			// the internal `terminal` agent — it isn't user-facing.
+			// the internal `terminal` agent - it isn't user-facing.
 			//
 			// Each agent is only written when its observed state actually
 			// changed (status differs, or the detected path differs). This
@@ -209,7 +209,7 @@ export class AgentDetector {
 				const existing = capabilitySnapshots.get(agentDef.id);
 				if (detection.exists) {
 					// Preserve any reactive auth_required state set by a recent
-					// spawn failure — detection alone shouldn't clear it. The
+					// spawn failure - detection alone shouldn't clear it. The
 					// next successful spawn (or explicit re-probe) flips it back.
 					if (existing?.status === 'auth_required') {
 						// no-op: leave reactive state intact

@@ -2,7 +2,7 @@
  * messageGistStore - In-memory tracker for messages that have been published as GitHub Gists.
  *
  * Keyed by a stable per-message id (log.id for terminal output, timestamp-based key for group
- * chat). Intentionally NOT persisted across app restarts — this is a visual cue for the current
+ * chat). Intentionally NOT persisted across app restarts - this is a visual cue for the current
  * session only.
  */
 

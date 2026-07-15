@@ -49,7 +49,7 @@ import { getPromptComposerInitialValue } from '../../hooks/modal/usePromptCompos
  * usage in App.tsx.
  */
 export interface AppModalsProps {
-	// Common props (sessions/groups/groupChats/modal booleans self-sourced from stores — Tier 1B)
+	// Common props (sessions/groups/groupChats/modal booleans self-sourced from stores - Tier 1B)
 	theme: Theme;
 	shortcuts: Record<string, Shortcut>;
 	tabShortcuts: Record<string, Shortcut>;
@@ -422,7 +422,7 @@ export interface AppModalsProps {
 		longestRunTimestamp: number;
 	}) => void;
 	errorSession: Session | null | undefined;
-	/** The effective error to display — live or historical from chat log */
+	/** The effective error to display - live or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	onDismissAgentError: () => void;

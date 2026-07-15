@@ -34,7 +34,7 @@ vi.mock('../../../../renderer/stores/notificationStore', async () => {
 	return { ...actual, notifyToast: vi.fn() };
 });
 
-// Mock worktreeDedup — stub the side-effecting Set helpers, but keep the
+// Mock worktreeDedup - stub the side-effecting Set helpers, but keep the
 // pure path-matching helpers (normalizePath, sessionMatchesWorktreeRoot) real
 // so the hook's lookup logic actually runs against the test fixtures.
 vi.mock('../../../../renderer/utils/worktreeDedup', async () => {
@@ -102,7 +102,7 @@ const baseDocuments = [
 // Tests
 // ============================================================================
 
-describe('handleStartBatchRun — worktree dispatch integration', () => {
+describe('handleStartBatchRun - worktree dispatch integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
@@ -815,7 +815,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// No new session was added — count stays at 2
+			// No new session was added - count stays at 2
 			expect(useSessionStore.getState().sessions.length).toBe(2);
 			// Batch run dispatched against the existing session
 			expect(deps.startBatchRun).toHaveBeenCalledOnce();
@@ -870,7 +870,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// No dispatch — busy guard fired.
+			// No dispatch - busy guard fired.
 			expect(deps.startBatchRun).not.toHaveBeenCalled();
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -930,7 +930,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// projectRoot match should reuse the existing session — no duplicate.
+			// projectRoot match should reuse the existing session - no duplicate.
 			expect(useSessionStore.getState().sessions.length).toBe(2);
 			expect(deps.startBatchRun).toHaveBeenCalledOnce();
 			expect(deps.startBatchRun.mock.calls[0][0]).toBe('wt-existing');
@@ -983,7 +983,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// Normalized comparison should find the existing session — no duplicate.
+			// Normalized comparison should find the existing session - no duplicate.
 			expect(useSessionStore.getState().sessions.length).toBe(2);
 			expect(deps.startBatchRun).toHaveBeenCalledOnce();
 			expect(deps.startBatchRun.mock.calls[0][0]).toBe('wt-existing');
@@ -1256,7 +1256,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// Should NOT call worktreeSetup — worktree already exists on disk
+			// Should NOT call worktreeSetup - worktree already exists on disk
 			expect(window.maestro.git.worktreeSetup).not.toHaveBeenCalled();
 
 			// Should have dispatched to a new session
@@ -1357,7 +1357,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// Should still dispatch — git info is nice-to-have
+			// Should still dispatch - git info is nice-to-have
 			expect(deps.startBatchRun).toHaveBeenCalledOnce();
 
 			// Session should still exist with path-derived branch

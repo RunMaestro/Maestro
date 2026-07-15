@@ -94,7 +94,7 @@ export interface WizardResponse {
 	message: string;
 	/**
 	 * Short human-readable name for the playbook (e.g. "HTML Chat Interface"),
-	 * extracted from the agent's JSON. Optional — older prompts may omit it,
+	 * extracted from the agent's JSON. Optional - older prompts may omit it,
 	 * and the wizard falls back to the session name when absent.
 	 */
 	projectName?: string;
@@ -565,7 +565,7 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'codex': {
-			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// Return only base args - the IPC handler's buildAgentArgs() adds
 			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
 			// automatically when a prompt is present. Adding them here would
 			// duplicate flags and cause "unexpected argument" exit code 2.

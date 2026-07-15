@@ -156,7 +156,7 @@ describe('useSessionNavigation', () => {
 				{ type: 'file', id: 'f1' },
 			],
 		});
-		// No tabKind — mimics an entry recorded before the tabKind field existed.
+		// No tabKind - mimics an entry recorded before the tabKind field existed.
 		const { result, getUpdated } = setup([session], { sessionId: 's1', tabId: 'ai-1' });
 
 		act(() => result.current.handleNavBack());

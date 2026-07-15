@@ -138,7 +138,7 @@ export class PluginEventBusImpl implements PluginEventBus {
 	 * re-authorized against live grants; an unauthorized (revoked) plugin has its
 	 * subscription pruned and receives nothing. A capability-gated topic (see
 	 * `TOPIC_REQUIRED_CAPABILITY`) is additionally withheld from subscribers not
-	 * currently holding the topic's capability — withheld, not pruned, so a
+	 * currently holding the topic's capability - withheld, not pruned, so a
 	 * later grant resumes delivery without resubscribing. A plugin whose sink
 	 * reports it is gone is also pruned. The integrator calls this from core
 	 * emit sites.
@@ -162,7 +162,7 @@ export class PluginEventBusImpl implements PluginEventBus {
 			}
 			const requiredCap = TOPIC_REQUIRED_CAPABILITY[event.topic];
 			if (requiredCap && !(this.deps.hasCapability?.(pluginId, requiredCap) ?? false)) {
-				// Missing the topic's domain capability (or no checker wired —
+				// Missing the topic's domain capability (or no checker wired -
 				// fail closed). Withhold delivery; keep the subscription.
 				this.deps.onDelivery?.(pluginId, event.topic, false);
 				continue;

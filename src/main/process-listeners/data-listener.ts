@@ -185,13 +185,13 @@ export function setupDataListener(
 		// group-chat-shaped sessionId we don't recognize. We MUST NOT fall through
 		// to safeSend('process:data', ...) or the web broadcast path below, or the
 		// group-chat output bytes will leak into the regular renderer channel
-		// (and, transitively, into anything that subscribes to process:data —
+		// (and, transitively, into anything that subscribes to process:data -
 		// including the session's stdout history that the UI displays). Drop the
 		// data and log loudly so the unknown shape can be investigated.
 		if (isGroupChatSession) {
 			debugLog(
 				'GroupChat:Debug',
-				`WARNING: unrecognized group-chat sessionId shape — dropping ${data.length} bytes to prevent cross-domain leak: ${sessionId}`
+				`WARNING: unrecognized group-chat sessionId shape - dropping ${data.length} bytes to prevent cross-domain leak: ${sessionId}`
 			);
 			return;
 		}

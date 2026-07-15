@@ -1,5 +1,5 @@
 /**
- * Tests for XTerminal.tsx — mapThemeToXterm and evaluateCustomKeyEvent pure functions.
+ * Tests for XTerminal.tsx - mapThemeToXterm and evaluateCustomKeyEvent pure functions.
  *
  * mapThemeToXterm converts a Maestro Theme into an xterm.js ITheme,
  * falling back to mode-appropriate ANSI palettes when the theme lacks

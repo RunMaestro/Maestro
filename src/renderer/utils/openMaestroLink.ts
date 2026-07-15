@@ -1,5 +1,5 @@
 /**
- * openMaestroLink — handle `maestro://` URLs clicked from inside the renderer
+ * openMaestroLink - handle `maestro://` URLs clicked from inside the renderer
  * (markdown previews, AI output, etc.) without round-tripping through the OS
  * protocol handler.
  *

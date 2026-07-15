@@ -66,7 +66,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 	// Clamp the popover into the viewport once mounted. The initial position is
 	// anchored to the + button's left edge, which renders off-screen when the
 	// button sits near the right edge (e.g. right panel collapsed). Runs as a
-	// layout effect so the correction happens before paint — no visible flicker.
+	// layout effect so the correction happens before paint - no visible flicker.
 	useLayoutEffect(() => {
 		if (!popoverOpen || !popoverPos) return;
 		const el = popoverRef.current;

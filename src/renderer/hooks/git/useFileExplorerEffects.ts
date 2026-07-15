@@ -1,5 +1,5 @@
 /**
- * useFileExplorerEffects — extracted from App.tsx (Phase 2.6)
+ * useFileExplorerEffects - extracted from App.tsx (Phase 2.6)
  *
  * Owns all file-explorer side effects and keyboard navigation:
  *   - Scroll position restore on session switch
@@ -156,13 +156,13 @@ export function useFileExplorerEffects(
 	const { hasOpenModal } = useLayerStack();
 
 	// ====================================================================
-	// stableFileTree — prevents FilePreview re-renders during agent activity
+	// stableFileTree - prevents FilePreview re-renders during agent activity
 	// ====================================================================
 
 	const stableFileTree = useMemo(() => fileTree || [], [fileTree]);
 
 	// ====================================================================
-	// handleMainPanelFileClick — open [[wiki]] and path links in markdown
+	// handleMainPanelFileClick - open [[wiki]] and path links in markdown
 	// ====================================================================
 
 	const handleMainPanelFileClick = useCallback(

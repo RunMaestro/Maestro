@@ -5,7 +5,7 @@
  * - Code executes ONLY when the plugin's signature verifies as `trusted`
  *   (valid ed25519 signature from a key in the trusted set).
  * - `unsigned`, `untrusted` (valid signature, unknown key), and `invalid`
- *   (tampered) plugins NEVER start a sandbox — even when enabled.
+ *   (tampered) plugins NEVER start a sandbox - even when enabled.
  * - The gate is about CODE, not data: unsigned/untrusted plugins remain
  *   installable + enableable and their DECLARATIVE contributions (themes,
  *   prompts, commands metadata) still aggregate.
@@ -182,7 +182,7 @@ describe('FC1 trusted-to-run gate', () => {
 		expect(themes.some((t) => t.id === 'declarative.plugin/gate-theme')).toBe(true);
 	});
 
-	it('tampered (invalid) plugins contribute NOTHING — declarative surface included', () => {
+	it('tampered (invalid) plugins contribute NOTHING - declarative surface included', () => {
 		const sandbox = makeSandbox();
 		const manager = makeManager(sandbox);
 		const dir = writeCodePlugin('tampered.data', { theme: true });

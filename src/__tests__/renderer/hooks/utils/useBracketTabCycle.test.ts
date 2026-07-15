@@ -1,5 +1,5 @@
 /**
- * Tests for hooks/utils/useBracketTabCycle — generic Cmd+Shift+[/] tab cycle
+ * Tests for hooks/utils/useBracketTabCycle - generic Cmd+Shift+[/] tab cycle
  * with wrap behavior, enabled gating, modifier requirements, and cleanup.
  */
 import { describe, it, expect, vi } from 'vitest';

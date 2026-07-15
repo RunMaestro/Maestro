@@ -215,7 +215,7 @@ export class HistoryManager {
 				logger.info(`Skipped ${skippedCount} orphaned entries (no sessionId)`, LOG_CONTEXT);
 			}
 
-			// Write per-session files in parallel — independent writes to
+			// Write per-session files in parallel - independent writes to
 			// distinct paths.
 			const writes = Array.from(entriesBySession.entries()).map(
 				async ([sessionId, sessionEntries]) => {
@@ -238,7 +238,7 @@ export class HistoryManager {
 			const sessionsMigrated = entriesBySession.size;
 
 			// Migration-marker write must happen AFTER all per-session writes
-			// have settled — otherwise a crash mid-migration could leave the
+			// have settled - otherwise a crash mid-migration could leave the
 			// marker in place with partial data on disk. Sequential here is
 			// load-bearing.
 			const marker: MigrationMarker = {
@@ -290,7 +290,7 @@ export class HistoryManager {
 			if (code === 'ENOENT') return []; // Cold-cache miss is expected
 			// A malformed/truncated history file (e.g. a write interrupted by a crash
 			// or power loss) surfaces as a JSON SyntaxError once recovery fails. That's
-			// an expected, recoverable on-disk condition — not a code bug — so we degrade
+			// an expected, recoverable on-disk condition - not a code bug - so we degrade
 			// gracefully to an empty history rather than reporting it to Sentry, where it
 			// only piled up as non-actionable noise (MAESTRO-QA). Genuinely unexpected
 			// read failures (permissions, I/O, etc.) are still captured below.
@@ -339,7 +339,7 @@ export class HistoryManager {
 			} catch (error) {
 				const code = (error as NodeJS.ErrnoException).code;
 				if (code === 'ENOENT') {
-					// New session — start with empty file.
+					// New session - start with empty file.
 					data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 				} else {
 					// A readable-but-unparseable file is corrupt history. Do NOT
@@ -566,7 +566,7 @@ export class HistoryManager {
 	 */
 	async getAllEntries(limit?: number): Promise<HistoryEntry[]> {
 		const sessions = await this.listSessionsWithHistory();
-		// Parallel reads — independent files.
+		// Parallel reads - independent files.
 		const allEntriesArrays = await Promise.all(sessions.map((sid) => this.getEntries(sid)));
 		const allEntries = allEntriesArrays.flat();
 		const sorted = sortEntriesByTimestamp(allEntries);
@@ -648,7 +648,7 @@ export class HistoryManager {
 					raw = await fsp.readFile(filePath, 'utf-8');
 				} catch (error) {
 					const code = (error as NodeJS.ErrnoException).code;
-					if (code === 'ENOENT') return; // file gone since listing — skip
+					if (code === 'ENOENT') return; // file gone since listing - skip
 					logger.warn(`Failed to read session ${sessionId}: ${error}`, LOG_CONTEXT);
 					return;
 				}

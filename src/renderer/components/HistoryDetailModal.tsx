@@ -59,7 +59,7 @@ interface HistoryDetailModalProps {
 	/**
 	 * Agent identifier (session.toolType) used to display input tokens correctly.
 	 * Claude reports `inputTokens` as the uncached delta only, so we add the cache
-	 * partitions to show the real input size — see calculateDisplayInputTokens.
+	 * partitions to show the real input size - see calculateDisplayInputTokens.
 	 */
 	agentId?: ToolType;
 }

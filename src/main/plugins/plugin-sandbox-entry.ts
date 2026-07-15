@@ -15,8 +15,8 @@
  * object the plugin can touch (the maestro SDK, console, timers, module /
  * exports, and everything transitively reachable from them) is constructed
  * INSIDE the vm context by a precompiled bootstrap script, from JSON-only
- * data. Host bridge functions are captured in bootstrap closures — never
- * assigned to any property plugin code can read — so the canonical escape
+ * data. Host bridge functions are captured in bootstrap closures - never
+ * assigned to any property plugin code can read - so the canonical escape
  * `reachable.constructor.constructor('return process')()` resolves to the
  * CONTEXT Function constructor, which `codeGeneration: { strings: false }`
  * makes throw. The regression test in
@@ -25,7 +25,7 @@
  *
  * IMPORTANT: a successful realm escape that reaches this child's real
  * `process`/`require` gets full Node in THIS utilityProcess and can call
- * fs/net/child_process DIRECTLY, bypassing the broker — so treat every change
+ * fs/net/child_process DIRECTLY, bypassing the broker - so treat every change
  * to the bootstrap surface as security-sensitive, not cosmetic.
  */
 
@@ -159,7 +159,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		timers.delete(id);
 		if (typeof fn !== 'function') return;
 		// Log-and-RETHROW: a throwing timer callback must keep its pre-realm
-		// semantics — the throw escapes to the host setTimeout callback, becomes
+		// semantics - the throw escapes to the host setTimeout callback, becomes
 		// an uncaughtException, and CRASHES the child. That crash is load-bearing:
 		// the FC5 background supervisor's crash-restart path (and its e2e) detect
 		// exactly this. Swallowing it here would leave a wedged plugin running.

@@ -27,7 +27,7 @@
 	});
 
 	// Animate progress bar while waiting for React
-	// Caps at 40% — React takes over with explicit stage updates after this
+	// Caps at 40% - React takes over with explicit stage updates after this
 	var interval = setInterval(function () {
 		progress += Math.random() * 2 + 0.5;
 		if (progress > 40) progress = 40;

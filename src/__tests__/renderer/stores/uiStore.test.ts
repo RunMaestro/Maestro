@@ -371,7 +371,7 @@ describe('uiStore', () => {
 		});
 
 		it('extracted actions still mutate state correctly', () => {
-			// Grab actions once, then call them — mirrors the App.tsx pattern
+			// Grab actions once, then call them - mirrors the App.tsx pattern
 			const { setLeftSidebarOpen, setActiveFocus } = useUIStore.getState();
 
 			setLeftSidebarOpen(false);

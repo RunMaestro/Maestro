@@ -12,10 +12,10 @@
  * - On reset: Removes from customizations JSON AND updates in-memory cache immediately
  *
  * Directives:
- * - {{INCLUDE:name}} — full inlining. Resolves recursively (max depth 3) with cycle detection.
+ * - {{INCLUDE:name}} - full inlining. Resolves recursively (max depth 3) with cycle detection.
  *   Use for foundational content the recipient must always have (e.g., file-access rules).
- * - {{REF:name}} — expands to just the absolute on-disk path of the bundled `.md`, in the host
- *   OS's native separator format. Nothing else — no bullet, no description, no quoting. Authors
+ * - {{REF:name}} - expands to just the absolute on-disk path of the bundled `.md`, in the host
+ *   OS's native separator format. Nothing else - no bullet, no description, no quoting. Authors
  *   wrap the directive with whatever surrounding prose, list markers, or context they want.
  *   Use for heavy reference material the agent only needs in some sessions; the agent reads the
  *   file on demand. NOTE: the path serves the bundled file, not user customizations from
@@ -47,7 +47,7 @@ export interface CorePrompt {
 	/**
 	 * True when the bundled default has changed since the user last saved their
 	 * customization. Always false for unmodified prompts. False when we lack a
-	 * baseline hash (legacy customizations) — see initializePrompts() for the
+	 * baseline hash (legacy customizations) - see initializePrompts() for the
 	 * one-time backfill that prevents that state for fresh customizations.
 	 */
 	hasDefaultDrifted: boolean;
@@ -129,7 +129,7 @@ async function loadUserCustomizations(): Promise<StoredData | null> {
 			return null;
 		}
 		// Any other error (malformed JSON, permission denied, disk corruption)
-		// is a real problem — log it so users know their customizations failed to load
+		// is a real problem - log it so users know their customizations failed to load
 		logger.error(
 			`Failed to load prompt customizations from ${filePath}: ${String(error)}`,
 			LOG_CONTEXT
@@ -186,7 +186,7 @@ export async function initializePrompts(): Promise<void> {
 		const content = isModified && customPrompt ? customPrompt.content : bundledContent;
 
 		// Backfill legacy customizations (saved before drift tracking existed) with
-		// the current bundled hash. Without a baseline we can't detect drift — the
+		// the current bundled hash. Without a baseline we can't detect drift - the
 		// honest choice is "treat current bundled state as the baseline going
 		// forward" rather than false-flag every legacy entry as drifted.
 		let originalHash = customPrompt?.originalHash;
@@ -208,7 +208,7 @@ export async function initializePrompts(): Promise<void> {
 			await saveUserCustomizations(workingCustomizations);
 		} catch (error) {
 			// Backfill is best-effort. If the write fails, drift detection just
-			// won't activate for legacy entries — they keep working as before.
+			// won't activate for legacy entries - they keep working as before.
 			logger.warn(`Failed to backfill originalHash on customizations: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -304,7 +304,7 @@ export async function resetPrompt(id: string): Promise<string> {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
-	// Read bundled content FIRST — verify it's readable before deleting customization
+	// Read bundled content FIRST - verify it's readable before deleting customization
 	const bundledContent = await readBundledContent(def.filename);
 
 	// Only remove customization after confirming bundled file is readable
@@ -409,7 +409,7 @@ const MAX_INCLUDE_DEPTH = 3;
 /**
  * Expand {{REF:name}} into the absolute on-disk path of the bundled `.md`.
  * `path.resolve` guarantees an absolute path on every OS and emits native
- * separators (`/` on macOS/Linux, `\` on Windows). Nothing else is emitted —
+ * separators (`/` on macOS/Linux, `\` on Windows). Nothing else is emitted -
  * authors supply their own surrounding prose. Refs are resolved before
  * includes and are not recursive: a ref produces literal text, not a fetch
  * the resolver follows.

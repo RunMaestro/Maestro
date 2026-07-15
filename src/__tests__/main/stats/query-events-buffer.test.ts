@@ -163,7 +163,7 @@ describe('query-events-buffer', () => {
 		for (let i = 0; i < 5; i++) {
 			enqueueQueryEvent(db as never, sampleEvent);
 		}
-		// One timer pending — advancing past the interval flushes everything.
+		// One timer pending - advancing past the interval flushes everything.
 		vi.advanceTimersByTime(QUERY_EVENT_FLUSH_INTERVAL_MS);
 		expect(stmt.run).toHaveBeenCalledTimes(5);
 	});
@@ -238,7 +238,7 @@ describe('query-events-buffer', () => {
 		flushQueryEventsSync();
 		expect(first.stmt.run).toHaveBeenCalledTimes(1);
 
-		// New DB reference — buffer module clears its statement cache and
+		// New DB reference - buffer module clears its statement cache and
 		// prepares against the new DB.
 		enqueueQueryEvent(second.db as never, sampleEvent);
 		flushQueryEventsSync();

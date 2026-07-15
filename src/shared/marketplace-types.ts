@@ -73,7 +73,7 @@ export interface MarketplacePlaybook {
 	 */
 	minMaestroVersion?: string;
 	/**
-	 * Beta flag — soft signal that the playbook is still maturing.
+	 * Beta flag - soft signal that the playbook is still maturing.
 	 * Strictly checked: only the boolean literal `true` counts as beta. Any other
 	 * value (false, "yes", 1, absent) is treated as not-beta. Does not affect install.
 	 */

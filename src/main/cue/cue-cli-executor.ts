@@ -1,5 +1,5 @@
 /**
- * Cue CLI Executor — runs an `action: command` subscription whose
+ * Cue CLI Executor - runs an `action: command` subscription whose
  * `command.mode` is `'cli'`.
  *
  * Delivers a message to a target session via
@@ -28,7 +28,7 @@ import { isWindows } from '../../shared/platformDetection';
 /** Timeout for a single maestro-cli send invocation. */
 const CLI_SEND_TIMEOUT_MS = 30_000;
 /**
- * Cap on how much of the source output we forward — protects the CLI argv.
+ * Cap on how much of the source output we forward - protects the CLI argv.
  *
  * Platform-aware because `maestro-cli send <agent-id> <message>` takes the
  * message as a positional argv. On Windows, `CreateProcessW` imposes a hard
@@ -60,7 +60,7 @@ export interface CueCliExecutionConfig {
 
 export interface CliSendResult {
 	ok: boolean;
-	/** Exit code from execFileNoThrow — number when the process ran, string error code (e.g. 'ENOENT') when spawn failed. */
+	/** Exit code from execFileNoThrow - number when the process ran, string error code (e.g. 'ENOENT') when spawn failed. */
 	exitCode: number | string;
 	stdout: string;
 	stderr: string;
@@ -115,7 +115,7 @@ function killCliProcess(child: ChildProcess, sync = false): void {
 			try {
 				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
 			} catch {
-				// taskkill returns non-zero when the process is already dead — fine.
+				// taskkill returns non-zero when the process is already dead - fine.
 			}
 		} else {
 			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
@@ -166,7 +166,7 @@ export async function runMaestroCliSend(
 			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
-				// Node — without this flag the spawn would launch the app instead
+				// Node - without this flag the spawn would launch the app instead
 				// of running maestro-cli.js. Mirrors the shims emitted by
 				// maestro-cli-manager.ts for user-facing invocations.
 				env: {
@@ -177,7 +177,7 @@ export async function runMaestroCliSend(
 		} catch (err) {
 			// Synchronous spawn throw is an unexpected process-launch failure
 			// (permissions, bad ELECTRON_RUN_AS_NODE interaction, etc.). Report
-			// to Sentry so it isn't lost — the caller still gets a `failed`
+			// to Sentry so it isn't lost - the caller still gets a `failed`
 			// result so the run flow stays intact. ENOENT (bundle not found)
 			// is already surfaced by the resolver and isn't captured.
 			const errCode = (err as NodeJS.ErrnoException)?.code;
@@ -239,7 +239,7 @@ export async function runMaestroCliSend(
 		child.on('error', (error) => {
 			// Async child-process error (e.g. spawn succeeded but the child
 			// failed before emitting any output). Treat like the sync throw
-			// above — report to Sentry unless it's the expected ENOENT from
+			// above - report to Sentry unless it's the expected ENOENT from
 			// a missing CLI bundle, then funnel into the normal failed path.
 			const errCode = (error as NodeJS.ErrnoException).code;
 			if (errCode !== 'ENOENT') {
@@ -317,7 +317,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 	const messageTemplate = cli.message ?? DEFAULT_CLI_MESSAGE_TEMPLATE;
 	const resolvedMessage = substituteTemplateVariables(messageTemplate, templateContext);
 
-	// Surface argv truncation so users notice when output is cut — on
+	// Surface argv truncation so users notice when output is cut - on
 	// Windows this cap is much tighter (30K vs 100K on POSIX) to stay
 	// under the 32K CreateProcessW command-line ceiling.
 	if (resolvedMessage.length > CLI_SEND_OUTPUT_MAX_CHARS) {
@@ -333,10 +333,10 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 	);
 
 	try {
-		// Treat <=0 as "no explicit cap — use default" rather than clamping to
+		// Treat <=0 as "no explicit cap - use default" rather than clamping to
 		// 1ms (which would kill the process almost immediately). When the
 		// caller-supplied timeout exceeds our hard cap, log it so the clamp is
-		// observable — a silent reduction would mask a surprising kill.
+		// observable - a silent reduction would mask a surprising kill.
 		if (timeoutMs > CLI_SEND_TIMEOUT_MS) {
 			onLog(
 				'warn',
@@ -350,7 +350,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		if (result.timedOut) {
 			onLog(
 				'warn',
-				`[CUE] "${subscription.name}" cli dispatch timed out after ${clampedTimeout}ms — process killed`
+				`[CUE] "${subscription.name}" cli dispatch timed out after ${clampedTimeout}ms - process killed`
 			);
 		} else if (!result.ok) {
 			onLog(

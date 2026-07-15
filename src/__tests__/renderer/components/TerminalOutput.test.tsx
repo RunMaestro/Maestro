@@ -857,7 +857,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 			expect(mockRegisterLayer).toHaveBeenCalled();
 
-			// Pull the most recent registerLayer call's onEscape — this is what the
+			// Pull the most recent registerLayer call's onEscape - this is what the
 			// layer stack fires when Escape is pressed on the topmost layer.
 			const layerConfig = mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
 			expect(typeof layerConfig.onEscape).toBe('function');
@@ -898,7 +898,7 @@ describe('TerminalOutput', () => {
 		});
 
 		it('keeps confirmation modal open when clicking the backdrop', async () => {
-			// Confirmation modals intentionally do not close on backdrop click — users
+			// Confirmation modals intentionally do not close on backdrop click - users
 			// must explicitly choose Cancel/Confirm or press Escape. This guards against
 			// accidental dismissal of destructive prompts.
 			const session = createDefaultSession({
@@ -1507,7 +1507,7 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Toggle is now exposed on user messages too — consistent with
+			// Toggle is now exposed on user messages too - consistent with
 			// assistant messages so the user can flip between formatted and
 			// raw text views of their own input.
 			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
@@ -2003,7 +2003,7 @@ describe('TerminalOutput', () => {
 
 			// Description shown separately
 			expect(screen.getByText('List comparison samples')).toBeInTheDocument();
-			// Full command shown without truncation — use regex since getByText struggles with newlines
+			// Full command shown without truncation - use regex since getByText struggles with newlines
 			expect(screen.getByText(/All comparison samples/)).toBeInTheDocument();
 			expect(screen.getByText(/compare_\* 2>\/dev\/null/)).toBeInTheDocument();
 			expect(screen.getByText(/Done ===/)).toBeInTheDocument();
@@ -2322,7 +2322,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should have been called — user was at bottom, auto-scroll kicks in
+			// scrollTo should have been called - user was at bottom, auto-scroll kicks in
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
@@ -2373,7 +2373,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should NOT have been called — user scrolled up, auto-scroll paused
+			// scrollTo should NOT have been called - user scrolled up, auto-scroll paused
 			expect(scrollToSpy).not.toHaveBeenCalled();
 		});
 
@@ -2645,7 +2645,7 @@ describe('TerminalOutput', () => {
 			];
 
 			// Forced TUI: enableMaestroP on + maestroPMode 'interactive' is NOT
-			// adaptive — only Dynamic mode auto-switches, so the prefix must drop.
+			// adaptive - only Dynamic mode auto-switches, so the prefix must drop.
 			const session = createDefaultSession({
 				enableMaestroP: true,
 				maestroPMode: 'interactive',

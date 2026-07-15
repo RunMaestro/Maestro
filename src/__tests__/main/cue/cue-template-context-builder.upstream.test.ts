@@ -25,7 +25,7 @@ function makeSub(overrides: Partial<CueSubscription> = {}): CueSubscription {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('cue-template-context-builder — per-source upstream output', () => {
+describe('cue-template-context-builder - per-source upstream output', () => {
 	describe('perSourceOutputs', () => {
 		it('creates output_ keys for each source in perSourceOutputs', () => {
 			const event = createCueEvent('agent.completed', 'chain-sub', {

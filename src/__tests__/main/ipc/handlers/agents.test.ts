@@ -1522,7 +1522,7 @@ describe('agents IPC handlers', () => {
 			});
 
 			// An unexpected failure on the skills dir (e.g. EACCES) should
-			// NOT tear down the slash-command list — enrichment is
+			// NOT tear down the slash-command list - enrichment is
 			// best-effort. The error is still captured by Sentry inside
 			// discoverSlashCommands; the list itself survives.
 			vi.mocked(fs.promises.readdir).mockImplementation(async () => {
@@ -1596,7 +1596,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// No built-in commands — only custom .md commands are discoverable
+			// No built-in commands - only custom .md commands are discoverable
 			expect(result).toEqual([]);
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
@@ -1752,7 +1752,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Array config ignored, no built-ins — result should be empty
+			// Array config ignored, no built-ins - result should be empty
 			expect(result).toEqual([]);
 		});
 
@@ -1777,7 +1777,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Malformed JSON skipped gracefully, no built-ins — empty result
+			// Malformed JSON skipped gracefully, no built-ins - empty result
 			expect(result).toEqual([]);
 		});
 
@@ -1980,7 +1980,7 @@ describe('agents IPC handlers', () => {
 			const result = await handler({} as any);
 
 			expect(runSpy).toHaveBeenCalledTimes(1);
-			// Manual refresh must opt into the aggressive sampling path — startup
+			// Manual refresh must opt into the aggressive sampling path - startup
 			// mode would skip when no maestro-p session exists.
 			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
 			expect(result).toEqual({ refreshed: 2 });

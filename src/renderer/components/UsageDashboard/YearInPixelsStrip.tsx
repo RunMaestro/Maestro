@@ -1,13 +1,13 @@
 /**
  * YearInPixelsStrip
  *
- * Single-row "year in pixels" hero — one cell per day across the active
+ * Single-row "year in pixels" hero - one cell per day across the active
  * dashboard time range, colored by activity intensity (same 5-bucket scale
  * used by the Activity Heatmap so the colors are consistent across the
  * dashboard).
  *
  * Designed to sit at the top of the Overview tab as a glanceable signature
- * graphic — the user sees their selected window of work in one strip, with
+ * graphic - the user sees their selected window of work in one strip, with
  * peaks, dry spells, and recent momentum all readable at once.
  */
 
@@ -30,7 +30,7 @@ interface YearInPixelsStripProps {
 	data: StatsAggregation;
 	theme: Theme;
 	colorBlindMode?: boolean;
-	/** Active dashboard time window — controls how many day cells render. */
+	/** Active dashboard time window - controls how many day cells render. */
 	timeRange: StatsTimeRange;
 }
 
@@ -265,7 +265,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 				</span>
 			</div>
 
-			{/* Strip — one flex row of unit-width cells. The container caps cell
+			{/* Strip - one flex row of unit-width cells. The container caps cell
 			    height so the strip stays a single visual line rather than turning
 			    into a chunky bar. */}
 			<div className="relative">

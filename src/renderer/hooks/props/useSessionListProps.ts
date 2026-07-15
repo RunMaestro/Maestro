@@ -13,10 +13,10 @@ import type { StarredItem } from '../session/useStarredItems';
 
 /**
  * Dependencies for computing SessionList props.
- * Only computed values and domain handlers remain — stores are read directly inside the component.
+ * Only computed values and domain handlers remain - stores are read directly inside the component.
  */
 export interface UseSessionListPropsDeps {
-	// Theme (computed from settingsStore by App.tsx — not a raw store value)
+	// Theme (computed from settingsStore by App.tsx - not a raw store value)
 	theme: Theme;
 
 	// Computed values (not raw store fields)

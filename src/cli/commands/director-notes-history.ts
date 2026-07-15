@@ -135,7 +135,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			);
 		} else if (format === 'markdown') {
 			const lines: string[] = [];
-			lines.push("# Director's Notes — History");
+			lines.push("# Director's Notes - History");
 			lines.push('');
 			lines.push(
 				`**Period:** ${lookbackDays > 0 ? `Last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'All time'}`

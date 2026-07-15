@@ -75,7 +75,7 @@ describe('useFocusAfterRender', () => {
 		const ref = createRef<HTMLElement>() as { current: HTMLElement | null };
 		ref.current = el;
 
-		// No delay argument — should default to 0
+		// No delay argument - should default to 0
 		renderHook(() => useFocusAfterRender(ref, true));
 
 		expect(focusSpy).toHaveBeenCalledTimes(1);

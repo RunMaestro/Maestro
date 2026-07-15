@@ -101,7 +101,7 @@ export interface ThemeColors {
 
 	/**
 	 * ANSI 16-color palette for terminal emulation.
-	 * Optional — XTerminal uses theme-appropriate defaults if not provided.
+	 * Optional - XTerminal uses theme-appropriate defaults if not provided.
 	 */
 	ansiBlack?: string;
 	ansiRed?: string;

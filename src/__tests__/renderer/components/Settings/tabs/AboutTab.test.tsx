@@ -1,5 +1,5 @@
 /**
- * Tests for AboutTab — the large-format informational About panel.
+ * Tests for AboutTab - the large-format informational About panel.
  *
  * Verifies the wordmark, tagline, version, origin caption, and that the
  * Texas flag (rendered via the shared MaestroFlags component) links to

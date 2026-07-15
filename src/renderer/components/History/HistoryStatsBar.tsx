@@ -110,7 +110,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				theme={theme}
 			/>
 
-			{/* Live activity indicators — only shown when provided and > 0 */}
+			{/* Live activity indicators - only shown when provided and > 0 */}
 			{showLiveIndicators(stats) && (
 				<>
 					<div

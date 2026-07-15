@@ -6,7 +6,7 @@
  *
  * Each Maestro instance writes to its own file (history-<hostname>.jsonl) and
  * reads from all other files when loading history. This avoids write conflicts
- * entirely — each hostname owns its file exclusively.
+ * entirely - each hostname owns its file exclusively.
  *
  * File format: one JSON object per line (JSONL), append-only.
  */
@@ -28,7 +28,7 @@ import {
 
 const LOG_CONTEXT = '[SharedHistory]';
 
-/** Cached hostname — resolved once per process */
+/** Cached hostname - resolved once per process */
 const LOCAL_HOSTNAME = os.hostname();
 
 /**
@@ -297,7 +297,7 @@ export async function readRemoteEntriesSsh(
 			nameSuffix: '.jsonl',
 		});
 		if (!statsResult.success || !statsResult.data) {
-			// Directory doesn't exist yet — no shared history
+			// Directory doesn't exist yet - no shared history
 			return [];
 		}
 

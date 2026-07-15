@@ -93,7 +93,7 @@ export interface BuildProcessTreeInput {
 }
 
 // Build the process tree using real active processes.
-// Pure function — does not read any closure state.
+// Pure function - does not read any closure state.
 //
 // Note: node.expanded was previously stamped from the live expansion Set, but the
 // renderer reads `expandedIds.has(node.id)` directly, so the field was never

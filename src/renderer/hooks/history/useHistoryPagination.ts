@@ -11,7 +11,7 @@
  *   of the newest-first sorted history, never the whole thing.
  * - Scrolling near the bottom appends an older page.
  * - Clicking a graph bucket far in the past **does not** fetch every
- *   page in between — it seeks directly, replacing the loaded window
+ *   page in between - it seeks directly, replacing the loaded window
  *   with a single page anchored at the target offset. Memory stays bounded.
  *
  * Real-time entries that arrive while the window is jumped (startOffset > 0)
@@ -35,12 +35,12 @@ export interface UseHistoryPaginationOptions<T> {
 	pageSize: number;
 	/**
 	 * Page loader. Must return entries newest-first within the window
-	 * `[offset, offset + limit)`. Stable identity (useCallback) — when this
+	 * `[offset, offset + limit)`. Stable identity (useCallback) - when this
 	 * changes the loaded window resets and the initial page is fetched
 	 * again. Use this to react to lookback / filter changes upstream.
 	 */
 	loadPage: (offset: number, limit: number) => Promise<PaginatedPage<T>>;
-	/** Stable identifier for an entry — used to dedupe streamed prepends. */
+	/** Stable identifier for an entry - used to dedupe streamed prepends. */
 	getEntryId: (entry: T) => string;
 }
 
@@ -60,7 +60,7 @@ export interface UseHistoryPaginationResult<T> {
 	isAtTop: boolean;
 
 	/**
-	 * Append the next older page. Safe to call from a scroll handler — it
+	 * Append the next older page. Safe to call from a scroll handler - it
 	 * coalesces concurrent calls and is a no-op when nothing more to load.
 	 */
 	loadMoreOlder: () => Promise<void>;
@@ -73,7 +73,7 @@ export interface UseHistoryPaginationResult<T> {
 	jumpToOffset: (targetOffset: number) => Promise<void>;
 
 	/**
-	 * Jump back to the top (offset 0) — equivalent to a fresh initial load.
+	 * Jump back to the top (offset 0) - equivalent to a fresh initial load.
 	 */
 	jumpToTop: () => Promise<void>;
 
@@ -85,7 +85,7 @@ export interface UseHistoryPaginationResult<T> {
 	prependLiveEntry: (entry: T) => boolean;
 
 	/**
-	 * Replace the entries set in place — for client-side mutations like
+	 * Replace the entries set in place - for client-side mutations like
 	 * delete/update that the caller already applied to the IPC.
 	 */
 	mutateEntries: (mutator: (current: T[]) => T[]) => void;
@@ -110,7 +110,7 @@ export function useHistoryPagination<T>({
 	// jumpToTop so a fast scroll into a click-to-jump can't race.
 	const inFlightRef = useRef(false);
 
-	// Latest values for the prepend handler — keeping it stable means
+	// Latest values for the prepend handler - keeping it stable means
 	// caller-side effect deps don't change every render.
 	const startOffsetRef = useRef(startOffset);
 	useEffect(() => {
@@ -121,7 +121,7 @@ export function useHistoryPagination<T>({
 		getEntryIdRef.current = getEntryId;
 	}, [getEntryId]);
 
-	// Reload from the top whenever the loader identity changes — this is
+	// Reload from the top whenever the loader identity changes - this is
 	// the canonical signal that the upstream filters (lookback, etc.)
 	// shifted, so the offset semantics no longer match.
 	useEffect(() => {
@@ -200,7 +200,7 @@ export function useHistoryPagination<T>({
 	}, [jumpToOffset]);
 
 	const prependLiveEntry = useCallback((entry: T): boolean => {
-		// Only safe at the top — anywhere else and we'd be inserting an
+		// Only safe at the top - anywhere else and we'd be inserting an
 		// entry into an arbitrary page slice, breaking offset semantics.
 		if (startOffsetRef.current !== 0) return false;
 		const id = getEntryIdRef.current(entry);

@@ -14,7 +14,7 @@ const ZAP_STYLE = { color: '#2dd4bf' } as const;
  * Maestro Cue indicator pill rendered next to the session name.
  *
  * Memo'd because SessionItem renders one of these per row in the Left Bar
- * and the props are all primitive — React's default shallow compare lets
+ * and the props are all primitive - React's default shallow compare lets
  * this component skip re-renders when only unrelated parent state changes.
  *
  * Hidden entirely when `subscriptionCount <= 0` so SessionItem can use

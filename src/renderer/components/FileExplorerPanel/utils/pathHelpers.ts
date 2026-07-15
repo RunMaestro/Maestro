@@ -22,7 +22,7 @@ export function basenameOf(relativePath: string): string {
 
 /**
  * Find a node at `relativePath` within the given file tree. Returns null when
- * the path doesn't resolve — treated as "no conflict" so fs:rename can surface
+ * the path doesn't resolve - treated as "no conflict" so fs:rename can surface
  * any race between this lookup and the actual move.
  */
 export function findNodeAtPath(

@@ -19,7 +19,7 @@ export interface CueFileWatcherConfig {
 	/**
 	 * Optional gate: when this returns `false`, debounced events are dropped
 	 * instead of dispatched. The chokidar watcher itself stays subscribed
-	 * (OS file-watch is nearly free) — only the downstream emit + filter +
+	 * (OS file-watch is nearly free) - only the downstream emit + filter +
 	 * dispatch is skipped. Used by the visibility-aware pause; see
 	 * CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations". Defaults to
 	 * always-active when omitted.
@@ -44,7 +44,7 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 
 	// Pre-compute the normalized project root (with trailing separator) so the
 	// per-event guard below can do a cheap prefix check. `path.resolve` does not
-	// follow symlinks — a link inside projectRoot pointing outside would slip
+	// follow symlinks - a link inside projectRoot pointing outside would slip
 	// through this guard. That is an accepted project-trust limitation, not a
 	// Cue concern (the validator already rejects `../` patterns up-front).
 	const normalizedRoot = path.resolve(projectRoot) + path.sep;
@@ -61,7 +61,7 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 				debounceTimers.delete(filePath);
 
 				// Visibility-aware pause: drop the event when inactive. We don't
-				// queue it for later — file changes that happened while hidden
+				// queue it for later - file changes that happened while hidden
 				// can be re-discovered on resume via re-scan paths.
 				if (!isActive()) return;
 

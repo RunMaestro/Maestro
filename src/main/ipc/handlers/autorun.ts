@@ -490,7 +490,7 @@ export function registerAutorunHandlers(
 					throw new Error('Invalid file path');
 				}
 
-				// Check if file exists — return empty content instead of throwing,
+				// Check if file exists - return empty content instead of throwing,
 				// since missing files are expected (deleted, renamed, stale references)
 				try {
 					await fs.access(filePath);
@@ -785,7 +785,7 @@ export function registerAutorunHandlers(
 					const remotePath = `${folderPath}/${normalizedPathPosix}`;
 					logger.debug(`${LOG_CONTEXT} replaceImage via SSH: ${remotePath}`, LOG_CONTEXT);
 
-					// Mirror the local branch's "overwrite only" contract — without
+					// Mirror the local branch's "overwrite only" contract - without
 					// the existence check, a stale annotator save could silently
 					// recreate a file that was deleted on the remote.
 					const stat = await statRemote(remotePath, sshConfig);
@@ -1025,7 +1025,7 @@ export function registerAutorunHandlers(
 					depth: 99, // Recursive watching
 				});
 
-				// Handler for file changes — coalesces all pending changes for this folder
+				// Handler for file changes - coalesces all pending changes for this folder
 				// into a single debounced flush so a burst of writes produces one tick of work.
 				const handleFileChange = (eventType: string) => (filePath: string) => {
 					// Only care about .md files

@@ -419,7 +419,7 @@ describe('buildProcessTree', () => {
 		expect(tree[0].children![0].cueRunId).toBe('uuid-1');
 	});
 
-	it('does not stamp node.expanded — that field is intentionally unused', () => {
+	it('does not stamp node.expanded - that field is intentionally unused', () => {
 		const tree = buildProcessTree({
 			sessions: [session()],
 			groups: [],

@@ -571,7 +571,7 @@ describe('system IPC handlers', () => {
 
 		it('should silently ignore non-URL strings like relative file paths', async () => {
 			const handler = handlers.get('shell:openExternal');
-			// These should return gracefully instead of throwing — Fixes MAESTRO-F4/E5
+			// These should return gracefully instead of throwing - Fixes MAESTRO-F4/E5
 			await expect(handler!({} as any, 'LICENSE')).resolves.toBeUndefined();
 			await expect(handler!({} as any, './README.md')).resolves.toBeUndefined();
 			await expect(handler!({} as any, '../docs/guide.md')).resolves.toBeUndefined();
@@ -691,7 +691,7 @@ describe('system IPC handlers', () => {
 			vi.mocked(shell.trashItem).mockRejectedValue(new Error('Operation was aborted'));
 
 			const handler = handlers.get('shell:trashItem');
-			// Should not throw — aborted operations are expected
+			// Should not throw - aborted operations are expected
 			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
 		});
 
@@ -725,7 +725,7 @@ describe('system IPC handlers', () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 
 			const handler = handlers.get('shell:openPath');
-			// Should not throw — logs warning and returns gracefully
+			// Should not throw - logs warning and returns gracefully
 			await expect(handler!({} as any, '/non/existent/path')).resolves.toBeUndefined();
 		});
 
@@ -734,7 +734,7 @@ describe('system IPC handlers', () => {
 			vi.mocked(shell.openPath).mockResolvedValue('No application found');
 
 			const handler = handlers.get('shell:openPath');
-			// Should not throw — logs warning instead
+			// Should not throw - logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
 		});
 	});
@@ -949,7 +949,7 @@ describe('system IPC handlers', () => {
 			expect(startResult.url).toBe(expectedUrl);
 
 			// Simulate the renderer's polling loop (useLiveOverlay.ts:131-136).
-			// Every call must return the tokenized URL — never the bare one.
+			// Every call must return the tokenized URL - never the bare one.
 			for (let i = 0; i < 5; i++) {
 				const pollResult = await statusHandler!({} as any);
 				expect(pollResult.url).toBe(expectedUrl);

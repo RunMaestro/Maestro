@@ -1,5 +1,5 @@
 /**
- * useInputKeyDown — extracted from App.tsx (Phase 2F)
+ * useInputKeyDown - extracted from App.tsx (Phase 2F)
  *
  * Owns the handleInputKeyDown keyboard event handler for the main input area.
  * Handles tab completion, @ mentions, slash commands, enter-to-send,
@@ -279,7 +279,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 
 			// Read enter-to-send settings at call time (not closure).
-			// A per-tab override wins over the global default — set when the user
+			// A per-tab override wins over the global default - set when the user
 			// clicks the chip or runs the palette toggle on a specific tab.
 			const settings = useSettingsStore.getState();
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);

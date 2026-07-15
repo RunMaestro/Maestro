@@ -416,7 +416,7 @@ describe('useFileTreeManagement', () => {
 				sshRemoteId: 'my-ssh-remote',
 			})
 		);
-		// Recursive loadFileTree must NOT be called for SSH refreshes — the whole
+		// Recursive loadFileTree must NOT be called for SSH refreshes - the whole
 		// point of the batched loader is to skip the per-directory round-trips.
 		expect(loadFileTree).not.toHaveBeenCalled();
 	});
@@ -696,7 +696,7 @@ describe('useFileTreeManagement', () => {
 			vi.advanceTimersByTime(6000);
 		});
 
-		// initialFileTreeReady should still be false — gated timer hasn't started yet
+		// initialFileTreeReady should still be false - gated timer hasn't started yet
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
 		// Now mark sessions as loaded
@@ -724,7 +724,7 @@ describe('useFileTreeManagement', () => {
 	it('absolute backstop fires at 8s even if sessionsLoaded is never set', () => {
 		vi.useFakeTimers();
 
-		// sessionsLoaded stays false — simulates a stuck session restoration
+		// sessionsLoaded stays false - simulates a stuck session restoration
 		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 
 		const state = createSessionsState([createMockSession({ fileTree: [] })]);
@@ -732,13 +732,13 @@ describe('useFileTreeManagement', () => {
 
 		renderHook(() => useFileTreeManagement(deps));
 
-		// At 7.9s — backstop hasn't fired yet
+		// At 7.9s - backstop hasn't fired yet
 		act(() => {
 			vi.advanceTimersByTime(7900);
 		});
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
-		// At 8s — backstop fires
+		// At 8s - backstop fires
 		act(() => {
 			vi.advanceTimersByTime(200);
 		});

@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/useGhCliPreflight — gh CLI pre-flight state
+ * Tests for SymphonyModal/hooks/useGhCliPreflight - gh CLI pre-flight state
  * machine. The dialog must open BEFORE the gh probe resolves so the spinner
  * is visible during the network round-trip.
  */
@@ -97,7 +97,7 @@ describe('useGhCliPreflight', () => {
 			await flushPromises();
 		});
 		expect(result.current.status).toEqual({ installed: false, authenticated: false });
-		// Trigger again — status should reset to null synchronously
+		// Trigger again - status should reset to null synchronously
 		act(() => result.current.start());
 		expect(result.current.status).toBeNull();
 		expect(result.current.isChecking).toBe(true);

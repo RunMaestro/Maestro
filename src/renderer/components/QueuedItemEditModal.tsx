@@ -20,7 +20,7 @@ interface QueuedItemEditModalProps {
 }
 
 /**
- * QueuedItemEditModal — edit a queued message's prompt text and attached images
+ * QueuedItemEditModal - edit a queued message's prompt text and attached images
  * before it is sent. Add images via the file picker or paste, edit them in the
  * shared annotator, or remove them. Reuses the same image primitives as the
  * composer (annotator store, dedupe helper, FileReader flow) and renders its own

@@ -68,7 +68,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
  * Resolve the file path and the target agent.
  *
  * - Relative paths are resolved against the shell's CWD (process.cwd()).
- * - With `--agent`, the file opens in that agent regardless of where it lives —
+ * - With `--agent`, the file opens in that agent regardless of where it lives -
  *   the explicit flag means the user is asserting which agent they want.
  * - Without `--agent`, we auto-detect the owning agent by longest cwd-prefix
  *   match. On tie, we pick the most-recently-active candidate by history-file

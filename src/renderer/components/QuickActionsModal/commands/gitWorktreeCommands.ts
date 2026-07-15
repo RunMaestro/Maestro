@@ -80,7 +80,7 @@ export function buildGitWorktreeCommands({
 					setGitDiffPreview(diff.diff);
 				} else {
 					notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-					// Polling cache said there were changes but `git diff` is empty —
+					// Polling cache said there were changes but `git diff` is empty -
 					// re-sync so the widget stops advertising stale stats.
 					void onRefreshGitStatus?.();
 				}
@@ -121,7 +121,7 @@ export function buildGitWorktreeCommands({
 						message:
 							error instanceof Error ? error.message : 'Failed to open repository in browser',
 					});
-					// Network/git failures are recoverable — capture for tracking but keep modal close path.
+					// Network/git failures are recoverable - capture for tracking but keep modal close path.
 					captureException(error);
 				}
 				setQuickActionOpen(false);

@@ -822,7 +822,7 @@ export function createProcessApi() {
 
 		/**
 		 * Send response for remote "new AI tab with prompt".
-		 * `tabId` is the id of the freshly-created tab — surfaced so
+		 * `tabId` is the id of the freshly-created tab - surfaced so
 		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
 		 * caller without owning a persistent channel.
 		 */
@@ -1074,7 +1074,7 @@ export function createProcessApi() {
 
 		/**
 		 * Subscribe to remote reset auto-run document tasks
-		 * (request-response — renderer reads/writes the document via existing autorun IPC).
+		 * (request-response - renderer reads/writes the document via existing autorun IPC).
 		 *
 		 * On failure we ack the channel with a fallback (so the web client doesn't hang)
 		 * and then rethrow so the unhandled rejection reaches Sentry via the global handler.
@@ -1184,7 +1184,7 @@ export function createProcessApi() {
 		 * fallback (`[]` / `null` / `false`) so the web client doesn't hang on a
 		 * regression, and rethrows the error so Sentry's global unhandled-rejection
 		 * hook still reports the cause. The web UI currently can't distinguish a
-		 * legitimate empty list from a transport failure with this shape — a
+		 * legitimate empty list from a transport failure with this shape - a
 		 * follow-up will move these to the structured `{ success, error }` payload
 		 * used by `onRemoteSetAutoRunFolder` (tracked in the AutoRun follow-up gist).
 		 */

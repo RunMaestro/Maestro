@@ -56,7 +56,7 @@ function isConversationalFiller(text: string): boolean {
 
 /**
  * Check if text is a wrap-up / housekeeping status that should not stand alone
- * as a History list-view headline. Distinct from conversational filler — these
+ * as a History list-view headline. Distinct from conversational filler - these
  * are statements about completion / process state rather than reactions.
  *
  * The prompt forbids these in Summary, but models still emit them. When the
@@ -77,7 +77,7 @@ function isWrapUpStatus(text: string): boolean {
 	if (wholeLinePatterns.some((pattern) => pattern.test(trimmed))) return true;
 
 	// Trailing wrap-up sentence: catches Summary lines that bury a banal
-	// housekeeping note as the closer, e.g. "The playbook file is gitignored —
+	// housekeeping note as the closer, e.g. "The playbook file is gitignored -
 	// no commit needed for that. Task complete."
 	const trailingPatterns = [
 		/[.!?\s]task\s+(complete|completed|done|finished)[\s!.]*$/i,
@@ -94,12 +94,12 @@ function isWrapUpStatus(text: string): boolean {
  * unwrapped title text.
  *
  * The prompt now forbids leading Details with a heading, but models still do
- * it — they put the real lede here while leaving Summary as a status note.
+ * it - they put the real lede here while leaving Summary as a status note.
  * When that happens we promote the headline to Summary so the History list
  * view reads correctly. Details is left as-is; the body view continues to
  * show the heading as the model wrote it.
  *
- * Short bold spans like `**Note:**` or `**Warning:**` are filtered out — they
+ * Short bold spans like `**Note:**` or `**Warning:**` are filtered out - they
  * are labels, not headlines.
  */
 function extractDetailsHeadline(details: string): string | null {
@@ -115,7 +115,7 @@ function extractDetailsHeadline(details: string): string | null {
 	const boldLeadingMatch = firstLine.match(/^\*\*([^*\n]+?)\*\*/);
 	if (boldLeadingMatch) {
 		const candidate = boldLeadingMatch[1].trim();
-		// Skip short labels like "Note:" / "Warning:" — not real headlines.
+		// Skip short labels like "Note:" / "Warning:" - not real headlines.
 		if (candidate.length >= 15 && !candidate.endsWith(':')) {
 			return candidate;
 		}
@@ -177,14 +177,14 @@ export function parseSynopsis(response: string): ParsedSynopsis {
 		const headline = extractDetailsHeadline(details);
 		if (headline) {
 			shortSummary = headline;
-			// Intentionally leave `details` untouched — the body view continues
+			// Intentionally leave `details` untouched - the body view continues
 			// to show the model's original content. Only the list-view lede
 			// (shortSummary) changes.
 		}
 	}
 
 	// Check if summary is a template placeholder or conversational filler
-	// (NOTE: deliberately excludes isWrapUpStatus here — when there's no
+	// (NOTE: deliberately excludes isWrapUpStatus here - when there's no
 	// rescue headline available, a weak wrap-up Summary is still more useful
 	// than the generic "Task completed" default. The rescue block above is
 	// where wrap-up status triggers replacement; this block handles the

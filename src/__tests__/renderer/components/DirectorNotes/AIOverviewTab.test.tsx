@@ -38,7 +38,7 @@ vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
 	),
 }));
 
-// Mock RichOverview — the Rich-mode dashboard is exercised in its own test
+// Mock RichOverview - the Rich-mode dashboard is exercised in its own test
 // file. Here we only need a lightweight stub that proves Rich mode rendered and
 // still surfaces the narrative (via the shared markdown-renderer testid) so the
 // existing synopsis assertions hold under the new Rich default.
@@ -58,7 +58,7 @@ vi.mock('../../../../renderer/components/DirectorNotes/RichOverview', () => ({
 	),
 }));
 
-// Mock SaveMarkdownModal — surface the `content` prop so tests can assert Save
+// Mock SaveMarkdownModal - surface the `content` prop so tests can assert Save
 // always operates on the raw synopsis markdown (in both Rich and Plain modes).
 vi.mock('../../../../renderer/components/SaveMarkdownModal', () => ({
 	SaveMarkdownModal: ({ content, onClose }: { content: string; onClose: () => void }) => (
@@ -455,7 +455,7 @@ describe('AIOverviewTab', () => {
 		// Unmount (simulates closing the modal)
 		unmount();
 
-		// Resolve the generation after unmount — should not throw or update state
+		// Resolve the generation after unmount - should not throw or update state
 		await act(async () => {
 			resolveGeneration({
 				success: true,
@@ -645,7 +645,7 @@ describe('AIOverviewTab', () => {
 
 		it('lets a localStorage override win over the persisted defaultMode', async () => {
 			// Persisted default is Plain, but the session override (the in-tab
-			// toggle) chose Rich — the override wins.
+			// toggle) chose Rich - the override wins.
 			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
 			window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'rich');
 
@@ -681,7 +681,7 @@ describe('AIOverviewTab', () => {
 				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
 			});
 
-			// Switch to Plain, then copy — same raw markdown, unaffected by mode.
+			// Switch to Plain, then copy - same raw markdown, unaffected by mode.
 			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
 			fireEvent.click(screen.getByText('Copy'));
 

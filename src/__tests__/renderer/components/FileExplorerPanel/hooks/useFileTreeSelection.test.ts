@@ -102,7 +102,7 @@ describe('useFileTreeSelection', () => {
 	});
 
 	it('shift-click anchor does not move (stickiness)', () => {
-		// Simulate two consecutive shift-clicks — the anchor stays at index 0
+		// Simulate two consecutive shift-clicks - the anchor stays at index 0
 		const { result } = renderSelectionHook(['a.ts', 'b.ts', 'c.ts', 'd.ts'], 'sess', 0);
 		const eShift = { shiftKey: true, metaKey: false, ctrlKey: false } as React.MouseEvent;
 		// First shift-click: index 0 to 2
@@ -131,7 +131,7 @@ describe('useFileTreeSelection', () => {
 	it('shift-click pivots from the store anchor (shared with keyboard nav), not selectedFileIndex', () => {
 		// selectedFileIndex prop is 0, but a prior keyboard move set the store
 		// anchor to 2. Shift-clicking row 0 must select [0..2] using the store
-		// anchor — proving mouse and keyboard extend the SAME selection.
+		// anchor - proving mouse and keyboard extend the SAME selection.
 		const { result } = renderSelectionHook(['a.ts', 'b.ts', 'c.ts', 'd.ts'], 'sess', 0);
 		act(() => {
 			useFileExplorerStore.getState().setSelectionAnchorIndex(2);

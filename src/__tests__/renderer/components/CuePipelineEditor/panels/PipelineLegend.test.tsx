@@ -1,5 +1,5 @@
 /**
- * Tests for PipelineLegend — Phase 14B extraction.
+ * Tests for PipelineLegend - Phase 14B extraction.
  */
 
 import { describe, it, expect, vi } from 'vitest';

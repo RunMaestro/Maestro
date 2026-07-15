@@ -1,6 +1,6 @@
 /**
  * @file consent-minter.test.ts
- * @description Tests for the consent-nonce registry — the anti-forgery core of
+ * @description Tests for the consent-nonce registry - the anti-forgery core of
  * the isolated authorization minter. A mint may only proceed with a live,
  * main-issued, one-time nonce bound to the exact plugin, approving a subset of
  * the offered capabilities.
@@ -281,7 +281,7 @@ describe('ConsentMinter', () => {
 	});
 });
 
-describe('ConsentMinter — Phase-4 act-verb channels', () => {
+describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	const ACT_REQUESTED: PermissionRequest[] = [
 		{ capability: 'fs:read' },
 		{ capability: 'agents:dispatch', scope: 'agent-a' },

@@ -1,12 +1,12 @@
 /**
  * @file cue-schedule-create.test.ts
- * @description Integration tests for `maestro-cli cue schedule` — the create
+ * @description Integration tests for `maestro-cli cue schedule` - the create
  * branch (Phase 03 task 1 of the time.once feature). The list/cancel branches
  * are covered in `cue-schedule-list-cancel.test.ts`; this file exercises the
  * end-to-end write path with a real temp directory so the YAML round-trip
  * (mkdir + dump + reload) is asserted on disk, not against a mocked writer.
  *
- * Only the agent lookup (`readSessions`) is mocked — every other dependency
+ * Only the agent lookup (`readSessions`) is mocked - every other dependency
  * (`appendSubscriptionsToYaml`, `loadCueConfigDetailed`,
  * `removeSubscriptionFromYaml`) runs unmodified against the temp project root.
  */
@@ -195,7 +195,7 @@ describe('cue schedule (create)', () => {
 				Record<string, unknown>
 			>;
 			expect(rows).toHaveLength(2);
-			// Sort order is ascending by fire_at — the 5m task should come first.
+			// Sort order is ascending by fire_at - the 5m task should come first.
 			expect(rows[0].agent_id).toBe('agent-alpha');
 			expect(rows[0].action).toBe('notify');
 			expect(rows[1].agent_id).toBe('agent-beta');
@@ -300,7 +300,7 @@ describe('cue schedule (create)', () => {
 
 		// Use a year safely in the future so the validator (if it ever rejects
 		// past timestamps) stays happy. The exact local-vs-UTC conversion is
-		// system-dependent — we only assert the resulting ISO string carries a
+		// system-dependent - we only assert the resulting ISO string carries a
 		// recognizable timezone suffix.
 		await cueSchedule({
 			at: '2099-12-15 14:30',

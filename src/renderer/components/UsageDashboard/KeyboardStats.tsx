@@ -4,10 +4,10 @@
  * Renders the "Shortcuts" tab of the Usage Dashboard. Combines two data
  * sources:
  *
- * 1. Keyboard mastery (which shortcuts the user has ever fired) — sourced from
+ * 1. Keyboard mastery (which shortcuts the user has ever fired) - sourced from
  *    `settingsStore.keyboardMasteryStats`. This is the same data backing the
  *    "85 / 87 mastered" display in the keyboard shortcuts help modal.
- * 2. Daily firing counts — fetched from
+ * 2. Daily firing counts - fetched from
  *    `window.maestro.stats.getShortcutUsageByDay`. Every shortcut firing
  *    increments the local-time day's bucket; the UI zero-fills missing days so
  *    the bar geometry matches calendar reality.
@@ -174,7 +174,7 @@ function buildContinuousSeries(
 
 /**
  * Pretty short label for a YYYY-MM-DD bucket. Hides labels on dense series so
- * the axis isn't crowded — the renderer only emits a label every Nth tick.
+ * the axis isn't crowded - the renderer only emits a label every Nth tick.
  */
 function formatTickLabel(date: string, index: number, total: number): string {
 	if (total <= 7) return date.slice(5); // MM-DD on small ranges
@@ -416,7 +416,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 				<MetricCard
 					icon={<Keyboard className="w-4 h-4" />}
 					label="Shortcut firings"
-					value={loading ? '—' : formatNumber(total)}
+					value={loading ? '-' : formatNumber(total)}
 					theme={theme}
 					animationIndex={1}
 					extra={
@@ -429,7 +429,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 				<MetricCard
 					icon={<Sparkles className="w-4 h-4" />}
 					label="Peak day"
-					value={peakDay ? formatNumber(peakDay.count) : '—'}
+					value={peakDay ? formatNumber(peakDay.count) : '-'}
 					theme={theme}
 					animationIndex={2}
 					extra={

@@ -353,7 +353,7 @@ export function useAgentSessionManagement(
 
 					// Convert to log entries, keeping messages with actual text content or
 					// reconstructed images. Tool-use-only messages (empty text, no images)
-					// are skipped — restored tabs start with thinking off so there's nothing
+					// are skipped - restored tabs start with thinking off so there's nothing
 					// useful to render for those entries.
 					messages = withoutSynopsis
 						.filter(

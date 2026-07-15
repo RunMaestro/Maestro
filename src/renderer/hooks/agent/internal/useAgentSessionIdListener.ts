@@ -1,5 +1,5 @@
 /**
- * useAgentSessionIdListener — registers `window.maestro.process.onSessionId`
+ * useAgentSessionIdListener - registers `window.maestro.process.onSessionId`
  *
  * Captures provider session IDs at tab and (for non-claude-code agents)
  * session level. Detects resume failure when an existing tab receives a
@@ -7,7 +7,7 @@
  * context gauge to zero so the user can see the reset.
  *
  * Special case: claude-code emits fresh fork IDs on every spawn that have
- * no backing JSONL — for that agent the original tab ID is treated as
+ * no backing JSONL - for that agent the original tab ID is treated as
  * immutable and the session-level field is never written.
  */
 
@@ -56,7 +56,7 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 					return prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
-						// Claude Code 2.1.x in batch mode emits a fresh `session_id` on every spawn —
+						// Claude Code 2.1.x in batch mode emits a fresh `session_id` on every spawn -
 						// but never writes a JSONL file under that fresh ID; the conversation
 						// continues to be appended to the original JSONL. Storing the fork ID and
 						// using it on the next spawn produces "no conversation found with session id"
@@ -104,7 +104,7 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 							}
 
 							logger.warn(
-								'[onSessionId] Session resume failed — agent returned a new session ID',
+								'[onSessionId] Session resume failed - agent returned a new session ID',
 								undefined,
 								{
 									expected: targetTab.agentSessionId,
@@ -120,7 +120,7 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 								id: generateId(),
 								timestamp: Date.now(),
 								source: 'system',
-								text: '⚠️ Session resume failed — agent started a new session. Previous context was lost.',
+								text: '⚠️ Session resume failed - agent started a new session. Previous context was lost.',
 							};
 
 							const updatedAiTabs = s.aiTabs.map((tab) => {

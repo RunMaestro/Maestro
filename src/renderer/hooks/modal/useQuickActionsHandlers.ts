@@ -1,5 +1,5 @@
 /**
- * useQuickActionsHandlers — extracted from App.tsx
+ * useQuickActionsHandlers - extracted from App.tsx
  *
  * Provides stable callbacks for the Quick Actions modal (Cmd+K):
  *   - Toggle read-only mode

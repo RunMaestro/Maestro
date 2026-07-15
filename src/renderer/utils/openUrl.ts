@@ -22,7 +22,7 @@ import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
  *
  * @param url        The URL to open (http, https, or mailto)
  * @param options.ctrlKey  Whether Ctrl (or Meta on macOS for this purpose) was
- *                         held — inverts the default browser choice
+ *                         held - inverts the default browser choice
  */
 export function openUrl(url: string, options?: { ctrlKey?: boolean }): void {
 	// mailto: always goes to system browser
@@ -67,7 +67,7 @@ export function openInMaestroBrowser(url: string): void {
 	const { setSessions } = useSessionStore.getState();
 	const session = selectActiveSession(useSessionStore.getState());
 	if (!session) {
-		// No active session — fall back to system browser
+		// No active session - fall back to system browser
 		window.maestro.shell.openExternal(url);
 		return;
 	}

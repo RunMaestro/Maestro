@@ -598,7 +598,7 @@ describe('EditAgentModal', () => {
 			sessionSshRemoteConfig: {
 				enabled: true,
 				remoteId: 'remote-1',
-				// No workingDirOverride — this is the regression scenario
+				// No workingDirOverride - this is the regression scenario
 			},
 		});
 
@@ -778,7 +778,7 @@ describe('EditAgentModal', () => {
 		// Wait for the SSH dropdown to render with the remote selected
 		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
 
-		// Switch the dropdown to Local Execution — this is the action that used
+		// Switch the dropdown to Local Execution - this is the action that used
 		// to wipe shareHistoryToProjectDir.
 		fireEvent.change(dropdown, { target: { value: 'local' } });
 

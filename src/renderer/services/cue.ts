@@ -107,7 +107,7 @@ export const cueService = {
 		// callers like CueYamlEditor silently fall back to a template even on
 		// transport errors. Existing call sites already cope with throws via
 		// outer try/catch (CueYamlEditor) or the write-back verification path
-		// in handleSave (which is now strictly more informative — the IPC
+		// in handleSave (which is now strictly more informative - the IPC
 		// error message propagates instead of "did not persist").
 		return createIpcMethod({
 			call: () => window.maestro.cue.readYaml(projectRoot),
@@ -127,7 +127,7 @@ export const cueService = {
 	async validateYaml(content: string): Promise<{ valid: boolean; errors: string[] }> {
 		// rethrow on IPC failure (instead of swallowing as `{ valid: true }`).
 		// The previous default was actively dangerous: a transport failure
-		// would surface as "yaml is valid, save freely" — exactly the wrong
+		// would surface as "yaml is valid, save freely" - exactly the wrong
 		// fallback. Callers (CueYamlEditor) already catch the rejection and
 		// gate Save by setting isValid=false + a meaningful error.
 		return createIpcMethod({

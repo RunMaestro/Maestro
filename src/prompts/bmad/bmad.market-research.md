@@ -229,7 +229,7 @@ Show initial scope document and present continue option:
 [C] Continue - Confirm scope and proceed to customer insights analysis
 [Modify] Suggest changes to research scope before proceeding
 
-**HALT — wait for user response before proceeding.**
+**HALT - wait for user response before proceeding.**
 
 ### 5. Handle User Response
 
@@ -460,7 +460,7 @@ _Source: [URL]_
 **Ready to proceed to customer pain points?**
 [C] Continue - Save this to document and proceed to pain points analysis
 
-**HALT — wait for user response before proceeding.**
+**HALT - wait for user response before proceeding.**
 
 ### 6. Handle Continue Selection
 

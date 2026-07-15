@@ -30,7 +30,7 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml'
 		yaml: (pipelines as unknown[]).length === 0 ? '' : 'yaml-content',
 		promptFiles: new Map(),
 	})),
-	// Per-agent-cwd emitter — the mock walks each pipeline's agent /
+	// Per-agent-cwd emitter - the mock walks each pipeline's agent /
 	// command nodes, looks up the owner's projectRoot via the sessionsById
 	// map, and emits one byCwd entry per distinct projectRoot. Mirrors what
 	// the real implementation does for these simple test pipelines without
@@ -304,7 +304,7 @@ describe('usePipelinePersistence', () => {
 					title: 'Some pipelines skipped',
 				})
 			);
-			// No YAML written — nothing valid to write
+			// No YAML written - nothing valid to write
 			expect(mockWriteYaml).not.toHaveBeenCalled();
 		});
 
@@ -316,7 +316,7 @@ describe('usePipelinePersistence', () => {
 
 			// Previous save had A at /proj-a
 			const h = setup({
-				pipelines: [pipelineB], // A was deleted — only B remains
+				pipelines: [pipelineB], // A was deleted - only B remains
 				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/proj-a' }],
 				previousRoots: new Set(['/proj-a']),
 			});
@@ -334,9 +334,9 @@ describe('usePipelinePersistence', () => {
 		});
 
 		it('does not delete root of an error-node pipeline during orphaned-root cleanup', async () => {
-			// A is valid (at /proj-a), B has errors (at /proj-b — still on disk from prev save)
+			// A is valid (at /proj-a), B has errors (at /proj-b - still on disk from prev save)
 			// Previous save included both roots. User saves WITHOUT deleting B.
-			// B's root should NOT be deleted — B still exists in the editor.
+			// B's root should NOT be deleted - B still exists in the editor.
 			const pipelineA = pipeline(
 				'p-a',
 				'Pipeline A',
@@ -364,7 +364,7 @@ describe('usePipelinePersistence', () => {
 
 			// A is written
 			expect(mockWriteYaml).toHaveBeenCalledWith('/proj-a', expect.any(String), expect.any(Object));
-			// B's root is protected — NOT deleted
+			// B's root is protected - NOT deleted
 			expect(mockDeleteYaml).not.toHaveBeenCalledWith('/proj-b');
 			// Warning for B being skipped
 			expect(mockNotifyToast).toHaveBeenCalledWith(
@@ -418,7 +418,7 @@ describe('usePipelinePersistence', () => {
 			await act(async () => {
 				await h.result.current.handleSave();
 			});
-			// The root is shared — skip writing to avoid stripping pipelineB from disk
+			// The root is shared - skip writing to avoid stripping pipelineB from disk
 			expect(mockWriteYaml).not.toHaveBeenCalledWith(
 				'/proj-ab',
 				expect.anything(),
@@ -804,7 +804,7 @@ describe('usePipelinePersistence', () => {
 			});
 			expect(h.result.current.saveStatus).toBe('success');
 			// After another 1.5s, the first timer (would have fired at 2s) should not
-			// have flipped to idle — the replacement 2s timer is still pending.
+			// have flipped to idle - the replacement 2s timer is still pending.
 			await act(async () => {
 				vi.advanceTimersByTime(1500);
 			});
@@ -893,7 +893,7 @@ describe('usePipelinePersistence', () => {
 				[{ id: 'e1', source: 't1', target: 'a1' }]
 			);
 			// Simulate the agent's input prompt being unset in React state at
-			// render time — the panel has a pending debounced write that would
+			// render time - the panel has a pending debounced write that would
 			// promote it to "Prompt 1" when the flush callback runs. Without
 			// flush-on-save, validatePipelines would see the empty prompt and
 			// reject the save.
@@ -905,7 +905,7 @@ describe('usePipelinePersistence', () => {
 			});
 
 			// Register a flush that promotes the stale empty prompt to the real
-			// value — exactly what the real debounced callback does via
+			// value - exactly what the real debounced callback does via
 			// onUpdateNode → setPipelineState.
 			registerPendingEdit(() => {
 				h.setPipelineState((prev) => ({

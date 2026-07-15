@@ -59,7 +59,7 @@ function seedSessions(codexHomes: string[]) {
 	useSessionStore.setState({ sessions } as any);
 }
 
-describe('CodexPlanUsage — empty state', () => {
+describe('CodexPlanUsage - empty state', () => {
 	it('renders the empty message when no Codex accounts are configured and no snapshots are cached', () => {
 		render(<CodexPlanUsage theme={theme} />);
 
@@ -68,7 +68,7 @@ describe('CodexPlanUsage — empty state', () => {
 	});
 });
 
-describe('CodexPlanUsage — configured account without snapshot', () => {
+describe('CodexPlanUsage - configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account with no snapshot yet', () => {
 		seedSessions(['/Users/me/.codex-pending']);
 
@@ -101,7 +101,7 @@ describe('CodexPlanUsage — configured account without snapshot', () => {
 	});
 });
 
-describe('CodexPlanUsage — multi-account tabs', () => {
+describe('CodexPlanUsage - multi-account tabs', () => {
 	it('renders a tab per account but only one selected row at a time', () => {
 		seedSnapshots({
 			'/Users/me/.codex': {
@@ -178,7 +178,7 @@ describe('CodexPlanUsage — multi-account tabs', () => {
 	});
 });
 
-describe('CodexPlanUsage — non-authenticated row', () => {
+describe('CodexPlanUsage - non-authenticated row', () => {
 	it('renders an auth warning in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
 			'/Users/me/.codex-0din': {
@@ -214,7 +214,7 @@ describe('CodexPlanUsage — non-authenticated row', () => {
 	});
 });
 
-describe('CodexPlanUsage — refresh wiring', () => {
+describe('CodexPlanUsage - refresh wiring', () => {
 	it('calls the refresh IPC and re-pulls sanitized snapshots on click', async () => {
 		getCodexUsageSnapshotsMock.mockResolvedValue({
 			'/Users/me/.codex': {
@@ -254,7 +254,7 @@ describe('CodexPlanUsage — refresh wiring', () => {
 	});
 });
 
-describe('CodexPlanUsage — hide/show accounts (list view)', () => {
+describe('CodexPlanUsage - hide/show accounts (list view)', () => {
 	function seedTwoAccounts() {
 		seedSnapshots({
 			'/Users/me/.codex': {

@@ -8,7 +8,7 @@
  * to API (API Limits) when the Max plan quota is exhausted.
  *
  * Snapshots auto-expire 24 hours after `sampledAt`. Pruning is opportunistic
- * (on read AND write) — no background timer — so the on-disk file stays clean
+ * (on read AND write) - no background timer - so the on-disk file stays clean
  * even after long-quiet periods, and corrupted records self-heal because an
  * unparseable `sampledAt` reads as expired.
  *
@@ -40,7 +40,7 @@ let _store: Store<ClaudeUsageStoreData> | null = null;
 /**
  * Lazily create (or return) the backing electron-store instance. Tests that
  * `vi.mock('electron-store')` before importing this module rely on this
- * lazy init — constructing eagerly at module-load would capture the real
+ * lazy init - constructing eagerly at module-load would capture the real
  * Store class before the mock is installed.
  */
 function getStore(): Store<ClaudeUsageStoreData> {

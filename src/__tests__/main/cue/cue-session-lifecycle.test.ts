@@ -132,7 +132,7 @@ describe('CueEngine session lifecycle', () => {
 
 		// Advance timer by 60s to fire another heartbeat -> goes into queue
 		vi.advanceTimersByTime(60 * 1000);
-		expect(onCueRun).toHaveBeenCalledTimes(1); // still 1 — second event is queued
+		expect(onCueRun).toHaveBeenCalledTimes(1); // still 1 - second event is queued
 
 		// Assert queue has 1 entry for session-1
 		const queueStatus = engine.getQueueStatus();
@@ -310,10 +310,10 @@ describe('CueEngine session lifecycle', () => {
 		// so the new heartbeat goes into the queue instead of dispatching.
 		engine.refreshSession('session-1', '/projects/test');
 
-		// onCueRun is still 1 — the refresh's immediate heartbeat was queued
+		// onCueRun is still 1 - the refresh's immediate heartbeat was queued
 		expect(onCueRun).toHaveBeenCalledTimes(1);
 
-		// Resolve the original in-flight promise — this decrements activeRunCount
+		// Resolve the original in-flight promise - this decrements activeRunCount
 		// and drains the queue, dispatching the queued heartbeat
 		const completedResult: CueRunResult = {
 			runId: 'run-1',
@@ -545,7 +545,7 @@ describe('CueEngine session lifecycle', () => {
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 
-			// No argument — must default to user-toggle, not system-boot.
+			// No argument - must default to user-toggle, not system-boot.
 			engine.start();
 
 			expect(deps.onCueRun).not.toHaveBeenCalled();
@@ -564,7 +564,7 @@ describe('CueEngine session lifecycle', () => {
 
 			// A YAML hot-reload triggers refreshSession, which calls initSession with
 			// reason='refresh'. Even though the same subscription is in the new config,
-			// startup must NOT re-fire — that would surprise users editing their YAML.
+			// startup must NOT re-fire - that would surprise users editing their YAML.
 			engine.refreshSession('session-1', '/projects/test');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
@@ -606,7 +606,7 @@ describe('CueEngine session lifecycle', () => {
 			engine.stop();
 		});
 
-		it('initSession idempotency guard — calling twice logs warn and re-initializes cleanly', async () => {
+		it('initSession idempotency guard - calling twice logs warn and re-initializes cleanly', async () => {
 			// Use a config with no subscriptions so createTriggerSource is never invoked
 			const config = createMockConfig({ subscriptions: [] });
 			mockLoadCueConfig.mockReturnValue(config);
@@ -632,11 +632,11 @@ describe('CueEngine session lifecycle', () => {
 
 			const session = createMockSession();
 
-			// First initSession — normal registration
+			// First initSession - normal registration
 			service.initSession(session, { reason: 'system-boot' });
 			expect(registry.has(session.id)).toBe(true);
 
-			// Second initSession — should trigger idempotency guard
+			// Second initSession - should trigger idempotency guard
 			service.initSession(session, { reason: 'user-toggle' });
 
 			// Guard must have logged a warning
@@ -696,7 +696,7 @@ describe('CueEngine session lifecycle', () => {
 			expect(selfDestruct).toHaveBeenCalledWith(session.projectRoot, 'once-doomed');
 		});
 
-		it('initSession idempotency guard — does not double-register the session in the registry', async () => {
+		it('initSession idempotency guard - does not double-register the session in the registry', async () => {
 			// NOTE: this test uses an empty `subscriptions: []` config so it does
 			// NOT exercise trigger-source registration directly; it only verifies
 			// the registry-level dedupe behavior (calling initSession twice still
@@ -838,7 +838,7 @@ describe('CueEngine session lifecycle', () => {
 		});
 
 		it('refreshSession PRESERVES cue_github_seen rows on parse errors (mid-edit YAML)', () => {
-			// Regression guard: parse/validation errors are transient — the
+			// Regression guard: parse/validation errors are transient - the
 			// user is mid-edit and will fix shortly. Clearing seen rows in
 			// that window would cause the GitHub poller to re-notify for
 			// every already-seen PR/issue on the next successful load.
@@ -861,7 +861,7 @@ describe('CueEngine session lifecycle', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// User saves a malformed YAML — parse error. Loader returns
+			// User saves a malformed YAML - parse error. Loader returns
 			// parse-error, NOT missing.
 			mockLoadCueConfig.mockReturnValue(null);
 			mockDetailedResult = {
@@ -871,7 +871,7 @@ describe('CueEngine session lifecycle', () => {
 			};
 			engine.refreshSession('session-1', '/projects/test');
 
-			// NOTHING cleared — the broken config will be fixed momentarily
+			// NOTHING cleared - the broken config will be fixed momentarily
 			// and we don't want to lose seen state.
 			expect(mockClearGitHubSeenForSubscription).not.toHaveBeenCalled();
 		});
@@ -910,7 +910,7 @@ describe('CueEngine session lifecycle', () => {
 			// Positive-path counterpart to the parse-error/invalid tests above.
 			// When the config is actually missing from disk (user deleted
 			// cue.yaml, or the session moved away from its project root), we
-			// SHOULD clear the seen rows — otherwise the GitHub poller retains
+			// SHOULD clear the seen rows - otherwise the GitHub poller retains
 			// stale state for a session that no longer has any subs.
 			mockClearGitHubSeenForSubscription.mockClear();
 			const initialConfig = createMockConfig({
@@ -962,7 +962,7 @@ describe('CueEngine session lifecycle', () => {
 			engine.removeSession('session-1');
 
 			// If the same session id is re-added later (e.g. user undoes the delete),
-			// startup should be eligible to fire again — but only on a real boot.
+			// startup should be eligible to fire again - but only on a real boot.
 			// A user-toggle still does not fire it.
 			engine.refreshSession('session-1', '/projects/test');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);

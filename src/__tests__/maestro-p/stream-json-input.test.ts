@@ -1,6 +1,6 @@
 /**
  * @file stream-json-input.test.ts
- * @description Tests for src/maestro-p/stream-json-input.ts — translation of
+ * @description Tests for src/maestro-p/stream-json-input.ts - translation of
  * Maestro's `--input-format stream-json` envelope into a TUI-ready prompt
  * with `@/tmp/.../*.png` image mentions.
  */

@@ -7,7 +7,7 @@
  * 2. Reload settings on system resume from sleep
  * 3. Apply font size to document root element
  *
- * The UseSettingsReturn interface is unchanged — zero consumer changes needed.
+ * The UseSettingsReturn interface is unchanged - zero consumer changes needed.
  */
 
 import { useEffect } from 'react';
@@ -493,7 +493,7 @@ export function useSettings(): UseSettingsReturn {
 	// PERF: Subscribe with shallow equality on the top-level state so a `set()` call that
 	// only flips one field doesn't re-render every consumer of useSettings. Critically,
 	// when an action calls `set({ x: value })` where `x === value` already, the resulting
-	// state object has a new reference but identical fields — shallow equality stops the
+	// state object has a new reference but identical fields - shallow equality stops the
 	// re-render cascade through MaestroConsoleInner → GitStatusProvider → workspace tree.
 	const store = useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);

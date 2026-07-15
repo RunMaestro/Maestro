@@ -149,7 +149,7 @@ describe('PipelineSelector', () => {
 
 		// Click a swatch at index 2 in the canonical PIPELINE_COLORS palette.
 		// Referencing the shared constant (instead of the literal '#f59e0b')
-		// keeps this test in sync if the palette order ever changes — only
+		// keeps this test in sync if the palette order ever changes - only
 		// pipelineColorPalette.test.ts owns the literal-value snapshot.
 		fireEvent.click(swatches[2]);
 		expect(onChangePipelineColor).toHaveBeenCalledWith('p1', PIPELINE_COLORS[2]);

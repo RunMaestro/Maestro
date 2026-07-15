@@ -314,7 +314,7 @@ describe('LiveOverlayPanel', () => {
 			);
 
 			fireEvent.blur(screen.getByPlaceholderText('8080'));
-			// handleServerRestart is async — flush microtasks
+			// handleServerRestart is async - flush microtasks
 			await vi.waitFor(() => {
 				expect(restartWebServer).toHaveBeenCalled();
 				expect(restartTunnel).toHaveBeenCalled();

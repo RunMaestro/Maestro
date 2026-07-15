@@ -879,7 +879,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			// Cmd+J opens a new terminal tab — safe in wizard tabs since it doesn't
+			// Cmd+J opens a new terminal tab - safe in wizard tabs since it doesn't
 			// touch the wizard tab's input/state.
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
 		});
@@ -1118,7 +1118,7 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Should NOT close directly — should show confirmation modal
+				// Should NOT close directly - should show confirmation modal
 				expect(mockPerformTabClose).not.toHaveBeenCalled();
 				expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 				const modal = useModalStore.getState().modals.get('confirm');
@@ -1752,7 +1752,7 @@ describe('useMainKeyboardHandler', () => {
 						filePreviewTabs: [
 							{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' },
 						],
-						activeFileTabId: 'file-tab-1', // File tab is active — inputMode stays 'ai'
+						activeFileTabId: 'file-tab-1', // File tab is active - inputMode stays 'ai'
 						unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
 						inputMode: 'ai',
 					},
@@ -1800,7 +1800,7 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
-		// Unified tab shortcuts in terminal mode — verifies that tab navigation and
+		// Unified tab shortcuts in terminal mode - verifies that tab navigation and
 		// management shortcuts work identically whether AI, file, or terminal tabs are active.
 		// The keyboard handler uses a single unified block for all tab types; these tests
 		// confirm terminal mode is NOT excluded. Prior regressions:
@@ -3126,7 +3126,7 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(focusBrowserAddressBar).toHaveBeenCalledTimes(1);
 			expect(openBrowserFind).not.toHaveBeenCalled();
-			// Must NOT re-dispatch — that's what made the older implementation race
+			// Must NOT re-dispatch - that's what made the older implementation race
 			// with the overlay guard.
 			expect(dispatched.find((e) => e.key === 'l' && e.metaKey)).toBeUndefined();
 		});
@@ -3210,7 +3210,7 @@ describe('useMainKeyboardHandler', () => {
 			});
 			expect(browserBack).toHaveBeenCalledTimes(1);
 
-			// Now focus on an HTMLInputElement and re-fire — must NOT navigate
+			// Now focus on an HTMLInputElement and re-fire - must NOT navigate
 			// (preserves macOS line-navigation inside text inputs)
 			const input = document.createElement('input');
 			document.body.appendChild(input);

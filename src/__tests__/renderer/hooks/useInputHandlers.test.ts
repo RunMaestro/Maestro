@@ -5,7 +5,7 @@
  * - Hook initialization and return shape
  * - Input state management (AI vs terminal mode)
  * - Staged images (get/set)
- * - (thinkingSessions removed — replaced by thinkingItems in App.tsx)
+ * - (thinkingSessions removed - replaced by thinkingItems in App.tsx)
  * - Completion suggestions (tab completion, @ mention)
  * - Tab switching effect (AI input persistence)
  * - Session switching effect (terminal input persistence)
@@ -584,7 +584,7 @@ describe('useInputHandlers', () => {
 
 			expect(inputVal()).toBe('tab1 text');
 
-			// Switch to tab-2 — this triggers the effect
+			// Switch to tab-2 - this triggers the effect
 			act(() => {
 				useSessionStore.setState({
 					sessions: [
@@ -1211,7 +1211,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// The drop handler creates a FileReader — just verify it doesn't throw
+			// The drop handler creates a FileReader - just verify it doesn't throw
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});
@@ -2219,7 +2219,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// Casing differs from projectRoot — relative match must NOT fire.
+			// Casing differs from projectRoot - relative match must NOT fire.
 			// The path is still emitted, just absolute, slash-normalised.
 			expect(inputVal()).toBe('@c:/users/alice/proj/src/index.ts ');
 		});

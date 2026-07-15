@@ -140,7 +140,7 @@ export function RunDetail({
 					theme={theme}
 					title="Checks"
 					values={run.checks.map(
-						(check) => `${check.status}: ${check.name}${check.summary ? ` — ${check.summary}` : ''}`
+						(check) => `${check.status}: ${check.name}${check.summary ? ` - ${check.summary}` : ''}`
 					)}
 					empty="No checks recorded."
 				/>

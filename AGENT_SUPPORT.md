@@ -29,7 +29,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
-6. **Sync renderer interfaces** — add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
+6. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
 
 #### Conditional Steps (based on capabilities)
 
@@ -146,7 +146,7 @@ interface AgentCapabilities {
 
 	// Execution behavior
 	supportsBatchMode: boolean; // Runs per-message (vs persistent process)
-	requiresPromptToStart: boolean; // No eager spawn — needs prompt to start
+	requiresPromptToStart: boolean; // No eager spawn - needs prompt to start
 	supportsStreaming: boolean; // Streams output incrementally
 	supportsModelSelection: boolean; // Supports --model flag for model selection
 
@@ -1023,8 +1023,8 @@ codex exec --json resume <thread_id> "continue"
 - **Agent ID:** `copilot-cli`
 - **Binary:** `copilot`
 - **CLI Flags:** `-p/--prompt`, `--output-format json`, `--continue`, `--resume[=session-id]`, `--allow-tool`, `--deny-tool`, `--no-ask-user`, `--model`
-- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` — handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
-- **Session Storage:** `src/main/storage/copilot-session-storage.ts` — reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
+- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` - handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
+- **Session Storage:** `src/main/storage/copilot-session-storage.ts` - reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
 - **Error Patterns:** auth failures, rate limiting, token exhaustion (7 variants), network errors, model-availability errors, session-not-found.
 - **Model Discovery:** Fetches the `github-copilot` model list from [models.dev](https://models.dev) (3s timeout) and merges it with the user's configured model from `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
 - **Known Limitations:** Interactive PTY mode does not go through `wrapSpawnWithSsh()`, so interactive Copilot-CLI over SSH is not supported. Batch mode (`-p`) works over SSH.

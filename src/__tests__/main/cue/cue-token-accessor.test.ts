@@ -3,11 +3,11 @@
  *
  * The accessor wires together two real subsystems we want to keep out of the
  * test environment:
- *   1. `getStatsDB().database` — a `better-sqlite3` handle. The native binding
+ *   1. `getStatsDB().database` - a `better-sqlite3` handle. The native binding
  *      is compiled against Electron's NODE_MODULE_VERSION and won't load
  *      under vitest's plain-Node runtime (other Cue tests work around this
  *      the same way), so we mock `getStatsDB()` to return a fake `prepare(...).all(...)`.
- *   2. `getSessionStorage(agentType)` — registers per-agent storage modules
+ *   2. `getSessionStorage(agentType)` - registers per-agent storage modules
  *      that read on-disk session files. We register fake storages with
  *      hand-crafted `AgentSessionInfo` rows so we can assert on the exact
  *      mapping into `SessionTokenSummary`.
@@ -15,7 +15,7 @@
  * Critically, the fixtures keep the two id spaces DISTINCT: `session_lifecycle`
  * rows are keyed by the Maestro agent id (`m-*`), while `AgentSessionInfo` rows
  * (what `listSessions` returns) are keyed by the provider session id (`p-*`).
- * Conflating them is the bug this accessor was rewritten to fix — using the
+ * Conflating them is the bug this accessor was rewritten to fix - using the
  * same id for both would silently pass even if the join were wrong.
  *
  * We exercise the dispatch table (`COVERAGE_BY_AGENT`) and cache via the
@@ -92,7 +92,7 @@ function makeInfo(overrides: Partial<AgentSessionInfo> = {}): AgentSessionInfo {
 
 /**
  * Register a fake storage for `agentId` that returns `infos` from
- * `listSessions(projectPath)`. Other methods throw — we never call them.
+ * `listSessions(projectPath)`. Other methods throw - we never call them.
  */
 function registerFakeStorage(agentId: string, infos: AgentSessionInfo[]): void {
 	const listSessions = vi.fn(async () => infos);
@@ -213,7 +213,7 @@ describe('cue-token-accessor', () => {
 					outputTokens: 300,
 					cacheReadTokens: 50,
 					cacheCreationTokens: 25,
-					// no costUsd — droid storage omits it
+					// no costUsd - droid storage omits it
 				}),
 			]);
 

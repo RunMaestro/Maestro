@@ -13,7 +13,7 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, QueuedItem } from '../../../renderer/types';
 
 // ============================================================================
-// Imports (after mocks — no external mocks needed for this hook)
+// Imports (after mocks - no external mocks needed for this hook)
 // ============================================================================
 
 import { useQueueHandlers } from '../../../renderer/hooks/agent/useQueueHandlers';
@@ -218,8 +218,8 @@ describe('useQueueHandlers', () => {
 			});
 
 			const sessions = useSessionStore.getState().sessions;
-			expect(sessions[0].executionQueue).toHaveLength(0); // target — item removed
-			expect(sessions[1].executionQueue).toHaveLength(1); // other — unchanged
+			expect(sessions[0].executionQueue).toHaveLength(0); // target - item removed
+			expect(sessions[1].executionQueue).toHaveLength(1); // other - unchanged
 			expect(sessions[1].executionQueue[0].id).toBe('item-b');
 		});
 	});
@@ -357,7 +357,7 @@ describe('useQueueHandlers', () => {
 				result.current.handleSwitchQueueSession('nonexistent');
 			});
 
-			// The store accepts any ID — validation is the caller's responsibility
+			// The store accepts any ID - validation is the caller's responsibility
 			expect(useSessionStore.getState().activeSessionId).toBe('nonexistent');
 		});
 	});

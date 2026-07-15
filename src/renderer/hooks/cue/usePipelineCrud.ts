@@ -1,8 +1,8 @@
 /**
- * usePipelineCrud — Pipeline-level CRUD operations for the pipeline editor.
+ * usePipelineCrud - Pipeline-level CRUD operations for the pipeline editor.
  *
  * Owns the create/delete/rename/select/recolor callbacks that operate at the
- * whole-pipeline granularity (not node/edge level — see usePipelineMutations).
+ * whole-pipeline granularity (not node/edge level - see usePipelineMutations).
  * All callbacks stay stable across renders via useCallback; pipeline state is
  * read via the setState callback form so no pipelineState dependency is needed.
  */

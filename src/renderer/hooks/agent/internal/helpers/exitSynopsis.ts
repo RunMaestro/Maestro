@@ -173,7 +173,7 @@ export async function runExitSynopsis(
 /**
  * Persist the tab name to the agent's session origins store so the session
  * remains searchable in TabSwitcherModal's "All Named" view after it closes.
- * Skip UUID-prefix fallback names (8 hex chars) — those aren't real
+ * Skip UUID-prefix fallback names (8 hex chars) - those aren't real
  * user-facing names.
  */
 function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {

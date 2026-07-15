@@ -176,8 +176,8 @@ d) **Build mental model:**
 a) **Now ask clarifying questions - but make them INFORMED by what you found:**
 
 Instead of generic questions like "What's the scope?", ask specific ones like:
-- "`AuthService` handles validation in the controller — should the new field follow that pattern or move it to a dedicated validator?"
-- "`NavigationSidebar` component uses local state for the 'collapsed' toggle — should we stick with that or move it to the global store?"
+- "`AuthService` handles validation in the controller - should the new field follow that pattern or move it to a dedicated validator?"
+- "`NavigationSidebar` component uses local state for the 'collapsed' toggle - should we stick with that or move it to the global store?"
 - "The epics doc mentions X - is this related?"
 
 **Adapt to {user_skill_level}.** Technical users want technical questions. Non-technical users need translation.

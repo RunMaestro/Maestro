@@ -9,7 +9,7 @@
  *   3. SSR/test environments where `window` may not exist
  *
  * Components use `isWebDesktop()` to hide destructive UI that assumes
- * Electron-host lifecycle — toggling the LIVE webserver off from inside
+ * Electron-host lifecycle - toggling the LIVE webserver off from inside
  * the bridge would kill the browser's own connection, and "Quit",
  * "Restart", and "Check for Updates" have no meaning when the user isn't
  * running the Electron binary directly.
@@ -19,7 +19,7 @@ let cached: boolean | null = null;
 
 /**
  * Returns true when the renderer is running inside the web-desktop browser
- * bundle. Memoized after first call — the answer doesn't change for the
+ * bundle. Memoized after first call - the answer doesn't change for the
  * life of a page load.
  */
 export function isWebDesktop(): boolean {
@@ -30,7 +30,7 @@ export function isWebDesktop(): boolean {
 	}
 	// Primary signal: the server injects __MAESTRO_CONFIG__ into the page so
 	// the bridge knows where to connect. Its presence is a load-bearing
-	// indicator that we are NOT inside Electron. (Read via cast — the same
+	// indicator that we are NOT inside Electron. (Read via cast - the same
 	// global is declared with a stricter shape elsewhere in src/web, and
 	// re-augmenting it from the renderer would collide.)
 	const cfg = (window as { __MAESTRO_CONFIG__?: unknown }).__MAESTRO_CONFIG__;
@@ -49,7 +49,7 @@ export function isWebDesktop(): boolean {
 				return cached;
 			}
 		} catch {
-			/* sandboxed window.location accessors can throw — fall through */
+			/* sandboxed window.location accessors can throw - fall through */
 		}
 	}
 	cached = false;

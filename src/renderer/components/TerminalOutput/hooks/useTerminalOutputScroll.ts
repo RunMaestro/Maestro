@@ -160,7 +160,7 @@ export function useTerminalOutputScroll({
 
 		// Only auto-scroll when the user's tracked position is at the bottom.
 		// Gating on isAtBottom (not `!autoScrollPaused`) keeps a content re-render
-		// after generation finishes — code-block re-highlight, markdown reflow —
+		// after generation finishes - code-block re-highlight, markdown reflow -
 		// from yanking the view down while the user reads earlier output. (#1140)
 		if (isAtBottomRef.current) {
 			scrollToBottom();

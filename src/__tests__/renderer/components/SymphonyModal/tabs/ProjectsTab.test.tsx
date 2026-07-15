@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/tabs/ProjectsTab — search, categories, grid render,
+ * Tests for SymphonyModal/tabs/ProjectsTab - search, categories, grid render,
  * loading / error / empty states.
  */
 import { describe, it, expect, vi } from 'vitest';

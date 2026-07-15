@@ -94,7 +94,7 @@ describe('extractCopilotUsageFromDisk', () => {
 		const usage = await extractCopilotUsageFromDisk(
 			'remote-session',
 			200000,
-			// Minimal SshRemoteConfig — only the fields readFileRemote uses.
+			// Minimal SshRemoteConfig - only the fields readFileRemote uses.
 			{
 				id: 'r1',
 				name: 'remote',

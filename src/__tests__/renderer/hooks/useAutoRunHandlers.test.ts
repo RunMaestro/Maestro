@@ -1462,7 +1462,7 @@ describe('useAutoRunHandlers', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// Should still dispatch — getBranches failure is non-fatal
+			// Should still dispatch - getBranches failure is non-fatal
 			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
 
 			// Session should still be created with path-derived branch name

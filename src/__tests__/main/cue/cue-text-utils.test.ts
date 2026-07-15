@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { sliceHeadByChars, sliceTailByChars } from '../../../main/cue/cue-text-utils';
 
 // A supplementary-plane code point (U+1F600 😀) encodes as the surrogate pair
-// D83D DE00 — two UTF-16 code units. A naive `.slice()` that lands between
+// D83D DE00 - two UTF-16 code units. A naive `.slice()` that lands between
 // them produces a lone surrogate that downstream consumers see as garbage.
 const EMOJI = '😀'; // 2 code units
 const TREE = '🌳'; // 2 code units
@@ -47,7 +47,7 @@ describe('sliceTailByChars', () => {
 	});
 
 	it('includes the full emoji when the slice boundary lands exactly on the high surrogate', () => {
-		// slice(-2) on "ab😀" lands on 😀's high surrogate — the whole emoji
+		// slice(-2) on "ab😀" lands on 😀's high surrogate - the whole emoji
 		// fits, so the helper should return it intact.
 		const input = 'ab' + EMOJI;
 		expect(sliceTailByChars(input, 2)).toBe(EMOJI);
@@ -91,7 +91,7 @@ describe('sliceHeadByChars', () => {
 
 	it('does not split a surrogate pair at the end of the slice', () => {
 		// "a" + "😀" + "b" → boundaries at 1,3,4. slice(0,2) lands between the
-		// high and low surrogates — helper must step back to "a".
+		// high and low surrogates - helper must step back to "a".
 		const input = 'a' + EMOJI + 'b';
 		const result = sliceHeadByChars(input, 2);
 		expect(result).toBe('a');

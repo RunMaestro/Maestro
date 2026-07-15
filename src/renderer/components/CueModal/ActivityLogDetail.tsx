@@ -1,5 +1,5 @@
 /**
- * ActivityLogDetail — Expanded detail view for a single Cue run execution.
+ * ActivityLogDetail - Expanded detail view for a single Cue run execution.
  *
  * Shows metadata grid, event payload, stdout, and stderr.
  */
@@ -61,7 +61,7 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 										: theme.colors.textDim,
 						}}
 					>
-						{entry.exitCode ?? '—'}
+						{entry.exitCode ?? '-'}
 					</span>
 				</div>
 				<div className="flex items-center gap-1.5">

@@ -254,7 +254,7 @@ export function useMobileSessionManagement(
 	const activeSessionIdRef = useRef<string | null>(urlSessionId || savedActiveSessionId);
 	// Ref to track activeTabId for use in callbacks (avoids stale closure issues)
 	const activeTabIdRef = useRef<string | null>(urlTabId || savedActiveTabId);
-	// Timestamp of last local session selection — used to ignore server echoes
+	// Timestamp of last local session selection - used to ignore server echoes
 	const lastLocalSelectionRef = useRef<number>(0);
 
 	// Keep activeSessionIdRef in sync with state
@@ -527,7 +527,7 @@ export function useMobileSessionManagement(
 				setSessions((prev) => {
 					// Exclude inputMode from server broadcasts to prevent race conditions
 					// with optimistic mode switches. The web client manages its own inputMode
-					// via handleModeToggle — server state_change broadcasts may carry stale
+					// via handleModeToggle - server state_change broadcasts may carry stale
 					// inputMode values during the IPC round-trip (web → server → desktop → broadcast).
 					const { inputMode: _serverInputMode, ...safeAdditionalData } = additionalData || {};
 					const updatedSessions = prev.map((s) =>
@@ -573,7 +573,7 @@ export function useMobileSessionManagement(
 			},
 			onActiveSessionChanged: (sessionId: string) => {
 				// Ignore server echoes that arrive shortly after a local selection
-				// (user selected a session in web, server echoed it back — but user may
+				// (user selected a session in web, server echoed it back - but user may
 				// have already clicked another session by the time the echo arrives)
 				const timeSinceLocalSelect = Date.now() - lastLocalSelectionRef.current;
 				if (timeSinceLocalSelect < 2000 && sessionId === activeSessionIdRef.current) {

@@ -1,5 +1,5 @@
 /**
- * useSessionLifecycle — extracted from App.tsx (Phase 2H)
+ * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
  * Owns session operation callbacks and session-level effects:
  *   - handleSaveEditAgent: persist agent config changes
@@ -254,7 +254,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 						// Kill the existing AI process for this session
 						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist — that's fine
+							// Process may not exist - that's fine
 						});
 					}
 
@@ -455,7 +455,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			})
 		);
 
-		// Fire and forget — generate name via ephemeral agent
+		// Fire and forget - generate name via ephemeral agent
 		window.maestro.tabNaming
 			.generateTabName({
 				userMessage: summary,
@@ -539,7 +539,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				});
 			}
 
-			// Kill terminal tab PTYs — each tab has its own PTY with ID {sessionId}-terminal-{tabId}
+			// Kill terminal tab PTYs - each tab has its own PTY with ID {sessionId}-terminal-{tabId}
 			for (const tab of session.terminalTabs || []) {
 				try {
 					await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
@@ -603,7 +603,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const toggleTabStar = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		// Star toggle only applies when an AI tab is the visible view — not when a
+		// Star toggle only applies when an AI tab is the visible view - not when a
 		// terminal, file preview, or browser tab is focused.
 		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
 			return;
@@ -649,7 +649,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const { showUnreadOnly } = useUIStore.getState();
 
 		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab (only if in AI mode —
+			// Entering filter mode: save current active tab (only if in AI mode -
 			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
 			const wasAiMode =
 				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;

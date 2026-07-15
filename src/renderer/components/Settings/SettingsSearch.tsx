@@ -2,8 +2,8 @@
  * SettingsSearch - Cross-tab search for the Settings modal
  *
  * Two components:
- *   SettingsSearchInput — the search bar (always visible in the header)
- *   SettingsSearchResults — the results list (shown when search is active, fills remaining space)
+ *   SettingsSearchInput - the search bar (always visible in the header)
+ *   SettingsSearchResults - the results list (shown when search is active, fills remaining space)
  *
  * Keyboard: Cmd+F focuses the input; Escape clears or blurs;
  * ArrowUp/ArrowDown move through filtered results and Enter jumps to the
@@ -125,7 +125,7 @@ export function useSettingsSearch({
 	return { query, setQuery, inputRef, results, isActive, clear, selectedIndex, setSelectedIndex };
 }
 
-/** Search input bar — renders inline in the modal header */
+/** Search input bar - renders inline in the modal header */
 export function SettingsSearchInput({
 	theme,
 	query,
@@ -199,7 +199,7 @@ export function SettingsSearchInput({
 	);
 }
 
-/** Search results list — renders as a full-height panel replacing the sidebar+content */
+/** Search results list - renders as a full-height panel replacing the sidebar+content */
 export function SettingsSearchResults({
 	theme,
 	query,

@@ -489,7 +489,7 @@ export function RepositoryDetailView({
 							<>
 								<Lock className="w-4 h-4" />
 								<span>
-									Blocked by a dependency — the maintainer will unblock when prerequisites are met
+									Blocked by a dependency - the maintainer will unblock when prerequisites are met
 								</span>
 							</>
 						) : (

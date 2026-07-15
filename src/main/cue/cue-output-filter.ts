@@ -23,15 +23,15 @@ export interface FilteredOutputs {
  * Shared by the fan-in tracker and the single-source completion path so both
  * paths respect the same include/forward semantics. When the include/forward
  * lists are undefined, every completion is treated as both included and (if
- * forward semantics are off) not forwarded — matching the legacy default.
+ * forward semantics are off) not forwarded - matching the legacy default.
  *
  * **Map keying contract**: `perSourceOutputs` and `forwardedOutputs` are keyed
- * by `sessionName` — this is load-bearing because the template-variable
+ * by `sessionName` - this is load-bearing because the template-variable
  * substitution downstream derives variable names like `{{CUE_OUTPUT_AGENT_A}}`
  * from the key. That means two completions with the same `sessionName` but
  * different `sessionId` values will collide: the later write wins. Session
- * names are expected to be unique within a Cue graph — enforced at the UI
- * layer — so in practice this is a theoretical concern, but it's documented
+ * names are expected to be unique within a Cue graph - enforced at the UI
+ * layer - so in practice this is a theoretical concern, but it's documented
  * here so callers don't assume uniqueness by sessionId.
  */
 export function buildFilteredOutputs(
@@ -64,18 +64,18 @@ export function buildFilteredOutputs(
 /**
  * Merge upstream-forwarded data into the current completion's forwardedOutputs
  * map. Preserves the pre-existing pass-through behavior for single-source
- * chains — if `forward_output_from` is set on the subscription, the upstream
+ * chains - if `forward_output_from` is set on the subscription, the upstream
  * map is filtered to only the listed names; if unset, everything passes
  * through (backward-compatible default).
  *
  * **Known asymmetry with `buildFilteredOutputs`**: that function matches on
  * either `sessionName` or `sessionId`, but here we only have names because
- * `upstreamForwarded` is `Record<sessionName, output>` — the wire format
+ * `upstreamForwarded` is `Record<sessionName, output>` - the wire format
  * doesn't carry sessionId for forwarded entries. Users who configure
  * `forward_output_from` with session IDs will see their upstream-forwarded
  * entries dropped at every hop beyond the direct source. Practically, this
  * is fine because the Cue UI generates pipeline YAML using session names,
- * not IDs — if you're hitting this, fix the YAML to use names. A proper fix
+ * not IDs - if you're hitting this, fix the YAML to use names. A proper fix
  * would require a wire-format change (sidecar id map) and is intentionally
  * deferred.
  */
@@ -89,7 +89,7 @@ export function mergeUpstreamForwarded(
 	// Invariant: `forwardedOutputs` has already been filtered by
 	// `buildFilteredOutputs` against this same `sub.forward_output_from`, so
 	// every entry copied from it into `merged` is already allow-listed. We
-	// don't re-check it here — only the `upstreamForwarded` entries need the
+	// don't re-check it here - only the `upstreamForwarded` entries need the
 	// forwardSet filter applied.
 	const merged = { ...forwardedOutputs };
 	for (const [name, output] of Object.entries(upstreamForwarded)) {

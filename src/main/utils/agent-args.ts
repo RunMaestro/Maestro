@@ -28,8 +28,8 @@ type BuildAgentArgsOptions = {
 	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
 	 * default behavior gates these on `options.prompt` being truthy so that a
 	 * bare interactive launch (no prompt) doesn't accidentally enable batch
-	 * mode. Callers that NEVER launch interactive mode — e.g. Cue, which spawns
-	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY — must set this so an
+	 * mode. Callers that NEVER launch interactive mode - e.g. Cue, which spawns
+	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY - must set this so an
 	 * empty-after-substitution prompt (e.g. `{{CUE_SOURCE_OUTPUT}}` resolving
 	 * to `""` when the upstream run produced no parseable stdout) doesn't
 	 * silently fall back to interactive mode and fail with
@@ -86,7 +86,7 @@ function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolea
 	}
 
 	// Also check if the flag key (e.g., --format, --output-format) is already
-	// present with a different value — avoid appending a conflicting duplicate
+	// present with a different value - avoid appending a conflicting duplicate
 	// that the dedup step would mangle.
 	const flagKey = jsonOutputArgs[0];
 	if (flagKey?.startsWith('-') && jsonOutputArgs.length > 1) {
@@ -147,7 +147,7 @@ export function buildAgentArgs(
 
 	if (agent.workingDirArgs && options.cwd) {
 		// Prepend so the directory flag lands before any subcommand (e.g. Codex
-		// `exec`). Codex treats `-C` as a root-level global flag — placing it
+		// `exec`). Codex treats `-C` as a root-level global flag - placing it
 		// after the subcommand makes it silently ignored (#959).
 		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
 	}

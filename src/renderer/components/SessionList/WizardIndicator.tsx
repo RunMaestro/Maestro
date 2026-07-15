@@ -13,11 +13,11 @@ const WAND_STYLE = { color: '#c084fc' } as const;
 /**
  * Inline wizard indicator pill rendered next to the agent (or group) name in
  * the Left Bar. Tells the user that the `/wizard` flow is in progress for this
- * agent — either still gathering requirements in dialog mode, or generating
+ * agent - either still gathering requirements in dialog mode, or generating
  * Auto Run documents (which is when it pulses).
  *
  * Memo'd because SessionItem renders one of these per row and the props are
- * primitive — shallow compare lets the component bail out when only unrelated
+ * primitive - shallow compare lets the component bail out when only unrelated
  * parent state changes (matches the CueIndicator pattern).
  *
  * Renders null when inactive so callers can mount unconditionally.

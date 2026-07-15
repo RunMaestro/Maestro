@@ -404,7 +404,7 @@ export function HamburgerMenuContent({
 				<ExternalLink className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 			</button>
 			{/* Check for Updates assumes the user is running the Electron binary
-			    directly — it would dump a misleading dialog when the renderer is
+			    directly - it would dump a misleading dialog when the renderer is
 			    served through the web-desktop bridge. Hide it in that context. */}
 			{!isWebDesktop() && (
 				<button

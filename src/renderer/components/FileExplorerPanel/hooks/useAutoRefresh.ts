@@ -82,7 +82,7 @@ export function useAutoRefresh({
 		}
 	}, [refreshFileTree, sessionId, onShowFlash]);
 
-	// Auto-refresh timer — uses refs to avoid resetting timer when callbacks change
+	// Auto-refresh timer - uses refs to avoid resetting timer when callbacks change
 	useEffect(() => {
 		if (autoRefreshTimerRef.current) {
 			clearInterval(autoRefreshTimerRef.current);

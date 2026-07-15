@@ -42,7 +42,7 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
-// Mock hasCapabilityCached — agents with batch mode support
+// Mock hasCapabilityCached - agents with batch mode support
 const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
@@ -1014,7 +1014,7 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			// Should NOT spawn — unknown slash command is early-returned
+			// Should NOT spawn - unknown slash command is early-returned
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 
 			// addLogToTab should have been called with an error log about the unknown command

@@ -308,7 +308,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				shellEnvVars?: Record<string, string>;
 				cols?: number;
 				rows?: number;
-				// Agent type (e.g. 'claude-code') — used to resolve agent-level customEnvVars
+				// Agent type (e.g. 'claude-code') - used to resolve agent-level customEnvVars
 				toolType?: string;
 				// Session-level custom env vars (override agent-level)
 				sessionCustomEnvVars?: Record<string, string>;
@@ -480,7 +480,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 			}) => {
 				logger.warn(
-					'process:runCommand is deprecated — use process:spawnTerminalTab for persistent PTY sessions'
+					'process:runCommand is deprecated - use process:spawnTerminalTab for persistent PTY sessions'
 				);
 				const processManager = requireProcessManager(getProcessManager);
 

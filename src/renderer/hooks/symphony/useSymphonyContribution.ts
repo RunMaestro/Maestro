@@ -1,5 +1,5 @@
 /**
- * useSymphonyContribution — extracted from App.tsx
+ * useSymphonyContribution - extracted from App.tsx
  *
  * Handles creating a new session for a Symphony contribution:
  *   - Validates session uniqueness

@@ -467,14 +467,14 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 
 	// Step 1: Parse the focus file FIRST so we can render it immediately, before
 	// the (potentially slow over SSH) directory scan completes. We pass no
-	// parseOptions here — relative-path resolution alone is enough for the
+	// parseOptions here - relative-path resolution alone is enough for the
 	// initial fan-out; once the scan finishes, subsequent depths get the
 	// filename-fallback resolver.
 	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, undefined);
 	if (!focusParsed) {
 		logger.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
 		// Best-effort: still surface whatever the scan turned up so the preview
-		// panel has wiki-link targets. Don't block — this is the failure path.
+		// panel has wiki-link targets. Don't block - this is the failure path.
 		const allMarkdownFiles = await scanMarkdownFiles(rootPath, onProgress, sshRemoteId).catch(
 			() => [] as string[]
 		);
@@ -499,7 +499,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	visited.add(focusFile);
 
 	// Emit the focus node IMMEDIATELY so the user sees a graph instead of a spinner.
-	// Broken-link annotations are deferred to the final return — they require
+	// Broken-link annotations are deferred to the final return - they require
 	// full BFS knowledge of which paths were reachable.
 	if (onPartialUpdate) {
 		const focusNodeId = `doc-${focusFile}`;
@@ -569,7 +569,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	}
 
 	// Step 3: BFS depth-by-depth, parallelizing parses within a depth level.
-	// Parallel parsing is critical over SSH — every fs.stat + fs.readFile is a
+	// Parallel parsing is critical over SSH - every fs.stat + fs.readFile is a
 	// network round-trip, and depth N has up to (avg-fanout)^N files, all
 	// independent.
 	let filesProcessed = 1;

@@ -2,7 +2,7 @@
  * Shared YAML frontmatter parser used by both the Fast tier
  * (`markdownFast/frontmatter.ts`) and the Rich tier (`remarkFrontmatterTable.ts`).
  *
- * Intentionally minimal — handles only what a "Document metadata" table needs:
+ * Intentionally minimal - handles only what a "Document metadata" table needs:
  *   - top-level `key: value` pairs
  *   - matching single/double quote stripping
  *   - blank lines and `#` comments
@@ -52,7 +52,7 @@ export function parseYamlKeyValues(yaml: string): FrontmatterEntry[] {
 		}
 
 		const indent = leadingSpaces(raw);
-		// Only top-level keys count — indented lines are continuation/nesting we
+		// Only top-level keys count - indented lines are continuation/nesting we
 		// don't model, so skip them rather than mis-parsing as new entries.
 		if (indent > 0) {
 			i++;

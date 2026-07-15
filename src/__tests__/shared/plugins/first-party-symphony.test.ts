@@ -73,7 +73,7 @@ describe('SYMPHONY_FIRST_PARTY_PLUGIN definition', () => {
 
 	it('never declares a high-risk act verb (git/gh spawn + dispatch stay host-owned)', () => {
 		// The git/gh pipeline (clone, fork, push, PR) and the auto-started
-		// batch run are host-owned supervised calls — act verbs must never
+		// batch run are host-owned supervised calls - act verbs must never
 		// ride the bundled first-party mint.
 		for (const request of SYMPHONY_FIRST_PARTY_PLUGIN_PERMISSIONS) {
 			expect(isHighRiskActCapability(request.capability)).toBe(false);

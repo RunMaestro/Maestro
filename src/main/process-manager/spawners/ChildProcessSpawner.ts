@@ -272,7 +272,7 @@ export class ChildProcessSpawner {
 
 			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
 			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
-			// the CVE-2024-27980 fix — they must be launched through a shell. npm-installed
+			// the CVE-2024-27980 fix - they must be launched through a shell. npm-installed
 			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
 			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
 			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
@@ -333,8 +333,8 @@ export class ChildProcessSpawner {
 
 			// When spawning through the default Windows shell (cmd.exe via ComSpec),
 			// Node concatenates the command and args into a single command line without
-			// quoting the command itself. A command path that contains spaces — e.g. an
-			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" — would
+			// quoting the command itself. A command path that contains spaces - e.g. an
+			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" - would
 			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
 			// boolean (cmd.exe) shell path; an explicit shell string carries its own
 			// quoting rules and is the caller's responsibility.
@@ -448,7 +448,7 @@ export class ChildProcessSpawner {
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
-				// for resumed sessions — without the seed, the post-exit disk
+				// for resumed sessions - without the seed, the post-exit disk
 				// reconciliation (`ExitHandler.awaitCopilotShutdown` →
 				// `readCopilotFinalAnswer` + `readCopilotShutdownUsage`)
 				// short-circuits at its `if (!agentSessionId) return` guard and

@@ -1,19 +1,19 @@
 /**
- * useAnnotatorState — In-memory state for the image annotator modal.
+ * useAnnotatorState - In-memory state for the image annotator modal.
  *
- * Owns two collections of drawables — freehand strokes and geometric shapes
- * (rect / ellipse / arrow) — plus the active tool, the in-progress shape/stroke
+ * Owns two collections of drawables - freehand strokes and geometric shapes
+ * (rect / ellipse / arrow) - plus the active tool, the in-progress shape/stroke
  * being drawn, the selected shape, and the pan/zoom view transform. Pointer
- * coordinates passed in must already be in image-space — projection from
+ * coordinates passed in must already be in image-space - projection from
  * client coordinates is the canvas component's job.
  *
  * Each committed stroke and shape captures the pen/shape style in effect at
  * the moment it was finished, so subsequent setting changes only affect
- * future drawables — past ones stay locked in.
+ * future drawables - past ones stay locked in.
  *
  * Undo walks a unified `history` log so it can pop strokes and shapes in the
  * order they were added, regardless of which collection they live in. Move
- * and resize edits are NOT in the history (live edits) — undoing a moved
+ * and resize edits are NOT in the history (live edits) - undoing a moved
  * shape simply removes it.
  */
 
@@ -51,7 +51,7 @@ export type ShapeKind = 'rect' | 'ellipse' | 'arrow';
 /**
  * A shape is fully described by two image-space anchor points plus a kind.
  * For rect/ellipse, p1 and p2 are opposite corners of the bounding box (any
- * two opposite corners — geometry normalizes). For arrow, p1 is the tail and
+ * two opposite corners - geometry normalizes). For arrow, p1 is the tail and
  * p2 is the head, so direction is preserved.
  */
 export interface Shape {
@@ -75,7 +75,7 @@ export interface TextStyle {
 /**
  * A text label is anchored at (x, y) in image space (top-left of its bounding
  * box). `value` is the rendered string; an empty string means the user opened
- * an editor and then dismissed it without typing — those are filtered out on
+ * an editor and then dismissed it without typing - those are filtered out on
  * commit rather than rendered as ghost selection rectangles.
  */
 export interface TextBox {
@@ -147,7 +147,7 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 	const [tool, setToolInternal] = useState<AnnotatorTool>('pen');
 	const [view, setView] = useState<AnnotatorView>(INITIAL_VIEW);
 	// History is read-only inside `undo` via the setter callback, never as a
-	// dependency of any other render path — so we drop the value half of the
+	// dependency of any other render path - so we drop the value half of the
 	// destructure to keep the hook lean.
 	const [, setHistory] = useState<HistoryEntry[]>([]);
 
@@ -216,7 +216,7 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 	const commitCurrentShape = useCallback(() => {
 		setCurrentShape((prev) => {
 			if (!prev) return prev;
-			// Reject zero-area shapes — they're an accidental click rather than a draw.
+			// Reject zero-area shapes - they're an accidental click rather than a draw.
 			if (Math.abs(prev.x2 - prev.x1) < 2 && Math.abs(prev.y2 - prev.y1) < 2) {
 				return null;
 			}

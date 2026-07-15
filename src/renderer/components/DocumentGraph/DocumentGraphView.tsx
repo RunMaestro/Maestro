@@ -358,7 +358,7 @@ export function DocumentGraphView({
 	const abortBacklinkScanRef = useRef<(() => void) | null>(null);
 	const currentGraphDataRef = useRef<GraphData | null>(null);
 
-	// Progressive expansion state — true while BFS is still walking outward after
+	// Progressive expansion state - true while BFS is still walking outward after
 	// the focus node has been rendered. Drives the non-blocking "expanding graph"
 	// badge in the bottom-left corner.
 	const [expandingGraph, setExpandingGraph] = useState(false);
@@ -549,7 +549,7 @@ export function DocumentGraphView({
 			);
 
 			if (update.phase === 'focus') {
-				// First update — replace any stale state from a previous build with
+				// First update - replace any stale state from a previous build with
 				// just the focus node, dismiss the spinner, and flag the BFS
 				// expansion as in-flight.
 				streamingActiveRef.current = true;
@@ -691,7 +691,7 @@ export function DocumentGraphView({
 				// If the streaming flow has already populated nodes/links, only
 				// flip the visible list when toggling state requires it (e.g. the
 				// user has external-links enabled and externals just arrived).
-				// Otherwise replace state — the streaming path may have been a
+				// Otherwise replace state - the streaming path may have been a
 				// no-op (e.g. focus file failed to parse and we got the empty
 				// fallback return).
 				if (!streamingActiveRef.current) {
@@ -705,7 +705,7 @@ export function DocumentGraphView({
 				// Set active focus file from the required focusFilePath prop
 				setActiveFocusFile(focusFilePath);
 
-				// Streaming BFS is done — clear the in-flight badge.
+				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
 				setExpandProgress(null);
 
@@ -985,7 +985,7 @@ export function DocumentGraphView({
 	);
 
 	/**
-	 * Handle layout type change — clears drag overrides since they're layout-specific
+	 * Handle layout type change - clears drag overrides since they're layout-specific
 	 */
 	const handleLayoutTypeChange = useCallback(
 		(type: MindMapLayoutType) => {
@@ -2162,7 +2162,7 @@ export function DocumentGraphView({
 									: `Load more (${totalDocuments - loadedDocuments} remaining)`}
 							</button>
 						)}
-						{/* BFS expansion indicator — visible after the focus node has
+						{/* BFS expansion indicator - visible after the focus node has
 						    rendered while we're still walking outward */}
 						{expandingGraph && (
 							<span

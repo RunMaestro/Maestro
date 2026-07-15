@@ -51,7 +51,7 @@ const SPARKLINE_DAYS = 7;
 /**
  * Build a fixed last-7-days window indexing the byDay series by its YYYY-MM-DD
  * date string and falling back to zero for absent days. This keeps the
- * sparkline geometrically faithful — sparse byDay rows would otherwise compress
+ * sparkline geometrically faithful - sparse byDay rows would otherwise compress
  * gaps and overstate momentum.
  *
  * The window ends on the latest date present in byDay (or today if byDay is
@@ -99,7 +99,7 @@ export function getLast7Days(byDay: ByDayEntry[]): number[] {
 /**
  * Walk a `byDay` series newest → oldest and return both:
  *   - `current`: consecutive days *up to and including today* with non-zero
- *     activity. Today missing? Streak is 0 (we don't pad — a streak that
+ *     activity. Today missing? Streak is 0 (we don't pad - a streak that
  *     hasn't been touched today is broken, period).
  *   - `max`: longest run of consecutive non-zero days anywhere in the series.
  *
@@ -117,7 +117,7 @@ export function computeStreaks(byDay: ByDayEntry[]): { current: number; max: num
 	}
 	if (activeDays.size === 0) return { current: 0, max: 0 };
 
-	// Local YYYY-MM-DD formatter — matches what the aggregation emits and
+	// Local YYYY-MM-DD formatter - matches what the aggregation emits and
 	// avoids the UTC-shift trap of `.toISOString().slice(0,10)`.
 	const ymd = (d: Date) =>
 		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -165,7 +165,7 @@ export function findBestDay(byDay: ByDayEntry[]): { date: string; count: number 
 
 /**
  * Count days with at least one query inside the byDay series. This is the
- * "active days in range" stat — different from the streak because gaps are
+ * "active days in range" stat - different from the streak because gaps are
  * allowed.
  */
 export function countActiveDays(byDay: ByDayEntry[]): number {
@@ -270,7 +270,7 @@ export function getCardStyles(
  * (the formats produced by `formatNumber` and percentage formatters).
  *
  * Returns `null` for strings like durations (`"12h 34m"`), peak hour
- * (`"9 AM"`), agent names, or `"N/A"` — these display immediately.
+ * (`"9 AM"`), agent names, or `"N/A"` - these display immediately.
  */
 function parseAnimatedValue(
 	value: string
@@ -348,7 +348,7 @@ export const AnimatedNumber = memo(function AnimatedNumber({
 });
 
 interface BouncingDotsProps {
-	/** Color for the dots — defaults to `currentColor` so callers can tint via CSS */
+	/** Color for the dots - defaults to `currentColor` so callers can tint via CSS */
 	color?: string;
 	/** Optional ARIA label; defaults to `"Loading"` for screen readers */
 	label?: string;
@@ -392,7 +392,7 @@ interface MetricCardProps {
 	animationIndex?: number;
 	/** Optional content rendered below the value (e.g. status breakdown) */
 	extra?: React.ReactNode;
-	/** Visual variant — defaults to `'elevated'` */
+	/** Visual variant - defaults to `'elevated'` */
 	variant?: CardVariant;
 	/** Optional accent color override for `outlined` / `filled` variants */
 	accentColor?: string;
@@ -914,13 +914,13 @@ export const SummaryCards = memo(function SummaryCards({
 			label: 'Top Agent',
 			value: mostActiveAgent,
 		},
-		// Streak / momentum row — replaces the always-stable Local% and
+		// Streak / momentum row - replaces the always-stable Local% and
 		// Interactive% cards, which were context-free numbers that never
 		// changed. Streak tells the user something they actually want to know.
 		{
 			icon: <Flame className="w-4 h-4" />,
 			label: 'Current Streak',
-			value: streaks.current === 0 ? '—' : `${streaks.current}d`,
+			value: streaks.current === 0 ? '-' : `${streaks.current}d`,
 			extra:
 				streaks.max > 0 ? (
 					<div
@@ -934,7 +934,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <Trophy className="w-4 h-4" />,
 			label: 'Best Day',
-			value: bestDay ? formatNumber(bestDay.count) : '—',
+			value: bestDay ? formatNumber(bestDay.count) : '-',
 			extra: bestDay ? (
 				<div
 					className="text-[10px] mt-1 uppercase tracking-wide"
@@ -952,7 +952,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <PenLine className="w-4 h-4" />,
 			label: 'Image Annotations',
-			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '—',
+			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '-',
 		},
 	];
 

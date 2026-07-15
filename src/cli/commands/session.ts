@@ -1,4 +1,4 @@
-// Session inspection commands — read-only access to desktop conversation state
+// Session inspection commands - read-only access to desktop conversation state
 // for external pollers (Maestro-Discord, Cue follow-ups, etc.).
 //
 // `session list` enumerates every open AI tab across every Maestro agent.
@@ -90,9 +90,9 @@ function mapTransportError(error: unknown): { error: string; code: string } | nu
 
 /**
  * Parse `--since` accepting:
- *   - ISO-8601 timestamps ("2026-04-28T10:00:00Z") — output of a previous
+ *   - ISO-8601 timestamps ("2026-04-28T10:00:00Z") - output of a previous
  *     `session show`'s `messages[].timestamp`, the natural cursor source.
- *   - Numeric epoch values (ms or seconds — auto-detected by magnitude).
+ *   - Numeric epoch values (ms or seconds - auto-detected by magnitude).
  * Returns ms epoch for the wire, or null if the input is unparseable so the
  * caller can fail loudly with INVALID_OPTION rather than silently filtering.
  */
@@ -143,7 +143,7 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 			const state = s.state === 'busy' ? 'busy' : 'idle';
 			const star = s.starred ? '★' : ' ';
 			const name = s.name ?? '(unnamed)';
-			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '—';
+			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '-';
 			console.log(
 				`${state} ${star} ${s.tabId}  ${s.agentName} (${s.agentId})  ${name}  ${created}`
 			);

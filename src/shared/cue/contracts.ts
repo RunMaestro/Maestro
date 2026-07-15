@@ -60,7 +60,7 @@ export type CueCommandMode = 'shell' | 'cli';
 /**
  * Toast notification config for `action: 'notify'` subscriptions.
  * Notify subscriptions surface a toast in the desktop UI via the owning
- * agent — clicking the toast jumps to that agent.
+ * agent - clicking the toast jumps to that agent.
  *
  * Used primarily by `time.once` reminder/task subscriptions emitted from
  * `maestro-cli cue schedule --notify`, but any event type can drive a
@@ -70,7 +70,7 @@ export interface CueNotifyConfig {
 	/** Toast body. When omitted, falls back to the subscription's `label`
 	 *  (preferred), then `prompt`, then `name`. */
 	message?: string;
-	/** When true, render the toast as dismissible (no auto-timeout — the
+	/** When true, render the toast as dismissible (no auto-timeout - the
 	 *  user must explicitly close it). Maps to `notifyToast({ dismissible: true })`. */
 	sticky?: boolean;
 }
@@ -88,7 +88,7 @@ export interface CueCommandCliCall {
 }
 
 /**
- * A `command` action — either an arbitrary shell command (PATH-aware, runs in
+ * A `command` action - either an arbitrary shell command (PATH-aware, runs in
  * the owning session's project root) or a structured maestro-cli call.
  */
 export type CueCommand = { mode: 'shell'; shell: string } | { mode: 'cli'; cli: CueCommandCliCall };
@@ -98,7 +98,7 @@ export type CueCommand = { mode: 'shell'; shell: string } | { mode: 'cli'; cli: 
  *
  * `action` defaults to `'prompt'` (run an AI agent with the substituted
  * `prompt`). When `action` is `'command'`, the subscription instead spawns a
- * shell command or invokes maestro-cli — see {@link CueCommand}.
+ * shell command or invokes maestro-cli - see {@link CueCommand}.
  *
  * Note: prompt content is always materialized at config-load time. The raw YAML
  * `prompt_file` / `output_prompt_file` fields are resolved by the normalizer and
@@ -111,7 +111,7 @@ export interface CueSubscription {
 	enabled: boolean;
 	prompt: string;
 	output_prompt?: string;
-	/** Action type — defaults to `'prompt'` when omitted. */
+	/** Action type - defaults to `'prompt'` when omitted. */
 	action?: CueAction;
 	/** Required when `action === 'command'`. */
 	command?: CueCommand;
@@ -120,7 +120,7 @@ export interface CueSubscription {
 	schedule_days?: CueScheduleDay[];
 	/** ISO-8601 timestamp at which a `time.once` subscription should fire.
 	 *  Required for `time.once` events; ignored for all other event types.
-	 *  Must include a timezone offset (Z or ±HH:MM) — the engine parses with
+	 *  Must include a timezone offset (Z or ±HH:MM) - the engine parses with
 	 *  `Date.parse` and naive local-time strings produce surprising behavior
 	 *  across DST boundaries and SSH-spawned remote runs. */
 	fire_at?: string;
@@ -156,7 +156,7 @@ export interface CueSubscription {
 	 *  Why: `source_session` alone matches any run in that session. When a
 	 *  command node shares a session with its downstream agent (`Schedule →
 	 *  Cmd1(owner S1) → Agent1(S1)`), both Cmd1's and Agent1's completions
-	 *  emit `agent.completed` for S1 — without this filter the chain
+	 *  emit `agent.completed` for S1 - without this filter the chain
 	 *  self-triggers on Agent1's own completion, and downstream fan-in subs
 	 *  cross-fire on Cmd1's completion before Agent1 has run.
 	 *
@@ -175,7 +175,7 @@ export interface CueSubscription {
 	 *  YAML; new writes always emit it alongside `fan_out`. */
 	fan_out_ids?: string[];
 	/** Per-target prompts for a fan-out subscription, one string per entry in
-	 *  `fan_out`. Legacy inline shape — kept for round-tripping YAML written
+	 *  `fan_out`. Legacy inline shape - kept for round-tripping YAML written
 	 *  by older versions or edited by hand. New writes prefer
 	 *  `fan_out_prompt_files` so each agent's prompt lives in its own `.md`
 	 *  file, mirroring what the UI shows per-agent. The normalizer resolves
@@ -199,7 +199,7 @@ export interface CueSubscription {
 	 *  Only meaningful for `github.pull_request` and `github.issue` events. */
 	retrigger_on_comments?: boolean;
 	/** Per-item cap on re-trigger fires when `retrigger_on_comments` is true.
-	 *  Counts re-fires only — the initial discovery fire is always allowed.
+	 *  Counts re-fires only - the initial discovery fire is always allowed.
 	 *  Omitted = default 10. Positive integer = explicit cap.
 	 *  `0` = unlimited (sentinel chosen over `null` so the field is a single
 	 *  numeric type for validation). Once a PR/issue hits its cap the poller
@@ -246,12 +246,12 @@ export interface CueSubscription {
 	 *  `-chain-N` suffix off subscription names. */
 	pipeline_name?: string;
 	/** Stable visual-node identifier for the subscription's target node
-	 *  (single-target subs only — fan-out uses `fan_out_node_keys`).
+	 *  (single-target subs only - fan-out uses `fan_out_node_keys`).
 	 *  Lets the loader distinguish "two separate visual nodes pointing at
 	 *  the same agent_id" from "one shared node with multiple inputs":
 	 *  subs sharing an `agent_id` but different `target_node_key` values
 	 *  emit separate visual nodes; sharing the same key collapses to one
-	 *  node (explicit user-drawn fan-in). Absent on legacy YAML — the
+	 *  node (explicit user-drawn fan-in). Absent on legacy YAML - the
 	 *  loader falls back to dedup-by-sessionName behavior so legacy
 	 *  pipelines keep loading. */
 	target_node_key?: string;

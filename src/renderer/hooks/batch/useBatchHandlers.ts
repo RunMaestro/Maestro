@@ -1,5 +1,5 @@
 /**
- * useBatchHandlers — extracted from App.tsx (Phase 2I)
+ * useBatchHandlers - extracted from App.tsx (Phase 2I)
  *
  * Orchestrates batch/Auto Run processing by:
  *   - Initializing useBatchProcessor with configuration callbacks
@@ -63,7 +63,7 @@ function resolveGroupName(
 /**
  * Find the session that is actually paused on error.
  * Prefer the active session when it is paused; otherwise pick the first errorPaused session.
- * Returns undefined when nothing is error-paused — callers bail via the existing guard.
+ * Returns undefined when nothing is error-paused - callers bail via the existing guard.
  */
 function resolveBatchSessionIdForPausedError(
 	batchRunStates: Record<string, BatchRunState>,
@@ -478,7 +478,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 										'**Symphony: Pull Request Ready for Review**',
 										'',
 										`- **PR:** ${result.prUrl}`,
-										`- **Issue:** #${session.symphonyMetadata!.issueNumber} — ${session.symphonyMetadata!.issueTitle}`,
+										`- **Issue:** #${session.symphonyMetadata!.issueNumber} - ${session.symphonyMetadata!.issueTitle}`,
 										`- **Tasks Completed:** ${info.completedTasks}`,
 										`- **Documents Processed:** ${info.documentsProcessed}`,
 									].join('\n'),
@@ -491,7 +491,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								// Best-effort history entry
 							}
 						} else {
-							// complete returned but no prUrl — set to completed for manual finalization
+							// complete returned but no prUrl - set to completed for manual finalization
 							await window.maestro.symphony.updateStatus({
 								contributionId,
 								status: 'completed',
@@ -754,7 +754,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	// sessionId-targeted variants for use from the web remote layer. These mirror
 	// the handle* helpers above but accept an explicit sessionId instead of
-	// resolving one from the active session — the web client always knows which
+	// resolving one from the active session - the web client always knows which
 	// session the user tapped Resume/Skip/Abort for. Each wrapper also clears
 	// the session's agent error so the renderer UI drops its error banner in
 	// sync with the batch state (otherwise the banner would persist until the
@@ -832,7 +832,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				window.maestro.app.confirmQuit();
 			} else {
 				// Tell main the modal is up so it disarms the dead-renderer safety
-				// timeout — otherwise the app force-quits after a few seconds while
+				// timeout - otherwise the app force-quits after a few seconds while
 				// the user is still deciding.
 				window.maestro.app.quitConfirmationPending?.();
 				getModalActions().setQuitConfirmModalOpen(true, {

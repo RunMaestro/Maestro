@@ -79,7 +79,7 @@ export function createFsApi() {
 		/**
 		 * Enumerate a remote directory tree in a single SSH round-trip.
 		 * Returns flat lists of directory and file paths relative to `rootPath`.
-		 * SSH-only — local trees should use the renderer's recursive `loadFileTree`.
+		 * SSH-only - local trees should use the renderer's recursive `loadFileTree`.
 		 */
 		listTreeRemote: (
 			rootPath: string,
@@ -91,7 +91,7 @@ export function createFsApi() {
 		/**
 		 * Read file contents.
 		 *
-		 * For SSH remote files, pass `requestId` to make the read cancellable —
+		 * For SSH remote files, pass `requestId` to make the read cancellable -
 		 * call `cancelReadFile(requestId)` to abort the underlying ssh+cat process.
 		 * Cancelled reads resolve to null.
 		 */

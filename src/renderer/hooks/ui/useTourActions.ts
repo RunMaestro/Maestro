@@ -1,5 +1,5 @@
 /**
- * useTourActions — extracted from App.tsx
+ * useTourActions - extracted from App.tsx
  *
  * Listens for tour:action custom events to control right panel state:
  *   - setRightTab: Switch to a specific right panel tab

@@ -441,7 +441,7 @@ describe('WizardInputPanel', () => {
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 
-			// No dialog — exits directly (only 1 tab, so falls back to onExitWizard)
+			// No dialog - exits directly (only 1 tab, so falls back to onExitWizard)
 			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
 			expect(onExitWizard).toHaveBeenCalledTimes(1);
 		});

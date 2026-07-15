@@ -277,7 +277,7 @@ export function NewInstanceModal({
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
 			if (source) {
 				handleWorkingDirChange(source.cwd);
-				// Clone the grants, don't alias them — the rows are edited in place and
+				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
 				setInstanceName(`${source.name} (Copy)`);
@@ -364,12 +364,12 @@ export function NewInstanceModal({
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
 
-	// Debounced git repo detection — checks if the selected working dir is
+	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
 	useEffect(() => {
 		const trimmed = workingDir.trim();
 		// Reset stale state from a previous directory before the async check
-		// resolves — otherwise the previous "not-repo" panel keeps rendering
+		// resolves - otherwise the previous "not-repo" panel keeps rendering
 		// (with a clickable Init button) against the new, unvalidated path
 		// during the 500ms debounce window.
 		setGitRepoStatus('unknown');
@@ -548,7 +548,7 @@ export function NewInstanceModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
-		// The dropdown's selected value wins — it was seeded from the source
+		// The dropdown's selected value wins - it was seeded from the source
 		// session's group (when duplicating) or the caller's preset (e.g. "New
 		// Agent in Group" from the group context menu), so explicit user
 		// selection naturally overrides those defaults.
@@ -1061,7 +1061,7 @@ export function NewInstanceModal({
 					/>
 				)}
 
-				{/* Git repo hint — offer to `git init` when the selected dir isn't a repo */}
+				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
 				{workingDir.trim() && gitRepoStatus === 'not-repo' && (
 					<div
 						className="flex items-center gap-3 p-3 rounded border"
@@ -1152,7 +1152,7 @@ export function NewInstanceModal({
 
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered, even when no remotes are configured, so the
-				    "remote-controlled" toggle is reachable — it mirrors history
+				    "remote-controlled" toggle is reachable - it mirrors history
 				    to the local project dir for a Maestro SSH'd into this
 				    machine, independent of local SSH remote setup.
 				    Uses '_pending_' key when no agent selected, transfers to

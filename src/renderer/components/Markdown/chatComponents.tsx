@@ -92,7 +92,7 @@ export function createChatMarkdownComponents(
 			style,
 			...props
 		}: JSX.IntrinsicElements['code'] & ExtraProps) => (
-			// Inline code only — block code is handled by the pre component above
+			// Inline code only - block code is handled by the pre component above
 			<InlineCode className={className} style={style} passthrough={props}>
 				{children}
 			</InlineCode>

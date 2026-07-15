@@ -473,7 +473,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 					</svg>
 				)}
 
-				{/* Tooltip — clamped to viewport so chart points near the right/top
+				{/* Tooltip - clamped to viewport so chart points near the right/top
 				    edge don't get cropped. Estimated width/height match the rendered
 				    box; if content changes substantially, revisit these. */}
 				{hoveredPoint && (

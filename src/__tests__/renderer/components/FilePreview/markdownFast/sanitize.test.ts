@@ -109,7 +109,7 @@ describe('sanitizeBlock', () => {
 		expect(() => sanitizeBlock('<p>unterminated <strong>')).not.toThrow();
 	});
 
-	it('is idempotent — sanitizing already-clean HTML twice yields the same result', () => {
+	it('is idempotent - sanitizing already-clean HTML twice yields the same result', () => {
 		const first = sanitizeBlock('<p>hello <a href="https://example.com">x</a></p>');
 		const second = sanitizeBlock(first);
 		expect(second).toBe(first);

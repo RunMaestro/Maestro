@@ -71,7 +71,7 @@ describe('AutoRunToolbar', () => {
 		it('shows the "Agent is thinking" tooltip on the Run button when isAgentBusy', () => {
 			render(<AutoRunToolbar {...createDefaultProps({ isAgentBusy: true })} />);
 			// The "Agent thinking" badge itself lives on the Go button inside
-			// BatchRunnerModal — here we just verify the toolbar surfaces the
+			// BatchRunnerModal - here we just verify the toolbar surfaces the
 			// busy state via its tooltip.
 			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
 			expect(screen.queryByText('Agent thinking')).toBeNull();

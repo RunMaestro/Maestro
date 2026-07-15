@@ -34,7 +34,7 @@ function getCssVar(name: string): string {
 
 describe('useThemeStyles', () => {
 	beforeEach(() => {
-		// Clean slate — clear any previously set vars from other tests.
+		// Clean slate - clear any previously set vars from other tests.
 		const root = document.documentElement.style;
 		root.removeProperty('--accent-color');
 		root.removeProperty('--highlight-color');

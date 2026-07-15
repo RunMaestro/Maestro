@@ -65,7 +65,7 @@ describe('isCompatible', () => {
 		);
 	});
 
-	// Case-insensitivity for prerelease tags — addresses the package.json
+	// Case-insensitivity for prerelease tags - addresses the package.json
 	// using "0.16.17-RC" (uppercase) while playbook manifests pin "0.16.17-rc".
 	it('treats uppercase and lowercase prerelease tags as equivalent', () => {
 		expect(isCompatible(makePlaybook({ minMaestroVersion: '0.16.17-rc' }), '0.16.17-RC')).toBe(

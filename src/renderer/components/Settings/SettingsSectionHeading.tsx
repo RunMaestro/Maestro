@@ -12,7 +12,7 @@ export interface SettingsSectionHeadingProps {
  * Canonical section heading for panels inside the Settings modal.
  *
  * All section headings use the same typography (uppercase, bold, dim via opacity)
- * and inherit `theme.colors.textMain` — do not override with `textDim` or any
+ * and inherit `theme.colors.textMain` - do not override with `textDim` or any
  * other color. Pair every heading with a Lucide icon.
  */
 export function SettingsSectionHeading({ icon: Icon, children }: SettingsSectionHeadingProps) {

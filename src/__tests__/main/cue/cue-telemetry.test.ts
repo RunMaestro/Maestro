@@ -1,5 +1,5 @@
 /**
- * Tests for cue-telemetry.ts — verifies the wire contract negotiated with the
+ * Tests for cue-telemetry.ts - verifies the wire contract negotiated with the
  * runmaestro.ai backend (sha256-truncated identifiers, two-event model,
  * Encore-flag gating, kill-switch env var, and outbox→submit→delete lifecycle).
  *
@@ -368,7 +368,7 @@ describe('flushTelemetry', () => {
 		});
 		const second = await flushTelemetry({ reason: 'manual' });
 		expect(second).toEqual({ ok: false, reason: 'backoff' });
-		// fetch was only called once — backoff blocked the second flush.
+		// fetch was only called once - backoff blocked the second flush.
 		expect((globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(
 			1
 		);

@@ -131,7 +131,7 @@ describe('cue-heartbeat-trigger-source', () => {
 		source.start();
 		expect(emit).toHaveBeenCalledTimes(1); // immediate fire
 
-		// Disable before the next tick — the timer callback short-circuits.
+		// Disable before the next tick - the timer callback short-circuits.
 		enabled = false;
 		vi.advanceTimersByTime(60_000);
 		expect(emit).toHaveBeenCalledTimes(1);
@@ -146,7 +146,7 @@ describe('cue-heartbeat-trigger-source', () => {
 			session: makeSession(),
 			subscription: makeSub({
 				interval_minutes: 1,
-				// payload.interval_minutes is always set to 1 by createCueEvent —
+				// payload.interval_minutes is always set to 1 by createCueEvent -
 				// this filter requires "2" so the event will never match.
 				filter: { interval_minutes: 2 },
 			}),

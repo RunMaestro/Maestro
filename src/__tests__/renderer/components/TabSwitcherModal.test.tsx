@@ -444,7 +444,7 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// No name or agentSessionId yet — shows "New Session"
+				// No name or agentSessionId yet - shows "New Session"
 				expect(screen.getByText('New Session')).toBeInTheDocument();
 			});
 		});
@@ -575,7 +575,7 @@ describe('TabSwitcherModal', () => {
 			it('caps at 100% when tokens fill the window exactly', () => {
 				// Use values that fill the window without overflowing so we exercise
 				// the Math.min(100, …) cap rather than the overflow branch (which now
-				// returns untrustworthy zeros — see issue #762).
+				// returns untrustworthy zeros - see issue #762).
 				const tab = createTestTab({
 					usageStats: {
 						inputTokens: 199500,
@@ -606,7 +606,7 @@ describe('TabSwitcherModal', () => {
 			it('hides the gauge when accumulated tokens overflow without a fallback', () => {
 				// Issue #762: an accumulated multi-tool turn can blow past the configured
 				// window before any session-level percentage has been preserved. We must
-				// not surface that as "0%" — hide the gauge instead so users don't read
+				// not surface that as "0%" - hide the gauge instead so users don't read
 				// untrustworthy data.
 				const tab = createTestTab({
 					usageStats: {

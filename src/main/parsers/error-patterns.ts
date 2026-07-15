@@ -1364,7 +1364,7 @@ export const ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH = 7;
  * pattern types instead of the last 1-2.
  *
  * If telemetry shifts (new agent provider, new error class), reorder
- * here. Behavior is identical — first-match early-return is preserved.
+ * here. Behavior is identical - first-match early-return is preserved.
  */
 const ERROR_TYPES_BY_HIT_FREQUENCY: AgentErrorType[] = [
 	'rate_limited',

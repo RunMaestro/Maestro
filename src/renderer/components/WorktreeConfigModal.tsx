@@ -55,7 +55,7 @@ export function WorktreeConfigModal({
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
-	// Form state — default base path to parent directory of the agent's cwd
+	// Form state - default base path to parent directory of the agent's cwd
 	const [basePath, setBasePath] = useState(
 		session.worktreeConfig?.basePath || getParentDir(session.cwd)
 	);
@@ -274,7 +274,7 @@ export function WorktreeConfigModal({
 						>
 							<Server className="w-4 h-4" style={{ color: theme.colors.accent }} />
 							<span className="text-sm" style={{ color: theme.colors.textMain }}>
-								Remote session — enter the path on the remote server
+								Remote session - enter the path on the remote server
 							</span>
 						</div>
 					)}

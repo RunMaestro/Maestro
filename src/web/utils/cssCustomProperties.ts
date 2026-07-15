@@ -34,7 +34,7 @@ export type ThemeCSSProperty =
 
 /**
  * Maps base theme color keys to CSS custom property names.
- * ANSI fields are excluded — they are only used for terminal emulation, not CSS variables.
+ * ANSI fields are excluded - they are only used for terminal emulation, not CSS variables.
  */
 const colorToCSSProperty: Partial<Record<keyof ThemeColors, ThemeCSSProperty>> = {
 	bgMain: '--maestro-bg-main',

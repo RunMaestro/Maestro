@@ -56,7 +56,7 @@ export function toControlChar(input: string): string {
 	// Uppercase folds a-z onto A-Z so both cases map to the same control code.
 	const code = input.toUpperCase().charCodeAt(0);
 
-	// `@`(64) through `_`(95) — this covers A-Z plus the classic control symbols.
+	// `@`(64) through `_`(95) - this covers A-Z plus the classic control symbols.
 	if (code >= 64 && code <= 95) {
 		return String.fromCharCode(code & 0x1f);
 	}

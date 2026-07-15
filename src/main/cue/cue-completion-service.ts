@@ -20,7 +20,7 @@ import {
  * non-empty when the session is NOT the effective owner of its `cue.yaml`
  * (shared-projectRoot conflict). Unowned `agent.completed` subscriptions
  * must be skipped for those sessions, otherwise a workspace registered as
- * two agents would dispatch the same chain twice — exactly the duplication
+ * two agents would dispatch the same chain twice - exactly the duplication
  * the ownership gate exists to prevent.
  */
 export interface CueCompletionSessionView {
@@ -62,7 +62,7 @@ function getMatchingSources(sub: CueSubscription): string[] {
 /**
  * Returns the set of upstream subscription names that may fire this chain.
  * When empty (no `source_sub` configured), the chain accepts completions from
- * any run in its source session(s) — legacy behavior.
+ * any run in its source session(s) - legacy behavior.
  *
  * `source_sub` narrows matching so a sub fires only on completions produced
  * by an explicit upstream sub. See the field docs on `CueSubscription` for
@@ -79,7 +79,7 @@ function getAllowedSourceSubs(sub: CueSubscription): string[] {
  *
  * When `source_sub` IS set, `triggeredBy` must also be set and present in
  * the allowed list. An undefined `triggeredBy` here in practice means an
- * external (non-Cue) completion of the source session — e.g. the user
+ * external (non-Cue) completion of the source session - e.g. the user
  * interacting with the agent directly, or a system process exit reported
  * via exit-listener. Bypassing the filter for those would partially
  * re-introduce the self-loop / cross-fire behaviour `source_sub` exists
@@ -128,7 +128,7 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 			if (chainDepth >= deps.maxChainDepth) {
 				deps.onLog(
 					'error',
-					`[CUE] Max chain depth (${deps.maxChainDepth}) exceeded — aborting to prevent infinite loop`
+					`[CUE] Max chain depth (${deps.maxChainDepth}) exceeded - aborting to prevent infinite loop`
 				);
 				return;
 			}
@@ -157,7 +157,7 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 					if (!allowsSourceSub(sub, completionData?.triggeredBy)) {
 						deps.onLog(
 							'cue',
-							`[CUE] "${sub.name}" skipped — triggeredBy "${completionData?.triggeredBy ?? '(none)'}" not in source_sub`
+							`[CUE] "${sub.name}" skipped - triggeredBy "${completionData?.triggeredBy ?? '(none)'}" not in source_sub`
 						);
 						continue;
 					}
@@ -180,7 +180,7 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 							[completion],
 							sub
 						);
-						// Preserve pass-through of upstream-forwarded data — but filter
+						// Preserve pass-through of upstream-forwarded data - but filter
 						// by forward_output_from when the list is set so user intent
 						// is respected through the full chain.
 						const mergedForwarded = mergeUpstreamForwarded(
@@ -211,11 +211,11 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 							continue;
 						}
 
-						// Phase 01 — propagate chain lineage. The downstream run
+						// Phase 01 - propagate chain lineage. The downstream run
 						// inherits the parent's chainRootId (or the parent's
 						// runId, when the parent was itself a root). parentEventId
 						// is always the parent's runId. Both undefined for non-Cue
-						// completions (e.g. exit-listener) — those start a new
+						// completions (e.g. exit-listener) - those start a new
 						// root in the next run's `cue_events` row.
 						const childChainRootId = completionData?.chainRootId ?? completionData?.parentRunId;
 						const childParentEventId = completionData?.parentRunId;

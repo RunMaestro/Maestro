@@ -1,5 +1,5 @@
 /**
- * CueDashboard — Dashboard tab body. Top-row stats, sessions table, and
+ * CueDashboard - Dashboard tab body. Top-row stats, sessions table, and
  * collapsible active runs. The Activity Log lives on its own tab.
  *
  * Pure presentational. Parent CueModal owns all data + callbacks.
@@ -25,7 +25,7 @@ export interface CueDashboardProps {
 	onRetry: () => void;
 	sessions: CueSessionStatus[];
 	activeRuns: CueRunResult[];
-	/** Recent completed/failed runs — used to compute average runtime stat. */
+	/** Recent completed/failed runs - used to compute average runtime stat. */
 	activityLog: CueRunResult[];
 	queueStatus: Record<string, number>;
 	graphSessions: CueGraphSession[];
@@ -39,7 +39,7 @@ export interface CueDashboardProps {
 	onEditYaml: (session: CueSessionStatus) => void;
 	onRemoveCue: (session: CueSessionStatus) => void;
 	onTriggerSubscription: (subscriptionName: string) => void;
-	/** Fire-and-forget — matches ActiveRunsList's onClick invocation. Any returned
+	/** Fire-and-forget - matches ActiveRunsList's onClick invocation. Any returned
 	 *  promise is discarded; errors should be surfaced via toasts in the caller. */
 	onStopRun: (runId: string) => void;
 	onStopAll: () => void;
@@ -78,7 +78,7 @@ export function CueDashboard({
 		return total / finished.length;
 	}, [activityLog]);
 
-	// Hide sessions flagged with an ownershipWarning by default — these are
+	// Hide sessions flagged with an ownershipWarning by default - these are
 	// non-owners of a shared cue.yaml (e.g. a Codex / OpenCode agent sitting
 	// at the same cwd as the agent that actually owns the subs). They add
 	// visual noise to a dashboard a user normally only cares about for the
@@ -102,7 +102,7 @@ export function CueDashboard({
 		[sessions]
 	);
 
-	// Distinct agents referenced by any pipeline's agent nodes — "agents
+	// Distinct agents referenced by any pipeline's agent nodes - "agents
 	// associated with Cue" in the dashboard sense.
 	const agentCount = useMemo(() => {
 		const ids = new Set<string>();

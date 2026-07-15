@@ -29,7 +29,7 @@ const SYNC_PARSE_BYTES = 64 * 1024;
  * virtualization means we don't need real measurement. */
 const PAGE_HEIGHT_PX = Math.ceil(DEFAULT_LINES_PER_PAGE * 13 * 1.6);
 
-/** Pixels of overscan above/below the viewport — TanStack Virtual unit is
+/** Pixels of overscan above/below the viewport - TanStack Virtual unit is
  * items, not pixels. With ~1280px-tall pages, 1 item ≈ a full page; 1 is
  * usually enough to hide the next-page mount flash. */
 const OVERSCAN_PAGES = 1;
@@ -54,7 +54,7 @@ function escapeHtmlForPre(value: string): string {
  * into 80-line pages via TanStack Virtual; lazy Shiki upgrades visible code
  * pages from plain text to highlighted output on intersection.
  *
- * Thin React shell — all non-React concerns live in sibling modules
+ * Thin React shell - all non-React concerns live in sibling modules
  * (pagination, codeHighlighter, searchHits, proseStyles).
  */
 export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFastProps>(
@@ -131,7 +131,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 					virtualizer.scrollToIndex(idx, { align: 'center' });
 					// Post-scroll precision: walk text nodes inside the matched
 					// page's content element (skipping the line-number gutter) so
-					// the matched word — not just the page top — comes into view.
+					// the matched word - not just the page top - comes into view.
 					requestAnimationFrame(() => {
 						const root = scrollRef.current;
 						if (!root) return;
@@ -177,7 +177,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 
 		const proseCss = useMemo(() => generateTextProseCss(theme), [theme]);
 
-		// Pre-compute the gutter contents per page once per parse — line
+		// Pre-compute the gutter contents per page once per parse - line
 		// numbers are stable so we don't need to do this in render.
 		const pageGutter = useCallback((page: TextPage) => {
 			const numbers: string[] = [];

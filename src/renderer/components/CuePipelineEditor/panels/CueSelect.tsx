@@ -1,5 +1,5 @@
 /**
- * CueSelect — Re-exports ThemedSelect for use within the pipeline editor.
+ * CueSelect - Re-exports ThemedSelect for use within the pipeline editor.
  */
 
 export {

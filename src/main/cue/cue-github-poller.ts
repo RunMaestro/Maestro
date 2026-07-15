@@ -22,7 +22,7 @@ import type { CueLogPayload } from '../../shared/cue-log-types';
 
 /**
  * Default per-item re-trigger cap when `retrigger_on_comments` is enabled but
- * `max_notifications` is omitted. Counts re-fires only — the initial discovery
+ * `max_notifications` is omitted. Counts re-fires only - the initial discovery
  * fire is always allowed. Set so a busy PR can't flood Cue indefinitely while
  * leaving plenty of room for legitimate back-and-forth between agents.
  */
@@ -162,7 +162,7 @@ export interface CueGitHubPollerConfig {
 	 */
 	retriggerOnComments?: boolean;
 	/**
-	 * Per-item cap on re-trigger fires. Counts re-fires only — the initial
+	 * Per-item cap on re-trigger fires. Counts re-fires only - the initial
 	 * discovery fire is always allowed regardless of this value. Omitted /
 	 * undefined falls back to {@link DEFAULT_MAX_NOTIFICATIONS}. `0` (or any
 	 * non-positive value) means unlimited.
@@ -221,7 +221,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	/** Tracks whether a poll has been attempted (success or failure) to prevent event flooding on recovery */
 	let firstPollAttempted = false;
 
-	// Phase 12C — rate-limit backoff state
+	// Phase 12C - rate-limit backoff state
 	const basePollMs = pollMinutes * 60 * 1000;
 	let currentPollMs = basePollMs;
 
@@ -237,7 +237,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			// a `code` (e.g. unexpected throws from `resolveGhPath`) used to slip
 			// through the old `code && code !== 'ENOENT'` guard silently.
 			const code = (err as { code?: string } | undefined)?.code;
-			onLog('warn', `[CUE] GitHub CLI (gh) not found — skipping "${triggerName}"`);
+			onLog('warn', `[CUE] GitHub CLI (gh) not found - skipping "${triggerName}"`);
 			if (code !== 'ENOENT') {
 				void captureException(err, { operation: 'cue:github:resolveGh', triggerName });
 			}
@@ -258,13 +258,13 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			return resolvedRepo;
 		} catch (err) {
 			// Rate-limited repo detection must bubble up so doPoll's outer
-			// catch can apply exponential backoff — swallowing + returning null
+			// catch can apply exponential backoff - swallowing + returning null
 			// here would make every poll immediately short-circuit while the
 			// limit lasts, without ever bumping currentPollMs.
 			if (isGitHubRateLimitError(err)) {
 				throw err;
 			}
-			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
+			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" - skipping poll`);
 			void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			return null;
 		}
@@ -274,7 +274,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	 * Fetch issue-style top-level comments for a single PR or issue, filtered
 	 * to those created strictly after `sinceIso`. Returns at most 50 comments
 	 * (the most recent if the API caps us). Inline review comments / thread
-	 * replies on PRs are intentionally skipped for v1 — they require a
+	 * replies on PRs are intentionally skipped for v1 - they require a
 	 * different API surface and the top-level stream is enough to drive
 	 * back-and-forth between agents.
 	 *
@@ -537,7 +537,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		// app becomes visible again.
 		if (!isActive()) return;
 		if (!isCueDbReady()) {
-			onLog('warn', `[CUE] Cue database not ready — skipping GitHub poll for "${triggerName}"`);
+			onLog('warn', `[CUE] Cue database not ready - skipping GitHub poll for "${triggerName}"`);
 			return;
 		}
 
@@ -552,14 +552,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			} else {
 				await pollIssues(repo);
 			}
-			// Success — reset backoff to baseline.
+			// Success - reset backoff to baseline.
 			currentPollMs = basePollMs;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 
 			if (isGitHubRateLimitError(err)) {
 				// Exponential backoff capped at the max. Sentry is NOT called for
-				// rate limits — they are expected operational conditions.
+				// rate limits - they are expected operational conditions.
 				currentPollMs = Math.min(currentPollMs * 2, GITHUB_RATE_LIMIT_MAX_BACKOFF_MS);
 				const backoffMin = Math.round(currentPollMs / 60000);
 				const payload: CueLogPayload = {
@@ -569,7 +569,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				};
 				onLog(
 					'warn',
-					`[CUE] "${triggerName}" rate-limited by GitHub — backing off to ${backoffMin}m`,
+					`[CUE] "${triggerName}" rate-limited by GitHub - backing off to ${backoffMin}m`,
 					payload
 				);
 			} else if (isGitHubConnectivityError(err)) {
@@ -594,11 +594,11 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 					markGitHubItemSeen(subscriptionId, '__seed_marker__');
 					onLog(
 						'info',
-						`[CUE] First poll for "${triggerName}" failed — seed marker set to prevent silent event loss on recovery`
+						`[CUE] First poll for "${triggerName}" failed - seed marker set to prevent silent event loss on recovery`
 					);
 				} catch (seedErr) {
 					// Non-fatal: DB may not be available. Surface to Sentry so we see
-					// when the "loss prevention" itself fails — previously silent.
+					// when the "loss prevention" itself fails - previously silent.
 					void captureException(seedErr, {
 						operation: 'cue:github:seedMarker',
 						triggerName,
@@ -619,8 +619,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	function scheduleNextPoll(): void {
 		if (stopped) return;
 		pollTimer = setTimeout(async () => {
-			// Guard the loop: if doPoll throws (it shouldn't — it has its own
-			// try/catch — but an unexpected rethrow would silently end the
+			// Guard the loop: if doPoll throws (it shouldn't - it has its own
+			// try/catch - but an unexpected rethrow would silently end the
 			// schedule). try/finally here keeps the loop alive regardless.
 			try {
 				await doPoll();
@@ -665,7 +665,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 	// Expose pollNow so the engine can request an immediate poll (e.g. on
 	// system wake) without waiting for the next scheduled tick. Errors are
-	// logged but not rethrown — pollNow is fire-and-forget by contract.
+	// logged but not rethrown - pollNow is fire-and-forget by contract.
 	config.onReady?.({
 		pollNow: () => {
 			if (stopped) return;

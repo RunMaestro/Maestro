@@ -6,7 +6,7 @@
  * seconds later it pops back to its previous position. Root cause: the
  * `displayNodes <- computedNodes` resync effect ran on every `activeRuns`
  * polling tick (its deps include the running-state Sets returned fresh from
- * usePipelineState's memos), unconditionally overwriting positions —
+ * usePipelineState's memos), unconditionally overwriting positions -
  * including ReactFlow's live drag-updated positions on `displayNodes`.
  *
  * Fix: track the `pipelineState.pipelines` reference between resyncs. When
@@ -136,7 +136,7 @@ import { mockTheme } from '../../../helpers/mockTheme';
  * stable across calls when `pipelinesRef` is reused. This mirrors the real
  * usePipelineState behavior: `pipelineState.pipelines` only gets a new array
  * identity when something actually mutates it (drag commit, add, delete,
- * discard) — NOT on every render.
+ * discard) - NOT on every render.
  */
 function buildStateHookReturn(pipelines: any[], overrides: Record<string, unknown> = {}) {
 	return {
@@ -209,7 +209,7 @@ function makePipelines() {
 	];
 }
 
-/** A pipeline-group "band" backdrop node — only present in the All-Pipelines view. */
+/** A pipeline-group "band" backdrop node - only present in the All-Pipelines view. */
 function makeBandNode(pipelineId: string) {
 	return {
 		id: `pipeline-group:${pipelineId}`,
@@ -221,7 +221,7 @@ function makeBandNode(pipelineId: string) {
 	};
 }
 
-describe('CuePipelineEditor — resync preserves live positions when pipelineState is unchanged', () => {
+describe('CuePipelineEditor - resync preserves live positions when pipelineState is unchanged', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		capturedNodes = [];
@@ -260,7 +260,7 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 
 		const { rerender } = renderEditor();
 
-		// User drags the node — onNodesChange (which the editor wires through to
+		// User drags the node - onNodesChange (which the editor wires through to
 		// applyNodeChanges → setDisplayNodes) flushes the new position into the
 		// live displayNodes. pipelineState is NOT updated here; that would
 		// happen in onNodeDragStop, which we omit to model the real-world
@@ -272,7 +272,7 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 
 		// Poll tick: usePipelineState produces a fresh `runningPipelineIds` Set
 		// identity (which forces computedNodes to recompute), but the SAME
-		// `pipelines` reference is reused — nothing structural changed.
+		// `pipelines` reference is reused - nothing structural changed.
 		mockUsePipelineState.mockReturnValue(
 			buildStateHookReturn(pipelines, { runningPipelineIds: new Set(['p1']) })
 		);
@@ -558,7 +558,7 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 		expect(node!.position).toEqual({ x: 0, y: 220 });
 	});
 
-	it('polling with new node added (same pipelines ref): edge case — new nodes still appear', () => {
+	it('polling with new node added (same pipelines ref): edge case - new nodes still appear', () => {
 		// Even though `pipelines` ref is unchanged in this contrived scenario,
 		// the merge path picks up new ids from computedNodes. Guards against a
 		// regression where the preserve branch dropped previously-unseen nodes.
@@ -597,8 +597,8 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 		// `computedNodes` (which gains the pipeline-group "band" backdrop and
 		// applies the per-pipeline `viewOffset` to content). When those land in
 		// SEPARATE effect fires, the `selectionChanged` ref is consumed on the
-		// first fire — while displayNodes still holds single-view geometry and no
-		// band — so the second fire (band now present) sees selectionChanged=false
+		// first fire - while displayNodes still holds single-view geometry and no
+		// band - so the second fire (band now present) sees selectionChanged=false
 		// and the bare `pipelinesChanged || selectionChanged` guard would PRESERVE
 		// stale single-view content positions while the freshly-added band lands at
 		// its All-view spot, stranding every node above/outside its band.
@@ -654,7 +654,7 @@ describe('CuePipelineEditor — resync preserves live positions when pipelineSta
 		);
 
 		// Band must be present, and content must take the fresh All-view position
-		// (0, 710) — NOT the stale single-view (0, 0) that left it above the band.
+		// (0, 710) - NOT the stale single-view (0, 0) that left it above the band.
 		expect(capturedNodes.some((n) => n.id === 'pipeline-group:p1')).toBe(true);
 		const node = capturedNodes.find((n) => n.id === 'p1:agent-1');
 		expect(node!.position).toEqual({ x: 0, y: 710 });
