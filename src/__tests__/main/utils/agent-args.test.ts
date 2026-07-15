@@ -12,6 +12,7 @@ import {
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -783,6 +784,104 @@ describe('buildAgentArgs', () => {
 			expect(result).toContain('-y');
 			expect(result).toContain('--output-format');
 			expect(result).toContain('stream-json');
+		});
+
+		// Grok desktop spawn composition, using the REAL definition rather than a
+		// hand-rolled mock. The desktop path (src/main/ipc/handlers/process.ts)
+		// composes args as buildAgentArgs -> applyAgentConfigOverrides, then
+		// ChildProcessSpawner appends promptArgs last. Grok's clap hard-errors on
+		// repeated value flags ("cannot be used multiple times"), so every value
+		// flag must appear exactly once in the final invocation.
+		describe('Grok: desktop spawn path composition (real definition)', () => {
+			const grokDef = getAgentDefinition('grok');
+			const grok = {
+				...grokDef,
+				available: true,
+				capabilities: {} as AgentConfig['capabilities'],
+			} as AgentConfig;
+
+			/** Mirror the desktop handler: buildAgentArgs -> config overrides -> promptArgs. */
+			function composeDesktopArgs(options: {
+				prompt: string;
+				cwd?: string;
+				agentSessionId?: string;
+				readOnlyMode?: boolean;
+				yoloMode?: boolean;
+				sessionCustomModel?: string;
+			}): string[] {
+				const built = buildAgentArgs(grok, {
+					baseArgs: grok.args,
+					prompt: options.prompt,
+					cwd: options.cwd,
+					readOnlyMode: options.readOnlyMode,
+					yoloMode: options.yoloMode,
+					agentSessionId: options.agentSessionId,
+				});
+				const resolved = applyAgentConfigOverrides(grok, built, {
+					sessionCustomModel: options.sessionCustomModel,
+				});
+				return [...resolved.args, ...grok.promptArgs!(options.prompt)];
+			}
+
+			it('composes --cwd, --resume, -m, and -p together in one legal invocation', () => {
+				const result = composeDesktopArgs({
+					prompt: 'hello',
+					cwd: '/project',
+					agentSessionId: 'sess-uuid',
+					sessionCustomModel: 'grok-composer-2.5-fast',
+				});
+
+				expect(result).toEqual([
+					'--cwd',
+					'/project',
+					'--always-approve',
+					'--output-format',
+					'streaming-json',
+					'--resume',
+					'sess-uuid',
+					'-m',
+					'grok-composer-2.5-fast',
+					'-p',
+					'hello',
+				]);
+
+				// clap rejects repeated flags: every flag token must be unique
+				const flags = result.filter((a) => a.startsWith('-'));
+				expect(new Set(flags).size).toBe(flags.length);
+			});
+
+			it('read-only mode emits exactly one --permission-mode and drops --always-approve', () => {
+				const result = composeDesktopArgs({
+					prompt: 'inspect only',
+					cwd: '/project',
+					readOnlyMode: true,
+				});
+
+				// batchModeArgs (--always-approve) conflicts with read-only intent
+				// and is skipped; readOnlyArgs supplies --permission-mode plan.
+				expect(result).not.toContain('--always-approve');
+				expect(result.filter((a) => a === '--permission-mode')).toHaveLength(1);
+				expect(result[result.indexOf('--permission-mode') + 1]).toBe('plan');
+			});
+
+			it('yolo + batch mode dedupes --always-approve to a single occurrence', () => {
+				// batchModeArgs === yoloModeArgs === ['--always-approve'] by design;
+				// a repeated boolean flag would make grok's clap exit 2.
+				const result = composeDesktopArgs({
+					prompt: 'do it',
+					cwd: '/project',
+					yoloMode: true,
+				});
+
+				expect(result.filter((a) => a === '--always-approve')).toHaveLength(1);
+			});
+
+			it('default config emits no -m or --reasoning-effort (empty defaults build no args)', () => {
+				const result = composeDesktopArgs({ prompt: 'hi' });
+
+				expect(result).not.toContain('-m');
+				expect(result).not.toContain('--reasoning-effort');
+			});
 		});
 
 		it('Factory Droid: readOnly works without extra flags (exec is read-only by default)', () => {

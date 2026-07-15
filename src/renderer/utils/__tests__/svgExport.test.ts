@@ -7,8 +7,8 @@
  * deterministic DOM-string logic instead.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { serializeSvg, downloadSvg } from '../svgExport';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { serializeSvg, downloadSvg, saveSvgToProject } from '../svgExport';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -88,5 +88,63 @@ describe('downloadSvg', () => {
 		expect(URL.revokeObjectURL).not.toHaveBeenCalled();
 		vi.runAllTimers();
 		expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock');
+	});
+});
+
+describe('saveSvgToProject', () => {
+	// The shared setup already mocks the fs bridge; drive its mocks directly
+	// rather than swapping window.maestro out from under it.
+	const fs = window.maestro.fs as unknown as {
+		mkdir: Mock;
+		writeFile: Mock;
+		stat: Mock;
+	};
+
+	beforeEach(() => {
+		fs.mkdir.mockReset().mockResolvedValue({ success: true });
+		fs.writeFile.mockReset().mockResolvedValue({ success: true });
+		// Default: the timestamped name is free, so no `-2` suffix is needed.
+		fs.stat.mockReset().mockResolvedValue(null);
+	});
+
+	it('writes the diagram into the project .maestro/diagrams folder', async () => {
+		const result = await saveSvgToProject(makeSvg(), { projectRoot: '/proj' });
+
+		expect(fs.mkdir).toHaveBeenCalledWith('/proj/.maestro/diagrams', undefined);
+		const [path, content] = fs.writeFile.mock.calls[0];
+		expect(path).toMatch(/^\/proj\/\.maestro\/diagrams\/diagram-\d{8}-\d{6}\.svg$/);
+		expect(content).toContain('<circle');
+		expect(result.relativePath).toMatch(/^\.maestro\/diagrams\/diagram-/);
+		expect(result.path).toBe(path);
+	});
+
+	it('passes the ssh remote id through so remote projects get the file', async () => {
+		await saveSvgToProject(makeSvg(), { projectRoot: '/proj', sshRemoteId: 'box' });
+
+		expect(fs.mkdir).toHaveBeenCalledWith('/proj/.maestro/diagrams', 'box');
+		expect(fs.writeFile.mock.calls[0][2]).toBe('box');
+	});
+
+	it('suffixes the name when a same-second file already exists', async () => {
+		// First candidate exists, second does not.
+		fs.stat.mockResolvedValueOnce({ size: 1 });
+
+		const result = await saveSvgToProject(makeSvg(), { projectRoot: '/proj' });
+
+		expect(result.path).toMatch(/-2\.svg$/);
+	});
+
+	it('throws when the write fails so the caller can surface it', async () => {
+		fs.writeFile.mockResolvedValueOnce({ success: false });
+
+		await expect(saveSvgToProject(makeSvg(), { projectRoot: '/proj' })).rejects.toThrow(
+			/Failed to write/
+		);
+	});
+
+	it('uses Windows separators when the project root is a Windows path', async () => {
+		await saveSvgToProject(makeSvg(), { projectRoot: 'C:\\proj' });
+
+		expect(fs.mkdir).toHaveBeenCalledWith('C:\\proj\\.maestro\\diagrams', undefined);
 	});
 });

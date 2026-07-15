@@ -403,7 +403,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 					</div>
 				)}
 			</div>
-			{/* File Stats subbar - hidden on scroll */}
+			{/* File Stats subbar - hidden on scroll when overflow allows (see FilePreview) */}
 			{((fileStats || lineCount !== null || tokenCount !== null || taskCounts) && showStatsBar) ||
 			canGoBack ||
 			canGoForward ? (

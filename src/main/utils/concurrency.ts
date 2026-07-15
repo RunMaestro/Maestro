@@ -18,6 +18,14 @@
 export const REMOTE_SESSION_READ_CONCURRENCY = 6;
 
 /**
+ * Cap on parallel per-session local filesystem reads when listing sessions.
+ * An unbounded `Promise.all` over a large history folder holds an open file
+ * descriptor per in-flight read and can brush against fd limits; libuv's
+ * threadpool serializes past ~4 ops anyway, so a modest cap costs nothing.
+ */
+export const LOCAL_SESSION_READ_CONCURRENCY = 16;
+
+/**
  * Map `items` with a bounded concurrency.
  *
  * Spawns up to `limit` workers that pull from a shared cursor; results are

@@ -40,6 +40,19 @@ import { markStaleForDeletedWorktreeUsingStore } from '../../agent-run/worktree-
 const LOG_CONTEXT = '[Git]';
 
 /**
+ * Directory-scan failures that are environmental rather than bugs: the path was
+ * moved or deleted out from under us (ENOENT/ENOTDIR), or we don't hold read
+ * permission on it (EACCES, or EPERM for macOS TCC-protected locations like
+ * Documents and Desktop). The scan skips the directory and reports `scanFailed`;
+ * none of these are worth a Sentry report.
+ */
+const EXPECTED_SCAN_ERROR_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
+
+function isExpectedScanError(code: string | undefined): boolean {
+	return code !== undefined && EXPECTED_SCAN_ERROR_CODES.has(code);
+}
+
+/**
  * Dependencies for Git handlers
  */
 export interface GitHandlerDependencies {
@@ -460,6 +473,92 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				});
 
 				return { entries, error: null };
+			}
+		)
+	);
+
+	// Topology data for graph view: includes parent hashes for lane rendering.
+	ipcMain.handle(
+		'git:graph',
+		withIpcErrorLogging(
+			handlerOpts('graph'),
+			async (
+				cwd: string,
+				options?: { limit?: number },
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const limit = options?.limit || 200;
+				// Use ASCII Unit Separator (U+001F, written as %x1f in git's pretty-format)
+				// between fields. `|` was tempting but author names and subjects can legally
+				// contain it, which silently corrupts every field after the offending one.
+				// US is a non-printing control character that never appears in real text.
+				const args = [
+					'log',
+					'--all',
+					`--max-count=${limit}`,
+					'--pretty=format:GRAPH_START%H%x1f%P%x1f%an%x1f%ad%x1f%D%x1f%s',
+					'--date=iso-strict',
+				];
+				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return { nodes: [], error: result.stderr };
+				}
+				const nodes = result.stdout
+					.split('GRAPH_START')
+					.filter((c) => c.trim())
+					.map((block) => {
+						const trimmed = block.trim();
+						const [hash = '', parents = '', author = '', date = '', refs = '', ...subj] =
+							trimmed.split('\x1f');
+						return {
+							hash,
+							shortHash: hash.slice(0, 7),
+							parents: parents ? parents.split(' ').filter(Boolean) : [],
+							author,
+							date,
+							refs: refs ? refs.split(', ').filter((r) => r.trim()) : [],
+							// Re-join with the same separator in case the subject itself contained one
+							// (extremely unlikely for a control character, but cheap to be correct).
+							subject: subj.join('\x1f'),
+						};
+					});
+				return { nodes, error: null };
+			}
+		)
+	);
+
+	// Switch to an existing branch in the current working tree.
+	// Returns success=false with stderr text on failure (e.g., dirty working tree).
+	ipcMain.handle(
+		'git:switch',
+		withIpcErrorLogging(
+			handlerOpts('switch'),
+			async (cwd: string, branchName: string, sshRemoteId?: string, remoteCwd?: string) => {
+				// Reject flag-like names so a caller can't pass e.g. "-c new-branch" or "-C"
+				// and have git interpret it as a switch flag. execFile blocks shell
+				// injection but not flag injection.
+				if (
+					typeof branchName !== 'string' ||
+					branchName.length === 0 ||
+					branchName.startsWith('-')
+				) {
+					return {
+						success: false,
+						stdout: '',
+						stderr: `Invalid branch name: ${branchName}`,
+					};
+				}
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const result = await execGit(['switch', branchName], cwd, sshRemote, effectiveRemoteCwd);
+				return {
+					success: result.exitCode === 0,
+					stdout: result.stdout,
+					stderr: result.stderr,
+				};
 			}
 		)
 	);
@@ -1370,7 +1469,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 									return await scanLevel(subdirPath, depthRemaining - 1);
 								} catch (err) {
 									const code = (err as NodeJS.ErrnoException | undefined)?.code;
-									if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'ENOTDIR') {
+									if (!isExpectedScanError(code)) {
 										logger.warn(`${LOG_CONTEXT} Failed to recurse into ${subdirPath}: ${err}`);
 									}
 									return [];
@@ -1387,10 +1486,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					const gitSubdirs = await scanLevel(parentPath, MAX_DEPTH);
 					return { gitSubdirs };
 				} catch (err) {
-					// ENOENT is expected when the configured parent path has been moved
-					// or deleted from disk — surface to logs but don't pollute Sentry.
+					// The configured parent path is user-supplied, so failing to read it is
+					// an environment condition rather than a bug: ENOENT when it's been moved
+					// or deleted, and EPERM/EACCES when it sits behind macOS TCC (Documents,
+					// Desktop) or has permissions we simply don't hold. Both surface to logs
+					// and to `scanFailed` below; neither should pollute Sentry. (MAESTRO-VQ)
 					const code = (err as NodeJS.ErrnoException | undefined)?.code;
-					if (code !== 'ENOENT') {
+					if (!isExpectedScanError(code)) {
 						void captureException(err);
 					}
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);

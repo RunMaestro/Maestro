@@ -160,6 +160,47 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		// Regression (MAESTRO-MR): MarketplaceFetchError carries the original failure
+		// as its `cause`, so Sentry's LinkedErrors integration ships TWO exception
+		// values ordered root-cause-first. The classifier used to read values[0]
+		// only, saw the bare `TypeError: fetch failed`, and let the event through —
+		// the rule above looked correct but never fired in the field.
+		it('drops marketplace fetch failures when Sentry expanded the cause chain', () => {
+			expect(
+				shouldDropSentryEvent({
+					exception: {
+						values: [
+							{ type: 'TypeError', value: 'fetch failed' },
+							{
+								type: 'MarketplaceFetchError',
+								value: 'Network error fetching document: fetch failed',
+							},
+						],
+					},
+				})
+			).toBe(true);
+		});
+
+		// Regression (MAESTRO-TY): GitHub raw rate-limits playbook imports.
+		it('drops marketplace fetches rejected by GitHub rate limiting or a 5xx', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch document: 429 Too Many Requests')
+				)
+			).toBe(true);
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch asset: 503 Service Unavailable')
+				)
+			).toBe(true);
+		});
+
+		it('does NOT drop a marketplace document that is genuinely missing', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('MarketplaceFetchError', 'Document not found: setup'))
+			).toBe(false);
+		});
+
 		it('drops GitHub CLI network failures when the user is offline', () => {
 			expect(
 				shouldDropSentryEvent(

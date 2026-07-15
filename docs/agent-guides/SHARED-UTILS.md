@@ -129,6 +129,7 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                                    |
 | `isAbsolutePath(path)`                 | `(string) => boolean`                  | True for Unix (`/x`), Windows drive (`C:\x`, `C:/x`), UNC paths.                  |
 | `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.                    |
+| `joinPath(base, ...segments)`          | `(string, ...string[]) => string`      | Join onto a base using the separator the base uses. Renderer-safe (no `path`).    |
 | `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                                  |
 
 ---

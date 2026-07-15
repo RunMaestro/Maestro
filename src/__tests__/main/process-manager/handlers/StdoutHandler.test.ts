@@ -2090,6 +2090,181 @@ describe('StdoutHandler — single JSON parse per line', () => {
 		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
 	});
 
+	describe('Grok thinking-chunk vs streamedText routing', () => {
+		it('emits thinking-chunk only for thought deltas; assistant text goes to streamedText', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const parser = new GrokOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(sessionId, '{"type":"thought","data":"planning..."}\n');
+			handler.handleData(sessionId, '{"type":"text","data":"{\\"confidence\\":40"}\n');
+			handler.handleData(
+				sessionId,
+				'{"type":"text","data":",\\"ready\\":false,\\"message\\":\\"hi\\"}"}\n'
+			);
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"sess-1","requestId":"req-1"}\n'
+			);
+
+			// Only reasoning deltas hit thinking-chunk (not assistant JSON fragments)
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'planning...');
+			// Assistant text accumulates for the final result emit
+			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'{"confidence":40,"ready":false,"message":"hi"}'
+			);
+		});
+
+		it('still emits thinking-chunk for Factory Droid assistant partials without isReasoning', async () => {
+			const { FactoryDroidOutputParser } =
+				await import('../../../../main/parsers/factory-droid-output-parser');
+			const parser = new FactoryDroidOutputParser();
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'message', role: 'assistant', text: 'Hello from droid' }) + '\n'
+			);
+
+			// Factory Droid has no isReasoning split; keep live thinking-panel partials
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid');
+			expect(proc.streamedText).toBe('Hello from droid');
+		});
+	});
+
+	describe('SSH auth_expired login guidance by agentId', () => {
+		function mockAuthParser(agentId: string, message: string) {
+			return {
+				agentId,
+				parseJsonLine: vi.fn(() => null),
+				parseJsonObject: vi.fn(() => null),
+				isResultMessage: vi.fn(() => false),
+				extractSessionId: vi.fn(() => null),
+				extractUsage: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'auth_expired' as const,
+					message,
+					recoverable: true,
+					agentId,
+					timestamp: Date.now(),
+					raw: {},
+				})),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+		}
+
+		it('uses the grok login command for grok on an SSH remote', () => {
+			const mockParser = mockAuthParser(
+				'grok',
+				'Not authenticated. Please run "grok login" to authenticate.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'not authenticated' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "grok login" to re-authenticate.'
+			);
+			expect(emitted.message).not.toContain('claude login');
+		});
+
+		it('uses claude login for claude-code even when the pattern message is generic', () => {
+			// Pattern-58 style message: no login command in the text. The
+			// agentId map must still produce "claude login" so Claude SSH
+			// users keep actionable guidance.
+			const mockParser = mockAuthParser(
+				'claude-code',
+				'Authentication failed. Please log in again.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication failed' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+			);
+			expect(emitted.message).toContain('claude login');
+		});
+
+		it('omits a login command for agents without a known CLI login', () => {
+			const mockParser = mockAuthParser(
+				'opencode',
+				'Authentication required. Please configure your credentials.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'opencode',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote to re-authenticate.'
+			);
+			expect(emitted.message).not.toContain('claude login');
+			expect(emitted.message).not.toContain('grok login');
+		});
+	});
+
 	describe('SSH error pattern false-positive prevention', () => {
 		it('should NOT check SSH patterns on valid JSON lines (prevents false positives from response text)', () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);

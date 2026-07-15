@@ -45,6 +45,12 @@ function makeWindowState(partial: Partial<WindowState> & Pick<WindowState, 'id'>
 
 // Mock child components to simplify testing - must be before MainPanel import
 
+// useModalLayer is no-op in tests - MainPanel does not provide LayerStackProvider,
+// and the BranchSwitcherDropdown registers a layer when rendered.
+vi.mock('../../../renderer/hooks/ui/useModalLayer', () => ({
+	useModalLayer: () => {},
+}));
+
 // LayerStack: MainPanelContent reads layerCount to blur the browser webview when a
 // modal/overlay is layered above it. These tests render MainPanel in isolation
 // without a LayerStackProvider, so stub the hook (no layers open => layerCount 0).
@@ -239,6 +245,9 @@ vi.mock('../../../renderer/components/InlineWizard', () => ({
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getDiff: vi.fn().mockResolvedValue({ diff: 'mock diff content' }),
+		getBranches: vi.fn().mockResolvedValue([]),
+		getGraph: vi.fn().mockResolvedValue([]),
+		switchBranch: vi.fn().mockResolvedValue({ success: true, stderr: '' }),
 	},
 }));
 
@@ -1838,14 +1847,67 @@ describe('MainPanel', () => {
 			expect(writeText).toHaveBeenCalledWith('main');
 		});
 
-		it('should open git log when clicking on SSH remote git badge', async () => {
-			const setGitLogOpen = vi.fn();
+		it('should open branch switcher when double-clicking on SSH remote git badge', async () => {
 			const session = createSession({
 				isGitRepo: true,
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
 			});
 
 			// Mock SSH remote name resolution
+			const mockGetConfigs = vi.fn().mockResolvedValue({
+				success: true,
+				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockImplementation(mockGetConfigs);
+
+			renderMainPanel({ activeSession: session });
+
+			await waitFor(() => {
+				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
+			});
+
+			fireEvent.doubleClick(screen.getByText('my-ssh-remote'));
+
+			// Branch switcher dropdown opens (revealed by its filter input).
+			expect(await screen.findByPlaceholderText(/Filter branches/)).toBeInTheDocument();
+			expect(gitService.getBranches).toHaveBeenCalled();
+		});
+
+		it('should open branch switcher on Shift+Enter on SSH remote git badge (keyboard a11y)', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			const mockGetConfigs = vi.fn().mockResolvedValue({
+				success: true,
+				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockImplementation(mockGetConfigs);
+
+			renderMainPanel({ activeSession: session });
+
+			await waitFor(() => {
+				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
+			});
+
+			// The chip's button is the parent of the SSH remote name span.
+			const chipButton = screen.getByText('my-ssh-remote').closest('button');
+			expect(chipButton).not.toBeNull();
+			fireEvent.keyDown(chipButton!, { key: 'Enter', shiftKey: true });
+
+			// Branch switcher dropdown opens via the keyboard path.
+			expect(await screen.findByPlaceholderText(/Filter branches/)).toBeInTheDocument();
+			expect(gitService.getBranches).toHaveBeenCalled();
+		});
+
+		it('should open git log when single-clicking on SSH remote git badge', async () => {
+			const setGitLogOpen = vi.fn();
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
 			const mockGetConfigs = vi.fn().mockResolvedValue({
 				success: true,
 				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
@@ -1860,7 +1922,8 @@ describe('MainPanel', () => {
 
 			fireEvent.click(screen.getByText('my-ssh-remote'));
 
-			expect(setGitLogOpen).toHaveBeenCalledWith(true);
+			// Single click is debounced (~220ms) before opening git log.
+			await waitFor(() => expect(setGitLogOpen).toHaveBeenCalledWith(true), { timeout: 1000 });
 		});
 
 		it('should call gitService.getDiff with SSH remote ID when session has SSH remote config enabled', async () => {

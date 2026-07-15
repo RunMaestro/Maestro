@@ -270,6 +270,13 @@ export class ProcessManager extends EventEmitter {
 		const process = this.processes.get(sessionId);
 		if (!process) return false;
 
+		// Mark the turn as user-interrupted BEFORE signalling. `interrupt()` (unlike
+		// `kill()`) leaves the process in the map, so its `close` still reaches
+		// ExitHandler - which coerces the null signal code to 0. Without this flag,
+		// an instant stop (no output yet) would look identical to a clean silent
+		// crash and trip the "exited without producing a response" guard.
+		process.interrupted = true;
+
 		try {
 			if (process.sdkController) {
 				// Server-backed (OpenCode SDK) process: abort the in-flight turn.

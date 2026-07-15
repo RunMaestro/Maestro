@@ -324,6 +324,26 @@ describe('AgentPickerGrid', () => {
 		expect(options[1]).toHaveAttribute('tabindex', '-1'); // future-agent (unsupported)
 	});
 
+	it('should treat grok as a supported agent (selectable, tabIndex=0)', () => {
+		const onAgentSelect = vi.fn();
+
+		render(
+			<AgentPickerGrid
+				{...createDefaultProps({
+					sortedAgents: [
+						createAgent({ id: 'grok', name: 'Grok CLI', available: true, binaryName: 'grok' }),
+					],
+					onAgentSelect,
+					selectedAgent: '',
+				})}
+			/>
+		);
+
+		expect(screen.getByRole('option')).toHaveAttribute('tabindex', '0');
+		fireEvent.click(screen.getByText('Grok CLI'));
+		expect(onAgentSelect).toHaveBeenCalledWith('grok');
+	});
+
 	it('should set aria-selected on selected agent', () => {
 		render(<AgentPickerGrid {...createDefaultProps({ selectedAgent: 'claude-code' })} />);
 

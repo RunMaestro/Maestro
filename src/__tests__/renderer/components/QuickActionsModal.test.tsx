@@ -1886,6 +1886,38 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
+	describe('Maestro Cue action', () => {
+		it('displays the openCue shortcut keys on the Maestro Cue command', () => {
+			const props = createDefaultProps({
+				onOpenMaestroCue: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					openCue: { id: 'openCue', keys: ['Alt', 'q'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'q']))).toBeInTheDocument();
+		});
+	});
+
+	describe('Execution Queue action', () => {
+		it('displays the executionQueue shortcut keys on the View Execution Queue command', () => {
+			const props = createDefaultProps({
+				onOpenQueueBrowser: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					executionQueue: { id: 'executionQueue', keys: ['Cmd', 'Shift', 'X'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('View Execution Queue')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'X']))).toBeInTheDocument();
+		});
+	});
+
 	describe('Agent switcher mode (Cmd+O)', () => {
 		it('shows agent-specific placeholder when initialMode is agents', () => {
 			const props = createDefaultProps({ initialMode: 'agents' });

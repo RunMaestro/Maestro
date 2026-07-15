@@ -14,6 +14,7 @@ import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
+import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
@@ -218,10 +219,13 @@ export const READY_CONFIDENCE_THRESHOLD = 80;
 
 /**
  * Suffix appended to each user message to remind the agent about JSON format.
+ * Keep discovery turns bounded: unbounded tool loops (especially agents that emit
+ * no tool events on stdout, like Grok) leave the wizard UI stuck on the last
+ * thought/text with isWaiting true until the process finally exits.
  */
 const STRUCTURED_OUTPUT_SUFFIX = `
 
-IMPORTANT: Remember to respond ONLY with valid JSON in this exact format:
+IMPORTANT: This is a discovery conversation. You may read files or fetch issue/docs URLs to scope the work, but do not implement changes or run long multi-step builds. Prefer short clarifying questions when context is thin. End every turn with ONLY valid JSON in this exact format:
 {"confidence": <0-100>, "ready": <true/false>, "message": "<your response>"}`;
 
 /**
@@ -440,7 +444,7 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 
 /**
  * Extract the result text from agent JSON output.
- * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex).
+ * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex, Grok).
  */
 function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
 	try {
@@ -489,6 +493,14 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			if (textParts.length > 0) {
 				return textParts.join('');
 			}
+		}
+
+		// For Grok: concatenate text deltas only (skip thought/reasoning deltas).
+		// The `end` event has sessionId but no result body, so the full answer is
+		// only available by joining {"type":"text","data":"..."} lines.
+		if (agentType === 'grok') {
+			const grokText = extractGrokTextFromJsonl(lines);
+			if (grokText) return grokText;
 		}
 
 		// For Copilot: final answers arrive as assistant.message with phase=final_answer
@@ -579,6 +591,14 @@ function buildArgsForAgent(agent: any): string[] {
 			if (agent.readOnlyArgs) {
 				args.push(...agent.readOnlyArgs);
 			}
+			return args;
+		}
+
+		case 'grok': {
+			// Shared discovery caps (always-approve, max-turns, no-subagents).
+			// Leave batch/json/cwd/prompt out - IPC buildAgentArgs adds those.
+			const args = [...(agent.args || [])];
+			args.push(...GROK_WIZARD_DISCOVERY_ARGS);
 			return args;
 		}
 
@@ -800,29 +820,26 @@ export async function sendWizardMessage(
 						// Extract the Claude agent session ID from output (for resume capability)
 						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
 
-						if (code === 0) {
-							// Extract result from stream-json format
-							const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-							const textToParse = extractedResult || outputBuffer;
+						// Prefer a parseable structured reply even on non-zero exit
+						// (e.g. Grok `--max-turns` can exit 1 after useful text).
+						const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
+						const textToParse = extractedResult || outputBuffer;
+						const parsedResponse = textToParse.trim() ? parseWizardResponse(textToParse) : null;
 
-							// Parse the wizard response
-							const parsedResponse = parseWizardResponse(textToParse);
-
-							if (parsedResponse) {
-								resolve({
-									success: true,
-									response: parsedResponse,
-									rawOutput: outputBuffer,
-									agentSessionId: agentSessionId || undefined,
-								});
-							} else {
-								resolve({
-									success: false,
-									error: 'Failed to parse agent response',
-									rawOutput: outputBuffer,
-									agentSessionId: agentSessionId || undefined,
-								});
-							}
+						if (parsedResponse) {
+							resolve({
+								success: true,
+								response: parsedResponse,
+								rawOutput: outputBuffer,
+								agentSessionId: agentSessionId || undefined,
+							});
+						} else if (code === 0) {
+							resolve({
+								success: false,
+								error: 'Failed to parse agent response',
+								rawOutput: outputBuffer,
+								agentSessionId: agentSessionId || undefined,
+							});
 						} else {
 							resolve({
 								success: false,

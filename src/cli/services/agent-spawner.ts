@@ -950,6 +950,12 @@ async function spawnJsonLineAgent(
 
 		let jsonBuffer = '';
 		let result: string | undefined;
+		// Accumulated partial text deltas, used as a fallback when no result
+		// event carries text. Grok streams its answer solely as token-sized
+		// `text` deltas (whitespace embedded, so direct concatenation) and its
+		// terminal `end` event has no text. Mirrors spawnClaudeAgent's
+		// assistantText fallback. Reasoning deltas are excluded.
+		let streamedText = '';
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
@@ -973,6 +979,10 @@ async function spawnJsonLineAgent(
 
 			if (event.type === 'result' && event.text) {
 				result = result ? `${result}\n${event.text}` : event.text;
+			}
+
+			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
+				streamedText += event.text;
 			}
 
 			if (event.type === 'error' && event.text && !errorText) {
@@ -1017,8 +1027,18 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			// Soft success: agents like Grok may exit non-zero after a full
+			// answer (e.g. --max-turns) with no structured error event. Prefer
+			// the streamed answer over raw stderr when there is no errorText.
+			const responseText = result || streamedText || undefined;
+			const hasAnswer = Boolean(responseText?.trim());
+			if (!errorText && (code === 0 || hasAnswer)) {
+				resolve({
+					success: true,
+					response: responseText,
+					agentSessionId: sessionId,
+					usageStats,
+				});
 			} else {
 				resolve({
 					success: false,

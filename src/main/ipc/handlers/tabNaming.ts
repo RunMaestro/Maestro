@@ -605,9 +605,13 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (event.type === 'result') {
 			// The final result carries the complete response; last one wins.
 			resultText = event.text;
-		} else if (event.type === 'text') {
+		} else if (event.type === 'text' && !event.isReasoning) {
 			// Streaming assistant chunks - accumulate so early extraction can
-			// resolve before the terminating result event arrives.
+			// resolve before the terminating result event arrives. Reasoning
+			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
+			// they stream BEFORE the answer, so mining them would let early
+			// extraction resolve with a thinking fragment ("This is a simple
+			// task") instead of the generated name.
 			assistantText += event.text;
 		}
 	}

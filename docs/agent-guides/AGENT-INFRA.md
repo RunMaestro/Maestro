@@ -34,6 +34,7 @@ export const AGENT_IDS = [
 	'opencode',
 	'factory-droid',
 	'copilot-cli',
+	'grok',
 ] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];

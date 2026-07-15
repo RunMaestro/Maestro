@@ -1046,6 +1046,29 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string
 		) => Promise<{ count: number; error: string | null }>;
+		graph: (
+			cwd: string,
+			options?: { limit?: number },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			nodes: Array<{
+				hash: string;
+				shortHash: string;
+				parents: string[];
+				author: string;
+				date: string;
+				refs: string[];
+				subject: string;
+			}>;
+			error: string | null;
+		}>;
+		switchBranch: (
+			cwd: string,
+			branchName: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; stdout: string; stderr: string }>;
 		show: (
 			cwd: string,
 			hash: string,

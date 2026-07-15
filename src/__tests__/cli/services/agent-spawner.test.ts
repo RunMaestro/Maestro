@@ -1578,6 +1578,150 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-resume-1');
 		});
 
+		it('should spawn grok headless with -p, --always-approve, streaming-json and accumulate text deltas', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'Hello grok');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(cmd).toBeTruthy();
+
+			// Grok batch mode: grok --always-approve --output-format streaming-json -p "prompt"
+			expect(args).toContain('--always-approve');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('streaming-json');
+			expect(args).toContain('-p');
+			expect(args).toContain('Hello grok');
+			// promptArgs path replaces the '--' separator
+			expect(args).not.toContain('--');
+			// --permission-mode belongs to read-only mode only; grok's clap errors
+			// with "cannot be used multiple times" if the flag ever repeats.
+			expect(args).not.toContain('--permission-mode');
+
+			// Mirror real grok streaming-json stdout: the answer arrives only as
+			// token-sized text deltas, thought deltas are reasoning (excluded from
+			// the response), and the terminal `end` event carries the sole
+			// sessionId but no text.
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"thought","data":"thinking..."}\n{"type":"text","data":"REA"}\n')
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"DY"}\n' +
+						JSON.stringify({
+							type: 'end',
+							stopReason: 'EndTurn',
+							sessionId: 'grok-sess-1',
+							requestId: 'req-1',
+						}) +
+						'\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('READY');
+			expect(result.agentSessionId).toBe('grok-sess-1');
+		});
+
+		it('should run grok read-only with a single --permission-mode plan and no approve flag', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'look around', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			// grok hard-errors on a repeated --permission-mode ("the argument
+			// '--permission-mode <MODE>' cannot be used multiple times"), so
+			// read-only must strip the batch approve flag and leave exactly one.
+			expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
+			expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
+			expect(args).not.toContain('--always-approve');
+			expect(args).not.toContain('bypassPermissions');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"ok"}\n{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-2"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('ok');
+		});
+
+		it('should resume a grok session via --resume <sessionId> and round-trip the id', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'follow-up', 'grok-resume-1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			const resumeIdx = args.indexOf('--resume');
+			expect(resumeIdx).toBeGreaterThanOrEqual(0);
+			expect(args[resumeIdx + 1]).toBe('grok-resume-1');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"still remembers"}\n{"type":"end","stopReason":"EndTurn","sessionId":"grok-resume-1"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			// The resumed session id must round-trip through agentSessionId so the
+			// caller can persist it and keep the chain going.
+			expect(result.agentSessionId).toBe('grok-resume-1');
+		});
+
+		it('should surface a grok stream error event as a failed result', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'trigger an error');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// grok emits {"type":"error","message":...} on stdout, duplicates it on
+			// stderr as `Error: <message>`, and exits 1.
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"error","message":"This model does not support that"}\n')
+			);
+			mockStderr.emit('data', Buffer.from('Error: This model does not support that\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('This model does not support that');
+		});
+
+		it('should soft-succeed when Grok streams a full answer then exits non-zero without a structured error', async () => {
+			// Mirrors wizard recovery: --max-turns (or similar) can exit 1 after
+			// a complete text+end stream with no {"type":"error"} event.
+			const resultPromise = spawnAgent('grok', '/project', 'brief task');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"all done"}\n{"type":"end","stopReason":"EndTurn","sessionId":"sess-soft"}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('max turns reached\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('all done');
+			expect(result.agentSessionId).toBe('sess-soft');
+		});
+
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';

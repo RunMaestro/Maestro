@@ -584,6 +584,62 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Leaderboard Endpoint');
 		});
 
+		it('ignores reasoning deltas when extracting from Grok streaming-json output', async () => {
+			// Grok streams `thought` deltas BEFORE the answer's `text` deltas, and
+			// the grok parser forwards them as text events with isReasoning=true.
+			// Without filtering those out, the accumulated response text would be
+			// the thinking fragment glued to the answer ("The user wants a nameAuth
+			// Bug Fix") and that garbage would pass extractTabName's filters.
+			const mockGrokAgent: AgentConfig = {
+				id: 'grok',
+				name: 'Grok CLI',
+				command: 'grok',
+				path: '/usr/local/bin/grok',
+				args: [],
+				promptArgs: (p: string) => ['-p', p],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockGrokAgent);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the authentication bug',
+				agentType: 'grok',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Real grok v0.2.93 stream shape (thoughts, then text, then end):
+			const streamJson = [
+				JSON.stringify({ type: 'thought', data: 'The user wants a name' }),
+				JSON.stringify({ type: 'text', data: 'Auth Bug' }),
+				JSON.stringify({ type: 'text', data: ' Fix' }),
+				JSON.stringify({
+					type: 'end',
+					stopReason: 'EndTurn',
+					sessionId: '019f47fb-2316-7f21-98db-55907d4ddb60',
+					requestId: 'req-1',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Auth Bug Fix');
+		});
+
 		it('returns null for empty output', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
