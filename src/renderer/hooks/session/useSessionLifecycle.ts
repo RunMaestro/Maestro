@@ -127,7 +127,8 @@ const selectRenameTabId = (s: ReturnType<typeof useModalStore.getState>) =>
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
-const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) => s.activeSessionId;
+const selectResolvedActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) =>
+	selectActiveSession(s)?.id;
 
 // ============================================================================
 // Hook
@@ -137,11 +138,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const { flushSessionPersistence, setRemovedWorktreePaths, pushNavigation } = deps;
 
 	// --- Store subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Rename handlers resolve via getState(); nav tracking
+	// uses narrow focus fields only.
 	const renameTabId = useModalStore(selectRenameTabId);
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
-	const activeSessionId = useSessionStore(selectActiveSessionId);
+	const activeSessionId = useSessionStore(selectResolvedActiveSessionId);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
+	const activeFileTabId = useSessionStore((s) => selectActiveSession(s)?.activeFileTabId);
+	const activeBrowserTabId = useSessionStore((s) => selectActiveSession(s)?.activeBrowserTabId);
+	const activeTerminalTabId = useSessionStore((s) => selectActiveSession(s)?.activeTerminalTabId);
+	const activeInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
+	const activeAiTabCount = useSessionStore((s) => selectActiveSession(s)?.aiTabs?.length);
 
 	// ====================================================================
 	// Callbacks
@@ -258,6 +267,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 	const handleRenameTab = useCallback(
 		(newName: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession || !renameTabId) return;
 
 			// If this is a tiled tab group, rename the group. Resolve the auto-name
@@ -386,10 +396,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				})
 			);
 		},
-		[activeSession, renameTabId]
+		[renameTabId]
 	);
 
 	const handleAutoNameTab = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession || !renameTabId) return;
 
 		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
@@ -502,7 +513,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					})
 				);
 			});
-	}, [activeSession, renameTabId]);
+	}, [renameTabId]);
 
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
@@ -682,7 +693,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		// Group chat navigation takes precedence when a group chat is open
 		if (activeGroupChatId) {
 			pushNavigation({ groupChatId: activeGroupChatId });
-		} else if (activeSession) {
+		} else {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			if (!activeSession) return;
 			// Resolve the active tab across all kinds using the same priority as
 			// findActiveUnifiedTabIndex (terminal > file > browser > ai) so the
 			// breadcrumb tracks whichever tab the user actually sees.
@@ -691,12 +704,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		}
 	}, [
 		activeSessionId,
-		activeSession?.activeTabId,
-		activeSession?.activeFileTabId,
-		activeSession?.activeBrowserTabId,
-		activeSession?.activeTerminalTabId,
-		activeSession?.inputMode,
-		activeSession?.aiTabs?.length,
+		activeTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTerminalTabId,
+		activeInputMode,
+		activeAiTabCount,
 		activeGroupChatId,
 	]);
 

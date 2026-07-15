@@ -31,6 +31,7 @@ import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { estimateTokensFromLogs } from '../../../shared/formatters';
 import { logger } from '../../utils/logger';
 
@@ -539,8 +540,6 @@ export interface MergeSessionCreatedInfo {
  * Dependencies for the useMergeSessionWithSessions hook variant
  */
 export interface UseMergeSessionWithSessionsDeps {
-	/** All sessions in the app */
-	sessions: Session[];
 	/** Session setter for updating app state */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Active tab ID for per-tab state tracking */
@@ -583,7 +582,6 @@ export interface UseMergeSessionWithSessionsResult extends UseMergeSessionResult
  *   executeMerge,
  *   cancelMerge,
  * } = useMergeSessionWithSessions({
- *   sessions,
  *   setSessions,
  *   onSessionCreated: (id) => setActiveSessionId(id),
  * });
@@ -591,7 +589,7 @@ export interface UseMergeSessionWithSessionsResult extends UseMergeSessionResult
 export function useMergeSessionWithSessions(
 	deps: UseMergeSessionWithSessionsDeps
 ): UseMergeSessionWithSessionsResult {
-	const { sessions, setSessions, activeTabId, onSessionCreated, onMergeComplete } = deps;
+	const { setSessions, activeTabId, onSessionCreated, onMergeComplete } = deps;
 	const baseHook = useMergeSession(activeTabId);
 
 	/**
@@ -605,8 +603,11 @@ export function useMergeSessionWithSessions(
 			targetTabId: string | undefined,
 			options: MergeOptions
 		): Promise<MergeResult> => {
-			// Find target session
-			const targetSession = sessions.find((s) => s.id === targetSessionId);
+			// PERF: Resolve sessions at event time so App need not subscribe to the
+			// full array (streaming rebuilds would otherwise wake the console shell).
+			const targetSession = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === targetSessionId);
 			if (!targetSession) {
 				return {
 					success: false,
@@ -798,7 +799,7 @@ export function useMergeSessionWithSessions(
 
 			return result;
 		},
-		[sessions, setSessions, onSessionCreated, onMergeComplete, baseHook]
+		[setSessions, onSessionCreated, onMergeComplete, baseHook]
 	);
 
 	return {

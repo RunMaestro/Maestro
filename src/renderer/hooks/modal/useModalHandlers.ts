@@ -903,11 +903,15 @@ export function useModalHandlers(
 	}, [settingsLoaded, sessionsLoaded]);
 
 	// ====================================================================
-	// Active Session Subscription (used by Git Diff, Director's Notes, and
-	// the Agent Error "Jump to failing tab" affordance)
+	// Active session (narrow) - Git Diff / Director's Notes / jump-to-failing
 	// ====================================================================
-
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens
+	// would wake App via this hook. Handlers resolve via getState(); jump-to-
+	// failing only needs primitive focus fields. Use the resolved agent id
+	// (same fallback as selectActiveSession) with those fields.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
+	const activeInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
 
 	// ====================================================================
 	// Agent Error: Jump to Failing Tab
@@ -921,9 +925,9 @@ export function useModalHandlers(
 	const isAlreadyOnFailingTab =
 		errorSession != null &&
 		failingTabId != null &&
-		activeSession?.id === errorSession.id &&
-		activeSession.activeTabId === failingTabId &&
-		activeSession.inputMode === 'ai';
+		activeSessionId === errorSession.id &&
+		activeTabId === failingTabId &&
+		activeInputMode === 'ai';
 
 	const handleJumpToFailingAgent = useMemo(() => {
 		if (!errorSession || !failingTabId || isAlreadyOnFailingTab) return undefined;
@@ -945,6 +949,7 @@ export function useModalHandlers(
 	const { refreshGitStatus } = useGitDetail();
 
 	const handleViewGitDiff = useCallback(async () => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession || !activeSession.isGitRepo) return;
 
 		const cwd =
@@ -968,7 +973,7 @@ export function useModalHandlers(
 			// stops advertising stale stats.
 			void refreshGitStatus();
 		}
-	}, [activeSession, refreshGitStatus]);
+	}, [refreshGitStatus]);
 
 	// ====================================================================
 	// Director's Notes Session Navigation (Tier 3C)
@@ -982,29 +987,26 @@ export function useModalHandlers(
 			getModalActions().setDirectorNotesOpen(false);
 
 			// If already on the right agent, resume directly
-			if (activeSession?.id === sourceSessionId) {
+			if (useSessionStore.getState().activeSessionId === sourceSessionId) {
 				handleResumeSessionRef?.current?.(agentSessionId);
 				return;
 			}
 
-			// Switch to the target agent and defer resume until activeSession updates
+			// Switch to the target agent and defer resume until activeSessionId updates
 			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId };
 			useSessionStore.getState().setActiveSessionId(sourceSessionId);
 		},
-		[activeSession?.id, handleResumeSessionRef]
+		[handleResumeSessionRef]
 	);
 
 	// Effect: process pending resume after agent switch completes
 	useEffect(() => {
-		if (
-			pendingResumeRef.current &&
-			activeSession?.id === pendingResumeRef.current.targetSessionId
-		) {
+		if (pendingResumeRef.current && activeSessionId === pendingResumeRef.current.targetSessionId) {
 			const { agentSessionId } = pendingResumeRef.current;
 			pendingResumeRef.current = null;
 			handleResumeSessionRef?.current?.(agentSessionId);
 		}
-	}, [activeSession?.id, handleResumeSessionRef]);
+	}, [activeSessionId, handleResumeSessionRef]);
 
 	// ====================================================================
 	// Return

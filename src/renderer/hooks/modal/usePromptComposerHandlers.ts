@@ -76,8 +76,8 @@ export function usePromptComposerHandlers(
 ): UsePromptComposerHandlersReturn {
 	const { handleSendGroupChatMessage, processInput, setInputValue } = deps;
 
-	// --- Reactive subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Tab toggles resolve the active agent at event time.
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
@@ -136,6 +136,7 @@ export function usePromptComposerHandlers(
 	);
 
 	const handlePromptToggleTabSaveToHistory = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
@@ -150,12 +151,13 @@ export function usePromptComposerHandlers(
 				};
 			})
 		);
-	}, [activeSession]);
+	}, []);
 
 	const handlePromptToggleTabReadOnlyMode = useCallback(() => {
 		if (activeGroupChatId) {
 			setGroupChatReadOnlyMode((prev: boolean) => !prev);
 		} else {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			const activeTab = getActiveTab(activeSession);
 			if (!activeTab) return;
@@ -171,9 +173,10 @@ export function usePromptComposerHandlers(
 				})
 			);
 		}
-	}, [activeGroupChatId, activeSession]);
+	}, [activeGroupChatId]);
 
 	const handlePromptToggleTabShowThinking = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
@@ -204,7 +207,7 @@ export function usePromptComposerHandlers(
 				};
 			})
 		);
-	}, [activeSession]);
+	}, []);
 
 	const handlePromptToggleEnterToSend = useCallback(
 		() => setEnterToSendAIExpanded(!enterToSendAIExpanded),

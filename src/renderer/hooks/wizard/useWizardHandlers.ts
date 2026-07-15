@@ -174,8 +174,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		inputRef,
 	} = deps;
 
-	// --- Store subscriptions (reactive) ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Effects use narrow fields; callbacks resolve via getState().
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
+	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
+	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
+	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
+	const activeAgentCommands = useSessionStore((s) => selectActiveSession(s)?.agentCommands);
+	const activeProjectRoot = useSessionStore((s) => selectActiveSession(s)?.projectRoot);
 
 	// --- Store actions (stable) ---
 	const { setSessions, setActiveSessionId } = useMemo(() => useSessionStore.getState(), []);
@@ -313,25 +320,26 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			cancelled = true;
 		};
 	}, [
-		activeSession?.id,
-		activeSession?.toolType,
-		activeSession?.cwd,
-		activeSession?.customPath,
-		activeSession?.agentCommands,
-		activeSession?.projectRoot,
+		activeSessionId,
+		activeToolType,
+		activeCwd,
+		activeCustomPath,
+		activeAgentCommands,
+		activeProjectRoot,
 	]);
 
 	// ========================================================================
 	// Wizard state sync effect (context → tab state)
 	// ========================================================================
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 
 		const activeTab = getActiveTab(activeSession);
-		const activeTabId = activeTab?.id;
-		if (!activeTabId) return;
+		const tabId = activeTab?.id;
+		if (!tabId) return;
 
-		const tabWizardState = getInlineWizardStateForTab(activeTabId);
+		const tabWizardState = getInlineWizardStateForTab(tabId);
 		const hasWizardOnThisTab = tabWizardState?.isActive || tabWizardState?.isGeneratingDocs;
 		const currentTabWizardState = activeTab?.wizardState;
 
@@ -346,7 +354,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTabId ? { ...tab, wizardState: undefined } : tab
+							tab.id === tabId ? { ...tab, wizardState: undefined } : tab
 						),
 					};
 				})
@@ -362,7 +370,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 
-				const latestTab = s.aiTabs.find((tab) => tab.id === activeTabId);
+				const latestTab = s.aiTabs.find((tab) => tab.id === tabId);
 				const latestWizardState = latestTab?.wizardState;
 
 				const newWizardState: SessionWizardState = {
@@ -413,12 +421,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTabId ? { ...tab, wizardState: newWizardState } : tab
+						tab.id === tabId ? { ...tab, wizardState: newWizardState } : tab
 					),
 				};
 			})
 		);
-	}, [activeSession?.id, activeSession?.activeTabId, getInlineWizardStateForTab, setSessions]);
+	}, [activeSessionId, activeTabId, getInlineWizardStateForTab, setSessions]);
 
 	// ========================================================================
 	// sendWizardMessageWithThinking
@@ -532,7 +540,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				tabId
 			);
 		},
-		[activeSession?.id, sendInlineWizardMessage, setSessions]
+		[activeSessionId, sendInlineWizardMessage, setSessions]
 	);
 
 	// ========================================================================
@@ -723,7 +731,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				})
 			);
 		}
-	}, [activeSession?.id, spawnBackgroundSynopsis, addHistoryEntry, setSessions]);
+	}, [activeSessionId, spawnBackgroundSynopsis, addHistoryEntry, setSessions]);
 
 	// ========================================================================
 	// handleSkillsCommand — /skills slash command
@@ -826,7 +834,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			addLogToTab(currentSession.id, errorLog);
 		}
-	}, [activeSession?.id]);
+	}, [activeSessionId]);
 
 	// ========================================================================
 	// handleWizardCommand — /wizard slash command
@@ -894,7 +902,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			useSessionStore.getState().addLogToTab(currentSession.id, wizardLog);
 		},
-		[activeSession?.id, startInlineWizard, setSessions]
+		[activeSessionId, startInlineWizard, setSessions]
 	);
 
 	// ========================================================================
@@ -966,36 +974,35 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 			addLogToTab(currentSession.id, wizardLog, newTab.id);
 		}, 0);
-	}, [activeSession?.id, startInlineWizard, setSessions]);
+	}, [activeSessionId, startInlineWizard, setSessions]);
 
 	// ========================================================================
 	// isWizardActiveForCurrentTab — derived value
 	// ========================================================================
 	const isWizardActiveForCurrentTab = useMemo(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return false;
-		// Use the per-tab primitive instead of the hook's singleton currentTabId — the latter only
+		// Use the per-tab primitive instead of the hook's singleton currentTabId - the latter only
 		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
+		// Reactivity comes from isInlineWizardActiveForTab (useCallback on tabStates), not from
+		// a full-session subscription.
 		return isInlineWizardActiveForTab(activeTab.id);
-	}, [activeSession, activeSession?.activeTabId, isInlineWizardActiveForTab]);
+	}, [activeSessionId, activeTabId, isInlineWizardActiveForTab]);
 
 	// Keep useInlineWizard's internal currentTabId pointed at whatever tab the user is currently on,
 	// so that sendMessage/setMode/setGoal/etc. (which fall back to currentTabId) route to the right
 	// wizard when multiple are active concurrently.
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
 		if (isInlineWizardActiveForTab(activeTab.id)) {
 			selectInlineWizardTab(activeTab.id);
 		}
-	}, [
-		activeSession,
-		activeSession?.activeTabId,
-		isInlineWizardActiveForTab,
-		selectInlineWizardTab,
-	]);
+	}, [activeSessionId, activeTabId, isInlineWizardActiveForTab, selectInlineWizardTab]);
 
 	// ========================================================================
 	// completeWizardImpl — shared logic for wizard completion
@@ -1096,7 +1103,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}, 0);
 			}
 		},
-		[activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
+		[activeSessionId, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
 	);
 
 	const handleWizardComplete = useCallback(
@@ -1118,7 +1125,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		if (activeTabLocal) {
 			generateInlineWizardDocuments(undefined, activeTabLocal.id);
 		}
-	}, [activeSession?.id, generateInlineWizardDocuments]);
+	}, [activeSessionId, generateInlineWizardDocuments]);
 
 	// ========================================================================
 	// handleToggleWizardShowThinking
@@ -1150,7 +1157,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				};
 			})
 		);
-	}, [activeSession?.id, setSessions]);
+	}, [activeSessionId, setSessions]);
 
 	// ========================================================================
 	// handleWizardLaunchSession — creates session from onboarding wizard
