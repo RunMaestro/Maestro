@@ -154,10 +154,14 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first prompt');
-		emit(child, { type: 'prompt_result', text: 'first result' });
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'o' },
+		});
+		emit(child, { type: 'prompt_result', text: 'ok' });
 		emit(child, { type: 'turn_end' });
 
-		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'first result');
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'ok');
 		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
 		expect(send).toHaveBeenCalledWith('process:exit', 'tab-2', 0);
 		expect(child.kill).not.toHaveBeenCalled();
@@ -168,13 +172,18 @@ describe('OmpNativeSessionAdapter', () => {
 
 		expect(promptMessages).toEqual(['first prompt', 'second prompt']);
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'second result');
+		const partialResultIndex = send.mock.calls.findIndex(
+			([channel, sessionId, value]) =>
+				channel === 'process:data' && sessionId === 'tab-2' && value === 'o'
+		);
 		const firstResultIndex = send.mock.calls.findIndex(
 			([channel, sessionId, value]) =>
-				channel === 'process:data' && sessionId === 'tab-2' && value === 'first result'
+				channel === 'process:data' && sessionId === 'tab-2' && value === 'ok'
 		);
 		const firstCompletionIndex = send.mock.calls.findIndex(
 			([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
 		);
+		expect(partialResultIndex).toBeLessThan(firstResultIndex);
 		expect(firstResultIndex).toBeLessThan(firstCompletionIndex);
 		expect(
 			send.mock.calls.filter(

@@ -169,6 +169,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				isFromAi = false;
 			}
 
+			// `process:data` is coalesced by the batcher. Native OMP emits its final
+			// result before this semantic exit, but the coalesced write may not run
+			// until a later frame. Flush before reading/finalizing tab state so the
+			// final reply survives cleanup, toast synthesis, and idle transition.
+			deps.batchedUpdater.flushNow();
+
 			// SAFETY CHECK: Verify the process is actually gone before mutating
 			// any per-tab state. We hold off on clearing `activeHiddenToolRef`
 			// until after this guard so a false-positive exit event doesn't
@@ -771,11 +777,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			if (queuedItemToProcess) {
-				// Flush any pending batched stdout/stderr chunks before the queued
-				// message is dispatched. Otherwise the new user log entry is appended
-				// ahead of the trailing chunks from the response that just finished,
-				// and those chunks merge into the next response's bubble (issue #1022).
-				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
 					deps.processQueuedItemRef.current?.(
 						queuedItemToProcess!.sessionId,

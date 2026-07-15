@@ -4,7 +4,7 @@ import { useAgentExitListener } from '../../../../../renderer/hooks/agent/intern
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
-import type { QueuedItem } from '../../../../../renderer/types';
+import type { LogEntry, QueuedItem } from '../../../../../renderer/types';
 
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -97,6 +97,52 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	it('flushes a coalesced native reply before finalizing an unqueued exit', async () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const session = createMockSession({
+			id: 'native-session',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const pendingReply: LogEntry = {
+			id: 'coalesced-native-reply',
+			timestamp: 1,
+			source: 'stdout',
+			text: 'ok',
+		};
+		const deps = makeDeps();
+		deps.batchedUpdater.flushNow.mockImplementation(() => {
+			useSessionStore.getState().setSessions((previous) =>
+				previous.map((current) =>
+					current.id !== 'native-session'
+						? current
+						: {
+								...current,
+								aiTabs: current.aiTabs.map((candidate) =>
+									candidate.id === 'tab-1'
+										? { ...candidate, logs: [...candidate.logs, pendingReply] }
+										: candidate
+								),
+							}
+				)
+			);
+		});
+		renderHook(() => useAgentExitListener(deps));
+
+		await act(async () => {
+			await handler!('native-session-ai-tab-1', 0);
+		});
+
+		const completed = useSessionStore.getState().sessions[0];
+		expect(deps.batchedUpdater.flushNow).toHaveBeenCalledTimes(1);
+		expect(completed.aiTabs[0].logs).toContainEqual(pendingReply);
+		expect(completed.state).toBe('idle');
 	});
 
 	it('dispatches and removes the queued second native prompt when the first turn completes', async () => {
