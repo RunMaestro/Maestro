@@ -655,19 +655,37 @@ export async function validateRemoteAccountDir(
 			return { exists: false, hasAuth: false, symlinksValid: false };
 		}
 
-		// Check .claude.json exists (auth)
-		const authCmd = `test -f "${escapedConfigDir}/.claude.json" && echo "AUTH_EXISTS" || echo "AUTH_MISSING"`;
+		// Provider-derived checks so Codex/OpenCode remotes validate too, instead
+		// of always probing Claude's .claude.json / projects. SSH remotes are
+		// POSIX, so plain symlinks (never Windows junctions) and `test` are correct.
+		const meta = getAccountProviderMeta(inferProviderFromDir(configDir));
+
+		// Auth: any of the provider's auth files present counts as authenticated.
+		const authProbe = (meta.authFiles.length ? meta.authFiles : ['.claude.json'])
+			.map((f) => `test -f "${escapedConfigDir}/${shellEscapeForDoubleQuotes(f)}"`)
+			.join(' || ');
+		const authCmd = `( ${authProbe} ) && echo "AUTH_EXISTS" || echo "AUTH_MISSING"`;
 		const { stdout: authCheck } = await execFileAsync('ssh', [...sshArgs, authCmd], {
 			timeout: 10000,
 		});
 		const hasAuth = authCheck.trim() === 'AUTH_EXISTS';
 
-		// Check symlinks (projects/ is the critical one for --resume)
-		const symlinkCmd = `test -L "${escapedConfigDir}/projects" && test -d "${escapedConfigDir}/projects" && echo "SYMLINKS_OK" || echo "SYMLINKS_BROKEN"`;
-		const { stdout: symlinkCheck } = await execFileAsync('ssh', [...sshArgs, symlinkCmd], {
-			timeout: 10000,
-		});
-		const symlinksValid = symlinkCheck.trim() === 'SYMLINKS_OK';
+		// Symlink integrity: check the provider's resume-critical shared resource
+		// (Claude's projects/ for --resume; else the first shared resource). A
+		// provider that shares nothing (OpenCode) has no link to verify.
+		const sharedResources = SHARED_SYMLINKS[meta.agentType] ?? [];
+		const criticalResource = sharedResources.includes('projects')
+			? 'projects'
+			: (sharedResources[0] ?? null);
+		let symlinksValid = true;
+		if (criticalResource) {
+			const escapedResource = shellEscapeForDoubleQuotes(criticalResource);
+			const symlinkCmd = `test -L "${escapedConfigDir}/${escapedResource}" && test -e "${escapedConfigDir}/${escapedResource}" && echo "SYMLINKS_OK" || echo "SYMLINKS_BROKEN"`;
+			const { stdout: symlinkCheck } = await execFileAsync('ssh', [...sshArgs, symlinkCmd], {
+				timeout: 10000,
+			});
+			symlinksValid = symlinkCheck.trim() === 'SYMLINKS_OK';
+		}
 
 		return { exists: true, hasAuth, symlinksValid };
 	} catch (error) {

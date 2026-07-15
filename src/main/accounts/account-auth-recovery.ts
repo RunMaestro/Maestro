@@ -13,7 +13,7 @@
  * from the provider's base directory.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execFile, type ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { ProcessManager } from '../process-manager/ProcessManager';
@@ -25,7 +25,9 @@ import { getAccountProviderMeta, inferProviderFromDir } from '../../shared/accou
 import {
 	escapeArgsForShell,
 	getWindowsShellForAgentExecution,
+	isPowerShellShell,
 } from '../process-manager/utils/shellEscape';
+import { getSettingsStore } from '../stores/getters';
 import { isWindows } from '../../shared/platformDetection';
 import { logger } from '../utils/logger';
 
@@ -251,12 +253,17 @@ export class AccountAuthRecovery {
 				// without a shell - a plain spawn fails with ENOENT/EINVAL on every
 				// stock install. Mirror handle-spawn.ts: run through the preferred
 				// Windows shell (PowerShell over cmd.exe for its higher command-line
-				// length limit), quoting the binary and args for that shell.
-				const shellConfig = getWindowsShellForAgentExecution();
-				const commandLine = escapeArgsForShell(
-					[binary, ...meta.loginSpawn!.args],
-					shellConfig.shell
-				).join(' ');
+				// length limit), honoring the user's custom shell just like the main
+				// spawn path, and quoting the binary and args for that shell.
+				const customShellPath = getSettingsStore().get('customShellPath', '') as string;
+				const shellConfig = getWindowsShellForAgentExecution({ customShellPath });
+				const escaped = escapeArgsForShell([binary, ...meta.loginSpawn!.args], shellConfig.shell);
+				// PowerShell parses a leading quoted token (a binary path with spaces
+				// gets single-quoted) as a STRING LITERAL, not a command, and errors on
+				// the trailing args. The `&` call operator forces invocation. cmd.exe
+				// runs a quoted leading token as a command and needs no such prefix.
+				const prefix = isPowerShellShell(shellConfig.shell) ? '& ' : '';
+				const commandLine = prefix + escaped.join(' ');
 				child = spawn(commandLine, [], {
 					env: spawnEnv,
 					stdio: ['ignore', 'pipe', 'pipe'],
@@ -283,7 +290,13 @@ export class AccountAuthRecovery {
 			// Timeout: if user doesn't authorize in time
 			const timeout = setTimeout(() => {
 				logger.warn(`${meta.displayName} login timed out`, LOG_CONTEXT, { configDir });
-				child.kill('SIGTERM');
+				// On Windows the child is the shell wrapper; a POSIX signal leaves the
+				// login grandchild orphaned. taskkill /t terminates the whole tree.
+				if (isWindows() && child.pid) {
+					execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], () => {});
+				} else {
+					child.kill('SIGTERM');
+				}
 				resolve(false);
 			}, LOGIN_TIMEOUT_MS);
 

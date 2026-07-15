@@ -935,5 +935,45 @@ describe('account-setup', () => {
 
 			await validateRemoteAccountDir({ host: 'example.com', port: 2222 }, '~/.claude-work');
 		});
+
+		it('probes the provider auth files for a codex remote (not .claude.json)', async () => {
+			const remoteCommands: string[] = [];
+			mockExecFile.mockImplementation((_cmd: string, args: string[], _opts: any, callback: any) => {
+				const command = args[args.length - 1];
+				remoteCommands.push(command);
+				if (command.includes('DIR_EXISTS')) callback(null, 'DIR_EXISTS\n', '');
+				else if (command.includes('AUTH_EXISTS')) callback(null, 'AUTH_EXISTS\n', '');
+				else callback(null, 'SYMLINKS_OK\n', '');
+			});
+
+			const result = await validateRemoteAccountDir({ host: 'example.com' }, '~/.codex-work');
+
+			expect(result.hasAuth).toBe(true);
+			const authCommand = remoteCommands.find((c) => c.includes('AUTH_EXISTS'));
+			// Codex auth lives in auth.json/config.toml, never .claude.json.
+			expect(authCommand).toContain('auth.json');
+			expect(authCommand).not.toContain('.claude.json');
+			// Codex shares config.toml/prompts (no projects/), so the symlink probe
+			// targets the first shared resource, config.toml.
+			const symlinkCommand = remoteCommands.find((c) => c.includes('SYMLINKS_OK'));
+			expect(symlinkCommand).toContain('config.toml');
+		});
+
+		it('treats an opencode remote as symlink-valid (nothing is shared)', async () => {
+			const remoteCommands: string[] = [];
+			mockExecFile.mockImplementation((_cmd: string, args: string[], _opts: any, callback: any) => {
+				const command = args[args.length - 1];
+				remoteCommands.push(command);
+				if (command.includes('DIR_EXISTS')) callback(null, 'DIR_EXISTS\n', '');
+				else if (command.includes('AUTH_EXISTS')) callback(null, 'AUTH_EXISTS\n', '');
+				else callback(null, 'SYMLINKS_OK\n', '');
+			});
+
+			const result = await validateRemoteAccountDir({ host: 'example.com' }, '~/.opencode-work');
+
+			// OpenCode shares no resources, so there is no symlink to verify.
+			expect(result.symlinksValid).toBe(true);
+			expect(remoteCommands.some((c) => c.includes('SYMLINKS_OK'))).toBe(false);
+		});
 	});
 });

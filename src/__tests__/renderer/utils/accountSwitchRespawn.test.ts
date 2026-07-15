@@ -154,6 +154,27 @@ describe('buildAccountSwitchRespawnConfig', () => {
 		expect(config!.sessionCustomContextWindow).toBe(200000);
 	});
 
+	it('pins the account dir with the provider-specific env var (codex -> CODEX_HOME)', async () => {
+		const session = makeSession({ toolType: 'codex', customEnvVars: { EXISTING_VAR: 'kept' } });
+		const config = await buildAccountSwitchRespawnConfig(session, respawnData);
+
+		// A codex switch must NOT stamp a stray CLAUDE_CONFIG_DIR; it sets CODEX_HOME.
+		expect(config!.sessionCustomEnvVars).toEqual({
+			EXISTING_VAR: 'kept',
+			CODEX_HOME: '/accounts/account-2',
+		});
+		expect(config!.sessionCustomEnvVars).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+	});
+
+	it('pins opencode with XDG_DATA_HOME', async () => {
+		const session = makeSession({ toolType: 'opencode', customEnvVars: {} });
+		const config = await buildAccountSwitchRespawnConfig(session, respawnData);
+
+		expect(config!.sessionCustomEnvVars).toEqual({
+			XDG_DATA_HOME: '/accounts/account-2',
+		});
+	});
+
 	it('suppresses stdin flags for SSH sessions', async () => {
 		const session = makeSession({
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },

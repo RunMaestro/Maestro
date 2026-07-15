@@ -54,8 +54,23 @@ vi.mock('../../../main/process-manager/utils/shellEscape', () => ({
 		source: 'powershell-default',
 	})),
 	escapeArgsForShell: vi.fn((args: string[]) => args),
+	isPowerShellShell: vi.fn(
+		(shell?: string) => !!shell && shell.toLowerCase().includes('powershell')
+	),
 }));
 
+// Mock the settings store so runProviderLogin can read customShellPath without
+// touching the real electron-store on disk. mockSettingGet lets a test stub the
+// customShellPath value.
+const mockSettingGet = vi.fn(() => '');
+vi.mock('../../../main/stores/getters', () => ({
+	getSettingsStore: vi.fn(() => ({ get: mockSettingGet })),
+}));
+
+import {
+	getWindowsShellForAgentExecution,
+	isPowerShellShell,
+} from '../../../main/process-manager/utils/shellEscape';
 import { AccountAuthRecovery } from '../../../main/accounts/account-auth-recovery';
 import type { ProcessManager } from '../../../main/process-manager/ProcessManager';
 import type { AccountRegistry } from '../../../main/accounts/account-registry';
@@ -528,9 +543,11 @@ describe('AccountAuthRecovery', () => {
 			const result = await promise;
 
 			expect(result).toBe(true);
-			// Command line goes to the shell as a single string; args stay empty
+			// Command line goes to the shell as a single string; args stay empty.
+			// The `& ` call operator is prepended for PowerShell so a quoted binary
+			// path is invoked rather than parsed as a string literal.
 			expect(mockSpawn).toHaveBeenCalledWith(
-				'/usr/bin/claude login',
+				'& /usr/bin/claude login',
 				[],
 				expect.objectContaining({
 					shell: 'powershell.exe',
@@ -560,7 +577,7 @@ describe('AccountAuthRecovery', () => {
 
 			expect(result).toBe(true);
 			expect(mockSpawn).toHaveBeenCalledWith(
-				'C:\\bin\\codex.cmd login',
+				'& C:\\bin\\codex.cmd login',
 				[],
 				expect.objectContaining({
 					shell: 'powershell.exe',
@@ -587,7 +604,7 @@ describe('AccountAuthRecovery', () => {
 
 			expect(result).toBe(true);
 			expect(mockSpawn).toHaveBeenCalledWith(
-				'opencode auth login',
+				'& opencode auth login',
 				[],
 				expect.objectContaining({
 					shell: 'powershell.exe',
@@ -596,6 +613,45 @@ describe('AccountAuthRecovery', () => {
 					}),
 				})
 			);
+		});
+
+		it('does NOT prepend the & call operator for cmd.exe', async () => {
+			(getWindowsShellForAgentExecution as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+				{ shell: 'cmd.exe', useShell: true, source: 'current' }
+			);
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(result).toBe(true);
+			// cmd.exe runs a quoted leading token as a command; no & prefix.
+			expect(isPowerShellShell).toHaveBeenCalledWith('cmd.exe');
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'/usr/bin/claude login',
+				[],
+				expect.objectContaining({ shell: 'cmd.exe' })
+			);
+		});
+
+		it('honors the user-configured custom shell path', async () => {
+			mockSettingGet.mockReturnValueOnce('C:\\tools\\pwsh\\pwsh.exe');
+			const mockChild = createMockChildProcess();
+			mockSpawn.mockReturnValue(mockChild);
+			mockAccess.mockResolvedValue(undefined);
+
+			const promise = recovery.recoverAuth('session-1', 'acct-1');
+			await vi.advanceTimersByTimeAsync(1000);
+			mockChild.emit('close', 0);
+			await promise;
+
+			expect(getWindowsShellForAgentExecution).toHaveBeenCalledWith({
+				customShellPath: 'C:\\tools\\pwsh\\pwsh.exe',
+			});
 		});
 	});
 

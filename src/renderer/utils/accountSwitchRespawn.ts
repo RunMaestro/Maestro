@@ -21,6 +21,7 @@ import type { Session, AITab, ProcessConfig } from '../types';
 import { getActiveTab } from './tabHelpers';
 import { buildSpawnConfigForAgent } from './sessionHelpers';
 import { prepareMaestroSystemPrompt } from './spawnHelpers';
+import { getAccountProviderMeta } from '../../shared/accountProviderMeta';
 
 /** Subset of the account:switch-respawn payload needed to rebuild the turn. */
 export interface AccountSwitchRespawnData {
@@ -56,6 +57,17 @@ export async function buildAccountSwitchRespawnConfig(
 	// an interrupted image turn retains its attachments.
 	const images = data.lastImages ?? tab?.stagedImages;
 
+	// Pin the account dir with the provider's OWN env var, not a hardcoded
+	// CLAUDE_CONFIG_DIR: a Codex/OpenCode switch would otherwise stamp a stray
+	// CLAUDE_CONFIG_DIR while its real var (CODEX_HOME / XDG_DATA_HOME) is only
+	// set later by main's injectAccountEnv. Providers with no relocation env var
+	// (envVar === null) get nothing extra here.
+	const providerEnvVar = getAccountProviderMeta(session.toolType).envVar;
+	const accountEnvVars: Record<string, string> = { ...session.customEnvVars };
+	if (providerEnvVar) {
+		accountEnvVars[providerEnvVar] = data.configDir;
+	}
+
 	return buildSpawnConfigForAgent({
 		sessionId: targetSessionId,
 		toolType: session.toolType,
@@ -68,10 +80,7 @@ export async function buildAccountSwitchRespawnConfig(
 		permissionMode: tab?.permissionMode,
 		sessionCustomPath: session.customPath,
 		sessionCustomArgs: session.customArgs,
-		sessionCustomEnvVars: {
-			...session.customEnvVars,
-			CLAUDE_CONFIG_DIR: data.configDir,
-		},
+		sessionCustomEnvVars: accountEnvVars,
 		sessionCustomModel: tab?.customModel ?? session.customModel,
 		sessionCustomEffort: tab?.customEffort ?? session.customEffort,
 		sessionCustomContextWindow: session.customContextWindow,
