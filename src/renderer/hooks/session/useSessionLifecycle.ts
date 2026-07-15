@@ -127,7 +127,8 @@ const selectRenameTabId = (s: ReturnType<typeof useModalStore.getState>) =>
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
-const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) => s.activeSessionId;
+const selectResolvedActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) =>
+	selectActiveSession(s)?.id;
 
 // ============================================================================
 // Hook
@@ -143,7 +144,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const renameTabId = useModalStore(selectRenameTabId);
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
-	const activeSessionId = useSessionStore(selectActiveSessionId);
+	const activeSessionId = useSessionStore(selectResolvedActiveSessionId);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 	const activeFileTabId = useSessionStore((s) => selectActiveSession(s)?.activeFileTabId);
 	const activeBrowserTabId = useSessionStore((s) => selectActiveSession(s)?.activeBrowserTabId);

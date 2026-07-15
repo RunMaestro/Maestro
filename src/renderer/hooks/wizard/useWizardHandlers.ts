@@ -176,7 +176,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// wake App via this hook. Effects use narrow fields; callbacks resolve via getState().
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
@@ -984,8 +984,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return false;
-		// Use the per-tab primitive instead of the hook's singleton currentTabId — the latter only
+		// Use the per-tab primitive instead of the hook's singleton currentTabId - the latter only
 		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
+		// Reactivity comes from isInlineWizardActiveForTab (useCallback on tabStates), not from
+		// a full-session subscription.
 		return isInlineWizardActiveForTab(activeTab.id);
 	}, [activeSessionId, activeTabId, isInlineWizardActiveForTab]);
 

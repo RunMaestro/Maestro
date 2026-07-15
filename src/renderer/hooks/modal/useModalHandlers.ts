@@ -907,8 +907,9 @@ export function useModalHandlers(
 	// ====================================================================
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens
 	// would wake App via this hook. Handlers resolve via getState(); jump-to-
-	// failing only needs primitive focus fields.
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// failing only needs primitive focus fields. Use the resolved agent id
+	// (same fallback as selectActiveSession) with those fields.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 	const activeInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
 

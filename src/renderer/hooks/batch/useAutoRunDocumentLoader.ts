@@ -46,8 +46,9 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// wake App via this hook. Subscribe only to Auto Run path fields that
-	// should re-run the loader / watcher.
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// should re-run the loader / watcher. Use the resolved agent id (same
+	// fallback as selectActiveSession) so field reads and writes stay aligned.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const autoRunFolderPath = useSessionStore((s) => selectActiveSession(s)?.autoRunFolderPath);
 	const autoRunSelectedFile = useSessionStore((s) => selectActiveSession(s)?.autoRunSelectedFile);
 	const autoRunSshRemoteId = useSessionStore((s) => {

@@ -122,8 +122,10 @@ export function useFileExplorerEffects(
 	// --- Store subscriptions ---
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// wake App via this hook. Subscribe only to file-explorer fields needed for
-	// tree flatten / jump / keyboard expand state.
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// tree flatten / jump / keyboard expand state. Use the resolved agent id
+	// (same fallback as selectActiveSession) so jump clear / toggleFolder match
+	// the session those fields came from.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const fileTree = useSessionStore((s) => selectActiveSession(s)?.fileTree);
 	const fileExplorerExpanded = useSessionStore((s) => selectActiveSession(s)?.fileExplorerExpanded);
 	const pendingJumpPath = useSessionStore((s) => selectActiveSession(s)?.pendingJumpPath);
@@ -348,6 +350,7 @@ export function useFileExplorerEffects(
 
 			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;
+			if (!activeSessionId) return;
 
 			const expandedFolders = new Set(fileExplorerExpanded || []);
 
