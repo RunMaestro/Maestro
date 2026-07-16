@@ -61,10 +61,6 @@ export function getAutoRunChartMax(tasksByDate: AutoRunDayData[]): number {
 	return Math.max(...tasksByDate.map((day) => Math.max(day.successCount, day.count)));
 }
 
-export function formatDateLabel(dateStr: string): string {
-	return parseLocalDate(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
 export function formatFullDate(dateStr: string): string {
 	return parseLocalDate(dateStr).toLocaleDateString('en-US', {
 		weekday: 'short',

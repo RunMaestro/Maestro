@@ -22,8 +22,7 @@ import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { getCardStyles } from './SummaryCards';
 import { Sparkline } from './Sparkline';
 import { isWorktreeAgent } from './chartUtils';
-
-const SPARKLINE_DAYS = 7;
+import { buildSessionSparkline } from './usageDashboardUtils';
 
 interface WorktreeAnalyticsProps {
 	/** All known sessions (terminal-only sessions are filtered out). */
@@ -94,20 +93,6 @@ const StatCard = memo(function StatCard({
 		</div>
 	);
 });
-
-/**
- * Pull the last `SPARKLINE_DAYS` entries' counts (oldest → newest), left-padding
- * with zeros so sparkline geometry stays stable for sessions with fewer than
- * seven recorded days. Mirrors the helper used by AgentOverviewCards.
- */
-function buildSessionSparkline(sessionByDay: Array<{ count: number }> | undefined): number[] {
-	if (!sessionByDay || sessionByDay.length === 0) {
-		return new Array(SPARKLINE_DAYS).fill(0);
-	}
-	const counts = sessionByDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
-}
 
 /**
  * Format the worktree-to-parent ratio for the badge.

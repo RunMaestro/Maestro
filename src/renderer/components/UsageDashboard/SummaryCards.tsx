@@ -43,6 +43,7 @@ import {
 	formatCost,
 } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
+import { formatUsageShortDate } from './usageDashboardUtils';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
 
@@ -174,20 +175,6 @@ export function countActiveDays(byDay: ByDayEntry[]): number {
 		if (day.count > 0) n += 1;
 	}
 	return n;
-}
-
-/**
- * Format a YYYY-MM-DD date string as a short "Mon DD" label (e.g. "Apr 17")
- * without going through a full `Date` lookup chain at every render. The
- * input format is what `byDay` produces; bail to the original string if
- * parsing fails so we never render a literal `Invalid Date`.
- */
-export function formatShortDate(dateStr: string): string {
-	const parts = dateStr.split('-').map(Number);
-	if (parts.length !== 3 || parts.some(Number.isNaN)) return dateStr;
-	const [y, m, d] = parts;
-	const date = new Date(y, m - 1, d);
-	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -940,7 +927,7 @@ export const SummaryCards = memo(function SummaryCards({
 					className="text-[10px] mt-1 uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
-					{formatShortDate(bestDay.date)}
+					{formatUsageShortDate(bestDay.date)}
 				</div>
 			) : undefined,
 		},
