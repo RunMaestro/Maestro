@@ -126,7 +126,57 @@ export interface OmpCompatibilityEntry {
 	readonly disposition: OmpCompatibilityDisposition;
 	readonly terminal: OmpTerminal;
 	readonly sequence: 'strict' | 'correlated' | 'none';
+	/** Concrete Maestro action for UI members; host rationale for host members. */
+	readonly actionId?: string;
+	readonly handler?: string;
+	readonly testId?: string;
+	readonly rationale?: string;
 }
+
+const COMMAND_ACTIONS = Object.freeze({
+	prompt: ['composer.submit', 'OmpNativeSessionAdapter.prompt'],
+	steer: ['composer.steer', 'OmpNativeSessionAdapter.prompt'],
+	follow_up: ['composer.follow-up', 'OmpNativeSessionAdapter.prompt'],
+	abort: ['composer.abort', 'OmpNativeSessionAdapter.interrupt'],
+	abort_and_prompt: ['composer.abort-and-prompt', 'OmpNativeSessionAdapter.interrupt+prompt'],
+	new_session: ['runtime.new-session', 'OmpNativeSessionAdapter.setControl'],
+	get_state: ['runtime.state', 'OmpNativeSessionAdapter.refreshFeatures'],
+	get_available_commands: ['composer.slash-commands', 'OmpNativeSessionAdapter.emitCommands'],
+	set_todos: ['runtime.todos', 'OmpNativeSessionAdapter.refreshFeatures'],
+	set_host_tools: ['host.tools', 'OmpNativeSessionAdapter.initialize'],
+	set_host_uri_schemes: ['host.uris', 'OmpNativeSessionAdapter.initialize'],
+	set_subagent_subscription: ['runtime.subagents', 'OmpNativeSessionAdapter.initialize'],
+	get_subagents: ['runtime.subagents', 'OmpNativeSessionAdapter.refreshFeatures'],
+	get_subagent_messages: ['runtime.subagent-messages', 'OmpNativeSessionAdapter.refreshFeatures'],
+	set_model: ['composer.model', 'OmpNativeSessionAdapter.setControl'],
+	cycle_model: ['composer.cycle-model', 'OmpNativeSessionAdapter.setControl'],
+	get_available_models: ['composer.model', 'OmpNativeSessionAdapter.refreshFeatures'],
+	set_thinking_level: ['composer.thinking', 'OmpNativeSessionAdapter.setControl'],
+	cycle_thinking_level: ['composer.cycle-thinking', 'OmpNativeSessionAdapter.setControl'],
+	set_steering_mode: ['composer.steering-mode', 'OmpNativeSessionAdapter.setControl'],
+	set_follow_up_mode: ['composer.follow-up-mode', 'OmpNativeSessionAdapter.setControl'],
+	set_interrupt_mode: ['composer.interrupt-mode', 'OmpNativeSessionAdapter.setControl'],
+	compact: ['runtime.compact', 'OmpNativeSessionAdapter.setControl'],
+	set_auto_compaction: ['runtime.auto-compaction', 'OmpNativeSessionAdapter.setControl'],
+	set_auto_retry: ['runtime.auto-retry', 'OmpNativeSessionAdapter.setControl'],
+	abort_retry: ['runtime.abort-retry', 'OmpNativeSessionAdapter.setControl'],
+	bash: ['runtime.bash', 'OmpNativeSessionAdapter.setControl'],
+	abort_bash: ['runtime.abort-bash', 'OmpNativeSessionAdapter.setControl'],
+	get_session_stats: ['runtime.stats', 'OmpNativeSessionAdapter.refreshFeatures'],
+	export_html: ['runtime.export-html', 'OmpNativeSessionAdapter.setControl'],
+	switch_session: ['runtime.resume-session', 'OmpNativeSessionAdapter.setControl'],
+	branch: ['runtime.branch-session', 'OmpNativeSessionAdapter.branch'],
+	get_branch_messages: ['runtime.branch-messages', 'OmpNativeSessionAdapter.refreshFeatures'],
+	get_last_assistant_text: [
+		'runtime.last-assistant-text',
+		'OmpNativeSessionAdapter.refreshFeatures',
+	],
+	set_session_name: ['session.rename', 'OmpNativeSessionAdapter.setControl'],
+	handoff: ['runtime.handoff', 'OmpNativeSessionAdapter.setControl'],
+	get_messages: ['runtime.session-tree', 'OmpNativeSessionAdapter.refreshFeatures'],
+	get_login_providers: ['runtime.login-providers', 'OmpNativeSessionAdapter.refreshFeatures'],
+	login: ['runtime.login', 'OmpNativeSessionAdapter.setControl'],
+} satisfies Record<OmpCommandType, readonly [string, string]>);
 
 const COMMAND_DISPOSITIONS: Readonly<Record<OmpCommandType, 'ui' | 'host'>> = {
 	prompt: 'ui',
@@ -171,11 +221,18 @@ const COMMAND_DISPOSITIONS: Readonly<Record<OmpCommandType, 'ui' | 'host'>> = {
 };
 
 function commandEntry(command: OmpCommandType): OmpCompatibilityEntry {
+	const [actionId, handler] = COMMAND_ACTIONS[command];
 	return {
 		version: '16.4.8',
 		disposition: COMMAND_DISPOSITIONS[command],
 		terminal: 'response',
 		sequence: 'correlated',
+		actionId,
+		handler,
+		testId: 'src/main/omp-native/session-adapter.test.ts',
+		...(COMMAND_DISPOSITIONS[command] === 'host'
+			? { rationale: 'Host-owned RPC initialization or state projection.' }
+			: {}),
 	};
 }
 

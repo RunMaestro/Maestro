@@ -30,6 +30,19 @@ describe('OMP 16.4.8 compatibility table', () => {
 		const dispositions = Object.values(OMP_16_4_8_COMPATIBILITY);
 		expect(dispositions.every((member) => member.version === '16.4.8')).toBe(true);
 		expect(dispositions.every((member) => member.disposition !== undefined)).toBe(true);
+		expect(
+			Object.values(OMP_16_4_8_COMPATIBILITY)
+				.filter((member) => member.disposition === 'ui')
+				.every(
+					(member) =>
+						typeof member.actionId === 'string' &&
+						member.actionId.length > 0 &&
+						typeof member.handler === 'string' &&
+						member.handler.length > 0 &&
+						typeof member.testId === 'string' &&
+						member.testId.length > 0
+				)
+		).toBe(true);
 		expect(OMP_16_4_8_COMPATIBILITY.set_host_tools).toMatchObject({
 			disposition: 'host',
 			terminal: 'response',
