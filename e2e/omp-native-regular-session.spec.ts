@@ -183,4 +183,111 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+	test('renders select and input native approval requests', async ({
+		browserName: _browserName,
+	}) => {
+		void _browserName;
+		test.setTimeout(180_000);
+		const harness = await launchNativeOmpRegularSessionHarness();
+		const { launched } = harness;
+		try {
+			await launched.window.getByRole('button', { name: 'New Agent' }).click();
+			await launched.window.getByText('Manual Setup', { exact: true }).click();
+			await launched.window.getByText('Oh My Pi', { exact: true }).click();
+			await launched.window.locator('input').first().fill('Native OMP approvals');
+			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
+			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
+			const composer = launched.window.locator('textarea').last();
+			const approvalDialog = launched.window
+				.locator('[role="dialog"]')
+				.filter({ hasText: 'Native OMP approval' });
+			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
+
+			await composer.fill('select-approval');
+			await composer.press('Enter');
+			await expect(approvalDialog.getByRole('button', { name: 'Safe', exact: true })).toBeVisible({
+				timeout: 30_000,
+			});
+			await approvalDialog.getByRole('button', { name: 'Safe', exact: true }).click();
+			await expect(approvalDialog).toHaveCount(0);
+			await expect
+				.poll(
+					() => (fs.readFileSync(frameLogPath, 'utf8').match(/"type":"agent_end"/g) ?? []).length
+				)
+				.toBe(1);
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+
+			await composer.fill('input-approval');
+			await composer.press('Enter');
+			await expect(
+				approvalDialog.locator('input[placeholder="Write the native response"]')
+			).toBeVisible({
+				timeout: 30_000,
+			});
+			await approvalDialog.getByPlaceholder('Write the native response').fill('typed native input');
+			await approvalDialog.getByRole('button', { name: 'Submit', exact: true }).click();
+			await expect(approvalDialog).toHaveCount(0);
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect
+				.poll(
+					() => (fs.readFileSync(frameLogPath, 'utf8').match(/"type":"agent_end"/g) ?? []).length
+				)
+				.toBe(2);
+
+			await expect
+				.poll(
+					() => {
+						const frames = fs.readFileSync(frameLogPath, 'utf8');
+						return ['"value":"typed native input"'].every((frame) => frames.includes(frame));
+					},
+					{ timeout: 30_000 }
+				)
+				.toBe(true);
+		} finally {
+			await harness.close();
+		}
+	});
+	test('renders an editor native approval request', async ({ browserName: _browserName }) => {
+		void _browserName;
+		test.setTimeout(120_000);
+		const harness = await launchNativeOmpRegularSessionHarness();
+		const { launched } = harness;
+		try {
+			await launched.window.getByRole('button', { name: 'New Agent' }).click();
+			await launched.window.getByText('Manual Setup', { exact: true }).click();
+			await launched.window.getByText('Oh My Pi', { exact: true }).click();
+			await launched.window.locator('input').first().fill('Native OMP editor');
+			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
+			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
+			const composer = launched.window.locator('textarea').last();
+			const approvalDialog = launched.window
+				.locator('[role="dialog"]')
+				.filter({ hasText: 'Native OMP approval' });
+			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
+
+			await composer.fill('editor-approval');
+			await composer.press('Enter');
+			await expect(approvalDialog).toHaveCount(1, { timeout: 60_000 });
+			const editor = approvalDialog.locator('textarea');
+			await expect(editor).toBeVisible({ timeout: 60_000 });
+			await editor.fill('typed native editor');
+			await approvalDialog.getByRole('button', { name: 'Submit', exact: true }).click();
+			await expect(approvalDialog).toHaveCount(0);
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect
+				.poll(
+					() => {
+						const frames = fs.readFileSync(frameLogPath, 'utf8');
+						return (
+							frames.includes('"id":"editor-approval-1"') &&
+							frames.includes('"value":"typed native editor"')
+						);
+					},
+					{ timeout: 30_000 }
+				)
+				.toBe(true);
+		} finally {
+			await harness.close();
+		}
+	});
 });
