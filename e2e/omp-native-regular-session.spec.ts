@@ -26,6 +26,17 @@ test.describe('first-party OMP regular session', () => {
 				launched.window.getByText('Native OMP fixture', { exact: true }).first()
 			).toBeVisible({ timeout: 30_000 });
 			await expect(launched.window.getByRole('dialog')).toHaveCount(0);
+			await launched.window.getByRole('button', { name: 'Native', exact: true }).click();
+			const runtimePanel = launched.window.getByTestId('native-runtime-panel');
+			await expect(runtimePanel).toBeVisible();
+			await expect(runtimePanel.getByText('OMP Native', { exact: true })).toBeVisible();
+			await expect(runtimePanel.getByText('Ready', { exact: true })).toBeVisible();
+			await expect(runtimePanel.getByTestId('native-runtime-dormant')).toContainText(
+				'OMP Native ready — starts on first message.'
+			);
+			await expect(launched.window.getByTestId('omp-runtime-controls')).toHaveCount(0);
+			await expect(runtimePanel.getByTestId('native-runtime-advanced')).toHaveCount(0);
+			await expect(runtimePanel.getByTestId('native-runtime-stats')).toHaveCount(0);
 			const composer = launched.window.locator('textarea').last();
 			await expect(composer).toBeVisible();
 			await composer.fill('show ordinary native transcript');
@@ -72,17 +83,25 @@ test.describe('first-party OMP regular session', () => {
 			await expect(
 				launched.window.getByText('fixture:expanded-16.4.8', { exact: true })
 			).toBeVisible();
-			await launched.window.getByRole('button', { name: 'Native', exact: true }).click();
-			const runtimePanel = launched.window.getByTestId('native-runtime-panel');
-			await expect(runtimePanel).toBeVisible();
-			await expect(
-				runtimePanel.getByText('Native fixture: Render ordinary session (in_progress)')
-			).toBeVisible();
-			await expect(runtimePanel.getByText('Native helper: running')).toBeVisible();
-			await expect(runtimePanel.getByText('inputTokens: 21')).toBeVisible();
+			await expect(runtimePanel.getByText('Live', { exact: true })).toBeVisible({
+				timeout: 30_000,
+			});
+			const stats = runtimePanel.getByTestId('native-runtime-stats');
+			await expect(stats).toBeVisible();
+			await expect(stats).toContainText('Input');
+			await expect(stats).toContainText('21');
+			await expect(stats).toContainText('Output');
+			await expect(stats).toContainText('34');
+			const tasks = runtimePanel.getByTestId('native-runtime-todos');
+			await expect(tasks).toContainText('Tasks');
+			await expect(tasks).toContainText('1/2');
+			await expect(tasks).toContainText('Render ordinary session');
+			await expect(runtimePanel.getByText('Native helper', { exact: true })).toBeVisible();
+			await expect(runtimePanel.getByText('Running', { exact: true })).toBeVisible();
 			await runtimePanel
 				.getByRole('button', { name: 'Branch from native expanded transcript' })
 				.click();
+			await runtimePanel.getByRole('button', { name: /Advanced/ }).click();
 			await runtimePanel
 				.getByPlaceholder('OMP session file path')
 				.fill('/fixture/resumed-native.jsonl');
@@ -93,21 +112,33 @@ test.describe('first-party OMP regular session', () => {
 				.locator('select[aria-label="OMP login provider"]')
 				.selectOption('fixture-login');
 			await runtimePanel.getByRole('button', { name: 'Login', exact: true }).click();
-			await launched.window.locator('select[aria-label="Thinking level"]').selectOption('max');
-			await launched.window
-				.locator('select[aria-label="Steering mode"]')
-				.selectOption('one-at-a-time');
-			await launched.window
-				.locator('select[aria-label="Follow-up mode"]')
-				.selectOption('one-at-a-time');
-			await launched.window.locator('select[aria-label="Interrupt mode"]').selectOption('wait');
-			const runtimeControls = launched.window.getByLabel('Native runtime controls');
+			await launched.window.getByRole('button', { name: 'high', exact: true }).click();
+			await launched.window.getByRole('menuitemradio', { name: 'max', exact: true }).click();
+			const openRuntimeSettings = async () => {
+				const trigger = launched.window.getByRole('button', { name: 'OMP runtime settings' });
+				await expect(trigger).toBeVisible();
+				await trigger.click();
+				const controls = launched.window.getByRole('dialog', { name: 'Native runtime controls' });
+				await expect(controls).toBeVisible();
+				return controls;
+			};
+			let runtimeControls = await openRuntimeSettings();
+			await runtimeControls.getByLabel('Steering mode').selectOption('one-at-a-time');
+			await runtimeControls.getByLabel('Follow-up mode').selectOption('one-at-a-time');
+			await runtimeControls.getByLabel('Interrupt mode').selectOption('wait');
+			await launched.window.keyboard.press('Escape');
+			await expect(
+				launched.window.getByRole('dialog', { name: 'Native runtime controls' })
+			).toHaveCount(0);
+			runtimeControls = await openRuntimeSettings();
 			const compact = runtimeControls.getByRole('button', { name: 'Compact', exact: true });
 			await compact.focus();
 			await compact.press('Enter');
+			runtimeControls = await openRuntimeSettings();
 			const exportHtml = runtimeControls.getByRole('button', { name: 'Export HTML', exact: true });
 			await exportHtml.focus();
 			await exportHtml.press('Enter');
+			runtimeControls = await openRuntimeSettings();
 			const abortBash = runtimeControls.getByRole('button', {
 				name: 'Abort shell command',
 				exact: true,
