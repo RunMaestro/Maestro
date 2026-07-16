@@ -1,27 +1,26 @@
-import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import type {
-	Session,
-	SessionState,
-	UsageStats,
-	QueuedItem,
-	LogEntry,
-	ToolType,
-} from '../../types';
-import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { useCallback, useEffect, useRef } from 'react';
+import type { Session, UsageStats, QueuedItem, ToolType } from '../../types';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
-import {
-	hasRunnableQueueItem,
-	nextRunnableQueueItem,
-	takeNextRunnableQueueItem,
-} from '../../utils/executionQueue';
+import { hasRunnableQueueItem, nextRunnableQueueItem } from '../../utils/executionQueue';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
-
+import {
+	classifyCancelledExecution,
+	classifyProcessExit,
+	classifySpawnFailure,
+	type AgentSpawnErrorKind,
+} from './internal/agentExecutionErrorPolicy';
+import { reduceAgentQueueAfterExit } from './internal/agentExecutionQueueReducer';
+import {
+	createBatchAgentSpawnConfig,
+	createSynopsisAgentSpawnConfig,
+	type SynopsisSessionConfig,
+} from './internal/agentExecutionSpawnAdapter';
 /**
  * Result from agent spawn operations.
  */
@@ -38,12 +37,7 @@ export interface AgentSpawnResult {
 	errorKind?: AgentSpawnErrorKind;
 }
 
-export type AgentSpawnErrorKind =
-	| 'watchdog-stalled'
-	| 'watchdog-timeout'
-	| 'process-exit'
-	| 'process-exit-unknown'
-	| 'spawn-failed';
+export type { AgentSpawnErrorKind } from './internal/agentExecutionErrorPolicy';
 
 const BATCH_WATCHDOG_CHECK_MS = 15 * 1000; // Check every 15 seconds
 
@@ -85,21 +79,7 @@ export interface UseAgentExecutionReturn {
 		resumeAgentSessionId: string,
 		prompt: string,
 		toolType?: ToolType,
-		sessionConfig?: {
-			customPath?: string;
-			customArgs?: string;
-			customEnvVars?: Record<string, string>;
-			customModel?: string;
-			customContextWindow?: number;
-			enableMaestroP?: boolean;
-			maestroPMode?: 'interactive' | 'dynamic';
-			maestroPPath?: string;
-			sessionSshRemoteConfig?: {
-				enabled: boolean;
-				remoteId: string | null;
-				workingDirOverride?: string;
-			};
-		}
+		sessionConfig?: SynopsisSessionConfig
 	) => Promise<AgentSpawnResult>;
 	/** Ref to spawnBackgroundSynopsis for use in callbacks that need latest version */
 	spawnBackgroundSynopsisRef: React.MutableRefObject<
@@ -109,21 +89,7 @@ export interface UseAgentExecutionReturn {
 				resumeAgentSessionId: string,
 				prompt: string,
 				toolType?: ToolType,
-				sessionConfig?: {
-					customPath?: string;
-					customArgs?: string;
-					customEnvVars?: Record<string, string>;
-					customModel?: string;
-					customContextWindow?: number;
-					enableMaestroP?: boolean;
-					maestroPMode?: 'interactive' | 'dynamic';
-					maestroPPath?: string;
-					sessionSshRemoteConfig?: {
-						enabled: boolean;
-						remoteId: string | null;
-						workingDirOverride?: string;
-					};
-				}
+				sessionConfig?: SynopsisSessionConfig
 		  ) => Promise<AgentSpawnResult>)
 		| null
 	>;
@@ -162,9 +128,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 		null
 	);
 
-	// Track active synopsis session IDs for cancellation
-	// Map: maestroSessionId -> Set of active synopsis process session IDs
-	const activeSynopsisSessionsRef = useRef<Map<string, Set<string>>>(new Map());
+	// Each execution owns exactly one cancellation callback. The callback removes
+	// its subscriptions before resolving, so exit and unmount cannot clean up twice.
+	const activeRunCancelsRef = useRef<Map<string, () => void>>(new Map());
+	// Map: maestroSessionId -> (synopsis process session ID -> its cancellation owner).
+	const activeSynopsisSessionsRef = useRef<Map<string, Map<string, () => void>>>(new Map());
+	useEffect(
+		() => () => {
+			for (const cancel of Array.from(activeRunCancelsRef.current.values())) cancel();
+		},
+		[]
+	);
 	const accumulateUsageStats = useCallback(
 		(current: UsageStats | undefined, usageStats: UsageStats): UsageStats => ({
 			...usageStats,
@@ -256,6 +230,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							clearInterval(inactivityTimer);
 							inactivityTimer = null;
 						}
+						activeRunCancelsRef.current.delete(targetSessionId);
 					};
 
 					const resolveOnce = (result: AgentSpawnResult) => {
@@ -264,6 +239,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanup();
 						resolve(result);
 					};
+
+					activeRunCancelsRef.current.set(targetSessionId, () => {
+						if (settled) return;
+						window.maestro.process.kill(targetSessionId).catch(() => {});
+						resolveOnce({
+							...classifyCancelledExecution(),
+							response: responseText,
+							agentSessionId,
+							usageStats: taskUsageStats,
+						});
+					});
 
 					// Set up listeners for this specific agent run
 					cleanupFns.push(
@@ -322,150 +308,42 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										);
 									});
 
-								const didExitCleanly = code === 0;
-								const exitErrorKind = didExitCleanly
-									? undefined
-									: code == null
-										? ('process-exit-unknown' as const)
-										: ('process-exit' as const);
-								const exitError = didExitCleanly
-									? undefined
-									: code == null
-										? 'Agent task exited without a status code'
-										: `Agent task exited with code ${code}`;
+								const exit = classifyProcessExit(code);
 
 								// Estimate context usage from the last single-turn event (not accumulated totals)
 								const taskContextUsage = lastUsageEvent
 									? (estimateContextUsage(lastUsageEvent, session.toolType) ?? undefined)
 									: undefined;
+								const completedResult: AgentSpawnResult = {
+									...exit,
+									response: responseText,
+									agentSessionId,
+									usageStats: taskUsageStats,
+									contextUsage: taskContextUsage,
+								};
 
-								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
+								// Select before scheduling state work so the subsequent side effect
+								// dispatches the same first runnable item that the reducer removes.
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
-								let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
-								// Skip paused items: only a runnable (non-held) item triggers dispatch.
 								const nextRunnable = currentSession
 									? nextRunnableQueueItem(currentSession.executionQueue)
 									: undefined;
+								const queuedItemToProcess = nextRunnable ? { sessionId, item: nextRunnable } : null;
 								const hasQueuedItems = !!nextRunnable;
 
-								if (nextRunnable) {
-									queuedItemToProcess = {
-										sessionId: sessionId,
-										item: nextRunnable,
-									};
-								}
-
-								// Update state - if there are queued items, keep busy and process next
 								setSessions((prev) =>
-									prev.map((s) => {
-										if (s.id !== sessionId) return s;
-
-										const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
-											s.executionQueue
-										);
-										if (nextItem) {
-											const target = resolveQueuedItemTarget(s, nextItem);
-
-											if (!target) {
-												// Fallback: no tabs exist
-												return {
-													...s,
-													state: 'busy' as SessionState,
-													busySource: 'ai',
-													executionQueue: remainingQueue,
-													thinkingStartTime: Date.now(),
-													currentCycleTokens: 0,
-													currentCycleBytes: 0,
-													pendingAICommandForSynopsis: undefined,
-												};
-											}
-
-											const logEntry: LogEntry | null =
-												nextItem.type === 'message' && nextItem.text
-													? {
-															id: generateId(),
-															timestamp: Date.now(),
-															source: 'user',
-															text: nextItem.text,
-															images: nextItem.images,
-														}
-													: null;
-
-											// Orphan target: the user closed this tab while the message was
-											// still queued. Route the user log to orphanedThinkingTabs and
-											// leave the active tab untouched - the send is fire-and-forget.
-											if (target.location === 'orphan') {
-												return {
-													...s,
-													state: 'busy' as SessionState,
-													busySource: 'ai',
-													...(logEntry &&
-														s.orphanedThinkingTabs && {
-															orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
-																tab.id === target.tabId
-																	? { ...tab, logs: [...tab.logs, logEntry] }
-																	: tab
-															),
-														}),
-													executionQueue: remainingQueue,
-													thinkingStartTime: Date.now(),
-													currentCycleTokens: 0,
-													currentCycleBytes: 0,
-													pendingAICommandForSynopsis: undefined,
-												};
-											}
-
-											// Foreground target: append the user log and bring the tab into view.
-											const updatedAiTabs = logEntry
-												? s.aiTabs.map((tab) =>
-														tab.id === target.tabId
-															? { ...tab, logs: [...tab.logs, logEntry] }
-															: tab
-													)
-												: s.aiTabs;
-
-											return {
-												...s,
-												state: 'busy' as SessionState,
-												busySource: 'ai',
-												aiTabs: updatedAiTabs,
-												activeTabId: target.tabId,
-												executionQueue: remainingQueue,
-												thinkingStartTime: Date.now(),
-												currentCycleTokens: 0,
-												currentCycleBytes: 0,
-												pendingAICommandForSynopsis: undefined,
-											};
-										}
-
-										// No queued items - set to idle
-										// Set ALL busy tabs to 'idle' for write-mode tracking
-										const updatedAiTabs =
-											s.aiTabs?.length > 0
-												? s.aiTabs.map((tab) =>
-														tab.state === 'busy'
-															? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-															: tab
-													)
-												: s.aiTabs;
-
-										return {
-											...s,
-											state: 'idle' as SessionState,
-											busySource: undefined,
-											thinkingStartTime: undefined,
-											pendingAICommandForSynopsis: undefined,
-											aiTabs: updatedAiTabs,
-										};
-									})
+									prev.map((s) =>
+										s.id === sessionId
+											? reduceAgentQueueAfterExit(s, Date.now(), generateId).session
+											: s
+									)
 								);
 
-								// Process queued item AFTER state update
 								if (queuedItemToProcess && processQueuedItemRef.current) {
 									setTimeout(() => {
 										processQueuedItemRef.current!(
-											queuedItemToProcess!.sessionId,
-											queuedItemToProcess!.item
+											queuedItemToProcess.sessionId,
+											queuedItemToProcess.item
 										);
 									}, 0);
 								}
@@ -474,10 +352,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// wait for the queue to drain before resolving. This ensures batch tasks don't
 								// race with queued manual writes. Worktree mode can skip this since it operates
 								// in a separate directory with no file conflicts.
-								// Note: cwdOverride is set when worktree is enabled
 								if (hasQueuedItems && !cwdOverride) {
-									// Wait for queue to drain by polling session state
-									// The queue is processed sequentially, so we wait until session becomes idle
 									const waitForQueueDrain = () => {
 										if (settled) return;
 										const checkSession = sessionsRef.current.find((s) => s.id === sessionId);
@@ -486,34 +361,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											checkSession.state === 'idle' ||
 											!hasRunnableQueueItem(checkSession.executionQueue)
 										) {
-											// Queue drained (or only held items left) or session idle - safe to continue batch
-											resolveOnce({
-												success: didExitCleanly,
-												response: responseText,
-												agentSessionId,
-												usageStats: taskUsageStats,
-												contextUsage: taskContextUsage,
-												error: exitError,
-												errorKind: exitErrorKind,
-											});
+											resolveOnce(completedResult);
 										} else {
-											// Queue still processing - check again
 											setTimeout(waitForQueueDrain, 100);
 										}
 									};
-									// Start polling after a short delay to let state update propagate
 									setTimeout(waitForQueueDrain, 50);
 								} else {
-									// No queued items or worktree mode - resolve immediately
-									resolveOnce({
-										success: didExitCleanly,
-										response: responseText,
-										agentSessionId,
-										usageStats: taskUsageStats,
-										contextUsage: taskContextUsage,
-										error: exitError,
-										errorKind: exitErrorKind,
-									});
+									resolveOnce(completedResult);
 								}
 							}
 						})
@@ -582,53 +437,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						hasImages: false, // Batch/Auto Run does not send images
 					});
 
-					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
+					// The adapter retains every process option while keeping this lifecycle
+					// responsible only for listener ownership, watchdogs, and completion.
 					window.maestro.process
-						.spawn({
-							sessionId: targetSessionId,
-							toolType: session.toolType,
-							cwd: effectiveCwd,
-							command: commandToUse,
-							args: agent.args || [],
-							prompt,
-							appendSystemPrompt,
-							readOnlyMode: false, // Auto Run needs to make changes, not plan
-							// Auto Run runs unattended in --print mode, so it must have full
-							// access - the same permission level as an interactive tab set to
-							// "full". Without this, agents whose bypass is gated on full access
-							// (e.g. Claude Code's --dangerously-skip-permissions in fullAccessArgs)
-							// fall back to the default permission model, can't get tool approvals
-							// non-interactively, and deadlock the run.
-							permissionMode: 'full',
-							// Per-session config overrides (if set)
-							sessionCustomPath: session.customPath,
-							sessionCustomArgs: session.customArgs,
-							sessionAdditionalDirectories: session.additionalDirectories,
-							sessionCustomEnvVars: session.customEnvVars,
-							sessionCustomModel: session.customModel,
-							// Auto Run is session-level (no active tab), so the session's effort
-							// is the source. Interactive spawns pass this too; omitting it here
-							// dropped the user's configured reasoning effort in Auto Run, which for
-							// Codex meant no reasoning summary was streamed (Thought Stream stayed
-							// stuck on "Waiting for the agent to start thinking...") - see #1147.
-							sessionCustomEffort: session.customEffort,
-							sessionCustomContextWindow: session.customContextWindow,
-							// Per-session SSH remote config (takes precedence over agent-level SSH config)
-							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
-						})
-						.catch((err: unknown) => {
-							resolveOnce({
-								success: false,
-								error: err instanceof Error ? err.message : String(err),
-								errorKind: 'spawn-failed',
-							});
-						});
+						.spawn(
+							createBatchAgentSpawnConfig({
+								targetSessionId,
+								session,
+								command: commandToUse,
+								agent,
+								cwd: effectiveCwd,
+								prompt,
+								appendSystemPrompt,
+								sendPromptViaStdin,
+								sendPromptViaStdinRaw,
+							})
+						)
+						.catch((err: unknown) => resolveOnce(classifySpawnFailure(err)));
 				});
 			} catch (error) {
 				logger.error('Error spawning agent:', undefined, error);
-				return { success: false, error: error instanceof Error ? error.message : String(error) };
+				return classifySpawnFailure(error);
 			}
 		},
 		[accumulateUsageStats, processQueuedItemRef, sessionsRef, setSessions]
@@ -663,24 +492,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			resumeAgentSessionId: string,
 			prompt: string,
 			toolType: ToolType = 'claude-code',
-			sessionConfig?: {
-				customPath?: string;
-				customArgs?: string;
-				customEnvVars?: Record<string, string>;
-				customModel?: string;
-				customContextWindow?: number;
-				// Claude token-source selection. The synopsis spawns under a synthetic
-				// sessionId, so the process:spawn handler can't resolve the token mode
-				// from the persisted session - forward these fields explicitly instead.
-				enableMaestroP?: boolean;
-				maestroPMode?: 'interactive' | 'dynamic';
-				maestroPPath?: string;
-				sessionSshRemoteConfig?: {
-					enabled: boolean;
-					remoteId: string | null;
-					workingDirOverride?: string;
-				};
-			}
+			sessionConfig?: SynopsisSessionConfig
 		): Promise<AgentSpawnResult> => {
 			try {
 				const agent = await window.maestro.agents.get(toolType);
@@ -698,70 +510,76 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
 
-				// Track this synopsis session for potential cancellation
-				if (!activeSynopsisSessionsRef.current.has(sessionId)) {
-					activeSynopsisSessionsRef.current.set(sessionId, new Set());
-				}
-				activeSynopsisSessionsRef.current.get(sessionId)!.add(targetSessionId);
-
 				return new Promise((resolve) => {
 					let agentSessionId: string | undefined;
 					let responseText = '';
 					let synopsisUsageStats: UsageStats | undefined;
 					let lastSynopsisUsageEvent: UsageStats | undefined;
-
-					// Array to collect cleanup functions as listeners are registered
+					let settled = false;
 					const cleanupFns: (() => void)[] = [];
 
 					const cleanup = () => {
 						cleanupFns.forEach((fn) => fn());
-						// Remove from tracking
-						activeSynopsisSessionsRef.current.get(sessionId)?.delete(targetSessionId);
+						activeRunCancelsRef.current.delete(targetSessionId);
+						const sessionRuns = activeSynopsisSessionsRef.current.get(sessionId);
+						sessionRuns?.delete(targetSessionId);
+						if (sessionRuns?.size === 0) activeSynopsisSessionsRef.current.delete(sessionId);
 					};
+					const resolveOnce = (result: AgentSpawnResult) => {
+						if (settled) return;
+						settled = true;
+						cleanup();
+						resolve(result);
+					};
+					const cancel = () => {
+						if (settled) return;
+						window.maestro.process.kill(targetSessionId).catch(() => {});
+						resolveOnce({
+							...classifyCancelledExecution(),
+							response: responseText,
+							agentSessionId,
+							usageStats: synopsisUsageStats,
+						});
+					};
+					activeRunCancelsRef.current.set(targetSessionId, cancel);
+					let sessionRuns = activeSynopsisSessionsRef.current.get(sessionId);
+					if (!sessionRuns) {
+						sessionRuns = new Map();
+						activeSynopsisSessionsRef.current.set(sessionId, sessionRuns);
+					}
+					sessionRuns.set(targetSessionId, cancel);
 
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
-							if (sid === targetSessionId) {
-								responseText += data;
-							}
+							if (sid === targetSessionId) responseText += data;
 						})
 					);
-
 					cleanupFns.push(
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
-							if (sid === targetSessionId) {
-								agentSessionId = capturedId;
-							}
+							if (sid === targetSessionId) agentSessionId = capturedId;
 						})
 					);
-
-					// Capture usage stats for this synopsis request
 					cleanupFns.push(
 						window.maestro.process.onUsage((sid: string, usageStats) => {
 							if (sid === targetSessionId) {
-								// Accumulate usage stats (there may be multiple events)
 								synopsisUsageStats = accumulateUsageStats(synopsisUsageStats, usageStats);
-								// Keep the last event for context estimation
 								lastSynopsisUsageEvent = usageStats;
 							}
 						})
 					);
-
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string) => {
-							if (sid === targetSessionId) {
-								cleanup();
-								const ctx = lastSynopsisUsageEvent
-									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
-									: undefined;
-								resolve({
-									success: true,
-									response: responseText,
-									agentSessionId,
-									usageStats: synopsisUsageStats,
-									contextUsage: ctx,
-								});
-							}
+							if (sid !== targetSessionId) return;
+							const contextUsage = lastSynopsisUsageEvent
+								? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
+								: undefined;
+							resolveOnce({
+								success: true,
+								response: responseText,
+								agentSessionId,
+								usageStats: synopsisUsageStats,
+								contextUsage,
+							});
 						})
 					);
 
@@ -780,47 +598,29 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 						hasImages: false, // Resume path does not send images
 					});
+					// The synopsis must never acquire a workspace lock, so its adapter
+					// receives permission-bypass flags only after filtering.
 					window.maestro.process
-						.spawn({
-							sessionId: targetSessionId,
-							toolType,
-							cwd,
-							command: commandToUse,
-							// Strip permission-bypass flags (e.g. --dangerously-skip-permissions). A
-							// background synopsis only reads the resumed conversation and emits a text
-							// summary - it must never acquire the agent's workspace lock. Left unfiltered
-							// it holds that lock for its full duration and blocks the NEXT queued send
-							// from spawning until it finishes, stalling background queue processing for
-							// as long as the synopsis runs. Mirrors tab-naming, which filters for the
-							// same reason.
-							args: filterYoloArgs(agent.args || [], agent),
-							prompt,
-							agentSessionId: resumeAgentSessionId, // This triggers the agent's resume mechanism
-							// Per-session config overrides (if set)
-							sessionCustomPath: sessionConfig?.customPath,
-							sessionCustomArgs: sessionConfig?.customArgs,
-							sessionCustomEnvVars: sessionConfig?.customEnvVars,
-							sessionCustomModel: sessionConfig?.customModel,
-							sessionCustomContextWindow: sessionConfig?.customContextWindow,
-							// Forward the agent's Claude token source. The synopsis runs under a
-							// synthetic sessionId, so the process:spawn handler can't hydrate the
-							// token mode from the persisted session - it falls back to these.
-							// Shared extractor guarantees the SAME complete triple - no
-							// partial/drifting forward possible.
-							...getClaudeTokenSourceFields(sessionConfig),
-							// Always use effective SSH remote config if available
-							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
-						})
-						.catch(() => {
-							cleanup();
-							resolve({ success: false });
-						});
+						.spawn(
+							createSynopsisAgentSpawnConfig({
+								targetSessionId,
+								toolType,
+								cwd,
+								command: commandToUse,
+								args: filterYoloArgs(agent.args || [], agent),
+								prompt,
+								agentSessionId: resumeAgentSessionId,
+								sessionConfig,
+								sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
+								sendPromptViaStdin,
+								sendPromptViaStdinRaw,
+							})
+						)
+						.catch((error: unknown) => resolveOnce(classifySpawnFailure(error)));
 				});
 			} catch (error) {
 				logger.error('Error spawning background synopsis:', undefined, error);
-				return { success: false };
+				return classifySpawnFailure(error);
 			}
 		},
 		[accumulateUsageStats, sessionsRef]
@@ -831,41 +631,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * Called when user clicks Stop to prevent synopsis from running after interruption.
 	 */
 	const cancelPendingSynopsis = useCallback(async (maestroSessionId: string): Promise<void> => {
-		const synopsisSessions = activeSynopsisSessionsRef.current.get(maestroSessionId);
-		if (!synopsisSessions || synopsisSessions.size === 0) {
-			return;
-		}
+		const synopsisRuns = activeSynopsisSessionsRef.current.get(maestroSessionId);
+		if (!synopsisRuns?.size) return;
 
 		logger.info('[cancelPendingSynopsis] Cancelling synopsis sessions for', undefined, [
 			maestroSessionId,
-			{
-				count: synopsisSessions.size,
-				sessionIds: Array.from(synopsisSessions),
-			},
+			{ count: synopsisRuns.size, sessionIds: Array.from(synopsisRuns.keys()) },
 		]);
 
-		// Kill all active synopsis processes for this session
-		const killPromises = Array.from(synopsisSessions).map(async (synopsisSessionId) => {
-			try {
-				await window.maestro.process.kill(synopsisSessionId);
-				logger.info(
-					'[cancelPendingSynopsis] Killed synopsis session:',
-					undefined,
-					synopsisSessionId
-				);
-			} catch (error) {
-				// Process may have already exited
-				logger.warn('[cancelPendingSynopsis] Failed to kill synopsis session:', undefined, [
-					synopsisSessionId,
-					error,
-				]);
-			}
-		});
-
-		await Promise.all(killPromises);
-
-		// Clear the tracking set
-		activeSynopsisSessionsRef.current.delete(maestroSessionId);
+		// The run owns both its kill and its listener cleanup. Snapshotting the
+		// callbacks prevents map mutation during cleanup from skipping a sibling.
+		for (const cancel of Array.from(synopsisRuns.values())) cancel();
 	}, []);
 
 	/** Emits a 2-second yellow center flash through the shared timer owner. */

@@ -543,14 +543,76 @@ describe('useAgentExecution', () => {
 		expect(mockKill).toHaveBeenCalledTimes(1);
 		expect(mockKill.mock.calls[0][0]).toMatch(new RegExp(`^${session.id}-synopsis-\\d+$`));
 
-		// Clean up: trigger exit so the promise resolves
-		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
-		const targetSessionId = spawnConfig.sessionId as string;
-		act(() => {
-			onExitHandler?.(targetSessionId);
+		const cancellation = await spawnPromise;
+		expect(cancellation).toMatchObject({ success: false, errorKind: 'cancelled' });
+	});
+
+	it('cancels each synopsis owner once and disposes every listener once', async () => {
+		const mockKill = vi.fn().mockResolvedValue(true);
+		const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+		window.maestro.process.kill = mockKill;
+		mockProcess.onData.mockReturnValueOnce(unsubscribers[0]);
+		mockProcess.onSessionId.mockReturnValueOnce(unsubscribers[1]);
+		mockProcess.onUsage.mockReturnValueOnce(unsubscribers[2]);
+		mockProcess.onExit.mockReturnValueOnce(unsubscribers[3]);
+		const session = createMockSession();
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session'
+		);
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledOnce());
+		await act(async () => {
+			await result.current.cancelPendingSynopsis(session.id);
+			await result.current.cancelPendingSynopsis(session.id);
 		});
 
-		await spawnPromise;
+		expect(mockKill).toHaveBeenCalledOnce();
+		for (const unsubscribe of unsubscribers) expect(unsubscribe).toHaveBeenCalledOnce();
+		await expect(spawnPromise).resolves.toMatchObject({ success: false, errorKind: 'cancelled' });
+	});
+
+	it('kills and settles active batch work on unmount without applying a stale exit state', async () => {
+		const mockKill = vi.fn().mockResolvedValue(true);
+		const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+		window.maestro.process.kill = mockKill;
+		mockProcess.onData.mockReturnValueOnce(unsubscribers[0]);
+		mockProcess.onSessionId.mockReturnValueOnce(unsubscribers[1]);
+		mockProcess.onUsage.mockReturnValueOnce(unsubscribers[2]);
+		mockProcess.onExit.mockReturnValueOnce(unsubscribers[3]);
+		const session = createMockSession({ state: 'busy' });
+		const setSessions = vi.fn();
+		const { result, unmount } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				setSessions,
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Work');
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledOnce());
+		unmount();
+		expect(mockKill).toHaveBeenCalledOnce();
+
+		for (const unsubscribe of unsubscribers) expect(unsubscribe).toHaveBeenCalledOnce();
+		await expect(spawnPromise).resolves.toMatchObject({ success: false, errorKind: 'cancelled' });
+		expect(setSessions).not.toHaveBeenCalled();
 	});
 
 	it('does nothing when cancelPendingSynopsis is called with no pending synopses', async () => {
