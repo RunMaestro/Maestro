@@ -23,6 +23,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { isExpectedRemoteError } from './remote-error-utils';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
+import { normalizeCopilotPathForComparison } from '../../shared/comparison-path';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
 
 const LOG_CONTEXT = '[CopilotSessionStorage]';
@@ -168,24 +169,11 @@ function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWork
 	return metadata;
 }
 
-/** Normalize a filesystem path for cross-platform comparison. Case-folds Windows-style paths (drive letter prefix). */
-function normalizePath(value?: string): string | null {
-	if (!value) return null;
-	let normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-	// Preserve POSIX root "/" - stripping its trailing slash would produce ""
-	if (!normalized && value === '/') normalized = '/';
-	// Case-fold Windows-style paths (e.g., C:/Users) for case-insensitive comparison
-	if (/^[A-Za-z]:/.test(normalized)) {
-		normalized = normalized.toLowerCase();
-	}
-	return normalized;
-}
-
 /** Check whether session metadata matches the given project path. */
 function matchesProject(metadata: CopilotWorkspaceMetadata, projectPath: string): boolean {
-	const normalizedProject = normalizePath(projectPath);
-	const gitRoot = normalizePath(metadata.git_root);
-	const cwd = normalizePath(metadata.cwd);
+	const normalizedProject = normalizeCopilotPathForComparison(projectPath);
+	const gitRoot = normalizeCopilotPathForComparison(metadata.git_root);
+	const cwd = normalizeCopilotPathForComparison(metadata.cwd);
 
 	if (!normalizedProject) return true;
 	return (
