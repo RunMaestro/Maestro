@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 /**
  * Moderator configuration
@@ -156,96 +157,46 @@ export function createGroupChatApi() {
 		getImages: (id: string): Promise<Record<string, string>> =>
 			ipcRenderer.invoke('groupChat:getImages', id),
 
-		// Events
-		onMessage: (callback: (groupChatId: string, message: ChatMessage) => void) => {
-			const handler = (_: any, groupChatId: string, message: ChatMessage) =>
-				callback(groupChatId, message);
-			ipcRenderer.on('groupChat:message', handler);
-			return () => ipcRenderer.removeListener('groupChat:message', handler);
-		},
+		onMessage: (callback: (groupChatId: string, message: ChatMessage) => void) =>
+			subscribeIpc('groupChat:message', callback),
 
 		onStateChange: (
 			callback: (
 				groupChatId: string,
 				state: 'idle' | 'moderator-thinking' | 'agent-working'
 			) => void
-		) => {
-			const handler = (
-				_: any,
-				groupChatId: string,
-				state: 'idle' | 'moderator-thinking' | 'agent-working'
-			) => callback(groupChatId, state);
-			ipcRenderer.on('groupChat:stateChange', handler);
-			return () => ipcRenderer.removeListener('groupChat:stateChange', handler);
-		},
+		) => subscribeIpc('groupChat:stateChange', callback),
 
-		onParticipantsChanged: (
-			callback: (groupChatId: string, participants: Participant[]) => void
-		) => {
-			const handler = (_: any, groupChatId: string, participants: Participant[]) =>
-				callback(groupChatId, participants);
-			ipcRenderer.on('groupChat:participantsChanged', handler);
-			return () => ipcRenderer.removeListener('groupChat:participantsChanged', handler);
-		},
+		onParticipantsChanged: (callback: (groupChatId: string, participants: Participant[]) => void) =>
+			subscribeIpc('groupChat:participantsChanged', callback),
 
-		onModeratorUsage: (callback: (groupChatId: string, usage: ModeratorUsage) => void) => {
-			const handler = (_: any, groupChatId: string, usage: ModeratorUsage) =>
-				callback(groupChatId, usage);
-			ipcRenderer.on('groupChat:moderatorUsage', handler);
-			return () => ipcRenderer.removeListener('groupChat:moderatorUsage', handler);
-		},
+		onModeratorUsage: (callback: (groupChatId: string, usage: ModeratorUsage) => void) =>
+			subscribeIpc('groupChat:moderatorUsage', callback),
 
-		onHistoryEntry: (callback: (groupChatId: string, entry: GroupChatHistoryEntry) => void) => {
-			const handler = (_: any, groupChatId: string, entry: GroupChatHistoryEntry) =>
-				callback(groupChatId, entry);
-			ipcRenderer.on('groupChat:historyEntry', handler);
-			return () => ipcRenderer.removeListener('groupChat:historyEntry', handler);
-		},
+		onHistoryEntry: (callback: (groupChatId: string, entry: GroupChatHistoryEntry) => void) =>
+			subscribeIpc('groupChat:historyEntry', callback),
 
 		onParticipantState: (
-			callback: (groupChatId: string, participantName: string, state: 'idle' | 'working') => void
-		) => {
-			const handler = (
-				_: any,
+			callback: (
 				groupChatId: string,
 				participantName: string,
-				state: 'idle' | 'working'
-			) => callback(groupChatId, participantName, state);
-			ipcRenderer.on('groupChat:participantState', handler);
-			return () => ipcRenderer.removeListener('groupChat:participantState', handler);
-		},
+				state: 'idle' | 'thinking' | 'working'
+			) => void
+		) => subscribeIpc('groupChat:participantState', callback),
 
 		onParticipantLiveOutput: (
 			callback: (groupChatId: string, participantName: string, chunk: string) => void
-		) => {
-			const handler = (_: any, groupChatId: string, participantName: string, chunk: string) =>
-				callback(groupChatId, participantName, chunk);
-			ipcRenderer.on('groupChat:participantLiveOutput', handler);
-			return () => ipcRenderer.removeListener('groupChat:participantLiveOutput', handler);
-		},
+		) => subscribeIpc('groupChat:participantLiveOutput', callback),
 
 		onAutoRunTriggered: (
 			callback: (groupChatId: string, participantName: string, filename?: string) => void
-		) => {
-			const handler = (_: any, groupChatId: string, participantName: string, filename?: string) =>
-				callback(groupChatId, participantName, filename);
-			ipcRenderer.on('groupChat:autoRunTriggered', handler);
-			return () => ipcRenderer.removeListener('groupChat:autoRunTriggered', handler);
-		},
+		) => subscribeIpc('groupChat:autoRunTriggered', callback),
 
-		onAutoRunBatchComplete: (callback: (groupChatId: string, participantName: string) => void) => {
-			const handler = (_: any, groupChatId: string, participantName: string) =>
-				callback(groupChatId, participantName);
-			ipcRenderer.on('groupChat:autoRunBatchComplete', handler);
-			return () => ipcRenderer.removeListener('groupChat:autoRunBatchComplete', handler);
-		},
+		onAutoRunBatchComplete: (callback: (groupChatId: string, participantName: string) => void) =>
+			subscribeIpc('groupChat:autoRunBatchComplete', callback),
 
-		onModeratorSessionIdChanged: (callback: (groupChatId: string, sessionId: string) => void) => {
-			const handler = (_: any, groupChatId: string, sessionId: string) =>
-				callback(groupChatId, sessionId);
-			ipcRenderer.on('groupChat:moderatorSessionIdChanged', handler);
-			return () => ipcRenderer.removeListener('groupChat:moderatorSessionIdChanged', handler);
-		},
+		onModeratorSessionIdChanged: (callback: (groupChatId: string, sessionId: string) => void) =>
+			subscribeIpc('groupChat:moderatorSessionIdChanged', callback),
 	};
 }
 

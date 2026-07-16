@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { AgentRun, AgentRunEvent, AgentRunStatus } from '../../shared/agent-run';
 import type { Campaign, CampaignStatus } from '../../shared/campaign';
 
@@ -91,16 +92,10 @@ export function createAgentRunApi() {
 			ipcRenderer.invoke('agentRun:resolveFinding', runId, findingIndex, status),
 		merge: (runId: string): Promise<AgentRunActionResponse> =>
 			ipcRenderer.invoke('agentRun:merge', runId),
-		onUpdated: (listener: (run: AgentRun) => void): (() => void) => {
-			const handler = (_event: unknown, run: AgentRun): void => listener(run);
-			ipcRenderer.on('agentRun:updated', handler);
-			return () => ipcRenderer.removeListener('agentRun:updated', handler);
-		},
-		onEventAppended: (listener: (event: AgentRunEvent) => void): (() => void) => {
-			const handler = (_event: unknown, appended: AgentRunEvent): void => listener(appended);
-			ipcRenderer.on('agentRun:eventAppended', handler);
-			return () => ipcRenderer.removeListener('agentRun:eventAppended', handler);
-		},
+		onUpdated: (listener: (run: AgentRun) => void): (() => void) =>
+			subscribeIpc('agentRun:updated', listener),
+		onEventAppended: (listener: (event: AgentRunEvent) => void): (() => void) =>
+			subscribeIpc('agentRun:eventAppended', listener),
 		campaigns: {
 			list: (options?: CampaignListOptions): Promise<CampaignListResponse> =>
 				ipcRenderer.invoke('campaign:list', options),
