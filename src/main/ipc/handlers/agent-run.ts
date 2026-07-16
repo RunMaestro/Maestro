@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
+import { createIpcHandler } from '../../utils/ipcHandler';
 import {
 	appendAgentRunEvent,
 	getAgentRun,
@@ -53,21 +54,28 @@ export function registerAgentRunHandlers(deps: AgentRunHandlerDependencies): voi
 	const { getProcessManager, settingsStore } = deps;
 	ipcMain.handle(
 		'agentRun:list',
-		async (
-			_event,
-			options?: { status?: AgentRunStatus; campaign?: string; limit?: number; offset?: number }
-		) => {
-			try {
+		createIpcHandler(
+			{
+				context: LOG_CONTEXT,
+				operation: 'list agent runs',
+				logSuccess: false,
+				formatError: toErrorMessage,
+			},
+			async (options?: {
+				status?: AgentRunStatus;
+				campaign?: string;
+				limit?: number;
+				offset?: number;
+			}) => {
 				const { campaign, ...storeOptions } = options ?? {};
 				return {
-					success: true,
-					runs: listAgentRuns({ ...storeOptions, ...(campaign ? { campaignId: campaign } : {}) }),
+					runs: listAgentRuns({
+						...storeOptions,
+						...(campaign ? { campaignId: campaign } : {}),
+					}),
 				};
-			} catch (error) {
-				logger.error(`Failed to list agent runs: ${toErrorMessage(error)}`, LOG_CONTEXT);
-				return { success: false, error: toErrorMessage(error) };
 			}
-		}
+		)
 	);
 
 	ipcMain.handle('agentRun:record', async (_event, run: AgentRun) => {
@@ -91,17 +99,18 @@ export function registerAgentRunHandlers(deps: AgentRunHandlerDependencies): voi
 		}
 	});
 
-	ipcMain.handle('agentRun:events', async (_event, runId: string) => {
-		try {
-			return { success: true, events: readAgentRunEvents(runId) };
-		} catch (error) {
-			logger.error(
-				`Failed to read agent run events ${runId}: ${toErrorMessage(error)}`,
-				LOG_CONTEXT
-			);
-			return { success: false, error: toErrorMessage(error) };
-		}
-	});
+	ipcMain.handle(
+		'agentRun:events',
+		createIpcHandler(
+			{
+				context: LOG_CONTEXT,
+				operation: 'read agent run events',
+				logSuccess: false,
+				formatError: toErrorMessage,
+			},
+			async (runId: string) => ({ events: readAgentRunEvents(runId) })
+		)
+	);
 
 	ipcMain.handle('agentRun:event', async (_event, event: AgentRunEvent) => {
 		try {
@@ -118,14 +127,17 @@ export function registerAgentRunHandlers(deps: AgentRunHandlerDependencies): voi
 
 	ipcMain.handle(
 		'campaign:list',
-		async (_event, options?: { status?: CampaignStatus; limit?: number }) => {
-			try {
-				return { success: true, campaigns: listCampaigns(options ?? {}) };
-			} catch (error) {
-				logger.error(`Failed to list campaigns: ${toErrorMessage(error)}`, LOG_CONTEXT);
-				return { success: false, error: toErrorMessage(error) };
-			}
-		}
+		createIpcHandler(
+			{
+				context: LOG_CONTEXT,
+				operation: 'list campaigns',
+				logSuccess: false,
+				formatError: toErrorMessage,
+			},
+			async (options?: { status?: CampaignStatus; limit?: number }) => ({
+				campaigns: listCampaigns(options ?? {}),
+			})
+		)
 	);
 
 	ipcMain.handle('campaign:record', async (_event, campaign: Campaign) => {
