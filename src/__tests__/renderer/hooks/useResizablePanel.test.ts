@@ -63,6 +63,7 @@ describe('useResizablePanel', () => {
 		act(() => {
 			result.current.onResizeStart({
 				preventDefault: () => {},
+				stopPropagation: () => {},
 				clientX,
 				pointerId: 1,
 				currentTarget: handle,

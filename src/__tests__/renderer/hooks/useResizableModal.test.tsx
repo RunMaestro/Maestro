@@ -61,26 +61,21 @@ describe('useResizableModal', () => {
 		}
 	});
 
-	it('updates DOM size live and persists only on mouseup', () => {
+	it('updates DOM size live and persists only on pointerup', () => {
 		render(<Harness />);
 
 		const modal = screen.getByTestId('modal');
 		expect(modal).toHaveStyle({ width: '400px', height: '300px' });
 
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-se'), {
-			clientX: 0,
-			clientY: 0,
-		});
-		fireEvent.mouseMove(document, {
-			clientX: 50,
-			clientY: 20,
-		});
+		const handle = screen.getByTestId('modal-resize-handle-se');
+		fireEvent.pointerDown(handle, { pointerId: 1, clientX: 0, clientY: 0 });
+		fireEvent.pointerMove(handle, { pointerId: 1, clientX: 50, clientY: 20 });
 
 		expect(modal.style.width).toBe('500px');
 		expect(modal.style.height).toBe('340px');
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
 
-		fireEvent.mouseUp(document);
+		fireEvent.pointerUp(handle, { pointerId: 1 });
 
 		expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
 			width: 500,
@@ -91,19 +86,16 @@ describe('useResizableModal', () => {
 		});
 	});
 
-	it('cleans document drag listeners when unmounted during a drag', () => {
-		const removeSpy = vi.spyOn(document, 'removeEventListener');
+	it('cleans pointer drag listeners when unmounted during a drag', () => {
 		const { unmount } = render(<Harness />);
+		const handle = screen.getByTestId('modal-resize-handle-e');
+		const removeSpy = vi.spyOn(handle, 'removeEventListener');
 
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-e'), {
-			clientX: 0,
-			clientY: 0,
-		});
-
+		fireEvent.pointerDown(handle, { pointerId: 1, clientX: 0, clientY: 0 });
 		unmount();
 
-		expect(removeSpy).toHaveBeenCalledWith('mousemove', expect.any(Function));
-		expect(removeSpy).toHaveBeenCalledWith('mouseup', expect.any(Function));
+		expect(removeSpy).toHaveBeenCalledWith('pointermove', expect.any(Function));
+		expect(removeSpy).toHaveBeenCalledWith('pointerup', expect.any(Function));
 	});
 
 	it('re-clamps immediately and persists (debounced) when the viewport shrinks', async () => {
@@ -172,12 +164,10 @@ describe('useResizableModal', () => {
 		// (The viewport-resize handler already clamped the size to the 500x400
 		// viewport's exact max, so shrinking from the "nw" corner is used here to
 		// land on a value distinct from that stale ceiling.)
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-nw'), {
-			clientX: 0,
-			clientY: 0,
-		});
-		fireEvent.mouseMove(document, { clientX: 30, clientY: 20 });
-		fireEvent.mouseUp(document);
+		const handle = screen.getByTestId('modal-resize-handle-nw');
+		fireEvent.pointerDown(handle, { pointerId: 1, clientX: 0, clientY: 0 });
+		fireEvent.pointerMove(handle, { pointerId: 1, clientX: 30, clientY: 20 });
+		fireEvent.pointerUp(handle, { pointerId: 1 });
 
 		expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
 			width: 376,
@@ -196,27 +186,21 @@ describe('useResizableModal', () => {
 		});
 	});
 
-	it('cleans up a previous drag before starting a new one if the first never received mouseup', () => {
+	it('cleans up a previous pointer drag before starting a new one', () => {
 		render(<Harness />);
 
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-e'), {
-			clientX: 0,
-			clientY: 0,
-		});
+		const firstHandle = screen.getByTestId('modal-resize-handle-e');
+		const secondHandle = screen.getByTestId('modal-resize-handle-s');
+		fireEvent.pointerDown(firstHandle, { pointerId: 1, clientX: 0, clientY: 0 });
+		const removeSpy = vi.spyOn(firstHandle, 'removeEventListener');
 
-		const removeSpy = vi.spyOn(document, 'removeEventListener');
+		// Starting a second drag must tear down the previous handle's listeners.
+		fireEvent.pointerDown(secondHandle, { pointerId: 2, clientX: 0, clientY: 0 });
 
-		// Start a second drag without the first drag ever getting a mouseup -
-		// the first drag's document listeners must be torn down, not orphaned.
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-s'), {
-			clientX: 0,
-			clientY: 0,
-		});
+		expect(removeSpy).toHaveBeenCalledWith('pointermove', expect.any(Function));
+		expect(removeSpy).toHaveBeenCalledWith('pointerup', expect.any(Function));
 
-		expect(removeSpy).toHaveBeenCalledWith('mousemove', expect.any(Function));
-		expect(removeSpy).toHaveBeenCalledWith('mouseup', expect.any(Function));
-
-		fireEvent.mouseUp(document);
+		fireEvent.pointerUp(secondHandle, { pointerId: 2 });
 
 		// Only the second (active) drag should commit.
 		expect(window.maestro.settings.set).toHaveBeenCalledTimes(1);
@@ -226,11 +210,9 @@ describe('useResizableModal', () => {
 		render(<Harness />);
 
 		const modal = screen.getByTestId('modal');
-		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-se'), {
-			clientX: 0,
-			clientY: 0,
-		});
-		fireEvent.mouseMove(document, { clientX: 50, clientY: 20 });
+		const handle = screen.getByTestId('modal-resize-handle-se');
+		fireEvent.pointerDown(handle, { pointerId: 1, clientX: 0, clientY: 0 });
+		fireEvent.pointerMove(handle, { pointerId: 1, clientX: 50, clientY: 20 });
 
 		expect(modal.style.width).toBe('500px');
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
@@ -242,9 +224,8 @@ describe('useResizableModal', () => {
 			height: 340,
 		});
 
-		// Further mouse movement (e.g. unrelated activity elsewhere in the app)
-		// must not keep resizing the modal - the drag listeners were removed.
-		fireEvent.mouseMove(document, { clientX: 999, clientY: 999 });
+		// Further pointer movement must not keep resizing after blur cleanup.
+		fireEvent.pointerMove(handle, { pointerId: 1, clientX: 999, clientY: 999 });
 		expect(modal.style.width).toBe('500px');
 	});
 

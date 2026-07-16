@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { ResizeStartEvent } from './usePointerResize';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { usePointerResize } from './usePointerResize';
 
 export interface UseResizablePanelOptions {
@@ -15,7 +15,7 @@ export interface UseResizablePanelOptions {
 export interface UseResizablePanelReturn {
 	panelRef: React.RefObject<HTMLDivElement>;
 	isResizing: boolean;
-	onResizeStart: (event: ResizeStartEvent<HTMLElement>) => void;
+	onResizeStart: (event: ReactPointerEvent<HTMLElement>) => void;
 	transitionClass: string;
 }
 
@@ -33,7 +33,7 @@ export function useResizablePanel({
 	const { isResizing, startResize } = usePointerResize<number>();
 
 	const onResizeStart = useCallback(
-		(event: ResizeStartEvent<HTMLElement>) => {
+		(event: ReactPointerEvent<HTMLElement>) => {
 			const startWidth = width;
 			startResize(event, {
 				value: startWidth,

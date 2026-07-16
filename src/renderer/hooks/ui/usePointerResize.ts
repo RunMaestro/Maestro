@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
-
-export type ResizeStartEvent<Element extends HTMLElement> =
-	ReactMouseEvent<Element> | ReactPointerEvent<Element>;
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 export interface PointerResizeOperation<Value> {
 	value: Value;
@@ -14,7 +11,7 @@ export interface PointerResizeOperation<Value> {
 export interface UsePointerResizeReturn<Value> {
 	isResizing: boolean;
 	startResize: (
-		event: ResizeStartEvent<HTMLElement>,
+		event: ReactPointerEvent<HTMLElement>,
 		operation: PointerResizeOperation<Value>
 	) => void;
 }
@@ -26,30 +23,24 @@ export interface UsePointerResizeReturn<Value> {
 export function usePointerResize<Value>(): UsePointerResizeReturn<Value> {
 	const [isResizing, setIsResizing] = useState(false);
 	const cleanupRef = useRef<(() => void) | null>(null);
-	const completeRef = useRef<(() => void) | null>(null);
 	const mountedRef = useRef(true);
 
 	useEffect(() => {
 		mountedRef.current = true;
 		return () => {
 			mountedRef.current = false;
-			completeRef.current?.();
+			cleanupRef.current?.();
 		};
 	}, []);
 
 	const startResize = useCallback(
-		(event: ResizeStartEvent<HTMLElement>, operation: PointerResizeOperation<Value>) => {
+		(event: ReactPointerEvent<HTMLElement>, operation: PointerResizeOperation<Value>) => {
 			event.preventDefault();
-			event.stopPropagation?.();
+			event.stopPropagation();
 			cleanupRef.current?.();
 
 			const handle = event.currentTarget;
-			const pointerId =
-				'pointerId' in event &&
-				typeof (event as ReactPointerEvent<HTMLElement>).pointerId === 'number'
-					? (event as ReactPointerEvent<HTMLElement>).pointerId
-					: null;
-			const isPointerEvent = event.type === 'pointerdown' || pointerId !== null;
+			const pointerId = event.pointerId;
 			const startX = event.clientX;
 			const startY = event.clientY;
 			let currentValue = operation.value;
@@ -59,82 +50,60 @@ export function usePointerResize<Value>(): UsePointerResizeReturn<Value> {
 				setIsResizing(true);
 			}
 
-			if (pointerId !== null) {
-				try {
-					handle.setPointerCapture(pointerId);
-				} catch {
-					// A release between the React handler and capture is harmless: the
-					// listeners below still complete the interaction when possible.
-				}
+			try {
+				handle.setPointerCapture(pointerId);
+			} catch {
+				// A release between the React handler and capture is harmless: the
+				// listeners below still complete the interaction when possible.
 			}
-			const matchesPointer = (moveEvent: PointerEvent) =>
-				pointerId === null ||
-				moveEvent.pointerId === undefined ||
-				moveEvent.pointerId === 0 ||
-				moveEvent.pointerId === pointerId;
 
 			const cleanup = () => {
-				if (isPointerEvent) {
-					handle.removeEventListener('pointermove', handlePointerMove);
-					handle.removeEventListener('pointerup', complete);
-					handle.removeEventListener('pointercancel', complete);
-					handle.removeEventListener('lostpointercapture', complete);
-					if (pointerId !== null) {
-						try {
-							handle.releasePointerCapture(pointerId);
-						} catch {
-							// Capture may already be released after cancellation or blur.
-						}
-					}
-				} else {
-					document.removeEventListener('mousemove', handleMouseMove);
-					document.removeEventListener('mouseup', complete);
-				}
+				handle.removeEventListener('pointermove', handlePointerMove);
+				handle.removeEventListener('pointerup', complete);
+				handle.removeEventListener('pointercancel', complete);
+				handle.removeEventListener('lostpointercapture', complete);
 				window.removeEventListener('blur', complete);
+				try {
+					handle.releasePointerCapture(pointerId);
+				} catch {
+					// Capture may already be released after cancellation or blur.
+				}
 				if (cleanupRef.current === cleanup) {
 					cleanupRef.current = null;
-					completeRef.current = null;
 				}
 			};
 
 			const complete = () => {
-				if (completed) {
-					return;
-				}
+				if (completed) return;
 				completed = true;
 				cleanup();
-				if (mountedRef.current) {
-					setIsResizing(false);
-				}
+				if (!mountedRef.current) return;
+				setIsResizing(false);
 				operation.onComplete(currentValue);
 			};
 
-			const resize = (clientX: number, clientY: number) => {
-				if (completed) return;
-				currentValue = operation.getNextValue(operation.value, clientX - startX, clientY - startY);
+			const handlePointerMove = (moveEvent: PointerEvent) => {
+				if (
+					completed ||
+					(moveEvent.pointerId !== undefined &&
+						moveEvent.pointerId !== 0 &&
+						moveEvent.pointerId !== pointerId)
+				) {
+					return;
+				}
+				currentValue = operation.getNextValue(
+					operation.value,
+					moveEvent.clientX - startX,
+					moveEvent.clientY - startY
+				);
 				operation.onResize(currentValue);
 			};
 
-			const handlePointerMove = (moveEvent: PointerEvent) => {
-				if (matchesPointer(moveEvent)) {
-					resize(moveEvent.clientX, moveEvent.clientY);
-				}
-			};
-			const handleMouseMove = (moveEvent: MouseEvent) => {
-				resize(moveEvent.clientX, moveEvent.clientY);
-			};
-
 			cleanupRef.current = cleanup;
-			completeRef.current = complete;
-			if (isPointerEvent) {
-				handle.addEventListener('pointermove', handlePointerMove);
-				handle.addEventListener('pointerup', complete);
-				handle.addEventListener('pointercancel', complete);
-				handle.addEventListener('lostpointercapture', complete);
-			} else {
-				document.addEventListener('mousemove', handleMouseMove);
-				document.addEventListener('mouseup', complete);
-			}
+			handle.addEventListener('pointermove', handlePointerMove);
+			handle.addEventListener('pointerup', complete);
+			handle.addEventListener('pointercancel', complete);
+			handle.addEventListener('lostpointercapture', complete);
 			window.addEventListener('blur', complete);
 		},
 		[]

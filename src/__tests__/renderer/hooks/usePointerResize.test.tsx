@@ -69,7 +69,7 @@ describe('usePointerResize', () => {
 		expect(onComplete).toHaveBeenCalledWith(130);
 	});
 
-	it('commits once for lost capture and commits the active value on unmount', () => {
+	it('completes once for lost capture and cleans up on unmount', () => {
 		const onComplete = vi.fn();
 		const { getByTestId, unmount } = render(<ResizeHandle onComplete={onComplete} />);
 		const handle = getByTestId('resize-handle');
@@ -88,7 +88,6 @@ describe('usePointerResize', () => {
 		fireEvent.pointerDown(handle, { pointerId: 8, clientX: 10, clientY: 0 });
 		unmount();
 		act(() => window.dispatchEvent(new Event('blur')));
-		expect(onComplete).toHaveBeenCalledTimes(2);
-		expect(onComplete).toHaveBeenLastCalledWith(100);
+		expect(onComplete).toHaveBeenCalledTimes(1);
 	});
 });

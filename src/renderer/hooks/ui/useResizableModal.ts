@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, RefObject } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { ModalResizeKey, ModalSize } from '../../utils/modalSizing';
 import { clampModalSize, resolveModalSize } from '../../utils/modalSizing';
 import { useEventListener } from '../utils/useEventListener';
 import { useDebouncedCallback } from '../utils/useThrottle';
-import { usePointerResize, type ResizeStartEvent } from './usePointerResize';
+import { usePointerResize } from './usePointerResize';
 
 const RESIZE_PERSIST_DEBOUNCE_MS = 300;
 
@@ -25,7 +25,10 @@ export interface UseResizableModalReturn {
 	modalRef: RefObject<HTMLDivElement>;
 	size: ModalSize;
 	isResizing: boolean;
-	onResizeStart: (direction: ModalResizeDirection, event: ResizeStartEvent<HTMLDivElement>) => void;
+	onResizeStart: (
+		direction: ModalResizeDirection,
+		event: ReactPointerEvent<HTMLDivElement>
+	) => void;
 	style: CSSProperties;
 }
 
@@ -142,9 +145,8 @@ export function useResizableModal({
 	);
 
 	const onResizeStart = useCallback(
-		(direction: ModalResizeDirection, event: ResizeStartEvent<HTMLDivElement>) => {
+		(direction: ModalResizeDirection, event: ReactPointerEvent<HTMLDivElement>) => {
 			if (!enabled) return;
-
 			const startSize = clamp(size);
 			startResize(event, {
 				value: startSize,
