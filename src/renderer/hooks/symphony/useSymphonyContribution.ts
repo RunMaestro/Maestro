@@ -9,6 +9,9 @@
  *   - Auto-starts batch run with contribution documents
  *
  * Reads from: sessionStore, settingsStore, modalStore, uiStore
+ *
+ * PERF: Does not subscribe to full sessions[]. Validation reads sessions at
+ * click time via getState().
  */
 
 import { useCallback } from 'react';
@@ -54,8 +57,7 @@ export function useSymphonyContribution(
 ): UseSymphonyContributionReturn {
 	const { startBatchRun, inputRef } = deps;
 
-	// --- Reactive subscriptions ---
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: No reactive sessions[] sub - contribution starts at click time via getState().
 
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId } = useSessionStore.getState();
@@ -81,12 +83,12 @@ export function useSymphonyContribution(
 				return;
 			}
 
-			// Validate uniqueness
+			// Validate uniqueness against current store (event-time read)
 			const validation = validateNewSession(
 				data.sessionName,
 				data.localPath,
 				data.agentType as ToolType,
-				sessions
+				useSessionStore.getState().sessions
 			);
 			if (!validation.valid) {
 				logger.error(`Session validation failed: ${validation.error}`);
@@ -267,7 +269,7 @@ export function useSymphonyContribution(
 				}, 500);
 			}
 		},
-		[sessions, defaultSaveToHistory, startBatchRun]
+		[defaultSaveToHistory, startBatchRun, inputRef]
 	);
 
 	return { handleStartContribution };

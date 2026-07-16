@@ -16,7 +16,7 @@
  *   - Legacy scanner: polls for worktrees using old worktreeParentPath model
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { Session } from '../../types';
 import type { PRDetails } from '../../components/CreatePRModal';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -146,38 +146,33 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	// ---------------------------------------------------------------------------
 	// Reactive subscriptions
 	// ---------------------------------------------------------------------------
-	// Full sessions array is needed here: worktreeConfigKey derives from all sessions'
-	// worktreeConfig fields, and the git info effect iterates parent sessions. A narrower
-	// selector would require a custom equality fn that's more complex than the current approach.
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Do not subscribe to the full sessions array. Streaming log/token flushes
+	// would wake App via this hook. Effects only need worktreeConfig / legacy-path
+	// signatures (and sessionsLoaded); handlers/scans read via getState().
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const defaultSaveToHistory = useSettingsStore((s) => s.defaultSaveToHistory);
+
+	// Stable dependency key for the worktree file-watcher effect below - only re-runs
+	// when a session's worktreeConfig actually changes (not on every sessions array mutation).
+	// Uses | delimiter to avoid false collisions (session IDs are UUIDs, paths don't contain |).
+	const worktreeConfigKey = useSessionStore((s) =>
+		s.sessions
+			.filter((sess) => sess.worktreeConfig?.basePath)
+			.map(
+				(sess) => `${sess.id}|${sess.worktreeConfig!.basePath}|${sess.worktreeConfig!.watchEnabled}`
+			)
+			.join('\n')
+	);
+
+	// Whether any sessions still use the legacy worktreeParentPath model (for legacy scanner effect).
+	const hasLegacyWorktreeSessions = useSessionStore((s) =>
+		s.sessions.some((sess) => Boolean(sess.worktreeParentPath))
+	);
 
 	// ---------------------------------------------------------------------------
 	// Refs
 	// ---------------------------------------------------------------------------
 	const recentlyCreatedWorktreePathsRef = useRef(new Set<string>());
-
-	// ---------------------------------------------------------------------------
-	// Memoized values
-	// ---------------------------------------------------------------------------
-	// Stable dependency key for the worktree file-watcher effect below — only re-runs
-	// when a session's worktreeConfig actually changes (not on every sessions array mutation).
-	// Uses | delimiter to avoid false collisions (session IDs are UUIDs, paths don't contain |).
-	const worktreeConfigKey = useMemo(
-		() =>
-			sessions
-				.filter((s) => s.worktreeConfig?.basePath)
-				.map((s) => `${s.id}|${s.worktreeConfig!.basePath}|${s.worktreeConfig!.watchEnabled}`)
-				.join('\n'),
-		[sessions]
-	);
-
-	// Whether any sessions still use the legacy worktreeParentPath model (for legacy scanner effect).
-	const hasLegacyWorktreeSessions = useMemo(
-		() => sessions.some((s) => s.worktreeParentPath),
-		[sessions]
-	);
 
 	// ---------------------------------------------------------------------------
 	// Quick-access handlers

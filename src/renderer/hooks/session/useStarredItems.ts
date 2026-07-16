@@ -96,7 +96,21 @@ export interface UseStarredItemsReturn {
 export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsReturn {
 	const { onJumpToStarredSession, showConfirmation, ownsSession } = deps;
 
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Star/open-tab signature only - streaming log/token flushes must not wake
+	// App via this hook. List builders read sessions at memo/event time via getState().
+	const starredOpenSignature = useSessionStore((s) =>
+		s.sessions
+			.map((sess) => {
+				const tabs = (sess.aiTabs ?? [])
+					.map(
+						(t) => `${t.id}:${t.starred ? 1 : 0}:${t.agentSessionId ?? ''}:${getTabDisplayName(t)}`
+					)
+					.join(',');
+				return `${sess.id}|${sess.name}|${sess.toolType}|${sess.projectRoot}|${tabs}`;
+			})
+			.join('\n')
+	);
+	const sessionCount = useSessionStore((s) => s.sessions.length);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 
 	// Closed/named starred sessions are loaded lazily from disk (the parent agent
@@ -138,7 +152,7 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	// closed twin behind).
 	useEffect(() => {
 		void loadStarredNamedSessions();
-	}, [loadStarredNamedSessions, sessions.length]);
+	}, [loadStarredNamedSessions, sessionCount]);
 	useEffect(
 		() => onStarredSessionsChanged(() => void loadStarredNamedSessions()),
 		[loadStarredNamedSessions]
@@ -148,6 +162,7 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 	// flat list rendered by the "Starred Sessions" Left Bar section.
 	const starredItems = useMemo<StarredItem[]>(() => {
 		if (!showStarredSessionsSection) return [];
+		const sessions = useSessionStore.getState().sessions;
 		const items: StarredItem[] = [];
 		// Suppress a closed/named row whenever its conversation is already open as a
 		// tab, regardless of that tab's star state. Tracking every open tab's
@@ -195,7 +210,8 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 		const scoped = ownsSession ? items.filter((i) => ownsSession(i.parentSessionId)) : items;
 		scoped.sort((a, b) => a.displayName.localeCompare(b.displayName));
 		return scoped;
-	}, [showStarredSessionsSection, sessions, starredNamedSessions, ownsSession]);
+		// starredOpenSignature pins star/open-tab fields without a full sessions[] sub.
+	}, [showStarredSessionsSection, starredOpenSignature, starredNamedSessions, ownsSession]);
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {
