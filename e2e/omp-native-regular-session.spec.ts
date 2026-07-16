@@ -61,7 +61,6 @@ test.describe('first-party OMP regular session', () => {
 					}
 				)
 				.toBe(true);
-			await expect(launched.window.getByText('native expanded complete')).toBeVisible();
 			await expect(approvalDialog).toHaveCount(0);
 			await expect(
 				launched.window.getByText('Native OMP fixture canvas', { exact: true }).first()
@@ -139,11 +138,13 @@ test.describe('first-party OMP regular session', () => {
 			await composer.fill('second native prompt after agent_end no-approval');
 			await composer.press('Enter');
 			await expect(
-				launched.window.getByText(
-					/native text: second native prompt after agent_end no-approvalnative expanded complete/
-				)
+				launched.window.getByText('native text: second native prompt after agent_end no-approval', {
+					exact: true,
+				})
 			).toBeVisible({ timeout: 30_000 });
-			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect(
+				launched.window.getByText('native expanded complete', { exact: true })
+			).toHaveCount(0);
 			await expect
 				.poll(
 					() =>
@@ -233,12 +234,6 @@ test.describe('first-party OMP regular session', () => {
 			await expect(composer).toBeEditable({ timeout: 30_000 });
 			await expect
 				.poll(
-					() => (fs.readFileSync(frameLogPath, 'utf8').match(/"type":"agent_end"/g) ?? []).length
-				)
-				.toBe(2);
-
-			await expect
-				.poll(
 					() => {
 						const frames = fs.readFileSync(frameLogPath, 'utf8');
 						return ['"value":"typed native input"'].every((frame) => frames.includes(frame));
@@ -246,6 +241,11 @@ test.describe('first-party OMP regular session', () => {
 					{ timeout: 30_000 }
 				)
 				.toBe(true);
+			await expect
+				.poll(
+					() => (fs.readFileSync(frameLogPath, 'utf8').match(/"type":"agent_end"/g) ?? []).length
+				)
+				.toBe(2);
 		} finally {
 			await harness.close();
 		}

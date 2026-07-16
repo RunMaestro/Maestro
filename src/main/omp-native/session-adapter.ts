@@ -55,6 +55,7 @@ export class OmpNativeSessionAdapter {
 	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
+	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
 	private appliedModel?: string;
 
@@ -117,6 +118,7 @@ export class OmpNativeSessionAdapter {
 
 	async prompt(message: string, images?: readonly string[]): Promise<void> {
 		await this.initialized;
+		this.turnEmittedAssistantText = false;
 		this.turnInFlight = true;
 		try {
 			await this.client.command({
@@ -302,8 +304,10 @@ export class OmpNativeSessionAdapter {
 			const assistantMessageEvent = asRecord(event.assistantMessageEvent);
 			const eventType = stringAt(assistantMessageEvent, 'type');
 			const text = stringAt(assistantMessageEvent, 'delta') ?? textFrom(event);
-			if ((eventType === 'text_delta' || !eventType) && text)
+			if ((eventType === 'text_delta' || !eventType) && text) {
+				this.turnEmittedAssistantText = true;
 				this.options.send('process:data', this.options.sessionId, text);
+			}
 			if (eventType === 'thinking_delta' && text)
 				this.options.send('process:thinking-chunk', this.options.sessionId, text);
 		}
@@ -349,7 +353,8 @@ export class OmpNativeSessionAdapter {
 	private handleCallback(callback: OmpRpcEvent): void {
 		if (callback.type === 'prompt_result') {
 			const text = textFrom(callback);
-			if (text) this.options.send('process:data', this.options.sessionId, text);
+			if (text && !this.turnEmittedAssistantText)
+				this.options.send('process:data', this.options.sessionId, text);
 			return;
 		}
 		if (callback.type === 'available_commands_update') {

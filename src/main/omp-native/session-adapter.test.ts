@@ -98,7 +98,7 @@ describe('OmpNativeSessionAdapter', () => {
 		emit(child, { type: 'message_update', sequence: 1, content: 'partial' });
 		emit(child, { type: 'prompt_result', agentInvoked: false, text: 'final' });
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-1', 'partial');
-		expect(send).toHaveBeenCalledWith('process:data', 'tab-1', 'final');
+		expect(send).not.toHaveBeenCalledWith('process:data', 'tab-1', 'final');
 		void adapter.interrupt();
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(child.stdin.write).toHaveBeenLastCalledWith(expect.stringContaining('"type":"abort"'));
@@ -119,7 +119,7 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 
-	it('signals each completed RPC turn without terminating the long-lived child', async () => {
+	it('settles each RPC turn and uses prompt results only when no assistant deltas streamed', async () => {
 		const child = new FakeChild();
 		const promptMessages: string[] = [];
 		child.stdin.write.mockImplementation((frame: string) => {
@@ -177,7 +177,7 @@ describe('OmpNativeSessionAdapter', () => {
 		emit(child, { type: 'prompt_result', text: 'ok' });
 		emit(child, { type: 'turn_end' });
 
-		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'ok');
+		expect(send).not.toHaveBeenCalledWith('process:data', 'tab-2', 'ok');
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'o');
 		expect(send).toHaveBeenCalledWith('process:thinking-chunk', 'tab-2', 'reasoning');
 		expect(
@@ -205,15 +205,15 @@ describe('OmpNativeSessionAdapter', () => {
 			([channel, sessionId, value]) =>
 				channel === 'process:data' && sessionId === 'tab-2' && value === 'o'
 		);
-		const firstResultIndex = send.mock.calls.findIndex(
-			([channel, sessionId, value]) =>
-				channel === 'process:data' && sessionId === 'tab-2' && value === 'ok'
-		);
 		const firstCompletionIndex = send.mock.calls.findIndex(
 			([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
 		);
-		expect(partialResultIndex).toBeLessThan(firstResultIndex);
-		expect(firstResultIndex).toBeLessThan(firstCompletionIndex);
+		expect(partialResultIndex).toBeLessThan(firstCompletionIndex);
+		expect(
+			send.mock.calls
+				.filter(([channel, sessionId]) => channel === 'process:data' && sessionId === 'tab-2')
+				.map(([, , value]) => value)
+		).toEqual(['o', 'second result']);
 		expect(
 			send.mock.calls.filter(
 				([channel, sessionId]) => channel === 'process:command-exit' && sessionId === 'tab-2'
