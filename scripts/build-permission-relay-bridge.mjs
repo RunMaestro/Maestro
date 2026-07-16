@@ -16,9 +16,8 @@
  * so there are no externals to leave out.
  */
 
-import * as esbuild from 'esbuild';
-import * as fs from 'fs';
 import * as path from 'path';
+import { buildArtifact } from './lib/build.mjs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,30 +25,11 @@ const rootDir = path.resolve(__dirname, '..');
 
 const outfile = path.join(rootDir, 'dist/cli/permission-relay-bridge.js');
 
-async function build() {
-	console.log('Building permission-relay bridge with esbuild...');
-
-	try {
-		await esbuild.build({
-			entryPoints: [path.join(rootDir, 'src/main/permission-relay/bridge.ts')],
-			bundle: true,
-			platform: 'node',
-			target: 'node20',
-			outfile,
-			format: 'cjs',
-			sourcemap: true,
-			minify: false, // Keep readable for debugging
-		});
-
-		fs.chmodSync(outfile, 0o755);
-
-		const stats = fs.statSync(outfile);
-		const sizeKB = (stats.size / 1024).toFixed(1);
-		console.log(`✓ Built ${outfile} (${sizeKB} KB)`);
-	} catch (error) {
-		console.error('Build failed:', error);
-		process.exit(1);
-	}
-}
-
-build();
+buildArtifact({
+	name: 'permission-relay bridge',
+	entryPoint: path.join(rootDir, 'src/main/permission-relay/bridge.ts'),
+	outfile,
+	platform: 'node',
+	target: 'node20',
+	format: 'cjs',
+});
