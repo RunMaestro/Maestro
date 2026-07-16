@@ -7,7 +7,7 @@ import {
 } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
 import { isAbsolutePath } from '../../../shared/formatters';
@@ -65,10 +65,6 @@ export interface FileTabOpenOptions {
 }
 
 export interface UseAppHandlersDeps {
-	/** Currently active session */
-	activeSession: Session | null;
-	/** ID of the currently active session */
-	activeSessionId: string | null;
 	/** Session state setter */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Focus area setter */
@@ -189,8 +185,6 @@ function findSubtreeFolders(
  */
 export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	const {
-		activeSession,
-		activeSessionId,
 		setSessions,
 		setActiveFocus,
 		setConfirmModalMessage,
@@ -337,6 +331,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 	const handleFileClick = useCallback(
 		async (node: FileNode, path: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
 
@@ -482,7 +477,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			}
 		},
 		[
-			activeSession,
 			setConfirmModalMessage,
 			setConfirmModalOnConfirm,
 			setConfirmModalOpen,
@@ -494,6 +488,9 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	const updateSessionWorkingDirectory = useCallback(async () => {
 		const newPath = await window.maestro.dialog.selectFolder();
 		if (!newPath) return;
+
+		const activeSessionId = selectActiveSession(useSessionStore.getState())?.id;
+		if (!activeSessionId) return;
 
 		setSessions((prev) =>
 			prev.map((s) => {
@@ -516,7 +513,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				};
 			})
 		);
-	}, [activeSessionId, setSessions]);
+	}, [setSessions]);
 
 	// --- FOLDER HANDLERS ---
 

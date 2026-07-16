@@ -33,6 +33,14 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => {
 	});
 };
 
+function seedActiveSession(session: Session | null) {
+	if (session) {
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+	} else {
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+	}
+}
+
 describe('useAgentSessionManagement', () => {
 	const originalMaestro = { ...window.maestro };
 
@@ -80,9 +88,9 @@ describe('useAgentSessionManagement', () => {
 		const rightPanelRef = createRightPanelRef();
 		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1700000000123);
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions: vi.fn(),
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -132,9 +140,9 @@ describe('useAgentSessionManagement', () => {
 
 		const rightPanelRef = createRightPanelRef();
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions: vi.fn(),
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -174,9 +182,9 @@ describe('useAgentSessionManagement', () => {
 
 		const rightPanelRef = createRightPanelRef();
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions: vi.fn(),
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -216,9 +224,9 @@ describe('useAgentSessionManagement', () => {
 		const setSessions = vi.fn();
 		const setActiveAgentSessionId = vi.fn();
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId,
 				setAgentSessionsOpen: vi.fn(),
@@ -257,9 +265,9 @@ describe('useAgentSessionManagement', () => {
 		});
 		const setSessions = vi.fn();
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -313,9 +321,9 @@ describe('useAgentSessionManagement', () => {
 			hasMore: false,
 		});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId,
 				setAgentSessionsOpen: vi.fn(),
@@ -365,9 +373,9 @@ describe('useAgentSessionManagement', () => {
 			hasMore: false,
 		});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -415,9 +423,9 @@ describe('useAgentSessionManagement', () => {
 			hasMore: false,
 		});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -464,9 +472,9 @@ describe('useAgentSessionManagement', () => {
 			'agent-456': { sessionName: 'Loaded Session', starred: true },
 		});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId,
 				setAgentSessionsOpen: vi.fn(),
@@ -551,9 +559,9 @@ describe('useAgentSessionManagement', () => {
 
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId,
 				setAgentSessionsOpen: vi.fn(),
@@ -583,9 +591,9 @@ describe('useAgentSessionManagement', () => {
 		const activeSession = createMockSession({ projectRoot: '/test/project' });
 		const setSessions = vi.fn();
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -654,9 +662,9 @@ describe('useAgentSessionManagement', () => {
 		});
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId,
 				setAgentSessionsOpen: vi.fn(),
@@ -693,9 +701,9 @@ describe('useAgentSessionManagement', () => {
 			.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -745,9 +753,9 @@ describe('useAgentSessionManagement', () => {
 		});
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions,
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -777,9 +785,9 @@ describe('useAgentSessionManagement', () => {
 		});
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions: vi.fn(),
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -806,9 +814,9 @@ describe('useAgentSessionManagement', () => {
 			.mockResolvedValue({ messages: [], total: 0, hasMore: false });
 		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() =>
 			useAgentSessionManagement({
-				activeSession,
 				setSessions: vi.fn(),
 				setActiveAgentSessionId: vi.fn(),
 				setAgentSessionsOpen: vi.fn(),
@@ -850,7 +858,10 @@ describe('useAgentSessionManagement', () => {
 		});
 
 		const previousStore = useSessionStore.getState();
-		useSessionStore.setState({ sessions: [activeSession, targetSession] });
+		useSessionStore.setState({
+			sessions: [activeSession, targetSession],
+			activeSessionId: activeSession.id,
+		});
 
 		const setActiveAgentSessionId = vi.fn();
 		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
@@ -865,12 +876,12 @@ describe('useAgentSessionManagement', () => {
 		try {
 			const { result } = renderHook(() =>
 				useAgentSessionManagement({
-					activeSession,
 					setSessions: vi.fn(),
 					setActiveAgentSessionId,
 					setAgentSessionsOpen: vi.fn(),
 					rightPanelRef: createRightPanelRef(),
 					defaultSaveToHistory: true,
+					defaultShowThinking: 'off',
 				})
 			);
 

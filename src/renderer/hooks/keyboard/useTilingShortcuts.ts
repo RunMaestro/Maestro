@@ -10,11 +10,14 @@
  * These are wired into the main keyboard handler (see useMainKeyboardHandler),
  * which matches the keys with isPaneShortcut and dispatches to the matching
  * handler. Kept out of App.tsx's body to keep that file's ctx assembly lean.
+ *
+ * Active Session is resolved at call time via selectActiveSession(getState()) so
+ * App does not need to pass a live Session into this hook.
  */
 
 import { useCallback, useMemo } from 'react';
 
-import { updateSessionWith } from '../../stores/sessionStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import {
@@ -61,95 +64,91 @@ function isEligibleStandalone(ref: UnifiedTabRef): boolean {
 	return ref.type === 'ai' || ref.type === 'file';
 }
 
-export function useTilingShortcuts(
-	activeSession: Session | null | undefined
-): TilingShortcutHandlers {
-	const sessionId = activeSession?.id ?? null;
+/** Resolve the active agent id at call time (identity-split: selectActiveSession, not raw activeSessionId). */
+function resolveActiveSessionId(): string | null {
+	return selectActiveSession(useSessionStore.getState())?.id ?? null;
+}
 
+export function useTilingShortcuts(): TilingShortcutHandlers {
 	// Move focus to the spatially nearest pane in `direction`. No-op when there is
 	// no active group, no focused pane, or no neighbor that way (edge of layout).
-	const focusPane = useCallback(
-		(direction: 'left' | 'right' | 'up' | 'down') => {
-			if (!sessionId) return;
-			updateSessionWith(sessionId, (s) => {
-				const group = activeGroupOf(s);
-				if (!group || !group.focusedPaneId) return s;
-				const neighbor = findPaneInDirection(group, group.focusedPaneId, direction);
-				if (!neighbor) return s;
-				return focusPaneInSession(s, group.id, neighbor);
-			});
-		},
-		[sessionId]
-	);
+	const focusPane = useCallback((direction: 'left' | 'right' | 'up' | 'down') => {
+		const sessionId = resolveActiveSessionId();
+		if (!sessionId) return;
+		updateSessionWith(sessionId, (s) => {
+			const group = activeGroupOf(s);
+			if (!group || !group.focusedPaneId) return s;
+			const neighbor = findPaneInDirection(group, group.focusedPaneId, direction);
+			if (!neighbor) return s;
+			return focusPaneInSession(s, group.id, neighbor);
+		});
+	}, []);
 
 	// Cycle focus through the group's panes in document order (Alt+[ prev, Alt+] next)
 	// with wrap-around. Unlike focusPane (spatial), this visits every pane in a fixed
 	// order so a user can round-robin through all panes regardless of geometry. No-op
 	// with no active group or fewer than two panes.
-	const cyclePane = useCallback(
-		(direction: 'prev' | 'next') => {
-			if (!sessionId) return;
-			updateSessionWith(sessionId, (s) => {
-				const group = activeGroupOf(s);
-				if (!group) return s;
-				const ids: string[] = [];
-				collectLeafIdsOrdered(group.layout, ids);
-				if (ids.length < 2) return s;
-				const currentIdx = group.focusedPaneId ? ids.indexOf(group.focusedPaneId) : -1;
-				// From no/unknown focus: next -> first pane, prev -> last pane.
-				const step = direction === 'next' ? 1 : -1;
-				const base = currentIdx === -1 ? (direction === 'next' ? -1 : 0) : currentIdx;
-				const nextIdx = (base + step + ids.length) % ids.length;
-				return focusPaneInSession(s, group.id, ids[nextIdx]);
-			});
-		},
-		[sessionId]
-	);
+	const cyclePane = useCallback((direction: 'prev' | 'next') => {
+		const sessionId = resolveActiveSessionId();
+		if (!sessionId) return;
+		updateSessionWith(sessionId, (s) => {
+			const group = activeGroupOf(s);
+			if (!group) return s;
+			const ids: string[] = [];
+			collectLeafIdsOrdered(group.layout, ids);
+			if (ids.length < 2) return s;
+			const currentIdx = group.focusedPaneId ? ids.indexOf(group.focusedPaneId) : -1;
+			// From no/unknown focus: next -> first pane, prev -> last pane.
+			const step = direction === 'next' ? 1 : -1;
+			const base = currentIdx === -1 ? (direction === 'next' ? -1 : 0) : currentIdx;
+			const nextIdx = (base + step + ids.length) % ids.length;
+			return focusPaneInSession(s, group.id, ids[nextIdx]);
+		});
+	}, []);
 
 	// Split the focused pane, pulling the next standalone AI/file tab out of the
 	// tab strip into the new pane. Full content selection lands with drag-and-drop
 	// in Phase 03; here we take the first eligible standalone tab if one exists,
 	// otherwise flash a hint and leave the layout untouched.
-	const splitFocusedPane = useCallback(
-		(direction: 'row' | 'column') => {
-			if (!sessionId) return;
-			let flashNoTab = false;
-			updateSessionWith(sessionId, (s) => {
-				const group = activeGroupOf(s);
-				if (!group || !group.focusedPaneId) return s;
-				const nextRef = (s.unifiedTabOrder ?? []).find(isEligibleStandalone);
-				if (!nextRef) {
-					flashNoTab = true;
-					return s;
-				}
-				const newLayout = splitLeaf(group.layout, group.focusedPaneId, direction, nextRef);
-				// The new leaf is the one referencing nextRef that wasn't in the old tree.
-				const newLeaf = collectNewLeafFor(newLayout, group.layout, nextRef);
-				const withLayout = updateGroupInSession(s, group.id, (g) => ({ ...g, layout: newLayout }));
-				// Drop the moved tab from the standalone strip (it now lives in a pane).
-				const cleaned: Session = {
-					...withLayout,
-					unifiedTabOrder: (withLayout.unifiedTabOrder ?? []).filter(
-						(ref) => !(ref.type === nextRef.type && ref.id === nextRef.id)
-					),
-				};
-				// Focus the freshly inserted pane so input immediately targets it.
-				return newLeaf ? focusPaneInSession(cleaned, group.id, newLeaf.id) : cleaned;
-			});
-			if (flashNoTab) {
-				notifyCenterFlash({
-					message: 'No standalone tab to split into',
-					color: 'yellow',
-				});
+	const splitFocusedPane = useCallback((direction: 'row' | 'column') => {
+		const sessionId = resolveActiveSessionId();
+		if (!sessionId) return;
+		let flashNoTab = false;
+		updateSessionWith(sessionId, (s) => {
+			const group = activeGroupOf(s);
+			if (!group || !group.focusedPaneId) return s;
+			const nextRef = (s.unifiedTabOrder ?? []).find(isEligibleStandalone);
+			if (!nextRef) {
+				flashNoTab = true;
+				return s;
 			}
-		},
-		[sessionId]
-	);
+			const newLayout = splitLeaf(group.layout, group.focusedPaneId, direction, nextRef);
+			// The new leaf is the one referencing nextRef that wasn't in the old tree.
+			const newLeaf = collectNewLeafFor(newLayout, group.layout, nextRef);
+			const withLayout = updateGroupInSession(s, group.id, (g) => ({ ...g, layout: newLayout }));
+			// Drop the moved tab from the standalone strip (it now lives in a pane).
+			const cleaned: Session = {
+				...withLayout,
+				unifiedTabOrder: (withLayout.unifiedTabOrder ?? []).filter(
+					(ref) => !(ref.type === nextRef.type && ref.id === nextRef.id)
+				),
+			};
+			// Focus the freshly inserted pane so input immediately targets it.
+			return newLeaf ? focusPaneInSession(cleaned, group.id, newLeaf.id) : cleaned;
+		});
+		if (flashNoTab) {
+			notifyCenterFlash({
+				message: 'No standalone tab to split into',
+				color: 'yellow',
+			});
+		}
+	}, []);
 
 	// Close the focused pane: promote its tab back to a standalone strip chip, move
 	// focus to a neighbor, rebalance the remaining panes. If that leaves a single
 	// pane, auto-dissolve the whole group (promoting the last tab too).
 	const closeFocusedPane = useCallback(() => {
+		const sessionId = resolveActiveSessionId();
 		if (!sessionId) return;
 		// Closing a pane changes the leaf set, so drop any stale maximize/zoom that
 		// might point at the pane being removed. Cheap and keeps the view consistent.
@@ -186,19 +185,21 @@ export function useTilingShortcuts(
 			// focusPaneInSession moves focusedPaneId to the neighbor and syncs activeTabId.
 			return focusTarget ? focusPaneInSession(promoted, group.id, focusTarget) : promoted;
 		});
-	}, [sessionId]);
+	}, []);
 
 	// Toggle maximize/zoom for the focused pane. Transient UI-store state, not the
 	// Session. Toggling again (or when already zoomed) restores the full layout.
 	const toggleZoom = useCallback(() => {
-		const group = activeGroupOf(activeSession);
+		const session = selectActiveSession(useSessionStore.getState());
+		const group = activeGroupOf(session);
 		if (!group || !group.focusedPaneId) return;
 		const { zoomedPaneId, setZoomedPaneId } = useUIStore.getState();
 		setZoomedPaneId(zoomedPaneId ? null : group.focusedPaneId);
-	}, [activeSession]);
+	}, []);
 
 	// Equal-split: reset every split node's sizes to equal fractions.
 	const rebalance = useCallback(() => {
+		const sessionId = resolveActiveSessionId();
 		if (!sessionId) return;
 		updateSessionWith(sessionId, (s) => {
 			const group = activeGroupOf(s);
@@ -208,7 +209,7 @@ export function useTilingShortcuts(
 				layout: rebalanceLayout(g.layout),
 			}));
 		});
-	}, [sessionId]);
+	}, []);
 
 	return useMemo(
 		() => ({ focusPane, cyclePane, splitFocusedPane, closeFocusedPane, toggleZoom, rebalance }),
