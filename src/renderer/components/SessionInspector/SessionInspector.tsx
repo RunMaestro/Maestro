@@ -87,6 +87,7 @@ export const SessionInspector = memo(function SessionInspector({
 }: SessionInspectorProps) {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [sessionName, setSessionName] = useState('');
+	const [sessionPath, setSessionPath] = useState('');
 
 	useEffect(() => {
 		if (!onClose) return;
@@ -162,6 +163,37 @@ export const SessionInspector = memo(function SessionInspector({
 						style={{ borderColor: theme.colors.border }}
 					>
 						Rename
+					</button>
+				</form>
+				<form
+					className="mb-4 flex gap-2"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (!sessionPath.trim()) return;
+						void window.maestro.process.setAgentControl(sessionId, 'switch-session', sessionPath);
+					}}
+				>
+					<label className="sr-only" htmlFor={`omp-session-path-${sessionId}`}>
+						OMP session file
+					</label>
+					<input
+						id={`omp-session-path-${sessionId}`}
+						value={sessionPath}
+						onChange={(event) => setSessionPath(event.target.value)}
+						placeholder="Resume OMP session file"
+						className="min-w-0 flex-1 rounded border px-2 py-1"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
+					/>
+					<button
+						type="submit"
+						className="rounded border px-2 py-1"
+						style={{ borderColor: theme.colors.border }}
+					>
+						Resume
 					</button>
 				</form>
 				{runtimeFeatures.tree?.length ? (
