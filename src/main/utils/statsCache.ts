@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import { captureException } from './sentry';
+import { readVersionedJsonCache } from './json-file-readers';
 
 // Re-export so existing consumers don't need import changes
 export { encodeClaudeProjectPath };
@@ -91,6 +92,45 @@ export interface SessionStatsCache {
  */
 export const STATS_CACHE_VERSION = 2;
 
+function isCacheRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isSessionStatsCache(value: unknown): value is SessionStatsCache {
+	if (!isCacheRecord(value) || !isCacheRecord(value.sessions) || !isCacheRecord(value.totals)) {
+		return false;
+	}
+	if (
+		!isNumber(value.version) ||
+		!isNumber(value.lastUpdated) ||
+		!isNumber(value.totals.totalSessions) ||
+		!isNumber(value.totals.totalMessages) ||
+		!isNumber(value.totals.totalCostUsd) ||
+		!isNumber(value.totals.totalSizeBytes) ||
+		!isNumber(value.totals.totalTokens) ||
+		!(typeof value.totals.oldestTimestamp === 'string' || value.totals.oldestTimestamp === null)
+	) {
+		return false;
+	}
+
+	return Object.values(value.sessions).every((session) => {
+		if (!isCacheRecord(session)) return false;
+		return (
+			isNumber(session.messages) &&
+			isNumber(session.costUsd) &&
+			isNumber(session.sizeBytes) &&
+			isNumber(session.tokens) &&
+			isNumber(session.fileMtimeMs) &&
+			(typeof session.oldestTimestamp === 'string' || session.oldestTimestamp === null) &&
+			(session.archived === undefined || typeof session.archived === 'boolean')
+		);
+	});
+}
+
 /**
  * Get the cache file path for a project's stats.
  * @param projectPath - The project directory path
@@ -107,18 +147,11 @@ function getStatsCachePath(projectPath: string): string {
  * @param projectPath - The project directory path
  */
 export async function loadStatsCache(projectPath: string): Promise<SessionStatsCache | null> {
-	try {
-		const cachePath = getStatsCachePath(projectPath);
-		const content = await fs.readFile(cachePath, 'utf-8');
-		const cache = JSON.parse(content) as SessionStatsCache;
-		// Invalidate cache if version mismatch
-		if (cache.version !== STATS_CACHE_VERSION) {
-			return null;
-		}
-		return cache;
-	} catch {
-		return null;
-	}
+	return readVersionedJsonCache(
+		getStatsCachePath(projectPath),
+		STATS_CACHE_VERSION,
+		isSessionStatsCache
+	);
 }
 
 /**
@@ -190,6 +223,30 @@ export interface GlobalStatsCache {
 /** Current global stats cache version. Bump to force cache invalidation. */
 export const GLOBAL_STATS_CACHE_VERSION = 3;
 
+function isGlobalStatsCache(value: unknown): value is GlobalStatsCache {
+	if (!isCacheRecord(value) || !isCacheRecord(value.providers)) return false;
+	if (!isNumber(value.version) || !isNumber(value.lastUpdated)) return false;
+
+	return Object.values(value.providers).every((provider) => {
+		if (!isCacheRecord(provider) || !isCacheRecord(provider.sessions)) return false;
+		return Object.values(provider.sessions).every((session) => {
+			if (!isCacheRecord(session)) return false;
+			return (
+				isNumber(session.messages) &&
+				isNumber(session.inputTokens) &&
+				isNumber(session.outputTokens) &&
+				isNumber(session.cacheReadTokens) &&
+				isNumber(session.cacheCreationTokens) &&
+				isNumber(session.cachedInputTokens) &&
+				isNumber(session.sizeBytes) &&
+				isNumber(session.fileMtimeMs) &&
+				(session.costUsd === undefined || isNumber(session.costUsd)) &&
+				(session.archived === undefined || typeof session.archived === 'boolean')
+			);
+		});
+	});
+}
+
 /**
  * Get the cache file path for global stats.
  * @returns Absolute path to the global stats cache JSON file
@@ -203,17 +260,11 @@ function getGlobalStatsCachePath(): string {
  * Returns null if cache doesn't exist, is corrupted, or has version mismatch.
  */
 export async function loadGlobalStatsCache(): Promise<GlobalStatsCache | null> {
-	try {
-		const cachePath = getGlobalStatsCachePath();
-		const content = await fs.readFile(cachePath, 'utf-8');
-		const cache = JSON.parse(content) as GlobalStatsCache;
-		if (cache.version !== GLOBAL_STATS_CACHE_VERSION) {
-			return null;
-		}
-		return cache;
-	} catch {
-		return null;
-	}
+	return readVersionedJsonCache(
+		getGlobalStatsCachePath(),
+		GLOBAL_STATS_CACHE_VERSION,
+		isGlobalStatsCache
+	);
 }
 
 /**

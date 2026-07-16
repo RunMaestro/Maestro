@@ -32,6 +32,7 @@ import { promises as fs } from 'fs';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import type {
 	AgentSessionInfo,
@@ -43,9 +44,6 @@ import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows, isMacOS } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = '[OmpSessionStorage]';
-
-/** Cap on how much of a single transcript we parse, guarding against a runaway file. */
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * True when two paths resolve to the same location, comparing case-insensitively

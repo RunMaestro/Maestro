@@ -37,9 +37,10 @@ import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
+import { readVersionedJsonCache } from '../utils/json-file-readers';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Get Codex sessions base directory (platform-specific)
@@ -224,22 +225,93 @@ interface CodexSessionCache {
 	sessions: Record<string, CodexSessionCacheEntry>;
 }
 
+function isCacheRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasFields(
+	value: Record<string, unknown>,
+	stringFields: readonly string[],
+	numberFields: readonly string[]
+): boolean {
+	return (
+		stringFields.every((field) => typeof value[field] === 'string') &&
+		numberFields.every((field) => isFiniteNumber(value[field]))
+	);
+}
+
+function isModelUsage(value: unknown): boolean {
+	if (!isCacheRecord(value)) return false;
+	return (
+		hasFields(
+			value,
+			['model'],
+			['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costUsd']
+		) && typeof value.costEstimated === 'boolean'
+	);
+}
+
+function isAgentSessionInfo(value: unknown): value is AgentSessionInfo {
+	if (!isCacheRecord(value)) return false;
+	if (
+		!hasFields(
+			value,
+			['sessionId', 'projectPath', 'timestamp', 'modifiedAt', 'firstMessage'],
+			[
+				'messageCount',
+				'sizeBytes',
+				'inputTokens',
+				'outputTokens',
+				'cacheReadTokens',
+				'cacheCreationTokens',
+				'durationSeconds',
+			]
+		)
+	) {
+		return false;
+	}
+
+	return (
+		(value.costUsd === undefined || isFiniteNumber(value.costUsd)) &&
+		(value.origin === undefined || value.origin === 'user' || value.origin === 'auto') &&
+		(value.sessionName === undefined || typeof value.sessionName === 'string') &&
+		(value.starred === undefined || typeof value.starred === 'boolean') &&
+		(value.byModel === undefined ||
+			(Array.isArray(value.byModel) && value.byModel.every(isModelUsage)))
+	);
+}
+
+function isCodexSessionCache(value: unknown): value is CodexSessionCache {
+	if (
+		!isCacheRecord(value) ||
+		!isFiniteNumber(value.version) ||
+		!isFiniteNumber(value.lastProcessedAt) ||
+		!isCacheRecord(value.sessions)
+	) {
+		return false;
+	}
+
+	return Object.values(value.sessions).every((entry) => {
+		return (
+			isCacheRecord(entry) && isFiniteNumber(entry.fileMtimeMs) && isAgentSessionInfo(entry.session)
+		);
+	});
+}
+
 function getCodexSessionCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
 }
 
 async function loadCodexSessionCache(): Promise<CodexSessionCache | null> {
-	try {
-		const cachePath = getCodexSessionCachePath();
-		const content = await fs.readFile(cachePath, 'utf-8');
-		const cache = JSON.parse(content) as CodexSessionCache;
-		if (cache.version !== CODEX_SESSION_CACHE_VERSION) {
-			return null;
-		}
-		return cache;
-	} catch {
-		return null;
-	}
+	return readVersionedJsonCache(
+		getCodexSessionCachePath(),
+		CODEX_SESSION_CACHE_VERSION,
+		isCodexSessionCache
+	);
 }
 
 async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {

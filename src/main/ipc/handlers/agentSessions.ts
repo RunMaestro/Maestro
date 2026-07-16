@@ -32,6 +32,7 @@ import {
 	CachedSessionStats,
 	GLOBAL_STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
+import { getClaudeProjectsDir } from '../../utils/claude-project-path';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -186,8 +187,7 @@ function parseCodexSessionContent(
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
-	const homeDir = os.homedir();
-	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+	const claudeProjectsDir = getClaudeProjectsDir();
 	const files: SessionFileInfo[] = [];
 
 	try {

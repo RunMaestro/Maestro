@@ -840,10 +840,10 @@ describe('ClaudeSessionStorage', () => {
 			expect(result).not.toContain('\\');
 		});
 
-		it('should use encodeClaudeProjectPath for the directory', async () => {
-			const { encodeClaudeProjectPath } = await import('../../main/utils/statsCache');
-			storage.getSessionPath('/my/project', 'sess-1');
-			expect(encodeClaudeProjectPath).toHaveBeenCalledWith('/my/project');
+		it('should use the legacy Claude project encoding for the directory', () => {
+			const result = storage.getSessionPath('/my/project', 'sess-1');
+
+			expect(result).toContain('-my-project');
 		});
 	});
 

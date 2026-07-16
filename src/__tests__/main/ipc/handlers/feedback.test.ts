@@ -528,6 +528,15 @@ describe('feedback drafts handlers', () => {
 		expect(result.drafts.map((d: { id: string }) => d.id)).toEqual(['newer', 'older']);
 	});
 
+	it('treats a drafts array containing an invalid element as an empty fallback', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({ drafts: [sampleDraft, { ...sampleDraft, id: 2 }] })
+		);
+
+		const handler = registeredHandlers.get('feedback:drafts:list');
+		await expect(handler!({})).resolves.toEqual({ drafts: [] });
+	});
+
 	it('saves a new draft and writes it with timestamps', async () => {
 		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
 		vi.mocked(fs.writeFile).mockResolvedValue(undefined);

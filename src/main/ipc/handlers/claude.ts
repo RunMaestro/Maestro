@@ -38,6 +38,8 @@ import {
 	snapshotStarredTranscript,
 	deleteStarredMirror,
 } from '../../storage/starred-transcript-mirror';
+import { readVersionedJsonCache } from '../../utils/json-file-readers';
+import { getClaudeProjectDir, getClaudeProjectsDir } from '../../utils/claude-project-path';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -74,22 +76,65 @@ interface LegacyGlobalStatsCache {
 
 const LEGACY_GLOBAL_STATS_CACHE_VERSION = 1;
 
+function isCacheRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasNumericCacheFields(
+	value: unknown,
+	fields: readonly string[]
+): value is Record<string, unknown> {
+	return (
+		isCacheRecord(value) &&
+		fields.every((field) => typeof value[field] === 'number' && Number.isFinite(value[field]))
+	);
+}
+
+function isLegacyGlobalStatsCache(value: unknown): value is LegacyGlobalStatsCache {
+	if (
+		!hasNumericCacheFields(value, ['version', 'lastUpdated']) ||
+		!isCacheRecord(value.sessions) ||
+		!hasNumericCacheFields(value.totals, [
+			'totalSessions',
+			'totalMessages',
+			'totalInputTokens',
+			'totalOutputTokens',
+			'totalCacheReadTokens',
+			'totalCacheCreationTokens',
+			'totalCostUsd',
+			'totalSizeBytes',
+		])
+	) {
+		return false;
+	}
+
+	return Object.values(value.sessions).every((session) => {
+		return (
+			hasNumericCacheFields(session, [
+				'messages',
+				'inputTokens',
+				'outputTokens',
+				'cacheReadTokens',
+				'cacheCreationTokens',
+				'sizeBytes',
+				'fileMtimeMs',
+			]) &&
+			(session.costUsd === undefined ||
+				(typeof session.costUsd === 'number' && Number.isFinite(session.costUsd)))
+		);
+	});
+}
+
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
 }
 
 async function loadLegacyGlobalStatsCache(): Promise<LegacyGlobalStatsCache | null> {
-	try {
-		const cachePath = getLegacyGlobalStatsCachePath();
-		const content = await fs.readFile(cachePath, 'utf-8');
-		const cache = JSON.parse(content) as LegacyGlobalStatsCache;
-		if (cache.version !== LEGACY_GLOBAL_STATS_CACHE_VERSION) {
-			return null;
-		}
-		return cache;
-	} catch {
-		return null;
-	}
+	return readVersionedJsonCache(
+		getLegacyGlobalStatsCachePath(),
+		LEGACY_GLOBAL_STATS_CACHE_VERSION,
+		isLegacyGlobalStatsCache
+	);
 }
 
 async function saveLegacyGlobalStatsCache(cache: LegacyGlobalStatsCache): Promise<void> {
@@ -155,8 +200,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:listSessions',
 		withIpcErrorLogging(handlerOpts('listSessions'), async (projectPath: string) => {
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+			const claudeProjectsDir = getClaudeProjectsDir();
 
 			const encodedPath = encodeClaudeProjectPath(projectPath);
 			const projectDir = path.join(claudeProjectsDir, encodedPath);
@@ -331,8 +375,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 			handlerOpts('listSessionsPaginated'),
 			async (projectPath: string, options?: { cursor?: string; limit?: number }) => {
 				const { cursor, limit = 100 } = options || {};
-				const homeDir = os.homedir();
-				const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+				const claudeProjectsDir = getClaudeProjectsDir();
 
 				const encodedPath = encodeClaudeProjectPath(projectPath);
 				const projectDir = path.join(claudeProjectsDir, encodedPath);
@@ -572,8 +615,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				};
 			};
 
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+			const claudeProjectsDir = getClaudeProjectsDir();
 			const encodedPath = encodeClaudeProjectPath(projectPath);
 			const projectDir = path.join(claudeProjectsDir, encodedPath);
 
@@ -745,8 +787,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 			}
 
 			// Fall back to quick scan
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+			const claudeProjectsDir = getClaudeProjectsDir();
 			const encodedPath = encodeClaudeProjectPath(projectPath);
 			const projectDir = path.join(claudeProjectsDir, encodedPath);
 
@@ -800,8 +841,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				safeSend('claude:globalStatsUpdate', stats);
 			};
 
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+			const claudeProjectsDir = getClaudeProjectsDir();
 
 			try {
 				await fs.access(claudeProjectsDir);
@@ -1003,11 +1043,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				sessionId: string,
 				options?: { offset?: number; limit?: number }
 			) => {
-				const homeDir = os.homedir();
-				const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
-
-				const encodedPath = encodeClaudeProjectPath(projectPath);
-				const sessionFile = path.join(claudeProjectsDir, encodedPath, `${sessionId}.jsonl`);
+				const sessionFile = path.join(getClaudeProjectDir(projectPath), `${sessionId}.jsonl`);
 
 				const content = await fs.readFile(sessionFile, 'utf-8');
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -1091,11 +1127,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				userMessageUuid: string,
 				fallbackContent?: string
 			) => {
-				const homeDir = os.homedir();
-				const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
-
-				const encodedPath = encodeClaudeProjectPath(projectPath);
-				const sessionFile = path.join(claudeProjectsDir, encodedPath, `${sessionId}.jsonl`);
+				const sessionFile = path.join(getClaudeProjectDir(projectPath), `${sessionId}.jsonl`);
 
 				const content = await fs.readFile(sessionFile, 'utf-8');
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -1275,8 +1307,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					return [];
 				}
 
-				const homeDir = os.homedir();
-				const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+				const claudeProjectsDir = getClaudeProjectsDir();
 
 				const encodedPath = encodeClaudeProjectPath(projectPath);
 				const projectDir = path.join(claudeProjectsDir, encodedPath);
@@ -1782,8 +1813,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getAllNamedSessions',
 		withIpcErrorLogging(handlerOpts('getAllNamedSessions', ORIGINS_LOG_CONTEXT), async () => {
-			const homeDir = os.homedir();
-			const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+			const claudeProjectsDir = getClaudeProjectsDir();
 
 			const allOrigins = claudeSessionOriginsStore.get('origins', {});
 			const namedSessions: Array<{

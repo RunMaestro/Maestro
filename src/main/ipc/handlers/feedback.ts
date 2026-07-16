@@ -25,6 +25,7 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { readKeyedJsonArray } from '../../utils/json-file-readers';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -178,6 +179,92 @@ function isFeedbackCategory(value: unknown): value is FeedbackCategory {
 	);
 }
 
+function isPersistedRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasPersistedFields(
+	value: Record<string, unknown>,
+	stringFields: readonly string[],
+	numberFields: readonly string[]
+): boolean {
+	return (
+		stringFields.every((field) => typeof value[field] === 'string') &&
+		numberFields.every((field) => typeof value[field] === 'number' && Number.isFinite(value[field]))
+	);
+}
+
+function isFeedbackDraftMessage(value: unknown): boolean {
+	if (!isPersistedRecord(value) || !hasPersistedFields(value, ['role', 'content'], ['timestamp'])) {
+		return false;
+	}
+	return (
+		(value.role === 'user' || value.role === 'assistant' || value.role === 'system') &&
+		(value.confidence === undefined ||
+			(typeof value.confidence === 'number' && Number.isFinite(value.confidence))) &&
+		(value.category === undefined || isFeedbackCategory(value.category)) &&
+		(value.summary === undefined || typeof value.summary === 'string')
+	);
+}
+
+function isFeedbackDraftAttachment(value: unknown): boolean {
+	return (
+		isPersistedRecord(value) && hasPersistedFields(value, ['id', 'name', 'dataUrl'], ['sizeBytes'])
+	);
+}
+
+function isFeedbackDraftResponse(value: unknown): boolean {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(value, ['message', 'summary'], ['confidence']) ||
+		typeof value.ready !== 'boolean' ||
+		!isFeedbackCategory(value.category) ||
+		!isPersistedRecord(value.structured)
+	) {
+		return false;
+	}
+	return hasPersistedFields(
+		value.structured,
+		['expectedBehavior', 'actualBehavior', 'reproductionSteps', 'additionalContext'],
+		[]
+	);
+}
+
+function isFeedbackDraft(value: unknown): value is FeedbackDraft {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(
+			value,
+			['id', 'suggestedName', 'summary', 'agentType', 'inputDraft'],
+			['confidence', 'createdAt', 'updatedAt']
+		) ||
+		!isFeedbackCategory(value.category) ||
+		typeof value.includeDebugPackage !== 'boolean' ||
+		!Array.isArray(value.messages) ||
+		!Array.isArray(value.attachments)
+	) {
+		return false;
+	}
+	return (
+		value.messages.every(isFeedbackDraftMessage) &&
+		value.attachments.every(isFeedbackDraftAttachment) &&
+		(value.lastResponse === undefined ||
+			value.lastResponse === null ||
+			isFeedbackDraftResponse(value.lastResponse))
+	);
+}
+
+function isSubmittedIssue(value: unknown): value is SubmittedIssue {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(value, ['url', 'title'], ['number', 'submittedAt', 'lastCheckedAt']) ||
+		!isFeedbackCategory(value.category)
+	) {
+		return false;
+	}
+	return value.state === 'open' || value.state === 'closed';
+}
+
 function sanitizeTextInput(value: string): string {
 	return value
 		.replace(/\r\n/g, '\n')
@@ -250,13 +337,7 @@ const enqueueDraftWrite = <T>(fn: () => Promise<T>): Promise<T> =>
  * missing or malformed, matching readPlaybooks() in playbooks.ts.
  */
 async function readDrafts(): Promise<FeedbackDraft[]> {
-	try {
-		const content = await fs.readFile(getDraftsFilePath(), 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.drafts) ? data.drafts : [];
-	} catch {
-		return [];
-	}
+	return (await readKeyedJsonArray(getDraftsFilePath(), 'drafts', isFeedbackDraft)) ?? [];
 }
 
 /**
@@ -282,13 +363,7 @@ const enqueueSubmittedIssuesWrite = <T>(fn: () => Promise<T>): Promise<T> =>
 	submittedIssuesWriteQueue.enqueue(SUBMITTED_ISSUES_FILE_NAME, fn);
 
 async function readSubmittedIssues(): Promise<SubmittedIssue[]> {
-	try {
-		const content = await fs.readFile(getSubmittedIssuesFilePath(), 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.issues) ? data.issues : [];
-	} catch {
-		return [];
-	}
+	return (await readKeyedJsonArray(getSubmittedIssuesFilePath(), 'issues', isSubmittedIssue)) ?? [];
 }
 
 async function writeSubmittedIssues(issues: SubmittedIssue[]): Promise<void> {

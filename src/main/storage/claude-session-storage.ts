@@ -12,7 +12,6 @@
  */
 
 import path from 'path';
-import os from 'os';
 import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
@@ -22,6 +21,7 @@ import { computeClaudeUsageCost } from '../utils/pricing';
 import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
+import { getClaudeProjectDir } from '../utils/claude-project-path';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
@@ -41,6 +41,7 @@ import type {
 } from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -49,7 +50,6 @@ export type { ClaudeSessionOriginsData } from '../stores/types';
 type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Matches the synthetic placeholder text the harness writes alongside an image
@@ -308,13 +308,6 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Get the Claude projects directory path (local)
-	 */
-	private getProjectsDir(): string {
-		return path.join(os.homedir(), '.claude', 'projects');
-	}
-
-	/**
 	 * Get the Claude projects directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
@@ -326,8 +319,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the encoded project directory path (local)
 	 */
 	private getEncodedProjectDir(projectPath: string): string {
-		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return path.join(this.getProjectsDir(), encodedPath);
+		return getClaudeProjectDir(projectPath);
 	}
 
 	/**
