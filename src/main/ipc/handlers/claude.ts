@@ -834,21 +834,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async () => {
-			// Helper to send progressive updates
-			const sendUpdate = (stats: {
-				totalSessions: number;
-				totalMessages: number;
-				totalInputTokens: number;
-				totalOutputTokens: number;
-				totalCacheReadTokens: number;
-				totalCacheCreationTokens: number;
-				totalCostUsd: number;
-				totalSizeBytes: number;
-				isComplete: boolean;
-			}) => {
-				safeSend('claude:globalStatsUpdate', stats);
-			};
-
 			const claudeProjectsDir = getClaudeProjectsDir();
 
 			try {
@@ -1013,10 +998,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					};
 
 					processedCount++;
-
-					// Send progress update
-					const currentTotals = calculateGlobalTotals(newCache);
-					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);

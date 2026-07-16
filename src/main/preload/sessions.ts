@@ -102,22 +102,6 @@ export function createClaudeApi() {
 			logDeprecationWarning('getGlobalStats');
 			return ipcRenderer.invoke('claude:getGlobalStats');
 		},
-		onGlobalStatsUpdate: (
-			callback: (stats: {
-				totalSessions: number;
-				totalMessages: number;
-				totalInputTokens: number;
-				totalOutputTokens: number;
-				totalCacheReadTokens: number;
-				totalCacheCreationTokens: number;
-				totalCostUsd: number;
-				totalSizeBytes: number;
-				isComplete: boolean;
-			}) => void
-		) => {
-			logDeprecationWarning('onGlobalStatsUpdate');
-			return subscribeIpc('claude:globalStatsUpdate', callback);
-		},
 		readSessionMessages: (
 			projectPath: string,
 			sessionId: string,

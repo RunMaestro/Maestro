@@ -1860,19 +1860,6 @@ interface MaestroAPI {
 			totalSizeBytes: number;
 			isComplete: boolean;
 		}>;
-		onGlobalStatsUpdate: (
-			callback: (stats: {
-				totalSessions: number;
-				totalMessages: number;
-				totalInputTokens: number;
-				totalOutputTokens: number;
-				totalCacheReadTokens: number;
-				totalCacheCreationTokens: number;
-				totalCostUsd: number;
-				totalSizeBytes: number;
-				isComplete: boolean;
-			}) => void
-		) => () => void;
 		getProjectStats: (projectPath: string) => Promise<{
 			totalSessions: number;
 			totalMessages: number;
