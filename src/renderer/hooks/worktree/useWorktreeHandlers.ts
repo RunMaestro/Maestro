@@ -905,20 +905,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			(s) => s.worktreeConfig?.basePath && s.worktreeConfig?.watchEnabled
 		);
 
-		// TODO: Remove debug logging after worktree detection is confirmed working
-		logger.warn(
-			`[WT-DEBUG] Effect 2 running. watchableSessions=${watchableSessions.length}, key=${worktreeConfigKey}`
-		);
-		for (const s of watchableSessions) {
-			logger.warn(`[WT-DEBUG]   → will watch: ${s.id} at ${s.worktreeConfig!.basePath}`);
-		}
-
 		// Start chokidar watchers, logging failures so they don't go silent
 		for (const session of watchableSessions) {
 			window.maestro.git
 				.watchWorktreeDirectory(session.id, session.worktreeConfig!.basePath)
 				.then((result) => {
-					logger.warn(`[WT-DEBUG] watchWorktreeDirectory result:`, undefined, result);
 					if (!result.success) {
 						logger.error(
 							`[WorktreeWatcher] Failed to start watcher for ${session.worktreeConfig!.basePath}:`,
@@ -935,18 +926,15 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		// Set up listener for discovered worktrees (from chokidar)
 		const cleanupListener = window.maestro.git.onWorktreeDiscovered(async (data) => {
 			const { sessionId, worktree } = data;
-			logger.warn(`[WT-DEBUG] onWorktreeDiscovered fired:`, undefined, { sessionId, worktree });
 
 			if (
 				recentlyCreatedWorktreePathsRef.current.has(normalizePath(worktree.path)) ||
 				isRecentlyCreatedWorktreePath(worktree.path)
 			) {
-				logger.warn(`[WT-DEBUG] SKIPPED: recently created path`);
 				return;
 			}
 
 			if (isSkippableBranch(worktree.branch)) {
-				logger.warn(`[WT-DEBUG] SKIPPED: skippable branch ${worktree.branch}`);
 				return;
 			}
 
@@ -1004,9 +992,6 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					? normalizePath(discoveredInfo.repoRoot)
 					: null;
 			if (parentRepoRoot && discoveredRepoRoot && discoveredRepoRoot !== parentRepoRoot) {
-				logger.warn(
-					`[WT-DEBUG] SKIPPED: discovered worktree ${worktree.path} belongs to repo ${discoveredRepoRoot}, not parent's repo ${parentRepoRoot}`
-				);
 				return;
 			}
 
@@ -1051,7 +1036,6 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		// Listen for worktree removals (e.g., git worktree remove from CLI)
 		const cleanupRemovalListener = window.maestro.git.onWorktreeRemoved((data) => {
 			const { sessionId, worktreePath } = data;
-			logger.warn(`[WT-DEBUG] onWorktreeRemoved fired:`, undefined, { sessionId, worktreePath });
 
 			const normalizedRemovedPath = normalizePath(worktreePath);
 
