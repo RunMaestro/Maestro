@@ -168,31 +168,7 @@ interface ParsedDocument {
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
 import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
-
-/**
- * Sanitize a filename to prevent path traversal attacks.
- * Removes path separators, directory traversal sequences, and other dangerous characters.
- *
- * @param filename - The raw filename from AI-generated output
- * @returns A safe filename with dangerous characters removed
- */
-export function sanitizeFilename(filename: string): string {
-	return (
-		filename
-			// Remove path separators (both Unix and Windows)
-			.replace(/[\/\\]/g, '-')
-			// Remove directory traversal sequences
-			.replace(/\.\./g, '')
-			// Remove null bytes and control characters
-			.replace(/[\x00-\x1f\x7f]/g, '')
-			// Remove leading dots (hidden files / relative paths)
-			.replace(/^\.+/, '')
-			// Remove leading/trailing whitespace
-			.trim() ||
-		// Ensure we have something left, default to 'document' if empty
-		'document'
-	);
-}
+import { sanitizeFilename } from '../../../utils/sanitizeFilename';
 
 /**
  * Generation timeout in milliseconds (20 minutes - large codebases need time for exploration)

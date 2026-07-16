@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
+import { sanitizeFilename } from '../utils/sanitizeFilename';
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -225,30 +226,6 @@ interface ParsedDocument {
 	phase: number;
 	/** Whether this document updates an existing file (vs creating new) */
 	isUpdate: boolean;
-}
-
-/**
- * Sanitize a filename to prevent path traversal attacks.
- *
- * @param filename - The raw filename from AI-generated output
- * @returns A safe filename with dangerous characters removed
- */
-export function sanitizeFilename(filename: string): string {
-	return (
-		filename
-			// Remove path separators (both Unix and Windows)
-			.replace(/[\/\\]/g, '-')
-			// Remove directory traversal sequences
-			.replace(/\.\./g, '')
-			// Remove null bytes and control characters
-			.replace(/[\x00-\x1f\x7f]/g, '')
-			// Remove leading dots (hidden files / relative paths)
-			.replace(/^\.+/, '')
-			// Remove leading/trailing whitespace
-			.trim() ||
-		// Ensure we have something left, default to 'document' if empty
-		'document'
-	);
 }
 
 /**
