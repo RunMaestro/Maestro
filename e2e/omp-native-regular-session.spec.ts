@@ -63,6 +63,14 @@ test.describe('first-party OMP regular session', () => {
 				.toBe(true);
 			await expect(launched.window.getByText('native expanded complete')).toBeVisible();
 			await expect(approvalDialog).toHaveCount(0);
+			await expect(
+				launched.window.getByText('Native OMP fixture canvas', { exact: true }).first()
+			).toBeVisible();
+			await expect(composer).toHaveValue('native composer text');
+			await expect(
+				launched.window.getByText('Native OMP fixture ready', { exact: true })
+			).toBeVisible();
+			await expect(launched.window.getByText('expanded-16.4.8', { exact: true })).toBeVisible();
 			await expect(composer).toBeEditable({ timeout: 30_000 });
 			await composer.fill('second native prompt after agent_end');
 			await composer.press('Enter');
