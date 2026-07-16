@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+const commentJson = require('comment-json');
 import { claudeCodeInstaller } from '../../../../main/coworking/installers/claude-code';
 
 const SPEC = {
@@ -74,6 +75,36 @@ describe('claudeCodeInstaller', () => {
 		const after = JSON.parse(fs.readFileSync(cfgPath(), 'utf8'));
 		expect(after.mcpServers).toEqual({ existing: { command: 'noop', args: [], env: {} } });
 		expect(after.theme).toBe('dark');
+	});
+
+	it('matches the previous comment-json bytes while preserving user comments and key order', async () => {
+		const seed = `// User heading
+{
+	/* Preserve theme context. */
+	"theme": "dark",
+	"mcpServers": {
+		// Existing server comment.
+		"existing": { "command": "noop", "args": [] }
+	}
+}
+`;
+		const legacyConfig = commentJson.parse(seed);
+		legacyConfig.mcpServers['maestro-coworking'] = {
+			command: SPEC.command,
+			args: SPEC.args,
+			env: SPEC.env,
+		};
+		const legacyBytes = commentJson.stringify(legacyConfig, null, 2) + '\n';
+		fs.writeFileSync(cfgPath(), seed);
+
+		await claudeCodeInstaller.install(SPEC);
+
+		const written = fs.readFileSync(cfgPath(), 'utf8');
+		expect(written).toBe(legacyBytes);
+		expect(written).toContain('// User heading');
+		expect(written).toContain('/* Preserve theme context. */');
+		expect(written).toContain('// Existing server comment.');
+		expect(written.indexOf('"existing"')).toBeLessThan(written.indexOf('"maestro-coworking"'));
 	});
 
 	it('install is idempotent', async () => {

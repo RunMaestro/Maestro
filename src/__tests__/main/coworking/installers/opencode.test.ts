@@ -84,4 +84,28 @@ describe('opencodeInstaller', () => {
 			fs.rmSync(xdg, { recursive: true, force: true });
 		}
 	});
+
+	it('preserves comments and appends its owned entry after user-owned servers', async () => {
+		fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
+		fs.writeFileSync(
+			cfgPath(),
+			`// User heading
+{
+	/* Preserve OpenCode preferences. */
+	"mcp": {
+		// Existing server comment.
+		"existing": { "type": "local", "command": ["noop"] }
+	}
+}
+`
+		);
+
+		await opencodeInstaller.install(SPEC);
+
+		const written = fs.readFileSync(cfgPath(), 'utf8');
+		expect(written).toContain('// User heading');
+		expect(written).toContain('/* Preserve OpenCode preferences. */');
+		expect(written).toContain('// Existing server comment.');
+		expect(written.indexOf('"existing"')).toBeLessThan(written.indexOf('"maestro-coworking"'));
+	});
 });
