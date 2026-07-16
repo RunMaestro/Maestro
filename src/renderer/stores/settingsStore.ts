@@ -52,6 +52,7 @@ import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing
 import { sanitizeModalSizes } from '../utils/modalSizing';
 import { readBoolean, readFiniteNumber, readString, readStringArray } from './settingsStoreDecode';
 import { migrateShortcutSettings } from './settingsStoreMigrations';
+import { createShellAndAppearanceSetters } from './settingsStoreSetters';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -897,9 +898,11 @@ export function createSettingsStoreDefaults(
 export const useSettingsStore = create<SettingsStore>()((set, get) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
+	const persistSetting = (key: string, value: unknown) => window.maestro.settings.set(key, value);
 
 	return {
 		...createSettingsStoreDefaults(),
+		...createShellAndAppearanceSetters(set, persistSetting),
 
 		// ============================================================================
 		// Simple Setters
@@ -929,56 +932,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setApiKey: (value) => {
 			set({ apiKey: value });
 			window.maestro.settings.set('apiKey', value);
-		},
-
-		setDefaultShell: (value) => {
-			set({ defaultShell: value });
-			window.maestro.settings.set('defaultShell', value);
-		},
-
-		setCustomShellPath: (value) => {
-			set({ customShellPath: value });
-			window.maestro.settings.set('customShellPath', value);
-		},
-
-		setShellArgs: (value) => {
-			set({ shellArgs: value });
-			window.maestro.settings.set('shellArgs', value);
-		},
-
-		setShellEnvVars: (value) => {
-			set({ shellEnvVars: value });
-			window.maestro.settings.set('shellEnvVars', value);
-		},
-
-		setGhPath: (value) => {
-			set({ ghPath: value });
-			window.maestro.settings.set('ghPath', value);
-		},
-
-		setFontFamily: (value) => {
-			set({ fontFamily: value });
-			window.maestro.settings.set('fontFamily', value);
-		},
-
-		setFontSize: (value) => {
-			set({ fontSize: value });
-			window.maestro.settings.set('fontSize', value);
-		},
-
-		setActiveThemeId: (value) => {
-			set({ activeThemeId: value });
-			window.maestro.settings.set('activeThemeId', value);
-		},
-
-		setCustomThemeColors: (value) => {
-			set({ customThemeColors: value });
-			window.maestro.settings.set('customThemeColors', value);
-		},
-
-		setCustomThemeBaseId: (value) => {
-			set({ customThemeBaseId: value });
-			window.maestro.settings.set('customThemeBaseId', value);
 		},
 
 		setEnterToSendAI: (value) => {
