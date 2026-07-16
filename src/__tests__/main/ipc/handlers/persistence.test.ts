@@ -479,6 +479,21 @@ describe('persistence IPC handlers', () => {
 			expect(result).toEqual(mockSessions);
 		});
 
+		it('returns existing shellLogs arrays unchanged, including legacy unknown entries', async () => {
+			const shellLogs = [
+				{ id: 'boot', timestamp: 1, source: 'system', text: 'Shell Session Ready.' },
+				{ id: 'command', timestamp: 2, source: 'user', text: 'git checkout main' },
+				{ id: 'future', timestamp: 'unknown', source: 'future-stream', text: null },
+			];
+			const persisted = [{ id: 'session-1', name: 'Session 1', cwd: '/test', shellLogs }];
+			mockSessionsStore.get.mockReturnValue(persisted);
+
+			const handler = handlers.get('sessions:getAll');
+			const result = await handler!({});
+
+			expect(result).toEqual(persisted);
+		});
+
 		it('should return empty array for missing sessions', async () => {
 			mockSessionsStore.get.mockReturnValue([]);
 

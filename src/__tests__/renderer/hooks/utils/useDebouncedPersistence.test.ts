@@ -159,6 +159,28 @@ describe('useDebouncedPersistence', () => {
 	// prepareSessionForPersistence (tested indirectly through hook flush)
 	// -----------------------------------------------------------------------
 	describe('prepareSessionForPersistence (via hook flush)', () => {
+		describe('shellLogs persisted representation', () => {
+			it('writes the existing ordered LogEntry array without a wrapper or normalization', () => {
+				const shellLogs: LogEntry[] = [
+					{ id: 'boot', timestamp: 1, source: 'system', text: 'Shell Session Ready.' },
+					{ id: 'command', timestamp: 2, source: 'user', text: 'git checkout main' },
+					{ id: 'stdout', timestamp: 3, source: 'stdout', text: 'Switched to branch main\n' },
+					{ id: 'stderr', timestamp: 4, source: 'stderr', text: 'warning: detached HEAD\n' },
+				];
+				const session = makeSession({ inputMode: 'terminal', shellLogs });
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].shellLogs).toEqual(shellLogs);
+			});
+		});
+
 		describe('wizard tab filtering', () => {
 			it('should filter out tabs with active wizard state', () => {
 				const regularTab = makeTab({ id: 'regular' });
