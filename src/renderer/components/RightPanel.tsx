@@ -51,6 +51,7 @@ function NativeRuntimePanel({
 	theme: Theme;
 	sessionId: string;
 }) {
+	const [sessionPath, setSessionPath] = useState('');
 	const sections = [
 		{
 			title: 'Todo',
@@ -106,6 +107,35 @@ function NativeRuntimePanel({
 					</section>
 				))
 			)}
+			<section>
+				<h3 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+					Resume session
+				</h3>
+				<div className="flex gap-2">
+					<input
+						value={sessionPath}
+						onChange={(event) => setSessionPath(event.target.value)}
+						placeholder="OMP session file path"
+						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+						style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+					/>
+					<button
+						type="button"
+						disabled={!sessionPath.trim()}
+						onClick={() =>
+							void window.maestro.process.setAgentControl(
+								sessionId,
+								'switch-session',
+								sessionPath.trim()
+							)
+						}
+						className="text-xs underline disabled:opacity-50"
+						style={{ color: theme.colors.accent }}
+					>
+						Resume
+					</button>
+				</div>
+			</section>
 		</div>
 	);
 }
