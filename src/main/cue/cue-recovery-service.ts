@@ -1,5 +1,5 @@
 /**
- * Cue Recovery Service — owns engine bootstrap and sleep/wake recovery.
+ * Cue Recovery Service - owns engine bootstrap and sleep/wake recovery.
  *
  * Wraps three previously-scattered concerns into one place:
  * 1. Database init + event prune at engine start
@@ -60,7 +60,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 			const err = error instanceof Error ? error : new Error(String(error));
 			deps.onLog(
 				'error',
-				`[CUE] Failed to initialize Cue database — engine will not start: ${err.message}`
+				`[CUE] Failed to initialize Cue database - engine will not start: ${err.message}`
 			);
 			captureException(err, { extra: { operation: 'cue.dbInit' } });
 			return { ok: false, error: err };
@@ -70,7 +70,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 	function detectSleepAndReconcile(): void {
 		try {
 			const lastHeartbeat = getLastHeartbeat();
-			if (lastHeartbeat === null) return; // First ever start — nothing to reconcile
+			if (lastHeartbeat === null) return; // First ever start - nothing to reconcile
 
 			const now = Date.now();
 			const gapMs = now - lastHeartbeat;
@@ -81,7 +81,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 			if (gapMs < 0) {
 				deps.onLog(
 					'cue',
-					`[CUE] Clock moved backward (gap: ${gapMs}ms) — skipping sleep reconciliation`
+					`[CUE] Clock moved backward (gap: ${gapMs}ms) - skipping sleep reconciliation`
 				);
 				return;
 			}

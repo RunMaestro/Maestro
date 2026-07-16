@@ -1,5 +1,5 @@
 /**
- * imageAnnotatorStore — Controls visibility and payload of the full-screen
+ * imageAnnotatorStore - Controls visibility and payload of the full-screen
  * image annotation modal.
  *
  * Callers (InputArea, GroupChatInput, AutoRun thumbnails, lightbox modals) open

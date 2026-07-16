@@ -3,11 +3,11 @@
  *
  * Covers two layers:
  *
- * 1. `buildBucketAggregate` — pure function that turns a flat entry array
+ * 1. `buildBucketAggregate` - pure function that turns a flat entry array
  *    into a fixed-count bucket aggregate spanning the entries' time range.
  *    The activity-graph view feeds this into the renderer.
  *
- * 2. `HistoryBucketCache` — disk-backed, fingerprint-keyed cache so the
+ * 2. `HistoryBucketCache` - disk-backed, fingerprint-keyed cache so the
  *    aggregate doesn't have to be recomputed on every interaction. The
  *    fingerprint is the underlying source file's `mtime+size` (single
  *    file) or a SHA over many such fingerprints (unified view).
@@ -183,7 +183,7 @@ describe('fileFingerprint', () => {
 		try {
 			if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
 		} catch {
-			// Ignore cleanup errors — the OS will reap eventually.
+			// Ignore cleanup errors - the OS will reap eventually.
 		}
 	});
 
@@ -280,7 +280,7 @@ describe('HistoryBucketCache', () => {
 		const entry = sampleEntry('round-trip');
 		await cache.set(entry);
 
-		// New cache instance points at same dir — must hit disk.
+		// New cache instance points at same dir - must hit disk.
 		const fresh = new HistoryBucketCache(cacheDir);
 		const hit = await fresh.get('round-trip', 'fp-1');
 		expect(hit).not.toBeNull();
@@ -326,12 +326,12 @@ describe('HistoryBucketCache', () => {
 		const entry = sampleEntry('concurrent');
 		await cache.set(entry);
 
-		// New cache instance — memCache is empty, both gets will go to disk.
+		// New cache instance - memCache is empty, both gets will go to disk.
 		const fresh = new HistoryBucketCache(cacheDir);
 
 		// Spy on fsp.readFile by patching it at the module level isn't
 		// straightforward here (the impl imports * as fsp). Instead, fire
-		// two parallel gets and confirm both resolve to the same data —
+		// two parallel gets and confirm both resolve to the same data -
 		// the in-flight de-dupe is exercised in this scenario by code
 		// inspection (covered by the inflightReads.set(...) path).
 		const [a, b] = await Promise.all([

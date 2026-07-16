@@ -176,7 +176,7 @@ function gitStatusMapsEqual(
  *
  * Per-session failures (via `allSettled`) are isolated so one bad session
  * doesn't block the rest, and unexpected exceptions are reported to Sentry
- * — `gitService` already swallows IPC errors and returns defaults, so
+ * - `gitService` already swallows IPC errors and returns defaults, so
  * anything that reaches us here is a real bug worth seeing.
  */
 async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
@@ -282,7 +282,7 @@ export function useGitStatusPolling(
 		// Re-check non-git sessions in case the user ran `git init` after
 		// agent creation. On transition, update the session so the worktree
 		// menu and other git-gated features unlock without restart.
-		// Fire-and-forget — runs in parallel with the main git poll.
+		// Fire-and-forget - runs in parallel with the main git poll.
 		if (nonGitSessions.length > 0) {
 			void detectGitRepoTransitions(nonGitSessions);
 		}

@@ -91,7 +91,7 @@ describe('MarkdownPreviewFast', () => {
 		it('shows the parsing skeleton for large input, then renders blocks', async () => {
 			// Just above the 64 KB sync-parse threshold so the component takes the
 			// deferred-parse path. Use one long paragraph (no `\n\n` boundaries
-			// inside the filler) so markdown-it emits a single block — keeps the
+			// inside the filler) so markdown-it emits a single block - keeps the
 			// parse cheap so the test isn't flaky on CPU-contended CI runners.
 			const SYNC_PARSE_BYTES = 64 * 1024;
 			const filler = 'paragraph body text '.repeat(Math.ceil(SYNC_PARSE_BYTES / 20) + 10);
@@ -378,7 +378,7 @@ describe('MarkdownPreviewFast', () => {
 			const scrollIntoViewSpy = vi.fn();
 			Element.prototype.scrollIntoView = scrollIntoViewSpy;
 
-			// Find the offsetWithinBlock for "beta" — the second block has text
+			// Find the offsetWithinBlock for "beta" - the second block has text
 			// "second block beta", so "beta" starts at character 13.
 			ref.current?.scrollToMatch({
 				sourceOffset: 0, // not used by handle

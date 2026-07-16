@@ -1,5 +1,5 @@
 /**
- * Tests for {@link SessionTooltipContent} — the hover tooltip body that
+ * Tests for {@link SessionTooltipContent} - the hover tooltip body that
  * appears for an agent row in the Left Bar. Guards the AUTO pill against
  * accidental re-introduction of pulse animation (see SessionItem AUTO pill
  * tests for the row-level equivalent).

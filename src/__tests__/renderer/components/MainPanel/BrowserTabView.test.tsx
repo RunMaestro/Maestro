@@ -252,7 +252,7 @@ describe('BrowserTabView', () => {
 		const Wrapper = () => {
 			const [tab, setTab] = React.useState<BrowserTab>(latestTab);
 			latestTab = tab;
-			// Fresh inline callback every render — mirrors MainPanelContent.
+			// Fresh inline callback every render - mirrors MainPanelContent.
 			return (
 				<BrowserTabView
 					tab={tab}
@@ -463,7 +463,7 @@ describe('BrowserTabView', () => {
 			});
 			expect(addressBar).toHaveStyle({ maxHeight: '0' });
 
-			// Scroll up — reveal
+			// Scroll up - reveal
 			await act(async () => {
 				webview.dispatchEvent(
 					Object.assign(new Event('console-message'), { message: '__MAESTRO_SCROLL__0' })
@@ -490,7 +490,7 @@ describe('BrowserTabView', () => {
 			});
 			expect(addressBar).toHaveStyle({ maxHeight: '0' });
 
-			// Focus address input — should reveal
+			// Focus address input - should reveal
 			fireEvent.focus(screen.getByLabelText('Browser URL'));
 			expect(addressBar).toHaveStyle({ maxHeight: '200px' });
 		});

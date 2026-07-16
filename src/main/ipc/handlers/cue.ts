@@ -161,7 +161,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	// Visibility-aware pause: the renderer flips this on visibilitychange so
 	// scanners (file-watcher / task-scanner / github-poller) stop doing
 	// expensive background work while the app is hidden. Different from
-	// enable/disable, which fully starts/stops the engine — setActive only
+	// enable/disable, which fully starts/stops the engine - setActive only
 	// gates the per-tick work and does not tear down state.
 	ipcMain.handle(
 		'cue:setActive',
@@ -241,7 +241,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
-	// Get fan-in health — stalled trackers > 50% timeout (empty = healthy).
+	// Get fan-in health - stalled trackers > 50% timeout (empty = healthy).
 	ipcMain.handle(
 		'cue:getFanInHealth',
 		withIpcErrorLogging(handlerOpts('getFanInHealth'), async () => {
@@ -329,7 +329,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				if (options.promptFiles) {
 					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
 					for (const [relativePath, content] of Object.entries(options.promptFiles)) {
-						// Reject obviously malformed keys before path.resolve — empty
+						// Reject obviously malformed keys before path.resolve - empty
 						// strings would resolve to the project root itself, and
 						// pre-normalized `..` segments make the containment check
 						// harder to reason about even though resolve normalizes them.
@@ -349,7 +349,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 						const normalizedKey =
 							path.sep === '/' ? relativePath.replace(/\\/g, '/') : relativePath;
 						// Reject both '..' (escapes the prompts dir) and '.' (harmless
-						// but ambiguous — `foo/.` and `foo` refer to the same file,
+						// but ambiguous - `foo/.` and `foo` refer to the same file,
 						// so accepting both breaks the keep-set invariant that
 						// distinct keys map to distinct files on disk).
 						if (
@@ -476,7 +476,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 
 				// Only prune when we have an authoritative keep-set. If the YAML
 				// failed to parse, the keep-set may be missing prompt files the
-				// YAML actually references — running prune anyway risks
+				// YAML actually references - running prune anyway risks
 				// mass-deleting files we'd lose forever. The next successful save
 				// (with valid YAML) will catch up.
 				let prunedCount = 0;
@@ -511,7 +511,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 			async (options: { projectRoot: string }): Promise<boolean> => {
 				const deleted = deleteCueConfigFile(options.projectRoot);
 				// Run prompt cleanup regardless of whether the yaml file was
-				// present — if the user deleted cue.yaml by hand and then
+				// present - if the user deleted cue.yaml by hand and then
 				// invokes this, we still want orphaned prompts cleaned up.
 				pruneOrphanedPromptFiles(options.projectRoot, []);
 				removeEmptyPromptsDir(options.projectRoot);

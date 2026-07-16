@@ -80,7 +80,7 @@ export default defineConfig(({ mode }) => ({
 		// strict about malformed CSS that esbuild's minifier silently passed
 		// through. esbuild here matches prior (Vite 5-7) behavior.
 		cssMinify: 'esbuild',
-		// Disable modulepreload polyfill — Electron loads from local filesystem
+		// Disable modulepreload polyfill - Electron loads from local filesystem
 		modulePreload: false,
 		rollupOptions: {
 			// Prevent esbuild from re-minifying xterm's pre-minified code.
@@ -88,7 +88,7 @@ export default defineConfig(({ mode }) => ({
 			// causing a "ReferenceError: <letter> is not defined" throw inside
 			// xterm.js's CSI parser when a TUI sends a DECRQM query (CSI ? N $ p).
 			// The throw poisons the parser state, so all subsequent output and
-			// user keystrokes are dropped — the terminal tab appears frozen
+			// user keystrokes are dropped - the terminal tab appears frozen
 			// (seen with OpenCode on Linux and vim on macOS).
 			//
 			// Vite's esbuild-transpile minifier runs as an `enforce: 'post'`
@@ -103,7 +103,7 @@ export default defineConfig(({ mode }) => ({
 			// to a finalization pass that runs AFTER renderChunk. The cached
 			// pre-minify code therefore still contains literal `!~{NNN}~`
 			// placeholders. The minified `asset.code` in generateBundle has the
-			// resolved filenames — so we use it as a lookup table to substitute
+			// resolved filenames - so we use it as a lookup table to substitute
 			// placeholders in the cached code before writing back. Without this
 			// step the app hangs on splash with `ENOENT rolldown-runtime-!~{001}~.js`.
 			plugins: (() => {
@@ -140,7 +140,7 @@ export default defineConfig(({ mode }) => ({
 									if (!resolvedMatch) {
 										throw new Error(
 											`skip-xterm-minify: could not resolve placeholder ${placeholder} ` +
-												`in ${asset.fileName} — Rolldown internals may have changed.`
+												`in ${asset.fileName} - Rolldown internals may have changed.`
 										);
 									}
 									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
@@ -205,7 +205,7 @@ export default defineConfig(({ mode }) => ({
 					// They are only used by lazy-loaded components (CueModal, DocumentGraphView).
 					// Forcing them into a dedicated chunk causes Rollup to place shared CJS
 					// interop helpers there, which then forces the main entry to eagerly import
-					// the chunk — crashing at startup with "Cannot read properties of undefined
+					// the chunk - crashing at startup with "Cannot read properties of undefined
 					// (reading 'useState')" because React hooks run before React is initialised.
 
 					// Diff viewer

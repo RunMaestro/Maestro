@@ -4,7 +4,7 @@
  * Pins two contracts:
  * 1. The definition discloses exactly the broker capabilities the feature's
  *    real code paths touch (director-notes IPC handlers, synopsis prompt
- *    builder, preload API, DirectorNotes renderer components) — and nothing
+ *    builder, preload API, DirectorNotes renderer components) - and nothing
  *    host-owned (`agents:dispatch`, `process:spawn`) leaks into static
  *    first-party metadata.
  * 2. Lifecycle through the shared FirstPartyPluginBridge: DN is a
@@ -108,7 +108,7 @@ describe("Director's Notes lifecycle through the shared bridge (service-less)", 
 		const mintFirstPartyGrants = vi.fn((definition: typeof DN) => {
 			currentGrants = grantsFromRequests([...definition.permissions], 2);
 		});
-		// DN passes no `supervisor` — the bridge must tolerate undefined hooks.
+		// DN passes no `supervisor` - the bridge must tolerate undefined hooks.
 		const bridge = new FirstPartyPluginBridge(DN, {
 			settingsStore,
 			readGrants: (id) => (id === DN.id ? currentGrants : []),

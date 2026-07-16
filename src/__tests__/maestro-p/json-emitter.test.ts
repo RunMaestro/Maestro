@@ -1,6 +1,6 @@
 /**
  * @file json-emitter.test.ts
- * @description Tests for src/maestro-p/json-emitter.ts — the stream-json
+ * @description Tests for src/maestro-p/json-emitter.ts - the stream-json
  * emitter that ships init / assistant / user / result envelopes (and the
  * standalone status snapshot) to stdout.
  *
@@ -158,7 +158,7 @@ describe('JsonEmitter', () => {
 			emitter.emitInit({ sessionId: 'abc', model: null, cwd: '/cwd' });
 
 			// A field that would be tempting to strip (e.g., model: '<synthetic>')
-			// — the emitter must pass it through; filtering is the runner's job.
+			// - the emitter must pass it through; filtering is the runner's job.
 			const rawMessage = {
 				model: '<synthetic>',
 				content: [{ type: 'text', text: 'No response requested.' }],
@@ -404,7 +404,7 @@ describe('JsonEmitter', () => {
 			expect(writtenLines).toHaveLength(4);
 			for (const line of writtenLines) {
 				expect(line.endsWith('\n')).toBe(true);
-				// Exactly one \n at the very end — no embedded newlines splitting
+				// Exactly one \n at the very end - no embedded newlines splitting
 				// what should be a single JSONL record across multiple lines.
 				expect(line.indexOf('\n')).toBe(line.length - 1);
 				// Parses as a single JSON value.

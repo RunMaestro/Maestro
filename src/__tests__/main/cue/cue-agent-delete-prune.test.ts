@@ -7,8 +7,8 @@
  * referenced by another node. A single pipeline can legitimately contain
  * multiple instances of the same agent (e.g. A → B → A, or a duplicate
  * agent across fan-out branches) and each instance lives in its own
- * prompt file keyed by the subscription name — not by the agent name
- * alone — so the prune must be surgical.
+ * prompt file keyed by the subscription name - not by the agent name
+ * alone - so the prune must be surgical.
  *
  * Exercises the full save path: renderer state → `pipelinesToYaml` →
  * writes prompt files + YAML to a real temp directory → simulates the
@@ -184,14 +184,14 @@ describe("agent deletion prunes only the deleted node's prompt file", () => {
 		]);
 
 		// Step 2: user deletes the SECOND Codex instance (the tail of the chain)
-		// — simulated here by removing the node and its edges.
+		// - simulated here by removing the node and its edges.
 		const deleted: CuePipeline = {
 			...initial,
 			nodes: initial.nodes.filter((n) => n.id !== 'codex-2'),
 			edges: initial.edges.filter((e) => e.source !== 'codex-2' && e.target !== 'codex-2'),
 		};
 
-		// Step 3: save again — prune must remove ONLY the tail Codex file.
+		// Step 3: save again - prune must remove ONLY the tail Codex file.
 		const { keptOnDisk, removed } = simulateSaveAndPrune([deleted]);
 
 		// The first Codex's file (`codex_1-refine.md`) and Claude's file must
@@ -240,7 +240,7 @@ describe("agent deletion prunes only the deleted node's prompt file", () => {
 		// When prompts are identical across fan-out targets, pipelineToYaml
 		// collapses to a single shared prompt_file. Deleting one target
 		// reduces fan_out but the remaining targets still reference the same
-		// file — it MUST NOT be pruned.
+		// file - it MUST NOT be pruned.
 		const t = trigger('t1');
 		const a = agent('a', 'sess-a', 'Codex 1', 'shared prompt');
 		const b = agent('b', 'sess-b', 'OpenCode 1', 'shared prompt');
@@ -258,7 +258,7 @@ describe("agent deletion prunes only the deleted node's prompt file", () => {
 		const afterInitial = fs.readdirSync(path.join(projectRoot, '.maestro/prompts')).sort();
 		expect(afterInitial).toEqual(['codex_1-sharedfanout.md']);
 
-		// Delete OpenCode. Remaining fan-out: [Codex, Claude] — still share
+		// Delete OpenCode. Remaining fan-out: [Codex, Claude] - still share
 		// the single prompt file, which must survive.
 		const deleted: CuePipeline = {
 			...initial,
@@ -289,7 +289,7 @@ describe("agent deletion prunes only the deleted node's prompt file", () => {
 		};
 		simulateSaveAndPrune([initial]);
 
-		// Delete the middle agent (Beta). The chain breaks — Gamma is no
+		// Delete the middle agent (Beta). The chain breaks - Gamma is no
 		// longer reachable, so its sub and prompt file also go away.
 		const deleted: CuePipeline = {
 			...initial,
@@ -340,7 +340,7 @@ describe("agent deletion prunes only the deleted node's prompt file", () => {
 		};
 		const { keptOnDisk, removed } = simulateSaveAndPrune([aReduced, pB]);
 
-		// Pipeline B's Claude file must survive — sharing sessionName with
+		// Pipeline B's Claude file must survive - sharing sessionName with
 		// the deleted agent doesn't matter because the file is keyed by sub
 		// name, not agent name.
 		expect(keptOnDisk).toContain('.maestro/prompts/claude_1-b-chain-1.md');

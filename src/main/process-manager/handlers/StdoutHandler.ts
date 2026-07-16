@@ -376,7 +376,7 @@ export class StdoutHandler {
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			// Not valid JSON — handled in the else branch below
+			// Not valid JSON - handled in the else branch below
 		}
 
 		if (parsed !== null && toolType === 'copilot-cli') {
@@ -418,7 +418,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// ── SSH error detection (line-based — SSH patterns are plain text) ──
+		// ── SSH error detection (line-based - SSH patterns are plain text) ──
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
@@ -606,12 +606,12 @@ export class StdoutHandler {
 		//   - assistant.turn_end fires after every LLM turn, including
 		//     narration turns ("I'll delegate this to..."), so it can't
 		//     mark session end.
-		//   - session.shutdown is NOT written to stdout in batch mode —
+		//   - session.shutdown is NOT written to stdout in batch mode -
 		//     it only goes to `~/.copilot/session-state/<id>/events.jsonl`,
 		//     and Copilot may keep writing to that file (via subagent
 		//     processes) AFTER our parent process exits.
 		// The authoritative completion signal lives on disk, so we defer
-		// the final flush to ExitHandler — which awaits the disk-side
+		// the final flush to ExitHandler - which awaits the disk-side
 		// shutdown marker before emitting the `exit` event. Legacy
 		// `phase: 'final_answer'` messages still flush immediately via
 		// the path below.

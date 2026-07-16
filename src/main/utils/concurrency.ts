@@ -1,7 +1,7 @@
 /**
  * Bounded-concurrency helpers for fan-out work, primarily SSH-backed reads.
  *
- * Background: OpenSSH's default `MaxStartups` is 10:30:100 — past 10 unauthenticated
+ * Background: OpenSSH's default `MaxStartups` is 10:30:100 - past 10 unauthenticated
  * connections, sshd starts probabilistically dropping new attempts. Listing N remote
  * sessions naively via `Promise.all(sessions.map(...))` opens N×K simultaneous
  * connections (where K is the number of SSH calls per session) and silently loses

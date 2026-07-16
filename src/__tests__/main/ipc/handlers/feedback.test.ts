@@ -429,7 +429,7 @@ describe('feedback handlers', () => {
 				author: { login: 'user' },
 			}));
 
-			// Each search returns 5 unique issues — with enough chunks this could exceed 10
+			// Each search returns 5 unique issues - with enough chunks this could exceed 10
 			let callCount = 0;
 			vi.mocked(execFileNoThrow).mockImplementation(async () => {
 				const batch = issues.map((iss) => ({

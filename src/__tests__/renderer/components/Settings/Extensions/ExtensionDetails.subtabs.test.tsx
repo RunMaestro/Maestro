@@ -135,7 +135,7 @@ function contributionsWith(setting: SettingContribution): AggregatedContribution
 
 afterEach(cleanup);
 
-describe('ExtensionDetails sub-tabs — configurable first-party tile', () => {
+describe('ExtensionDetails sub-tabs - configurable first-party tile', () => {
 	it('opens on the Settings sub-tab and renders the config body there', () => {
 		renderDetails({ ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY });
 
@@ -184,7 +184,7 @@ describe('ExtensionDetails sub-tabs — configurable first-party tile', () => {
 		renderDetails({ ext: builtinTile('usageStats', false), settingsBody: SETTINGS_BODY });
 
 		// Still opens on Settings (it is configurable), but the body is gated
-		// behind the enable state — a hint takes its place.
+		// behind the enable state - a hint takes its place.
 		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
 			'aria-selected',
 			'true'
@@ -196,7 +196,7 @@ describe('ExtensionDetails sub-tabs — configurable first-party tile', () => {
 	});
 });
 
-describe('ExtensionDetails sub-tabs — non-configurable tile', () => {
+describe('ExtensionDetails sub-tabs - non-configurable tile', () => {
 	it('opens straight on Permissions when there is nothing to configure', () => {
 		// A disabled directorNotes tile with NO settingsBody: not configurable,
 		// so the Settings tab is absent and the pane opens on Permissions.
@@ -211,7 +211,7 @@ describe('ExtensionDetails sub-tabs — non-configurable tile', () => {
 	});
 });
 
-describe('ExtensionDetails sub-tabs — Pianola', () => {
+describe('ExtensionDetails sub-tabs - Pianola', () => {
 	it('shows Open Pianola inside the Settings sub-tab (not the action row)', () => {
 		renderDetails({ ext: builtinTile('pianola', true) });
 
@@ -235,7 +235,7 @@ describe('ExtensionDetails sub-tabs — Pianola', () => {
 	});
 });
 
-describe('ExtensionDetails sub-tabs — plugin Configure (grant + edit)', () => {
+describe('ExtensionDetails sub-tabs - plugin Configure (grant + edit)', () => {
 	const pluginId = 'com.example.settings';
 	const setting: SettingContribution = {
 		id: `${pluginId}:poll`,
@@ -274,7 +274,7 @@ describe('ExtensionDetails sub-tabs — plugin Configure (grant + edit)', () => 
 	});
 });
 
-describe('ExtensionDetails sub-tabs — removed action-row affordances', () => {
+describe('ExtensionDetails sub-tabs - removed action-row affordances', () => {
 	it('never renders the removed extension-configure-builtin control', () => {
 		renderDetails({ ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY });
 		expect(screen.queryByTestId('extension-configure-builtin')).not.toBeInTheDocument();

@@ -1,5 +1,5 @@
 /**
- * Tests for KeyboardMasteryCelebration — the confetti modal that appears when
+ * Tests for KeyboardMasteryCelebration - the confetti modal that appears when
  * the user reaches a new keyboard mastery level.
  *
  * Characterization tests for Tier 2 listener-hygiene refactor: pin down the
@@ -17,7 +17,7 @@ vi.mock('canvas-confetti', () => ({
 	default: vi.fn(),
 }));
 
-// useModalLayer registers with the layer stack — we don't care about that here.
+// useModalLayer registers with the layer stack - we don't care about that here.
 vi.mock('../../../renderer/hooks/ui/useModalLayer', () => ({
 	useModalLayer: vi.fn(),
 }));

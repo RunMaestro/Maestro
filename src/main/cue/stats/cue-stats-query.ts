@@ -9,7 +9,7 @@
  * Token attribution: each event is credited with the token totals of the
  * provider session it produced (`cue_events.provider_session_id`), resolved via
  * `getSessionTokenSummaries`. Each Cue run spawns a fresh agent process, so one
- * event maps to exactly one provider session — no double-counting. Events with
+ * event maps to exactly one provider session - no double-counting. Events with
  * no recorded provider session id (command/shell runs, or rows written before
  * provider-id capture landed) contribute zeros.
  */
@@ -46,7 +46,7 @@ const PARTIAL_CHAIN_LABEL = '<partial chain>';
 
 /**
  * Statuses that mean the run reached a terminal failure mode. `running` is
- * intentionally excluded — in-flight events count as occurrences only.
+ * intentionally excluded - in-flight events count as occurrences only.
  */
 const FAILURE_STATUSES = new Set(['failed', 'timeout', 'stopped']);
 const SUCCESS_STATUSES = new Set(['completed']);
@@ -110,7 +110,7 @@ function classifyStatus(status: string): { isSuccess: boolean; isFailure: boolea
 /**
  * Token totals for an event, looked up by the run's provider session id (the
  * key the on-disk session files use). Events with no recorded provider session
- * id — command/shell runs, or rows written before provider-id capture landed —
+ * id - command/shell runs, or rows written before provider-id capture landed -
  * contribute no tokens.
  */
 function tokensForEvent(
@@ -169,7 +169,7 @@ function bucketSizeFor(timeRange: CueStatsTimeRange): number {
  * Order of resolution:
  *   1. The persisted `pipelineId` column on the row (Phase 01 lineage).
  *   2. A live `subscriptionName → pipelineName` lookup from the running cue
- *      engine — covers events that were recorded before lineage tracking was
+ *      engine - covers events that were recorded before lineage tracking was
  *      enabled, OR before `pipeline_name` was added to the project's cue
  *      config. Without this fallback, every old event lands in "Unattributed"
  *      even when the user has a fully-defined pipeline graph.
@@ -192,7 +192,7 @@ function agentGroupKey(agentType: string | null): { key: string; label: string }
 
 /**
  * Friendly labels for the dotted `event.type` strings persisted on
- * `cue_events`. Unknown types fall through with the raw key — a defensive
+ * `cue_events`. Unknown types fall through with the raw key - a defensive
  * default so a future trigger introduced upstream is still visible (just
  * unstyled) instead of silently bucketed as "Unknown".
  */
@@ -218,7 +218,7 @@ interface GroupAccumulator {
 	label: string;
 	totals: MutableTotals;
 	/**
-	 * Sort hint for the "Unattributed"/"Unknown" buckets — they sort last
+	 * Sort hint for the "Unattributed"/"Unknown" buckets - they sort last
 	 * regardless of label.
 	 */
 	sortLast: boolean;
@@ -371,7 +371,7 @@ function buildChains(
 /**
  * Bucket events into a 24-entry hour-of-day distribution using the host's
  * local timezone (matches how the rest of the stats dashboard treats day
- * boundaries). Always returns 24 entries — hours with zero occurrences
+ * boundaries). Always returns 24 entries - hours with zero occurrences
  * keep their slot so the renderer can draw a continuous 24-bar strip.
  */
 function buildHourOfDay(events: CueEventRecord[]): CueHourBucket[] {

@@ -2066,7 +2066,7 @@ Some text with [x] in it that's not a checkbox
 		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
 			// Regression: agent.defaultEnvVars must NOT silently override a value
 			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
-			// its defaultEnvVars — if the shell sets it, that shell value should
+			// its defaultEnvVars - if the shell sets it, that shell value should
 			// survive to the spawned process.
 			const prev = process.env.OPENCODE_CONFIG_CONTENT;
 			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
@@ -2227,7 +2227,7 @@ Some text with [x] in it that's not a checkbox
 			expect(result.error).toMatch(/SSH remote execution is enabled/i);
 			expect(result.error).toMatch(/could not be resolved/i);
 			expect(result.error).toContain('missing-remote');
-			// Must not fall through to a local spawn — user explicitly opted into SSH
+			// Must not fall through to a local spawn - user explicitly opted into SSH
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
@@ -2336,7 +2336,7 @@ Some text with [x] in it that's not a checkbox
 
 		it('forwards agent defaultEnvVars to the SSH wrapper even without user customEnvVars', async () => {
 			// Defaults must still reach the remote host (which has no shell env
-			// to fall back on). Session customEnvVars is omitted here — we're
+			// to fall back on). Session customEnvVars is omitted here - we're
 			// asserting that the default-only path survived the env-layer fix.
 			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
 

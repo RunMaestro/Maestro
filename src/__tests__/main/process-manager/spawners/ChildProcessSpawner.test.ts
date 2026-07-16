@@ -580,7 +580,7 @@ describe('ChildProcessSpawner', () => {
 			spawner.spawn(createBaseConfig({ prompt: 'test' }));
 
 			// Verify 'close' is registered (ensures all stdout/stderr data is consumed
-			// before exit handler runs — fixes data loss for short-lived processes)
+			// before exit handler runs - fixes data loss for short-lived processes)
 			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
 			const eventNames = onCalls.map(([event]) => event);
 			expect(eventNames).toContain('close');
@@ -696,7 +696,7 @@ describe('ChildProcessSpawner', () => {
 
 			const { spawner } = createTestContext();
 
-			// Args do NOT contain 'resume' — this is an initial spawn
+			// Args do NOT contain 'resume' - this is an initial spawn
 			spawner.spawn(
 				createBaseConfig({
 					toolType: 'codex',
@@ -908,7 +908,7 @@ describe('ChildProcessSpawner', () => {
 					command: 'copilot',
 					args: ['--output-format', 'json'],
 					prompt: 'first message',
-					// No agentSessionId — fresh session, sessionId will arrive via session.start
+					// No agentSessionId - fresh session, sessionId will arrive via session.start
 				})
 			);
 

@@ -1,8 +1,8 @@
 /**
- * pipelineValidation — Pure pipeline graph validation.
+ * pipelineValidation - Pure pipeline graph validation.
  *
  * Owns per-trigger config validation and graph-wide validation (disconnected agents,
- * missing prompts, cycle detection). No React state, no IPC — safe to use from
+ * missing prompts, cycle detection). No React state, no IPC - safe to use from
  * any context. Extracted from usePipelineState so the validation rules are
  * testable in isolation and reusable outside the hook.
  */
@@ -32,7 +32,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 /**
  * Validate trigger node config against the YAML schema's per-event
  * requirements. Catches misconfigured triggers (e.g. a `time.scheduled`
- * trigger with no `schedule_times`) at SAVE time so they never hit disk —
+ * trigger with no `schedule_times`) at SAVE time so they never hit disk -
  * otherwise the YAML loader rejects the whole file on next launch and
  * blocks valid pipelines belonging to other agents in the same project.
  */
@@ -80,7 +80,7 @@ function validateTriggerConfig(
 				(typeof cfg.repo !== 'string' || cfg.repo.trim().length === 0)
 			) {
 				errors.push(
-					`"${pipelineName}": ${label} trigger has an empty "repo" — leave blank or set "owner/repo"`
+					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
 				);
 			}
 			break;
@@ -98,7 +98,7 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 
 		// Completely empty pipelines cannot be persisted (no subscriptions in YAML).
 		// Silent-skipping them here led to saves that appeared to succeed but
-		// wrote nothing to disk — flag them so the user gets clear feedback.
+		// wrote nothing to disk - flag them so the user gets clear feedback.
 		if (triggers.length === 0 && agents.length === 0 && commands.length === 0) {
 			errors.push(`"${pipeline.name}": add a trigger and an agent or command before saving`);
 			continue;
@@ -113,7 +113,7 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 
 		// Command-node configuration: each command must have an owning agent (the
 		// "cwd/PATH" provider) and a non-empty body (shell or cli target). The
-		// owning-agent requirement comes from the engine's subscription model —
+		// owning-agent requirement comes from the engine's subscription model -
 		// `agent_id` binds the sub to a session, and commands without one can't
 		// be dispatched. Surface this at save time so unbound nodes don't silently
 		// disappear from YAML output.
@@ -122,7 +122,7 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 			const label = cmdData.name || 'command';
 			if (!cmdData.owningSessionId) {
 				errors.push(
-					`"${pipeline.name}": command "${label}" needs an owning agent — pick one in the config panel`
+					`"${pipeline.name}": command "${label}" needs an owning agent - pick one in the config panel`
 				);
 			}
 			if (cmdData.mode === 'shell' && !cmdData.shell?.trim()) {
@@ -169,7 +169,7 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 					errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);
 				}
 			} else if (!agentData.inputPrompt?.trim() && agentData.includeUpstreamOutput === false) {
-				// Chain agent with upstream output disabled — must have node-level prompt
+				// Chain agent with upstream output disabled - must have node-level prompt
 				const name = agentData.sessionName;
 				errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);
 			}

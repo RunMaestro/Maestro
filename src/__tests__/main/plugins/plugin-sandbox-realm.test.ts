@@ -6,15 +6,15 @@
  *
  *     (reachable).constructor.constructor('return process')()
  *
- * MUST throw for EVERY value reachable on the plugin global — because every
+ * MUST throw for EVERY value reachable on the plugin global - because every
  * reachable function is a CONTEXT function whose Function constructor has
  * string code-generation disabled (`codeGeneration: { strings: false }`).
  * If any host intrinsic leaks onto the plugin surface, its `constructor`
  * chain reaches the HOST Function constructor (which vm cannot disable) and
- * the escape succeeds — this suite then fails the build.
+ * the escape succeeds - this suite then fails the build.
  *
- * The walker runs INSIDE the realm as plugin code — the true attacker
- * position — so the assertion covers the SDK object graph, module/exports,
+ * The walker runs INSIDE the realm as plugin code - the true attacker
+ * position - so the assertion covers the SDK object graph, module/exports,
  * console, timers, globalThis itself, and everything transitively reachable
  * from them (prototypes and property getters included).
  */
@@ -92,7 +92,7 @@ const WALKER_SOURCE = String.raw`
 	globalThis.__findings = findings;
 `;
 
-describe('plugin sandbox realm — escape regression (FC1)', () => {
+describe('plugin sandbox realm - escape regression (FC1)', () => {
 	it('constructor-chain escape throws for every value reachable from plugin code', () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);
@@ -193,7 +193,7 @@ describe('plugin sandbox realm — escape regression (FC1)', () => {
 	});
 });
 
-describe('plugin sandbox realm — behavioral parity', () => {
+describe('plugin sandbox realm - behavioral parity', () => {
 	it('SDK calls round-trip through the bridge as JSON and resolve in-realm', async () => {
 		const sent: string[] = [];
 		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
@@ -321,7 +321,7 @@ describe('plugin sandbox realm — behavioral parity', () => {
 		expect(infos).toContain('timer fired');
 	});
 
-	it('the SDK surface is frozen — plugin code cannot mutate or extend it', () => {
+	it('the SDK surface is frozen - plugin code cannot mutate or extend it', () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);
 		realm.runScript(

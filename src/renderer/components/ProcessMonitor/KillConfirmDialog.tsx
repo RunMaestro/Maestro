@@ -5,8 +5,8 @@
 //
 // Escape is owned by the layer stack (registers at MODAL_PRIORITIES.CONFIRM, which is
 // higher than PROCESS_MONITOR's 550) so the dialog's Escape always wins over the
-// underlying ProcessMonitor handler — per the CLAUDE.md convention "register with
-// layer stack — don't handle Escape locally".
+// underlying ProcessMonitor handler - per the CLAUDE.md convention "register with
+// layer stack - don't handle Escape locally".
 import { useEffect, useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';

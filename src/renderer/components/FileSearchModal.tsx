@@ -373,7 +373,7 @@ export function FileSearchModal({
 	);
 
 	// Open the absolute path currently typed in the search box. No-op unless it
-	// has resolved to an existing file — folders and missing paths can't preview.
+	// has resolved to an existing file - folders and missing paths can't preview.
 	const handleAbsoluteOpen = useCallback(() => {
 		if (absDisplay.status !== 'file') return;
 		onFileSelect({
@@ -493,7 +493,7 @@ export function FileSearchModal({
 					</div>
 				</div>
 
-				{/* Mode Toggle Pills — hidden in absolute-path mode (no list to scope) */}
+				{/* Mode Toggle Pills - hidden in absolute-path mode (no list to scope) */}
 				{!isAbsoluteQuery && (
 					<div
 						className="px-4 py-2 flex items-center gap-2 border-b"
@@ -529,7 +529,7 @@ export function FileSearchModal({
 					</div>
 				)}
 
-				{/* Absolute-path open panel — replaces the file list when the query
+				{/* Absolute-path open panel - replaces the file list when the query
 				    is a full filesystem path that points at an existing file. */}
 				{isAbsoluteQuery && (
 					<div className="flex-1 flex flex-col items-center justify-center px-8 py-12 text-center gap-3">

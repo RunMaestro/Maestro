@@ -172,7 +172,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNavForward,
 	} = props;
 
-	// Git status refresh — used to re-sync polling cache when `git diff` comes
+	// Git status refresh - used to re-sync polling cache when `git diff` comes
 	// back empty despite the widget advertising changes (e.g. files were
 	// reverted or committed since the last poll).
 	const { refreshGitStatus } = useGitDetail();
@@ -349,7 +349,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
-	// section headers that interleave with — but aren't part of — `filtered`),
+	// section headers that interleave with - but aren't part of - `filtered`),
 	// so a magic itemHeight constant drifts. Measure real button positions
 	// against the container's viewport instead.
 	const handleScroll = () => {
@@ -795,7 +795,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	filteredRef.current = filtered;
 
 	// LIVE/IDLE bucket headers only earn their pixels in agents mode when both
-	// buckets are present — a single-bucket list doesn't need a label above it.
+	// buckets are present - a single-bucket list doesn't need a label above it.
 	const showBucketHeaders = shouldShowAgentBucketHeaders(filtered, mode);
 
 	// Callback for when an item is selected (by Enter key or number hotkey)
@@ -839,7 +839,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [selectedIndex]);
 
 	// Reset selection when search or mode changes.
-	// resetSelection is intentionally excluded from deps — it changes when filtered.length
+	// resetSelection is intentionally excluded from deps - it changes when filtered.length
 	// changes, but we only want to reset on user-driven search/mode changes, not on every
 	// list length fluctuation from parent re-renders (which causes infinite update loops).
 	useEffect(() => {

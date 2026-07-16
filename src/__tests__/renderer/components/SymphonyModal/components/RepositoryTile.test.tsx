@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/RepositoryTile — tile display, selection
+ * Tests for SymphonyModal/components/RepositoryTile - tile display, selection
  * highlight, scrollIntoView reaction, issue-count badge variants, skeleton.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

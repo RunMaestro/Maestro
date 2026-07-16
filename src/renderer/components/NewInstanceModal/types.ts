@@ -67,7 +67,7 @@ export interface NewInstanceModalProps {
 	theme: Theme;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
-	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating — duplicate inherits source's group)
+	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating - duplicate inherits source's group)
 }
 
 export interface EditAgentModalProps {

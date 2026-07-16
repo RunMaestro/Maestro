@@ -1,10 +1,10 @@
 /**
- * Cue Process Lifecycle — spawns child processes, manages stdio capture,
+ * Cue Process Lifecycle - spawns child processes, manages stdio capture,
  * enforces timeout with SIGTERM → SIGKILL escalation, and tracks active
  * processes for the Process Monitor.
  *
  * Single responsibility: process spawning and lifecycle management.
- * Does NOT know about template variables, agent definitions, or SSH —
+ * Does NOT know about template variables, agent definitions, or SSH -
  * it receives a fully resolved SpawnSpec and executes it.
  */
 
@@ -31,7 +31,7 @@ interface CueActiveProcess {
 	startTime: number;
 	/** For SSH spawns: the agent invocation running on the remote host. */
 	sshRemoteCommand?: string;
-	/** Live ref to the accumulating stdout buffer — filled by the runProcess
+	/** Live ref to the accumulating stdout buffer - filled by the runProcess
 	 *  closure as chunks arrive. Exposed via `getActiveProcessOutput` so the
 	 *  renderer can poll for in-flight logs without a separate subscription
 	 *  channel. */
@@ -126,7 +126,7 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 
 /**
  * Per-agent stderr noise prefixes. These are informational diagnostics the
- * agent CLI emits on stderr even for successful runs — e.g. Codex printing
+ * agent CLI emits on stderr even for successful runs - e.g. Codex printing
  * "Reading additional input from stdin..." before it observes EOF. Including
  * them in the activity-log "Errors" panel is misleading (nothing's wrong), so
  * we filter them out before storing the run result.
@@ -209,7 +209,7 @@ function killCueProcess(child: ChildProcess, sync = false): void {
 	} else {
 		child.kill('SIGTERM');
 
-		// Escalate to SIGKILL after delay — only if the process hasn't actually exited.
+		// Escalate to SIGKILL after delay - only if the process hasn't actually exited.
 		setTimeout(() => {
 			if (child.exitCode === null && child.signalCode === null) {
 				child.kill('SIGKILL');
@@ -241,7 +241,7 @@ export function runProcess(
 		// pipe causes some agents (notably Codex `exec`) to emit "Reading
 		// additional input from stdin..." into the run output before they
 		// observe EOF. `'ignore'` gives the child /dev/null for stdin so it
-		// never tries to read — Claude already behaves correctly with either,
+		// never tries to read - Claude already behaves correctly with either,
 		// so this is safe across all agents.
 		const needsStdinWrite = sshRemoteEnabled && (Boolean(sshStdinScript) || Boolean(stdinPrompt));
 		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
@@ -316,7 +316,7 @@ export function runProcess(
 			finish(status, code);
 		});
 
-		// Handle spawn errors (async — e.g. ENOENT after spawn returns)
+		// Handle spawn errors (async - e.g. ENOENT after spawn returns)
 		child.on('error', (error) => {
 			captureException(error, {
 				operation: 'cue:childProcess:error',
@@ -329,19 +329,19 @@ export function runProcess(
 
 		// Write to stdin based on execution mode
 		if (sshStdinScript && sshRemoteEnabled) {
-			// SSH stdin script mode — send the full bash script via stdin
+			// SSH stdin script mode - send the full bash script via stdin
 			child.stdin?.write(sshStdinScript);
 			child.stdin?.end();
 		} else if (stdinPrompt && sshRemoteEnabled) {
-			// SSH small prompt mode — send raw prompt via stdin
+			// SSH small prompt mode - send raw prompt via stdin
 			child.stdin?.write(stdinPrompt);
 			child.stdin?.end();
 		} else {
-			// Local mode — prompt is already in the args
+			// Local mode - prompt is already in the args
 			child.stdin?.end();
 		}
 
-		// Enforce timeout — use platform-appropriate kill
+		// Enforce timeout - use platform-appropriate kill
 		if (timeoutMs > 0) {
 			timeoutTimer = setTimeout(() => {
 				if (settled) return;
@@ -395,7 +395,7 @@ export function getActiveProcessMap(): Map<string, CueActiveProcess> {
  * Snapshot the in-flight stdout/stderr for a still-running Cue process.
  * Returns null when the runId has no active process (already finished, never
  * started, or running on a different engine instance). Buffers are returned
- * raw — callers must trim/format for display.
+ * raw - callers must trim/format for display.
  */
 export function getActiveProcessOutput(runId: string): { stdout: string; stderr: string } | null {
 	const entry = activeProcesses.get(runId);

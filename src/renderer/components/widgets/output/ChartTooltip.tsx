@@ -24,12 +24,12 @@ import type { Theme } from '../../../types';
 import { clampTooltipToViewport } from './tooltipGeometry';
 
 interface ChartTooltipProps {
-	/** Anchor point in viewport coords — typically the mouse cursor. `null` hides the tooltip. */
+	/** Anchor point in viewport coords - typically the mouse cursor. `null` hides the tooltip. */
 	anchor: { x: number; y: number } | null;
 	theme: Theme;
 	children: ReactNode;
 	/** Approximate tooltip dimensions used for viewport clamping; tooltip can be wider/taller in
-	 *  practice — these are just hints so we don't shove it under the right/bottom edge. */
+	 *  practice - these are just hints so we don't shove it under the right/bottom edge. */
 	width?: number;
 	height?: number;
 	/** Offset (px) of the tooltip's bottom edge above the cursor. */

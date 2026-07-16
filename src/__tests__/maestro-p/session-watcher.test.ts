@@ -1,13 +1,13 @@
 /**
  * @file session-watcher.test.ts
- * @description Tests for src/maestro-p/session-watcher.ts — discovers a
+ * @description Tests for src/maestro-p/session-watcher.ts - discovers a
  * freshly-spawned claude TUI's session id by polling
  * `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/` for the first new `*.jsonl`
  * whose creation time is at or after the recorded spawn timestamp.
  *
  * Strategy: drive against real temp directories with `fs.mkdtempSync`
  * for isolation and a small poll interval for snappy assertions. No
- * fake timers — the watcher's contract is fundamentally about real
+ * fake timers - the watcher's contract is fundamentally about real
  * filesystem behavior (birthtime, readdir, ENOENT recovery), and these
  * tests should fail if cross-platform fs semantics change in an
  * incompatible way.
@@ -78,7 +78,7 @@ describe('session-watcher', () => {
 
 		it('replaces dots (which look alphanumeric to the eye) with `-`', () => {
 			// `/Users/foo/.claude-mem/observer` and `/Users/foo/.claude-mem-observer`
-			// collide under this rule — that's a known claude behavior, not our
+			// collide under this rule - that's a known claude behavior, not our
 			// problem to disambiguate.
 			expect(cwdSlug('/Users/foo/.claude-mem/observer')).toBe('-Users-foo--claude-mem-observer');
 		});
@@ -219,7 +219,7 @@ describe('session-watcher', () => {
 			).rejects.toThrow(/never-written-id\.jsonl did not appear/);
 		});
 
-		it('tolerates the projects dir not existing yet — picks up the file once it appears', async () => {
+		it('tolerates the projects dir not existing yet - picks up the file once it appears', async () => {
 			const spawnTimestamp = Date.now();
 			// Kick off discovery before the directory exists. Claude lazily
 			// creates `projects/<slug>/` on the first session for a cwd.

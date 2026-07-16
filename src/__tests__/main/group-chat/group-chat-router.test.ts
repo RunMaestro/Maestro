@@ -440,7 +440,7 @@ describe('group-chat-router', () => {
 
 		it('handles bold markdown **@name**', () => {
 			const mentions = extractMentions(
-				'**@controlplane** — Please execute your plan.',
+				'**@controlplane** - Please execute your plan.',
 				participants
 			);
 			expect(mentions).toEqual(['controlplane']);
@@ -468,7 +468,7 @@ describe('group-chat-router', () => {
 
 		it('handles multiple markdown-formatted mentions in one message', () => {
 			const mentions = extractMentions(
-				'- **@controlplane** — execute plan\n- **@dataplane** — verify results',
+				'- **@controlplane** - execute plan\n- **@dataplane** - verify results',
 				participants
 			);
 			expect(mentions).toEqual(['controlplane', 'dataplane']);
@@ -1416,7 +1416,7 @@ describe('group-chat-router', () => {
 			setGetSessionsCallback(() => [sshSession]);
 			setSshStore(mockSshStore);
 
-			// User mentions @RemoteAgent — this should auto-add with SSH config
+			// User mentions @RemoteAgent - this should auto-add with SSH config
 			await routeUserMessage(
 				chat.id,
 				'@RemoteAgent: please help',
@@ -1467,7 +1467,7 @@ describe('group-chat-router', () => {
 
 			mockWrapSpawnWithSsh.mockClear();
 
-			// Moderator mentions the SSH participant — batch spawn should use SSH wrapping
+			// Moderator mentions the SSH participant - batch spawn should use SSH wrapping
 			await routeModeratorResponse(
 				chat.id,
 				'@SSHWorker: implement the feature',

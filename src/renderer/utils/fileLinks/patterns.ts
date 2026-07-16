@@ -8,7 +8,7 @@
 
 /**
  * File extensions we recognize as link targets. Includes code, configs,
- * docs, media, data, and archive formats. Lowercase only — callers must
+ * docs, media, data, and archive formats. Lowercase only - callers must
  * use case-insensitive matching.
  */
 export const LINKABLE_EXTENSIONS =
@@ -41,7 +41,7 @@ export const WIKI_LINK_PATTERN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
  * recognized extension) or a bare `name` (only when preceded by at least
  * one folder segment, the wiki-link-style path). This prevents the greedy
  * `[A-Za-z0-9_.-]+` of older versions from swallowing a sentence-ending
- * period — e.g. in `See src/utils/helpers.ts.` we now match exactly
+ * period - e.g. in `See src/utils/helpers.ts.` we now match exactly
  * `src/utils/helpers.ts` instead of `src/utils/helpers.ts.`.
  */
 export const PATH_PATTERN = new RegExp(
@@ -63,7 +63,7 @@ export const ABSOLUTE_PATH_PATTERN = new RegExp(
 /**
  * Tilde-expanded path: `~/Documents/note.md`. Same shape as absolute path
  * but rooted at the user's home directory; resolution requires homeDir.
- * Case-insensitive — see ABSOLUTE_PATH_PATTERN above.
+ * Case-insensitive - see ABSOLUTE_PATH_PATTERN above.
  */
 export const TILDE_PATH_PATTERN = new RegExp(
 	`~\\/(?:[^\\s/]+\\/)*[^\\s/]+\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,

@@ -4,12 +4,12 @@
  * Platform detection now uses window.maestro.platform (Electron preload bridge)
  * instead of navigator.userAgent. Since isMac() is a function call (not a
  * module-level constant), we can simply set window.maestro.platform before
- * each test — no dynamic imports needed.
+ * each test - no dynamic imports needed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Undo the global mock from setup.ts — this file tests the real module
+// Undo the global mock from setup.ts - this file tests the real module
 vi.unmock('../../../renderer/utils/shortcutFormatter');
 
 import {

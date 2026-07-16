@@ -1,5 +1,5 @@
 /**
- * Tests for cue-heartbeat — Phase 13A consecutive-failure reporting.
+ * Tests for cue-heartbeat - Phase 13A consecutive-failure reporting.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -63,8 +63,8 @@ describe('cue-heartbeat', () => {
 			throw new Error('SQLITE_BUSY: database is locked');
 		});
 		const hb = createCueHeartbeat();
-		hb.start(); // attempt #1 — failure
-		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // attempt #2 — failure
+		hb.start(); // attempt #1 - failure
+		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // attempt #2 - failure
 		expect(mockCaptureException).not.toHaveBeenCalled();
 		hb.stop();
 	});
@@ -97,7 +97,7 @@ describe('cue-heartbeat', () => {
 		hb.start(); // #1 fail
 		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // #2 fail
 		fail = false;
-		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // #3 succeeds — counter resets
+		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // #3 succeeds - counter resets
 		// Now trigger a fresh failure run. Need to reach threshold AGAIN to report.
 		fail = true;
 		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // #1 fail
@@ -117,7 +117,7 @@ describe('cue-heartbeat', () => {
 		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // 2 failures total
 		hb.stop();
 
-		// Re-start — because stop cleared the counter, we need THREE more
+		// Re-start - because stop cleared the counter, we need THREE more
 		// failures to trigger Sentry, not one.
 		mockCaptureException.mockReset();
 		hb.start();
@@ -129,8 +129,8 @@ describe('cue-heartbeat', () => {
 	});
 
 	it('reports unexpected (non-DB-lock) errors immediately without waiting for the threshold', () => {
-		// Novel failure modes — a programming error, a type mismatch, a
-		// permission problem — should not hide behind the 3-tick threshold
+		// Novel failure modes - a programming error, a type mismatch, a
+		// permission problem - should not hide behind the 3-tick threshold
 		// that exists specifically for SQLite lock races. Surface them on
 		// the first occurrence so the field data from Sentry flags them.
 		mockUpdateHeartbeat.mockImplementation(() => {
@@ -138,7 +138,7 @@ describe('cue-heartbeat', () => {
 		});
 		const onFailure = vi.fn();
 		const hb = createCueHeartbeat({ onFailure });
-		hb.start(); // attempt #1 — single failure
+		hb.start(); // attempt #1 - single failure
 		expect(mockCaptureException).toHaveBeenCalledTimes(1);
 		expect(mockCaptureException).toHaveBeenCalledWith(
 			expect.any(Error),

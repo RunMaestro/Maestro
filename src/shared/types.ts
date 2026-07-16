@@ -7,7 +7,7 @@ export type { AgentId } from './agentIds';
 
 /**
  * Union type of all valid agent IDs.
- * Derived from AGENT_IDS — the single source of truth in agentIds.ts.
+ * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
  */
 export type ToolType = import('./agentIds').AgentId;
 
@@ -206,7 +206,7 @@ export function isWorktreeGroup(group: Group): boolean {
  *
  * Producer: `useCliActivityMonitoring` in
  * `renderer/hooks/remote/useCliActivityMonitoring.ts`. If a new field is added
- * here, the comparator must compare it too — TypeScript will flag the omission
+ * here, the comparator must compare it too - TypeScript will flag the omission
  * because both sites depend on this exact shape.
  */
 export interface SessionCliActivity {
@@ -251,18 +251,18 @@ export interface SessionInfo {
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
-	 * backoff (30s→30m). Defaults ON — treat `undefined` as enabled via
+	 * backoff (30s→30m). Defaults ON - treat `undefined` as enabled via
 	 * {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnAvailabilityErrors?: boolean;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt when the plan quota is
 	 * exhausted (usage/quota limit). Waits until the parsed reset time, or 1h if
-	 * unknown, then retries hourly. Defaults ON — treat `undefined` as enabled
+	 * unknown, then retries hourly. Defaults ON - treat `undefined` as enabled
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
-	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
+	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
 
@@ -746,7 +746,7 @@ export interface AgentSshRemoteConfig {
 	 * Mirror every new history entry for this agent to
 	 * <projectRoot>/.maestro/history/history-<hostname>.jsonl on *this* machine's
 	 * local filesystem. Meant for agents that run here locally but are controlled
-	 * by another Maestro instance over SSH — the controller reads the project's
+	 * by another Maestro instance over SSH - the controller reads the project's
 	 * `.maestro/history/` dir and sees entries generated on this side.
 	 * Independent of `enabled` / `syncHistory`.
 	 */

@@ -1,5 +1,5 @@
 /**
- * useAgentUsageListener — registers `window.maestro.process.onUsage`
+ * useAgentUsageListener - registers `window.maestro.process.onUsage`
  *
  * Updates per-tab and per-session usage stats via the batched updater.
  * Estimates context-window % using `estimateContextUsage`; falls back to
@@ -32,7 +32,7 @@ import type { BatchedUpdater } from './types';
  * When the agent doesn't report a contextPercentage and we have to estimate,
  * keep the estimate this many percentage points below the configured yellow
  * warning threshold so an extrapolated value never trips the warning UI on
- * its own — the user sees yellow only when the agent's reported usage
+ * its own - the user sees yellow only when the agent's reported usage
  * crosses the bar, not when our heuristic does.
  */
 const ESTIMATED_USAGE_YELLOW_GAP_PCT = 5;

@@ -162,7 +162,7 @@ describe('cue-task-scanner', () => {
 			expect(result[0].tasks).toHaveLength(1);
 			expect(result[0].tasks[0].text).toBe('open task');
 
-			// Calling again returns the same result — unlike the polling scanner,
+			// Calling again returns the same result - unlike the polling scanner,
 			// there is no seeding or content-hash suppression.
 			expect(scanTaskFilesNow('/project', '**/*.md')).toHaveLength(1);
 		});
@@ -257,7 +257,7 @@ describe('cue-task-scanner', () => {
 			// Advance past initial delay
 			await vi.advanceTimersByTimeAsync(3000);
 
-			// First scan seeds hashes — should NOT fire events
+			// First scan seeds hashes - should NOT fire events
 			expect(onEvent).not.toHaveBeenCalled();
 		});
 
@@ -406,7 +406,7 @@ describe('cue-task-scanner', () => {
 				await vi.advanceTimersByTimeAsync(3000);
 
 				expect(onEvent).not.toHaveBeenCalled();
-				// Walk never happened — readdirSync should not have been called
+				// Walk never happened - readdirSync should not have been called
 				expect(mockReaddirSync).not.toHaveBeenCalled();
 				expect(mockReadFileSync).not.toHaveBeenCalled();
 
@@ -439,7 +439,7 @@ describe('cue-task-scanner', () => {
 				await vi.advanceTimersByTimeAsync(3000);
 				expect(mockReaddirSync).not.toHaveBeenCalled();
 
-				// Activate — next interval tick should now scan
+				// Activate - next interval tick should now scan
 				active = true;
 				await vi.advanceTimersByTimeAsync(60_000); // pollMinutes * 60_000 = 1 min
 				expect(mockReaddirSync).toHaveBeenCalled();
@@ -459,7 +459,7 @@ describe('cue-task-scanner', () => {
 					onEvent,
 					onLog: vi.fn(),
 					triggerName: 'test-scanner',
-					// No isActive — should behave as always-active.
+					// No isActive - should behave as always-active.
 				});
 
 				await vi.advanceTimersByTimeAsync(3000);

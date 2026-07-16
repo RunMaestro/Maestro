@@ -6,7 +6,7 @@
  * and when understanding reaches 80%, submits a well-structured GitHub issue.
  *
  * Features:
- * - Auto-picks the first available supported provider — no selection step
+ * - Auto-picks the first available supported provider - no selection step
  * - Chat interface with progress bar
  * - Screenshot drag-and-drop
  * - Support package opt-in
@@ -331,7 +331,7 @@ export function FeedbackChatView({
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
 	}, [messages, attachments, inputValue, step, isTracing, tracePath]);
 
-	// --- Background issue search — fires after every agent response ---
+	// --- Background issue search - fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
 		if (!query || query === lastSearchQueryRef.current) return;
 		lastSearchQueryRef.current = query;
@@ -385,12 +385,12 @@ export function FeedbackChatView({
 				systemPrompt: prompt,
 			});
 			setStep('chat');
-			// Focus input immediately — no auto-greeting, user speaks first
+			// Focus input immediately - no auto-greeting, user speaks first
 			requestAnimationFrame(() => inputRef.current?.focus());
 		} catch (error) {
 			// Surface IPC/runtime failures from getConversationPrompt() and
 			// managerRef.current.start() to Sentry so production breakage is
-			// visible — these are unexpected errors, not recoverable conditions.
+			// visible - these are unexpected errors, not recoverable conditions.
 			captureException(error, { extra: { source: 'FeedbackChatView.startConversation' } });
 			// Release the auto-start latch so a future state change can retry,
 			// and surface the error in the boot screen with a Close action.
@@ -400,7 +400,7 @@ export function FeedbackChatView({
 	}, [selectedAgent]);
 
 	// --- Auto-start conversation once GH auth + agent detection are ready.
-	//     The previous "pick a provider" screen is gone (#766) — Maestro infers
+	//     The previous "pick a provider" screen is gone (#766) - Maestro infers
 	//     the provider from the first detected supported agent.
 	useEffect(() => {
 		if (startedRef.current) return;
@@ -514,14 +514,14 @@ export function FeedbackChatView({
 			return;
 		}
 
-		// Search hasn't run yet (race condition) — run it now
+		// Search hasn't run yet (race condition) - run it now
 		const query = lastResponse.summary || lastResponse.structured.expectedBehavior;
 		if (query) {
 			await runIssueSearch(query);
 			// After search: if matches were found, the matching UI is already showing them.
 			// If no matches, the auto-proceed useEffect will call createNewIssue.
 		} else {
-			// No query available — create directly
+			// No query available - create directly
 			await createNewIssue();
 		}
 	}, [lastResponse, isReady, matchingIssues, searchingIssues, runIssueSearch, createNewIssue]);
@@ -530,7 +530,7 @@ export function FeedbackChatView({
 	useEffect(() => {
 		if (step !== 'matching' || searchingIssues) return;
 		if (matchingIssues.length === 0) {
-			// Search finished with no matches — create issue directly
+			// Search finished with no matches - create issue directly
 			void createNewIssue();
 		}
 	}, [step, searchingIssues, matchingIssues, createNewIssue]);
@@ -1203,7 +1203,7 @@ export function FeedbackChatView({
 					</div>
 				)}
 
-				{/* Inline similar issues card — appears during chat when matches are found */}
+				{/* Inline similar issues card - appears during chat when matches are found */}
 				{step === 'chat' && !searchingIssues && matchingIssues.length > 0 && (
 					<div
 						className="rounded-lg border px-3 py-3"
@@ -1213,7 +1213,7 @@ export function FeedbackChatView({
 						}}
 					>
 						<p className="text-xs font-semibold mb-2" style={{ color: theme.colors.textMain }}>
-							Similar existing issues found — does any of these match?
+							Similar existing issues found - does any of these match?
 						</p>
 						<div className="flex flex-col gap-1.5">
 							{matchingIssues.slice(0, 5).map((issue) => (
@@ -1277,7 +1277,7 @@ export function FeedbackChatView({
 							className="mt-2 text-[10px] transition-colors hover:underline"
 							style={{ color: theme.colors.textDim }}
 						>
-							None of these match — I have a new issue
+							None of these match - I have a new issue
 						</button>
 					</div>
 				)}
@@ -1475,7 +1475,7 @@ export function FeedbackChatView({
 							className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed overflow-y-auto"
 							style={{ color: theme.colors.textMain }}
 						/>
-						{/* Send message button — always available */}
+						{/* Send message button - always available */}
 						<button
 							type="button"
 							onClick={sendMessage}
@@ -1486,7 +1486,7 @@ export function FeedbackChatView({
 						>
 							{isLoading ? <Spinner size={16} /> : <Send className="w-4 h-4" />}
 						</button>
-						{/* Submit button — appears when ready */}
+						{/* Submit button - appears when ready */}
 						{isReady && (
 							<button
 								type="button"

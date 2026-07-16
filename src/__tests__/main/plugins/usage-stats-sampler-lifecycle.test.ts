@@ -5,7 +5,7 @@
  *
  * Strategy: a REAL UsageRefreshScheduler (samplers + logger mocked, fake
  * timers) supervised by a REAL FirstPartyPluginBridge over the REAL
- * USAGE_STATS_FIRST_PARTY_PLUGIN definition — the same
+ * USAGE_STATS_FIRST_PARTY_PLUGIN definition - the same
  * reconcile=start()/stopAll=stop() hooks index.ts wires into
  * firstPartySupervisors.usageStats. Grants live in a minimal in-memory
  * ledger double (the sealed-ledger integration is covered by

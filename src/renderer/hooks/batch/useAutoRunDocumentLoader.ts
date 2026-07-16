@@ -1,5 +1,5 @@
 /**
- * useAutoRunDocumentLoader — extracted from App.tsx
+ * useAutoRunDocumentLoader - extracted from App.tsx
  *
  * Loads and watches Auto Run documents for the active session:
  *   - Counts tasks (checked/unchecked) in document content
@@ -39,7 +39,7 @@ const REMOTE_POLL_INTERVAL_MS = 20000;
 
 export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	const loadSequenceRef = useRef(0);
-	// Last (sessionId|folder|sshRemoteId) tuple — lets us distinguish a true
+	// Last (sessionId|folder|sshRemoteId) tuple - lets us distinguish a true
 	// session/folder change (full reload) from a `selectedFile`-only change
 	// (single-file content fetch).
 	const structureKeyRef = useRef<string | null>(null);
@@ -192,7 +192,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 						if (selectedFile) {
 							let content: string;
 							if (captureInList) {
-								// Already read during task counting — reuse it.
+								// Already read during task counting - reuse it.
 								content = capturedContent ?? '';
 							} else {
 								// Selected file isn't in the listing (stale ref); read explicitly.
@@ -223,7 +223,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 					}
 				}
 			} else if (selectedFile) {
-				// Only the selected file changed — read just that file.
+				// Only the selected file changed - read just that file.
 				const contentResult = await window.maestro.autorun.readDoc(
 					folderPath,
 					selectedFile + '.md',
@@ -361,7 +361,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 			window.maestro.autorun.unwatchFolder(folderPath);
 			unsubscribe();
 		};
-		// Intentionally NOT depending on autoRunSelectedFile — the watcher reads
+		// Intentionally NOT depending on autoRunSelectedFile - the watcher reads
 		// the latest selected file from the store at refresh time, so changing
 		// the selected doc shouldn't tear down and re-establish the watcher.
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops

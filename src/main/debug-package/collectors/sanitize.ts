@@ -42,7 +42,7 @@ function sanitizeText(text: string): string {
  */
 export function sanitizeLogMessage(message: string): string {
 	let sanitized = sanitizeText(message);
-	// Truncate messages over 500 chars — long messages are likely prompts or conversation content
+	// Truncate messages over 500 chars - long messages are likely prompts or conversation content
 	if (sanitized.length > 500) {
 		sanitized = sanitized.slice(0, 500) + ' [TRUNCATED]';
 	}

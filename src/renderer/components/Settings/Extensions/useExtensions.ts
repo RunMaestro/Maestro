@@ -109,7 +109,7 @@ export function useExtensions(): UseExtensionsResult {
 	}, [reload, encoreFeatures.plugins]);
 
 	// The consent window mints grants and the main process then enables the
-	// plugin, broadcasting 'plugins:changed' — re-read so the grid reflects the
+	// plugin, broadcasting 'plugins:changed' - re-read so the grid reflects the
 	// new enabled/grant state without a manual refresh.
 	useEffect(() => {
 		const unsubscribe = window.maestro.plugins.onChanged(() => {
@@ -145,7 +145,7 @@ export function useExtensions(): UseExtensionsResult {
 				})
 				.catch((err) => {
 					console.error(
-						`[Extensions] first-party bridge toggle failed for "${flag}" — ` +
+						`[Extensions] first-party bridge toggle failed for "${flag}" - ` +
 							`falling back to direct settings write:`,
 						err
 					);
@@ -159,7 +159,7 @@ export function useExtensions(): UseExtensionsResult {
 	// capabilities stages a pre-enable permission review (FirstPartyEnableModal);
 	// NOTHING is minted until the user confirms. Disabling, and enabling
 	// zero-permission or non-first-party flags, commit immediately (disable only
-	// removes access — there is nothing to review).
+	// removes access - there is nothing to review).
 	const toggleBuiltin = useCallback(
 		(flag: keyof EncoreFeatureFlags) => {
 			const next = !encoreFeatures[flag];

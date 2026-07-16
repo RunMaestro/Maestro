@@ -80,7 +80,7 @@ describe('CsvTableRenderer', () => {
 		it('handles rows with different column counts', () => {
 			render(<CsvTableRenderer content={'A,B,C\n1,2\n3,4,5,6'} theme={mockTheme} />);
 
-			// Should not crash — fills missing cells with empty, ignores extra
+			// Should not crash - fills missing cells with empty, ignores extra
 			expect(screen.getByText('A')).toBeInTheDocument();
 			expect(screen.getByText('3')).toBeInTheDocument();
 		});
@@ -238,7 +238,7 @@ describe('CsvTableRenderer', () => {
 				<CsvTableRenderer content={'Value\n123.\n456.\n789.'} theme={mockTheme} />
 			);
 
-			// "123." is not a valid number — column should be left-aligned
+			// "123." is not a valid number - column should be left-aligned
 			const cells = container.querySelectorAll('tbody td');
 			expect((cells[1] as HTMLElement).style.textAlign).toBe('left');
 		});
@@ -332,7 +332,7 @@ describe('CsvTableRenderer', () => {
 				/>
 			);
 
-			// Should render without hanging — the query is truncated to 200 chars
+			// Should render without hanging - the query is truncated to 200 chars
 			const rows = container.querySelectorAll('tbody tr');
 			expect(rows).toHaveLength(1);
 		});

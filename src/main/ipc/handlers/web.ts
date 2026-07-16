@@ -87,7 +87,7 @@ const ENSURE_CLI_MAX_ATTEMPTS = 3;
  * Ensure the CLI server is running and the discovery file is published.
  *
  * Called during app initialization to make the web server always available
- * for CLI IPC connections. The server binds to 0.0.0.0 — this is intentional
+ * for CLI IPC connections. The server binds to 0.0.0.0 - this is intentional
  * for LAN accessibility; the UUID security token prevents unauthorized access.
  *
  * Retries on any failure (port collision, transient fs error, etc.) and
@@ -141,7 +141,7 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boo
 				try {
 					await existing.stop();
 				} catch {
-					// Best-effort cleanup — the next attempt will recreate the server.
+					// Best-effort cleanup - the next attempt will recreate the server.
 				}
 				setWebServer(null);
 			}
@@ -153,7 +153,7 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boo
 	}
 
 	logger.error(
-		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts — maestro-cli will be unavailable until Live Mode is toggled`,
+		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts - maestro-cli will be unavailable until Live Mode is toggled`,
 		'CliServer'
 	);
 	return false;
@@ -178,9 +178,9 @@ const CLI_WATCHDOG_INTERVAL_MS = 5_000;
  * depth for cases the main-path retry can't catch (file deleted externally,
  * disk hiccup after a successful write, ensureCliServer racing with a Live
  * Mode toggle, etc.). Also self-heals if the initial ensureCliServer attempt
- * gave up — the next time the server is reachable, the watchdog republishes.
+ * gave up - the next time the server is reachable, the watchdog republishes.
  *
- * Safe to call multiple times — the previous timer is cleared first. Pass
+ * Safe to call multiple times - the previous timer is cleared first. Pass
  * `intervalMs` only for tests; production uses the default 5s interval.
  */
 export function startCliDiscoveryWatchdog(
@@ -191,7 +191,7 @@ export function startCliDiscoveryWatchdog(
 	cliDiscoveryWatchdog = setInterval(() => {
 		const webServer = deps.getWebServer();
 		if (!webServer) {
-			// No server yet (initial ensureCliServer never succeeded) — try to
+			// No server yet (initial ensureCliServer never succeeded) - try to
 			// bring one up so maestro-cli works without forcing a Live Mode toggle.
 			void ensureCliServer(deps).catch((err: unknown) => {
 				logger.error(
@@ -209,7 +209,7 @@ export function startCliDiscoveryWatchdog(
 		if (discoveryFileMatches(port, token)) {
 			return;
 		}
-		logger.warn('CLI discovery file is missing or stale — watchdog republishing', 'CliServer');
+		logger.warn('CLI discovery file is missing or stale - watchdog republishing', 'CliServer');
 		try {
 			refreshCliDiscoveryFile(port, token);
 		} catch (err: any) {
@@ -219,7 +219,7 @@ export function startCliDiscoveryWatchdog(
 			);
 		}
 	}, intervalMs);
-	// Don't keep the event loop alive just for the watchdog — Electron's
+	// Don't keep the event loop alive just for the watchdog - Electron's
 	// lifecycle owns process exit and we don't want this timer to delay quit.
 	cliDiscoveryWatchdog.unref?.();
 }
@@ -412,7 +412,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 			// Rotate the security token on every Live toggle unless the user
 			// opted into Persistent Web Link. After live:stopServer the CLI-only
-			// server (spun up by ensureCliServer) keeps the previous token —
+			// server (spun up by ensureCliServer) keeps the previous token -
 			// reusing it on the next Live ON would silently leak the prior URL.
 			// Tear it down so createWebServer() mints a fresh ephemeral token.
 			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
@@ -420,7 +420,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				try {
 					await webServer.stop();
 				} catch (err: any) {
-					// Don't drop the reference — the old server may still be bound
+					// Don't drop the reference - the old server may still be bound
 					// to its port. Nulling it would leak a live server and the next
 					// start() would either collide on a custom port or run a second
 					// server in parallel on a random one.
@@ -449,7 +449,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 				// Refresh CLI discovery file so the CLI can reconnect after a
 				// stop/start cycle (ensureCliServer only runs once at app launch).
-				// Non-fatal: the server is genuinely up — a failure here would only
+				// Non-fatal: the server is genuinely up - a failure here would only
 				// break CLI IPC, so don't let it mask the UI's success path.
 				try {
 					refreshCliDiscoveryFile(port, token);
@@ -459,7 +459,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				return { success: true, url };
 			}
 
-			// Already running — refresh discovery file in case it's stale.
+			// Already running - refresh discovery file in case it's stale.
 			// Same non-fatal treatment: server is up, CLI discovery is secondary.
 			try {
 				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
@@ -525,7 +525,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			try {
 				settingsStore.set('persistentWebLink', false);
 			} catch {
-				// Best-effort rollback — disk may be completely unavailable
+				// Best-effort rollback - disk may be completely unavailable
 			}
 			logger.error(`Failed to persist web server token: ${error.message}`, 'WebServer');
 			return { success: false, message: error.message };
@@ -542,12 +542,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info('Cleared persistent web link token and disabled flag', 'WebServer');
 			return { success: true };
 		} catch (error: any) {
-			// Rollback the flag so disk state stays consistent — prevents
+			// Rollback the flag so disk state stays consistent - prevents
 			// persistentWebLink=false with a stale token on next startup.
 			try {
 				settingsStore.set('persistentWebLink', true);
 			} catch {
-				// Best-effort rollback — disk may be completely unavailable
+				// Best-effort rollback - disk may be completely unavailable
 			}
 			logger.error(`Failed to clear persistent token: ${error.message}`, 'WebServer');
 			return { success: false, message: error.message };

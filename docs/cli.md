@@ -112,10 +112,10 @@ Supported agent types: any installed provider - `claude-code`, `codex`, `opencod
 
 #### Messages that start with a dash
 
-Messages whose first character is a dash (em-dash `-`, en-dash `-`, double-dash `--`, minus `-`) collide with option parsing and will be rejected as unknown flags. Use the standard `--` end-of-options separator so the message is passed verbatim:
+Messages whose first character is a Unicode dash (U+2014 em dash or U+2013 en dash), a double hyphen (`--`), or an ASCII hyphen/minus (`-`) collide with option parsing and will be rejected as unknown flags. Use the standard `--` end-of-options separator so the message is passed verbatim:
 
 ```bash
-maestro-cli send <agent-id> -- " -  -  - revise the spec"
+maestro-cli send <agent-id> -- "- revise the spec"
 maestro-cli send <agent-id> -s <session-id> -- "--re-run"
 maestro-cli dispatch <agent-id> -- "--force the rewrite"
 ```

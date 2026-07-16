@@ -67,7 +67,7 @@ function getBundledPromptsDir(): string | null {
  * empty path.
  */
 function resolveRefs(content: string): string {
-	// Local /g regex — using a module-level singleton would force manual
+	// Local /g regex - using a module-level singleton would force manual
 	// `lastIndex = 0` resets between the `.test()` probe and `.replace()` and
 	// silently skip later matches if any helper in between also called
 	// `.test()`. A fresh regex per call has zero shared state.
@@ -94,7 +94,7 @@ async function getCustomizedPrompt(id: string): Promise<string | null> {
 			return entry.content;
 		}
 	} catch {
-		// No customizations file or parse error — fall through to bundled
+		// No customizations file or parse error - fall through to bundled
 	}
 	return null;
 }

@@ -211,7 +211,7 @@ describe('EnvVarsEditor', () => {
 		const valueInput = screen.getAllByPlaceholderText('value')[0];
 		fireEvent.change(valueInput, { target: { value: '"value&with|special"' } });
 
-		// Should NOT show warning — value is quoted
+		// Should NOT show warning - value is quoted
 		expect(screen.queryByText(/contains disallowed special characters/)).not.toBeInTheDocument();
 	});
 
@@ -358,7 +358,7 @@ describe('EnvVarsEditor', () => {
 	});
 
 	it('rejects a relative CLAUDE_CONFIG_DIR value', () => {
-		// Guards against the real-world typo `sm/Users/pedram/.claude-smash` —
+		// Guards against the real-world typo `sm/Users/pedram/.claude-smash` -
 		// a relative path silently resolved against the main-process cwd at
 		// sample time and pointed at a non-existent dir, producing a phantom
 		// "smash" tab in the Usage Dashboard.

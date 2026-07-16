@@ -289,7 +289,7 @@ export class OpencodeServerSpawner {
 				return;
 			}
 		} catch (setupErr) {
-			// A kill mid-setup surfaces as an aborted subscribe/create rejection —
+			// A kill mid-setup surfaces as an aborted subscribe/create rejection -
 			// that's a clean stop, not a transport failure, so don't fall back to CLI.
 			if (cancelled()) {
 				lifecycle.finish(0);
@@ -300,7 +300,7 @@ export class OpencodeServerSpawner {
 				'OpencodeServer',
 				{ sessionId, error: String(setupErr) }
 			);
-			// Only reclaim the slot if it's still ours — a concurrent respawn for the
+			// Only reclaim the slot if it's still ours - a concurrent respawn for the
 			// same sessionId must not be clobbered by our fallback.
 			if (this.processes.get(sessionId) === managedProcess) {
 				this.processes.delete(sessionId);

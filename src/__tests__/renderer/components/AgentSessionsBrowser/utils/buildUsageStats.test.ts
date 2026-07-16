@@ -60,7 +60,7 @@ describe('buildUsageStats', () => {
 		expect(result?.totalCostUsd).toBe(0.001);
 	});
 
-	it('is pure — same input produces same output without mutating the session', () => {
+	it('is pure - same input produces same output without mutating the session', () => {
 		const session = makeSession({ costUsd: 2.0 });
 		const before = JSON.stringify(session);
 		const r1 = buildUsageStats(session);

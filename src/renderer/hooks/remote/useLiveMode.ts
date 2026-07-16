@@ -1,5 +1,5 @@
 /**
- * useLiveMode — extracted from App.tsx (Tier 3B)
+ * useLiveMode - extracted from App.tsx (Tier 3B)
  *
  * Manages the global live mode (web interface for all sessions):
  *   - isLiveMode state (whether web server is running)
@@ -77,14 +77,14 @@ export function useLiveMode(): UseLiveModeReturn {
 				setWebInterfaceUrl(result.url);
 				return result.url;
 			} else {
-				// Server stopped but failed to restart — update state to reflect stopped server
+				// Server stopped but failed to restart - update state to reflect stopped server
 				setIsLiveMode(false);
 				setWebInterfaceUrl(null);
 				logger.error('[restartWebServer] Failed to restart server:', undefined, result.error);
 				return null;
 			}
 		} catch (error) {
-			// stopServer may have succeeded — ensure state reflects server is down
+			// stopServer may have succeeded - ensure state reflects server is down
 			setIsLiveMode(false);
 			setWebInterfaceUrl(null);
 			logger.error('[restartWebServer] Error:', undefined, error);

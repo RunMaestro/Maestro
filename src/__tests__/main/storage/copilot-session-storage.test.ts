@@ -84,7 +84,7 @@ function eventsJsonl(): string {
 // Tests
 // ============================================================================
 
-describe('CopilotSessionStorage — remote SSH listing', () => {
+describe('CopilotSessionStorage - remote SSH listing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -287,7 +287,7 @@ describe('CopilotSessionStorage — remote SSH listing', () => {
 	});
 });
 
-describe('CopilotSessionStorage — paginated listing', () => {
+describe('CopilotSessionStorage - paginated listing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -313,7 +313,7 @@ describe('CopilotSessionStorage — paginated listing', () => {
 		const projectPath = '/remote/project';
 		const totalCount = 2500;
 		const ids = Array.from({ length: totalCount }, (_, i) => `sess-${i}`);
-		// Older session ids have lower mtimes — newest id ('sess-2499') sorts first.
+		// Older session ids have lower mtimes - newest id ('sess-2499') sorts first.
 		const baseMtime = 1_776_000_000_000;
 
 		vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
@@ -374,7 +374,7 @@ describe('CopilotSessionStorage — paginated listing', () => {
 			...page2.sessions.map((s) => s.sessionId),
 			...page3.sessions.map((s) => s.sessionId),
 		];
-		// No duplicates across pages — cursor must advance strictly past each match.
+		// No duplicates across pages - cursor must advance strictly past each match.
 		expect(new Set(allIds).size).toBe(allIds.length);
 		// Together the three pages cover all 130 sessions.
 		expect(allIds).toHaveLength(130);

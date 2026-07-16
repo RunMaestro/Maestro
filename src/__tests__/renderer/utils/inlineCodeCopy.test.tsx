@@ -12,7 +12,7 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock clipboard utility — the handler awaits this; default to success.
+// Mock clipboard utility - the handler awaits this; default to success.
 const mockSafeClipboardWrite = vi.fn().mockResolvedValue(true);
 vi.mock('../../../renderer/utils/clipboard', () => ({
 	safeClipboardWrite: (...args: unknown[]) => mockSafeClipboardWrite(...args),
@@ -57,7 +57,7 @@ describe('inlineCodeCopy', () => {
 		});
 	});
 
-	describe('buildInlineCodeHandlers — onClick', () => {
+	describe('buildInlineCodeHandlers - onClick', () => {
 		it('stops propagation and prevents default', () => {
 			const handlers = buildInlineCodeHandlers('npm install');
 			const e = {
@@ -78,7 +78,7 @@ describe('inlineCodeCopy', () => {
 			const handlers = buildInlineCodeHandlers('TEST-PLAN-0.16.15-RC.md');
 
 			// Capture-phase listener on the document fires BEFORE the inline-code
-			// handler — so by the time we inspect defaultPrevented after the click,
+			// handler - so by the time we inspect defaultPrevented after the click,
 			// it should reflect the handler's preventDefault().
 			let capturedEvent: Event | null = null;
 			const captureListener = (e: Event) => {
@@ -114,7 +114,7 @@ describe('inlineCodeCopy', () => {
 			}
 
 			// The <code> handler should have prevented the click's default action
-			// — that is what would otherwise let the browser perform <a> navigation.
+			// - that is what would otherwise let the browser perform <a> navigation.
 			expect(capturedEvent).not.toBeNull();
 			expect(capturedEvent!.defaultPrevented).toBe(true);
 
@@ -139,7 +139,7 @@ describe('inlineCodeCopy', () => {
 		});
 	});
 
-	describe('buildInlineCodeHandlers — onKeyDown', () => {
+	describe('buildInlineCodeHandlers - onKeyDown', () => {
 		it('handles Enter and Space, prevents default + stops propagation', () => {
 			const handlers = buildInlineCodeHandlers('value');
 			for (const key of ['Enter', ' ']) {

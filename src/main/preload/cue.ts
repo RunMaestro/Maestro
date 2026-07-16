@@ -81,7 +81,7 @@ export function createCueApi() {
 		// Disable the Cue engine (runtime control)
 		disable: (): Promise<void> => ipcRenderer.invoke('cue:disable'),
 
-		// Visibility-aware pause — the renderer flips this on visibilitychange
+		// Visibility-aware pause - the renderer flips this on visibilitychange
 		// so the scanner subsystem skips expensive background work while the
 		// app is hidden. Idempotent.
 		setActive: (active: boolean): Promise<void> => ipcRenderer.invoke('cue:setActive', active),
@@ -146,7 +146,7 @@ export function createCueApi() {
 			ipcRenderer.invoke('cue:loadPipelineLayout'),
 
 		// Listen for real-time activity updates from the main process. Payload
-		// is a typed CueLogPayload discriminated union — narrow on `data.type`
+		// is a typed CueLogPayload discriminated union - narrow on `data.type`
 		// to handle specific events (queueOverflow, runFinished, ...).
 		onActivityUpdate: (callback: (data: CueActivityPayload) => void): (() => void) => {
 			const handler = (_e: unknown, data: CueActivityPayload) => callback(data);

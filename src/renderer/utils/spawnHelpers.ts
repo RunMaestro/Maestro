@@ -44,7 +44,7 @@ export async function prepareMaestroSystemPrompt(opts: {
 		}
 	}
 
-	// History file path for task recall — skip for SSH (path is local-only)
+	// History file path for task recall - skip for SSH (path is local-only)
 	let historyFilePath: string | undefined;
 	const isSSH = opts.session.sshRemoteId || opts.session.sessionSshRemoteConfig?.enabled;
 	if (!isSSH) {

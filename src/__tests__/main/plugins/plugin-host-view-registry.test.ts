@@ -265,7 +265,7 @@ describe('PluginHostViewRegistry', () => {
 
 	it('purges a live runtime view when the record persists in a failed load state', () => {
 		// A reload that produces an `invalid`/`incompatible` record keeps the record
-		// PRESENT while dropping its declarations — that is a permanent failure, not
+		// PRESENT while dropping its declarations - that is a permanent failure, not
 		// a transient window, so the stale runtime view must not keep replaying.
 		const view: HostViewContribution = {
 			id: 'com.example.runtime/status',

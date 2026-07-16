@@ -1,20 +1,20 @@
 /**
- * Phase 03 task #4 — unit tests for `cue-stats-query.ts`.
+ * Phase 03 task #4 - unit tests for `cue-stats-query.ts`.
  *
  * The aggregation function reads from two upstream subsystems we'd rather
  * keep out of the test runtime:
- *   1. `getRecentCueEvents()` from `cue-db` — backed by `better-sqlite3`,
+ *   1. `getRecentCueEvents()` from `cue-db` - backed by `better-sqlite3`,
  *      whose native binding is built for Electron's NODE_MODULE_VERSION and
  *      fails to load under vitest (every other Cue test works around this
  *      the same way; see `cue-db.test.ts` and `cue-chain-lineage.test.ts`).
  *   2. `getSessionTokenSummaries()` + `getAgentTypesForSessions()` from the
- *      token accessor — which themselves read `session_lifecycle` and dispatch
+ *      token accessor - which themselves read `session_lifecycle` and dispatch
  *      to per-agent storage.
  *
  * We mock both at the module boundary and seed deterministic event lists +
  * token summaries per test, then assert on the aggregation output. This
  * exercises the actual pipeline/agent/subscription rollups, chain forest
- * builder, time-series bucketing, and coverage-warning logic — none of which
+ * builder, time-series bucketing, and coverage-warning logic - none of which
  * touch SQL.
  *
  * Token attribution joins on the provider session id; these fixtures set each
@@ -104,7 +104,7 @@ function makeSummary(overrides: Partial<SessionTokenSummary> = {}): SessionToken
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('cue-stats-query — getCueStatsAggregation', () => {
+describe('cue-stats-query - getCueStatsAggregation', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockEvents = [];
@@ -182,7 +182,7 @@ describe('cue-stats-query — getCueStatsAggregation', () => {
 			expect(result.totals.totalOutputTokens).toBe(240);
 			expect(result.totals.totalCacheReadTokens).toBe(60);
 			expect(result.totals.totalCacheCreationTokens).toBe(30);
-			// 0.01 + 0.02 = 0.03 (s3 contributes nothing — costUsd null)
+			// 0.01 + 0.02 = 0.03 (s3 contributes nothing - costUsd null)
 			expect(result.totals.totalCostUsd).toBeCloseTo(0.03, 5);
 		});
 
@@ -310,7 +310,7 @@ describe('cue-stats-query — getCueStatsAggregation', () => {
 			const now = Date.now();
 			// Window for 'day' is now-24h. Place root outside (older), child + grandchild inside.
 			mockEvents = [
-				// Note: root event is NOT in the events list — it predates the window.
+				// Note: root event is NOT in the events list - it predates the window.
 				makeEvent({
 					id: 'child',
 					sessionId: 's2',

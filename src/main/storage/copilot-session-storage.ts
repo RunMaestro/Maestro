@@ -28,7 +28,7 @@ import type { ModelTokenUsage } from '../../shared/tokenUsage';
 const LOG_CONTEXT = '[CopilotSessionStorage]';
 
 /**
- * Skip remote sessions whose `events.jsonl` exceeds this size — they can't be
+ * Skip remote sessions whose `events.jsonl` exceeds this size - they can't be
  * read in a single `cat` without blowing past `EXEC_MAX_BUFFER`, and they're
  * almost always corrupted/runaway logs in practice.
  */
@@ -172,7 +172,7 @@ function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWork
 function normalizePath(value?: string): string | null {
 	if (!value) return null;
 	let normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-	// Preserve POSIX root "/" — stripping its trailing slash would produce ""
+	// Preserve POSIX root "/" - stripping its trailing slash would produce ""
 	if (!normalized && value === '/') normalized = '/';
 	// Case-fold Windows-style paths (e.g., C:/Users) for case-insensitive comparison
 	if (/^[A-Za-z]:/.test(normalized)) {
@@ -418,7 +418,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 
 		// Filter out sessions whose events.jsonl exceeds the read budget. Sessions
 		// without an entry (no events.jsonl yet) are kept and let `loadSessionInfo`
-		// classify them — bulk stat output is best-effort metadata, not gating.
+		// classify them - bulk stat output is best-effort metadata, not gating.
 		const eligibleIds = sessionIds.filter((id) => {
 			const stat = eventsStats.get(id);
 			if (!stat) return true;
@@ -456,13 +456,13 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	 *
 	 * This override:
 	 *   1. Bulk-stats every `events.jsonl` in one round-trip (sizes + mtimes).
-	 *   2. Sorts session ids by mtime descending — no file content read.
+	 *   2. Sorts session ids by mtime descending - no file content read.
 	 *   3. Scans forward from the cursor in concurrency-bounded batches, doing
 	 *      the full `loadSessionInfo` only until the page is filled. Sessions
 	 *      that don't match the project bail out cheaply after the
 	 *      `workspace.yaml` read (no `events.jsonl` read or directory size).
 	 *
-	 * `nextCursor` is the id of the last *matched* session — the next call
+	 * `nextCursor` is the id of the last *matched* session - the next call
 	 * resumes immediately after it. Non-matching sessions read past that
 	 * boundary in the final batch get re-scanned on the next page; that's
 	 * wasted work but keeps the cursor monotonic and correct.
@@ -494,7 +494,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		let lastMatchedIndex = scanIndex - 1;
 		// Amortize SSH round-trip cost: scan more than `limit` per batch so
 		// non-matching sessions don't serialize the fan-out. 4× concurrency is
-		// a balance — bigger batches waste fewer batches when sparse matches,
+		// a balance - bigger batches waste fewer batches when sparse matches,
 		// but waste more reads when the page fills before the batch ends.
 		const batchSize = REMOTE_SESSION_READ_CONCURRENCY * 4;
 
@@ -540,7 +540,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	 * Build the sorted candidate list used by paginated listing. Joins the
 	 * session-id directory listing with the bulk events.jsonl stat so we
 	 * keep sessions whose events.jsonl is missing (they get mtime=0 and
-	 * `loadSessionInfo` will classify them) — matches the existing
+	 * `loadSessionInfo` will classify them) - matches the existing
 	 * "best-effort metadata, not gating" contract from listSessionsRemote.
 	 */
 	private async collectCandidates(
@@ -602,7 +602,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 					const stat = await fs.stat(eventsPath);
 					stats.set(name, { size: stat.size, mtime: stat.mtimeMs });
 				} catch {
-					// No events.jsonl yet — leave the session out of stats; the
+					// No events.jsonl yet - leave the session out of stats; the
 					// caller still keeps it as a candidate with mtime=0.
 				}
 			})
@@ -613,7 +613,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 
 	/**
 	 * Bulk-stat every session's `events.jsonl` in one SSH call. Returns a map
-	 * keyed by session id. Empty on failure — the caller falls back to per-
+	 * keyed by session id. Empty on failure - the caller falls back to per-
 	 * session reads, so a stat outage degrades gracefully.
 	 */
 	private async bulkStatEventsRemote(

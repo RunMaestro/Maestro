@@ -304,7 +304,7 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /deep-doc\.md/i });
 			fireEvent.click(button);
 
-			// Both the trigger and the dropdown row show the doc text — pick
+			// Both the trigger and the dropdown row show the doc text - pick
 			// the dropdown row by its data-selected marker.
 			const selectedButton = document.querySelector(
 				'button[data-selected="true"]'

@@ -204,7 +204,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									</button>
 								</HoverTooltip>
 							)}
-						{/* Word-wrap toggle — edit mode only. Switches between soft-wrap
+						{/* Word-wrap toggle - edit mode only. Switches between soft-wrap
 						    (default; long lines wrap at whitespace) and no-wrap
 						    (horizontal scroll). */}
 						{toolbarVisibility.wordWrap && isEditableText && markdownEditMode && (
@@ -353,7 +353,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Open in Maestro Browser — HTML files only, not over SSH
+						{/* Open in Maestro Browser - HTML files only, not over SSH
 						    (file:// can't reach the remote host). Mirrors the file-tree
 						    right-click action so JS-heavy local HTML renders in the full
 						    webview instead of the sandboxed preview iframe. */}

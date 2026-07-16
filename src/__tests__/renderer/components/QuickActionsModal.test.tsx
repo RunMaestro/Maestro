@@ -2099,7 +2099,7 @@ describe('QuickActionsModal', () => {
 			// Main mode keeps the per-row state subtext and does not show section headers.
 			expect(dialog.textContent).not.toContain('LIVE');
 			// 'IDLE' may legitimately appear as the per-row state subtext in main mode,
-			// but never as a standalone section header — we assert via class lookup.
+			// but never as a standalone section header - we assert via class lookup.
 			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
 			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
 			expect(headerTexts.some((t) => t.trim() === 'LIVE')).toBe(false);
@@ -2231,7 +2231,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			// Browser tab is at index 1 (last) — should show Move to First but not Move to Last
+			// Browser tab is at index 1 (last) - should show Move to First but not Move to Last
 			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
 			expect(screen.queryByText('Move to Last Position')).not.toBeInTheDocument();
 		});
@@ -2254,7 +2254,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			// Browser tab is at index 0 (first) — should show Move to Last but not Move to First
+			// Browser tab is at index 0 (first) - should show Move to Last but not Move to First
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
 			expect(screen.getByText('Move to Last Position')).toBeInTheDocument();
 		});

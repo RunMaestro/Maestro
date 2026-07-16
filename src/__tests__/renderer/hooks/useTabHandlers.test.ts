@@ -1507,7 +1507,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleSelectFileTab — auto-refresh
+	// handleSelectFileTab - auto-refresh
 	// ========================================================================
 
 	describe('handleSelectFileTab auto-refresh', () => {
@@ -1592,7 +1592,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleTabClose — wizard tab
+	// handleTabClose - wizard tab
 	// ========================================================================
 
 	describe('handleTabClose wizard tab', () => {
@@ -1658,7 +1658,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleTabClose — draft confirmation
+	// handleTabClose - draft confirmation
 	// ========================================================================
 
 	describe('handleTabClose draft confirmation', () => {
@@ -1732,7 +1732,7 @@ describe('useTabHandlers', () => {
 
 		it('uses live draft store when tab.inputValue is stale empty', () => {
 			// Simulates a fresh tab where the user has typed text but not yet
-			// blurred — tab.inputValue is empty but liveDraftStore has the live value.
+			// blurred - tab.inputValue is empty but liveDraftStore has the live value.
 			const tab1 = createMockAITab({ id: 'tab-1', inputValue: '' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
@@ -1748,7 +1748,7 @@ describe('useTabHandlers', () => {
 		});
 
 		it('skips draft modal when live draft is empty even if tab.inputValue is stale', () => {
-			// Simulates a tab whose user typed and then cleared the textarea —
+			// Simulates a tab whose user typed and then cleared the textarea -
 			// tab.inputValue still has the old text, but liveDraftStore reflects empty.
 			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'stale persisted text' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
@@ -1785,7 +1785,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseAllTabs — draft confirmation
+	// handleCloseAllTabs - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseAllTabs draft confirmation', () => {
@@ -1822,7 +1822,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseOtherTabs — draft confirmation
+	// handleCloseOtherTabs - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseOtherTabs draft handling', () => {
@@ -1852,7 +1852,7 @@ describe('useTabHandlers', () => {
 				result.current.handleCloseOtherTabs();
 			});
 
-			// Active tab's draft doesn't matter — it's not being closed
+			// Active tab's draft doesn't matter - it's not being closed
 			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
 			const session = getSession();
 			expect(session.aiTabs).toHaveLength(1);
@@ -1861,7 +1861,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseTabsLeft/Right — draft confirmation
+	// handleCloseTabsLeft/Right - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseTabsLeft draft handling', () => {
@@ -1903,7 +1903,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleToggleTabShowThinking — clears logs on off
+	// handleToggleTabShowThinking - clears logs on off
 	// ========================================================================
 
 	describe('handleToggleTabShowThinking log clearing', () => {
@@ -1937,7 +1937,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleDeleteLog — additional coverage
+	// handleDeleteLog - additional coverage
 	// ========================================================================
 
 	describe('handleDeleteLog additional coverage', () => {
@@ -2061,7 +2061,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleAtBottomChange — edge cases
+	// handleAtBottomChange - edge cases
 	// ========================================================================
 
 	describe('handleAtBottomChange edge cases', () => {
@@ -2083,7 +2083,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseOtherTabs — with file tabs
+	// handleCloseOtherTabs - with file tabs
 	// ========================================================================
 
 	describe('handleCloseOtherTabs with file tabs', () => {
@@ -2160,7 +2160,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseTabsLeft/Right — with file tabs
+	// handleCloseTabsLeft/Right - with file tabs
 	// ========================================================================
 
 	describe('handleCloseTabsLeft with file tabs', () => {
@@ -2321,7 +2321,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleOpenFileTab — adjacent insertion
+	// handleOpenFileTab - adjacent insertion
 	// ========================================================================
 
 	describe('handleOpenFileTab adjacent insertion', () => {
@@ -2395,7 +2395,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleNewAgentSession — settings defaults
+	// handleNewAgentSession - settings defaults
 	// ========================================================================
 
 	describe('handleNewAgentSession settings', () => {
@@ -2459,7 +2459,7 @@ describe('useTabHandlers', () => {
 				result.current.handleAtBottomChange(true);
 			});
 
-			// No crash — state unchanged
+			// No crash - state unchanged
 			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 

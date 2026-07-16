@@ -189,7 +189,7 @@ function TabBarInner({
 	]);
 
 	// Filter tabs for display. Memoized so the filter only re-runs when the
-	// inputs actually change — without this, every TabBar render (e.g. on input
+	// inputs actually change - without this, every TabBar render (e.g. on input
 	// keystrokes or unrelated session updates) re-walks the tabs array.
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
@@ -235,7 +235,7 @@ function TabBarInner({
 				);
 			}
 			// File preview tabs: hidden by default in unread filter, shown if setting
-			// enabled — but the currently active file tab is always visible so the user
+			// enabled - but the currently active file tab is always visible so the user
 			// never loses sight of what they're looking at.
 			if (ut.type === 'file') {
 				return showFilePreviewsInUnreadFilter || ut.id === activeFileTabId;
@@ -440,7 +440,7 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
-	// Close wrappers — forward the clicked tab id as the pivot so the operation
+	// Close wrappers - forward the clicked tab id as the pivot so the operation
 	// closes relative to the tab whose menu was used, not whatever happens to be
 	// the active tab. Dropping the id here was the cause of catastrophic
 	// wrong-set closes (e.g. "close tabs to right" closing every other tab).
@@ -466,7 +466,7 @@ function TabBarInner({
 	const allTabs = unifiedTabs ?? [];
 
 	// Map of terminal-tab id → display index, ordered by creation time so the
-	// "Terminal N" label reflects the order the user opened them — not the
+	// "Terminal N" label reflects the order the user opened them - not the
 	// position in the visual tab strip. Without this, opening a 2nd terminal
 	// while an AI tab is active inserts the new terminal to the LEFT of the
 	// existing one (insertAfterActiveInUnifiedTabOrder), which would otherwise
@@ -630,7 +630,7 @@ function TabBarInner({
 					</div>
 				)}
 
-			{/* Tab rendering — unified mode (AI + file + terminal tabs) */}
+			{/* Tab rendering - unified mode (AI + file + terminal tabs) */}
 			{displayedUnifiedTabs
 				? displayedUnifiedTabs.map((unifiedTab, index) => {
 						const isActive = isUnifiedTabActive(
@@ -660,7 +660,7 @@ function TabBarInner({
 						const isFirstTab = originalIndex === 0;
 						const isLastTab = originalIndex === allTabs.length - 1;
 						// When the unread filter is active, jump shortcuts (Cmd+N / Cmd+0) operate on
-						// the filtered list — so hints must reflect the displayed position, not the
+						// the filtered list - so hints must reflect the displayed position, not the
 						// underlying unifiedTabs index.
 						const isLastDisplayed = index === displayedUnifiedTabs.length - 1;
 						const shortcutHint = showUnreadOnly
@@ -819,7 +819,7 @@ function TabBarInner({
 						}
 						return null;
 					})
-				: /* Legacy mode — AI tabs only */
+				: /* Legacy mode - AI tabs only */
 					displayedTabs.map((tab, index) => {
 						const isActive = tab.id === activeTabId && !activeFileTabId;
 						const prevTab = index > 0 ? displayedTabs[index - 1] : null;

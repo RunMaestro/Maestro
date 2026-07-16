@@ -46,9 +46,9 @@ and the source files listed below for contract truth.
      IPC/WS verb; plugin cannot fabricate a channel.
    - `events:subscribe` → only the fixed metadata-only topic catalog; re-authorize EVERY delivery
      against live grants (instant revoke).
-3. `fs:read` AND `fs:write` scopes MUST structurally EXCLUDE the userData/config tree — grants file,
+3. `fs:read` AND `fs:write` scopes MUST structurally EXCLUDE the userData/config tree - grants file,
    enable-state, `encoreFeatures.*` settings, agent-configs, the CLI/WS token (`cli-server.json`),
-   the plugins dir, plugin KV, pianola supervisor targets, transcripts — enforced in the broker/
+   the plugins dir, plugin KV, pianola supervisor targets, transcripts - enforced in the broker/
    handler AFTER symlink/real-path resolution (not by consent wording).
 4. `net:fetch`: keep `redirect:'error'`; add a resolved-IP egress policy that BLOCKS loopback,
    link-local (169.254.0.0/16, ::1, fe80::/10), RFC1918 (10/8, 172.16/12, 192.168/16), and cloud

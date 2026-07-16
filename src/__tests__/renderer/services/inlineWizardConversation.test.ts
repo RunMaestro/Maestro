@@ -481,7 +481,7 @@ describe('inlineWizardConversation', () => {
 			await vi.advanceTimersByTimeAsync(900000); // 15 minutes
 			dataCallback(session.sessionId, '{"type":"assistant"}');
 
-			// Advance another 15 minutes — would have timed out at 20 min without the reset
+			// Advance another 15 minutes - would have timed out at 20 min without the reset
 			await vi.advanceTimersByTimeAsync(900000); // now 30 minutes total
 			expect(mockKill).not.toHaveBeenCalled();
 
@@ -522,13 +522,13 @@ describe('inlineWizardConversation', () => {
 
 			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
 
-			// Send data every 10 minutes for 70 minutes — well past the 20-min timeout
+			// Send data every 10 minutes for 70 minutes - well past the 20-min timeout
 			for (let i = 0; i < 7; i++) {
 				await vi.advanceTimersByTimeAsync(600000);
 				dataCallback(session.sessionId, `{"type":"chunk_${i}"}`);
 			}
 
-			// Agent should still be alive — never went 20 min without activity
+			// Agent should still be alive - never went 20 min without activity
 			expect(mockKill).not.toHaveBeenCalled();
 
 			// Complete normally
@@ -539,7 +539,7 @@ describe('inlineWizardConversation', () => {
 
 			const result = await messagePromise;
 			// The agent should have completed without a timeout error.
-			// result.error may be undefined (success) or a parse error — either is fine.
+			// result.error may be undefined (success) or a parse error - either is fine.
 			if (result.error) {
 				expect(result.error).not.toContain('timeout');
 			}

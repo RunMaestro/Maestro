@@ -49,7 +49,7 @@ export function createCueFileWatcherTriggerSource(
 		},
 
 		nextTriggerAt() {
-			// File watchers fire on demand — there is no scheduled "next" time.
+			// File watchers fire on demand - there is no scheduled "next" time.
 			return null;
 		},
 	};

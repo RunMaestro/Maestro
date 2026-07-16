@@ -9,7 +9,7 @@
  * Usage Dashboard uses to render a "Goal" affordance instead of the
  * file-name / task-count UI that only makes sense for real document runs.
  *
- * Pure string helpers — no Electron, React, or IPC.
+ * Pure string helpers - no Electron, React, or IPC.
  */
 
 /** Prefix marking a stats `documentPath` as a goal run rather than a file path. */

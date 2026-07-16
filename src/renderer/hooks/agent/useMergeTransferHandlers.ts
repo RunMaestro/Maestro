@@ -1,5 +1,5 @@
 /**
- * useMergeTransferHandlers — extracted from App.tsx (Phase 2.5)
+ * useMergeTransferHandlers - extracted from App.tsx (Phase 2.5)
  *
  * Orchestrates merge-session and send-to-agent workflows:
  *   - useMergeSessionWithSessions (merge context between sessions)
@@ -98,7 +98,7 @@ export function useMergeTransferHandlers(
 	const [transferTargetAgent, setTransferTargetAgent] = useState<ToolType | null>(null);
 
 	// ====================================================================
-	// useMergeSessionWithSessions — merge context between sessions
+	// useMergeSessionWithSessions - merge context between sessions
 	// ====================================================================
 
 	const {
@@ -207,7 +207,7 @@ export function useMergeTransferHandlers(
 	});
 
 	// ====================================================================
-	// useSendToAgentWithSessions — transfer context to a different agent
+	// useSendToAgentWithSessions - transfer context to a different agent
 	// ====================================================================
 
 	const {
@@ -581,7 +581,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[setSessions, setActiveSessionId, resetTransfer]
 	);
 
-	// Tab context menu handlers — switch to tab then open modal
+	// Tab context menu handlers - switch to tab then open modal
 	const handleMergeWith = useCallback(
 		(tabId: string) => {
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);

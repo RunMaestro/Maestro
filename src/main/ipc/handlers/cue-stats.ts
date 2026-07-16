@@ -2,13 +2,13 @@
  * Cue Stats IPC Handlers
  *
  * Exposes the Phase 03 aggregation query (`getCueStatsAggregation`) to the
- * renderer over a single IPC channel. Mirrors the structure of `stats.ts` —
+ * renderer over a single IPC channel. Mirrors the structure of `stats.ts` -
  * thin transport that delegates to domain code.
  *
  * Gated at the handler on BOTH Encore flags (`encoreFeatures.usageStats` AND
  * `encoreFeatures.maestroCue`). The dashboard fuses Cue lineage with token
  * data, so disabling either feature must hide it. Failure mode is throwing
- * `'CueStatsDisabled'` rather than returning an empty payload — the renderer
+ * `'CueStatsDisabled'` rather than returning an empty payload - the renderer
  * needs to distinguish "feature off" from "no data in window".
  */
 
@@ -43,7 +43,7 @@ export interface CueStatsHandlerDependencies {
 
 /**
  * Build a `subscriptionName → pipelineName` lookup from the engine's current
- * graph data. Subscriptions without a `pipeline_name` field are skipped — they
+ * graph data. Subscriptions without a `pipeline_name` field are skipped - they
  * legitimately don't belong to a pipeline. When the engine isn't available
  * (or has no sessions registered yet), returns an empty map.
  */

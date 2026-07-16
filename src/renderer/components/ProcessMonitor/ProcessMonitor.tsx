@@ -16,7 +16,7 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 
 // Hook composition order:
 //   1. useProcessMonitorData owns polling and exposes refresh.
-//   2. tree is memoised from raw inputs only — does NOT depend on expansion state,
+//   2. tree is memoised from raw inputs only - does NOT depend on expansion state,
 //      because the renderer reads expandedIds.has(node.id) directly rather than
 //      consulting the (formerly stamped) node.expanded field.
 //   3. useProcessExpansion receives tree for stepper depth math + initial-restore.
@@ -100,7 +100,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	// Escape: close detail view when open, otherwise close the modal. When a
 	// KillConfirmDialog is mounted it registers a higher-priority layer
 	// (MODAL_PRIORITIES.CONFIRM = 1000 > PROCESS_MONITOR = 550) so the dialog
-	// wins Escape automatically — no killConfirm guard needed here.
+	// wins Escape automatically - no killConfirm guard needed here.
 	useModalLayer(MODAL_PRIORITIES.PROCESS_MONITOR, 'System Processes', () => {
 		if (detailView) {
 			setDetailView(null);

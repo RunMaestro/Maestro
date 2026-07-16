@@ -127,7 +127,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 	// the `tunnel.start()` promise (which has its own 30s timeout). If we let a
 	// poll demote `starting → off` based on a transient "process spawned but URL
 	// not yet parsed" snapshot from `getStatus()`, the spinner vanishes within
-	// 500ms and the user thinks their click didn't register — then double-taps,
+	// 500ms and the user thinks their click didn't register - then double-taps,
 	// which kills the in-flight cloudflared and starts a fresh one.
 	useEffect(() => {
 		if (

@@ -168,7 +168,7 @@ describe('createMermaidRenderer', () => {
 	});
 
 	it('no-ops gracefully when IntersectionObserver is unavailable', () => {
-		// @ts-expect-error — simulate older environment.
+		// @ts-expect-error - simulate older environment.
 		delete globalThis.IntersectionObserver;
 		const root = makeRoot('<pre><code class="language-mermaid">graph;A</code></pre>');
 		const handle = createMermaidRenderer({ theme: mockTheme });

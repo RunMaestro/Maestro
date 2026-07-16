@@ -267,7 +267,7 @@ describe('useCueAutoDiscovery', () => {
 
 			mockRefreshSession.mockClear();
 
-			// Add a new session while feature is disabled — should still refresh
+			// Add a new session while feature is disabled - should still refresh
 			act(() => {
 				seedSessions([...initialSessions, makeSession('s2', '/project/b')], true);
 			});
@@ -348,7 +348,7 @@ describe('useCueAutoDiscovery', () => {
 			// Let the microtask chain drain across all three toggles.
 			await act(async () => {});
 
-			// Every transition must have been observed once — never skipped or
+			// Every transition must have been observed once - never skipped or
 			// reordered. Final call is enable to match the final flag value.
 			expect(mockEnable).toHaveBeenCalledTimes(2);
 			expect(mockDisable).toHaveBeenCalledTimes(1);

@@ -1,5 +1,5 @@
 /**
- * Tests for NarrativeSections — the Rich-Mode renderer for the parsed
+ * Tests for NarrativeSections - the Rich-Mode renderer for the parsed
  * Director's Notes narrative.
  *
  * Verifies it:

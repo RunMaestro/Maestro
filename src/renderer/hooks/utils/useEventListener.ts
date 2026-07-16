@@ -5,7 +5,7 @@
  * cleanup on unmount or when the event type / target / enabled state changes.
  *
  * The handler is held in a ref so callers can pass an inline function
- * without re-subscribing on every render — only `eventType`, `target`, and
+ * without re-subscribing on every render - only `eventType`, `target`, and
  * `enabled` cause re-subscription.
  */
 

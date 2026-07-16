@@ -352,7 +352,7 @@ describe('Tab completion navigation', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		// Should not call tab completion setters — falls through
+		// Should not call tab completion setters - falls through
 		expect(mockInputContext.setSelectedTabCompletionIndex).not.toHaveBeenCalled();
 	});
 });
@@ -684,14 +684,14 @@ describe('Enter-to-send', () => {
 		const deps = createMockDeps();
 		const { result } = renderHook(() => useInputKeyDown(deps));
 
-		// Plain Enter on a tab that overrides to Cmd+Enter mode — should NOT send
+		// Plain Enter on a tab that overrides to Cmd+Enter mode - should NOT send
 		const plain = createKeyEvent('Enter');
 		act(() => {
 			result.current.handleInputKeyDown(plain);
 		});
 		expect(deps.processInput).not.toHaveBeenCalled();
 
-		// Cmd+Enter on the same tab — SHOULD send
+		// Cmd+Enter on the same tab - SHOULD send
 		const withMeta = createKeyEvent('Enter', { metaKey: true });
 		act(() => {
 			result.current.handleInputKeyDown(withMeta);
@@ -927,7 +927,7 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		// Non-empty input - empty input takes the `triggerForceSendQueued` event branch instead.
 		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter', { metaKey: true, shiftKey: true });
@@ -1018,7 +1018,7 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		// Non-empty input - empty input takes the `triggerForceSendQueued` event branch instead.
 		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter', { ctrlKey: true, shiftKey: true });
@@ -1094,7 +1094,7 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		// Non-empty input - empty input takes the `triggerForceSendQueued` event branch instead.
 		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 
@@ -1152,10 +1152,10 @@ describe('Edge cases', () => {
 });
 
 // ============================================================================
-// Additional coverage — Tab completion navigation
+// Additional coverage - Tab completion navigation
 // ============================================================================
 
-describe('Tab completion navigation — additional', () => {
+describe('Tab completion navigation - additional', () => {
 	const suggestions = [
 		{ value: 'src/', type: 'folder' as const, label: 'src/' },
 		{ value: 'package.json', type: 'file' as const, label: 'package.json' },
@@ -1213,10 +1213,10 @@ describe('Tab completion navigation — additional', () => {
 });
 
 // ============================================================================
-// Additional coverage — @ mention completion
+// Additional coverage - @ mention completion
 // ============================================================================
 
-describe('@ mention completion — additional', () => {
+describe('@ mention completion - additional', () => {
 	const mentions = [
 		{
 			kind: 'file' as const,
@@ -1292,10 +1292,10 @@ describe('@ mention completion — additional', () => {
 });
 
 // ============================================================================
-// Additional coverage — Slash command autocomplete
+// Additional coverage - Slash command autocomplete
 // ============================================================================
 
-describe('Slash command autocomplete — additional', () => {
+describe('Slash command autocomplete - additional', () => {
 	const commands = [
 		{ command: '/help', description: 'Show help' },
 		{ command: '/clear', description: 'Clear output' },
@@ -1373,17 +1373,17 @@ describe('Slash command autocomplete — additional', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		// Should return early — no processInput, no setInputValue, no other handlers
+		// Should return early - no processInput, no setInputValue, no other handlers
 		expect(deps.processInput).not.toHaveBeenCalled();
 		expect(deps.setInputValue).not.toHaveBeenCalled();
 	});
 });
 
 // ============================================================================
-// Additional coverage — Enter-to-send
+// Additional coverage - Enter-to-send
 // ============================================================================
 
-describe('Enter-to-send — additional', () => {
+describe('Enter-to-send - additional', () => {
 	it('Enter+Meta when enterToSendAI=true also sends', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({ enterToSendAI: true } as any);
@@ -1404,14 +1404,14 @@ describe('Enter-to-send — additional', () => {
 		const deps = createMockDeps();
 		const { result } = renderHook(() => useInputKeyDown(deps));
 
-		// Plain Enter with enterToSendAI=false — does NOT send
+		// Plain Enter with enterToSendAI=false - does NOT send
 		const e1 = createKeyEvent('Enter');
 		act(() => {
 			result.current.handleInputKeyDown(e1);
 		});
 		expect(deps.processInput).not.toHaveBeenCalled();
 
-		// Cmd+Enter with enterToSendAI=false — SENDS
+		// Cmd+Enter with enterToSendAI=false - SENDS
 		const e2 = createKeyEvent('Enter', { metaKey: true });
 		act(() => {
 			result.current.handleInputKeyDown(e2);
@@ -1421,10 +1421,10 @@ describe('Enter-to-send — additional', () => {
 });
 
 // ============================================================================
-// Additional coverage — Escape key
+// Additional coverage - Escape key
 // ============================================================================
 
-describe('Escape key — additional', () => {
+describe('Escape key - additional', () => {
 	it('does not crash when terminalOutputRef is null', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const deps = createMockDeps({ terminalOutputRef: { current: null } as any });
@@ -1457,10 +1457,10 @@ describe('Escape key — additional', () => {
 });
 
 // ============================================================================
-// Additional coverage — Command history
+// Additional coverage - Command history
 // ============================================================================
 
-describe('Command history — additional', () => {
+describe('Command history - additional', () => {
 	it('opens with empty filter when inputValue is empty in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
 		const deps = createMockDeps({ inputValue: '' });
@@ -1478,10 +1478,10 @@ describe('Command history — additional', () => {
 });
 
 // ============================================================================
-// Additional coverage — General edge cases
+// Additional coverage - General edge cases
 // ============================================================================
 
-describe('General edge cases — additional', () => {
+describe('General edge cases - additional', () => {
 	it('ArrowDown with no active session and no dropdowns open is a no-op', () => {
 		useSessionStore.setState({ sessions: [], activeSessionId: '' } as any);
 		const deps = createMockDeps();

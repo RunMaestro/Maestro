@@ -18,7 +18,7 @@ import { logger } from '../../utils/logger';
  * If a remote-file loading tab is still in flight in the target session,
  * close it. Used when the SSH read failed or returned null without the user
  * having closed the tab themselves. Tabs that are no longer loading (or no
- * longer present at all) are left alone — the user may have already closed
+ * longer present at all) are left alone - the user may have already closed
  * them, or the path may have been replaced by a different file.
  */
 function closeLoadingTabIfStillLoading(
@@ -51,7 +51,7 @@ export interface FileTabInfo {
 	lastModified?: number;
 	/** Open the tab in loading state (no content yet). Used for slow remote reads. */
 	isLoading?: boolean;
-	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
+	/** While isLoading, the in-flight fs:readFile requestId - cancelled if the tab is closed mid-load. */
 	loadRequestId?: string;
 }
 
@@ -305,7 +305,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 		// Mouse release always ends a session drag, period. `dragend` covers the
 		// HTML5 drag lifecycle, but releasing the button is the user's mental
-		// model of "the drag is over" — clear the ghosting flag unconditionally
+		// model of "the drag is over" - clear the ghosting flag unconditionally
 		// on mouseup so a row can never stay faded once the mouse is up.
 		const handleMouseUp = () => {
 			if (useUIStore.getState().draggingSessionId !== null) {
@@ -443,7 +443,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 				const stat = statResult.status === 'fulfilled' ? statResult.value : null;
 				if (statResult.status === 'rejected') {
-					// Non-fatal — content is fine, just log so the failure is visible.
+					// Non-fatal - content is fine, just log so the failure is visible.
 					logger.warn(
 						`fs.stat failed for ${fullPath}: ${
 							statResult.reason instanceof Error

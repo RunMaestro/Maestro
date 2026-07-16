@@ -1,5 +1,5 @@
 /**
- * Tests for useCueVisibilityWiring — forwards renderer visibility
+ * Tests for useCueVisibilityWiring - forwards renderer visibility
  * changes to the main-process Cue scanner subsystem.
  */
 

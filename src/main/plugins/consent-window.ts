@@ -6,10 +6,10 @@
  * confirmer of a `ConsentMinter` prompt:
  *
  * - It loads its OWN minimal page (`consent.html`) with its OWN minimal preload
- *   (`consent-preload.js`) that exposes nothing but the consent bridge — never
+ *   (`consent-preload.js`) that exposes nothing but the consent bridge - never
  *   the main Maestro SPA or its full preload, so a plugin can neither render into
  *   it nor reach a richer IPC surface through it.
- * - It is a modal, non-resizable, menu-less child window — not an in-page modal a
+ * - It is a modal, non-resizable, menu-less child window - not an in-page modal a
  *   plugin-controlled surface could overlay or spoof.
  * - The offer (including the one-time nonce) is handed to it ONLY via
  *   `additionalArguments`, readable solely by this window's preload.
@@ -35,7 +35,7 @@ export interface ConsentOfferItem {
 	 * Phase 4: true for the arbitrary-code-execution-grade act verbs
 	 * (agents:dispatch / process:spawn). The consent page renders these in a
 	 * SEPARATE high-risk section, UNCHECKED by default, and the preload returns
-	 * their approval on the distinct `approvedHighRisk` channel — never bundled
+	 * their approval on the distinct `approvedHighRisk` channel - never bundled
 	 * into the plain `approved` click.
 	 */
 	actVerb?: boolean;

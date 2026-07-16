@@ -1,5 +1,5 @@
 /**
- * Memory Manager — read/write project memory files.
+ * Memory Manager - read/write project memory files.
  *
  * Claude Code stores per-project persistent memory at:
  *   ~/.claude/projects/<encoded-path>/memory/

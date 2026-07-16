@@ -1,5 +1,5 @@
 /**
- * All Pipelines view — read-only lock regression tests.
+ * All Pipelines view - read-only lock regression tests.
  *
  * In "All Pipelines" view (`selectedPipelineId === null`), the canvas must be
  * completely locked:
@@ -67,7 +67,7 @@ vi.mock('reactflow', () => ({
 
 // Capture all interaction callbacks + the read-only flag that CuePipelineEditor
 // passes down. The mock intentionally captures these at mount so tests can
-// invoke them directly — much more reliable than simulating ReactFlow events.
+// invoke them directly - much more reliable than simulating ReactFlow events.
 vi.mock('../../../../renderer/components/CuePipelineEditor/PipelineCanvas', () => ({
 	PipelineCanvas: React.memo((props: any) => {
 		captured.onNodesChange = props.onNodesChange;
@@ -94,7 +94,7 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/PipelineContextMenu',
 	),
 }));
 
-// Hoisted — tests toggle this and re-render. `stableStateHook` returns the
+// Hoisted - tests toggle this and re-render. `stableStateHook` returns the
 // same object reference each call (avoids the setState loop the initial
 // viewport test ran into).
 const mockSetPipelineState = vi.fn();
@@ -116,7 +116,7 @@ const AGENT_NODE = {
 };
 const EDGE = { id: 'e1', source: 'trigger-1', target: 'agent-1', mode: 'pass' as const };
 
-// Two stable state objects — one per view mode — so the pipelineState prop is
+// Two stable state objects - one per view mode - so the pipelineState prop is
 // referentially identical across renders (prevents ReactFlow re-renders
 // triggering a setState loop).
 const lockedPipelineState = {
@@ -137,7 +137,7 @@ const unlockedPipelineState = {
 };
 let currentPipelineState = lockedPipelineState;
 
-// Selection mocks — used to verify click-to-select is blocked
+// Selection mocks - used to verify click-to-select is blocked
 const mockSetSelectedNodeId = vi.fn();
 const mockSetSelectedEdgeId = vi.fn();
 const mockHandleConfigureNode = vi.fn();
@@ -262,7 +262,7 @@ function renderEditor() {
 	);
 }
 
-describe('CuePipelineEditor — All Pipelines view is fully read-only', () => {
+describe('CuePipelineEditor - All Pipelines view is fully read-only', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		Object.assign(captured, {
@@ -291,7 +291,7 @@ describe('CuePipelineEditor — All Pipelines view is fully read-only', () => {
 		expect(captured.isReadOnly).toBe(false);
 	});
 
-	it('onNodeDragStop is a no-op — position commits are refused', () => {
+	it('onNodeDragStop is a no-op - position commits are refused', () => {
 		renderEditor();
 		const draggedNode = { id: 'p1:agent-1', position: { x: 999, y: 999 } };
 		captured.onNodeDragStop({} as any, draggedNode, [draggedNode]);
@@ -299,7 +299,7 @@ describe('CuePipelineEditor — All Pipelines view is fully read-only', () => {
 		expect(mockPersistLayout).not.toHaveBeenCalled();
 	});
 
-	it('onDrop is a no-op — new trigger/agent drops are refused', () => {
+	it('onDrop is a no-op - new trigger/agent drops are refused', () => {
 		renderEditor();
 		const triggerDropEvent = {
 			preventDefault: vi.fn(),
@@ -332,7 +332,7 @@ describe('CuePipelineEditor — All Pipelines view is fully read-only', () => {
 		expect(mockSetPipelineState).not.toHaveBeenCalled();
 	});
 
-	it('onConnect is a no-op — new edges are refused', () => {
+	it('onConnect is a no-op - new edges are refused', () => {
 		renderEditor();
 		captured.onConnect({
 			source: 'p1:trigger-1',
@@ -415,7 +415,7 @@ describe('CuePipelineEditor — All Pipelines view is fully read-only', () => {
 	});
 });
 
-describe('CuePipelineEditor — single-pipeline view remains editable (negative control)', () => {
+describe('CuePipelineEditor - single-pipeline view remains editable (negative control)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		Object.assign(captured, {

@@ -1,9 +1,9 @@
 /**
- * usePipelineKeyboard — installs keyboard shortcuts for the pipeline editor.
+ * usePipelineKeyboard - installs keyboard shortcuts for the pipeline editor.
  *
  *   - Delete/Backspace: removes selected node or edge (guarded: no-op in
  *     text inputs, no-op in All Pipelines view).
- *   - Escape: cascading close — drawer first, then selection.
+ *   - Escape: cascading close - drawer first, then selection.
  *   - Cmd/Ctrl+S: triggers handleSave, always (even in text inputs, matching
  *     pre-extraction behavior).
  *   - P / S: switch canvas interaction mode (Pan / Select). Bare keys, ignored
@@ -84,13 +84,13 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 			const isInput =
 				target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 			// Inputs behind the editor (e.g. the AI input textarea under the
-			// Cue modal) shouldn't suppress our shortcuts — only inputs inside
+			// Cue modal) shouldn't suppress our shortcuts - only inputs inside
 			// the editor count as "user is typing here".
 			const isInputInsideEditor = isInput && containerRef.current?.contains(target) === true;
 
 			if (e.key === 'Delete' || e.key === 'Backspace') {
 				if (isInput) return;
-				// All Pipelines view is read-only — no deletions.
+				// All Pipelines view is read-only - no deletions.
 				// (Save via Cmd+S and Escape-to-deselect remain available.)
 				if (isAllPipelinesView) return;
 				if (selectedNode && selectedNodePipelineId) {
@@ -122,7 +122,7 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 				// typing into an input *inside the editor* (lets the user actually
 				// type a 'p' or 's') and when a modifier is held (Cmd+S above).
 				// Inputs *outside* the editor (e.g. the AI input area behind the
-				// Cue modal) must not swallow the key — the modal owns it.
+				// Cue modal) must not swallow the key - the modal owns it.
 				if (isInputInsideEditor) return;
 				e.preventDefault();
 				e.stopPropagation();
@@ -136,7 +136,7 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 				!e.ctrlKey &&
 				!e.altKey
 			) {
-				// '=' is the unshifted key on US layouts where '+' lives — accept
+				// '=' is the unshifted key on US layouts where '+' lives - accept
 				// both so users don't need to hold Shift to zoom in.
 				if (isInputInsideEditor) return;
 				e.preventDefault();

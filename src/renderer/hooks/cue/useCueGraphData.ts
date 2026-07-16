@@ -1,12 +1,12 @@
 /**
- * useCueGraphData — Loads graph-data for the Cue dashboard/pipeline view.
+ * useCueGraphData - Loads graph-data for the Cue dashboard/pipeline view.
  *
  * Owns graphSessions, graphError, and the derived `dashboardPipelines` +
  * `subscriptionPipelineMap` memos. Re-fetches when `activeTab` changes so
  * switching between dashboard and pipeline views reflects disk state.
  *
  * Exposes `refreshGraphData()` so callers can trigger a fresh fetch after
- * a save — wired by CueModal as the `onSaveSuccess` callback on the pipeline
+ * a save - wired by CueModal as the `onSaveSuccess` callback on the pipeline
  * editor (Fix #3 from Phase 10).
  */
 

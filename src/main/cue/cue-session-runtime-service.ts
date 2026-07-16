@@ -24,7 +24,7 @@ import { captureException } from '../utils/sentry';
  *
  * - `system-boot`: Electron just launched. app.startup subscriptions fire.
  * - `user-toggle`: User flipped the Cue toggle off and back on. Do NOT fire
- *   app.startup again — that would surprise users who expect toggling to be
+ *   app.startup again - that would surprise users who expect toggling to be
  *   idempotent.
  * - `refresh`: A YAML hot-reload re-initialized the session. app.startup
  *   already fired (or didn't) on this process; do not re-fire.
@@ -47,7 +47,7 @@ export interface CueSessionRuntimeServiceDeps {
 	registry: CueSessionRegistry;
 	/**
 	 * Dispatch a fired event for a subscription. This is the single dispatch
-	 * entry point — it handles fan-out vs single-target routing internally.
+	 * entry point - it handles fan-out vs single-target routing internally.
 	 * Trigger sources never call run-manager directly.
 	 */
 	dispatchSubscription: (
@@ -72,7 +72,7 @@ export interface CueSessionRuntimeServiceDeps {
 /**
  * Structured outcome of {@link CueSessionRuntimeService.initSession}. Lets
  * callers (primarily `refreshSession`) distinguish a cleanly-loaded config
- * from one that is missing on disk vs one that failed parse / validation —
+ * from one that is missing on disk vs one that failed parse / validation -
  * a distinction that matters for cleanup decisions (e.g. we only clear
  * cue_github_seen rows when the config is truly gone, not when it's merely
  * malformed and will likely be fixed on the next edit).
@@ -122,7 +122,7 @@ export function createCueSessionRuntimeService(
 		if (registry.has(session.id)) {
 			deps.onLog(
 				'warn',
-				`[CUE] initSession called for already-initialized session "${session.name}" — tearing down first`
+				`[CUE] initSession called for already-initialized session "${session.name}" - tearing down first`
 			);
 			teardownSession(session.id);
 			registry.unregister(session.id);
@@ -130,7 +130,7 @@ export function createCueSessionRuntimeService(
 
 		// Per-agent-cwd model: each session reads ONLY its own
 		// `<cwd>/.maestro/cue.yaml`. There is no ancestor walk and no
-		// cross-cwd merge — every subscription that targets this agent
+		// cross-cwd merge - every subscription that targets this agent
 		// lives in this agent's own yaml file (writer enforces this via
 		// `pipelinesToYamlByOwnerCwd`). Worktrees, sub-agents, and any
 		// other shared-parent topology each get their own cue.yaml; they
@@ -174,7 +174,7 @@ export function createCueSessionRuntimeService(
 		// of truth: this session is NOT the config owner and the dashboard
 		// will surface the string as a red-triangle tooltip. Subscriptions
 		// with an explicit `agent_id` continue to fan out regardless.
-		// Filter candidates to sessions that could actually own a Cue config —
+		// Filter candidates to sessions that could actually own a Cue config -
 		// a cue.yaml at their projectRoot AND a tool type that participates
 		// in Cue. A terminal (or any non-AI-agent) session could otherwise
 		// win the implicit first-in-list race at a shared projectRoot,
@@ -194,14 +194,14 @@ export function createCueSessionRuntimeService(
 		if (ownershipWarning && config.subscriptions.some((s) => !s.agent_id)) {
 			deps.onLog(
 				'cue',
-				`[CUE] "${session.name}" will not fire unowned subscriptions from cue.yaml at "${session.projectRoot}" — ${ownershipWarning}`
+				`[CUE] "${session.name}" will not fire unowned subscriptions from cue.yaml at "${session.projectRoot}" - ${ownershipWarning}`
 			);
 		}
 
 		// Subscriptions this session will actually instantiate / run. For non-
 		// owners, drop unowned subs (no agent_id) up front so every downstream
-		// consumer — trigger wiring, app.startup, sleep prevention, the
-		// initialized-with-N-subs log, refresh activeCount — sees a single
+		// consumer - trigger wiring, app.startup, sleep prevention, the
+		// initialized-with-N-subs log, refresh activeCount - sees a single
 		// consistent view. Without this filter, a non-owner with only unowned
 		// time-based subs would still hit `onPreventSleep` and report active
 		// counts for work it never executes.
@@ -250,7 +250,7 @@ export function createCueSessionRuntimeService(
 					deps.dispatchSubscription(session.id, sub, event, session.name);
 				},
 				// The trigger source asks for the sub to be consumed (missed-grace,
-				// or — in theory — any other reason it decides not to fire). The
+				// or - in theory - any other reason it decides not to fire). The
 				// runtime is the sole writer of cue.yaml on this path; the engine's
 				// YAML watcher reloads the config naturally after the rewrite, so
 				// there's no need to refresh the session manually.
@@ -345,7 +345,7 @@ export function createCueSessionRuntimeService(
 		}
 
 		// Each trigger source owns its own underlying mechanism (timer, watcher,
-		// poller). Calling stop() releases all of them in one place — no more
+		// poller). Calling stop() releases all of them in one place - no more
 		// parallel timers[] / watchers[] arrays.
 		for (const source of state.triggerSources) {
 			source.stop();
@@ -360,7 +360,7 @@ export function createCueSessionRuntimeService(
 		deps.clearFanInState(sessionId);
 		deps.clearQueue(sessionId, true);
 
-		// Drop time.scheduled dedup keys for this session — they only matter while
+		// Drop time.scheduled dedup keys for this session - they only matter while
 		// the session is initialized. Startup keys are NOT cleared here so that a
 		// refresh inside the same process lifecycle does not re-fire app.startup.
 		registry.clearScheduledForSession(sessionId);
@@ -438,7 +438,7 @@ export function createCueSessionRuntimeService(
 
 		// Config is gone OR it failed to load. Only clear GitHub-seen rows when
 		// the config is TRULY gone (file missing). Parse / validation errors
-		// usually mean "user is mid-edit and will fix shortly" — keeping seen
+		// usually mean "user is mid-edit and will fix shortly" - keeping seen
 		// rows lets the GitHub poller skip already-seen items once the config
 		// comes back, instead of re-spamming the user on reload.
 		const configTrulyMissing = outcome.kind === 'missing';
@@ -458,7 +458,7 @@ export function createCueSessionRuntimeService(
 			// Only surface "Config removed" when the session previously had a
 			// config AND the file is truly gone. A parse/validation error on
 			// a previously-valid config is a SEPARATE state ("invalid config")
-			// — the yaml watcher remains armed so the next save reloads.
+			// - the yaml watcher remains armed so the next save reloads.
 			return {
 				reloaded: false,
 				configRemoved: configTrulyMissing,
@@ -466,7 +466,7 @@ export function createCueSessionRuntimeService(
 			};
 		}
 
-		// Session never had a valid config — nothing to mark as removed, and no
+		// Session never had a valid config - nothing to mark as removed, and no
 		// GitHub-seen rows to clear that weren't already absent. The refresh
 		// outcome is simply "still no config", not "config removed".
 		return { reloaded: false, configRemoved: false, sessionName: session.name };
@@ -479,7 +479,7 @@ export function createCueSessionRuntimeService(
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
 		deps.clearQueue(sessionId);
-		// Removing a session means its app.startup history is no longer relevant —
+		// Removing a session means its app.startup history is no longer relevant -
 		// if the same session id is re-added later (rare), we want startup to fire.
 		registry.clearStartupForSession(sessionId);
 

@@ -42,7 +42,7 @@ function render(source: string, opts: { indices?: FileTreeIndices; cwd?: string 
 	return md.renderer.render(tokens, md.options, {});
 }
 
-describe('applyFileLinks — standard markdown link rewriting', () => {
+describe('applyFileLinks - standard markdown link rewriting', () => {
 	it('rewrites a relative href that resolves in the tree', () => {
 		const indices = indicesFor(['docs/Notes.md']);
 		const html = render('[click](docs/Notes.md)', { indices });
@@ -58,7 +58,7 @@ describe('applyFileLinks — standard markdown link rewriting', () => {
 
 	it('leaves mailto / tel URIs untouched', () => {
 		// (markdown-it's default validateLink rejects file:// links so they
-		// never become anchor tokens — no rewrite path to assert against.)
+		// never become anchor tokens - no rewrite path to assert against.)
 		expect(render('[m](mailto:a@b.com)')).toContain('href="mailto:a@b.com"');
 		expect(render('[t](tel:+1234)')).toContain('href="tel:+1234"');
 	});
@@ -88,7 +88,7 @@ describe('applyFileLinks — standard markdown link rewriting', () => {
 	});
 });
 
-describe('applyFileLinks — wiki-style [[references]]', () => {
+describe('applyFileLinks - wiki-style [[references]]', () => {
 	it('resolves [[Note]] to its full path when unique', () => {
 		const indices = indicesFor(['notes/Hello.md']);
 		const html = render('See [[Hello]] for context.', { indices });
@@ -125,7 +125,7 @@ describe('applyFileLinks — wiki-style [[references]]', () => {
 	});
 });
 
-describe('applyFileLinks — ![[image]] embeds', () => {
+describe('applyFileLinks - ![[image]] embeds', () => {
 	it('rewrites image embeds to <img> tokens pointing at the resolved path', () => {
 		const indices = indicesFor(['assets/diagram.png']);
 		const html = render('See ![[diagram.png]] below.', { indices });
@@ -160,7 +160,7 @@ describe('applyFileLinks — ![[image]] embeds', () => {
 	});
 });
 
-describe('applyFileLinks — plain path references in running text', () => {
+describe('applyFileLinks - plain path references in running text', () => {
 	it('rewrites a path-style reference when the path exists', () => {
 		const indices = indicesFor(['src/utils/helpers.ts']);
 		const html = render('See src/utils/helpers.ts.', { indices });
@@ -180,7 +180,7 @@ describe('applyFileLinks — plain path references in running text', () => {
 	});
 });
 
-describe('applyFileLinks — bare maestro:// deep links', () => {
+describe('applyFileLinks - bare maestro:// deep links', () => {
 	it('auto-linkifies a bare maestro:// URL in running text', () => {
 		const html = render('See maestro://session/abc/tab/xyz now.');
 		expect(html).toContain('href="maestro://session/abc/tab/xyz"');
@@ -195,7 +195,7 @@ describe('applyFileLinks — bare maestro:// deep links', () => {
 	});
 });
 
-describe('applyFileLinks — edge cases', () => {
+describe('applyFileLinks - edge cases', () => {
 	it('is safe to call with no fileLinks options at all', () => {
 		const md = new MarkdownIt({ html: true });
 		const tokens = md.parse('[a](b.md) and [[c]]', {});

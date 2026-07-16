@@ -99,7 +99,7 @@ describe('worktreeDedup', () => {
 		vi.advanceTimersByTime(8000);
 		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/remark')).toBe(true);
 
-		// Re-mark — should reset the 10s TTL
+		// Re-mark - should reset the 10s TTL
 		markWorktreePathAsRecentlyCreated('/projects/worktrees/remark', 10000);
 
 		// Advance another 8s (16s total, past original TTL but within re-marked TTL)
@@ -118,7 +118,7 @@ describe('worktreeDedup', () => {
 		// Re-mark with a short TTL
 		markWorktreePathAsRecentlyCreated('/projects/worktrees/clear-timer', 5000);
 
-		// Advance past original TTL but within new TTL — should still be present
+		// Advance past original TTL but within new TTL - should still be present
 		// (old timer was cleared, only new 5s timer exists)
 		vi.advanceTimersByTime(4999);
 		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/clear-timer')).toBe(true);
@@ -183,7 +183,7 @@ describe('sessionMatchesWorktreeRoot', () => {
 
 	it('does NOT match a session whose cwd is a subdir of the worktree root', () => {
 		// projectRoot fallback exists precisely so this case still matches via
-		// projectRoot — but if projectRoot is missing, cwd-only must NOT match.
+		// projectRoot - but if projectRoot is missing, cwd-only must NOT match.
 		const s = makeSession({ cwd: `${root}/src/components` });
 		expect(sessionMatchesWorktreeRoot(s, root)).toBe(false);
 	});

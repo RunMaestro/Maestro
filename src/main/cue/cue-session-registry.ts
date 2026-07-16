@@ -1,5 +1,5 @@
 /**
- * Cue Session Registry — single owner of per-session Cue runtime state.
+ * Cue Session Registry - single owner of per-session Cue runtime state.
  *
  * Holds `Map<sessionId, SessionState>` plus the dedup key sets that previously
  * lived on CueEngine and were mutated by three different files. All mutations
@@ -7,16 +7,16 @@
  * place.
  *
  * Public surface:
- * - register / unregister / get / has / values / size — session lifecycle
+ * - register / unregister / get / has / values / size - session lifecycle
  * - markScheduledFired / evictStaleScheduledKeys / clearScheduledForSession
- *   — `time.scheduled` dedup (one fire per `(session, sub, HH:MM)`)
+ *   - `time.scheduled` dedup (one fire per `(session, sub, HH:MM)`)
  * - markStartupFired / clearStartupForSession / clearAllStartupKeys
- *   — `app.startup` dedup (one fire per `(session, sub)` per engine cycle).
+ *   - `app.startup` dedup (one fire per `(session, sub)` per engine cycle).
  *   `markStartupFired` returns true on first fire within the current cycle,
  *   false if already fired. `engine.stop()` calls `clearAllStartupKeys()` to
  *   reset the dedup set so that the next `start('system-boot')` re-fires
  *   startup subscriptions for all sessions.
- * - clear — drops all sessions and `time.scheduled` dedup state; `app.startup`
+ * - clear - drops all sessions and `time.scheduled` dedup state; `app.startup`
  *   keys are NOT cleared by `clear()` (they remain valid within the current
  *   engine cycle). To reset startup keys, call `clearAllStartupKeys()` or
  *   use `engine.stop()`, which does so automatically.

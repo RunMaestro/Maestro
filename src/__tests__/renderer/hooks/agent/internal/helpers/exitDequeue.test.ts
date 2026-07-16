@@ -107,7 +107,7 @@ describe('chooseNextQueuedItem', () => {
 			agentError: undefined,
 			aiTabs: [tab({ id: 'tab-1', state: 'busy' })],
 		};
-		// Even though tab-1 is "busy", it's the exiting tab — the queue can dequeue.
+		// Even though tab-1 is "busy", it's the exiting tab - the queue can dequeue.
 		expect(chooseNextQueuedItem(session, 'tab-1').action).toBe('dequeue');
 	});
 

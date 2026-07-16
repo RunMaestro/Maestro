@@ -64,7 +64,7 @@ export const CodeFence = memo(function CodeFence({
 
 	// Resolve the fence tag to a canonical Shiki id (handles aliases). Once
 	// the user picks a language via the dropdown (`userOverrodeRef`), this
-	// effect stays out of the way for the lifetime of the component instance —
+	// effect stays out of the way for the lifetime of the component instance -
 	// including re-checking the ref after every `await`, since a streaming
 	// `code` update could land mid-detection and try to overwrite the choice.
 	useEffect(() => {
@@ -78,7 +78,7 @@ export const CodeFence = memo(function CodeFence({
 		};
 		void (async () => {
 			// An explicit, resolvable fence tag (e.g. `ts`, `python`) is trusted
-			// as-is. We only consult the alias table for explicit tags — a bare
+			// as-is. We only consult the alias table for explicit tags - a bare
 			// fence resolves to `text`, which would otherwise short-circuit the
 			// auto-detection below and leave untagged code blocks unhighlighted.
 			const resolved = isExplicitLang(language) ? await resolveLanguage(language) : null;
@@ -87,7 +87,7 @@ export const CodeFence = memo(function CodeFence({
 				applyLang(resolved);
 				return;
 			}
-			// No explicit language (or an unknown tag) — guess from the body.
+			// No explicit language (or an unknown tag) - guess from the body.
 			// Uses the debounced snapshot so streaming doesn't re-detect per char.
 			const detected = await detectLanguage(debouncedCode);
 			if (stale()) return;
@@ -178,7 +178,7 @@ export const CodeFence = memo(function CodeFence({
 			{html ? (
 				// Shiki emits `<pre class="shiki" style="background:...">` with its own
 				// theme background and inline token styles. dangerouslySetInnerHTML is
-				// safe: the HTML comes from Shiki (HTML-escaped) — not user-supplied.
+				// safe: the HTML comes from Shiki (HTML-escaped) - not user-supplied.
 				<div className="shiki-host" dangerouslySetInnerHTML={{ __html: html }} />
 			) : (
 				<pre style={fallbackPreStyle}>

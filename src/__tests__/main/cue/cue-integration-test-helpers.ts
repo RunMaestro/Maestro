@@ -1,9 +1,9 @@
 /**
- * Phase 15B — Integration test helpers.
+ * Phase 15B - Integration test helpers.
  *
  * Exported utilities:
  *
- * - `createInMemoryCueDb()` — a high-fidelity in-memory implementation of
+ * - `createInMemoryCueDb()` - a high-fidelity in-memory implementation of
  *   the cue-db module contract. `better-sqlite3` is a native module compiled
  *   against Electron's ABI and does not load under vitest's Node runtime, so
  *   we cannot exercise real SQL in integration tests. Instead we mirror the
@@ -15,19 +15,19 @@
  *   heartbeat upsert (single-row id=1). Exposes `setNowOverride`,
  *   `queueWriteFailure`, and `resetAll` for deterministic test control.
  *
- * - `buildCueDbModuleMock(getDb)` — a factory returning a module-shape object
+ * - `buildCueDbModuleMock(getDb)` - a factory returning a module-shape object
  *   that delegates every cue-db function to the supplied InMemoryCueDb.
  *   Designed for `vi.mock('.../cue-db', () => buildCueDbModuleMock(() =>
- *   sharedDb))` — the lazy `getDb` getter accommodates vi.mock's hoisting,
+ *   sharedDb))` - the lazy `getDb` getter accommodates vi.mock's hoisting,
  *   where the factory runs before any top-level `let sharedDb` has executed.
  *
- * - `canLoadBetterSqlite3()` — probe-instantiates a `:memory:` database so a
+ * - `canLoadBetterSqlite3()` - probe-instantiates a `:memory:` database so a
  *   `describe.skipIf(!canLoadBetterSqlite3())` block reflects the native
  *   binary's real availability. A plain `require('better-sqlite3')` returns
  *   true even when the prebuilt binary is ABI-mismatched (compiled for
  *   Electron's Node version, not vitest's); probing catches that.
  *
- * - `createOnCueRunSpy(defaultResponse?)` — a lightweight spy for the
+ * - `createOnCueRunSpy(defaultResponse?)` - a lightweight spy for the
  *   engine's `onCueRun` boundary callback, capturing a per-call summary
  *   (runId, sessionId, subscriptionName, prompt, event) so integration tests
  *   can assert the dispatch payload without re-reading every vi.fn() call
@@ -49,11 +49,11 @@ import { vi } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 
 // ────────────────────────────────────────────────────────────────────────────
-// InMemoryCueDb — high-fidelity contract mirror of cue-db.ts
+// InMemoryCueDb - high-fidelity contract mirror of cue-db.ts
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Internal event row — mirrors the cue_events table's column set. Stored in
+ * Internal event row - mirrors the cue_events table's column set. Stored in
  * insertion order via a Map keyed by id, plus an array of ids so we can do
  * ORDER BY created_at DESC + LIMIT lookups without re-sorting on every read.
  */
@@ -85,7 +85,7 @@ export interface InMemoryCueQueueRow {
 	commandJson: string | null;
 	chainDepth: number;
 	queuedAt: number;
-	/** Phase 01 — chain lineage round-tripped so resumed runs stay attached
+	/** Phase 01 - chain lineage round-tripped so resumed runs stay attached
 	 *  to their chain root in stats. NULL for roots and for rows persisted
 	 *  before usageStats was enabled. */
 	chainRootId: string | null;
@@ -105,7 +105,7 @@ export interface InMemoryCueDbState {
 }
 
 export interface InMemoryCueDb {
-	// State accessors — for assertion convenience in tests.
+	// State accessors - for assertion convenience in tests.
 	readonly state: InMemoryCueDbState;
 	// Lifecycle
 	initCueDb(onLog?: (level: string, msg: string) => void, dbPathOverride?: string): void;
@@ -157,7 +157,7 @@ export interface InMemoryCueDb {
 	/** Force a specific current time for prune/heartbeat tests. Reset with clearNowOverride(). */
 	setNowOverride(ts: number): void;
 	clearNowOverride(): void;
-	/** Force the next write to throw — exercises safe-wrapper warn paths. */
+	/** Force the next write to throw - exercises safe-wrapper warn paths. */
 	queueWriteFailure(err?: Error): void;
 	resetAll(): void;
 }
@@ -189,7 +189,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 
 	function requireReady(): void {
 		if (!state.ready) {
-			throw new Error('Cue database not initialized — call initCueDb() first');
+			throw new Error('Cue database not initialized - call initCueDb() first');
 		}
 	}
 
@@ -205,7 +205,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 		state,
 
 		initCueDb(_onLog, _dbPathOverride) {
-			// Idempotent — matches the real module's short-circuit on re-init.
+			// Idempotent - matches the real module's short-circuit on re-init.
 			if (state.ready) return;
 			state.ready = true;
 			state.closed = false;
@@ -253,7 +253,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			const row = state.events.get(id);
 			if (!row) {
 				// Real SQL is a silent no-op when WHERE id=? matches nothing.
-				// Preserve that — don't throw.
+				// Preserve that - don't throw.
 				return;
 			}
 			row.status = status;
@@ -290,14 +290,14 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			try {
 				this.updateCueEventStatus(id, status, providerSessionId, failure);
 			} catch {
-				// Same contract as safeRecordCueEvent — non-throwing.
+				// Same contract as safeRecordCueEvent - non-throwing.
 			}
 		},
 
 		updateHeartbeat() {
 			requireReady();
 			consumePendingFailure();
-			// Upsert on single-row id=1 — just replace the scalar.
+			// Upsert on single-row id=1 - just replace the scalar.
 			state.heartbeat = now();
 		},
 
@@ -331,7 +331,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 		markGitHubItemSeen(subscriptionId, itemKey) {
 			requireReady();
 			consumePendingFailure();
-			// INSERT OR IGNORE — only inserts if not already present.
+			// INSERT OR IGNORE - only inserts if not already present.
 			const key = githubKey(subscriptionId, itemKey);
 			if (!state.githubSeen.has(key)) {
 				state.githubSeen.set(key, now());
@@ -375,7 +375,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			pendingFailure = err ?? new Error('Simulated DB write failure');
 		},
 
-		// ── Phase 12A — queue persistence ──────────────────────────────────
+		// ── Phase 12A - queue persistence ──────────────────────────────────
 		persistQueuedEvent(record) {
 			requireReady();
 			consumePendingFailure();
@@ -443,7 +443,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 //   vi.mock('../../../main/cue/cue-db', () => buildCueDbModuleMock(() => sharedDb));
 //
 // The () => sharedDb indirection lets the mock factory tolerate the test file's
-// hoisting order — vi.mock factories run before any `import`, so the shared
+// hoisting order - vi.mock factories run before any `import`, so the shared
 // instance has to be constructed lazily on first access.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -492,7 +492,7 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// canLoadBetterSqlite3 — lets Phase 15B add an optional smoke test against
+// canLoadBetterSqlite3 - lets Phase 15B add an optional smoke test against
 // the real native module when it happens to be available (local dev on the
 // same Node version as Electron). CI without a matching binary just skips.
 // ────────────────────────────────────────────────────────────────────────────
@@ -500,7 +500,7 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 export function canLoadBetterSqlite3(): boolean {
 	// We check this lazily because `import` would fail loudly at module-eval
 	// time if the binary is missing, which defeats the purpose of the
-	// conditional. Also: `require('better-sqlite3')` alone is NOT enough —
+	// conditional. Also: `require('better-sqlite3')` alone is NOT enough -
 	// the package resolves fine but `new Database()` may still throw
 	// NODE_MODULE_VERSION mismatch when the binary was compiled against
 	// Electron's ABI and we're running under plain Node. Instantiate against
@@ -517,7 +517,7 @@ export function canLoadBetterSqlite3(): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Minimal wired-engine helpers — shared by cue-engine-integration.test.ts.
+// Minimal wired-engine helpers - shared by cue-engine-integration.test.ts.
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface WiredOnCueRunCall {

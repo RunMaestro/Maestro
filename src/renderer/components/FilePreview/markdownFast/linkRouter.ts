@@ -15,7 +15,7 @@ const EXTERNAL_PROTOCOL_RE = /^(?:https?|mailto|tel|file):/i;
  * delegated click handler at the scroll container, extracts an anchor + the
  * event modifiers, and asks this function what to do.
  *
- * Pure — no DOM access, no side effects. The component is responsible for
+ * Pure - no DOM access, no side effects. The component is responsible for
  * wiring the returned action to the relevant callback.
  */
 export function resolveLinkAction(link: LinkDescriptor, modifiers: ClickModifiers): LinkAction {

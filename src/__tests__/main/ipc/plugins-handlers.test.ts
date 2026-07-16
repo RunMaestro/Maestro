@@ -99,7 +99,7 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		const handler = handlers.get('plugins:contributions');
 		expect(handler).toBeDefined();
 
-		// Call it repeatedly — the old bug looped because each read refreshed.
+		// Call it repeatedly - the old bug looped because each read refreshed.
 		await handler!(event);
 		await handler!(event);
 		await handler!(event);

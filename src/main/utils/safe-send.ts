@@ -37,7 +37,7 @@ export function createSafeSend(getWindows: GetBroadcastWindows) {
 	 * Handles cases where a renderer has been disposed (e.g., GPU crash, window closing).
 	 * This prevents "Render frame was disposed before WebFrameMain could be accessed" errors.
 	 *
-	 * MULTI-WINDOW INVARIANT — do NOT "optimize" this into per-window targeting.
+	 * MULTI-WINDOW INVARIANT - do NOT "optimize" this into per-window targeting.
 	 * Every `process:*` event (data, exit, status, ...) and every other
 	 * main→renderer push is BROADCAST to all open windows; each renderer then
 	 * filters agent-scoped events to the agents it owns via

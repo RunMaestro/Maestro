@@ -11,7 +11,7 @@ import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../type
 import { formatTokensCompact } from '../utils/formatters';
 
 interface ThinkingStatusPillProps {
-	/** Pre-filtered flat list of (session, tab) pairs — one entry per busy tab across all agents.
+	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
 	 * PERF: Caller should memoize this to avoid O(n) filter on every render. */
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
@@ -100,7 +100,7 @@ function getItemDisplayName(
 
 // formatTokensCompact imported from ../utils/formatters
 
-// Single row in the expanded dropdown — represents one (session, tab) thinking item
+// Single row in the expanded dropdown - represents one (session, tab) thinking item
 const ThinkingItemRow = memo(
 	({
 		item,
@@ -170,7 +170,7 @@ function getAutoRunTaskCounts(autoRunState: BatchRunState): { completed: number;
 }
 
 // AutoRun entry inside a "Running Processes" dropdown. When onStop is provided it renders a
-// per-row Stop button — used when AutoRun is demoted from the pill (because the focused tab is
+// per-row Stop button - used when AutoRun is demoted from the pill (because the focused tab is
 // busy) so the user can still stop AutoRun without losing it to a navigation-only list.
 const AutoRunRow = memo(
 	({
@@ -312,7 +312,7 @@ const AutoRunPill = memo(
 						</span>
 					)}
 
-					{/* Progress — goal percent for goal runs, task count otherwise. Each branch
+					{/* Progress - goal percent for goal runs, task count otherwise. Each branch
 					    carries its own divider; the label words drop on very narrow widths (pill-label). */}
 					{autoRunState.goalMode ? (
 						<div
@@ -421,7 +421,7 @@ const AutoRunPill = memo(
 						</>
 					)}
 
-					{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+					{/* Expanded dropdown - anchored to the pill so its width matches the pill. */}
 					{concurrentCount > 0 && isExpanded && (
 						<div
 							className="absolute inset-x-0 bottom-full pb-1 z-50"
@@ -444,7 +444,7 @@ const AutoRunPill = memo(
 								>
 									Running Processes
 								</div>
-								{/* AutoRun entry — stop lives on the pill itself, so no per-row Stop here */}
+								{/* AutoRun entry - stop lives on the pill itself, so no per-row Stop here */}
 								<AutoRunRow
 									theme={theme}
 									completedTasks={completedTasks}
@@ -475,7 +475,7 @@ AutoRunPill.displayName = 'AutoRunPill';
 /**
  * ThinkingStatusPill Inner Component
  * Shows the primary thinking item with an expandable list when multiple tabs are thinking.
- * Each "thinking item" is a (session, tab) pair — one entry per busy tab across all agents.
+ * Each "thinking item" is a (session, tab) pair - one entry per busy tab across all agents.
  * Features: pulsing indicator, session name, bytes/tokens, elapsed time, Claude session UUID.
  *
  * When AutoRun is active for the active session, shows AutoRunPill with +N badge for concurrent items.
@@ -528,7 +528,7 @@ function ThinkingStatusPillInner({
 	);
 
 	// If AutoRun is active for the current session, show the AutoRun pill with concurrent
-	// thinking items badge for parallel operations — UNLESS the focused tab has its own live
+	// thinking items badge for parallel operations - UNLESS the focused tab has its own live
 	// request. In that case the pill must describe the focused tab so its Stop button interrupts
 	// what the user is looking at; AutoRun is demoted into the dropdown (with its own Stop) below.
 	if (autoRunState?.isRunning && !focusedTabBusy) {
@@ -549,11 +549,11 @@ function ThinkingStatusPillInner({
 		return null;
 	}
 
-	// AutoRun is running but demoted because the focused tab is busy — surface it in the dropdown.
+	// AutoRun is running but demoted because the focused tab is busy - surface it in the dropdown.
 	const demotedAutoRun = autoRunState?.isRunning ? autoRunState : null;
 
 	// Primary item selection (each layer falls back to the next):
-	//   1. The exact active tab in the active session — when forced-parallel runs two busy
+	//   1. The exact active tab in the active session - when forced-parallel runs two busy
 	//      tabs in the same agent, this keeps the pill (name, elapsed time) describing the
 	//      tab the user is viewing, which is also the tab Stop will interrupt.
 	//   2. Any busy tab in the active session (active tab itself isn't busy).
@@ -721,7 +721,7 @@ function ThinkingStatusPillInner({
 					</>
 				)}
 
-				{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+				{/* Expanded dropdown - anchored to the pill so its width matches the pill. */}
 				{hasMultiple && isExpanded && (
 					<div
 						className="absolute inset-x-0 bottom-full pb-1 z-50"

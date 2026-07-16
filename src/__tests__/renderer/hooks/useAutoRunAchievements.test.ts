@@ -65,7 +65,7 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 	}),
 }));
 
-// Mock cueService — capture the onActivityUpdate callback so tests can push
+// Mock cueService - capture the onActivityUpdate callback so tests can push
 // conductorTimeCredit payloads through the real subscription path.
 let capturedCueActivityCallback: ((payload: any) => void) | null = null;
 const mockCueUnsubscribe = vi.fn();
@@ -80,7 +80,7 @@ vi.mock('../../../renderer/services/cue', () => ({
 	},
 }));
 
-// Mock conductorBadges — provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)
+// Mock conductorBadges - provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)
 vi.mock('../../../renderer/constants/conductorBadges', () => ({
 	CONDUCTOR_BADGES: [
 		{
@@ -166,7 +166,7 @@ describe('useAutoRunAchievements', () => {
 	});
 
 	// ==========================================================================
-	// Timer interval — empty activeBatchSessionIds
+	// Timer interval - empty activeBatchSessionIds
 	// ==========================================================================
 
 	describe('no interval when no active batches', () => {
@@ -216,10 +216,10 @@ describe('useAutoRunAchievements', () => {
 			// Clear mocks so we can assert fresh state
 			mockUpdateAutoRunProgress.mockClear();
 
-			// Now remove all active sessions — should reset the ref
+			// Now remove all active sessions - should reset the ref
 			rerender({ ids: [] });
 
-			// Advance time — no progress update should fire because interval is torn down
+			// Advance time - no progress update should fire because interval is torn down
 			act(() => {
 				vi.advanceTimersByTime(60000);
 			});
@@ -229,7 +229,7 @@ describe('useAutoRunAchievements', () => {
 	});
 
 	// ==========================================================================
-	// Timer interval — with active batches
+	// Timer interval - with active batches
 	// ==========================================================================
 
 	describe('interval setup with active batches', () => {
@@ -325,7 +325,7 @@ describe('useAutoRunAchievements', () => {
 			unmount1();
 			mockUpdateAutoRunProgress.mockClear();
 
-			// Run with two sessions — reinitialize fake timers to get a fresh epoch
+			// Run with two sessions - reinitialize fake timers to get a fresh epoch
 			vi.useRealTimers();
 			vi.useFakeTimers();
 
@@ -717,7 +717,7 @@ describe('useAutoRunAchievements', () => {
 		it('initializes lastUpdateTime on first active run and uses it for subsequent ticks', () => {
 			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: ['session-1'] }));
 
-			// First tick — should fire and produce a positive delta
+			// First tick - should fire and produce a positive delta
 			act(() => {
 				vi.advanceTimersByTime(60000);
 			});
@@ -757,13 +757,13 @@ describe('useAutoRunAchievements', () => {
 
 			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: ['session-1'] }));
 
-			// First tick — no badge
+			// First tick - no badge
 			act(() => {
 				vi.advanceTimersByTime(60000);
 			});
 			expect(mockSetStandingOvationData).not.toHaveBeenCalled();
 
-			// Second tick — badge level 1 unlocked, uses fresh autoRunStats (longestRunMs: 5000)
+			// Second tick - badge level 1 unlocked, uses fresh autoRunStats (longestRunMs: 5000)
 			act(() => {
 				vi.advanceTimersByTime(60000);
 			});

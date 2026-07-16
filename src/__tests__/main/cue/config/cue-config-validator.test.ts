@@ -1,5 +1,5 @@
 /**
- * Unit tests for `validateSubscription` — focused on the `time.once` event
+ * Unit tests for `validateSubscription` - focused on the `time.once` event
  * type and the `notify` action added in Phase 01.
  *
  * Mirrors the table-driven style used elsewhere in the cue test suite:
@@ -19,7 +19,7 @@ function errs(sub: unknown): string[] {
 // time.once event validation
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('validateSubscription — time.once', () => {
+describe('validateSubscription - time.once', () => {
 	const base = {
 		name: 'task-1',
 		event: 'time.once',
@@ -165,7 +165,7 @@ describe('validateSubscription — time.once', () => {
 // action: 'notify' validation
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('validateSubscription — action: notify', () => {
+describe('validateSubscription - action: notify', () => {
 	const base = {
 		name: 'notify-1',
 		event: 'time.once',
@@ -176,7 +176,7 @@ describe('validateSubscription — action: notify', () => {
 	};
 
 	it('accepts action: notify even without a prompt field', () => {
-		// `prompt` is intentionally absent — notify never reads it.
+		// `prompt` is intentionally absent - notify never reads it.
 		expect(errs(base)).toEqual([]);
 	});
 

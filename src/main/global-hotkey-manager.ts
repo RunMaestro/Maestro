@@ -25,7 +25,7 @@ import { isMacOS } from '../shared/platformDetection';
  * - Single letters are upper-cased; named keys (`ArrowLeft`, `F5`, ...) are
  *   passed through.
  *
- * Returns `null` if the array has no non-modifier key — those aren't valid
+ * Returns `null` if the array has no non-modifier key - those aren't valid
  * global shortcuts.
  */
 export function keysToAccelerator(keys: string[]): string | null {
@@ -64,7 +64,7 @@ function summonMainWindow(window: BrowserWindow): void {
 	if (window.isMinimized()) window.restore();
 	if (!window.isVisible()) window.show();
 	// On macOS the app process can be hidden (Cmd+H) even when the window has
-	// state — `app.show()` brings it back to the foreground.
+	// state - `app.show()` brings it back to the foreground.
 	if (isMacOS()) app.show();
 	window.focus();
 }
@@ -106,7 +106,7 @@ export function setGlobalShowHotkey(keys: string[]): boolean {
 		});
 		if (!ok) {
 			logger.warn(
-				`Failed to register global hotkey '${accelerator}' — likely already in use by another app`,
+				`Failed to register global hotkey '${accelerator}' - likely already in use by another app`,
 				'GlobalHotkey'
 			);
 			return false;
@@ -129,7 +129,7 @@ export function disposeGlobalHotkey(): void {
 		try {
 			globalShortcut.unregister(currentAccelerator);
 		} catch {
-			// Ignore — app is shutting down or shortcut wasn't registered.
+			// Ignore - app is shutting down or shortcut wasn't registered.
 		}
 		currentAccelerator = null;
 	}

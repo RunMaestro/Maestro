@@ -1,5 +1,5 @@
 /**
- * MemoryViewer — full-panel overlay for browsing/editing Claude Code per-project memory.
+ * MemoryViewer - full-panel overlay for browsing/editing Claude Code per-project memory.
  *
  * Mirrors the Claude Sessions browser shell (same header pattern, stats bar, close button) and
  * reuses the shared DualPaneFileEditor for the list + markdown editor layout. Gated by the
@@ -42,7 +42,7 @@ const INDEX_STARTER_CONTENT = `# Memory index
 
 Pointers to individual memory files. One line per entry, under ~150 chars:
 
-- [Title](filename.md) — one-line hook
+- [Title](filename.md) - one-line hook
 `;
 
 const ENTRY_STARTER_CONTENT = `---

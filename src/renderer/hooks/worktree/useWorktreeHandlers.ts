@@ -1,8 +1,8 @@
 /**
- * useWorktreeHandlers — extracted from App.tsx (Phase 2D)
+ * useWorktreeHandlers - extracted from App.tsx (Phase 2D)
  *
  * Owns all worktree-related handlers, effects, refs, and memoized values.
- * Reads from Zustand stores directly — no parameters needed.
+ * Reads from Zustand stores directly - no parameters needed.
  *
  * Handlers:
  *   - Modal open/close for worktree config, create, delete
@@ -109,9 +109,9 @@ function isSkippableBranch(branch: string | null | undefined): boolean {
  * scanned subdir actually belongs to the parent agent's repository.
  *
  * Returns null in two cases:
- *  - "Not a git repo / no repoRoot" — explicit signal from `worktreeInfo`.
+ *  - "Not a git repo / no repoRoot" - explicit signal from `worktreeInfo`.
  *    Callers fall back to the legacy "trust the basePath" behavior.
- *  - Unexpected exception (IPC failure, etc.) — we return null *and* report
+ *  - Unexpected exception (IPC failure, etc.) - we return null *and* report
  *    the error to Sentry + the logger. Without that signal, a regressed IPC
  *    would silently disable the repo-root guard and re-introduce the
  *    wrong-parent attachment bug with no production trace.
@@ -239,7 +239,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					const parentRepoRoot = await resolveRepoRoot(activeSession.cwd, parentSshRemoteId);
 
 					for (const subdir of gitSubdirs) {
-						// Skip main/master/HEAD branches — they're typically the main repo
+						// Skip main/master/HEAD branches - they're typically the main repo
 						if (isSkippableBranch(subdir.branch)) continue;
 
 						// Repo-identity check (mirrors scanWorktreeConfigs). Falls back to
@@ -388,7 +388,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				);
 
 				if (!result.success) {
-					// Creation failed — remove from ref so the path isn't permanently blocked
+					// Creation failed - remove from ref so the path isn't permanently blocked
 					recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
 					throw new Error(result.error || 'Failed to create worktree');
 				}
@@ -399,7 +399,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				const reusedExisting = !!result.alreadyExisted && !!result.existingPath;
 
 				// If we ended up using a different path, drop the original mark and
-				// avoid re-marking — there was nothing newly created on disk to race with.
+				// avoid re-marking - there was nothing newly created on disk to race with.
 				if (reusedExisting) {
 					recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
 				}
@@ -499,7 +499,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		try {
 			// Create the worktree via git (pass SSH remote ID for remote sessions).
 			// baseBranch is honored only when the named branch doesn't already exist
-			// — see git.ts handler for the full semantics.
+			// - see git.ts handler for the full semantics.
 			const result = await window.maestro.git.worktreeSetup(
 				createWtSession.cwd,
 				worktreePath,
@@ -663,11 +663,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		if (sessionsWithWorktreeConfig.length === 0) return;
 
 		const newWorktreeSessions: Session[] = [];
-		// Children that no longer exist on disk — surfaced as "Worktree Removed".
+		// Children that no longer exist on disk - surfaced as "Worktree Removed".
 		const staleSessionIds: string[] = [];
 		// Children whose cwd still exists but belongs to a different repo. Surfaced
 		// as "Worktree Re-assigned" instead of "Worktree Removed" so the user isn't
-		// told their worktree was deleted (it wasn't — it just attaches to the
+		// told their worktree was deleted (it wasn't - it just attaches to the
 		// correct parent on the next scan / chokidar event).
 		const reassignedSessionIds: string[] = [];
 
@@ -683,7 +683,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				// Resolve the parent's main repo root once so we can verify each scanned
 				// subdir actually belongs to *this* parent's repository. Without this,
 				// two parents whose basePaths overlap (or a basePath that contains
-				// worktrees from a different repo) would race — whichever parent's loop
+				// worktrees from a different repo) would race - whichever parent's loop
 				// iterates first would grab every worktree, producing the "worktrees
 				// re-added under a wrong agent" bug after a wipe + restart.
 				const parentRepoRoot = await resolveRepoRoot(parentSession.cwd, sshRemoteId);
@@ -769,14 +769,14 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				// Guards against false-positive bulk removals (the bug that produced a
 				// stack of "Worktree Removed" toasts on Linux/Windows when a transient
 				// scan failure or symlinked basePath caused gitSubdirs to come back empty):
-				//   1. If the scan flagged itself as failed, trust nothing — skip.
+				//   1. If the scan flagged itself as failed, trust nothing - skip.
 				//   2. If the scan returned zero subdirs while child sessions exist, treat
 				//      that as suspicious and skip. A real "user removed every worktree"
 				//      case is rare and will be surfaced one at a time via chokidar
 				//      unlinkDir events instead.
 				if (scanFailed) {
 					logger.warn(
-						`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan failed`
+						`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} - scan failed`
 					);
 				} else {
 					// Build a quick lookup from normalized subdir path → its repoRoot,
@@ -793,7 +793,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					);
 					if (gitSubdirs.length === 0 && childSessions.length > 0) {
 						logger.warn(
-							`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan returned zero subdirs but ${childSessions.length} child sessions exist (suspicious)`
+							`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} - scan returned zero subdirs but ${childSessions.length} child sessions exist (suspicious)`
 						);
 					} else {
 						for (const child of childSessions) {
@@ -979,7 +979,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			const [parentRepoRoot, discoveredInfo] = await Promise.all([
 				resolveRepoRoot(parentSession.cwd, sshRemoteId),
 				// Unexpected IPC errors here are reported to Sentry rather than
-				// silently nulled out — otherwise a regressed worktreeInfo would
+				// silently nulled out - otherwise a regressed worktreeInfo would
 				// disable the repo-root guard for chokidar discoveries with no
 				// production signal. An explicit "not a repo" still resolves to
 				// `info.success=false` and falls through to the legacy fallback.
@@ -1152,7 +1152,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 								continue;
 							}
 
-							// Found a new worktree — prepare session creation
+							// Found a new worktree - prepare session creation
 							pathsBeingAdded.add(subdir.path);
 
 							const sessionName = subdir.branch ? `${subdir.name} (${subdir.branch})` : subdir.name;
@@ -1211,7 +1211,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		scanWorktreeParents();
 
 		// Scan when app regains focus (visibility change) instead of polling
-		// This is much more efficient — only scans when user returns to app
+		// This is much more efficient - only scans when user returns to app
 		const handleVisibilityChange = () => {
 			if (!document.hidden) {
 				scanWorktreeParents();

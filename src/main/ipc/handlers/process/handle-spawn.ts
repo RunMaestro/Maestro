@@ -354,7 +354,7 @@ export async function handleProcessSpawn(
 	// turn is preserved in the agent's session transcript, so on resume we skip
 	// re-embedding to avoid polluting every subsequent user message with the
 	// full system prompt (which would be redundant context and waste tokens).
-	// Agents with native support re-send per invocation — that flag is metadata,
+	// Agents with native support re-send per invocation - that flag is metadata,
 	// not conversation content, and some agents (e.g. Claude Code) require it
 	// every turn because it isn't persisted into the session transcript.
 	// ========================================================================
@@ -448,7 +448,7 @@ export async function handleProcessSpawn(
 	// each run by calling the `task_complete` tool. The built-in autopilot
 	// system prompt biases the model toward calling that tool *early*,
 	// which manifests in Maestro as "the turn came back to me but the
-	// task wasn't actually done". The remedy isn't a CLI flag — it's a
+	// task wasn't actually done". The remedy isn't a CLI flag - it's a
 	// user-message preamble injected on every batch invocation that
 	// pushes back on premature completion and instructs the model to
 	// put its real conclusion in `task_complete.summary` (which is what
@@ -469,7 +469,7 @@ export async function handleProcessSpawn(
 				});
 			}
 		} catch (err) {
-			// Prompt not loaded yet (initializePrompts not called) — skip silently.
+			// Prompt not loaded yet (initializePrompts not called) - skip silently.
 			// This path is hit by tests that stub the IPC handler without bootstrapping
 			// prompts. Production code always runs initializePrompts() at app start.
 			logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT, {
@@ -693,7 +693,7 @@ export async function handleProcessSpawn(
 	// For local (non-SSH) spawns, prepend the parent dir of the binary
 	// we're actually about to spawn to PATH. Covers npm-style script
 	// agents (codex, claude, etc.) installed alongside a non-standard
-	// `node` that's outside our hardcoded version-manager paths —
+	// `node` that's outside our hardcoded version-manager paths -
 	// the script's `#!/usr/bin/env node` shebang needs that node on
 	// PATH. SSH path is built separately on the remote and must not
 	// inherit any local directories.
@@ -780,7 +780,7 @@ export async function handleProcessSpawn(
 			prompt: replayPrompt,
 			buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
 				// Pull the freshest agentSessionId for this session/tab off the
-				// sessions store — maestro-p's session-id watcher may have stamped
+				// sessions store - maestro-p's session-id watcher may have stamped
 				// one between spawn and exit.
 				let freshAgentSessionId: string | undefined = originalConfig.agentSessionId;
 				try {

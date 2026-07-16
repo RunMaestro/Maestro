@@ -78,7 +78,7 @@ describe('Forwarding Listeners', () => {
 		handler?.(testSessionId, 'think');
 		handler?.(testSessionId, 'ing...');
 
-		// Nothing should have been sent yet — chunks are still buffered.
+		// Nothing should have been sent yet - chunks are still buffered.
 		expect(mockSafeSend).not.toHaveBeenCalled();
 
 		// Advance past the flush interval; the buffered content should arrive
@@ -99,7 +99,7 @@ describe('Forwarding Listeners', () => {
 		const handler = eventHandlers.get('thinking-chunk');
 		const testSessionId = 'test-session-123';
 
-		// 8KB threshold — push a payload that exceeds it in a single chunk.
+		// 8KB threshold - push a payload that exceeds it in a single chunk.
 		const big = 'x'.repeat(9 * 1024);
 		handler?.(testSessionId, big);
 

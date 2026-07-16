@@ -287,7 +287,7 @@ export function FileTreeContextMenu({
 							<span>Copy File Name</span>
 						</button>
 
-						{/* Reveal in Finder / Explorer — local-only, hidden over SSH */}
+						{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
 						{!sshRemoteId && (
 							<button
 								onClick={onOpenInExplorer}

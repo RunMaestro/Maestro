@@ -2,7 +2,7 @@
 //
 // Reads Claude's live session transcript (one JSON object per \n-terminated
 // line) and emits structured `'entry'` events the runner forwards to stdout.
-// This is the source of truth for assistant / user / tool-result events —
+// This is the source of truth for assistant / user / tool-result events -
 // the TUI screen is only used for startup readiness and quota-limit
 // detection. See MAESTRO-P-01-binary.md task 5 for the full contract.
 //
@@ -17,7 +17,7 @@
 // Skip-existing semantics
 // -----------------------
 // When `skipExisting: true` (used by `--resume`), `start()` seeds the
-// internal offset to the file's current size — only bytes written AFTER
+// internal offset to the file's current size - only bytes written AFTER
 // `start()` are emitted. This is what makes resume clean: prior turns are
 // not re-streamed to stdout. With `skipExisting: false` (fresh-session
 // discovery path), the offset starts at 0 and the entire file is replayed.
@@ -152,7 +152,7 @@ export class JsonlTailer extends EventEmitter {
 			throw err;
 		}
 
-		// File didn't grow — or shrank, which shouldn't happen in normal use
+		// File didn't grow - or shrank, which shouldn't happen in normal use
 		// but is treated as "no new bytes" rather than seeking backwards.
 		if (stat.size <= this.lastOffset) return;
 

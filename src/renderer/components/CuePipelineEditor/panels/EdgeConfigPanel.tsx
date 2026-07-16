@@ -1,5 +1,5 @@
 /**
- * EdgeConfigPanel — Bottom panel for configuring selected pipeline edges.
+ * EdgeConfigPanel - Bottom panel for configuring selected pipeline edges.
  *
  * Provides mode selection (pass/debate/autorun) and mode-specific settings.
  * All changes update immediately.
@@ -268,5 +268,5 @@ function EdgeConfigPanelInner({
 	);
 }
 
-// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+// Phase 14B - memoized so the panel does not re-render on unrelated canvas ticks.
 export const EdgeConfigPanel = React.memo(EdgeConfigPanelInner);

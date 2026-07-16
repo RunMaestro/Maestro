@@ -57,7 +57,7 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				errorRecoverable: state.error?.recoverable,
 				errorDocumentIndex: state.errorDocumentIndex,
 				errorTaskDescription: state.errorTaskDescription,
-				// Goal-Driven mode — web/mobile render goal percent + iteration in
+				// Goal-Driven mode - web/mobile render goal percent + iteration in
 				// place of task counts when goalMode is true.
 				goalMode: state.goalMode,
 				goalProgress: state.goalProgress,

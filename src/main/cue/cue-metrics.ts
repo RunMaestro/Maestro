@@ -1,9 +1,9 @@
 /**
- * Cue Metrics — in-process counter aggregation for engine observability.
+ * Cue Metrics - in-process counter aggregation for engine observability.
  *
  * Zero I/O per increment. Snapshot is plain-JSON so it can ride the IPC wire
  * unchanged. Each subsystem receives only the keys it needs via the typed
- * `increment(key, by?)` method — no shared mutable state leaks.
+ * `increment(key, by?)` method - no shared mutable state leaks.
  *
  * Reset on engine stop so re-enable starts fresh.
  */

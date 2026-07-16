@@ -97,7 +97,7 @@ export interface PluginManagerDeps {
 	 * authorization no longer matches the plugin on disk (identity changed) or the
 	 * plugin was removed/tombstoned. Production wires this to the sealed ledger's
 	 * `verify()` + `pluginIdentity()`; absent => no extra gate (the enable toggle and
-	 * consent govern). It only ever force-disables — never force-enables.
+	 * consent govern). It only ever force-disables - never force-enables.
 	 */
 	verifyRecord?: (record: PluginRecord) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
@@ -132,7 +132,7 @@ export class PluginManager {
 
 	/** Records the host should activate (enabled AND loadable). Empty when the
 	 * Encore flag is off, regardless of what is on disk. Tampered code (signature
-	 * `invalid`) is excluded here — the single authoritative "active" filter — so
+	 * `invalid`) is excluded here - the single authoritative "active" filter - so
 	 * no path (refresh, setEnabled, or any future toggle) can make it contribute,
 	 * since `listActive` itself does not check the signature. */
 	getActiveRecords(): PluginRecord[] {
@@ -250,7 +250,7 @@ export class PluginManager {
 			// on disk, or it was removed). Absent by default. Signature trust is
 			// enforced separately and centrally: tampered code (`invalid`) is inert via
 			// getActiveRecords(), and CODE EXECUTION additionally requires `trusted`
-			// via isRunnable() — regardless of this gate or the enable toggle.
+			// via isRunnable() - regardless of this gate or the enable toggle.
 			let gated = signed;
 			if (this.deps.verifyRecord) {
 				const eligibleCode =
@@ -292,7 +292,7 @@ export class PluginManager {
 	 * running code requires a valid signature from a trusted publisher key).
 	 * Unsigned/untrusted/tampered plugins never execute code; they remain
 	 * installable + enableable for DECLARATIVE contributions only (themes,
-	 * prompts, UI slots — see getActiveRecords/getContributions, which
+	 * prompts, UI slots - see getActiveRecords/getContributions, which
 	 * deliberately do NOT use this gate and only exclude tampered `invalid`).
 	 */
 	private isRunnable(record: PluginRecord): boolean {

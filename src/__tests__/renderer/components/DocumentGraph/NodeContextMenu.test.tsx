@@ -323,7 +323,7 @@ describe('NodeContextMenu', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: /copy path/i }));
 
-			// safeClipboardWrite swallows the error — onDismiss is still called
+			// safeClipboardWrite swallows the error - onDismiss is still called
 			await waitFor(() => {
 				expect(onDismiss).toHaveBeenCalled();
 			});

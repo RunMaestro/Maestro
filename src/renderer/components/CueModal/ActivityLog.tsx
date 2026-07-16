@@ -1,5 +1,5 @@
 /**
- * ActivityLog — Cue run history rendered as a table with newest-first ordering,
+ * ActivityLog - Cue run history rendered as a table with newest-first ordering,
  * smart "today vs date" timestamps, header-mounted search, and an expand-all
  * toggle. Used as the body of the Activity Log tab.
  */
@@ -66,7 +66,7 @@ function buildHaystack(
  */
 function formatActivityTimestamp(iso: string, now: Date): string {
 	const date = new Date(iso);
-	if (isNaN(date.getTime())) return '—';
+	if (isNaN(date.getTime())) return '-';
 	const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 	const sameDay =
 		date.getFullYear() === now.getFullYear() &&
@@ -146,7 +146,7 @@ export function ActivityLog({
 
 	return (
 		<div className="flex flex-col h-full">
-			{/* Header — title left; search + expand-all right */}
+			{/* Header - title left; search + expand-all right */}
 			<div className="flex items-center justify-between gap-3 mb-3">
 				<h3
 					className="text-xs font-bold uppercase tracking-wider"

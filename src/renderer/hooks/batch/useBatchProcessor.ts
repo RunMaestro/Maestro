@@ -215,7 +215,7 @@ export function useBatchProcessor({
 			// Clear stop requested refs (though they should already be cleaned up per-session)
 			stopRequestedRefs.current = {};
 
-			// Drop any outstanding Auto Run flush state — nothing to flush against after unmount.
+			// Drop any outstanding Auto Run flush state - nothing to flush against after unmount.
 			autoRunFlushStateRefs.current = {};
 		};
 	}, []);
@@ -286,7 +286,7 @@ export function useBatchProcessor({
 
 	// Update ref to always have latest updateBatchStateAndBroadcast (fixes HMR stale closure
 	// in long-running async loops; safe across module boundaries because Vite invalidates
-	// per-module — keeping the ref in the coordinator is intentional).
+	// per-module - keeping the ref in the coordinator is intentional).
 	updateBatchStateAndBroadcastRef.current = updateBatchStateAndBroadcast;
 
 	// Document/task-driven Auto Run orchestrator.

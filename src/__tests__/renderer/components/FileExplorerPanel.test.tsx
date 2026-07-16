@@ -975,7 +975,7 @@ describe('FileExplorerPanel', () => {
 			});
 			expect(slowRefresh).toHaveBeenCalledTimes(1);
 
-			// Second interval fires while first is still in flight — should be skipped
+			// Second interval fires while first is still in flight - should be skipped
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(1000);
 			});
@@ -987,7 +987,7 @@ describe('FileExplorerPanel', () => {
 				await vi.advanceTimersByTimeAsync(500);
 			});
 
-			// Third interval fires — should proceed now
+			// Third interval fires - should proceed now
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(1000);
 			});
@@ -1672,7 +1672,7 @@ describe('FileExplorerPanel', () => {
 		});
 	});
 
-	// LOCKED VISUAL INVARIANTS — DO NOT RELAX WITHOUT EXPLICIT REQUEST.
+	// LOCKED VISUAL INVARIANTS - DO NOT RELAX WITHOUT EXPLICIT REQUEST.
 	// Alignment rules (see FileExplorerPanel.tsx TreeRow):
 	//   BASE_PAD = 8, INDENT_STEP = 20 (= chevron width 12 + flex gap 8)
 	//   Row padding-left:  BASE_PAD + depth * INDENT_STEP
@@ -1685,7 +1685,7 @@ describe('FileExplorerPanel', () => {
 	describe('Indent Alignment (locked invariants)', () => {
 		const BASE_PAD = 8;
 		const INDENT_STEP = 20;
-		const CHEVRON_PLUS_GAP = 20; // w-3 (12) + gap-2 (8) — must equal INDENT_STEP
+		const CHEVRON_PLUS_GAP = 20; // w-3 (12) + gap-2 (8) - must equal INDENT_STEP
 		const expectedPad = (depth: number) => `${BASE_PAD + depth * INDENT_STEP}px`;
 
 		const getRowByText = (container: HTMLElement, text: string) =>
@@ -2496,7 +2496,7 @@ describe('FileExplorerPanel', () => {
 
 		it('drags all selected paths when the dragged row is in the multi-selection', () => {
 			// Use a controlled wrapper so setSelectedFileIndex actually moves the
-			// anchor between clicks — the default vi.fn() prop doesn't propagate.
+			// anchor between clicks - the default vi.fn() prop doesn't propagate.
 			const Controlled = () => {
 				const [idx, setIdx] = React.useState(0);
 				return (
@@ -2551,7 +2551,7 @@ describe('FileExplorerPanel', () => {
 			fireEvent.click(pkgRow);
 			fireEvent.click(readmeRow, { metaKey: true });
 
-			// Drag an unselected row — should not pull in the multi-selection.
+			// Drag an unselected row - should not pull in the multi-selection.
 			const dt = makeDataTransfer();
 			fireEvent.dragStart(htmlRow, { dataTransfer: dt });
 			expect(dt.data['application/x-maestro-file-path']).toBe('index.html');
@@ -2777,7 +2777,7 @@ describe('FileExplorerPanel', () => {
 			const htmlRow = getRowByLabel(container, 'index.html');
 			fireEvent.click(htmlRow, { shiftKey: true });
 
-			// Drag from an end of the range — payload should include the full range.
+			// Drag from an end of the range - payload should include the full range.
 			const dt = (function makeDt() {
 				const data: Record<string, string> = {};
 				return {
@@ -2797,7 +2797,7 @@ describe('FileExplorerPanel', () => {
 			fireEvent.dragStart(htmlRow, { dataTransfer: dt });
 			const multi = JSON.parse(dt.data['application/x-maestro-file-paths']);
 			// Selection should include the rows from index 0..3 (src, package.json,
-			// README.md, index.html) — the actual order isn't significant, only the
+			// README.md, index.html) - the actual order isn't significant, only the
 			// set membership.
 			expect(multi).toEqual(
 				expect.arrayContaining(['src', 'package.json', 'README.md', 'index.html'])
@@ -2835,7 +2835,7 @@ describe('FileExplorerPanel', () => {
 			fireEvent.click(htmlRow, { shiftKey: true }); // range 0..5
 			fireEvent.click(pkgRow, { shiftKey: true }); // should be 0..3, not 3..5
 
-			// Drag from pkgRow — payload should reflect 0..3 (4 rows).
+			// Drag from pkgRow - payload should reflect 0..3 (4 rows).
 			const dt = (function makeDt() {
 				const data: Record<string, string> = {};
 				return {
@@ -2858,7 +2858,7 @@ describe('FileExplorerPanel', () => {
 				expect.arrayContaining(['src', 'src/index.ts', 'src/utils', 'package.json'])
 			);
 			expect(multi).toHaveLength(4);
-			// index.html and README.md should NOT be in the selection any more —
+			// index.html and README.md should NOT be in the selection any more -
 			// they would be if the anchor had moved to htmlRow on the first
 			// shift-click.
 			expect(multi).not.toContain('index.html');
@@ -2887,7 +2887,7 @@ describe('FileExplorerPanel', () => {
 
 			fireEvent.click(pkgRow);
 			fireEvent.click(readmeRow, { metaKey: true });
-			// Plain click on a third row — multi-selection should be cleared.
+			// Plain click on a third row - multi-selection should be cleared.
 			fireEvent.click(htmlRow);
 
 			// A drag from package.json should now carry only package.json (no multi).
@@ -3287,7 +3287,7 @@ describe('FileExplorerPanel', () => {
 			(window as any).maestro = { fs: { writeFile } };
 
 			// session.fileTree is the source of truth for the duplicate check, not
-			// filteredFileTree — pass it in explicitly so src/index.ts is known.
+			// filteredFileTree - pass it in explicitly so src/index.ts is known.
 			const { container } = render(
 				<FileExplorerPanel
 					{...defaultProps}

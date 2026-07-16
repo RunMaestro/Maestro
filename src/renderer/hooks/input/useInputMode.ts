@@ -1,5 +1,5 @@
 /**
- * useInputMode — extracted from App.tsx (Tier 3A)
+ * useInputMode - extracted from App.tsx (Tier 3A)
  *
  * Provides toggle between AI and terminal input modes:
  *   - Saves/restores file preview tab when switching to/from terminal

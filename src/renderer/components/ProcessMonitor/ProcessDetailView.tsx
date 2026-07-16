@@ -125,11 +125,11 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 					</span>
 				</div>
 
-				{/* Info Grid — 4-column on wide modal widths, 2-column on narrow.
+				{/* Info Grid - 4-column on wide modal widths, 2-column on narrow.
 				    Tiles use col-span-{1,2,4} to pack short fields into shared rows
 				    and reserve full width for long/wrapping content. */}
 				<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-					{/* Process Session ID — half width; wraps to two lines for the long -ai-<tabId> form,
+					{/* Process Session ID - half width; wraps to two lines for the long -ai-<tabId> form,
 					    but that's preferable to leaving the row half-empty */}
 					<div
 						className="col-span-2 p-4 rounded-lg"
@@ -152,7 +152,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</code>
 					</div>
 
-					{/* Started At — paired with Process Session ID on the top row */}
+					{/* Started At - paired with Process Session ID on the top row */}
 					<div
 						className="col-span-2 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -171,7 +171,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</span>
 					</div>
 
-					{/* Agent Session ID — half width (UUID, ~36 chars) */}
+					{/* Agent Session ID - half width (UUID, ~36 chars) */}
 					{detail.agentSessionId && (
 						<div
 							className="col-span-2 p-4 rounded-lg"
@@ -195,7 +195,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Tab Name — half width */}
+					{/* Tab Name - half width */}
 					{detail.tabName && (
 						<div
 							className="col-span-2 p-4 rounded-lg"
@@ -216,7 +216,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* PID — quarter width on wide, half on narrow */}
+					{/* PID - quarter width on wide, half on narrow */}
 					<div
 						className="col-span-1 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -238,7 +238,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</code>
 					</div>
 
-					{/* Runtime — quarter width */}
+					{/* Runtime - quarter width */}
 					<div
 						className="col-span-1 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -257,7 +257,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</span>
 					</div>
 
-					{/* Tool Type — quarter width */}
+					{/* Tool Type - quarter width */}
 					<div
 						className="col-span-1 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -276,7 +276,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</span>
 					</div>
 
-					{/* Process Type — quarter width */}
+					{/* Process Type - quarter width */}
 					{detail.processType && (
 						<div
 							className="col-span-1 p-4 rounded-lg"
@@ -297,7 +297,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Cue-specific detail fields — half width each */}
+					{/* Cue-specific detail fields - half width each */}
 					{detail.cueSubscriptionName && (
 						<div
 							className="col-span-2 p-4 rounded-lg"
@@ -358,7 +358,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Working Directory — full width (paths can be long) */}
+					{/* Working Directory - full width (paths can be long) */}
 					<div
 						className="col-span-2 lg:col-span-4 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -380,7 +380,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</code>
 					</div>
 
-					{/* Remote Command — full width. Shown only for SSH spawns: the actual agent
+					{/* Remote Command - full width. Shown only for SSH spawns: the actual agent
 					    invocation running on the remote host, displayed above the local SSH
 					    command line below so it's clear what is executing remotely. */}
 					{detail.sshRemoteCommand && (
@@ -411,7 +411,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Command Line — full width (very long). For SSH spawns this is the local
+					{/* Command Line - full width (very long). For SSH spawns this is the local
 					    `ssh ... /bin/bash` invocation; the remote agent command is shown above. */}
 					<div
 						className="col-span-2 lg:col-span-4 p-4 rounded-lg"
@@ -439,7 +439,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</code>
 					</div>
 
-					{/* Maestro Environment Variables — full width */}
+					{/* Maestro Environment Variables - full width */}
 					{envEntries.length > 0 && (
 						<div
 							className="col-span-2 lg:col-span-4 p-4 rounded-lg"
@@ -507,7 +507,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Child Processes (terminal only) — full width */}
+					{/* Child Processes (terminal only) - full width */}
 					{detail.childProcesses && detail.childProcesses.length > 0 && (
 						<div
 							className="col-span-2 lg:col-span-4 p-4 rounded-lg"

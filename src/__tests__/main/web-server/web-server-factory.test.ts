@@ -58,7 +58,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetAutoRunDocContentCallback = vi.fn();
 			setSaveAutoRunDocCallback = vi.fn();
 			setStopAutoRunCallback = vi.fn();
-			// Auto Run parity additions — task reset, error recovery, playbook CRUD.
+			// Auto Run parity additions - task reset, error recovery, playbook CRUD.
 			// The factory wires these during createWebServer; without the stubs
 			// the module-under-test throws TypeError on startup.
 			setResetAutoRunDocTasksCallback = vi.fn();
@@ -165,7 +165,7 @@ vi.mock('../../../main/services/marketplace-service', () => ({
 	importMarketplacePlaybook: vi.fn(),
 }));
 
-// Mock Sentry — captureException is called from the import callback's
+// Mock Sentry - captureException is called from the import callback's
 // failure branch.
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -1000,10 +1000,10 @@ describe('web-server/web-server-factory', () => {
 
 		it('should treat sessionSshRemoteConfig.enabled === false as no SSH and import locally', async () => {
 			// A session with `enabled: false` and a populated remoteId must
-			// NOT be treated as remote — `enabled` is the source of truth.
+			// NOT be treated as remote - `enabled` is the source of truth.
 			// We assert the resolver returned `undefined` for sshConfig (i.e.
 			// no remote was looked up); whether the downstream import call
-			// succeeds is irrelevant — we only care that the SSH gate let it
+			// succeeds is irrelevant - we only care that the SSH gate let it
 			// through as a local import.
 			vi.mocked(importMarketplacePlaybook).mockResolvedValueOnce({
 				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
@@ -1091,7 +1091,7 @@ describe('web-server/web-server-factory', () => {
 			expect(getCueGraphData).toHaveBeenCalledTimes(1);
 			expect(all).toHaveLength(3);
 			expect(all[0]).toMatchObject({
-				// `sessionId::pipeline::name` — the pipeline discriminator
+				// `sessionId::pipeline::name` - the pipeline discriminator
 				// prevents collisions when two pipelines in the same session
 				// each define a sub with the same name.
 				id: 'agent-1::Obsidian Daily Pipe::Digest Script',

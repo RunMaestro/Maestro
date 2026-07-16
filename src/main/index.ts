@@ -381,7 +381,7 @@ if (!installationId) {
 	logger.info('Generated new installation ID', 'Startup', { installationId });
 }
 
-// Run one-shot settings-store migrations (idempotent — each migration owns
+// Run one-shot settings-store migrations (idempotent - each migration owns
 // its own marker). Mirrors the installation-ID generator above as the
 // canonical "first thing we do after the settings store is up" hook.
 runSettingsMigrations(store);
@@ -965,7 +965,7 @@ app
 						headers: { 'content-type': contentType },
 					});
 				} catch (err) {
-					// Only swallow "file not found" — surface every other fs error
+					// Only swallow "file not found" - surface every other fs error
 					// (EACCES, EISDIR, etc.) so Sentry / the renderer can react
 					// instead of silently 404ing on a broken install.
 					if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
@@ -1081,7 +1081,7 @@ app
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
 		// so an unhandled error later in startup can't silently leave maestro-cli
-		// without a discovery file — the symptom that previously forced users to
+		// without a discovery file - the symptom that previously forced users to
 		// toggle Live Mode on/off to coax the file into existence.
 		const cliServerDeps = {
 			getWebServer: () => webServer,
@@ -1172,7 +1172,7 @@ app
 		// Fire-and-forget: sample `maestro-p --status` for every CLAUDE_CONFIG_DIR
 		// account referenced by a recent Batch Mode-enabled Claude session so the
 		// context-window popover has fresh quota data on first turn. Failures here
-		// are non-fatal — the spawner's resolver tolerates a null snapshot by
+		// are non-fatal - the spawner's resolver tolerates a null snapshot by
 		// defaulting to interactive, and the next sampler refresh will repopulate.
 		void runStartupUsageSampling({
 			sessionsStore,
@@ -1197,7 +1197,7 @@ app
 			agentDetector,
 		});
 		// L5 usage-stats lift: the sampling loop is the feature's supervised
-		// `stats.sampler` background service — don't arm it when the user has
+		// `stats.sampler` background service - don't arm it when the user has
 		// explicitly disabled the Usage & Stats tile. `!== false` (not `=== true`)
 		// mirrors the renderer default (usageStats defaults ON and the merged
 		// flag map may never have been persisted main-side).
@@ -1250,7 +1250,7 @@ app
 				};
 
 				// `action: notify` surfaces a toast through the owning agent instead of
-				// spawning anything — handled before command/prompt so the spawn config,
+				// spawning anything - handled before command/prompt so the spawn config,
 				// SSH wrap, and history-recording paths below stay agent-only. The
 				// notify message is pre-resolved by the dispatch service via the
 				// fallback chain (notify.message → label → prompt → name); falling
@@ -1300,7 +1300,7 @@ app
 				}
 
 				// `action: command` runs a shell command or maestro-cli call instead of an
-				// AI prompt — skip agent path resolution and SSH wrapping.
+				// AI prompt - skip agent path resolution and SSH wrapping.
 				if (action === 'command') {
 					if (!command) {
 						// Should be unreachable post-validator, but guard anyway so a
@@ -1454,7 +1454,7 @@ app
 			},
 			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
 			onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
-			// Phase 01 — gate cue_events stats lineage writes on the
+			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
 			getUsageStatsEnabled: () => {
@@ -1477,7 +1477,7 @@ app
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
 		// on every event so toggling Cue or usageStats at runtime takes effect
 		// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
-		// — both flags required.
+		// - both flags required.
 		configureCueTelemetry({
 			getInstallationId: () => store.get('installationId') as string | null,
 			getAppVersion: () => app.getVersion(),
@@ -1571,7 +1571,7 @@ app
 		// (first-party = trusted by construction; the marketplace tile shows the
 		// permission list as disclosure); disable/revoke stop supervised work and
 		// clear the flag. Feature workers (L1..L5) look their bridge up via
-		// getFirstPartyBridge(flag) — this is the single construction site.
+		// getFirstPartyBridge(flag) - this is the single construction site.
 		const mintFirstPartyGrants = createFirstPartyGrantMinter(authStore);
 		const firstPartySupervisors: Partial<Record<FirstPartyEncoreFlag, FirstPartySupervisorHooks>> =
 			{
@@ -1582,7 +1582,7 @@ app
 				// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
 				// flag+grants hold; stopAll halts every watcher/poller/heartbeat.
 				maestroCue: createCueSupervisorHooks(() => cueEngine),
-				// L5 usage-stats: `stats.sampler` — the background provider-quota
+				// L5 usage-stats: `stats.sampler` - the background provider-quota
 				// sampling loop (UsageRefreshScheduler). Marketplace disable/revoke
 				// stops the timers; enable re-arms from the persisted intervals
 				// (start() is idempotent; it arms nothing until the user picks an
@@ -2122,7 +2122,7 @@ app
 		// this function; both closures read it lazily (never before app-ready use).
 		const backgroundSupervisor = new PluginBackgroundSupervisor({
 			// refresh() re-reads disk and reconciles sandboxes: it starts every
-			// runnable plugin that is not running — i.e. the crashed one.
+			// runnable plugin that is not running - i.e. the crashed one.
 			restartPlugin: () => pluginManager?.refresh(),
 			isPluginEnabled: (pluginId) =>
 				pluginManager?.getRegistry().records.some((r) => r.id === pluginId && r.enabled) ?? false,
@@ -2130,8 +2130,8 @@ app
 		pluginBackgroundSupervisor = backgroundSupervisor;
 
 		// Shared FC2/FC3 dispatch sink: resolve a runtime session FAIL-CLOSED
-		// (exact session id, else exact UNIQUE name — ambiguity is an error, never
-		// a guess), audit the resolved id, then hand the prompt to the renderer —
+		// (exact session id, else exact UNIQUE name - ambiguity is an error, never
+		// a guess), audit the resolved id, then hand the prompt to the renderer -
 		// the same single source of truth the web remote path uses. SYNCHRONOUS by
 		// design: resolution/renderer failures throw INTO the caller (the scheduler
 		// tick's try/catch, the handler's promise chain), never after a false
@@ -2150,7 +2150,7 @@ app
 			if (!target?.id) {
 				throw new Error(
 					byName.length > 1
-						? `agents.dispatch: "${agentId}" matches ${byName.length} sessions — use the session id`
+						? `agents.dispatch: "${agentId}" matches ${byName.length} sessions - use the session id`
 						: `agents.dispatch: no session "${agentId}"`
 				);
 			}
@@ -2166,7 +2166,7 @@ app
 			return { dispatched: true, sessionId: target.id };
 		};
 
-		// Host-owned spawn binary allowlist (FC2 / phase-4 §2). Ships EMPTY —
+		// Host-owned spawn binary allowlist (FC2 / phase-4 §2). Ships EMPTY -
 		// Maestro blesses no helper binaries by default. DEMO_MODE lets the e2e
 		// harness bless ONE binary ('e2e-selftest') via an env-supplied absolute
 		// path; the registry still enforces every invariant (absolute path, no
@@ -2311,7 +2311,7 @@ app
 				// paths) + ActionGuard high caps + audit-before-effect. These sinks
 				// are the LAST hop, not a gate.
 				// Trust source for assertTrustedActVerb: the live registry's verified
-				// signature status. Lazy — pluginManager is assigned below; handlers
+				// signature status. Lazy - pluginManager is assigned below; handlers
 				// only run once the sandbox is up. Fail-closed when absent.
 				isPluginTrusted: (pluginId) =>
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
@@ -2319,7 +2319,7 @@ app
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
-				// — the same grant source and check the time-based scheduler uses.
+				// - the same grant source and check the time-based scheduler uses.
 				dispatchUnattendedAllowed: (pluginId, agentId) =>
 					isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId),
 				spawn: async (pluginId, spec) => {
@@ -2569,7 +2569,7 @@ app
 				outcome.reason === 'conflict'
 					? `an untrusted plugin can't combine transcripts:read with net:fetch or process:spawn (only a trusted, signed plugin can).`
 					: outcome.reason === 'bad-nonce'
-						? `the consent request expired or was superseded — try again.`
+						? `the consent request expired or was superseded - try again.`
 						: `consent was rejected (${outcome.reason}).`;
 			logger.toast(
 				`Couldn't enable "${pluginId}": ${reasonMsg} Re-enable it to choose a different set.`,
@@ -2615,7 +2615,7 @@ app
 					throw new Error(`cue trigger "${trigger.id}" has no agentId to dispatch to`);
 				}
 				// Synchronous: a vanished/ambiguous session or missing renderer throws
-				// HERE, into the scheduler tick's try/catch — never a false success.
+				// HERE, into the scheduler tick's try/catch - never a false success.
 				dispatchPromptToSession(trigger.agentId, trigger.payload);
 			},
 			evaluateDispatch: (trigger) => {
@@ -2718,13 +2718,13 @@ app
 		// Start Cue engine if the Encore Feature flag is enabled
 		const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
 		if (encoreFeatures.maestroCue && cueEngine) {
-			logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
+			logger.info('Maestro Cue Encore Feature enabled - starting Cue engine', 'Startup');
 			try {
 				cueEngine.start('system-boot');
 			} catch (err) {
 				void captureException(err);
 				logger.error(
-					`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
+					`Cue engine failed to start at boot - will remain available for retry via Settings: ${err}`,
 					'Startup'
 				);
 			}
@@ -2781,7 +2781,7 @@ app
 		if (isMacOS()) {
 			const template: Electron.MenuItemConstructorOptions[] = [
 				{
-					// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
+					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
 					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
 					// quit role (as "Quit and Keep Windows"), and that keystroke sits
 					// one modifier away from Opt+Q (Maestro Cue), causing accidental
@@ -2814,11 +2814,11 @@ app
 					],
 				},
 				{
-					// Custom Edit menu — equivalent to `role: 'editMenu'` minus
+					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
 					// `undo` / `redo`. Those built-in roles register Cmd+Z /
 					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
 					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W — see the note
+					// (same trap as `role: 'close'` eating Cmd+W - see the note
 					// above the appMenu block). Removing them frees Cmd+Z for the
 					// image annotator's stroke-undo handler.
 					//
@@ -2930,7 +2930,7 @@ app
 	})
 	.catch(async (err) => {
 		// Without this, an unhandled rejection anywhere in the long startup chain
-		// silently aborts initialization — historically the cause of the missing
+		// silently aborts initialization - historically the cause of the missing
 		// CLI discovery file. Log loudly and report to Sentry so we can actually
 		// diagnose future regressions instead of guessing.
 		logger.error(`Fatal error during app startup: ${err}`, 'Startup');
@@ -2949,7 +2949,7 @@ app.on('window-all-closed', () => {
 		app.quit();
 	} else {
 		// On macOS the app stays alive after all windows close (dock click reopens).
-		// Kill all managed PTY/child processes now so they don't leak — session
+		// Kill all managed PTY/child processes now so they don't leak - session
 		// restoration will re-spawn fresh PTYs when the window is reopened.
 		processManager?.killAll();
 	}
@@ -3110,7 +3110,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
-			// Always query the executor's active process map — processes may still be
+			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
 			// independently of engine state).
 			const processList = getCueProcessList();

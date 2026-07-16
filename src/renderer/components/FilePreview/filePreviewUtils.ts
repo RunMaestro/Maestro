@@ -53,7 +53,7 @@ export const FAST_TIER_LINES = 5_000;
  * Bumped from the original plan's 4 MB to 8 MB so the Fast tier still owns
  * the common "huge markdown" case (e.g. the user-reported 300k-line / ~15 MB
  * file would otherwise lose rendered tables to CM6's source view). Giant
- * kicks in only when markdown-it parse becomes the dominant latency — past
+ * kicks in only when markdown-it parse becomes the dominant latency - past
  * ~8 MB, parse routinely exceeds 2 s on a modern Mac.
  */
 export const GIANT_TIER_BYTES = 8 * 1024 * 1024; // 8MB
@@ -80,14 +80,14 @@ export type PreviewTier = 'rich' | 'fast' | 'giant';
 /**
  * Pick a preview tier based on file size shape. Pass `bytes` (content length),
  * `lines` (newline count + 1), and `maxLineLength` (longest single line).
- * The Giant-friendliest condition wins — a file with a single 500k-char line
+ * The Giant-friendliest condition wins - a file with a single 500k-char line
  * routes to Giant even if its total bytes are under 8 MB.
  *
  * Tier landings:
  *   - Phase 1: Fast tier (markdown).
  *   - Phase 3: Fast tier (plain text + code).
  *   - Phase 4: Giant tier (CodeMirror 6) for files over GIANT_TIER_BYTES /
- *     GIANT_TIER_LINES — used for markdown, text, and code alike.
+ *     GIANT_TIER_LINES - used for markdown, text, and code alike.
  *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
  *     Giant regardless of byte / line count to avoid wide-layer freeze.
  *
@@ -198,7 +198,7 @@ export const getLanguageFromFilename = (filename: string): string => {
  * tell apart `.ts` / `.py` / `.css` files (Shiki-eligible code) from `.txt`
  * / `.log` / `README` (plain prose).
  *
- * `'markdown'` is intentionally NOT considered code — markdown has its own
+ * `'markdown'` is intentionally NOT considered code - markdown has its own
  * Fast-tier renderer.
  */
 export const isCodeFile = (language: string): boolean => {

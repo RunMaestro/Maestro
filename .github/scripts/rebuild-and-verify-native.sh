@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rebuild-and-verify-native.sh — Clean, rebuild, and verify native modules for a target architecture.
+# rebuild-and-verify-native.sh - Clean, rebuild, and verify native modules for a target architecture.
 # Used by release.yml to prevent architecture contamination across x64/arm64 builds.
 #
 # Usage: ./rebuild-and-verify-native.sh <arch>

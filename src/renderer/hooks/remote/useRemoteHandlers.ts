@@ -1,5 +1,5 @@
 /**
- * useRemoteHandlers — extracted from App.tsx (Phase 2K)
+ * useRemoteHandlers - extracted from App.tsx (Phase 2K)
  *
  * Handles remote command processing from the web interface:
  *   - handleRemoteCommand event listener (terminal + AI mode dispatching)
@@ -115,7 +115,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	}, [sessionSshRemoteKey, sshRemoteConfigs]);
 
 	// ====================================================================
-	// handleRemoteCommand — processes commands from web interface
+	// handleRemoteCommand - processes commands from web interface
 	// ====================================================================
 
 	useEffect(() => {
@@ -127,7 +127,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				/** Optional explicit tab target (from `maestro-cli dispatch --session
 				 *  <tabId>`). When unset, falls back to the active tab. When set
 				 *  but unknown, the command is dropped (we never silently re-route
-				 *  to the active tab — callers chaining `--session <tabId>` would
+				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
 				/** When true, bypass the renderer's busy-state guard. Mirrors the
@@ -260,7 +260,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 
 			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard — without that escape hatch, the renderer would
+			// bypasses this guard - without that escape hatch, the renderer would
 			// silently drop forced dispatches and the server-side allow-list
 			// would be moot.
 			if (session.state === 'busy' && !force) {
@@ -279,7 +279,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				: undefined;
 			if (requestedTabId && !requestedTab) {
 				logger.warn(
-					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} — dropping command (avoiding silent re-route to active tab)`
+					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} - dropping command (avoiding silent re-route to active tab)`
 				);
 				return;
 			}
@@ -368,7 +368,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						promptToSend.substring(0, 100)
 					);
 				} else {
-					// Unknown slash command — route the error log to the targeted
+					// Unknown slash command - route the error log to the targeted
 					// tab (not whichever tab happens to be active) so the caller
 					// sees the error in the conversation they dispatched into.
 					logger.info('[Remote] Unknown slash command:', undefined, commandText);
@@ -409,7 +409,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					const tabStillExists = liveSession?.aiTabs?.some((t) => t.id === writeTabId);
 					if (!tabStillExists) {
 						logger.warn(
-							`[Remote] Target tab "${writeTabId}" was closed before spawn — dropping command`
+							`[Remote] Target tab "${writeTabId}" was closed before spawn - dropping command`
 						);
 						return;
 					}
@@ -491,7 +491,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								: s.aiTabs;
 
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
-							logger.error('[runAICommand] Target tab not found in session — dropping user log');
+							logger.error('[runAICommand] Target tab not found in session - dropping user log');
 							return s;
 						}
 
@@ -572,7 +572,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
 							logger.error(
-								'[runAICommand error] Target tab not found in session — dropping error log'
+								'[runAICommand error] Target tab not found in session - dropping error log'
 							);
 							return s;
 						}
@@ -599,10 +599,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	const handleQuickActionsToggleRemoteControl = useCallback(async () => {
 		await toggleGlobalLive();
 		if (isLiveMode) {
-			setSuccessFlashNotification('Remote Control: OFFLINE — See indicator at top of left panel');
+			setSuccessFlashNotification('Remote Control: OFFLINE - See indicator at top of left panel');
 		} else {
 			setSuccessFlashNotification(
-				'Remote Control: LIVE — See LIVE indicator at top of left panel for QR code'
+				'Remote Control: LIVE - See LIVE indicator at top of left panel for QR code'
 			);
 		}
 		setTimeout(() => setSuccessFlashNotification(null), 4000);

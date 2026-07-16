@@ -421,7 +421,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_start' }));
 
-			// First (intermediate) assistant.message — narration before delegation.
+			// First (intermediate) assistant.message - narration before delegation.
 			handler.handleData(
 				sessionId,
 				JSON.stringify({
@@ -509,7 +509,7 @@ describe('StdoutHandler', () => {
 
 			// Session ID should still be extracted from bare exit-code result events
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-error');
-			// Bare exit codes without error text should NOT trigger an inline error —
+			// Bare exit codes without error text should NOT trigger an inline error -
 			// the richer detectErrorFromExit() runs at process exit with stderr context
 			expect(errorSpy).not.toHaveBeenCalled();
 		});
@@ -1997,7 +1997,7 @@ function createMinimalOutputParser(usageReturn: {
 
 // ── Performance: single JSON.parse per NDJSON line ──────────────────────
 
-describe('StdoutHandler — single JSON parse per line', () => {
+describe('StdoutHandler - single JSON parse per line', () => {
 	it('parses JSON exactly once per NDJSON line (output parser path)', () => {
 		// Instrument JSON.parse to count calls
 		const originalParse = JSON.parse;
@@ -2345,7 +2345,7 @@ describe('StdoutHandler — single JSON parse per line', () => {
 			const errors: Array<[string, unknown]> = [];
 			emitter.on('agent-error', (sid: string, err: unknown) => errors.push([sid, err]));
 
-			// Send a plain text line (not JSON) — this is a real SSH error
+			// Send a plain text line (not JSON) - this is a real SSH error
 			handler.handleData(sessionId, 'bash: opencode: command not found\n');
 
 			// SSH pattern check SHOULD be called for non-JSON lines

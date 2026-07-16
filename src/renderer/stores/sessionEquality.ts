@@ -21,7 +21,7 @@ function aiTabEqual(a: AITab, b: AITab): boolean {
 /**
  * Equality function for `useStoreWithEqualityFn(useSessionStore, s => s.sessions, ...)`.
  *
- * Returns true when the two arrays are sidebar-equivalent — i.e. nothing the
+ * Returns true when the two arrays are sidebar-equivalent - i.e. nothing the
  * left-bar / categorization layer cares about has changed. This lets the
  * batched session-update flush rebuild the array reference every 200 ms without
  * forcing the sidebar tree to re-render unless a user-visible field actually

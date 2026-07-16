@@ -350,7 +350,7 @@ describe('usePipelineCanvasCallbacks', () => {
 					target: 'p2:a1',
 				} as Parameters<typeof h.result.current.onConnect>[0])
 			);
-			// Still calls setPipelineState but with prev unchanged — verify via getState
+			// Still calls setPipelineState but with prev unchanged - verify via getState
 			expect(h.getState().pipelines[0].edges).toHaveLength(0);
 		});
 
@@ -495,7 +495,7 @@ describe('usePipelineCanvasCallbacks', () => {
 			).toBe(true);
 		});
 
-		// Phase 14C — callback identity stability via ref pattern.
+		// Phase 14C - callback identity stability via ref pattern.
 		it('keeps callback identity stable across nodes/edges changes', () => {
 			let nodes: Node[] = [rfNode('p1:t1', 'trigger'), rfNode('p1:a1', 'agent')];
 			let edges: Edge[] = [];
@@ -517,7 +517,7 @@ describe('usePipelineCanvasCallbacks', () => {
 
 			const firstIdentity = result.current.isValidConnection;
 
-			// Swap in new nodes/edges arrays — simulating post-drag applyNodeChanges.
+			// Swap in new nodes/edges arrays - simulating post-drag applyNodeChanges.
 			nodes = [rfNode('p1:t1', 'trigger'), rfNode('p1:a1', 'agent'), rfNode('p1:a2', 'agent')];
 			edges = [rfEdge('e1', 'p1:t1', 'p1:a1')];
 			rerender({ n: nodes, e: edges });

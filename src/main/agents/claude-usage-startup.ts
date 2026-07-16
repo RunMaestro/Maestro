@@ -4,7 +4,7 @@
  * Fires a one-shot `maestro-p --status` per unique CLAUDE_CONFIG_DIR account
  * referenced by any recent Claude Code session, and persists each result into
  * `claudeUsageStore`. Invoked from `src/main/index.ts` after settings/CLI
- * watchers come up, as fire-and-forget — the spawner can still fall through
+ * watchers come up, as fire-and-forget - the spawner can still fall through
  * with a null snapshot if sampling never completed, and the 5-min stale
  * refresh inside the spawner's mode-selection block tops the store back up
  * lazily when an `auto`-mode tab actually needs the data.
@@ -21,7 +21,7 @@
  * Filter window:
  *   Only sessions younger than 7 days (`createdAt >= now - 7d`) are sampled.
  *   The intent is to skip stale tabs the user hasn't touched in a long
- *   time — sampling those would waste a 30s spawn budget per account that
+ *   time - sampling those would waste a 30s spawn budget per account that
  *   isn't actually being used in this run.
  *
  * Skip conditions (each logged at warn, then a clean return):
@@ -72,13 +72,13 @@ export interface StartupUsageSamplingDeps {
 	/** Override for tests; defaults to `Date.now()`. */
 	now?: () => number;
 	/**
-	 * 'startup' (default): strict filter — only sample for sessions that will
+	 * 'startup' (default): strict filter - only sample for sessions that will
 	 * spawn through maestro-p (Adaptive Mode toggle on, or maestro-p set as the
 	 * session-level / agent-level Path) AND were created within the 7-day
-	 * window. Keeps boot snappy — non-maestro-p users don't pay a 30s
+	 * window. Keeps boot snappy - non-maestro-p users don't pay a 30s
 	 * `--status` spawn per account on every launch.
 	 *
-	 * 'manual': aggressive — sample every unique CLAUDE_CONFIG_DIR referenced
+	 * 'manual': aggressive - sample every unique CLAUDE_CONFIG_DIR referenced
 	 * by ANY Claude Code session, ignoring the maestro-p filter and the 7-day
 	 * window. Falls back to the default ~/.claude account when no Claude Code
 	 * sessions exist. Used by the Usage Dashboard Refresh button: the user
@@ -140,7 +140,7 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 
 /**
  * Locate the bundled `maestro-p.js` script. Returns null when no candidate
- * exists — callers treat this the same as "claude agent missing" and skip
+ * exists - callers treat this the same as "claude agent missing" and skip
  * sampling cleanly.
  *
  * Candidate order matches the dev / packaged split:
@@ -227,7 +227,7 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
  *     in customEnvVars. We refuse to sample "default" accounts the user
  *     hasn't explicitly configured: the user may have multiple Anthropic
  *     accounts on this host, and the default `~/.claude` may not match
- *     wherever claude's tokens actually live in the Keychain — so a
+ *     wherever claude's tokens actually live in the Keychain - so a
  *     "guess the default" sample would trigger an OAuth browser prompt.
  *     Better to skip than to pop a browser the user didn't ask for.
  */
@@ -263,7 +263,7 @@ function buildTarget(
 	}
 
 	// Hard requirement: sample only explicitly-configured accounts. If the
-	// user didn't set CLAUDE_CONFIG_DIR anywhere, we don't guess — the
+	// user didn't set CLAUDE_CONFIG_DIR anywhere, we don't guess - the
 	// spawn would inherit the default `~/.claude`, which may have stale
 	// `.claude.json` metadata pointing at an account whose Keychain tokens
 	// no longer exist, and that combination triggers a browser OAuth flow.
@@ -296,7 +296,7 @@ function buildTarget(
  *     discover unconfigured ~/.claude-* dirs on disk, since sampling a stale
  *     leftover account would pop an OAuth browser the user never asked for.
  *
- * Never throws — every failure surfaces as a warn log and a skipped entry.
+ * Never throws - every failure surfaces as a warn log and a skipped entry.
  */
 export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): Promise<void> {
 	const now = (deps.now ?? Date.now)();
@@ -342,7 +342,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 
 	// Dedup by canonical configDirKey so two sessions pointing at the same
 	// Anthropic account only sample once. First session wins on cwd / env
-	// shape — the snapshot is a per-account quota, not per-session.
+	// shape - the snapshot is a per-account quota, not per-session.
 	const targetsByKey = new Map<string, SamplingTarget>();
 	for (const session of eligibleClaudeSessions) {
 		const target = buildTarget(session, agentLevelEnvVars);

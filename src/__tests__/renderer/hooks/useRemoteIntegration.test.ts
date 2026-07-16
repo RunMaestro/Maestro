@@ -224,7 +224,7 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
-		// Auto Run parity additions — playbook CRUD + task reset + error recovery.
+		// Auto Run parity additions - playbook CRUD + task reset + error recovery.
 		// Each hook subscribes but the tests here don't drive these handlers;
 		// a no-op unsubscribe keeps useRemoteIntegration setup from throwing.
 		onRemoteResetAutoRunDocTasks: vi.fn().mockImplementation(() => () => {}),

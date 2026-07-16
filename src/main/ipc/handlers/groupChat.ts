@@ -606,8 +606,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 
 				// Mark participant as done and trigger synthesis if all participants have responded.
 				// Unlike regular participants (whose process exit triggers this via exit-listener),
-				// autorun participants never exit a group-chat process — the batch runs as a separate
-				// Maestro session — so we must call markParticipantResponded here.
+				// autorun participants never exit a group-chat process - the batch runs as a separate
+				// Maestro session - so we must call markParticipantResponded here.
 				const agentDetector = getAgentDetector();
 				const isLast = markParticipantResponded(groupChatId, participantName);
 				if (isLast && processManager && agentDetector) {

@@ -205,7 +205,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 	// First-party Encore features: route the marketplace toggle through the
 	// host-owned lifecycle bridge (flag flip + grant mint + supervised-work
 	// reconcile/stop) instead of a bare settings write. Deliberately NOT gated
-	// on `encoreFeatures.plugins` — first-party features are independent of the
+	// on `encoreFeatures.plugins` - first-party features are independent of the
 	// community-plugin subsystem, and their tiles render even when it is off.
 	const wrappedFirstPartySetEnabled = withIpcErrorLogging(
 		handlerOpts('firstPartySetEnabled'),

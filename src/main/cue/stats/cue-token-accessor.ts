@@ -5,10 +5,10 @@
  *
  * Two distinct id spaces are in play and conflating them is what made every
  * Cue token figure read zero:
- * - **Maestro agent id** — what `cue_events` / `session_lifecycle` store. Used
+ * - **Maestro agent id** - what `cue_events` / `session_lifecycle` store. Used
  *   here only to resolve `(agentType, projectPath, isRemote)` from the
  *   `session_lifecycle` stats table.
- * - **Provider session id** — Claude's `session_id` etc., the key the agents'
+ * - **Provider session id** - Claude's `session_id` etc., the key the agents'
  *   on-disk session files (and `AgentSessionInfo.sessionId`) use. Used here to
  *   actually match token totals.
  *
@@ -25,7 +25,7 @@
  * - Token attribution credits the entire session (Phase 02 Q2 decision).
  *   `sinceMs`/`untilMs` only filter which sessions are *included* in the
  *   result; included sessions report full session totals.
- * - SSH remote sessions are not supported in Phase 02 — `session_lifecycle`
+ * - SSH remote sessions are not supported in Phase 02 - `session_lifecycle`
  *   stores `is_remote` but not the SSH remote ID, so we cannot resolve the
  *   `SshRemoteConfig` from the stats DB alone. Remote sessions are returned
  *   with `coverage: 'partial'` and zeros, plus a warn-level log. Phase 04 may
@@ -48,7 +48,7 @@ const CACHE_TTL_MS = 30 * 1000;
 /**
  * Aggregated token usage for one provider session.
  *
- * `coverage` reports how complete the data is — see audit doc for which
+ * `coverage` reports how complete the data is - see audit doc for which
  * agents fall into each bucket. Callers should surface the bucket in the UI
  * so users understand when totals are an undercount.
  */
@@ -116,7 +116,7 @@ interface SessionLookupRow {
 /**
  * Look up `(agentType, projectPath, isRemote)` for a batch of session IDs.
  * Sessions absent from `session_lifecycle` are simply missing from the
- * returned map — callers should treat that as "session doesn't exist".
+ * returned map - callers should treat that as "session doesn't exist".
  */
 function lookupSessions(
 	db: Database.Database,
@@ -209,7 +209,7 @@ function matchesWindow(
  *   on-disk token totals). Deduped by `providerSessionId`.
  * @param opts.sinceMs - Optional window lower bound. Sessions whose
  *   `windowEndMs` falls before this are excluded from the result. Token
- *   counts on included sessions are NOT clipped — the simple model credits
+ *   counts on included sessions are NOT clipped - the simple model credits
  *   the full session.
  * @param opts.untilMs - Optional window upper bound. Sessions whose
  *   `windowStartMs` falls after this are excluded from the result. Same
@@ -238,7 +238,7 @@ export async function getSessionTokenSummaries(
 		}
 	}
 
-	// First pass — serve from cache, collect uncached provider ids.
+	// First pass - serve from cache, collect uncached provider ids.
 	const uncached: string[] = [];
 	for (const providerSessionId of maestroByProvider.keys()) {
 		const entry = cache.get(providerSessionId);
@@ -314,7 +314,7 @@ export async function getSessionTokenSummaries(
 		Array.from(groups.values()).map(async (group) => {
 			const baseCoverage = COVERAGE_BY_AGENT[group.agentType];
 
-			// Unknown agent — mark unsupported.
+			// Unknown agent - mark unsupported.
 			if (!baseCoverage) {
 				for (const providerSessionId of group.providerSessionIds) {
 					const summary = buildEmptySummary(providerSessionId, group.agentType, 'unsupported');
@@ -387,7 +387,7 @@ export async function getSessionTokenSummaries(
  *
  * Kept separate from token resolution because agent type is keyed by the
  * Maestro agent id (what `cue_events` stores) and is available even for events
- * that never recorded a provider session id — so the dashboard can still label
+ * that never recorded a provider session id - so the dashboard can still label
  * a run's agent when its token total is unknown. Maestro agent ids absent from
  * `session_lifecycle` are simply missing from the returned map.
  */

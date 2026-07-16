@@ -1,7 +1,7 @@
 /**
  * Cue Backup IPC Handlers
  *
- * Thin transport layer over `cue-backup-manager` — every handler is a
+ * Thin transport layer over `cue-backup-manager` - every handler is a
  * one-line delegation. Reads and writes to the user-data `cue-backups/`
  * directory. Used by the Cue modal's Backup tab.
  */

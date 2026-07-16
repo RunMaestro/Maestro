@@ -6,7 +6,7 @@
  * focused diagnostic panels: failure spotlight, time-series, hour-of-day,
  * trigger-type, pipeline, agent, and slowest-runs.
  *
- * The component is responsible only for read+display — gating lives in the
+ * The component is responsible only for read+display - gating lives in the
  * parent dashboard (tab is hidden when `encoreFeatures.maestroCue` is off)
  * and in the IPC handler (throws `'CueStatsDisabled'` when either Encore
  * flag is off, which we render as a friendly note as defense in depth).
@@ -446,7 +446,7 @@ interface GroupTableProps {
 	keyLabel: string;
 	formatLabel?: (label: string, key: string) => string;
 	/** When true, the Total Tokens / Total Cost columns are dropped from the
-	 *  table — used when the active range has no token data so we don't
+	 *  table - used when the active range has no token data so we don't
 	 *  render columns of zeros and dashes. */
 	hideTokenColumns?: boolean;
 }
@@ -606,7 +606,7 @@ const GroupTable = memo(function GroupTable({
 												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 													{row.totals.totalCostUsd != null
 														? formatCost(row.totals.totalCostUsd)
-														: '—'}
+														: '-'}
 												</td>
 											</>
 										)}
@@ -828,7 +828,7 @@ const SlowestRunsTable = memo(function SlowestRunsTable({
 										{row.subscriptionName}
 									</td>
 									<td className="px-3 py-2" style={{ color: theme.colors.textDim }}>
-										{row.agentType ? getAgentDisplayName(row.agentType) : '—'}
+										{row.agentType ? getAgentDisplayName(row.agentType) : '-'}
 									</td>
 									<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 										{format(new Date(row.startedAtMs), 'MMM d HH:mm')}
@@ -950,7 +950,7 @@ const TriggerTypeChart = memo(function TriggerTypeChart({
 
 /* ---------------------------- Hour-of-day chart -------------------------- */
 
-const HOUR_LABEL_INTERVAL = 3; // 0, 3, 6, … 21 — keeps the strip readable.
+const HOUR_LABEL_INTERVAL = 3; // 0, 3, 6, … 21 - keeps the strip readable.
 
 /**
  * 24-bar histogram showing when Cue runs in the local day. Helps the user
@@ -1078,7 +1078,7 @@ const HourOfDayChart = memo(function HourOfDayChart({
 									data-hour={bucket.hour}
 								>
 									<title>
-										{`${String(bucket.hour).padStart(2, '0')}:00 — ${formatNumber(
+										{`${String(bucket.hour).padStart(2, '0')}:00 - ${formatNumber(
 											bucket.occurrences
 										)} ${bucket.occurrences === 1 ? 'run' : 'runs'}${
 											bucket.failureCount > 0 ? `, ${bucket.failureCount} failed` : ''

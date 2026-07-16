@@ -84,18 +84,18 @@ describe('watchCueConfigFile torn-flag guard', () => {
 			cleanup = watchCueConfigFile(projectRoot, onChange, { onReady: resolve });
 		});
 
-		// Trigger a real change so the debounced callback is scheduled — this
+		// Trigger a real change so the debounced callback is scheduled - this
 		// exercises the path the torn flag actually protects. Writing the
 		// canonical .maestro/cue.yaml is exactly what the session runtime does.
 		const maestroDir = path.join(projectRoot, '.maestro');
 		fs.mkdirSync(maestroDir, { recursive: true });
 		fs.writeFileSync(path.join(maestroDir, 'cue.yaml'), 'subscriptions: []', 'utf-8');
 
-		// Cleanup IMMEDIATELY — the debounced setTimeout is already scheduled
+		// Cleanup IMMEDIATELY - the debounced setTimeout is already scheduled
 		// (or about to be). The torn flag must reject it when it fires.
 		cleanup();
 
-		// Wait beyond the 1s debounce window — nothing should fire.
+		// Wait beyond the 1s debounce window - nothing should fire.
 		await new Promise((resolve) => setTimeout(resolve, 1200));
 		expect(onChange).not.toHaveBeenCalled();
 	});
@@ -106,7 +106,7 @@ describe('watchCueConfigFile torn-flag guard', () => {
 
 		// chokidar.close() returns a Promise. We don't await it, so any
 		// rejection on a double-close would surface as an unhandled rejection
-		// rather than a synchronous throw — watch for both.
+		// rather than a synchronous throw - watch for both.
 		const unhandled: unknown[] = [];
 		const onUnhandled = (event: { reason?: unknown } | PromiseRejectionEvent) => {
 			unhandled.push((event as { reason?: unknown }).reason);
@@ -171,7 +171,7 @@ describe('recovery-service negative-gap guard', () => {
 		// Init opens the DB (mocked as a no-op here).
 		service.init();
 
-		// Heartbeat is 10 seconds in the future — gapMs will be negative.
+		// Heartbeat is 10 seconds in the future - gapMs will be negative.
 		vi.spyOn(Date, 'now').mockReturnValue(1000);
 		mockGetLastHeartbeat.mockReturnValue(11000);
 

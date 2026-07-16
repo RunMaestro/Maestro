@@ -185,7 +185,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			handlerOpts('init'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail fast if an SSH remote was requested but can't be resolved —
+				// Fail fast if an SSH remote was requested but can't be resolved -
 				// otherwise we'd silently `git init` the wrong (local) directory.
 				if (sshRemoteId && !sshRemote) {
 					return {
@@ -218,7 +218,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			handlerOpts('commitAll'),
 			async (cwd: string, message: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail fast if an SSH remote was requested but can't be resolved —
+				// Fail fast if an SSH remote was requested but can't be resolved -
 				// otherwise we'd silently commit in the wrong (local) directory.
 				if (sshRemoteId && !sshRemote) {
 					return {
@@ -938,7 +938,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				}
 
 				if (createResult.exitCode !== 0) {
-					// Recover from "already used / already checked out" — the branch is
+					// Recover from "already used / already checked out" - the branch is
 					// already registered with another worktree on disk. Resolve that path
 					// from `git worktree list --porcelain` so the caller can open it.
 					const errMsg = createResult.stderr || '';
@@ -1346,7 +1346,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							const err = new Error(
 								`Failed to read remote directory ${dir}: ${result.error || 'unknown error'}`
 							) as NodeJS.ErrnoException;
-							// Tag as ENOENT so the outer catch's Sentry-quieting branch applies —
+							// Tag as ENOENT so the outer catch's Sentry-quieting branch applies -
 							// remote read failures are typically "path no longer exists / not reachable",
 							// not bugs worth paging on.
 							err.code = 'ENOENT';
@@ -1385,7 +1385,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 						sshRemote
 					);
 					if (toplevelResult.exitCode !== 0) {
-						return null; // Git command failed — treat as invalid
+						return null; // Git command failed - treat as invalid
 					}
 					const toplevel = toplevelResult.stdout.trim();
 					// For local paths, canonicalize via realpath so that symlinked base
@@ -1433,7 +1433,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							repoRoot = path.dirname(commonDirAbs);
 						}
 					} else {
-						// For non-worktree git repos, the toplevel IS the repo root —
+						// For non-worktree git repos, the toplevel IS the repo root -
 						// reuse the value we already fetched above instead of re-running
 						// `git rev-parse --show-toplevel`.
 						repoRoot = toplevel;
@@ -1451,7 +1451,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				// Walk a directory level: inspect each subdir, then recurse into any
 				// non-git subdirs (up to MAX_DEPTH below the original parentPath).
 				// Failures while reading a nested directory are swallowed by the
-				// inner try/catch — a missing or unreadable group dir shouldn't fail
+				// inner try/catch - a missing or unreadable group dir shouldn't fail
 				// the entire scan. Top-level failure propagates up to the outer
 				// try/catch so scanFailed is surfaced and the renderer skips removal.
 				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
@@ -1532,7 +1532,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					};
 				}
 
-				// Stop existing watcher if any — delete from map BEFORE awaiting close
+				// Stop existing watcher if any - delete from map BEFORE awaiting close
 				// to prevent race conditions with concurrent unwatch/watch IPC calls
 				const existingWatcher = worktreeWatchers.get(sessionId);
 				if (existingWatcher) {
@@ -1666,7 +1666,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					// removed and the empty parent is cleaned up. We forward the event
 					// regardless because (a) the dir is gone so we can't run git checks
 					// to validate, and (b) the renderer's onWorktreeRemoved handler
-					// already filters by registered child cwds — an unknown path is a
+					// already filters by registered child cwds - an unknown path is a
 					// no-op, not a session removal. See useWorktreeHandlers.ts.
 					watcher.on('unlinkDir', (dirPath: string) => {
 						if (dirPath === worktreePath) return;
@@ -1698,7 +1698,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					return { success: true };
 				} catch (err) {
 					// ENOENT is expected when the worktree parent path has been moved
-					// or deleted; the renderer surfaces this as "stale" — no need to
+					// or deleted; the renderer surfaces this as "stale" - no need to
 					// page Sentry on user filesystem state.
 					const code = (err as NodeJS.ErrnoException | undefined)?.code;
 					if (code !== 'ENOENT') {

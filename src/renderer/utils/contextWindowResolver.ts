@@ -3,8 +3,8 @@
  *
  * Resolves an agent's effective context window from its per-agent override,
  * its agent-type config, or the agent defaults. Kept separate from the live
- * usage gauge (`useContextWindow`) so non-hook callers — e.g. Auto Run's
- * fresh-context mode picker — can resolve the same number without pulling in
+ * usage gauge (`useContextWindow`) so non-hook callers - e.g. Auto Run's
+ * fresh-context mode picker - can resolve the same number without pulling in
  * tab usage state.
  */
 
@@ -28,7 +28,7 @@ interface ContextWindowSource {
  * same precedence the live context gauge uses:
  *   1. `customContextWindow` (per-agent override) when > 0
  *   2. the agent-type config's `contextWindow`
- * Returns 0 when neither is set, signalling "unknown" — callers that need a
+ * Returns 0 when neither is set, signalling "unknown" - callers that need a
  * non-zero estimate should use {@link resolveEffectiveContextWindow}.
  */
 export async function resolveConfiguredContextWindow(

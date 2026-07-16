@@ -210,7 +210,7 @@ describe('GitStatusWidget', () => {
 			);
 			render(<GitStatusWidget {...defaultProps} />);
 			// Component displays modifiedCount in full mode (orange text) and fileCount in compact mode
-			// When values match, multiple elements exist — scope to the full-mode span
+			// When values match, multiple elements exist - scope to the full-mode span
 			const fullMode = document.querySelector('.header-git-status-full')!;
 			expect(within(fullMode).getByText('2')).toBeInTheDocument();
 		});
@@ -243,7 +243,7 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// fileCount (compact) and modifiedCount (full) are both 1 — scope to compact span
+			// fileCount (compact) and modifiedCount (full) are both 1 - scope to compact span
 			const compact = document.querySelector('.header-git-status-compact')!;
 			expect(within(compact).getByText('1')).toBeInTheDocument();
 		});
@@ -706,7 +706,7 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// fileCount (compact) and modifiedCount (full) are both 20 — scope queries
+			// fileCount (compact) and modifiedCount (full) are both 20 - scope queries
 			const fullMode = document.querySelector('.header-git-status-full')!;
 			expect(within(fullMode).getByText('190')).toBeInTheDocument();
 			expect(within(fullMode).getByText('27')).toBeInTheDocument();

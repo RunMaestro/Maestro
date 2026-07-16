@@ -119,7 +119,7 @@ export const TerminalView = memo(
 		const spawnFailureCountRef = useRef(0);
 		const spawnFailureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const spawnFailureLastMessageRef = useRef<string | null>(null);
-		// Stable refs for callback props — prevents spawnPtyForTab from getting a new
+		// Stable refs for callback props - prevents spawnPtyForTab from getting a new
 		// identity on every render, which would re-trigger the spawn useEffect in a loop.
 		const onTabPidChangeRef = useRef(onTabPidChange);
 		onTabPidChangeRef.current = onTabPidChange;
@@ -229,7 +229,7 @@ export const TerminalView = memo(
 				clearActiveTerminal() {
 					if (!activeTab) return;
 					// xterm.clear() removes scrollback but keeps the current prompt line
-					// exactly where it is — which looks like nothing happened when the user
+					// exactly where it is - which looks like nothing happened when the user
 					// has just the prompt visible. Also send Ctrl+L to the PTY so the shell
 					// redraws the current line at the top of a fresh screen.
 					terminalRefs.current.get(activeTab.id)?.clear();
@@ -262,7 +262,7 @@ export const TerminalView = memo(
 			[activeTab]
 		);
 
-		// Shared spawn function — closes tab and shows error toast on failure
+		// Shared spawn function - closes tab and shows error toast on failure
 		const spawnPtyForTab = useCallback(
 			(tab: TerminalTab) => {
 				const tabId = tab.id;
@@ -286,9 +286,9 @@ export const TerminalView = memo(
 				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
 				//
 				// workingDirOverride must be a REMOTE path. Fallback chain:
-				//   1. sessionSshRemoteConfig.workingDirOverride — user-configured remote project root
-				//   2. session.remoteCwd — tracked remote cwd (set after agent reports cd)
-				//   3. session.cwd — the working directory from session creation; for SSH sessions
+				//   1. sessionSshRemoteConfig.workingDirOverride - user-configured remote project root
+				//   2. session.remoteCwd - tracked remote cwd (set after agent reports cd)
+				//   3. session.cwd - the working directory from session creation; for SSH sessions
 				//      this IS a remote path (the user types a remote path when SSH is enabled)
 				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
 					? {
@@ -365,7 +365,7 @@ export const TerminalView = memo(
 								operation: 'spawnTerminalTab',
 							},
 						});
-						// Spawn threw — same persistent-vs-scratch handling as a failed spawn.
+						// Spawn threw - same persistent-vs-scratch handling as a failed spawn.
 						handleSpawnFailure(
 							tabId,
 							isPersistent,
@@ -385,7 +385,7 @@ export const TerminalView = memo(
 				defaultShell,
 				shellArgs,
 				shellEnvVars,
-				// onTabPidChange / onTabStateChange accessed via stable refs — not deps
+				// onTabPidChange / onTabStateChange accessed via stable refs - not deps
 				handleSpawnFailure,
 			]
 		);
@@ -400,7 +400,7 @@ export const TerminalView = memo(
 
 		// Eagerly spawn any non-active terminal tab that has a startupCommand
 		// configured. Without this, a tab with `npm run dev` would silently sit
-		// dormant after an app restart until the user clicked it — defeating the
+		// dormant after an app restart until the user clicked it - defeating the
 		// whole point of a persistent startup command. spawnPtyForTab's in-flight
 		// guard + the pid===0 check make this safe to re-evaluate on every render.
 		useEffect(() => {
@@ -419,7 +419,7 @@ export const TerminalView = memo(
 
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden
-		// rather than unmounting, so xterm.js's ResizeObserver never fires — the WebGL/canvas
+		// rather than unmounting, so xterm.js's ResizeObserver never fires - the WebGL/canvas
 		// renderer won't repaint unless explicitly told to after the element becomes visible.
 		useEffect(() => {
 			if (activeTab) {
@@ -434,7 +434,7 @@ export const TerminalView = memo(
 		}, [activeTab?.id]);
 
 		// Repaint + focus when the terminal panel becomes visible again (e.g. returning from AI mode).
-		// activeTab?.id doesn't change in this case, so the effect above won't fire — we need an
+		// activeTab?.id doesn't change in this case, so the effect above won't fire - we need an
 		// explicit refresh here. The display:none → display:flex transition can wipe the WebGL/canvas
 		// framebuffer, so we must tell xterm.js to redraw from its internal buffer.
 		useEffect(() => {
@@ -449,7 +449,7 @@ export const TerminalView = memo(
 		}, [isVisible]);
 
 		// Close search when the active terminal tab changes.
-		// Intentionally depends only on activeTab?.id — we want to close search when
+		// Intentionally depends only on activeTab?.id - we want to close search when
 		// switching tabs, not every time searchOpen/onSearchClose props change.
 		useEffect(() => {
 			if (searchOpen) {
@@ -648,7 +648,7 @@ export const TerminalView = memo(
 									ref={(handle) => {
 										if (handle) {
 											terminalRefs.current.set(tab.id, handle);
-											// Write loading indicator once per idle cycle — guard prevents duplicate writes on re-renders
+											// Write loading indicator once per idle cycle - guard prevents duplicate writes on re-renders
 											if (
 												tab.pid === 0 &&
 												tab.state === 'idle' &&
@@ -661,7 +661,7 @@ export const TerminalView = memo(
 											}
 										} else {
 											terminalRefs.current.delete(tab.id);
-											// Do NOT clear loadingWrittenRef here — React calls inline ref callbacks with
+											// Do NOT clear loadingWrittenRef here - React calls inline ref callbacks with
 											// null then the new handle on re-renders; clearing it would cause repeated writes.
 										}
 									}}
@@ -685,7 +685,7 @@ export const TerminalView = memo(
 );
 
 // ============================================================================
-// Callback factories — used by MainPanel to wire tab state/pid updates
+// Callback factories - used by MainPanel to wire tab state/pid updates
 // ============================================================================
 
 /**

@@ -302,7 +302,7 @@ describe('useBatchKillAction', () => {
 		getActiveProcesses.mockReturnValue(neverResolve as never);
 
 		const { hook, stopRequestedRefs } = setupHook();
-		// Fire-and-forget — don't await. The flag should already be set by the time
+		// Fire-and-forget - don't await. The flag should already be set by the time
 		// killBatchRun yields to the first `await`.
 		void hook.result.current.killBatchRun('sess');
 

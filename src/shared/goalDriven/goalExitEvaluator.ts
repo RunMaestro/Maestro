@@ -8,7 +8,7 @@
  * loop-limit, stall detection), but driven by self-reported progress instead
  * of `- [ ]` checkbox counts.
  *
- * No Electron, React, or IPC — just data in, decision out.
+ * No Electron, React, or IPC - just data in, decision out.
  */
 
 import type { GoalExitDecision, GoalIterationRecord, GoalRunConfig } from './types';
@@ -40,7 +40,7 @@ function normalizeProgressSeries(history: GoalIterationRecord[]): number[] {
  * Detect a stall against the (already normalized) progress series.
  *
  * A stall means the last `STALL_THRESHOLD` iterations show no upward progress
- * movement — every consecutive pair within that window is flat or declining.
+ * movement - every consecutive pair within that window is flat or declining.
  * Requires at least `STALL_THRESHOLD` entries. Returns the normalized value the
  * run is stuck at (for the human-readable detail), or `null` when not stalled.
  */
@@ -61,11 +61,11 @@ function detectStall(series: number[]): number | null {
  * Evaluate whether a goal-driven run should continue or stop.
  *
  * Stop conditions are checked in strict priority order; the first match wins:
- *   1. Completion    — latest `complete` (or `progress === 100`)
- *   2. Deadlock      — latest `deadlock`
- *   3. Max iterations — finite `config.maxIterations` reached
- *   4. Stall          — no upward progress across the last `STALL_THRESHOLD` records
- *   5. otherwise      — continue
+ *   1. Completion    - latest `complete` (or `progress === 100`)
+ *   2. Deadlock      - latest `deadlock`
+ *   3. Max iterations - finite `config.maxIterations` reached
+ *   4. Stall          - no upward progress across the last `STALL_THRESHOLD` records
+ *   5. otherwise      - continue
  *
  * `detail` is a concise, human-readable string surfaced in History.
  */
@@ -73,7 +73,7 @@ export function evaluateGoalExit(
 	history: GoalIterationRecord[],
 	config: GoalRunConfig
 ): GoalExitDecision {
-	// Nothing has run yet — keep going.
+	// Nothing has run yet - keep going.
 	if (history.length === 0) {
 		return { action: 'continue' };
 	}
@@ -89,7 +89,7 @@ export function evaluateGoalExit(
 		};
 	}
 
-	// 2. Deadlock — the agent declared it cannot make further progress. Prefer the
+	// 2. Deadlock - the agent declared it cannot make further progress. Prefer the
 	// reason from the deadlock marker itself (what the prompt instructs the agent
 	// to emit); fall back to the progress rationale only when no deadlock reason
 	// was given.
@@ -104,7 +104,7 @@ export function evaluateGoalExit(
 		};
 	}
 
-	// 3. Max iterations — only when a finite cap is configured.
+	// 3. Max iterations - only when a finite cap is configured.
 	if (config.maxIterations !== null && history.length >= config.maxIterations) {
 		return {
 			action: 'stop',
@@ -115,7 +115,7 @@ export function evaluateGoalExit(
 		};
 	}
 
-	// 4. Stall — running without moving the number is no real progress. Use the
+	// 4. Stall - running without moving the number is no real progress. Use the
 	// normalized series so a silent (missing-progress) latest iteration reports
 	// the value it's stuck at rather than a raw null.
 	const stuckAt = detectStall(normalizeProgressSeries(history));
@@ -127,6 +127,6 @@ export function evaluateGoalExit(
 		};
 	}
 
-	// 5. Healthy — keep going.
+	// 5. Healthy - keep going.
 	return { action: 'continue' };
 }

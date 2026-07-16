@@ -167,7 +167,7 @@ describe('usePipelineContextMenu', () => {
 			act(() => h.result.current.onNodeContextMenu(stubEvent(), rfNode('p1:t1', 'trigger')));
 			h.rerender({ isAllPipelinesView: true });
 			act(() => h.result.current.handleContextMenuDuplicate());
-			// Note: setPipelineState may be called initially by onNodeContextMenu — but it isn't, so
+			// Note: setPipelineState may be called initially by onNodeContextMenu - but it isn't, so
 			// only check no state change after duplicate attempt
 			expect(h.getState().pipelines[0].nodes).toHaveLength(1);
 		});

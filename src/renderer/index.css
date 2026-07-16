@@ -45,23 +45,23 @@ textarea::placeholder {
    Theme tokens (set on :root by useThemeStyles in src/renderer/hooks/ui/
    useThemeStyles.ts):
 
-     --scrollbar-thumb        — idle thumb color (theme `border`)
-     --scrollbar-thumb-hover  — hover thumb color (theme `textDim`)
-     --scrollbar-thumb-active — actively-scrolling thumb (theme `accent`)
-     --scrollbar-track        — track tint (theme `bgActivity`)
+     --scrollbar-thumb        - idle thumb color (theme `border`)
+     --scrollbar-thumb-hover  - hover thumb color (theme `textDim`)
+     --scrollbar-thumb-active - actively-scrolling thumb (theme `accent`)
+     --scrollbar-track        - track tint (theme `bgActivity`)
 
    Three layers, in order of specificity:
 
-   1) Global default (`*::-webkit-scrollbar`) — themes EVERY scrollable
+   1) Global default (`*::-webkit-scrollbar`) - themes EVERY scrollable
       element in the app, including the ~200 inline `overflow: auto`
       containers that don't carry an explicit class. Width 10px, soft theme
       colors. Works on light and dark themes.
 
-   2) `.scrollbar-thin` — slim 6px variant for tight UI areas (sidebars,
+   2) `.scrollbar-thin` - slim 6px variant for tight UI areas (sidebars,
       autocomplete dropdowns, command palettes, the right rail). Used in
       ~50 components. Reuses the same CSS variables.
 
-   3) `.scrollbar-thin.scrolling` / `.scrollbar-thin.fading` — stateful
+   3) `.scrollbar-thin.scrolling` / `.scrollbar-thin.fading` - stateful
       classes toggled by useThemeStyles to brighten the thumb during active
       scrolling and fade it out after 1s of idle. Only fires for elements
       with `.scrollbar-thin` (managed in JS to avoid wiring scroll listeners
@@ -73,7 +73,7 @@ textarea::placeholder {
    useThemeStyles runs).
 */
 
-/* (1) Global default scrollbar — themes every scrollable element */
+/* (1) Global default scrollbar - themes every scrollable element */
 *::-webkit-scrollbar {
 	width: 10px;
 	height: 10px;
@@ -109,7 +109,7 @@ textarea::placeholder {
 	scrollbar-width: thin;
 }
 
-/* (2) Slim variant for tight UI areas — opt-in via .scrollbar-thin */
+/* (2) Slim variant for tight UI areas - opt-in via .scrollbar-thin */
 .scrollbar-thin::-webkit-scrollbar {
 	width: 6px;
 	height: 6px;
@@ -163,7 +163,7 @@ textarea::placeholder {
 	scrollbar-width: none;
 }
 
-/* Hide xterm scrollbar when terminal container is not visible — prevents
+/* Hide xterm scrollbar when terminal container is not visible - prevents
    the xterm-viewport scrollbar from bleeding through behind the AI tab.
    Both overflow and scrollbar-width are needed because Chromium's compositor
    can paint native scrollbars even on visibility:hidden elements. */
@@ -176,7 +176,7 @@ textarea::placeholder {
 	display: none !important;
 }
 
-/* xterm.js viewport scrollbar — match Maestro's thin scrollbar style */
+/* xterm.js viewport scrollbar - match Maestro's thin scrollbar style */
 .xterm-viewport::-webkit-scrollbar {
 	width: 6px;
 	height: 6px;
@@ -408,7 +408,7 @@ textarea::placeholder {
 
 /* Claude Plan Usage - in-flight refresh sweep (indeterminate progress).
    Wider than the button so the gradient enters from offscreen on the left,
-   passes through, and exits offscreen on the right — reads as a recurring
+   passes through, and exits offscreen on the right - reads as a recurring
    light sweep rather than a strobing flash. */
 @keyframes claude-plan-refresh-sweep {
 	0% {
@@ -462,7 +462,7 @@ textarea::placeholder {
 
 /* Usage Dashboard - Staggered card entrance animation.
    Final keyframe must use `transform: none` (not translateY(0) scale(1)) so
-   the resting state doesn't leave a non-none transform behind — that would
+   the resting state doesn't leave a non-none transform behind - that would
    create a stacking context per card and trap sibling chart tooltips
    (z-50, fixed) underneath later sections. */
 @keyframes card-enter {
@@ -502,7 +502,7 @@ textarea::placeholder {
 
 /* Usage Dashboard - Chart section enter animation.
    Final keyframe uses `transform: none` (not translateY(0)) so the resting
-   state doesn't create a per-section stacking context — otherwise chart
+   state doesn't create a per-section stacking context - otherwise chart
    tooltips (fixed, z-50) inside the first section get trapped underneath
    later sections like SummaryCards. */
 @keyframes dashboard-section-enter {
@@ -526,7 +526,7 @@ textarea::placeholder {
 	opacity: 0;
 }
 
-/* Bouncing dots — three dots that bounce in sequence for loading / thinking */
+/* Bouncing dots - three dots that bounce in sequence for loading / thinking */
 .bounce-dots {
 	display: inline-flex;
 	align-items: center;
@@ -772,7 +772,7 @@ textarea::placeholder {
 	background-color: rgba(0, 0, 0, 0.85);
 }
 
-/* Modal width utilities — scale with the Cmd+= font-size setting via --font-scale
+/* Modal width utilities - scale with the Cmd+= font-size setting via --font-scale
  * (set in useSettings.ts; 14px is the design baseline → scale = 1). Use these
  * instead of w-[Npx] on modal containers so contents that grow with rem
  * (pills, headers, buttons) don't wrap into a fixed-width shell. The 95vw
@@ -819,7 +819,7 @@ textarea::placeholder {
 	animation: search-highlight-glow 2s ease-in-out infinite;
 }
 
-/* Wand sparkle animation — opacity-only. Earlier versions translated the SVG
+/* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
    <path> elements by 0.5px for jitter, but Chrome doesn't composite transforms
    on SVG sub-elements, so every animated frame triggered a full layout
    (~720 layouts/sec when any agent was busy). The half-pixel motion was
@@ -977,7 +977,7 @@ svg.wand-profiling-active path:nth-child(8) {
  * The Cue PipelineCanvas passes a custom <PipelineConnectionLine> component
  * via `connectionLineComponent` so we render the path ourselves with full
  * control. This rule is a belt-and-suspenders safety net for any ReactFlow
- * surface that falls back to the default ConnectionLine — without it, the
+ * surface that falls back to the default ConnectionLine - without it, the
  * default `stroke: #b1b1b7` is invisible against the dark theme.
  *
  * If the inline style on a custom component sets stroke explicitly, that
@@ -985,7 +985,7 @@ svg.wand-profiling-active path:nth-child(8) {
  * only kicks in when nothing else has styled the path.
  */
 .react-flow__connection-path {
-	stroke: #06b6d4; /* CUE_COLOR — keep in sync with shared/cue-pipeline-types.ts */
+	stroke: #06b6d4; /* CUE_COLOR - keep in sync with shared/cue-pipeline-types.ts */
 	stroke-width: 2;
 	stroke-dasharray: 6 3;
 	fill: none;
@@ -1069,7 +1069,7 @@ svg.wand-profiling-active path:nth-child(8) {
 /* Below 300px: Hide session name */
 @container header (max-width: 480px) {
 	/* Drop secondary header buttons (Memory Viewer + Agent Sessions) so the
-	 * right group fits — both are still reachable via the Menu drawer. */
+	 * right group fits - both are still reachable via the Menu drawer. */
 	.header-secondary-btn {
 		display: none !important;
 	}
@@ -1466,7 +1466,7 @@ svg.wand-profiling-active path:nth-child(8) {
  *
  * Closed (data-collapsed='true') keeps the inline 64px status-dot strip so
  * users can see all sessions at a glance. Hidden (data-hidden='true') drops
- * the panel entirely — used when the user wants maximum room for the main
+ * the panel entirely - used when the user wants maximum room for the main
  * content. Hidden state applies at every breakpoint, including desktop.
  */
 [data-panel='left'][data-hidden='true'] {

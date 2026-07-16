@@ -136,7 +136,7 @@ describe('cue-recovery-service', () => {
 		it('does nothing when the gap is below the sleep threshold', () => {
 			const now = Date.now();
 			vi.spyOn(Date, 'now').mockReturnValue(now);
-			// Gap of just 1 minute — well under SLEEP_THRESHOLD_MS (2 minutes).
+			// Gap of just 1 minute - well under SLEEP_THRESHOLD_MS (2 minutes).
 			mockGetLastHeartbeat.mockReturnValue(now - 60_000);
 
 			const onDispatch = vi.fn();
@@ -173,7 +173,7 @@ describe('cue-recovery-service', () => {
 		it('dispatches a catch-up event for each missed time.heartbeat subscription', () => {
 			const now = Date.now();
 			vi.spyOn(Date, 'now').mockReturnValue(now);
-			// 10-minute gap — well over both the threshold and the 1-min interval.
+			// 10-minute gap - well over both the threshold and the 1-min interval.
 			mockGetLastHeartbeat.mockReturnValue(now - 10 * 60_000);
 
 			const onDispatch =

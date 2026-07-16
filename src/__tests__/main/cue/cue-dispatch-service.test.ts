@@ -174,7 +174,7 @@ describe('createCueDispatchService', () => {
 		// `fan_out` carries the display name at save time; renaming an agent
 		// would otherwise silently drop it from dispatch (the YAML name no
 		// longer matches any live session). `fan_out_ids` is the stable-id
-		// mirror — the dispatcher must prefer it over the stale name.
+		// mirror - the dispatcher must prefer it over the stale name.
 		it('resolves fan-out target by fan_out_ids when the agent has been renamed', () => {
 			const { deps, executeRun } = makeDeps([
 				// Renamed: id is still 's-1', name is now 'alpha-renamed'.

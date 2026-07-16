@@ -679,7 +679,7 @@ describe('gateContributions (per-capability customization gate)', () => {
 
 	it('ui:render-unsafe does NOT unlock host-rendered uiItems or panels (D-PanelsEscape)', () => {
 		// SECURITY INVARIANT: ui:render-unsafe is the high-risk "render arbitrary UI"
-		// escape hatch — it is NOT a substitute grant for the host-rendered surfaces.
+		// escape hatch - it is NOT a substitute grant for the host-rendered surfaces.
 		// Holding only it must leave uiItems/panels gated out; otherwise an author who
 		// got the inert escape-hatch grant would silently gain menu/panel injection.
 		const onlyUnsafe = gateContributions(built, (cap) => cap === 'ui:render-unsafe');
@@ -688,7 +688,7 @@ describe('gateContributions (per-capability customization gate)', () => {
 	});
 });
 
-describe('aggregateContributions — gated aggregation', () => {
+describe('aggregateContributions - gated aggregation', () => {
 	it('gates capability-scoped contributions per plugin when given the predicate', () => {
 		const m = manifest(
 			'com.g2',

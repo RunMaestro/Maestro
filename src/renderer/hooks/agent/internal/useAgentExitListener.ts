@@ -1,5 +1,5 @@
 /**
- * useAgentExitListener — registers `window.maestro.process.onExit`
+ * useAgentExitListener - registers `window.maestro.process.onExit`
  *
  * Orchestration only: pure logic lives in `helpers/exitDequeue`,
  * `helpers/exitTabCleanup`, `helpers/exitGitRefresh`, and
@@ -193,7 +193,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 				// Agent Resilience: if an auto-retry resend is still 'in-flight' at
 				// exit, no retryable error re-scheduled it (agent-error fires before
-				// exit), so the resent turn settled — clear the pending retry.
+				// exit), so the resent turn settled - clear the pending retry.
 				clearRetryIfSettled(actualSessionId, tabIdFromSession);
 			}
 
@@ -231,7 +231,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						};
 					}
 
-					// Look up the completed tab in aiTabs first, then in orphanedThinkingTabs —
+					// Look up the completed tab in aiTabs first, then in orphanedThinkingTabs -
 					// tabs closed mid-thinking land in the orphan list, and their exit still
 					// needs to drive toast/synopsis side-effects.
 					const completedTab = tabIdFromSession
@@ -355,13 +355,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				}
 			}
 
-			// Update state (pure function — no side effects)
+			// Update state (pure function - no side effects)
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== actualSessionId) return s;
 
 					// If this exit belongs to a tab the user already closed while it was
-					// still thinking, the tab is no longer in s.aiTabs — it lives in
+					// still thinking, the tab is no longer in s.aiTabs - it lives in
 					// s.orphanedThinkingTabs purely so the thinking pill can keep
 					// surfacing it. Drop it from orphans and recompute session-level
 					// busy state. Nothing else (queue, logs, synopsis, toast) needs to
@@ -524,7 +524,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 															logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
 															state: 'idle' as const,
 															thinkingStartTime: undefined,
-															// Preserve agentSessionId — stale IDs are cleared
+															// Preserve agentSessionId - stale IDs are cleared
 															// by onAgentError when session_not_found is detected.
 															// Blanket-clearing here breaks tab identity for
 															// recoverable errors (rate limits, API errors, etc.)
@@ -564,7 +564,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
 							);
 							if (!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy) {
-								// Don't dequeue — mark the exiting tab idle and keep session busy
+								// Don't dequeue - mark the exiting tab idle and keep session busy
 								const updatedAiTabs = s.aiTabs.map((tab) =>
 									tabIdFromSession && tab.id === tabIdFromSession
 										? {
@@ -651,7 +651,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 														logs: cleanupExitedTabLogs(tab.logs, tab.id, tab),
 														state: 'idle' as const,
 														thinkingStartTime: undefined,
-														// Preserve agentSessionId for session resume —
+														// Preserve agentSessionId for session resume -
 														// stale IDs are cleared by onAgentError when
 														// session_not_found is detected
 													}

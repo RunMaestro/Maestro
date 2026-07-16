@@ -114,7 +114,7 @@ export const HistoryPanel = React.memo(
 		const activeFiltersAgentIdRef = useRef(session.id);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
-		// Source/host filter — null means "All Sources". When set, both the
+		// Source/host filter - null means "All Sources". When set, both the
 		// entry list and the activity graph narrow to entries from that host.
 		const [selectedHost, setSelectedHost] = useState<string | null>(null);
 		const searchFilterOpen = useUIStore((s) => s.historySearchFilterOpen);
@@ -123,7 +123,7 @@ export const HistoryPanel = React.memo(
 			{ start: number; end: number } | undefined
 		>(undefined);
 		const [helpModalOpen, setHelpModalOpen] = useState(false);
-		// Lookback selector — drives both the paginated entry list (server-side)
+		// Lookback selector - drives both the paginated entry list (server-side)
 		// and the graph window. The graph data is server-cached per lookback,
 		// so flipping between windows is cheap once each has been computed.
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
@@ -153,7 +153,7 @@ export const HistoryPanel = React.memo(
 		// Page loader for the shared pagination hook. Memoized on
 		// `(session.id, session.cwd, graphLookbackHours)` so any of those
 		// changes resets the window via the hook's loader-identity reset.
-		// Stable shared-context snapshot — only changes when the relevant
+		// Stable shared-context snapshot - only changes when the relevant
 		// SSH bits or cwd change. Keeps `loadPage` identity stable across
 		// unrelated session field updates so the pagination hook doesn't
 		// reset on every render.
@@ -169,7 +169,7 @@ export const HistoryPanel = React.memo(
 		);
 		// `projectPath` is what lets the handler merge a non-SSH session's
 		// `<projectPath>/.maestro/history/*.jsonl` files (entries written
-		// by other Maestro instances pointed at the same project — typically
+		// by other Maestro instances pointed at the same project - typically
 		// a peer SSH'd into this machine, or vice-versa). Without it, a
 		// machine running the agent locally never sees foreign-host entries
 		// even when the JSONL files are sitting right there on disk.
@@ -259,7 +259,7 @@ export const HistoryPanel = React.memo(
 		}, [refreshGraphData]);
 
 		// Subscribe to real-time history entry additions. Entries are only
-		// inserted when the loaded window is at the top — when jumped, they're
+		// inserted when the loaded window is at the top - when jumped, they're
 		// silently dropped (the next pagination call will pick them up).
 		useEffect(() => {
 			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded((entry, sourceSessionId) => {
@@ -267,7 +267,7 @@ export const HistoryPanel = React.memo(
 
 				const inserted = prependLiveEntry(entry);
 
-				// Coalesce graph refreshes — a burst of streamed entries
+				// Coalesce graph refreshes - a burst of streamed entries
 				// shouldn't trigger a refetch per entry. Only refresh when
 				// the entry actually landed in view.
 				if (inserted && !graphRefreshScheduled.current) {
@@ -368,7 +368,7 @@ export const HistoryPanel = React.memo(
 
 		// Client-side filters applied to the loaded window. Lookback is
 		// now server-side (part of the page loader), so it doesn't appear
-		// here — entries arriving from the IPC are already inside the
+		// here - entries arriving from the IPC are already inside the
 		// window. Type + search + host all stay client-side over loaded pages.
 		const allFilteredEntries = useMemo(() => {
 			return historyEntries.filter((entry) => {
@@ -445,7 +445,7 @@ export const HistoryPanel = React.memo(
 
 		// Estimate row height based on entry content. The estimate is the
 		// upper bound (assumes the line-clamp ceiling) so measureElement's
-		// correction only ever shrinks the row — preventing adjacent rows
+		// correction only ever shrinks the row - preventing adjacent rows
 		// from overlapping in the gap between initial paint and ResizeObserver.
 		const estimateSize = useCallback(
 			(index: number) => {
@@ -494,7 +494,7 @@ export const HistoryPanel = React.memo(
 
 		// Expose focus and refreshHistory methods to parent. Refresh now
 		// goes through the hook's `jumpToTop` since the entry list is
-		// paginated — there's no full-table reload to preserve scroll for.
+		// paginated - there's no full-table reload to preserve scroll for.
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -518,7 +518,7 @@ export const HistoryPanel = React.memo(
 		 *
 		 * Slow path: ask the server for the offset of the first entry at
 		 * (or just before) the bucket's end, then `jumpToOffset` to load
-		 * a single page anchored at that target. No fill-in between —
+		 * a single page anchored at that target. No fill-in between -
 		 * memory stays bounded.
 		 */
 		const handleGraphBarClickVirtualized = useCallback(
@@ -595,7 +595,7 @@ export const HistoryPanel = React.memo(
 			const bottomEntry = allFilteredEntries[lastVisibleIndex];
 
 			if (target.scrollTop < 10 && lastVisibleIndex >= allFilteredEntries.length - 1) {
-				// All entries visible — no indicator needed
+				// All entries visible - no indicator needed
 				setGraphViewportRange(undefined);
 			} else if (topEntry && bottomEntry) {
 				// Entries are newest-first, so topEntry.timestamp > bottomEntry.timestamp
@@ -724,7 +724,7 @@ export const HistoryPanel = React.memo(
 			<div className="flex flex-col h-full">
 				{/* Filter Pills + Activity Graph + Help Button */}
 				<div className="flex flex-col gap-2 mb-4 pt-2">
-					{/* Search Filter — above buttons when open */}
+					{/* Search Filter - above buttons when open */}
 					{searchFilterOpen && (
 						<div>
 							<div className="relative">
@@ -777,7 +777,7 @@ export const HistoryPanel = React.memo(
 					<div
 						className={`flex items-start gap-3${visibleTypes.length > 2 ? ' justify-center' : ''}`}
 					>
-						{/* Search button — left of filter pills */}
+						{/* Search button - left of filter pills */}
 						<button
 							onClick={() => {
 								if (searchFilterOpen) {
@@ -797,7 +797,7 @@ export const HistoryPanel = React.memo(
 							<Search className="w-3.5 h-3.5" />
 						</button>
 
-						{/* Filter pills — centered when graph is on its own row */}
+						{/* Filter pills - centered when graph is on its own row */}
 						<HistoryFilterToggle
 							activeFilters={activeFilters}
 							onToggleFilter={toggleFilter}
@@ -809,7 +809,7 @@ export const HistoryPanel = React.memo(
 						{/* Activity graph inline when only 2 types (no CUE).
 						    When a host filter is active we omit the server-cached
 						    aggregate so the graph re-buckets client-side from the
-						    filtered loaded window — keeps it visually consistent
+						    filtered loaded window - keeps it visually consistent
 						    with the list below. */}
 						{visibleTypes.length <= 2 && (
 							<ActivityGraph
@@ -823,7 +823,7 @@ export const HistoryPanel = React.memo(
 							/>
 						)}
 
-						{/* Help button — right of filter pills */}
+						{/* Help button - right of filter pills */}
 						<button
 							onClick={() => setHelpModalOpen(true)}
 							className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
@@ -838,7 +838,7 @@ export const HistoryPanel = React.memo(
 					</div>
 
 					{/* Activity graph on its own row when 3 types (CUE enabled).
-					    Same precomputed-bypass as the inline variant — host filter
+					    Same precomputed-bypass as the inline variant - host filter
 					    forces client-side bucketing from the filtered window. */}
 					{visibleTypes.length > 2 && (
 						<ActivityGraph
@@ -947,7 +947,7 @@ export const HistoryPanel = React.memo(
 					)}
 				</div>
 
-				{/* Source/host picker — only shown when the loaded window
+				{/* Source/host picker - only shown when the loaded window
 				    contains more than one host. Selecting a host narrows
 				    both the list above and the activity graph at top. */}
 				{hostCounts.size > 1 && (

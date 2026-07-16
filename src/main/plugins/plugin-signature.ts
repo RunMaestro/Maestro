@@ -71,7 +71,7 @@ function hashTree(dir: string): Record<string, string> {
 }
 
 /**
- * A stable content digest of a plugin directory — the same file set and hashing
+ * A stable content digest of a plugin directory - the same file set and hashing
  * the signer uses, hashed once more into a single hex digest. The authorization
  * ledger binds a grant to this value, so if ANY plugin file changes after
  * consent the digest changes and the plugin must be re-consented. Throws on a

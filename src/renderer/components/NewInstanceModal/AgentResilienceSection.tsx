@@ -1,5 +1,5 @@
 /**
- * AgentResilienceSection — the two "Agent Resilience" auto-retry toggles shared
+ * AgentResilienceSection - the two "Agent Resilience" auto-retry toggles shared
  * by the create (NewInstanceModal) and edit (EditAgentModal) agent dialogs.
  *
  * Styled to match the rest of the agent modals: a standard uppercase section

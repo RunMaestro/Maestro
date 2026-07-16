@@ -1,5 +1,5 @@
 /**
- * Text utilities for Cue — specifically for slicing user-facing output before
+ * Text utilities for Cue - specifically for slicing user-facing output before
  * it's passed to downstream subscriptions or persisted.
  *
  * Plain `.slice()` / `.substring()` on a JS string operates on UTF-16 code
@@ -36,7 +36,7 @@ export function sliceTailByChars(s: string, maxChars: number): string {
 	if (s.length <= maxChars) return s;
 	let start = s.length - maxChars;
 	// If the slice starts on a low surrogate, the matching high surrogate is
-	// one code unit earlier — drop the low surrogate to keep the result valid.
+	// one code unit earlier - drop the low surrogate to keep the result valid.
 	if (start > 0 && isLowSurrogate(s.charCodeAt(start))) {
 		start += 1;
 	}

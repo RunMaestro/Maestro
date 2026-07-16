@@ -761,7 +761,7 @@ export function EditAgentModal({
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered (not gated on sshRemotes.length) because the
 				    "remote-controlled" toggle inside is meaningful even when no
-				    local remotes exist — it lets a Maestro SSH'd into this
+				    local remotes exist - it lets a Maestro SSH'd into this
 				    machine see mirrored history for this agent. */}
 				<SshRemoteSelector
 					theme={theme}

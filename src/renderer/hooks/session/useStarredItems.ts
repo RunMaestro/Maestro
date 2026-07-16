@@ -1,5 +1,5 @@
 /**
- * useStarredItems — single source of truth for the Left Bar "Starred Sessions"
+ * useStarredItems - single source of truth for the Left Bar "Starred Sessions"
  * section.
  *
  * Previously the starred list (open starred AI tabs + closed/named starred

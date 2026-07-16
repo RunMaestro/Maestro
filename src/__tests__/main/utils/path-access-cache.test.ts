@@ -1,5 +1,5 @@
 /**
- * Tests for {@link PathAccessCache} — short-TTL cache over a boolean
+ * Tests for {@link PathAccessCache} - short-TTL cache over a boolean
  * file-access predicate. Used by the SSH modules to avoid re-stat'ing the
  * same identity files on rapid retries.
  */
@@ -77,7 +77,7 @@ describe('PathAccessCache', () => {
 		expect(accessFn).toHaveBeenCalledWith('/path/b');
 	});
 
-	it('false results are NOT cached — re-invokes accessFn on second call', () => {
+	it('false results are NOT cached - re-invokes accessFn on second call', () => {
 		const cache = new PathAccessCache(30_000);
 		const accessFn = vi.fn().mockReturnValue(false);
 
@@ -100,7 +100,7 @@ describe('PathAccessCache', () => {
 		cache.check('/path/to/key', accessFn);
 		vi.advanceTimersByTime(31_000); // Past TTL
 		const second = cache.check('/path/to/key', accessFn);
-		// Immediately retry — must re-invoke (false isn't cached)
+		// Immediately retry - must re-invoke (false isn't cached)
 		const third = cache.check('/path/to/key', accessFn);
 
 		expect(second).toBe(false);

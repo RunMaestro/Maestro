@@ -101,7 +101,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'red':
-				// XCircle — error. Circled so it's not mistaken for the bare close (X) button.
+				// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -113,7 +113,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'yellow':
-				// Info-style "i" — yellow is a soft heads-up.
+				// Info-style "i" - yellow is a soft heads-up.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -125,7 +125,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'orange':
-				// AlertTriangle — more emphatic warning than yellow.
+				// AlertTriangle - more emphatic warning than yellow.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -138,7 +138,7 @@ const ToastItem = memo(function ToastItem({
 				);
 			case 'theme':
 			default:
-				// Sparkles — themed default, no semantic.
+				// Sparkles - themed default, no semantic.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -152,7 +152,7 @@ const ToastItem = memo(function ToastItem({
 		}
 	};
 
-	/** Fixed orange — no theme defines this slot. Matches CenterFlash. */
+	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
 	const ORANGE_HEX = '#f97316';
 
 	const getTypeColor = () => {
@@ -299,7 +299,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 				</div>
 
-				{/* Close button — emphasized when toast is dismissible (sticky) */}
+				{/* Close button - emphasized when toast is dismissible (sticky) */}
 				<button
 					onClick={handleClose}
 					className="flex-shrink-0 p-1 rounded transition-colors"
@@ -326,7 +326,7 @@ const ToastItem = memo(function ToastItem({
 				</button>
 			</div>
 
-			{/* Progress bar — hidden for dismissible (sticky) toasts */}
+			{/* Progress bar - hidden for dismissible (sticky) toasts */}
 			{!toast.dismissible && toast.duration && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"

@@ -169,7 +169,7 @@ export function attachGuestWebviewSecurity(
 
 	browserWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
 		// Plugin panel guests get the panel lockdown ONLY: no popups, no
-		// navigation — and none of the browser-tab conveniences (shortcut
+		// navigation - and none of the browser-tab conveniences (shortcut
 		// forwarding, JS injection, privileged paste) may ever run inside
 		// plugin-controlled content.
 		const panelGuest = guestContents as unknown as PluginPanelGuestContents;
@@ -186,7 +186,7 @@ export function attachGuestWebviewSecurity(
 		//
 		// Strategy: inject a bubble-phase keydown listener into the guest page.
 		// After all page handlers have run, if the page did NOT call preventDefault
-		// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut —
+		// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut -
 		// so we forward it to the app. If the page DID preventDefault, the page's
 		// shortcut takes precedence and we leave it alone.
 		const guest = guestContents as BrowserTabGuestContents;

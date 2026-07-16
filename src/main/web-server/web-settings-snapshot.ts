@@ -13,7 +13,7 @@ import type { WebSettings } from './types';
  * Settings keys whose changes should be broadcast to web clients so they
  * see desktop-originated edits live (instead of only on reconnect/reload).
  *
- * Keep in sync with the keys read by buildWebSettingsSnapshot — adding a
+ * Keep in sync with the keys read by buildWebSettingsSnapshot - adding a
  * field there means adding its underlying key here.
  */
 export const WEB_SETTINGS_BROADCAST_KEYS: ReadonlySet<string> = new Set([

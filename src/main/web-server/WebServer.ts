@@ -771,7 +771,7 @@ export class WebServer {
 			}
 		}
 
-		// Web-Desktop bundle assets — the default interface. Served at
+		// Web-Desktop bundle assets - the default interface. Served at
 		// /<token>/desktop/assets/ to match the absolute asset references the
 		// desktop index.html is rewritten to use, regardless of the URL the HTML
 		// itself was served from. Mounted whenever the bundle has been built.
@@ -805,7 +805,7 @@ export class WebServer {
 
 	private setupRoutes(): void {
 		// Setup static routes (web-desktop SPA, PWA files, health check). The
-		// desktop bundle is served at the token root and at /<token>/desktop —
+		// desktop bundle is served at the token root and at /<token>/desktop -
 		// see StaticRoutes.registerRoutes.
 		this.staticRoutes.registerRoutes(this.server);
 
@@ -1013,7 +1013,7 @@ export class WebServer {
 				sourceAgentId?: string
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
-			// main-process layout file via the mutation primitives — no
+			// main-process layout file via the mutation primitives - no
 			// renderer round-trip needed. The Pipeline Editor (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next

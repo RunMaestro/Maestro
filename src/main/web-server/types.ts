@@ -366,7 +366,7 @@ export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop
- * app does when the user picks a different folder via `dialog.selectFolder` —
+ * app does when the user picks a different folder via `dialog.selectFolder` -
  * the renderer reloads the document list from the new path and persists the
  * choice to session storage. Used by the web UI's `FolderPickerSheet`.
  */
@@ -408,7 +408,7 @@ export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
 
 /**
  * Data-driven click intent for an externally-fired toast. Mirrors
- * `ToastClickAction` in `renderer/stores/notificationStore.ts` — the only
+ * `ToastClickAction` in `renderer/stores/notificationStore.ts` - the only
  * subset that survives serialization across the IPC bridge.
  */
 export type NotifyToastClickAction =
@@ -424,21 +424,21 @@ export interface NotifyToastParams {
 	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
 	duration?: number;
 	/**
-	 * Sticky toast — no auto-dismiss, requires the user to click the close
+	 * Sticky toast - no auto-dismiss, requires the user to click the close
 	 * button to dismiss. Use for critical messages the user must acknowledge.
 	 */
 	dismissible?: boolean;
-	/** Optional agent/session ID — clicking the toast jumps to it. */
+	/** Optional agent/session ID - clicking the toast jumps to it. */
 	sessionId?: string;
 	/**
 	 * Optional explicit source-agent label rendered in the toast header strip.
 	 * Unlike the name resolved from `sessionId` (which requires the agent to be
-	 * loaded in the desktop store), this is store-independent — so cron- and
+	 * loaded in the desktop store), this is store-independent - so cron- and
 	 * watchdog-fired toasts always show who produced them. When set, it wins over
 	 * the resolved session name for display; `sessionId` still drives click-jump.
 	 */
 	sourceAgent?: string;
-	/** Optional AI tab ID within the agent — paired with `sessionId` for jump-to-tab. */
+	/** Optional AI tab ID within the agent - paired with `sessionId` for jump-to-tab. */
 	tabId?: string;
 	/** Optional inline action link rendered beneath the message body (opens in browser). */
 	actionUrl?: string;
@@ -513,7 +513,7 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
  *
  * `tabId` is the addressable identifier consumers (Maestro-Discord, Cue) pass
  * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
- * an alias kept for symmetry with `dispatch`'s response shape — the duplicate
+ * an alias kept for symmetry with `dispatch`'s response shape - the duplicate
  * field lets polling consumers use whichever name they prefer.
  */
 export interface DesktopSessionEntry {
@@ -655,7 +655,7 @@ export interface WebPlaybookDocument {
 
 /**
  * Saved Playbook configuration (subset surfaced to web/mobile clients).
- * Worktree settings are intentionally omitted — they're desktop-only.
+ * Worktree settings are intentionally omitted - they're desktop-only.
  */
 export interface WebPlaybook {
 	id: string;
@@ -881,7 +881,7 @@ export type GetGitStatusCallback = (sessionId: string) => Promise<GitStatusResul
 export type GetGitDiffCallback = (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 
 /**
- * Result for the `get_git_branches` WebSocket message — used by mobile Run-in-Worktree
+ * Result for the `get_git_branches` WebSocket message - used by mobile Run-in-Worktree
  * picker to populate the base-branch dropdown.
  */
 export interface GitBranchesResult {

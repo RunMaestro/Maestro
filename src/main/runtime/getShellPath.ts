@@ -15,7 +15,7 @@ export async function refreshShellPath(): Promise<string> {
 	if (cachedPathPromise) return cachedPathPromise;
 
 	cachedPathPromise = (async () => {
-		// On Windows, there's no reliable POSIX login shell to probe — fall back to
+		// On Windows, there's no reliable POSIX login shell to probe - fall back to
 		// the current process env PATH so callers still receive something useful.
 		if (isWindows()) {
 			const p = process.env.PATH || '';
@@ -40,7 +40,7 @@ export async function refreshShellPath(): Promise<string> {
 				try {
 					child.kill();
 				} catch {
-					// Ignore kill errors — process may have already exited
+					// Ignore kill errors - process may have already exited
 				}
 				reject(new Error('Timed out reading shell PATH'));
 			}, 2000);

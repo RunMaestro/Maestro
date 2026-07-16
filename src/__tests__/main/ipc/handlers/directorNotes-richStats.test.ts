@@ -30,12 +30,12 @@ vi.mock('electron', () => ({
 	},
 }));
 
-// Mock the history-manager module — the sole data source for the stats engine.
+// Mock the history-manager module - the sole data source for the stats engine.
 vi.mock('../../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn(),
 }));
 
-// Mock the stores module — resolves Maestro session names for perAgent rollups.
+// Mock the stores module - resolves Maestro session names for perAgent rollups.
 const mockGetSessionsStore = vi.fn().mockReturnValue({
 	get: vi.fn().mockReturnValue([]),
 });
@@ -105,7 +105,7 @@ describe('director-notes:getRichOverviewStats', () => {
 			mockHistoryManager as unknown as HistoryManager
 		);
 
-		// Default: no Maestro session names — perAgent falls back to the id.
+		// Default: no Maestro session names - perAgent falls back to the id.
 		mockGetSessionsStore.mockReturnValue({
 			get: vi.fn().mockReturnValue([]),
 		});
@@ -217,7 +217,7 @@ describe('director-notes:getRichOverviewStats', () => {
 		mockHistoryManager.getEntries.mockResolvedValue([
 			createMockEntry({ id: 'e1', timestamp: now - 1000, elapsedTimeMs: 1000 }),
 			createMockEntry({ id: 'e2', timestamp: now - 2000, elapsedTimeMs: 3000 }),
-			// No elapsedTimeMs — excluded from the average divisor.
+			// No elapsedTimeMs - excluded from the average divisor.
 			createMockEntry({ id: 'e3', timestamp: now - 3000 }),
 		]);
 

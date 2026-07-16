@@ -83,7 +83,7 @@ export class LocalCommandRunner {
 				// even when the interactive shell doesn't source an rc file that
 				// extends PATH. Matches buildPtyTerminalEnv()'s behavior for
 				// consistency between PTY terminal tabs and single runCommand
-				// invocations — a minimal-config zsh shouldn't see different
+				// invocations - a minimal-config zsh shouldn't see different
 				// resolution between the two paths.
 				env = {
 					HOME: process.env.HOME,

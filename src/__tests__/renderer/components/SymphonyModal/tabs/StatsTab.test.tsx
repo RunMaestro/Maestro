@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/tabs/StatsTab — three stat cards, achievement grid,
+ * Tests for SymphonyModal/tabs/StatsTab - three stat cards, achievement grid,
  * streak labels.
  */
 import { describe, it, expect, vi } from 'vitest';

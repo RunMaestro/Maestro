@@ -43,7 +43,7 @@ describe('CommandConfigPanel owning-session picker', () => {
 		);
 
 		expect(screen.getByText('Choose an owning agent')).toBeInTheDocument();
-		// Picker is a ThemedSelect — closed by default; its trigger shows the placeholder
+		// Picker is a ThemedSelect - closed by default; its trigger shows the placeholder
 		expect(screen.getByText('Select an agent…')).toBeInTheDocument();
 		// Opening the menu exposes each session as an option
 		fireEvent.click(screen.getByText('Select an agent…'));
@@ -108,7 +108,7 @@ describe('CommandConfigPanel owning-session picker', () => {
 		fireEvent.click(screen.getByText('Select an agent…'));
 
 		// All four real options should render; their DOM order should be
-		// alphabetical (case-insensitive) — Alpha, Bravo, charlie, Zulu —
+		// alphabetical (case-insensitive) - Alpha, Bravo, charlie, Zulu -
 		// not the input order (Zulu, charlie, Alpha, Bravo).
 		const optionLabels = screen
 			.getAllByRole('option')

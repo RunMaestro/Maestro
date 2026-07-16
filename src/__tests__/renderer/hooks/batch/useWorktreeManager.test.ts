@@ -22,7 +22,7 @@ const manyDocs: BatchDocumentEntry[] = [
 	{ filename: 'frontend-ui', resetOnCompletion: false },
 ];
 
-describe('useWorktreeManager — PR generation', () => {
+describe('useWorktreeManager - PR generation', () => {
 	describe('generatePRTitle', () => {
 		it('includes branch name and document name for single doc', () => {
 			const { result } = renderHook(() => useWorktreeManager());

@@ -210,7 +210,7 @@ export function useBatchedSessionUpdates(
 						// When the session's resolved Claude mode is interactive, tag
 						// non-stderr entries with renderStyle: 'text-stream' so the
 						// "Captured via interactive TUI" footer pill renders on them.
-						// stderr stays untagged — error frames aren't interactive output.
+						// stderr stays untagged - error frames aren't interactive output.
 						const isInteractive = updatedSession.claudeInteractive?.mode === 'interactive';
 
 						updatedSession = {
@@ -219,7 +219,7 @@ export function useBatchedSessionUpdates(
 								const logData = aiTabLogs.get(tab.id);
 								if (!logData) return tab;
 
-								// ThinkingMode contract — inline clear point.
+								// ThinkingMode contract - inline clear point.
 								// When new assistant text arrives, drop transient thinking/tool entries
 								// from prior reasoning so the final answer replaces them. The matching
 								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
@@ -283,7 +283,7 @@ export function useBatchedSessionUpdates(
 						};
 					}
 
-					// Apply shell logs (legacy fallback — only when no terminal tabs present)
+					// Apply shell logs (legacy fallback - only when no terminal tabs present)
 					// TODO: Remove shellLogs once terminal tabs migration is complete
 					if ((shellStdout || shellStderr) && !updatedSession.terminalTabs?.length) {
 						const shellLogs = [...updatedSession.shellLogs];

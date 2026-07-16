@@ -28,7 +28,7 @@ import { logger } from '../utils/logger';
  * Determine how xterm should handle a keyboard event.
  *
  * Returns:
- * - 'passthrough': xterm should NOT handle this key (return false to xterm) —
+ * - 'passthrough': xterm should NOT handle this key (return false to xterm) -
  *   the event bubbles to Maestro's window-level shortcut handler instead.
  * - 'handle': xterm should handle this key normally (return true to xterm).
  */
@@ -52,9 +52,9 @@ function getTerminalNavSequence(e: KeyboardEvent): string | null {
 
 	// Option (Alt) + Arrow → word navigation
 	if (e.altKey && !e.metaKey && !e.ctrlKey) {
-		if (e.key === 'ArrowLeft') return '\x1bb'; // ESC b — backward word
-		if (e.key === 'ArrowRight') return '\x1bf'; // ESC f — forward word
-		if (e.key === 'Backspace') return '\x1b\x7f'; // ESC DEL — backward kill word
+		if (e.key === 'ArrowLeft') return '\x1bb'; // ESC b - backward word
+		if (e.key === 'ArrowRight') return '\x1bf'; // ESC f - forward word
+		if (e.key === 'Backspace') return '\x1b\x7f'; // ESC DEL - backward kill word
 	}
 
 	// Cmd (Meta) + Arrow → line navigation
@@ -95,10 +95,10 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// Let Alt key combos through so Maestro shortcuts like Alt+Q (Cue),
 	// Alt+J (jump to terminal), Alt+U (filter unread agents) work.
 	// macOptionIsMeta is not enabled, so Alt doesn't send escape sequences
-	// by default — these events would just produce dead/special characters
+	// by default - these events would just produce dead/special characters
 	// that aren't useful in the terminal context.
 	if (e.altKey) return 'passthrough';
-	// Let xterm.js handle Escape normally — it sends \x1b through the standard
+	// Let xterm.js handle Escape normally - it sends \x1b through the standard
 	// onData pipeline which writes to the PTY. Previous manual handling (writing
 	// \x1b directly and returning false on keydown) caused xterm's internal key
 	// processing state to become inconsistent (keydown blocked but keyup allowed),
@@ -208,12 +208,12 @@ export interface XTerminalHandle {
 	/** Read the full scrollback + visible buffer as a newline-joined string (right-trimmed). */
 	getBuffer(): string;
 	resize(): void;
-	/** Force fit + full canvas repaint — call when the terminal becomes visible after being hidden */
+	/** Force fit + full canvas repaint - call when the terminal becomes visible after being hidden */
 	refresh(): void;
 }
 
 export interface XTerminalProps {
-	/** IPC routing key — format: `{sessionId}-terminal-{tabId}` */
+	/** IPC routing key - format: `{sessionId}-terminal-{tabId}` */
 	sessionId: string;
 	/** Active Maestro theme */
 	theme: Theme;
@@ -272,9 +272,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// Deferred WebGL load: resolved when the async import completes but the container was hidden.
 	// Applied on the next visible resize or explicit refresh() call.
 	const pendingWebglLoadRef = useRef<(() => void) | null>(null);
-	// WebGL addon instance — stored in a ref so the isActive effect can dispose/re-init it.
+	// WebGL addon instance - stored in a ref so the isActive effect can dispose/re-init it.
 	const webglAddonRef = useRef<import('@xterm/addon-webgl').WebglAddon | null>(null);
-	// WebGL constructor class — cached after first dynamic import so re-init doesn't re-import.
+	// WebGL constructor class - cached after first dynamic import so re-init doesn't re-import.
 	const webglCtorRef = useRef<typeof import('@xterm/addon-webgl').WebglAddon | null>(null);
 	// `onContextLoss` returns a disposable that holds a closure reference to the
 	// addon and the logger. Without disposing it before throwing the addon away,
@@ -297,7 +297,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const [selectionMenu, setSelectionMenu] = useState<TerminalSelectionContextMenuState | null>(
 		null
 	);
-	// Latest callback refs — the contextmenu listener is registered once in the mount
+	// Latest callback refs - the contextmenu listener is registered once in the mount
 	// effect (empty deps) so we can't capture fresh closures; read through refs instead.
 	const onCopySelectionRef = useRef(onCopySelection);
 	onCopySelectionRef.current = onCopySelection;
@@ -435,7 +435,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// isActive effect) can drop the subscription before discarding the addon.
 			// Without this, every re-init leaks an EventEmitter slot.
 			const ctxLossDisposable = addon.onContextLoss(() => {
-				logger.warn('[XTerminal] WebGL context lost — recovering renderer');
+				logger.warn('[XTerminal] WebGL context lost - recovering renderer');
 				ctxLossDisposable.dispose();
 				webglCtxLossDisposableRef.current = null;
 				addon.dispose();
@@ -480,7 +480,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// Route OSC 8 hyperlinks (escape-code terminal links) through openUrl so they
 			// respect the useSystemBrowser setting. Without this, xterm's default activate
 			// shows a confirm() dialog and then calls window.open(), which Electron's
-			// setWindowOpenHandler blocks — clicks silently fail.
+			// setWindowOpenHandler blocks - clicks silently fail.
 			linkHandler: {
 				activate(event, text) {
 					// Only left-click opens the link; right-click is reserved for the context menu.
@@ -553,7 +553,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		const tryLoadWebgl = (WebglAddon: typeof import('@xterm/addon-webgl').WebglAddon) => {
 			const container = containerRef.current;
 			if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) {
-				// Container is hidden — defer until it becomes visible
+				// Container is hidden - defer until it becomes visible
 				pendingWebglLoadRef.current = () => tryLoadWebgl(WebglAddon);
 				return;
 			}
@@ -730,7 +730,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			});
 
 		// Capture the title-change disposable so `term.dispose()` doesn't have to
-		// fan it out for us — and so a future "react to onTitleChange prop change"
+		// fan it out for us - and so a future "react to onTitleChange prop change"
 		// effect can't accidentally stack subscriptions.
 		const titleChangeDisposable = onTitleChange ? term.onTitleChange(onTitleChange) : null;
 
@@ -762,7 +762,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			fitAddonRef.current = null;
 			searchAddonRef.current = null;
 		};
-	}, []); // Mount once — other effects handle dynamic prop changes
+	}, []); // Mount once - other effects handle dynamic prop changes
 
 	// IPC: receive data from PTY → write to terminal
 	useEffect(() => {
@@ -822,13 +822,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 
 	// Dispose the WebGL renderer when this terminal tab becomes inactive to free GPU resources.
 	// Re-initialise it when the tab becomes active again. Each live WebGL context holds GPU
-	// memory and a compositing layer — with multiple terminal tabs this adds up fast.
+	// memory and a compositing layer - with multiple terminal tabs this adds up fast.
 	useEffect(() => {
 		const term = terminalRef.current;
 		if (!term) return;
 
 		if (!isActive) {
-			// Going inactive — dispose WebGL, fall back to the built-in canvas renderer.
+			// Going inactive - dispose WebGL, fall back to the built-in canvas renderer.
 			// Drop the onContextLoss subscription first so the addon's callback closure
 			// (which root-holds the addon + term + logger) can be GC'd.
 			if (webglAddonRef.current) {
@@ -838,7 +838,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				webglAddonRef.current = null;
 			}
 		} else {
-			// Becoming active — re-init WebGL if we have the constructor cached.
+			// Becoming active - re-init WebGL if we have the constructor cached.
 			if (!webglAddonRef.current && webglCtorRef.current) {
 				// Fresh visit: let the context-loss recovery try WebGL again from scratch.
 				webglContextLossCountRef.current = 0;
@@ -847,7 +847,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 					try {
 						attachWebglRenderer(webglCtorRef.current, term);
 					} catch {
-						// WebGL re-init failed — canvas renderer remains active
+						// WebGL re-init failed - canvas renderer remains active
 					}
 				}
 				// Full repaint to sync the freshly-attached WebGL renderer with the terminal buffer

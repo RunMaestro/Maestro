@@ -1,5 +1,5 @@
 /**
- * Phase 15B — Cue database contract / integration tests.
+ * Phase 15B - Cue database contract / integration tests.
  *
  * Exercises the contract cue-engine depends on (ordering, UNIQUE, prune-by-age,
  * heartbeat upsert, safe-wrapper no-throw) through the in-memory mirror
@@ -10,7 +10,7 @@
  * engine (ordering, UNIQUE constraints, prune cutoff).
  *
  * A `describe.skipIf(!canLoadBetterSqlite3())` block at the bottom runs one
- * real-SQLite smoke round-trip when the binary is available locally — this
+ * real-SQLite smoke round-trip when the binary is available locally - this
  * catches drift between the mirror and the native module without breaking CI
  * on hosts that can't load it.
  */
@@ -25,7 +25,7 @@ import {
 	type InMemoryCueDb,
 } from './cue-integration-test-helpers';
 
-describe('Phase 15B — cue-db in-memory contract', () => {
+describe('Phase 15B - cue-db in-memory contract', () => {
 	let db: InMemoryCueDb;
 
 	beforeEach(() => {
@@ -42,7 +42,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 			expect(db.isCueDbReady()).toBe(false);
 		});
 
-		it('initCueDb is idempotent — second call is a no-op', () => {
+		it('initCueDb is idempotent - second call is a no-op', () => {
 			// Calling init twice must not throw nor reset the current state.
 			db.recordCueEvent({
 				id: 'e1',
@@ -233,7 +233,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 				status: 'running',
 			});
 			// A status flip with no failure object (e.g. 'stopped') must not write
-			// the failure columns — they stay null/undefined.
+			// the failure columns - they stay null/undefined.
 			db.updateCueEventStatus('e-ok', 'stopped');
 			const [event] = db.getRecentCueEvents(0);
 			expect(event.status).toBe('stopped');
@@ -253,7 +253,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 					status: 'running',
 				})
 			).not.toThrow();
-			// The failed write left no row — non-fatal, as documented.
+			// The failed write left no row - non-fatal, as documented.
 			expect(db.getRecentCueEvents(0)).toHaveLength(0);
 		});
 
@@ -276,7 +276,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 	// ─── Rapid successive writes ──────────────────────────────────────────
 	//
 	// JS is single-threaded and `Promise.resolve().then(...)` just schedules
-	// microtasks — there's no real concurrency. What we exercise here is a
+	// microtasks - there's no real concurrency. What we exercise here is a
 	// microtask flood: 100 writes serialized through the event loop in
 	// immediate succession. Still worth pinning because the mirror uses a
 	// Map + array pair for ordering, and a naive refactor that rebuilt the
@@ -466,7 +466,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 	// ─── Close / reinit persistence (in-memory simulation) ────────────────
 
 	describe('restart simulation', () => {
-		it('a fresh InMemoryCueDb starts empty — documents the test-helper contract', () => {
+		it('a fresh InMemoryCueDb starts empty - documents the test-helper contract', () => {
 			// This makes explicit what cue-engine-integration.test.ts relies on:
 			// `simulateRestart()` should use `resetAll()` to get a clean DB but
 			// if the caller creates a NEW instance, it is also empty. If you
@@ -483,7 +483,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 			expect(db.getRecentCueEvents(0)).toHaveLength(1);
 
 			// Simulate an app restart with the SAME instance: close then init.
-			// Data MUST survive (we never clear state on close — only `ready`).
+			// Data MUST survive (we never clear state on close - only `ready`).
 			db.closeCueDb();
 			db.initCueDb();
 			expect(db.getRecentCueEvents(0)).toHaveLength(1);
@@ -516,7 +516,7 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 // round-trip, the smoke block surfaces that when run locally. CI usually skips.
 // ────────────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!canLoadBetterSqlite3())('Phase 15B — real SQLite smoke test', () => {
+describe.skipIf(!canLoadBetterSqlite3())('Phase 15B - real SQLite smoke test', () => {
 	it('real cue-db persists and retrieves one event through a full round-trip', async () => {
 		// Isolate this test from the rest of the file's mocks. We cannot use
 		// the top-level `vi.mock('better-sqlite3', ...)` that other cue-db
@@ -562,7 +562,7 @@ describe.skipIf(!canLoadBetterSqlite3())('Phase 15B — real SQLite smoke test',
 				try {
 					cueDb.closeCueDb();
 				} catch {
-					/* best effort — double-close is safe, other errors are non-fatal here */
+					/* best effort - double-close is safe, other errors are non-fatal here */
 				}
 			}
 			try {

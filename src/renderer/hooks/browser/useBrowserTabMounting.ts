@@ -16,11 +16,11 @@ import {
  * in MainPanelContent.
  *
  * Policy comes from the `browserTabKeepAlive` setting:
- *  - 'off'    — only the active browser tab is mounted (lowest memory; page
+ *  - 'off'    - only the active browser tab is mounted (lowest memory; page
  *               reloads on return). This reproduces the original behavior.
- *  - 'recent' — keep the N most-recently-active browser tabs mounted (LRU),
+ *  - 'recent' - keep the N most-recently-active browser tabs mounted (LRU),
  *               where N is `browserTabKeepAliveLimit`.
- *  - 'all'    — keep every browser tab in the active agent mounted.
+ *  - 'all'    - keep every browser tab in the active agent mounted.
  *
  * Scope is the ACTIVE agent only. Switching agents unmounts the previous
  * agent's browser tabs; cross-agent keep-alive would grow memory unbounded and

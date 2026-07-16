@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/SymphonyAchievementBadge — earned vs unearned
+ * Tests for SymphonyModal/components/SymphonyAchievementBadge - earned vs unearned
  * styling, progress bar, check icon.
  */
 import { describe, it, expect, vi } from 'vitest';

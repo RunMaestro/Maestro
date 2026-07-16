@@ -157,7 +157,7 @@ function ModelTextInput({
 						onBlur={() => {
 							// Delay to allow click on dropdown item
 							setTimeout(() => {
-								// If a dropdown item was clicked, skip blur logic — the click handler already committed the value
+								// If a dropdown item was clicked, skip blur logic - the click handler already committed the value
 								if (selectionMadeRef.current) {
 									selectionMadeRef.current = false;
 									return;

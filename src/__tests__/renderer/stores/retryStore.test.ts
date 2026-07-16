@@ -1,5 +1,5 @@
 /**
- * Tests for retryStore — the Agent Resilience auto-retry engine.
+ * Tests for retryStore - the Agent Resilience auto-retry engine.
  *
  * Covers scheduling/classification gating, the scheduled → in-flight state
  * machine, backoff continuation, resend vs batch-resume modes, dispatch
@@ -89,7 +89,7 @@ afterEach(() => {
 	registerBatchResumer(null);
 });
 
-describe('scheduleRetryForError — classification gating', () => {
+describe('scheduleRetryForError - classification gating', () => {
 	it('schedules an availability retry when resilience is on and a snapshot exists', () => {
 		setupSession('s1', 't1');
 		seedSnapshot('s1', 't1');
@@ -145,7 +145,7 @@ describe('scheduleRetryForError — classification gating', () => {
 	});
 });
 
-describe('scheduleRetryForError — backoff continuation', () => {
+describe('scheduleRetryForError - backoff continuation', () => {
 	it('increments the attempt and lengthens the delay when re-scheduled', () => {
 		setupSession('s7', 't1');
 		seedSnapshot('s7', 't1');
@@ -269,7 +269,7 @@ describe('batch-resume mode', () => {
 		const resumer = vi.fn();
 		registerBatchResumer(resumer);
 		setupSession('s15', 't1');
-		// No snapshot — batch resume does not need one.
+		// No snapshot - batch resume does not need one.
 
 		expect(scheduleRetryForError('s15', 't1', overload(), { batch: true })).toBe(true);
 		expect(getRetryEntry('s15', 't1')?.mode).toBe('batch-resume');

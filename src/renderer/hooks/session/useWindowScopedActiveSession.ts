@@ -1,5 +1,5 @@
 /**
- * useWindowScopedActiveSession — keep a window's active agent to one it owns.
+ * useWindowScopedActiveSession - keep a window's active agent to one it owns.
  *
  * The store's `activeSessionId` is a single, globally-persisted value, but agent
  * ownership is per-window (see {@link WindowContext}). Every window's renderer

@@ -65,7 +65,7 @@ export interface AITabOverlayMenuProps {
 
 /**
  * Overlay menu content for AI tabs.
- * Pure presentational — all handlers passed as props.
+ * Pure presentational - all handlers passed as props.
  */
 export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	tab,
@@ -251,7 +251,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					</button>
 				)}
 
-				{/* Context: Copy with Reasoning — only when the tab has reasoning blocks */}
+				{/* Context: Copy with Reasoning - only when the tab has reasoning blocks */}
 				{onCopyContext && hasThinkingEntries(tab.logs) && (
 					<button
 						onClick={onCopyContextWithReasoningClick}

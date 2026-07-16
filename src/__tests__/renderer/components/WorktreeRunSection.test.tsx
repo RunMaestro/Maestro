@@ -533,14 +533,14 @@ describe('WorktreeRunSection', () => {
 		) as HTMLOptionElement;
 		expect(busyOption).toBeTruthy();
 		expect(busyOption.disabled).toBe(true);
-		expect(busyOption.textContent).toContain('— busy');
+		expect(busyOption.textContent).toContain('- busy');
 
 		const idleOption = options.find(
 			(o) => (o as HTMLOptionElement).value === 'child-idle'
 		) as HTMLOptionElement;
 		expect(idleOption).toBeTruthy();
 		expect(idleOption.disabled).toBe(false);
-		expect(idleOption.textContent).not.toContain('— busy');
+		expect(idleOption.textContent).not.toContain('- busy');
 	});
 
 	it('shows base branch dropdown and branch name input when Create New Worktree is selected', async () => {
@@ -672,7 +672,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 
-		// Click toggle to turn on — this sets internal selectedValue
+		// Click toggle to turn on - this sets internal selectedValue
 		const toggle = screen.getByText('Dispatch to a separate worktree');
 		await act(async () => {
 			fireEvent.click(toggle);
@@ -806,7 +806,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 
-		// Click the toggle to turn on — no children exist
+		// Click the toggle to turn on - no children exist
 		const toggle = screen.getByText('Dispatch to a separate worktree');
 		fireEvent.click(toggle);
 

@@ -1,5 +1,5 @@
 /**
- * ErrorNode — Rendered in place of an unresolved agent when the Cue YAML
+ * ErrorNode - Rendered in place of an unresolved agent when the Cue YAML
  * references a session that no longer exists.
  *
  * Prevents the "silent agent swap" failure mode: when `agent_id` or

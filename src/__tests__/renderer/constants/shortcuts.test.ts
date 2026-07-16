@@ -8,7 +8,7 @@
  * maps, so any handler calling `ctx.isShortcut(e, 'somethingOnlyInFixed')`
  * silently never fires.
  *
- * This has bitten us multiple times — most recently with `clearTerminal`
+ * This has bitten us multiple times - most recently with `clearTerminal`
  * (Cmd+Shift+K), which was moved into FIXED_SHORTCUTS by mistake and
  * stopped working entirely.
  *
@@ -72,7 +72,7 @@ describe('keyboard shortcut registry wiring', () => {
 		const missing = [...isShortcutIds].filter((id) => !(id in DEFAULT_SHORTCUTS));
 		expect(
 			missing,
-			`These ids are passed to isShortcut() but are not in DEFAULT_SHORTCUTS — the matcher will never fire. Most likely cause: the entry was placed in FIXED_SHORTCUTS, which isn't merged into the user shortcuts map.`
+			`These ids are passed to isShortcut() but are not in DEFAULT_SHORTCUTS - the matcher will never fire. Most likely cause: the entry was placed in FIXED_SHORTCUTS, which isn't merged into the user shortcuts map.`
 		).toEqual([]);
 	});
 

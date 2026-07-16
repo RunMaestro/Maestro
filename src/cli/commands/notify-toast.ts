@@ -1,4 +1,4 @@
-// Notify-toast command — show a toast notification in the Maestro desktop app.
+// Notify-toast command - show a toast notification in the Maestro desktop app.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
@@ -153,7 +153,7 @@ export async function notifyToast(
 			if (options.json) {
 				console.log(JSON.stringify({ success: true, color, dismissible }));
 			} else {
-				console.log(dismissible ? 'Toast sent (sticky — click to dismiss)' : 'Toast sent');
+				console.log(dismissible ? 'Toast sent (sticky - click to dismiss)' : 'Toast sent');
 			}
 		} else {
 			const errMsg = result.error || 'Failed to send toast';

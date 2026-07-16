@@ -179,7 +179,7 @@ export function useDragToMove({
 					onShowFlash?.(`${failVerb} failed: ${msg}`);
 				}
 			} finally {
-				// Clear multi-selection — attempted move paths may now be stale.
+				// Clear multi-selection - attempted move paths may now be stale.
 				setSelectedPaths(new Set());
 				setIsMoving(false);
 				setMoveConflict(null);

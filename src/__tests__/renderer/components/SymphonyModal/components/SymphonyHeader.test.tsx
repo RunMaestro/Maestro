@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/SymphonyHeader — title, help popover,
+ * Tests for SymphonyModal/components/SymphonyHeader - title, help popover,
  * refresh button + spinner, close button, register-link, cache age label.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

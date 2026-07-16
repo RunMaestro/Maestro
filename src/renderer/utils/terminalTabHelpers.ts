@@ -1,4 +1,4 @@
-// Terminal tab helper functions — pure functions for managing TerminalTab state in Maestro sessions.
+// Terminal tab helper functions - pure functions for managing TerminalTab state in Maestro sessions.
 // Follows the same pattern as tabHelpers.ts: take a Session, return a new Session (immutable).
 // No React hooks, no side effects, no IPC.
 
@@ -9,7 +9,7 @@ import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
 
-/** Maximum entries in unifiedClosedTabHistory — matches tabHelpers.ts MAX_CLOSED_TAB_HISTORY. */
+/** Maximum entries in unifiedClosedTabHistory - matches tabHelpers.ts MAX_CLOSED_TAB_HISTORY. */
 const MAX_CLOSED_UNIFIED_HISTORY = 25;
 
 // ─── Factory ────────────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			fallbackRef =
 				updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
 		} else {
-			// unifiedTabOrder out of sync — fall back to terminalTabs position
+			// unifiedTabOrder out of sync - fall back to terminalTabs position
 			const newIndex = Math.max(0, tabIndex - 1);
 			newActiveTerminalTabId = updatedTerminalTabs[newIndex]?.id ?? null;
 		}

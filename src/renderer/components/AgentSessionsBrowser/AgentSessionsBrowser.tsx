@@ -84,7 +84,7 @@ export function AgentSessionsBrowser({
 	const [showSearchPanel, setShowSearchPanel] = useState(true);
 	const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
 
-	// Refs shared by multiple consumers — owned by shell
+	// Refs shared by multiple consumers - owned by shell
 	const inputRef = useRef<HTMLInputElement>(null);
 	const renameInputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement | HTMLDivElement | null>(null);

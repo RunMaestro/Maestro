@@ -459,7 +459,7 @@ function AppStandaloneModalsInner({
 							});
 						}
 						// Save gist URL for the individual message, if the publish originated from one.
-						// In-memory only — intentionally not persisted across app restarts.
+						// In-memory only - intentionally not persisted across app restarts.
 						if (tabGistContent?.messageId) {
 							useMessageGistStore.getState().setMessageGist(tabGistContent.messageId, {
 								gistUrl,

@@ -189,7 +189,7 @@ describe('cue-file-watcher', () => {
 
 		cleanup();
 
-		// Advance past debounce — event should NOT fire since cleanup was called
+		// Advance past debounce - event should NOT fire since cleanup was called
 		vi.advanceTimersByTime(5000);
 		expect(onEvent).not.toHaveBeenCalled();
 		expect(mockClose).toHaveBeenCalled();

@@ -69,8 +69,8 @@ const baseProps = {
 
 describe('ProcessListView', () => {
 	afterEach(() => {
-		// Restores any vi.spyOn — notably the Element.prototype.scrollIntoView spy
-		// in the selection-changes test below — even if an assertion threw mid-test.
+		// Restores any vi.spyOn - notably the Element.prototype.scrollIntoView spy
+		// in the selection-changes test below - even if an assertion threw mid-test.
 		vi.restoreAllMocks();
 	});
 

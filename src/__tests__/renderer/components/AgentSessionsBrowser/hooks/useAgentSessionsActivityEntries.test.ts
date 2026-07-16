@@ -204,7 +204,7 @@ describe('useAgentSessionsActivityEntries', () => {
 
 		// Should NOT auto-update because filteredSessions changed alone (no filter/view toggle)
 		// BUT it IS the initial load case: graph visible + entries empty + sessions non-empty
-		// The hook only fires initial-load when switching states — so this depends on whether
+		// The hook only fires initial-load when switching states - so this depends on whether
 		// prevFiltersRef changes triggered a re-check
 		// Let's verify the entries DID update (initial load path)
 		expect(result.current.activityEntries).toHaveLength(2);

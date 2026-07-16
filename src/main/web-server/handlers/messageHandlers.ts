@@ -108,7 +108,7 @@ const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor>
 /**
  * Hard upper bound on flash duration for **externally-triggered** flashes
  * (CLI / web). The renderer-side `notifyCenterFlash` itself is uncapped so
- * internal in-app callers can still use longer durations if ever needed —
+ * internal in-app callers can still use longer durations if ever needed -
  * the cap lives at the IPC boundary so external scripts can't stick a
  * permanent overlay on the user.
  */
@@ -117,7 +117,7 @@ const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
 /**
  * Hard upper bound on toast duration (seconds) for externally-triggered
  * toasts. Toasts are corner notifications so the cap is more generous than
- * Center Flash, but `0` (never auto-dismiss) is rejected — external scripts
+ * Center Flash, but `0` (never auto-dismiss) is rejected - external scripts
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
 const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
@@ -445,7 +445,7 @@ export class WebSocketMessageHandler {
 
 	/**
 	 * Report a handler exception to Sentry and send an error response. Use in
-	 * `.catch(...)` blocks where we'd otherwise silently swallow the cause —
+	 * `.catch(...)` blocks where we'd otherwise silently swallow the cause -
 	 * lets us keep the user-facing message tight while preserving production
 	 * diagnostics.
 	 */
@@ -859,7 +859,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Generic IPC bridge — dispatch a bridge.invoke message to the matching
+	 * Generic IPC bridge - dispatch a bridge.invoke message to the matching
 	 * ipcMain handler and return the result/error as a bridge.response. This
 	 * backs the web-desktop bundle, the default browser interface.
 	 */
@@ -974,7 +974,7 @@ export class WebSocketMessageHandler {
 		// Only echo a tabId in command_result when the caller passed one
 		// explicitly. Returning the server's snapshot of `activeTabId` for the
 		// no-tabId path would lie when the user switches active tabs between
-		// the IPC send and IPC receive — callers chaining `dispatch --session
+		// the IPC send and IPC receive - callers chaining `dispatch --session
 		// <returnedTabId>` would think they are continuing a conversation that
 		// actually went to a different tab. For deterministic addressing,
 		// callers should use `dispatch --new-tab` (returns the new tabId from
@@ -1065,7 +1065,7 @@ export class WebSocketMessageHandler {
 								sessionId,
 							});
 						} else {
-							// PTY failed to spawn — report failure so the client can roll back
+							// PTY failed to spawn - report failure so the client can roll back
 							this.send(client, {
 								type: 'mode_switch_result',
 								success: false,
@@ -1625,7 +1625,7 @@ export class WebSocketMessageHandler {
 
 			return result;
 		} catch {
-			// Permission denied or other errors — return empty
+			// Permission denied or other errors - return empty
 			return [];
 		}
 	}
@@ -1730,7 +1730,7 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Validate optional worktree config — desktop app uses this to create a
+		// Validate optional worktree config - desktop app uses this to create a
 		// git worktree, checkout the branch, and optionally open a PR on completion.
 		let worktree:
 			| {
@@ -1905,7 +1905,7 @@ export class WebSocketMessageHandler {
 		}
 		// Relative paths resolve against the agent's working directory; absolute
 		// paths are honored as-is. Opening files outside the worktree is
-		// intentionally allowed — a paired client already has shell-level access
+		// intentionally allowed - a paired client already has shell-level access
 		// (execute_command), so confining preview tabs to the worktree gated
 		// nothing the connection token doesn't already gate.
 		const sessionRoot = path.resolve(session.cwd);
@@ -1938,7 +1938,7 @@ export class WebSocketMessageHandler {
 	private handleOpenBrowserTab(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const url = typeof message.url === 'string' ? message.url : '';
-		// URLs can embed bearer tokens or session IDs — log length only.
+		// URLs can embed bearer tokens or session IDs - log length only.
 		logger.info(
 			`[Web] Received open_browser_tab message: session=${sessionId}, urlLength=${url.length}`,
 			LOG_CONTEXT
@@ -2019,7 +2019,7 @@ export class WebSocketMessageHandler {
 		const rawCwd = message.cwd;
 		const rawShell = message.shell;
 		const rawName = message.name;
-		// cwd/shell/name can leak local usernames or project names — log
+		// cwd/shell/name can leak local usernames or project names - log
 		// presence flags only.
 		logger.info(
 			`[Web] Received open_terminal_tab message: session=${sessionId}, cwdProvided=${
@@ -2070,7 +2070,7 @@ export class WebSocketMessageHandler {
 		}
 
 		// If a cwd is provided, confine it to the agent working directory
-		// (same rule as open_file_tab — prevents spawning a shell outside scope).
+		// (same rule as open_file_tab - prevents spawning a shell outside scope).
 		// Resolve symlinks via fs.realpath so a `link-to-outside` inside the
 		// session root can't slip past the lexical prefix check.
 		let resolvedCwd: string | undefined;
@@ -2124,7 +2124,7 @@ export class WebSocketMessageHandler {
 	private handleNewAITabWithPrompt(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const prompt = typeof message.prompt === 'string' ? message.prompt : '';
-		// Prompts can contain user-authored content with secrets or PII —
+		// Prompts can contain user-authored content with secrets or PII -
 		// log length only rather than a raw preview.
 		logger.info(
 			`[Web] Received new_ai_tab_with_prompt message: session=${sessionId}, promptLength=${prompt.length}`,
@@ -2384,7 +2384,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle reset_auto_run_doc_tasks message — revert all completed `[x]`
+	 * Handle reset_auto_run_doc_tasks message - revert all completed `[x]`
 	 * checkboxes back to `[ ]` for a single document. Mirrors the desktop's
 	 * "Reset Tasks" action so a playbook can be re-run from scratch.
 	 */
@@ -2444,7 +2444,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle resume_auto_run_error message — clear the error pause and continue.
+	 * Handle resume_auto_run_error message - clear the error pause and continue.
 	 */
 	private handleResumeAutoRunError(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2478,7 +2478,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle skip_auto_run_document message — skip the failing document and
+	 * Handle skip_auto_run_document message - skip the failing document and
 	 * continue with the next one in the queue.
 	 */
 	private handleSkipAutoRunDocument(client: WebClient, message: WebClientMessage): void {
@@ -2513,7 +2513,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle abort_auto_run_error message — fully stop the run after an error.
+	 * Handle abort_auto_run_error message - fully stop the run after an error.
 	 */
 	private handleAbortAutoRunError(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2547,7 +2547,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_playbooks message — return the saved playbooks for a session.
+	 * Handle list_playbooks message - return the saved playbooks for a session.
 	 */
 	private handleListPlaybooks(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2581,7 +2581,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle create_playbook message — persist a new playbook with the given config.
+	 * Handle create_playbook message - persist a new playbook with the given config.
 	 */
 	private handleCreatePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2665,7 +2665,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle update_playbook message — apply partial updates to an existing playbook.
+	 * Handle update_playbook message - apply partial updates to an existing playbook.
 	 */
 	private handleUpdatePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2767,7 +2767,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle delete_playbook message — remove a playbook.
+	 * Handle delete_playbook message - remove a playbook.
 	 */
 	private handleDeletePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2918,7 +2918,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Known agent types for validation — derived from the canonical AGENT_IDS list.
+	 * Known agent types for validation - derived from the canonical AGENT_IDS list.
 	 * Excludes 'terminal' since it's an internal-only agent type.
 	 */
 	private static readonly VALID_AGENT_TYPES: Set<string> = new Set(
@@ -3124,7 +3124,7 @@ export class WebSocketMessageHandler {
 	 * The desktop's `projectRoot` (used for provider session storage) is left
 	 * untouched so historical conversations stay addressable; only the UI-facing
 	 * `cwd`/`fullPath` move. Renderer-side validation rejects updates while an
-	 * agent process is alive — the PTY's cwd is fixed at spawn time.
+	 * agent process is alive - the PTY's cwd is fixed at spawn time.
 	 */
 	private handleUpdateSessionCwd(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -3479,7 +3479,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle get_git_branches message — list local + remote branches for a session's
+	 * Handle get_git_branches message - list local + remote branches for a session's
 	 * cwd, used by the mobile Run-in-Worktree base-branch picker.
 	 */
 	private handleGetGitBranches(client: WebClient, message: WebClientMessage): void {
@@ -3518,7 +3518,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_worktrees message — list existing worktrees for a session's cwd,
+	 * Handle list_worktrees message - list existing worktrees for a session's cwd,
 	 * used by mobile Run-in-Worktree to offer "use existing" alongside "create new".
 	 */
 	private handleListWorktrees(client: WebClient, message: WebClientMessage): void {
@@ -3839,7 +3839,7 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Strict validation — avoid truthy coercion so a string like "false"
+		// Strict validation - avoid truthy coercion so a string like "false"
 		// cannot flip a private gist to public.
 		if (message.description !== undefined && typeof message.description !== 'string') {
 			reply({ success: false, error: 'description must be a string when provided' });
@@ -4007,7 +4007,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_list — return all named pipeline entries from
+	 * Handle cue_pipeline_list - return all named pipeline entries from
 	 * the on-disk cue-pipeline-layout.json. Pipelines are returned as
 	 * opaque JSON objects so the CLI doesn't need to share the editor's
 	 * full type tree to round-trip them.
@@ -4035,7 +4035,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_get — fetch a single pipeline entry by name or
+	 * Handle cue_pipeline_get - fetch a single pipeline entry by name or
 	 * id. Missing entries respond with `pipeline: null` rather than an
 	 * error so scripts can treat "not found" as a normal value.
 	 */
@@ -4068,7 +4068,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_set — add or replace a pipeline entry. The
+	 * Handle cue_pipeline_set - add or replace a pipeline entry. The
 	 * callback returns a structured result so the CLI can map error codes
 	 * (already_exists / not_found / invalid_input / …) to non-zero exit
 	 * codes without parsing free-form messages.
@@ -4112,7 +4112,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_remove — delete a pipeline entry by name or id.
+	 * Handle cue_pipeline_remove - delete a pipeline entry by name or id.
 	 */
 	private handleCuePipelineRemove(client: WebClient, message: WebClientMessage): void {
 		const identifier = message.identifier;
@@ -4736,7 +4736,7 @@ export class WebSocketMessageHandler {
 			color = 'theme';
 		}
 
-		// External flashes must be (0, 5000 ms] — `0` (never auto-dismiss) is rejected so
+		// External flashes must be (0, 5000 ms] - `0` (never auto-dismiss) is rejected so
 		// external scripts can't stick a permanent overlay on the user. In-app callers
 		// using `notifyCenterFlash()` directly are not capped.
 		if (duration !== undefined) {
@@ -4937,7 +4937,7 @@ export class WebSocketMessageHandler {
 		) {
 			return true;
 		}
-		// Reject any backslash anywhere — official/local manifest paths use
+		// Reject any backslash anywhere - official/local manifest paths use
 		// forward slashes, so a backslash is either a Windows-style absolute
 		// fragment or a deliberate normalization-bypass attempt.
 		if (playbookPath.includes('\\')) {
@@ -5168,7 +5168,7 @@ export class WebSocketMessageHandler {
 	 * Handle marketplace_import_playbook - import a playbook into the
 	 * session's Auto Run folder. The server resolves both the folder path
 	 * and SSH config from the session, so the mobile client doesn't need
-	 * to send them — and can't lie about them.
+	 * to send them - and can't lie about them.
 	 */
 	private handleMarketplaceImportPlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId;
@@ -5265,7 +5265,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_desktop_sessions message — enumerate every open AI tab across
+	 * Handle list_desktop_sessions message - enumerate every open AI tab across
 	 * desktop agents. Stateless read backed by the persisted session store; no
 	 * subscription side-effects so external pollers (Maestro-Discord, Cue) can
 	 * call this every few seconds without leaking state into the desktop.
@@ -5281,7 +5281,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle plugins_list_tools — project the registered plugin `tools`
+	 * Handle plugins_list_tools - project the registered plugin `tools`
 	 * contributions into MCP tool defs for the `maestro-cli mcp serve` bridge.
 	 * Returns an MCP-safe `name` (namespaced id, `/`->`__`) plus the real
 	 * `toolId` so the bridge can reverse-map on call. Empty when the plugins flag
@@ -5320,7 +5320,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle plugins_call_tool — risk-gate a model-initiated plugin tool call,
+	 * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
 	 * then invoke it via the broker. The toolId MUST be a declared `tools`
 	 * contribution (never an arbitrary command handler), and risk is rated on the
 	 * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
@@ -5376,7 +5376,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle get_session_history message — return the conversation log for a
+	 * Handle get_session_history message - return the conversation log for a
 	 * tab, optionally filtered by `sinceMs` (poll cursor) and/or `tail` (cap).
 	 * Errors are returned in the same response type rather than as a generic
 	 * `error` so the CLI's request/response pairing stays deterministic.

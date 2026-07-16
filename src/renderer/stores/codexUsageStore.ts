@@ -1,5 +1,5 @@
 /**
- * codexUsageStore — renderer-side mirror of Codex quota snapshots.
+ * codexUsageStore - renderer-side mirror of Codex quota snapshots.
  *
  * Main owns the auth-sensitive sampling path. Renderer components only fetch
  * already-sanitized quota windows through IPC.

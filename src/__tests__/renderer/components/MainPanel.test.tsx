@@ -3706,10 +3706,10 @@ describe('MainPanel', () => {
 			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
 			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 
-			// Render with OpenCode session — triggers getModels('opencode') which is pending
+			// Render with OpenCode session - triggers getModels('opencode') which is pending
 			const { rerender } = renderMainPanel({ activeSession: openCodeSession });
 
-			// Switch to Claude session — triggers getModels('claude-code') which resolves fast
+			// Switch to Claude session - triggers getModels('claude-code') which resolves fast
 			const claudeSession = createSession({
 				id: 'session-claude',
 				toolType: 'claude-code',
@@ -3733,7 +3733,7 @@ describe('MainPanel', () => {
 			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
 			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
 
-			// The stale OpenCode models should NOT appear — Claude models should persist.
+			// The stale OpenCode models should NOT appear - Claude models should persist.
 			// Verify via the data attribute exposed by the InputArea mock.
 			await waitFor(() => {
 				const inputArea = screen.getByTestId('input-area');

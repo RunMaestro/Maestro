@@ -11,7 +11,7 @@ interface TerminalStartupCommandModalProps {
 	initialCommand: string;
 	/** Currently configured cwd override, if any. */
 	initialCwd: string;
-	/** Default cwd shown as placeholder — typically the agent's working directory. */
+	/** Default cwd shown as placeholder - typically the agent's working directory. */
 	defaultCwd: string;
 	onSave: (command: string, cwd: string) => void;
 	onClose: () => void;
@@ -73,7 +73,7 @@ export const TerminalStartupCommandModal = memo(function TerminalStartupCommandM
 				/>
 			</div>
 			<p className="mt-3 text-xs" style={{ color: theme.colors.textDim }}>
-				Runs each time this terminal&apos;s shell is started — including after you quit and reopen
+				Runs each time this terminal&apos;s shell is started - including after you quit and reopen
 				the app. Leave the command empty to disable.
 			</p>
 		</Modal>

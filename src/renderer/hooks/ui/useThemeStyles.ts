@@ -4,21 +4,21 @@ import { useEffect } from 'react';
  * Theme colors required for CSS variable management.
  *
  * This is a structural subset of `ThemeColors` from `src/shared/theme-types.ts`
- * — only the tokens consumed by global CSS rules are listed here. Keep these
+ * - only the tokens consumed by global CSS rules are listed here. Keep these
  * field names in sync with the shared type. The hook is happy to receive the
  * full theme palette; it just reads what it needs.
  */
 export interface ThemeColors {
 	/** Accent color used for highlights and active-scrolling scrollbar thumbs */
 	accent: string;
-	/** Border color — used as the idle scrollbar thumb color (theme-aware,
+	/** Border color - used as the idle scrollbar thumb color (theme-aware,
 	 *  works on both light and dark themes unlike the previous hardcoded
 	 *  rgba(255,255,255,0.15) which was invisible on light themes). */
 	border: string;
-	/** Dimmed text color — used as the hover scrollbar thumb color. Slightly
+	/** Dimmed text color - used as the hover scrollbar thumb color. Slightly
 	 *  more visible than `border`, still subtle. */
 	textDim: string;
-	/** Activity background — used as the very subtle scrollbar track tint.
+	/** Activity background - used as the very subtle scrollbar track tint.
 	 *  Track is mostly transparent so this only matters for tall narrow
 	 *  containers where the track is visible. */
 	bgActivity: string;
@@ -73,7 +73,7 @@ export function useThemeStyles(deps: UseThemeStylesDeps): UseThemeStylesReturn {
 
 	// Set CSS variables for theme colors. App-wide scrollbar styling in
 	// index.css references these via var(--scrollbar-*) so every scrollable
-	// container picks up the active theme automatically — no per-component
+	// container picks up the active theme automatically - no per-component
 	// changes required.
 	useEffect(() => {
 		const root = document.documentElement.style;

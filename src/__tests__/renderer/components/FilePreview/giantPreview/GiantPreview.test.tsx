@@ -133,7 +133,7 @@ describe('GiantPreview', () => {
 
 		it('scrollToMatch clamps offsets that fall past the doc end', () => {
 			const { ref } = renderGiant({ content: 'short' });
-			// Pass a huge sourceOffset — must not throw or dispatch an invalid
+			// Pass a huge sourceOffset - must not throw or dispatch an invalid
 			// selection; impl clamps to docLength before calling EditorSelection.
 			expect(() =>
 				ref.current!.scrollToMatch({

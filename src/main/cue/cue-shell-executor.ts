@@ -1,5 +1,5 @@
 /**
- * Cue Shell Executor — runs an `action: command` subscription whose
+ * Cue Shell Executor - runs an `action: command` subscription whose
  * `command.mode` is `'shell'`.
  *
  * The command string is substituted with template variables and then spawned
@@ -59,13 +59,13 @@ function killShellProcess(
 			try {
 				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
 			} catch {
-				// taskkill returns non-zero when the process is already dead — fine.
+				// taskkill returns non-zero when the process is already dead - fine.
 			}
 		} else {
 			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
 				if (!error) return;
 				// If the child has already exited by the time taskkill runs, the
-				// non-zero exit is just "process already dead" — benign. Checking
+				// non-zero exit is just "process already dead" - benign. Checking
 				// `child.exitCode` is locale-independent, unlike matching the
 				// error message text.
 				if (child.exitCode !== null || child.signalCode !== null) return;
@@ -148,7 +148,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	// Resolve spawn parameters. For SSH-remote sessions, wrap the command so it
 	// executes on the remote host inside `projectRoot` (which is a remote path).
 	// We pass the user's shell string as `bash -c <cmd>` so the remote shell
-	// still parses pipes/quotes/globs — mirroring local `shell: true` behavior.
+	// still parses pipes/quotes/globs - mirroring local `shell: true` behavior.
 	let spawnCommand = substitutedCommand;
 	let spawnArgs: string[] = [];
 	let spawnCwd = projectRoot;
@@ -186,7 +186,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	// macOS GUI apps inherit a minimal launchd PATH (no `~/.local/bin`,
 	// `/opt/homebrew/bin`, etc.), so shell commands that rely on user-installed
 	// binaries fail with "command not found". Source the user's login-shell PATH
-	// to match terminal behavior. SSH mode is unaffected — the remote shell
+	// to match terminal behavior. SSH mode is unaffected - the remote shell
 	// resolves PATH on its own host.
 	if (useLocalShell) {
 		try {
@@ -211,7 +211,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				// For local mode, `shell: true` makes the user's shell resolve
 				// PATH and handle quoting/pipes/globs. For SSH mode, the remote
 				// `/bin/bash -c` inside the wrapper already parses the command,
-				// and the outer spawn just invokes `ssh` — no local shell needed.
+				// and the outer spawn just invokes `ssh` - no local shell needed.
 				shell: useLocalShell,
 				stdio: ['ignore', 'pipe', 'pipe'],
 			});
