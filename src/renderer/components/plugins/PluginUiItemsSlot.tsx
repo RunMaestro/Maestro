@@ -38,11 +38,13 @@ interface PluginUiItemsSlotProps {
 	surface: PluginUiSurface;
 	className?: string;
 	presentation?: PluginUiItemsSlotPresentation;
+	onActivate?: () => void;
 }
 
 export function PluginUiItemsSlot({
 	surface,
 	className,
+	onActivate,
 	presentation = 'inline',
 }: PluginUiItemsSlotProps) {
 	const contributions = usePluginContributions();
@@ -99,6 +101,7 @@ export function PluginUiItemsSlot({
 						onClick={(event) => {
 							event.stopPropagation();
 							void activate(item);
+							onActivate?.();
 						}}
 						className={itemClass}
 						title={tooltip}

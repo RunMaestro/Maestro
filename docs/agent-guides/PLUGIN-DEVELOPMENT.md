@@ -314,9 +314,23 @@ to update or remove a view after activation, and should declare `minHostApi: "1.
 	"blocks": [
 		{ "kind": "heading", "text": "Ready" },
 		{ "kind": "badge", "text": "Waiting for a run", "color": "neutral" }
+	]
+}
+```
+
+The manifest author writes the local `id`; Maestro namespaces it to
+`<pluginId>/run-status`. An enabled plugin renders its declared static blocks. A running,
+granted tier-1 plugin may change only the blocks of one of its own declared views with
+`maestro.ui.hostView.update('run-status', blocks)`, or remove it with
+`maestro.ui.hostView.remove('run-status')`; it cannot change the title or surface.
+
 ### uiItems (tier 1)
 
-`{ id, surface, label, command, icon?, tooltip?, group?, priority? }` adds a small host-rendered control. `surface` must be one of `'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar' | 'tabBar' | 'sessionRowBadge' | 'groupHeaderBadge' | 'settingsSection' | 'rightPanelTab' | 'contextMenuItem' | 'emptyState'`. `command` must be one of YOUR plugin-local command ids; the host controls the frame, icon mapping, tooltip, and non-suppressible plugin provenance.
+`{ id, surface, label, command, icon?, tooltip?, group?, priority? }` adds a small host-rendered
+control. `surface` must be one of `'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar' |
+'tabBar' | 'sessionRowBadge' | 'groupHeaderBadge' | 'settingsSection' | 'rightPanelTab' |
+'contextMenuItem' | 'emptyState'`. `command` must be one of your plugin-local command ids; the
+host controls the frame, icon mapping, tooltip, and non-suppressible plugin provenance.
 
 ```json
 {
@@ -339,11 +353,6 @@ to update or remove a view after activation, and should declare `minHostApi: "1.
 }
 ```
 
-The manifest author writes the local `id`; Maestro namespaces it to
-`<pluginId>/run-status`. An enabled plugin renders its declared static blocks. A running,
-granted tier-1 plugin may change only the blocks of one of its own declared views with
-`maestro.ui.hostView.update('run-status', blocks)`, or remove it with
-`maestro.ui.hostView.remove('run-status')`; it cannot change the title or surface.
 ### agents (tier 1)
 
 `{ id, displayName, binaryName, baseArgs?, capabilities? }`. `binaryName` is a bare command (no path, traversal, or shell metacharacters); `capabilities` is a boolean feature map. Registering an agent adds it to the registry but does NOT enable spawning it (arbitrary binary execution is a separate, security-reviewed step).
@@ -390,10 +399,10 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 | `ui:command`          | low    | none  | invoke a registered palette command                                                    | `{ "capability": "ui:command" }`                                 |
 | `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                                                 | `{ "capability": "events:subscribe" }`                           |
 | `process:spawn`       | high   | none  | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                 | `{ "capability": "process:spawn" }`                              |
-| `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar)                   | `{ "capability": "ui:contribute" }`                              |
-| `ui:panel`            | medium | none  | render its own sandboxed interactive panels                                            | `{ "capability": "ui:panel" }`                                   |
+| `ui:contribute`       | medium | none  | add declarative controls in approved host-owned surfaces                               | `{ "capability": "ui:contribute" }`                              |
+| `ui:panel`            | medium | none  | render sandboxed panels in approved Maestro regions                                    | `{ "capability": "ui:panel" }`                                   |
 | `ui:hostView`         | medium | none  | render/update declared host BlockView data                                             | `{ "capability": "ui:hostView" }`                                |
-| `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)                             | `{ "capability": "ui:render-unsafe" }`                           |
+| `ui:render-unsafe`    | high   | none  | render custom UI only in host-approved, non-protected regions                          | `{ "capability": "ui:render-unsafe" }`                           |
 
 `agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 

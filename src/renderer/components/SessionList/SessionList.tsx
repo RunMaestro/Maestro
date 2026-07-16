@@ -1713,6 +1713,7 @@ function SessionListInner(props: SessionListProps) {
 										}
 										aria-expanded={!group.collapsed}
 										onKeyDown={(e) => {
+											if (e.target !== e.currentTarget) return;
 											if (e.key === 'Enter' || e.key === ' ') {
 												e.preventDefault();
 												toggleGroup(group.id);
@@ -1798,6 +1799,7 @@ function SessionListInner(props: SessionListProps) {
 												generatingDocs={!!wizardRollup.groups.get(group.id)?.isGeneratingDocs}
 											/>
 										</div>
+										<PluginUiItemsSlot surface="groupHeaderBadge" className="mr-2 shrink-0" />
 										{/* Delete button for empty groups */}
 										{groupSessions.length === 0 && (
 											<button

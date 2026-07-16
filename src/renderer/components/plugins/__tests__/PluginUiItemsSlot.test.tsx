@@ -72,6 +72,21 @@ describe('PluginUiItemsSlot', () => {
 		await waitFor(() => expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('p/go'));
 	});
 
+	it('notifies the menu owner after a contributed action activates', async () => {
+		const onActivate = vi.fn();
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			uiItems: [uiItem({ surface: 'contextMenuItem', label: 'Plugin menu action' })],
+		});
+
+		render(
+			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onActivate} />
+		);
+
+		fireEvent.click(await screen.findByText('Plugin menu action'));
+		await waitFor(() => expect(onActivate).toHaveBeenCalledTimes(1));
+	});
+
 	it.each([
 		'tabBar',
 		'sessionRowBadge',

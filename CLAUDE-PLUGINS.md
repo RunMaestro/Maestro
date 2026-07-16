@@ -132,10 +132,10 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `ui:command`          | low    | none  | invoke a registered palette command                                                                                                                                                                                                    |
 | `events:subscribe`    | medium | none  | metadata-only topics                                                                                                                                                                                                                   |
 | `process:spawn`       | high   | none  | LIVE, fully gated: allowlist grant + trusted signature + Pianola risk + ActionGuard + closed schema                                                                                                                                    |
-| `ui:contribute`       | medium | none  | gates accepting declarative `uiItems` into host surfaces (menus, sidebar, status bar)                                                                                                                                                  |
-| `ui:panel`            | medium | none  | gates accepting the plugin's sandboxed `panels`                                                                                                                                                                                        |
+| `ui:contribute`       | medium | none  | gates declarative `uiItems` in approved host-owned surfaces; every surface uses this same capability                                                                                                                                   |
+| `ui:panel`            | medium | none  | gates sandboxed `panels` in approved Maestro regions                                                                                                                                                                                   |
 | `ui:hostView`         | medium | none  | drives brokered updates/removals of the plugin's declared native BlockView data; no plugin renderer runs                                                                                                                               |
-| `ui:render-unsafe`    | high   | none  | escape hatch: full custom UI with interface access (high-trust)                                                                                                                                                                        |
+| `ui:render-unsafe`    | high   | none  | high-trust custom UI only in host-approved, non-protected regions; never a trusted-chrome bypass                                                                                                                                       |
 
 `PermissionRequest = { capability, scope?, reason? }`. Scopes narrow `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
 
@@ -189,8 +189,9 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.12.0`; it added the `net:connect` capability and the
-`net.connect` / `net.send` / `net.close` methods. Earlier: `1.11.0` added
+The current host is `1.13.0`; it adds the host-mediated `PluginUiSurface`
+registry and trusted-chrome guard. Earlier: `1.12.0` added `net:connect` and
+the `net.connect` / `net.send` / `net.close` methods; `1.11.0` added
 `groupings` + `ui:grouping`; `1.10.0` added `iconPacks`; `1.9.0` added
 `hostViews`, `ui:hostView`, and the `ui.hostViewUpdate` / `ui.hostViewRemove`
 methods. Plugins declare the `maestro.minHostApi` matching the lowest version

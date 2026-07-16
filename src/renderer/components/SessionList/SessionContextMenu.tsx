@@ -638,7 +638,7 @@ export function SessionContextMenu({
 				</>
 			)}
 
-			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" />
+			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onDismiss} />
 
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
