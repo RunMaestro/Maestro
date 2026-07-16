@@ -27,10 +27,9 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	WebSocketMessageHandler,
-	type WebClient,
-	type WebClientMessage,
 	type MessageHandlerCallbacks,
 } from '../../../../main/web-server/handlers/messageHandlers';
+import type { WebClient, WebClientMessage } from '../../../../main/web-server/types';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,

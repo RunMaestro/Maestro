@@ -20,9 +20,9 @@ import {
 } from '../../main/web-server/services/broadcastService';
 import {
 	WebSocketMessageHandler,
-	type WebClient,
 	type MessageHandlerCallbacks,
 } from '../../main/web-server/handlers/messageHandlers';
+import type { WebClient } from '../../main/web-server/types';
 import type { Theme } from '../../shared/theme-types';
 
 // Mock the logger
@@ -52,8 +52,7 @@ class MockWebServer {
 		| ((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => Promise<boolean>)
 		| null = null;
 	private switchModeCallback:
-		| ((sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>)
-		| null = null;
+		((sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>) | null = null;
 	private getThemeCallback: (() => Theme | null) | null = null;
 
 	constructor() {

@@ -35,7 +35,6 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { app } from 'electron';
-import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { getCommitHash } from '../../utils/build-info';
@@ -76,6 +75,7 @@ import type {
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 } from '../types';
+import type { LiveSessionInfo, WebClient, WebClientMessage } from '../types';
 
 /**
  * Hard upper bound on flash duration for **externally-triggered** flashes
@@ -133,35 +133,7 @@ import type {
 const LOG_CONTEXT = 'WebServer';
 
 /**
- * Web client message interface
- */
-export interface WebClientMessage {
-	type: string;
-	requestId?: string;
-	sessionId?: string;
-	tabId?: string;
-	command?: string;
-	mode?: 'ai' | 'terminal';
-	inputMode?: 'ai' | 'terminal';
-	newName?: string;
-	filePath?: string;
-	focus?: boolean;
-	force?: boolean;
-	background?: boolean;
-	[key: string]: unknown;
-}
 
-/**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-}
-
-/**
  * Session detail for command validation
  */
 export interface SessionDetailForHandler {
@@ -172,15 +144,6 @@ export interface SessionDetailForHandler {
 	/** Currently active AI tab id; surfaced in send_command responses so callers
 	 *  (`maestro-cli dispatch`) can address the same tab on follow-up calls. */
 	activeTabId?: string;
-}
-
-/**
- * Live session info for enriching sessions
- */
-export interface LiveSessionInfo {
-	sessionId: string;
-	agentSessionId?: string;
-	enabledAt: number;
 }
 
 /**
