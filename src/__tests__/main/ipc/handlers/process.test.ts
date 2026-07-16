@@ -21,6 +21,7 @@ import {
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { OmpNativeSessionAdapter } from '../../../../main/omp-native/session-adapter';
+import { isPluginsFeatureEnabled } from '../../../../main/plugins/plugin-manager-singleton';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -297,6 +298,7 @@ describe('process IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(true);
 
 		// Create mock process manager
 		mockProcessManager = {
@@ -466,6 +468,30 @@ describe('process IPC handlers', () => {
 				['data:image/png;base64,cG5nLWJ5dGVz']
 			);
 			expect(result).toEqual({ success: true, pid: 9876 });
+		});
+
+		it('uses native OMP when optional third-party plugins are disabled', async () => {
+			vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+			const prompt = vi.fn().mockResolvedValue(undefined);
+			vi.mocked(OmpNativeSessionAdapter.acquire).mockResolvedValue({
+				ready: Promise.resolve(),
+				pid: 9888,
+				prompt,
+			} as unknown as OmpNativeSessionAdapter);
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'omp', command: 'omp' });
+
+			const handler = handlers.get('process:spawn');
+			await handler!(undefined, {
+				sessionId: 'native-omp-with-plugins-disabled',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+				prompt: 'Use the native OMP runtime',
+			});
+
+			expect(OmpNativeSessionAdapter.acquire).toHaveBeenCalled();
+			expect(prompt).toHaveBeenCalledWith('Use the native OMP runtime', undefined);
 		});
 
 		it('does not duplicate the fallback system prompt when resuming a native OMP transcript', async () => {

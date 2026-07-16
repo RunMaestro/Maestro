@@ -78,25 +78,15 @@ export async function handleProcessSpawn(
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-	// Native OMP uses a dedicated, long-lived JSONL RPC process instead of the
-	// one-shot CLI spawner. It is deliberately gated on the first-party plugin:
-	// without it the legacy batch path below remains untouched. OMP 16.4.8 does
-	// not expose a read-only permission control, so read-only sessions fail
-	// closed to that legacy path rather than starting with full tool access.
-	const pluginsFeatureEnabled = isPluginsFeatureEnabled();
-	const activePluginManager = getActivePluginManager();
-	const ompPluginActive =
-		activePluginManager?.getActiveRecords().some((record) => record.id === 'com.maestro.omp') ??
-		false;
+	// OMP is a bundled first-party integration. Its native JSONL session is
+	// independently authorized by the first-party package/ledger, not by the
+	// optional community-plugin Encore flag. Selecting OMP must therefore never
+	// silently degrade to the legacy terminal path merely because third-party
+	// plugins are disabled. OMP 16.4.8 has no read-only permission control.
 	const ompReadOnlyRequiresLegacy =
 		config.permissionMode === 'readonly' ||
 		(config.permissionMode === undefined && config.readOnlyMode === true);
-	if (
-		config.toolType === 'omp' &&
-		pluginsFeatureEnabled &&
-		ompPluginActive &&
-		!ompReadOnlyRequiresLegacy
-	) {
+	if (config.toolType === 'omp' && !ompReadOnlyRequiresLegacy) {
 		const send = (channel: string, ...args: unknown[]) => {
 			if (safeSend) {
 				safeSend(channel, ...args);
@@ -138,10 +128,7 @@ export async function handleProcessSpawn(
 		}
 	}
 	if (config.toolType === 'omp') {
-		logger.warn('OMP native spawn gate failed; falling back to legacy one-shot CLI', LOG_CONTEXT, {
-			pluginsFeatureEnabled,
-			activePluginManagerPresent: activePluginManager !== null,
-			ompPluginActive,
+		logger.warn('OMP native mode is unavailable for read-only sessions', LOG_CONTEXT, {
 			ompReadOnlyRequiresLegacy,
 		});
 	}
