@@ -777,6 +777,18 @@ async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<str
 	}
 }
 
+/**
+ * Upload a temporary feedback archive and consume it regardless of whether the
+ * upload succeeds, fails, or is cancelled.
+ */
+async function uploadAndCleanupFeedbackZip(zipPath: string, linkText: string): Promise<string> {
+	try {
+		return await uploadFeedbackZip(zipPath, linkText);
+	} finally {
+		await fs.unlink(zipPath).catch(() => {});
+	}
+}
+
 async function composeFeedbackPrompt(
 	feedbackText: string,
 	attachments: FeedbackAttachmentInput[]
@@ -1359,14 +1371,10 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					try {
 						const packageResult = await generateDebugPackage(os.tmpdir(), _deps.debugPackageDeps);
 						if (packageResult.success && packageResult.path) {
-							try {
-								debugPackageMarkdown = await uploadFeedbackZip(
-									packageResult.path,
-									'maestro-debug-package.zip'
-								);
-							} finally {
-								await fs.unlink(packageResult.path).catch(() => {});
-							}
+							debugPackageMarkdown = await uploadAndCleanupFeedbackZip(
+								packageResult.path,
+								'maestro-debug-package.zip'
+							);
 						}
 					} catch (e) {
 						void captureException(e);
@@ -1379,15 +1387,13 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				let performanceTraceMarkdown = '';
 				if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
 					try {
-						performanceTraceMarkdown = await uploadFeedbackZip(
+						performanceTraceMarkdown = await uploadAndCleanupFeedbackZip(
 							payload.performanceTracePath,
 							'maestro-performance-trace.zip'
 						);
 					} catch (e) {
 						void captureException(e);
 						logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
-					} finally {
-						await fs.unlink(payload.performanceTracePath).catch(() => {});
 					}
 				}
 

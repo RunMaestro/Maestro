@@ -469,6 +469,95 @@ describe('feedback handlers', () => {
 		expect(setCachedGhStatus).toHaveBeenCalledWith(true, true);
 		expect(result).toEqual({ authenticated: true });
 	});
+
+	it('cleans a cancelled performance-trace upload exactly once', async () => {
+		const abortError = new Error('upload cancelled');
+		abortError.name = 'AbortError';
+		vi.mocked(fs.readFile).mockRejectedValue(abortError);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockImplementation((_command, args) => {
+			if (args.includes('issue') && args.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/456',
+					stderr: '',
+				});
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' });
+		});
+
+		const handler = registeredHandlers.get('feedback:submit-conversation');
+		await handler!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Trace upload cancelled',
+				expectedBehavior: 'The issue should still be created.',
+				actualBehavior: 'The trace upload was cancelled.',
+				performanceTracePath: '/tmp/maestro-performance-trace.zip',
+			}
+		);
+
+		expect(
+			vi
+				.mocked(fs.unlink)
+				.mock.calls.filter(([targetPath]) => targetPath === '/tmp/maestro-performance-trace.zip')
+		).toHaveLength(1);
+	});
+
+	it('cleans a successfully uploaded performance trace exactly once', async () => {
+		vi.mocked(fs.readFile).mockImplementation((targetPath) =>
+			Promise.resolve(
+				String(targetPath) === '/tmp/maestro-performance-trace.zip'
+					? Buffer.from('zip')
+					: JSON.stringify({ issues: [] })
+			)
+		);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockImplementation((_command, args) => {
+			if (args.includes('user')) {
+				return Promise.resolve({ exitCode: 0, stdout: 'maestro-owner', stderr: '' });
+			}
+			if (args.includes('issue') && args.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/457',
+					stderr: '',
+				});
+			}
+			if (args.includes('PUT')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: JSON.stringify({
+						content: { download_url: 'https://example.test/feedback/trace.zip' },
+					}),
+					stderr: '',
+				});
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' });
+		});
+
+		const handler = registeredHandlers.get('feedback:submit-conversation');
+		const result = await handler!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Trace uploaded',
+				expectedBehavior: 'The issue should include the trace.',
+				actualBehavior: 'The trace upload completed.',
+				performanceTracePath: '/tmp/maestro-performance-trace.zip',
+			}
+		);
+
+		expect(result.success).toBe(true);
+		expect(
+			vi
+				.mocked(fs.unlink)
+				.mock.calls.filter(([targetPath]) => targetPath === '/tmp/maestro-performance-trace.zip')
+		).toHaveLength(1);
+	});
 });
 
 describe('feedback drafts handlers', () => {
