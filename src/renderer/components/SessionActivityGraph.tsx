@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { LOOKBACK_OPTIONS } from './History/historyConstants';
 import type { LookbackHours } from './History/lookbackOptions';
+import { buildActivityGraphAxisLabels } from './History/activityGraphAxis';
 
 // Generic entry type - just needs timestamp
 export interface ActivityEntry {
@@ -167,45 +168,14 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 	}, [contextMenu]);
 
 	// Generate labels for the x-axis
-	const getAxisLabels = () => {
-		if (lookbackHours === null) {
-			// All time - show start and end dates
-			return [
-				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
-					index: 0,
-				},
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		} else if (lookbackHours <= 24) {
-			return [
-				{ label: `${lookbackHours}h`, index: 0 },
-				{ label: `${Math.floor((lookbackHours * 2) / 3)}h`, index: Math.floor(bucketCount / 3) },
-				{ label: `${Math.floor(lookbackHours / 3)}h`, index: Math.floor((bucketCount * 2) / 3) },
-				{ label: '0h', index: bucketCount - 1 },
-			];
-		} else if (lookbackHours <= 168) {
-			// Up to 1 week - show days
-			const days = Math.floor(lookbackHours / 24);
-			return [
-				{ label: `${days}d`, index: 0 },
-				{ label: `${Math.floor(days / 2)}d`, index: Math.floor(bucketCount / 2) },
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		} else {
-			// Longer periods - show start/end
-			const startLabel = new Date(startTime).toLocaleDateString([], {
-				month: 'short',
-				day: 'numeric',
-			});
-			return [
-				{ label: startLabel, index: 0 },
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		}
-	};
-
-	const axisLabels = getAxisLabels();
+	const axisLabels = buildActivityGraphAxisLabels({
+		range: { start: startTime, end: endTime },
+		bucketCount,
+		lookbackHours,
+		timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+		formatDate: (date, timeZone) =>
+			date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone }),
+	});
 
 	return (
 		<div
