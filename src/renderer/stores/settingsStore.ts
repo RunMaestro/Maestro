@@ -50,6 +50,7 @@ import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
 import { sanitizeModalSizes } from '../utils/modalSizing';
+import { readBoolean, readFiniteNumber, readString, readStringArray } from './settingsStoreDecode';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -2338,8 +2339,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['apiKey'] !== undefined) patch.apiKey = allSettings['apiKey'] as string;
 
-		if (allSettings['defaultShell'] !== undefined)
-			patch.defaultShell = allSettings['defaultShell'] as string;
+		const defaultShell = readString(allSettings, 'defaultShell');
+		if (defaultShell !== undefined) patch.defaultShell = defaultShell;
 
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
@@ -2355,7 +2356,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fontFamily'] !== undefined)
 			patch.fontFamily = allSettings['fontFamily'] as string;
 
-		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
+		const fontSize = readFiniteNumber(allSettings, 'fontSize');
+		if (fontSize !== undefined) patch.fontSize = fontSize;
 
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
@@ -2805,16 +2807,16 @@ export async function loadAllSettings(): Promise<void> {
 			);
 		}
 
-		// SSH Remote settings (with array validation)
-		if (
-			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
-			Array.isArray(allSettings['sshRemoteIgnorePatterns'])
-		) {
-			patch.sshRemoteIgnorePatterns = allSettings['sshRemoteIgnorePatterns'] as string[];
+		// SSH Remote settings use the canonical persisted-default policy.
+		const sshRemoteIgnorePatterns = readStringArray(allSettings, 'sshRemoteIgnorePatterns');
+		if (sshRemoteIgnorePatterns !== undefined) {
+			patch.sshRemoteIgnorePatterns = sshRemoteIgnorePatterns;
 		}
 
-		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
-			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
+		const sshRemoteHonorGitignore = readBoolean(allSettings, 'sshRemoteHonorGitignore');
+		if (sshRemoteHonorGitignore !== undefined) {
+			patch.sshRemoteHonorGitignore = sshRemoteHonorGitignore;
+		}
 
 		if (allSettings['useSystemBrowser'] !== undefined)
 			patch.useSystemBrowser = allSettings['useSystemBrowser'] as boolean;
@@ -2935,8 +2937,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['wakatimeDetailedTracking'] !== undefined)
 			patch.wakatimeDetailedTracking = allSettings['wakatimeDetailedTracking'] as boolean;
 
-		if (allSettings['useNativeTitleBar'] !== undefined)
-			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
+		const useNativeTitleBar = readBoolean(allSettings, 'useNativeTitleBar');
+		if (useNativeTitleBar !== undefined) patch.useNativeTitleBar = useNativeTitleBar;
 
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
