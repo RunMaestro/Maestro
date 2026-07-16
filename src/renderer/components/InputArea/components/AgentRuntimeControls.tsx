@@ -1,5 +1,6 @@
 import { memo, useCallback } from 'react';
 import type { AgentControl } from '../../../../shared/agent-runtime-features';
+import { isRegisteredOmpControl } from '../../../../shared/omp-command-registry';
 import type { Theme } from '../../../types';
 
 interface AgentRuntimeControlsProps {
@@ -22,6 +23,7 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 }: AgentRuntimeControlsProps) {
 	const visibleControls = controls?.filter(
 		(control) =>
+			isRegisteredOmpControl(control.id) &&
 			control.id.toLowerCase() !== 'model' &&
 			control.label.toLowerCase() !== 'model' &&
 			(control.kind === 'select' || control.kind === 'toggle' || control.kind === 'action')

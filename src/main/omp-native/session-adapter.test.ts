@@ -1217,6 +1217,8 @@ describe('OmpNativeSessionAdapter', () => {
 		await expect(adapter.setControl('switch-session', 'C:/work/omp/session.jsonl')).resolves.toBe(
 			true
 		);
+		await expect(adapter.setControl('bash', 'echo native command')).resolves.toBe(true);
+		await expect(adapter.setControl('login', 'fixture-login')).resolves.toBe(true);
 
 		expect(frames.map((frame) => frame.type)).toEqual(
 			expect.arrayContaining([
@@ -1230,6 +1232,8 @@ describe('OmpNativeSessionAdapter', () => {
 				'abort_bash',
 				'set_session_name',
 				'switch_session',
+				'bash',
+				'login',
 			])
 		);
 	});

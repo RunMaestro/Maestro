@@ -5,10 +5,9 @@
  * discovered plugins, toggle a plugin on/off, and install/uninstall by path.
  * Thin transport over the main-process PluginManager.
  *
- * Gated at the handler on `encoreFeatures.plugins`. Unlike a read-only feature,
- * a disabled flag throws `'PluginsDisabled'` so the renderer can tell "feature
- * off" from "no plugins installed". The gate runs OUTSIDE withIpcErrorLogging so
- * the sentinel is not logged as an unexpected IPC failure.
+ * Gated at the handler on `encoreFeatures.plugins`. Mutations reject when the
+ * feature is off; read-only contribution snapshots resolve to empty values so
+ * ordinary first-party screens never poll a throwing optional subsystem.
  */
 
 import { ipcMain } from 'electron';
@@ -82,6 +81,26 @@ function isPluginsEnabled(settingsStore: { get: (key: string) => unknown }): boo
 	const ef = (settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
 	return ef.plugins === true;
 }
+
+const EMPTY_CONTRIBUTIONS: AggregatedContributions = Object.freeze({
+	themes: [],
+	iconPacks: [],
+	prompts: [],
+	settings: [],
+	commandMacros: [],
+	cueTriggers: [],
+	commands: [],
+	panels: [],
+	workspaces: [],
+	interactivePanels: [],
+	agents: [],
+	tools: [],
+	keybindings: [],
+	uiItems: [],
+	hostViews: [],
+	groupings: [],
+	errorsByPlugin: {},
+});
 
 function snapshotOf(registry: PluginRegistry, subsystemEnabled: boolean): PluginListSnapshot {
 	return { hostApiVersion: HOST_API_VERSION, subsystemEnabled, plugins: registry.records };
@@ -263,7 +282,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 	);
 
 	ipcMain.handle('plugins:contributions', async (event): Promise<AggregatedContributions> => {
-		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+		if (!isPluginsEnabled(settingsStore)) return EMPTY_CONTRIBUTIONS;
 		return wrappedContributions(event);
 	});
 
@@ -305,7 +324,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 	});
 
 	ipcMain.handle('plugins:get-groupings', async (event): Promise<PluginGroupingSnapshot> => {
-		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+		if (!isPluginsEnabled(settingsStore)) return [];
 		return wrappedGetGroupings(event);
 	});
 

@@ -41,6 +41,7 @@ import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
 import type { AgentRuntimeFeatureState } from '../../shared/agent-runtime-features';
+import { controlIdForOmpCommand } from '../../shared/omp-command-registry';
 
 function NativeRuntimePanel({
 	features,
@@ -51,6 +52,7 @@ function NativeRuntimePanel({
 	theme: Theme;
 	sessionId: string;
 }) {
+	const switchSessionControlId = controlIdForOmpCommand('switch_session');
 	const [sessionPath, setSessionPath] = useState('');
 	const sections = [
 		{
@@ -122,13 +124,14 @@ function NativeRuntimePanel({
 					<button
 						type="button"
 						disabled={!sessionPath.trim()}
-						onClick={() =>
+						onClick={() => {
+							if (!switchSessionControlId) return;
 							void window.maestro.process.setAgentControl(
 								sessionId,
-								'switch-session',
+								switchSessionControlId,
 								sessionPath.trim()
-							)
-						}
+							);
+						}}
 						className="text-xs underline disabled:opacity-50"
 						style={{ color: theme.colors.accent }}
 					>

@@ -146,7 +146,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:respond-approval',
 		withIpcErrorLogging(
 			handlerOpts('respond-approval'),
-			async (_event, payload: unknown): Promise<boolean> => {
+			async (payload: unknown): Promise<boolean> => {
 				if (!isOmpPayload(payload, ['sessionId', 'requestId'])) return false;
 				const { sessionId, requestId, optionId, value, cancelled } = payload as {
 					sessionId: string;
@@ -180,7 +180,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:set-agent-control',
 		withIpcErrorLogging(
 			handlerOpts('set-agent-control'),
-			async (_event, payload: unknown): Promise<boolean> => {
+			async (payload: unknown): Promise<boolean> => {
 				if (!isOmpPayload(payload, ['sessionId', 'controlId'])) return false;
 				const { sessionId, controlId, value } = payload as {
 					sessionId: string;
@@ -198,7 +198,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:branch-session',
 		withIpcErrorLogging(
 			handlerOpts('branch-session'),
-			async (_event, payload: unknown): Promise<boolean> => {
+			async (payload: unknown): Promise<boolean> => {
 				if (!isOmpPayload(payload, ['sessionId', 'entryId'])) return false;
 				const { sessionId, entryId } = payload as { sessionId: string; entryId: string };
 				const adapter = OmpNativeSessionAdapter.forSession(sessionId);

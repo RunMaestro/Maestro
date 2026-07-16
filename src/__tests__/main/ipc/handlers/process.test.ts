@@ -382,6 +382,7 @@ describe('process IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
+		vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue(undefined);
 	});
 
 	describe('registration', () => {
@@ -407,6 +408,54 @@ describe('process IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('native OMP action handlers', () => {
+		it('forwards approval payload after the wrapped IPC event is stripped', async () => {
+			const respondApproval = vi.fn().mockResolvedValue(true);
+			vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue({
+				respondApproval,
+			} as unknown as OmpNativeSessionAdapter);
+
+			const handler = handlers.get('process:respond-approval')!;
+			await expect(
+				handler({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					requestId: 'approval-1',
+					optionId: 'approve',
+				})
+			).resolves.toBe(true);
+			expect(respondApproval).toHaveBeenCalledWith('approval-1', {
+				optionId: 'approve',
+				value: undefined,
+				cancelled: undefined,
+			});
+		});
+
+		it('forwards set-agent-control and branch payloads after the wrapped IPC event is stripped', async () => {
+			const setControl = vi.fn().mockResolvedValue(true);
+			const branch = vi.fn().mockResolvedValue(true);
+			vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue({
+				setControl,
+				branch,
+			} as unknown as OmpNativeSessionAdapter);
+
+			await expect(
+				handlers.get('process:set-agent-control')!({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					controlId: 'model',
+					value: 'fixture:fast',
+				})
+			).resolves.toBe(true);
+			await expect(
+				handlers.get('process:branch-session')!({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					entryId: 'entry-1',
+				})
+			).resolves.toBe(true);
+			expect(setControl).toHaveBeenCalledWith('model', 'fixture:fast');
+			expect(branch).toHaveBeenCalledWith('entry-1');
 		});
 	});
 

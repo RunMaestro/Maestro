@@ -18,6 +18,7 @@ import {
 	type OmpRpcImage,
 	type OmpRpcTransport,
 } from './types';
+import { isRegisteredOmpControl } from '../../shared/omp-command-registry';
 
 export type OmpNativeSend = (channel: string, ...args: unknown[]) => void;
 export type OmpChildSpawner = (
@@ -936,6 +937,7 @@ function approvalFrom(callback: OmpRpcEvent, sessionId: string): AgentApprovalRe
 }
 
 function controlCommand(controlId: string, value: string | boolean): OmpRpcCommand | null {
+	if (!isRegisteredOmpControl(controlId)) return null;
 	if (controlId === 'model' && typeof value === 'string') return modelCommand(value);
 	if (controlId === 'thinking-level' && typeof value === 'string')
 		return { type: 'set_thinking_level', level: value };
@@ -949,6 +951,10 @@ function controlCommand(controlId: string, value: string | boolean): OmpRpcComma
 		return { type: 'set_session_name', name: value.trim() };
 	if (controlId === 'switch-session' && typeof value === 'string' && value.trim())
 		return { type: 'switch_session', sessionPath: value.trim() };
+	if (controlId === 'bash' && typeof value === 'string' && value.trim())
+		return { type: 'bash', command: value.trim() };
+	if (controlId === 'login' && typeof value === 'string' && value.trim())
+		return { type: 'login', providerId: value.trim() };
 	if (controlId === 'auto-compaction' && typeof value === 'boolean')
 		return { type: 'set_auto_compaction', enabled: value };
 	if (controlId === 'auto-retry' && typeof value === 'boolean')

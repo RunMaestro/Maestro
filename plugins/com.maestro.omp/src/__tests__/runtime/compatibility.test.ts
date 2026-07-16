@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import {
+	OMP_16_4_8_COMMAND_IDS,
+	OMP_16_4_8_COMMAND_REGISTRY,
+} from '../../../../../src/shared/omp-command-registry';
 import { OMP_16_4_8_FIXTURE, OMP_16_4_8_TRANSCRIPT } from './fixtures/protocol-16.4.8';
 import {
 	OMP_16_4_8_COMPATIBILITY,
@@ -30,6 +34,17 @@ describe('OMP 16.4.8 compatibility table', () => {
 		const dispositions = Object.values(OMP_16_4_8_COMPATIBILITY);
 		expect(dispositions.every((member) => member.version === '16.4.8')).toBe(true);
 		expect(dispositions.every((member) => member.disposition !== undefined)).toBe(true);
+		expect(OMP_16_4_8_COMMAND_IDS).toEqual(OMP_16_4_8_COMMAND_TYPES);
+		expect(
+			Object.values(OMP_16_4_8_COMMAND_REGISTRY)
+				.filter((entry) => entry.disposition === 'ui')
+				.every(
+					(entry) =>
+						entry.adapterHandler.length > 0 &&
+						typeof entry.rendererCaller === 'string' &&
+						entry.rendererCaller.length > 0
+				)
+		).toBe(true);
 		expect(
 			Object.values(OMP_16_4_8_COMPATIBILITY)
 				.filter((member) => member.disposition === 'ui')
@@ -37,11 +52,16 @@ describe('OMP 16.4.8 compatibility table', () => {
 					(member) =>
 						typeof member.actionId === 'string' &&
 						member.actionId.length > 0 &&
-						typeof member.handler === 'string' &&
-						member.handler.length > 0 &&
-						typeof member.testId === 'string' &&
-						member.testId.length > 0
+						typeof member.adapterHandler === 'string' &&
+						member.adapterHandler.length > 0 &&
+						typeof member.rendererCaller === 'string' &&
+						member.rendererCaller.length > 0
 				)
+		).toBe(true);
+		expect(
+			Object.values(OMP_16_4_8_COMMAND_REGISTRY)
+				.filter((entry) => entry.disposition === 'host')
+				.every((entry) => typeof entry.rationale === 'string' && entry.rationale.length > 0)
 		).toBe(true);
 		expect(
 			Object.values(OMP_16_4_8_COMPATIBILITY)

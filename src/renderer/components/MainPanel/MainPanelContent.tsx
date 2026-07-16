@@ -24,6 +24,7 @@ import {
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
+import { parseSessionId } from '../../utils/sessionIdParser';
 import { notifyToast } from '../../stores/notificationStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
@@ -663,7 +664,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			(sessionId, requestId, approvalResponse) =>
 				window.maestro.process.respondApproval(sessionId, requestId, approvalResponse),
 			() =>
-				updateSessionWith(response.sessionId, (session) => ({
+				updateSessionWith(parseSessionId(response.sessionId).baseSessionId, (session) => ({
 					...session,
 					pendingApprovals: session.pendingApprovals?.filter(
 						(approval) => approval.id !== response.requestId

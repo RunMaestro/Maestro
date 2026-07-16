@@ -14,7 +14,9 @@ describe('respondToAgentApproval', () => {
 			showRejectedToast
 		);
 
-		expect(respondApproval).toHaveBeenCalledWith('session-1', 'approval-1', 'opaque-deny-option');
+		expect(respondApproval).toHaveBeenCalledWith('session-1', 'approval-1', {
+			optionId: 'opaque-deny-option',
+		});
 		expect(removeFromPendingApprovals).toHaveBeenCalledOnce();
 		expect(showRejectedToast).not.toHaveBeenCalled();
 	});
