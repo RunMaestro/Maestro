@@ -3,6 +3,7 @@ import { BarChart3, Search, X } from 'lucide-react';
 import { Spinner } from '../../ui/Spinner';
 import { SessionActivityGraph } from '../../SessionActivityGraph';
 import type { ActivityEntry } from '../../SessionActivityGraph';
+import type { LookbackHours } from '../../History/lookbackOptions';
 import type { Theme } from '../../../types';
 import type { SearchMode } from '../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
@@ -19,7 +20,7 @@ interface SessionSearchBarProps {
 	searchModeDropdownRef: RefObject<HTMLDivElement>;
 	inputRef: RefObject<HTMLInputElement>;
 	activityEntries: ActivityEntry[];
-	graphLookbackHours: number | null;
+	graphLookbackHours: LookbackHours;
 	theme: Theme;
 	onSearchChange: (value: string) => void;
 	onSearchKeyDown: React.KeyboardEventHandler<HTMLInputElement>;
@@ -29,7 +30,7 @@ interface SessionSearchBarProps {
 	onSearchModeDropdownToggle: () => void;
 	onSearchModeSelect: (mode: SearchMode) => void;
 	onGraphBarClick: (bucketStart: number, bucketEnd: number) => void;
-	onLookbackChange: (hours: number | null) => void;
+	onLookbackChange: (hours: LookbackHours) => void;
 }
 
 export const SessionSearchBar = React.memo(function SessionSearchBar({

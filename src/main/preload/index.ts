@@ -430,8 +430,8 @@ export type {
 	TempfileApi,
 	HistoryApi,
 	CliApi,
-	HistoryEntry,
 } from './files';
+export type { HistoryEntry } from '../../shared/types';
 export type {
 	// From commands
 	SpeckitApi,
@@ -578,12 +578,15 @@ export type {
 export type {
 	// From directorNotes
 	DirectorNotesApi,
-	UnifiedHistoryOptions,
-	UnifiedHistoryEntry,
 	SynopsisOptions,
 	SynopsisResult,
 	SynopsisStats,
 } from './directorNotes';
+export type {
+	PaginatedUnifiedHistoryResult,
+	UnifiedHistoryEntry,
+	UnifiedHistoryOptions,
+} from '../../shared/history';
 export type {
 	// From cue
 	CueApi,

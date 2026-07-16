@@ -9,6 +9,7 @@ import {
 	useClickOutside,
 } from '../../hooks';
 import type { AgentSessionsBrowserProps } from './types';
+import type { LookbackHours } from '../History/lookbackOptions';
 import { resolveSessionProjectPath } from './utils/sessionProjectPath';
 import { useAgentSessionsAggregateStats } from './hooks/useAgentSessionsAggregateStats';
 import { useAgentSessionsSearch } from './hooks/useAgentSessionsSearch';
@@ -82,7 +83,7 @@ export function AgentSessionsBrowser({
 	const [searchModeDropdownOpen, setSearchModeDropdownOpen] = useState(false);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [showSearchPanel, setShowSearchPanel] = useState(true);
-	const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
+	const [graphLookbackHours, setGraphLookbackHours] = useState<LookbackHours>(null);
 
 	// Refs shared by multiple consumers - owned by shell
 	const inputRef = useRef<HTMLInputElement>(null);

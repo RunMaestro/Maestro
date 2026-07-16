@@ -2,24 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-
-// Lookback period options for the activity graph
-export type LookbackPeriod = {
-	label: string;
-	hours: number | null; // null = all time
-	bucketCount: number;
-};
-
-export const LOOKBACK_OPTIONS: LookbackPeriod[] = [
-	{ label: '24 hours', hours: 24, bucketCount: 24 },
-	{ label: '72 hours', hours: 72, bucketCount: 24 },
-	{ label: '1 week', hours: 168, bucketCount: 28 },
-	{ label: '2 weeks', hours: 336, bucketCount: 28 },
-	{ label: '1 month', hours: 720, bucketCount: 30 },
-	{ label: '6 months', hours: 4320, bucketCount: 24 },
-	{ label: '1 year', hours: 8760, bucketCount: 24 },
-	{ label: 'All time', hours: null, bucketCount: 24 },
-];
+import { LOOKBACK_OPTIONS } from './History/historyConstants';
+import type { LookbackHours } from './History/lookbackOptions';
 
 // Generic entry type - just needs timestamp
 export interface ActivityEntry {
@@ -30,8 +14,8 @@ interface SessionActivityGraphProps {
 	entries: ActivityEntry[];
 	theme: Theme;
 	onBarClick?: (bucketStartTime: number, bucketEndTime: number) => void;
-	lookbackHours: number | null; // null = all time
-	onLookbackChange: (hours: number | null) => void;
+	lookbackHours: LookbackHours;
+	onLookbackChange: (hours: LookbackHours) => void;
 	className?: string;
 }
 

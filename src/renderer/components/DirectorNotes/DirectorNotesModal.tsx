@@ -12,6 +12,7 @@ import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
 import { useModalStore, selectModalData } from '../../stores/modalStore';
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
+import type { LookbackHours } from '../History/lookbackOptions';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
 // Lazy load tab components
@@ -53,7 +54,7 @@ export function DirectorNotesModal({
 	const [activeTab, setActiveTab] = useState<TabId>(directorNotesData?.initialTab ?? 'history');
 	const [overviewReady, setOverviewReady] = useState(cached);
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
-	const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
+	const [lookbackHours, setLookbackHours] = useState<LookbackHours>(() =>
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
 

@@ -3,7 +3,7 @@
 
 import { readSessions, readHistory, readSettings } from '../services/storage';
 import { formatError, formatDirectorNotesHistory } from '../output/formatter';
-import type { HistoryEntry } from '../../shared/types';
+import type { UnifiedHistoryEntry } from '../../shared/history';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -13,11 +13,6 @@ interface DirectorNotesHistoryOptions {
 	filter?: string;
 	limit?: string;
 	json?: boolean;
-}
-
-interface UnifiedHistoryEntry extends HistoryEntry {
-	agentName?: string;
-	sourceSessionId: string;
 }
 
 function resolveFormat(options: DirectorNotesHistoryOptions): OutputFormat {

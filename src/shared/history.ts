@@ -5,7 +5,7 @@
  * (HistoryManager) and CLI (storage.ts) for per-session history storage.
  */
 
-import type { HistoryEntry } from './types';
+import type { HistoryEntry, HistoryEntryType } from './types';
 
 /**
  * Current history file format version. Increment when making breaking changes
@@ -65,6 +65,68 @@ export interface PaginatedResult<T> {
 	limit: number;
 	offset: number;
 	hasMore: boolean;
+}
+
+/** Single time slice in a history activity graph. */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
+}
+
+/**
+ * Transport-safe activity graph payload returned by history IPC handlers.
+ * Cache invalidation metadata deliberately remains main-process internal.
+ */
+export interface HistoryGraphData {
+	buckets: GraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	hostCounts: Record<string, number>;
+	cached: boolean;
+}
+
+/** A history entry annotated with its source Maestro session. */
+export interface UnifiedHistoryEntry extends HistoryEntry {
+	agentName?: string;
+	sourceSessionId: string;
+}
+
+/** Aggregate counts returned with unified history results. */
+export interface UnifiedHistoryStats {
+	agentCount: number;
+	sessionCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	totalCount: number;
+}
+
+export type UnifiedHistoryFilter = HistoryEntryType | HistoryEntryType[] | null;
+
+/** Input accepted by the unified-history IPC endpoint. */
+export interface UnifiedHistoryOptions {
+	lookbackDays: number;
+	filter?: UnifiedHistoryFilter;
+	limit?: number;
+	offset?: number;
+	graphBucketCount?: number;
+}
+
+/** Paginated unified history returned across the preload boundary. */
+export interface PaginatedUnifiedHistoryResult extends PaginatedResult<UnifiedHistoryEntry> {
+	stats: UnifiedHistoryStats;
+	graphBuckets?: GraphBucket[];
+}
+
+/** Unified graph data augments the base graph transport with aggregate stats. */
+export interface UnifiedHistoryGraphData extends HistoryGraphData {
+	stats: UnifiedHistoryStats;
 }
 
 /**

@@ -1,17 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
+import type { GraphBucket } from '../../../shared/history';
 import { LOOKBACK_OPTIONS, CUE_COLOR } from './historyConstants';
+import type { LookbackHours } from './lookbackOptions';
 import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
-
-/** Pre-computed activity graph bucket from backend */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
 
 // Activity bar graph component with configurable lookback window
 export interface ActivityGraphProps {
@@ -19,8 +14,8 @@ export interface ActivityGraphProps {
 	theme: Theme;
 	viewportRange?: { start: number; end: number }; // Timestamps of currently visible entries in the list
 	onBarClick?: (bucketStartTime: number, bucketEndTime: number) => void;
-	lookbackHours: number | null; // null = all time
-	onLookbackChange: (hours: number | null) => void;
+	lookbackHours: LookbackHours;
+	onLookbackChange: (hours: LookbackHours) => void;
 	/** Pre-computed buckets from backend (uses all entries, not just first page) */
 	precomputedBuckets?: GraphBucket[];
 	/**

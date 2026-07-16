@@ -20,6 +20,8 @@ import {
 	ORPHANED_SESSION_ID,
 	sortEntriesByTimestamp,
 	paginateEntries,
+	type GraphBucket,
+	type HistoryGraphData,
 } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import {
@@ -36,7 +38,6 @@ import {
 	getHistoryBucketCache,
 	fileFingerprint,
 	HISTORY_BUCKET_CACHE_VERSION,
-	type CachedGraphBucket,
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate, LOCAL_HOST_AGG_KEY } from '../../utils/history-bucket-builder';
 import type { PluginEvent } from '../../../shared/plugins/events';
@@ -49,36 +50,9 @@ export interface SharedHistoryContext {
 	remoteCwd: string;
 }
 
-/**
- * Aggregated graph data returned by `history:getGraphData` and
- * `director-notes:getGraphData`. Buckets are computed over the full source
- * history (not the renderer's lookback window) so the graph view stays
- * "all-encompassing" while the entry list paginates beneath it.
- */
-export interface HistoryGraphData {
-	buckets: CachedGraphBucket[];
-	bucketCount: number;
-	earliestTimestamp: number;
-	latestTimestamp: number;
-	totalCount: number;
-	autoCount: number;
-	userCount: number;
-	cueCount: number;
-	/**
-	 * Per-host entry counts in the same window the buckets cover. Key is
-	 * the entry's `hostname`, or `"__local__"` for entries with no
-	 * hostname. Lookback-aware via the same `lookbackMs` that bucketing
-	 * uses, so flipping the renderer's lookback selector updates these
-	 * numbers too.
-	 */
-	hostCounts: Record<string, number>;
-	/** True when served from the disk cache (diagnostics only). */
-	cached: boolean;
-}
-
 /** Internal: shape returned by `buildBucketAggregate`. */
 interface BucketAggregateLike {
-	buckets: CachedGraphBucket[];
+	buckets: GraphBucket[];
 	earliestTimestamp: number;
 	latestTimestamp: number;
 	totalCount: number;
@@ -109,7 +83,7 @@ function aggregateToGraphData(
 
 function cachedToGraphData(
 	cached: {
-		buckets: CachedGraphBucket[];
+		buckets: GraphBucket[];
 		bucketCount: number;
 		earliestTimestamp: number;
 		latestTimestamp: number;

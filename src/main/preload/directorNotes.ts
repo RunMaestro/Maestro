@@ -9,73 +9,11 @@
 import { ipcRenderer } from 'electron';
 import type { ToolType, HistoryEntry } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
-
-/** Aggregate stats returned alongside unified history */
-export interface UnifiedHistoryStats {
-	agentCount: number; // Distinct Maestro agents with history
-	sessionCount: number; // Distinct provider sessions across all agents
-	autoCount: number; // Total AUTO entries
-	userCount: number; // Total USER entries
-	cueCount: number; // Total CUE entries
-	totalCount: number; // Total entries (autoCount + userCount + cueCount)
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
-
-/**
- * Paginated result wrapper (mirrors shared/history.ts PaginatedResult)
- */
-export interface PaginatedUnifiedHistoryResult {
-	entries: UnifiedHistoryEntry[];
-	total: number;
-	limit: number;
-	offset: number;
-	hasMore: boolean;
-	stats: UnifiedHistoryStats;
-	graphBuckets?: GraphBucket[];
-}
-
-/**
- * Options for fetching unified history
- */
-export interface UnifiedHistoryOptions {
-	lookbackDays: number;
-	// A single type, an array of types to include, or null for "all".
-	// An empty array selects nothing.
-	filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
-	/** Number of entries to return per page (default: 100) */
-	limit?: number;
-	/** Number of entries to skip for pagination (default: 0) */
-	offset?: number;
-	/** Number of buckets for the activity graph (passed from frontend lookback config) */
-	graphBucketCount?: number;
-}
-
-/**
- * A history entry augmented with source session info
- */
-export interface UnifiedHistoryEntry {
-	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
-	timestamp: number;
-	summary: string;
-	fullResponse?: string;
-	agentSessionId?: string;
-	sessionName?: string;
-	projectPath: string;
-	sessionId?: string;
-	contextUsage?: number;
-	success?: boolean;
-	elapsedTimeMs?: number;
-	validated?: boolean;
-	agentName?: string;
-	sourceSessionId: string;
-}
+import type {
+	PaginatedUnifiedHistoryResult,
+	UnifiedHistoryGraphData,
+	UnifiedHistoryOptions,
+} from '../../shared/history';
 
 /**
  * Options for synopsis generation
@@ -110,22 +48,6 @@ export interface SynopsisResult {
 	narrative?: DirectorNotesNarrative;
 	/** Set when the raw synopsis could not be parsed into a structured narrative. */
 	narrativeError?: string;
-}
-
-/**
- * All-time activity graph data aggregated across every session.
- */
-export interface UnifiedGraphData {
-	buckets: GraphBucket[];
-	bucketCount: number;
-	earliestTimestamp: number;
-	latestTimestamp: number;
-	totalCount: number;
-	autoCount: number;
-	userCount: number;
-	cueCount: number;
-	cached: boolean;
-	stats: UnifiedHistoryStats;
 }
 
 /** Options for the deterministic Rich Overview stats IPC */
@@ -186,7 +108,10 @@ export function createDirectorNotesApi() {
 		// lookback parameter controls the window - `null` for "all time",
 		// or hours back from "now". Each (bucketCount, lookback) pair gets
 		// its own cached aggregate keyed by composite source fingerprint.
-		getGraphData: (bucketCount: number, lookbackHours: number | null): Promise<UnifiedGraphData> =>
+		getGraphData: (
+			bucketCount: number,
+			lookbackHours: number | null
+		): Promise<UnifiedHistoryGraphData> =>
 			ipcRenderer.invoke('director-notes:getGraphData', bucketCount, lookbackHours),
 
 		// Deterministic Rich Mode stats computed in the main process over history

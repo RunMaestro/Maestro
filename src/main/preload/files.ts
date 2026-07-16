@@ -8,67 +8,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Single bucket in the activity-graph aggregate.
- */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
-
-/**
- * All-time graph data returned by `history:getGraphData` and
- * `director-notes:getGraphData`. Buckets always span the full source
- * history so the activity graph stays "all-encompassing" even when the
- * entry list paginates a smaller window underneath.
- */
-export interface HistoryGraphData {
-	buckets: GraphBucket[];
-	bucketCount: number;
-	earliestTimestamp: number;
-	latestTimestamp: number;
-	totalCount: number;
-	autoCount: number;
-	userCount: number;
-	cueCount: number;
-	cached: boolean;
-}
-
-/**
- * History entry
- */
-export interface HistoryEntry {
-	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
-	timestamp: number;
-	summary: string;
-	fullResponse?: string;
-	agentSessionId?: string;
-	projectPath: string;
-	sessionId?: string;
-	sessionName?: string;
-	contextUsage?: number;
-	usageStats?: {
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadInputTokens: number;
-		cacheCreationInputTokens: number;
-		totalCostUsd: number;
-		contextWindow: number;
-	};
-	success?: boolean;
-	elapsedTimeMs?: number;
-	validated?: boolean;
-	hostname?: string;
-	/** Cross-agent attribution: the agent that consulted this one via `@mention`. */
-	sourceAgentName?: string;
-	/** Claude-only, per-turn: `interactive` = maestro-p TUI, `api` = `claude --print`. */
-	tokenSource?: 'interactive' | 'api';
-	/** Claude-only, per-turn: `auto` = user/usage selected, `limit` = forced API fallback. */
-	tokenSourceReason?: 'auto' | 'limit';
-}
+import type { HistoryGraphData } from '../../shared/history';
+import type { HistoryEntry } from '../../shared/types';
 
 /**
  * Creates the tempfile API object for preload exposure

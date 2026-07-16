@@ -30,7 +30,8 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
-import type { GraphBucket } from './History/ActivityGraph';
+import type { GraphBucket } from '../../shared/history';
+import type { LookbackHours } from './History/lookbackOptions';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -70,7 +71,7 @@ const SCROLL_LOAD_THRESHOLD = 500;
  * resolution (e.g. 24 buckets for "24 hours" and "All time", 28 for "1
  * week", etc.).
  */
-function bucketCountForLookback(hours: number | null): number {
+function bucketCountForLookback(hours: LookbackHours): number {
 	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
 	return config?.bucketCount ?? 24;
 }
@@ -126,7 +127,7 @@ export const HistoryPanel = React.memo(
 		// Lookback selector - drives both the paginated entry list (server-side)
 		// and the graph window. The graph data is server-cached per lookback,
 		// so flipping between windows is cheap once each has been computed.
-		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
+		const [graphLookbackHours, setGraphLookbackHours] = useState<LookbackHours>(null);
 		// Server-cached graph buckets for the current lookback.
 		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
@@ -289,7 +290,7 @@ export const HistoryPanel = React.memo(
 				const saved = await window.maestro.settings.get(settingsKey);
 				if (saved !== undefined) {
 					// saved could be null (all time) or a number
-					setGraphLookbackHours(saved as number | null);
+					setGraphLookbackHours(saved as LookbackHours);
 				}
 			};
 			loadLookbackPreference();
@@ -297,7 +298,7 @@ export const HistoryPanel = React.memo(
 
 		// Handler to update lookback hours and persist the preference
 		const handleLookbackChange = useCallback(
-			(hours: number | null) => {
+			(hours: LookbackHours) => {
 				setGraphLookbackHours(hours);
 				const settingsKey = `historyGraphLookback:${session.id}`;
 				window.maestro.settings.set(settingsKey, hours);
