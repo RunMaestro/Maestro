@@ -154,15 +154,16 @@ export function selectCueDiscoverySignature(state: { sessions: Session[] }): str
 }
 
 /**
- * AI-tab fields needed for App shell chrome, tab strip, and AppModals flags.
+ * AI-tab fields needed for App shell chrome when a host still holds a chrome Session.
  * Deliberately omits `logs` / thinking chunks so streaming does not bust equality.
+ * Also omits tab `state` / `isGeneratingName` / session `state` - those belong to
+ * paint leaves (MainPanel / SessionList sidebar equality), not MaestroConsoleInner.
  */
 function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 	if (a === b) return true;
 	return (
 		a.id === b.id &&
 		a.name === b.name &&
-		a.state === b.state &&
 		a.starred === b.starred &&
 		a.hasUnread === b.hasUnread &&
 		a.readOnlyMode === b.readOnlyMode &&
@@ -173,7 +174,6 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 		a.autoSendOnActivate === b.autoSendOnActivate &&
 		a.customModel === b.customModel &&
 		a.customEffort === b.customEffort &&
-		a.isGeneratingName === b.isGeneratingName &&
 		!!a.pendingMergedContext === !!b.pendingMergedContext &&
 		a.agentError?.timestamp === b.agentError?.timestamp &&
 		a.agentError?.message === b.agentError?.message
@@ -181,21 +181,19 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 }
 
 /**
- * Equality for the active agent when held by MaestroConsoleInner / tab chrome.
+ * Equality for the active agent when held by MaestroConsoleInner / remaining App shell.
  *
- * Returns true when nothing the shell needs for layout, tab strip, title bar, or
- * modal flags has changed. Streaming fields (logs, tokens, contextUsage, fileTree,
- * workLog, etc.) are ignored so log/token flushes do not re-render the whole console.
+ * Returns true when nothing the shell needs for layout, title bar, or modal flags has
+ * changed. Streaming fields (logs, tokens, contextUsage, fileTree, workLog, etc.) and
+ * busy/thinking chrome (`state`, tab `state`, `isGeneratingName`) are ignored so
+ * send/reply and log flushes do not re-render the whole console. Tab-strip busy /
+ * naming spinners live in MainPanel (full session) and the Left Bar (sidebar equality).
  *
  * Invariant: any consumer of this chrome-gated slice must not read fields absent
  * from this comparator (or those fields go silently stale). Paint/data leaves that
  * need omitted fields (MainPanel logs, useFileTreeManagement.fileTree, summarize
  * eligibility via contextUsage/logs) must self-subscribe with their own selector
  * or read getState() at event time - same pattern as MainPanel.
- *
- * Tab-strip chrome includes `isGeneratingName`, tab `agentError`, presence of
- * `pendingMergedContext`, and browser `customTitle` so rename / error / naming
- * spinners stay live under this equality.
  */
 export function activeSessionChromeEquality(a: Session | null, b: Session | null): boolean {
 	if (a === b) return true;
@@ -209,7 +207,6 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		a.inputMode !== b.inputMode ||
 		a.cwd !== b.cwd ||
 		a.shellCwd !== b.shellCwd ||
-		a.state !== b.state ||
 		a.parentSessionId !== b.parentSessionId ||
 		a.isGitRepo !== b.isGitRepo ||
 		a.isPianola !== b.isPianola ||

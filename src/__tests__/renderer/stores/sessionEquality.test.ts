@@ -149,10 +149,26 @@ describe('sidebarSessionEquality', () => {
 });
 
 describe('activeSessionChromeEquality', () => {
-	it('returns false when isGeneratingName flips', () => {
+	it('returns true when isGeneratingName flips (MainPanel owns naming spinner)', () => {
 		const a = createMockSession({ aiTabs: [tab({ id: 't1', isGeneratingName: false })] });
-		const b = createMockSession({ aiTabs: [tab({ id: 't1', isGeneratingName: true })] });
-		expect(activeSessionChromeEquality(a, b)).toBe(false);
+		const b: Session = {
+			...a,
+			aiTabs: [{ ...a.aiTabs[0], isGeneratingName: true }],
+		};
+		expect(activeSessionChromeEquality(a, b)).toBe(true);
+	});
+
+	it('returns true when session/tab busy state flips (sidebar + MainPanel own busy paint)', () => {
+		const a = createMockSession({
+			state: 'idle',
+			aiTabs: [tab({ id: 't1', state: 'idle' })],
+		});
+		const b: Session = {
+			...a,
+			state: 'busy',
+			aiTabs: [{ ...a.aiTabs[0], state: 'busy' }],
+		};
+		expect(activeSessionChromeEquality(a, b)).toBe(true);
 	});
 
 	it('returns false when browser customTitle changes', () => {

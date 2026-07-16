@@ -106,7 +106,6 @@ export interface ScrollLogHandlersReturn {
 
 export interface TabHandlersReturn
 	extends
-		TabDerivedState,
 		AITabHandlersReturn,
 		FilePreviewTabHandlersReturn,
 		BrowserTabHandlersReturn,
