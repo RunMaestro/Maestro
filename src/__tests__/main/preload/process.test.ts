@@ -20,6 +20,8 @@ vi.mock('electron', () => ({
 }));
 
 import { createProcessApi, type ProcessConfig } from '../../../main/preload/process';
+import { OMP_NATIVE_TURN_COMPLETION } from '../../../shared/omp-native-session';
+import type { OmpNativeTurnCompletion } from '../../../shared/omp-native-session';
 
 describe('Process Preload API', () => {
 	let api: ReturnType<typeof createProcessApi>;
@@ -236,6 +238,39 @@ describe('Process Preload API', () => {
 
 			expect(mockOn).toHaveBeenCalledWith('process:exit', expect.any(Function));
 			expect(typeof cleanup).toBe('function');
+		});
+	});
+
+	describe('onCommandExit', () => {
+		it('forwards native turn completion separately from legacy command exits', () => {
+			const callback = vi.fn();
+			let registeredHandler:
+				| ((
+						event: unknown,
+						sessionId: string,
+						code: number,
+						completion?: OmpNativeTurnCompletion
+				  ) => void)
+				| undefined;
+
+			mockOn.mockImplementation(
+				(
+					channel: string,
+					handler: (
+						event: unknown,
+						sessionId: string,
+						code: number,
+						completion?: OmpNativeTurnCompletion
+					) => void
+				) => {
+					if (channel === 'process:command-exit') registeredHandler = handler;
+				}
+			);
+
+			api.onCommandExit(callback);
+			registeredHandler!({}, 'session-123-ai-tab-1', 0, OMP_NATIVE_TURN_COMPLETION);
+
+			expect(callback).toHaveBeenCalledWith('session-123-ai-tab-1', 0, OMP_NATIVE_TURN_COMPLETION);
 		});
 	});
 

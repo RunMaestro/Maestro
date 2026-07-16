@@ -63,6 +63,26 @@ test.describe('first-party OMP regular session', () => {
 				.toBe(true);
 			await expect(launched.window.getByText('native expanded complete')).toBeVisible();
 			await expect(approvalDialog).toHaveCount(0);
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await composer.fill('second native prompt after agent_end');
+			await composer.press('Enter');
+			await expect(approvalDialog).toBeVisible({ timeout: 30_000 });
+			await approvalDialog.getByRole('button', { name: 'Approve', exact: true }).click();
+			await expect(
+				launched.window.getByText(
+					/native text: second native prompt after agent_endnative expanded complete/
+				)
+			).toBeVisible({ timeout: 30_000 });
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect
+				.poll(
+					() =>
+						fs
+							.readFileSync(frameLogPath, 'utf8')
+							.includes('"message":"second native prompt after agent_end"'),
+					{ timeout: 10_000 }
+				)
+				.toBe(true);
 			const frames = fs.readFileSync(frameLogPath, 'utf8');
 			expect(frames).toContain('"type":"message_update"');
 			expect(frames).toContain('"type":"turn_end"');

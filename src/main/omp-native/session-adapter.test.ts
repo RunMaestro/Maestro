@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
 import { OmpNativeSessionAdapter } from './session-adapter';
 import capturedRpcTurn from './fixtures/real-rpc-turn.json';
+import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 import capturedThinkingLevel from './fixtures/real-rpc-thinking-level.json';
 
 class FakeChild extends EventEmitter {
@@ -154,6 +155,7 @@ describe('OmpNativeSessionAdapter', () => {
 		const send = vi.fn();
 		const adapter = OmpNativeSessionAdapter.create({
 			sessionId: 'tab-2',
+			agentSessionId: 'omp-provider-session-2',
 			cwd: 'C:/work/project',
 			command: 'omp',
 			send,
@@ -184,7 +186,12 @@ describe('OmpNativeSessionAdapter', () => {
 					channel === 'process:data' && sessionId === 'tab-2' && value === 'reasoning'
 			)
 		).toHaveLength(0);
-		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-2',
+			0,
+			OMP_NATIVE_TURN_COMPLETION
+		);
 		expect(send).not.toHaveBeenCalledWith('process:exit', 'tab-2', 0);
 		expect(child.kill).not.toHaveBeenCalled();
 
@@ -428,7 +435,12 @@ describe('OmpNativeSessionAdapter', () => {
 			cancelled: true,
 		});
 		emit(child, { type: 'turn_end' });
-		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-callback-safety', 0);
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-callback-safety',
+			0,
+			OMP_NATIVE_TURN_COMPLETION
+		);
 	});
 
 	it('does not expose or mutate a composer control without a matching RPC command', async () => {
@@ -827,7 +839,12 @@ describe('OmpNativeSessionAdapter', () => {
 				([channel, sessionId]) => channel === 'process:data' && sessionId === 'captured-turn'
 			)
 		).toEqual([['process:data', 'captured-turn', 'Ok.']]);
-		expect(send).toHaveBeenCalledWith('process:command-exit', 'captured-turn', 0);
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'captured-turn',
+			0,
+			OMP_NATIVE_TURN_COMPLETION
+		);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		const features = send.mock.calls
 			.filter(([channel]) => channel === 'process:runtime-features')

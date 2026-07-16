@@ -712,7 +712,13 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
-		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		onCommandExit: (
+			callback: (
+				sessionId: string,
+				code: number,
+				completion?: import('../shared/omp-native-session').OmpNativeTurnCompletion
+			) => void
+		) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
 		onAgentError: (
 			callback: (

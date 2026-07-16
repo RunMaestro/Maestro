@@ -18,6 +18,7 @@ import type {
 	AgentApprovalResponse,
 	AgentRuntimeFeatureState,
 } from '../../shared/agent-runtime-features';
+import type { OmpNativeTurnCompletion } from '../../shared/omp-native-session';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -1956,8 +1957,15 @@ export function createProcessApi() {
 		/**
 		 * Subscribe to command exit from runCommand (separate from PTY exit)
 		 */
-		onCommandExit: (callback: (sessionId: string, code: number) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, code: number) => callback(sessionId, code);
+		onCommandExit: (
+			callback: (sessionId: string, code: number, completion?: OmpNativeTurnCompletion) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				code: number,
+				completion?: OmpNativeTurnCompletion
+			) => callback(sessionId, code, completion);
 			ipcRenderer.on('process:command-exit', handler);
 			return () => ipcRenderer.removeListener('process:command-exit', handler);
 		},

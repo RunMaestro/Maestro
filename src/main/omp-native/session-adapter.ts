@@ -19,6 +19,7 @@ import {
 	type OmpRpcTransport,
 } from './types';
 import { isRegisteredOmpControl } from '../../shared/omp-command-registry';
+import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 
 export type OmpNativeSend = (channel: string, ...args: unknown[]) => void;
 export type OmpChildSpawner = (
@@ -577,12 +578,13 @@ export class OmpNativeSessionAdapter {
 		if (!this.turnInFlight) return;
 		this.turnInFlight = false;
 		// A native OMP agent_end completes one turn, not the long-lived RPC child.
-		// command-exit releases composer bookkeeping; process:exit would tear down
-		// the regular session and reject every subsequent prompt.
+		// The process session id identifies the owning Maestro AI tab; the provider
+		// session id is only continuity metadata and cannot route renderer state.
 		this.options.send(
 			'process:command-exit',
-			this.options.agentSessionId ?? this.options.sessionId,
-			0
+			this.options.sessionId,
+			0,
+			OMP_NATIVE_TURN_COMPLETION
 		);
 	}
 }

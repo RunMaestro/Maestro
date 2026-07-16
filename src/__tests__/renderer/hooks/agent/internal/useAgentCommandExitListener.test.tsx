@@ -4,15 +4,27 @@ import { useAgentCommandExitListener } from '../../../../../renderer/hooks/agent
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import { OMP_NATIVE_TURN_COMPLETION } from '../../../../../shared/omp-native-session';
+import type { OmpNativeTurnCompletion } from '../../../../../shared/omp-native-session';
 
-let handler: ((sessionId: string, code: number) => void) | undefined;
+let handler:
+	| ((sessionId: string, code: number, completion?: OmpNativeTurnCompletion) => void)
+	| undefined;
 const mockUnsubscribe = vi.fn();
 
 const mockProcess = {
-	onCommandExit: vi.fn((h: any) => {
-		handler = h;
-		return mockUnsubscribe;
-	}),
+	onCommandExit: vi.fn(
+		(
+			handlerCallback: (
+				sessionId: string,
+				code: number,
+				completion?: OmpNativeTurnCompletion
+			) => void
+		) => {
+			handler = handlerCallback;
+			return mockUnsubscribe;
+		}
+	),
 };
 
 beforeEach(() => {
@@ -66,6 +78,45 @@ describe('useAgentCommandExitListener', () => {
 		handler!('sess-1', 0);
 
 		expect(useSessionStore.getState().sessions[0].state).toBe('busy');
+	});
+
+	it('settles two native OMP turns without terminating their routed AI tab', () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: Date.now() });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: Date.now(),
+		});
+		useSessionStore.getState().setSessions(() => [session]);
+
+		renderHook(() => useAgentCommandExitListener());
+		handler!('sess-1-ai-tab-1', 0, OMP_NATIVE_TURN_COMPLETION);
+
+		let updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).toBe('idle');
+		expect(updated.aiTabs[0]).toMatchObject({ state: 'idle', thinkingStartTime: undefined });
+
+		useSessionStore.getState().setSessions((sessions) =>
+			sessions.map((current) => ({
+				...current,
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: Date.now(),
+				aiTabs: current.aiTabs.map((currentTab) => ({
+					...currentTab,
+					state: 'busy' as const,
+					thinkingStartTime: Date.now(),
+				})),
+			}))
+		);
+		handler!('sess-1-ai-tab-1', 0, OMP_NATIVE_TURN_COMPLETION);
+
+		updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).toBe('idle');
+		expect(updated.aiTabs[0]).toMatchObject({ state: 'idle', thinkingStartTime: undefined });
 	});
 
 	it('transitions session to idle when no AI tabs busy', () => {
