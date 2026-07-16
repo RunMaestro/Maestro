@@ -296,60 +296,6 @@ Some sample content for testing.
 		});
 	});
 
-	test.describe('Image Paste and Attachment', () => {
-		test.skip('should show image upload button when in edit mode', async ({ window }) => {
-			// Test requires configured Auto Run folder
-			const autoRunTab = window.locator('text=Auto Run');
-			if ((await autoRunTab.count()) > 0) {
-				await autoRunTab.first().click();
-
-				const editButton = window.locator('button').filter({ hasText: 'Edit' });
-				if ((await editButton.count()) > 0 && (await editButton.isVisible())) {
-					await editButton.first().click();
-
-					// Look for image upload button (has Image icon)
-					const imageButton = window
-						.locator('button[title*="image"]')
-						.or(window.locator('button[title*="Image"]'));
-					await expect(imageButton).toBeVisible();
-				}
-			}
-		});
-
-		test.skip('should handle image paste from clipboard', async ({ window }) => {
-			// This test requires clipboard mocking with image data
-			// Skip until clipboard mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock clipboard with image data
-			// 4. Press Cmd+V
-			// 5. Verify image is inserted into content
-			// 6. Verify image file is saved to images/ folder
-		});
-
-		test.skip('should handle image file upload via button', async ({ window }) => {
-			// This test requires file input mocking
-			// Skip until file input mocking is implemented
-			// Steps would be:
-			// 1. Configure Auto Run folder
-			// 2. Switch to edit mode
-			// 3. Mock file input selection
-			// 4. Click upload button
-			// 5. Verify image is inserted into content
-		});
-
-		test.skip('should display uploaded images in attachments section', async ({ window }) => {
-			// This test verifies the attachments preview area
-			// Requires an existing image in the Auto Run folder
-		});
-
-		test.skip('should open lightbox when clicking image in preview', async ({ window }) => {
-			// This test verifies lightbox functionality
-			// Requires an image to be present in the document
-		});
-	});
-
 	test.describe('Mode Switching', () => {
 		test('should switch between edit and preview modes via buttons', async ({ window }) => {
 			const autoRunTab = window.locator('text=Auto Run');
@@ -706,36 +652,6 @@ Some sample content for testing.
 				}
 			}
 		});
-	});
-});
-
-/**
- * Integration tests that require a fully configured session with Auto Run
- * These tests verify end-to-end workflows
- */
-test.describe('Auto Run Editing Integration', () => {
-	test.skip('should persist edits across session restarts', async ({ window }) => {
-		// This test requires:
-		// 1. Creating a session with Auto Run
-		// 2. Making edits
-		// 3. Saving
-		// 4. Restarting app
-		// 5. Verifying edits persist
-	});
-
-	test.skip('should handle external file changes', async ({ window }) => {
-		// This test requires:
-		// 1. Opening Auto Run with a document
-		// 2. Modifying the file externally
-		// 3. Verifying contentVersion increments
-		// 4. Verifying content updates
-	});
-
-	test.skip('should handle concurrent editing from multiple sources', async ({ window }) => {
-		// This test would verify behavior when:
-		// - Main panel and expanded modal both show same document
-		// - External process modifies file
-		// - Both views should update correctly
 	});
 });
 
