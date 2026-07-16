@@ -22,7 +22,7 @@ export function useCopyFeedback(
 	{ duration = 2000 }: UseCopyFeedbackOptions = {}
 ): UseCopyFeedbackReturn {
 	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<number | null>(null);
+	const timeoutRef = useRef<number | NodeJS.Timeout | null>(null);
 	const mountedRef = useRef(true);
 	const requestIdRef = useRef(0);
 
