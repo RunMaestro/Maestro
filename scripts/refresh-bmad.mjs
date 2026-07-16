@@ -11,7 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import https from 'https';
+import { httpsGet } from './lib/http.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BMAD_DIR = path.join(__dirname, '..', 'src', 'prompts', 'bmad');
@@ -105,48 +105,23 @@ function applyMaestroPromptFixes(id, prompt) {
 	return fixed;
 }
 
-function httpsGet(url, options = {}) {
-	return new Promise((resolve, reject) => {
-		const timeoutMs = options.timeoutMs ?? 15000;
-		const headers = {
-			'User-Agent': 'Maestro-BMAD-Refresher',
-			Accept: 'application/vnd.github+json',
-			...options.headers,
-		};
-
-		const req = https.get(url, { headers }, (res) => {
-			if (res.statusCode === 301 || res.statusCode === 302) {
-				return resolve(httpsGet(res.headers.location, options));
-			}
-
-			if (res.statusCode !== 200) {
-				reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-				return;
-			}
-
-			let data = '';
-			res.on('data', (chunk) => (data += chunk));
-			res.on('end', () => resolve({ data, headers: res.headers }));
-			res.on('error', reject);
-		});
-
-		req.setTimeout(timeoutMs, () => {
-			req.destroy(new Error(`Request timed out after ${timeoutMs}ms: ${url}`));
-		});
-		req.on('error', reject);
-	});
-}
+const BMAD_HTTP_OPTIONS = {
+	timeoutMs: 15000,
+	headers: {
+		'User-Agent': 'Maestro-BMAD-Refresher',
+		Accept: 'application/vnd.github+json',
+	},
+};
 
 async function getJson(url) {
-	const { data } = await httpsGet(url);
+	const { data } = await httpsGet(url, BMAD_HTTP_OPTIONS);
 	return JSON.parse(data);
 }
 
 async function getText(url) {
 	const { data } = await httpsGet(url, {
-		headers: {
-			Accept: 'text/plain',
-		},
+		...BMAD_HTTP_OPTIONS,
+		headers: { ...BMAD_HTTP_OPTIONS.headers, Accept: 'text/plain' },
 	});
 	return data;
 }

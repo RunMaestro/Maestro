@@ -16,7 +16,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import https from 'https';
+import { httpsGet } from './lib/http.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OPENSPEC_DIR = path.join(__dirname, '..', 'src', 'prompts', 'openspec');
@@ -37,35 +37,9 @@ const UPSTREAM_COMMANDS = [
 	{ id: 'archive', sourceFile: 'archive-change.ts' },
 ];
 
-/**
- * Make an HTTPS GET request
- */
-function httpsGet(url, options = {}) {
-	return new Promise((resolve, reject) => {
-		const headers = {
-			'User-Agent': 'Maestro-OpenSpec-Refresher',
-			...options.headers,
-		};
-
-		https
-			.get(url, { headers }, (res) => {
-				if (res.statusCode === 301 || res.statusCode === 302) {
-					return resolve(httpsGet(res.headers.location, options));
-				}
-
-				if (res.statusCode !== 200) {
-					reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-					return;
-				}
-
-				let data = '';
-				res.on('data', (chunk) => (data += chunk));
-				res.on('end', () => resolve({ data, headers: res.headers }));
-				res.on('error', reject);
-			})
-			.on('error', reject);
-	});
-}
+const OPENSPEC_HTTP_OPTIONS = {
+	headers: { 'User-Agent': 'Maestro-OpenSpec-Refresher' },
+};
 
 /**
  * Extract the `instructions:` template-literal string from a workflow module's
@@ -103,7 +77,8 @@ function extractInstructions(tsSource) {
 async function getLatestVersion() {
 	try {
 		const { data } = await httpsGet(
-			`${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`
+			`${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`,
+			OPENSPEC_HTTP_OPTIONS
 		);
 		return JSON.parse(data).tag_name;
 	} catch {
@@ -132,7 +107,7 @@ async function refreshOpenSpec() {
 		let updatedCount = 0;
 		for (const { id, sourceFile } of UPSTREAM_COMMANDS) {
 			const url = `${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${version}/${WORKFLOWS_BASE_PATH}/${sourceFile}`;
-			const { data: tsSource } = await httpsGet(url);
+			const { data: tsSource } = await httpsGet(url, OPENSPEC_HTTP_OPTIONS);
 			const content = extractInstructions(tsSource);
 
 			if (!content) {

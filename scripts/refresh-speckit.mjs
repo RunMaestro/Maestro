@@ -18,7 +18,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import https from 'https';
+import { httpsGet } from './lib/http.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPECKIT_DIR = path.join(__dirname, '..', 'src', 'prompts', 'speckit');
@@ -42,36 +42,9 @@ const UPSTREAM_COMMANDS = [
 	'taskstoissues',
 ];
 
-/**
- * Make an HTTPS GET request
- */
-function httpsGet(url, options = {}) {
-	return new Promise((resolve, reject) => {
-		const headers = {
-			'User-Agent': 'Maestro-SpecKit-Refresher',
-			...options.headers,
-		};
-
-		https
-			.get(url, { headers }, (res) => {
-				// Handle redirects
-				if (res.statusCode === 301 || res.statusCode === 302) {
-					return resolve(httpsGet(res.headers.location, options));
-				}
-
-				if (res.statusCode !== 200) {
-					reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-					return;
-				}
-
-				let data = '';
-				res.on('data', (chunk) => (data += chunk));
-				res.on('end', () => resolve({ data, headers: res.headers }));
-				res.on('error', reject);
-			})
-			.on('error', reject);
-	});
-}
+const SPECKIT_HTTP_OPTIONS = {
+	headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' },
+};
 
 /**
  * Rewrite repo-relative paths to their installed `.specify/...` locations.
@@ -177,7 +150,7 @@ function processSpeckitTemplate(content) {
  */
 async function getLatestRelease() {
 	const url = `${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
-	const { data } = await httpsGet(url);
+	const { data } = await httpsGet(url, SPECKIT_HTTP_OPTIONS);
 	return JSON.parse(data);
 }
 
@@ -202,7 +175,7 @@ async function refreshSpecKit() {
 		let updatedCount = 0;
 		for (const commandName of UPSTREAM_COMMANDS) {
 			const url = `${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${version}/templates/commands/${commandName}.md`;
-			const { data: raw } = await httpsGet(url);
+			const { data: raw } = await httpsGet(url, SPECKIT_HTTP_OPTIONS);
 			const content = processSpeckitTemplate(raw);
 
 			const promptFile = path.join(SPECKIT_DIR, `speckit.${commandName}.md`);
