@@ -89,6 +89,39 @@
 			"dist/**/*",
 			"package.json"
 		],
+		"extraResources": [
+			{
+				"from": "dist/cli/maestro-cli.js",
+				"to": "maestro-cli.js"
+			},
+			{
+				"from": "dist/cli/maestro-p.js",
+				"to": "maestro-p.js"
+			},
+			{
+				"from": "dist/cli/permission-relay-bridge.js",
+				"to": "permission-relay-bridge.js"
+			},
+			{
+				"from": "src/prompts",
+				"to": "prompts/core",
+				"filter": [
+					"*.md"
+				]
+			},
+			{
+				"from": "src/prompts/speckit",
+				"to": "prompts/speckit"
+			},
+			{
+				"from": "src/prompts/openspec",
+				"to": "prompts/openspec"
+			},
+			{
+				"from": "src/prompts/bmad",
+				"to": "prompts/bmad"
+			}
+		],
 		"asarUnpack": [
 			"node_modules/node-pty/**/*",
 			"node_modules/better-sqlite3/**/*",
@@ -109,40 +142,7 @@
 				"zip"
 			],
 			"artifactName": "${name}-${version}-${arch}-mac.${ext}",
-			"icon": "build/icon.icns",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.icns"
 		},
 		"afterSign": "scripts/notarize.js",
 		"win": {
@@ -160,40 +160,7 @@
 					]
 				}
 			],
-			"icon": "build/icon.ico",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.ico"
 		},
 		"linux": {
 			"target": [
@@ -203,40 +170,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/icon.png",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.png"
 		},
 		"deb": {
 			"depends": [
