@@ -807,26 +807,6 @@ test.describe('Full Session Switching Integration', () => {
 			}
 		}
 	});
-
-	test.skip('should handle session deletion while on that session', async ({ window }) => {
-		// When active session is deleted, app should switch to another session
-		// This test requires:
-		// 1. Multiple sessions
-		// 2. Delete the active session
-		// 3. Verify app switches to another session
-		// 4. Verify Auto Run shows new session's content
-		// Skip until multi-session infrastructure is available
-	});
-
-	test.skip('should handle creating new session and switching to it', async ({ window }) => {
-		// Create new session, verify it appears in list, switch to it
-		// This test requires:
-		// 1. Create new session via wizard or button
-		// 2. Verify it appears in session list
-		// 3. Click on it
-		// 4. Verify Auto Run shows setup prompt (unconfigured) or content
-		// Skip until session creation is available in E2E
-	});
 });
 
 /**
