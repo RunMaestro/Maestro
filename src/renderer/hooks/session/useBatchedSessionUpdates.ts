@@ -33,6 +33,7 @@ interface LogAccumulator {
 	tabId: string | null;
 	isAi: boolean;
 	isStderr: boolean;
+	sequence: number;
 	chunks: string[];
 	timestamp: number;
 }
@@ -43,6 +44,7 @@ interface LogAccumulator {
 interface SessionAccumulator {
 	// Log accumulation (for efficient string concatenation)
 	logAccumulators: Map<string, LogAccumulator>; // key = `${tabId || 'shell'}-${isStderr ? 'stderr' : 'stdout'}`
+	nextLogSequence: number;
 	// Latest status (only last one matters)
 	status?: SessionState;
 	tabStatuses?: Map<string, 'idle' | 'busy'>;
@@ -129,7 +131,7 @@ export function useBatchedSessionUpdates(
 	const getAccumulator = useCallback((sessionId: string): SessionAccumulator => {
 		let acc = accumulatorRef.current.get(sessionId);
 		if (!acc) {
-			acc = { logAccumulators: new Map() };
+			acc = { logAccumulators: new Map(), nextLogSequence: 0 };
 			accumulatorRef.current.set(sessionId, acc);
 		}
 		return acc;
@@ -169,7 +171,7 @@ export function useBatchedSessionUpdates(
 					// Process AI tab logs
 					const aiTabLogs = new Map<
 						string,
-						{ data: string; isStderr: boolean; timestamp: number }
+						{ data: string; isStderr: boolean; timestamp: number; sequence: number }[]
 					>();
 					let shellStdout = '';
 					let shellStderr = '';
@@ -181,17 +183,19 @@ export function useBatchedSessionUpdates(
 						if (!combinedData) continue;
 
 						if (logAcc.isAi && logAcc.tabId) {
-							// AI tab log
-							const existing = aiTabLogs.get(logAcc.tabId);
-							if (existing) {
-								existing.data += combinedData;
-								existing.timestamp = Math.max(existing.timestamp, logAcc.timestamp);
+							// Each accumulator is already keyed by source. Keep those
+							// chunks separate so stderr cannot absorb assistant stdout.
+							const logsForTab = aiTabLogs.get(logAcc.tabId);
+							const entry = {
+								data: combinedData,
+								isStderr: logAcc.isStderr,
+								timestamp: logAcc.timestamp,
+								sequence: logAcc.sequence,
+							};
+							if (logsForTab) {
+								logsForTab.push(entry);
 							} else {
-								aiTabLogs.set(logAcc.tabId, {
-									data: combinedData,
-									isStderr: logAcc.isStderr,
-									timestamp: logAcc.timestamp,
-								});
+								aiTabLogs.set(logAcc.tabId, [entry]);
 							}
 						} else {
 							// Shell log
@@ -216,9 +220,13 @@ export function useBatchedSessionUpdates(
 						updatedSession = {
 							...updatedSession,
 							aiTabs: updatedSession.aiTabs.map((tab) => {
-								const logData = aiTabLogs.get(tab.id);
-								if (!logData) return tab;
+								const logDataEntries = aiTabLogs.get(tab.id);
+								if (!logDataEntries) return tab;
 
+								logDataEntries.sort(
+									(first, second) =>
+										first.timestamp - second.timestamp || first.sequence - second.sequence
+								);
 								// ThinkingMode contract — inline clear point.
 								// When new assistant text arrives, drop transient thinking/tool entries
 								// from prior reasoning so the final answer replaces them. The matching
@@ -230,52 +238,53 @@ export function useBatchedSessionUpdates(
 									}
 									return true;
 								});
-								const lastLog = existingLogs[existingLogs.length - 1];
+								let updatedLogs = existingLogs;
+								for (const logData of logDataEntries) {
+									const lastLog = updatedLogs[updatedLogs.length - 1];
+									// Determine the source based on stderr flag
+									const logSource = logData.isStderr ? 'stderr' : 'stdout';
 
-								// Determine the source based on stderr flag
-								const logSource = logData.isStderr ? 'stderr' : 'stdout';
+									// Defensive: never coalesce streamed output into a non-stream entry
+									// (error/system/tool/user/thinking). The source-equality check below already
+									// excludes these in theory, but a UI bug exists where assistant text gets
+									// concatenated into an error bubble's text. Belt-and-suspenders allowlist
+									// + a warn lets us catch the upstream cause if it ever fires.
+									const isCoalescableSource =
+										lastLog?.source === 'stdout' || lastLog?.source === 'stderr';
+									if (lastLog && !isCoalescableSource && lastLog.source === logSource) {
+										logger.warn(
+											'[useBatchedSessionUpdates] Refusing to coalesce streamed output into non-stream log entry',
+											undefined,
+											{ tabId: tab.id, lastLogSource: lastLog.source, logSource }
+										);
+									}
 
-								// Defensive: never coalesce streamed output into a non-stream entry
-								// (error/system/tool/user/thinking). The source-equality check below already
-								// excludes these in theory, but a UI bug exists where assistant text gets
-								// concatenated into an error bubble's text. Belt-and-suspenders allowlist
-								// + a warn lets us catch the upstream cause if it ever fires.
-								const isCoalescableSource =
-									lastLog?.source === 'stdout' || lastLog?.source === 'stderr';
-								if (lastLog && !isCoalescableSource && lastLog.source === logSource) {
-									logger.warn(
-										'[useBatchedSessionUpdates] Refusing to coalesce streamed output into non-stream log entry',
-										undefined,
-										{ tabId: tab.id, lastLogSource: lastLog.source, logSource }
-									);
-								}
+									// Time-based grouping for AI output (500ms window) - only group same source types
+									const shouldGroup =
+										lastLog &&
+										isCoalescableSource &&
+										lastLog.source === logSource &&
+										logData.timestamp - lastLog.timestamp < 500;
 
-								// Time-based grouping for AI output (500ms window) - only group same source types
-								const shouldGroup =
-									lastLog &&
-									isCoalescableSource &&
-									lastLog.source === logSource &&
-									logData.timestamp - lastLog.timestamp < 500;
+									const shouldTagInteractive = isInteractive && !logData.isStderr;
 
-								const shouldTagInteractive = isInteractive && !logData.isStderr;
-
-								let updatedLogs: LogEntry[];
-								if (shouldGroup) {
-									updatedLogs = [...existingLogs];
-									updatedLogs[updatedLogs.length - 1] = {
-										...lastLog,
-										text: lastLog.text + logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-									};
-								} else {
-									const newLog: LogEntry = {
-										id: generateId(),
-										timestamp: logData.timestamp,
-										source: logSource,
-										text: logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-									};
-									updatedLogs = [...existingLogs, newLog];
+									if (shouldGroup) {
+										updatedLogs = [...updatedLogs];
+										updatedLogs[updatedLogs.length - 1] = {
+											...lastLog,
+											text: lastLog.text + logData.data,
+											...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+										};
+									} else {
+										const newLog: LogEntry = {
+											id: generateId(),
+											timestamp: logData.timestamp,
+											source: logSource,
+											text: logData.data,
+											...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+										};
+										updatedLogs = [...updatedLogs, newLog];
+									}
 								}
 
 								return { ...tab, logs: updatedLogs };
@@ -533,6 +542,7 @@ export function useBatchedSessionUpdates(
 					isAi,
 					isStderr,
 					chunks: [],
+					sequence: acc.nextLogSequence++,
 					timestamp: Date.now(),
 				};
 				acc.logAccumulators.set(key, logAcc);

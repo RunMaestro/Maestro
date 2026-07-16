@@ -4,6 +4,7 @@ import { normalizeOmpModelSelector, OmpNativeSessionAdapter } from './session-ad
 import capturedRpcTurn from './fixtures/real-rpc-turn.json';
 import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 import capturedThinkingLevel from './fixtures/real-rpc-thinking-level.json';
+import { logger } from '../utils/logger';
 
 class FakeChild extends EventEmitter {
 	stdin = { write: vi.fn() };
@@ -138,6 +139,54 @@ describe('OmpNativeSessionAdapter', () => {
 		await expect(adapter.branch('entry-1')).resolves.toBe(true);
 		expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"type":"branch"'));
 		expect(child.kill).not.toHaveBeenCalled();
+	});
+
+	it('suppresses only the benign host-tool startup diagnostic and forwards genuine stderr once', () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const debug = vi.spyOn(logger, 'debug');
+		OmpNativeSessionAdapter.create({
+			sessionId: 'diagnostic-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		const benignDiagnostic = 'OMP xd://: mounted maestro.session.status';
+		child.stderr.emit('data', Buffer.from(`${benignDiagnostic}\n`));
+		child.stderr.emit('data', Buffer.from('OMP genuine runtime failure\n'));
+
+		expect(child.stderr.listenerCount('data')).toBe(1);
+		expect(debug).toHaveBeenCalledWith(benignDiagnostic, 'OmpNativeSessionAdapter');
+		expect(send).not.toHaveBeenCalledWith(
+			'process:stderr',
+			'diagnostic-tab',
+			`${benignDiagnostic}\n`
+		);
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(send).toHaveBeenCalledWith(
+			'process:stderr',
+			'diagnostic-tab',
+			'OMP genuine runtime failure\n'
+		);
+	});
+
+	it('clears projected runtime features when plugin activation revokes native sessions', async () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		await OmpNativeSessionAdapter.acquire({
+			sessionId: 'tab-plugin-disabled',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		OmpNativeSessionAdapter.disposeAll();
+
+		expect(send).toHaveBeenCalledWith('process:runtime-features', 'tab-plugin-disabled', null);
+		expect(child.kill).toHaveBeenCalledOnce();
 	});
 
 	it('coalesces self-emitted refresh callbacks while detail requests still resolve', async () => {

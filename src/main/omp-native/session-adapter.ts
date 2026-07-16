@@ -20,6 +20,7 @@ import {
 } from './types';
 import { isRegisteredOmpControl } from '../../shared/omp-command-registry';
 import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
+import { logger } from '../utils/logger';
 
 export type OmpNativeSend = (channel: string, ...args: unknown[]) => void;
 export type OmpChildSpawner = (
@@ -99,18 +100,13 @@ export class OmpNativeSessionAdapter {
 		this.client = new OmpRpcClient(this.transport());
 		this.client.onEvent((event) => this.handleEvent(event));
 		this.client.onCallback((callback) => this.handleCallback(callback));
-		this.client.onDiagnostic((message) =>
-			this.options.send('process:stderr', this.options.sessionId, message)
-		);
+		this.client.onDiagnostic((message) => this.handleDiagnostic(message));
 		this.child.once('close', (code, signal) => {
 			if (this.disposed) return;
 			this.disposed = true;
 			adapters.delete(options.sessionId);
 			this.options.send('process:exit', options.sessionId, code ?? 0, signal ? 1 : undefined);
 		});
-		this.client.onDiagnostic((message) =>
-			this.options.send('process:stderr', options.sessionId, message)
-		);
 		this.ready = this.client.ready;
 		this.initialized = this.ready.then(() => this.initialize());
 		void this.initialized.catch((error: unknown) => {
@@ -150,6 +146,10 @@ export class OmpNativeSessionAdapter {
 				([adapterSessionId]) => nativeAdapterBaseSessionId(adapterSessionId) === baseSessionId
 			)
 			.map(([, adapter]) => adapter);
+	}
+
+	static disposeAll(): void {
+		for (const adapter of [...adapters.values()]) adapter.dispose();
 	}
 
 	get pid(): number {
@@ -267,6 +267,7 @@ export class OmpNativeSessionAdapter {
 		for (const controller of this.hostToolCalls.values()) controller.abort();
 		this.hostToolCalls.clear();
 		this.hostUriRequests.clear();
+		this.options.send('process:runtime-features', this.options.sessionId, null);
 		this.child.kill();
 	}
 
@@ -290,6 +291,15 @@ export class OmpNativeSessionAdapter {
 				return () => this.child.off('close', close);
 			},
 		};
+	}
+
+	private handleDiagnostic(message: string): void {
+		const diagnostic = message.trim();
+		if (diagnostic === 'OMP xd://: mounted maestro.session.status') {
+			logger.debug(diagnostic, 'OmpNativeSessionAdapter');
+			return;
+		}
+		this.options.send('process:stderr', this.options.sessionId, message);
 	}
 
 	private async initialize(): Promise<void> {
