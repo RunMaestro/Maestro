@@ -72,10 +72,7 @@ import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
 import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
 import type { PluginEvent } from '../../shared/plugins/events';
-import {
-	parseCueSubscriptionId,
-	pipelineKeyForSubscription,
-} from '../../shared/cue/subscription-id';
+import { parseCueSubscriptionId } from '../../shared/cue/subscription-id';
 
 const MAX_CHAIN_DEPTH = 10;
 const cueConfigMutations = createCueConfigMutationService();
