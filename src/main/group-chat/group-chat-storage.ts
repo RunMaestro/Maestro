@@ -14,7 +14,12 @@ import * as path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
-import type { ModeratorConfig, GroupChatHistoryEntry } from '../../shared/group-chat-types';
+import type {
+	GroupChat,
+	GroupChatHistoryEntry,
+	GroupChatParticipant,
+	ModeratorConfig,
+} from '../../shared/group-chat-types';
 import { hasCapability } from '../agents/capabilities';
 import { logger } from '../utils/logger';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
@@ -39,54 +44,6 @@ const bootstrapStore = new Store<BootstrapSettings>({
 	name: 'maestro-bootstrap',
 	defaults: {},
 });
-
-/**
- * Group chat participant
- * Note: This should stay in sync with shared/group-chat-types.ts
- */
-export interface GroupChatParticipant {
-	name: string;
-	agentId: string;
-	/** Internal process session ID (used for routing) */
-	sessionId: string;
-	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
-	agentSessionId?: string;
-	addedAt: number;
-	lastActivity?: number;
-	lastSummary?: string;
-	contextUsage?: number;
-	// Color for this participant (assigned on join)
-	color?: string;
-	// Stats tracking
-	tokenCount?: number;
-	messageCount?: number;
-	processingTimeMs?: number;
-	/** Total cost in USD (optional, depends on provider) */
-	totalCost?: number;
-	/** SSH remote name (displayed as pill when running on SSH remote) */
-	sshRemoteName?: string;
-}
-
-/**
- * Group chat metadata
- */
-export interface GroupChat {
-	id: string;
-	name: string;
-	createdAt: number;
-	updatedAt: number;
-	moderatorAgentId: string;
-	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
-	moderatorSessionId: string;
-	/** Claude Code agent session UUID (set after first message is processed) */
-	moderatorAgentSessionId?: string;
-	/** Custom configuration for the moderator agent */
-	moderatorConfig?: ModeratorConfig;
-	participants: GroupChatParticipant[];
-	logPath: string;
-	imagesDir: string;
-	archived?: boolean;
-}
 
 /**
  * Partial update for group chat metadata

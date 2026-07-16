@@ -170,31 +170,33 @@ export function getMentionNameForContext(name: string, peerNames: readonly strin
 // TYPE DEFINITIONS
 // ============================================================================
 
-/**
- * Group chat participant
- */
-export interface GroupChatParticipant {
+/** Stable serialized identity for a group-chat participant. */
+export interface GroupChatParticipantBase {
 	name: string;
 	agentId: string;
-	/** Internal process session ID (used for routing) */
+	/** Internal process session ID used for routing. */
 	sessionId: string;
-	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
-	agentSessionId?: string;
 	addedAt: number;
+}
+
+/** Persisted participant status and presentation metadata. */
+export interface GroupChatParticipantStatus {
+	/** Agent's session ID (e.g., Claude Code's session GUID for continuity). */
+	agentSessionId?: string;
 	lastActivity?: number;
 	lastSummary?: string;
 	contextUsage?: number;
-	// Color for this participant (assigned on join)
 	color?: string;
-	// Stats tracking
 	tokenCount?: number;
 	messageCount?: number;
 	processingTimeMs?: number;
-	/** Total cost in USD (optional, depends on provider) */
 	totalCost?: number;
-	/** SSH remote name (displayed as pill when running on SSH remote) */
 	sshRemoteName?: string;
 }
+
+/** Serializable participant record used by storage and the renderer. */
+export interface GroupChatParticipant
+	extends GroupChatParticipantBase, GroupChatParticipantStatus {}
 
 /**
  * Custom configuration for an agent (moderator)
@@ -222,37 +224,47 @@ export interface ModeratorConfig {
 	maestroPPath?: string;
 }
 
-/**
- * Group chat metadata
- */
-export interface GroupChat {
+/** Stable serialized group-chat metadata shared by storage and UI. */
+export interface GroupChatBase {
 	id: string;
 	name: string;
 	createdAt: number;
-	updatedAt?: number;
 	moderatorAgentId: string;
-	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
+	/** Internal session ID prefix used for routing. */
 	moderatorSessionId: string;
-	/** Claude Code agent session UUID (set after first message is processed) */
-	moderatorAgentSessionId?: string;
-	/** Custom configuration for the moderator agent */
-	moderatorConfig?: ModeratorConfig;
 	participants: GroupChatParticipant[];
+}
+
+/** Fields owned by group-chat metadata storage. */
+export interface GroupChatStorageFields {
+	updatedAt?: number;
+	/** Claude Code agent session UUID (set after first message is processed). */
+	moderatorAgentSessionId?: string;
+	moderatorConfig?: ModeratorConfig;
 	logPath: string;
 	imagesDir: string;
-	draftMessage?: string;
 	archived?: boolean;
 }
 
-/**
- * Group chat message entry from the chat log
- */
-export interface GroupChatMessage {
+/** UI-only, non-persisted group-chat fields. */
+export interface GroupChatUiFields {
+	draftMessage?: string;
+}
+
+/** Group-chat model composed from stable, storage, and UI concerns. */
+export interface GroupChat extends GroupChatBase, GroupChatStorageFields, GroupChatUiFields {}
+
+/** Stable line payload persisted in the group-chat log. */
+export interface GroupChatLogMessage {
 	timestamp: string;
 	from: string;
 	content: string;
+}
+
+/** Parsed log payload augmented for UI display. */
+export interface GroupChatMessage extends GroupChatLogMessage {
 	readOnly?: boolean;
-	/** Base64 data URLs of images attached to this message */
+	/** Base64 data URLs of images attached to this message. */
 	images?: string[];
 }
 

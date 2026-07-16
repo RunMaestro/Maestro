@@ -11,7 +11,6 @@
 import * as os from 'os';
 import * as path from 'path';
 import {
-	GroupChatParticipant,
 	loadGroupChat,
 	updateParticipant,
 	addGroupChatHistoryEntry,
@@ -22,6 +21,7 @@ import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
+	type GroupChatParticipant,
 	cleanMentionName,
 	findUniqueMentionMatch,
 	getMentionNameForContext,

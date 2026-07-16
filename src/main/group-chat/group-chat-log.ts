@@ -16,18 +16,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-
-/**
- * Message structure for parsed log entries.
- */
-export interface GroupChatMessage {
-	timestamp: string;
-	from: string;
-	content: string;
-	readOnly?: boolean;
-	/** Base64 data URLs of images attached to this message */
-	images?: string[];
-}
+import type { GroupChatMessage } from '../../shared/group-chat-types';
 
 /**
  * Escapes content for storage in the pipe-delimited log format.

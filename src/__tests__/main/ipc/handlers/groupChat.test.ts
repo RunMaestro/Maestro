@@ -16,10 +16,10 @@ import {
 // Import types we need for mocking
 import type {
 	GroupChat,
+	GroupChatHistoryEntry,
+	GroupChatMessage,
 	GroupChatParticipant,
-} from '../../../../main/group-chat/group-chat-storage';
-import type { GroupChatMessage } from '../../../../main/group-chat/group-chat-log';
-import type { GroupChatHistoryEntry } from '../../../../shared/group-chat-types';
+} from '../../../../shared/group-chat-types';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({

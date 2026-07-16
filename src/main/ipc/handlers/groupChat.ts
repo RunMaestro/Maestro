@@ -25,8 +25,6 @@ import {
 	deleteGroupChat,
 	updateGroupChat,
 	updateParticipant,
-	GroupChat,
-	GroupChatParticipant,
 	addGroupChatHistoryEntry,
 	getGroupChatHistory,
 	deleteGroupChatHistoryEntry,
@@ -35,11 +33,13 @@ import {
 	getGroupChatDir,
 } from '../../group-chat/group-chat-storage';
 
-// Group chat history type
-import type { GroupChatHistoryEntry } from '../../../shared/group-chat-types';
-
-// Group chat log imports
-import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
+import type {
+	GroupChat,
+	GroupChatHistoryEntry,
+	GroupChatMessage,
+	GroupChatParticipant,
+} from '../../../shared/group-chat-types';
+import { appendToLog, readLog, saveImage } from '../../group-chat/group-chat-log';
 
 // Group chat moderator imports
 import {

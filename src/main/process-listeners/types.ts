@@ -9,8 +9,12 @@ import type { AgentDetector } from '../agents';
 import type { CueEngine } from '../cue/cue-engine';
 import type { SafeSendFn } from '../utils/safe-send';
 import type { StatsDB } from '../stats';
-import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-storage';
-import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-types';
+import type {
+	GroupChat,
+	GroupChatMessage,
+	GroupChatParticipant,
+	GroupChatState,
+} from '../../shared/group-chat-types';
 import type { ParticipantState } from '../ipc/handlers/groupChat';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { PluginEvent } from '../../shared/plugins/events';
