@@ -972,7 +972,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 			};
 
 			// Process new/modified sessions
-			let processedCount = 0;
 			for (const { filePath, sessionKey, mtimeMs } of sessionsToProcess) {
 				try {
 					const content = await fs.readFile(filePath, 'utf-8');
@@ -996,8 +995,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						sizeBytes: fileStat.size,
 						costUsd,
 					};
-
-					processedCount++;
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
