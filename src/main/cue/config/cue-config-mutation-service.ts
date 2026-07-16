@@ -153,7 +153,7 @@ export function createCueConfigMutationService(
 				);
 				if (index < 0) return false;
 
-				const next = removeSubscriptionRange(document.raw, index);
+				const next = removeSubscriptionRange(document.raw, index, subscriptions.length === 1);
 				parseAndValidate(next, document.filePath);
 				await persist(document.filePath, document.raw, next);
 				return true;
@@ -307,9 +307,15 @@ function patchSubscriptionEnabled(raw: string, index: number, enabled: boolean):
 	);
 }
 
-function removeSubscriptionRange(raw: string, index: number): string {
+function removeSubscriptionRange(raw: string, index: number, removingLast: boolean): string {
 	const range = subscriptionRange(raw, index);
-	return raw.slice(0, range.start) + raw.slice(range.end);
+	const next = raw.slice(0, range.start) + raw.slice(range.end);
+	if (!removingLast) return next;
+
+	return next.replace(
+		/^(\s*subscriptions\s*:)(\s*(?:#.*)?)?\r?\n/m,
+		(_match, declaration: string, trailing = '') => `${declaration} []${trailing}\n`
+	);
 }
 
 function patchSettings(raw: string, settings: Pick<CueSettings, GlobalSettingsKey>): string {

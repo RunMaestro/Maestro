@@ -87,6 +87,26 @@ describe('removeSubscriptionFromYaml', () => {
 		expect(names).toEqual(['heartbeat-1', 'task-2026-05-22-1500-bbbb2222-notify']);
 	});
 
+	it('leaves a valid empty subscriptions array when removing the final sub', async () => {
+		writeYaml({
+			subscriptions: [
+				{
+					name: 'task-x',
+					event: 'time.heartbeat',
+					interval_minutes: 5,
+					prompt: 'tick',
+				},
+			],
+		});
+
+		const result = await removeSubscriptionFromYaml(projectRoot, 'task-x');
+
+		expect(result.removed).toBe(true);
+		const { raw, parsed } = readYaml();
+		expect(parsed.subscriptions).toEqual([]);
+		expect(raw).toContain('subscriptions: []');
+	});
+
 	it('preserves the leading `# Pipeline:` comment header', async () => {
 		writeYaml(
 			{
