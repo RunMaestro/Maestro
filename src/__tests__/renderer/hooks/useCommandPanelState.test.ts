@@ -38,4 +38,38 @@ describe('useCommandPanelState', () => {
 		expect(result.current.expandedCommands.has('command')).toBe(true);
 		expect(result.current.editingCommand).toBeNull();
 	});
+
+	it('applies an async save result to the latest command list rather than a stale render snapshot', async () => {
+		let resolveSave!: () => void;
+		const save = new Promise<void>((resolve) => {
+			resolveSave = resolve;
+		});
+		const { result } = renderHook(() =>
+			useCommandPanelState<Command, null, { id: string; prompt: string }>({
+				commands: [{ id: 'one', prompt: 'first', isModified: false }],
+			})
+		);
+
+		const applySave = async () => {
+			await save;
+			result.current.replaceCommand('one', { prompt: 'saved', isModified: true });
+		};
+		const pendingSave = applySave();
+
+		act(() => {
+			result.current.setCommands([
+				{ id: 'one', prompt: 'newly loaded', isModified: false },
+				{ id: 'two', prompt: 'second', isModified: false },
+			]);
+			resolveSave();
+		});
+		await act(async () => {
+			await pendingSave;
+		});
+
+		expect(result.current.commands).toEqual([
+			{ id: 'one', prompt: 'saved', isModified: true },
+			{ id: 'two', prompt: 'second', isModified: false },
+		]);
+	});
 });
