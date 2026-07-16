@@ -12,7 +12,7 @@ import fs from 'fs/promises';
 
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn().mockReturnValue('/mock/userData'),
+		getPath: vi.fn().mockReturnValue('/temporary-profile'),
 		isPackaged: false,
 	},
 }));

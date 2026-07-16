@@ -17,7 +17,7 @@ import path from 'path';
 // Mock electron app module
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn().mockReturnValue('/mock/userData'),
+		getPath: vi.fn().mockReturnValue('/temporary-profile'),
 		isPackaged: false,
 	},
 }));
