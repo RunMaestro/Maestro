@@ -23,6 +23,12 @@ export const OMP_16_4_8_FIXTURE = {
 			messageCount: 0,
 			queuedMessageCount: 0,
 			todoPhases: [],
+			model: { provider: 'fixture', id: 'fixture-model' },
+			sessionFile: 'C:/fixture/sessions/fixture-session.jsonl',
+			sessionName: 'Fixture session',
+			systemPrompt: ['Be concise.'],
+			dumpTools: [{ name: 'read', description: 'Read fixture', parameters: {} }],
+			contextUsage: { inputTokens: 0 },
 		},
 	},
 	stableMembers: [
@@ -132,7 +138,16 @@ export const OMP_16_4_8_TRANSCRIPT = {
 		ready: { type: 'ready' },
 		state: OMP_16_4_8_FIXTURE.stateResponse.data,
 		availableCommands: {
-			commands: [{ name: 'help', description: 'Show available slash commands', aliases: ['h'] }],
+			commands: [
+				{
+					name: 'help',
+					source: 'builtin',
+					description: 'Show available slash commands',
+					aliases: ['h'],
+					input: { hint: 'topic' },
+					subcommands: [{ name: 'all', usage: '/help all' }],
+				},
+			],
 		},
 		availableModels: { models: [] },
 	},
@@ -145,7 +160,7 @@ export const OMP_16_4_8_TRANSCRIPT = {
 			arguments: { path: 'README.md' },
 		},
 		hostToolCancel: { type: 'host_tool_cancel', id: 'callback-cancel', targetId: 'tool-1' },
-		promptResult: { type: 'prompt_result', agentInvoked: true },
+		promptResult: { type: 'prompt_result', agentInvoked: false },
 	},
 	terminalErrors: [
 		{ type: 'response', id: 'request-1', command: 'prompt', success: false, error: 'denied' },

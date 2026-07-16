@@ -27,7 +27,12 @@ describe('OmpNativeSessionAdapter', () => {
 					command.type === 'get_available_commands'
 						? { commands: [{ name: 'compact' }] }
 						: command.type === 'get_state'
-							? { sessionId: 'omp-session', thinkingLevel: 'high', todoPhases: [] }
+							? {
+									sessionId: 'omp-session',
+									sessionFile: 'C:/work/.omp/sessions/omp-session.jsonl',
+									thinkingLevel: 'high',
+									todoPhases: [],
+								}
 							: command.type === 'get_available_models'
 								? {
 										models: [{ provider: 'anthropic', id: 'claude-sonnet-4-5', label: 'Sonnet' }],
@@ -84,8 +89,13 @@ describe('OmpNativeSessionAdapter', () => {
 				stats: { inputTokens: 12 },
 			})
 		);
+		expect(send).toHaveBeenCalledWith(
+			'process:session-id',
+			'tab-1',
+			'C:/work/.omp/sessions/omp-session.jsonl'
+		);
 		emit(child, { type: 'message_update', sequence: 1, content: 'partial' });
-		emit(child, { type: 'prompt_result', agentInvoked: true, text: 'final' });
+		emit(child, { type: 'prompt_result', agentInvoked: false, text: 'final' });
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-1', 'partial');
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-1', 'final');
 		void adapter.interrupt();
@@ -248,6 +258,7 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(frames[promptIndex]).toMatchObject({
 			type: 'prompt',
 			message: 'describe the image',
+			streamingBehavior: 'steer',
 			images: [{ image: { mimeType: 'image/png', data: 'cG5nLWJ5dGVz' } }],
 		});
 	});
@@ -720,6 +731,8 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.setControl('model', 'anthropic:claude-fable-5');
 		await adapter.setControl('thinking-level', 'high');
 		await adapter.setControl('steering-mode', 'one-at-a-time');
+		await adapter.setControl('follow-up-mode', 'one-at-a-time');
+		await adapter.setControl('interrupt-mode', 'wait');
 		await adapter.setControl('auto-compaction', true);
 		await adapter.setControl('auto-retry', true);
 
@@ -729,6 +742,8 @@ describe('OmpNativeSessionAdapter', () => {
 					'set_model',
 					'set_thinking_level',
 					'set_steering_mode',
+					'set_follow_up_mode',
+					'set_interrupt_mode',
 					'set_auto_compaction',
 					'set_auto_retry',
 				].includes(String(frame.type))
@@ -748,6 +763,16 @@ describe('OmpNativeSessionAdapter', () => {
 			{
 				type: 'set_steering_mode',
 				mode: 'one-at-a-time',
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_follow_up_mode',
+				mode: 'one-at-a-time',
+				id: expect.stringMatching(/^maestro-omp-/),
+			},
+			{
+				type: 'set_interrupt_mode',
+				mode: 'wait',
 				id: expect.stringMatching(/^maestro-omp-/),
 			},
 			{
@@ -921,6 +946,29 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(
 			send.mock.calls.filter(([channel]) => channel === 'process:runtime-features')
 		).toHaveLength(refreshesBeforeRejection);
+	});
+
+	it('fails closed with a native diagnostic when a pinned RPC process emits an unknown frame', async () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-protocol-drift',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		emit(child, { type: 'unrecognized_16_4_8_extension_frame' });
+
+		expect(send).toHaveBeenCalledWith(
+			'process:stderr',
+			'tab-protocol-drift',
+			'OMP emitted unsupported RPC frame type unrecognized_16_4_8_extension_frame'
+		);
+		await expect(adapter.prompt('must not be sent')).rejects.toThrow('OMP RPC process is closed');
 	});
 
 	function extensionResponses(child: FakeChild): unknown[] {

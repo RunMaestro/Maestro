@@ -195,6 +195,21 @@ describe('MainPanelContent', () => {
 		expect(screen.getByTestId('input-area')).toBeInTheDocument();
 	});
 
+	it('does not mount runtime session details over the ordinary transcript', () => {
+		const props = makeDefaultProps();
+		props.activeSession = makeSession({
+			runtimeFeatures: {
+				controls: [],
+				tree: [{ id: 'turn-1', label: 'OMP turn' }],
+				todos: null,
+				subagents: null,
+				stats: null,
+			},
+		});
+		render(<MainPanelContent {...props} />);
+		expect(screen.queryByRole('dialog', { name: 'Session details' })).not.toBeInTheDocument();
+	});
+
 	it('hides InputArea in terminal mode', () => {
 		const props = makeDefaultProps();
 		props.activeSession = makeSession({ inputMode: 'terminal' });

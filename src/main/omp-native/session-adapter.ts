@@ -63,6 +63,9 @@ export class OmpNativeSessionAdapter {
 		this.client = new OmpRpcClient(this.transport());
 		this.client.onEvent((event) => this.handleEvent(event));
 		this.client.onCallback((callback) => this.handleCallback(callback));
+		this.client.onDiagnostic((message) =>
+			this.options.send('process:stderr', this.options.sessionId, message)
+		);
 		this.child.once('close', (code, signal) => {
 			if (this.disposed) return;
 			this.disposed = true;
@@ -113,6 +116,7 @@ export class OmpNativeSessionAdapter {
 			await this.client.command({
 				type: 'prompt',
 				message,
+				streamingBehavior: 'steer',
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
 		} catch (error) {
@@ -265,8 +269,8 @@ export class OmpNativeSessionAdapter {
 		this.options.send('process:runtime-features', this.options.sessionId, features);
 		const usage = usageFromStats(statsProjection);
 		if (usage) this.options.send('process:usage', this.options.sessionId, usage);
-		const sessionId = stringAt(stateData, 'sessionId');
-		if (sessionId) this.options.send('process:session-id', this.options.sessionId, sessionId);
+		const sessionPath = stringAt(stateData, 'sessionFile') ?? stringAt(stateData, 'sessionId');
+		if (sessionPath) this.options.send('process:session-id', this.options.sessionId, sessionPath);
 	}
 
 	private handleEvent(event: OmpRpcEvent): void {
@@ -285,6 +289,31 @@ export class OmpNativeSessionAdapter {
 				timestamp: Date.now(),
 				toolCallId: stringAt(event, 'id'),
 			});
+		}
+		if (
+			event.type === 'auto_compaction_start' ||
+			event.type === 'auto_compaction_end' ||
+			event.type === 'auto_retry_start' ||
+			event.type === 'auto_retry_end' ||
+			event.type === 'retry_fallback_applied' ||
+			event.type === 'retry_fallback_succeeded' ||
+			event.type === 'notice' ||
+			event.type === 'extension_error'
+		) {
+			const detail =
+				textFrom(event) ??
+				stringAt(event, 'message') ??
+				stringAt(event, 'error') ??
+				event.type.replaceAll('_', ' ');
+			this.options.send('process:stderr', this.options.sessionId, `OMP ${detail}`);
+		}
+		if (
+			event.type === 'todo_reminder' ||
+			event.type === 'todo_auto_clear' ||
+			event.type === 'goal_updated' ||
+			event.type === 'thinking_level_changed'
+		) {
+			void this.refreshFeatures();
 		}
 		if (event.type === 'turn_end' || event.type === 'agent_end') {
 			this.completeTurn();
@@ -305,6 +334,23 @@ export class OmpNativeSessionAdapter {
 				this.options.sessionId,
 				raw.map(commandName).filter((command): command is string => Boolean(command))
 			);
+			return;
+		}
+		if (callback.type === 'command_output') {
+			const text = textFrom(callback);
+			if (text) this.options.send('process:data', this.options.sessionId, text);
+			return;
+		}
+		if (callback.type === 'host_uri_request' || callback.type === 'host_uri_cancel') {
+			const id = stringAt(callback, 'id');
+			const detail =
+				callback.type === 'host_uri_request'
+					? 'Maestro has no approved host URI scheme for this OMP session'
+					: 'OMP cancelled a host URI request';
+			this.options.send('process:stderr', this.options.sessionId, detail);
+			if (callback.type === 'host_uri_request' && id) {
+				void this.client.send({ type: 'host_uri_result', id, isError: true, error: detail });
+			}
 			return;
 		}
 		if (callback.type === 'extension_ui_request') {
@@ -456,6 +502,26 @@ function controlsFromState(
 				{ id: 'one-at-a-time', label: 'One at a time' },
 			],
 			value: stringAt(state, 'steeringMode') ?? 'all',
+		},
+		{
+			id: 'follow-up-mode',
+			label: 'Follow-up mode',
+			kind: 'select',
+			options: [
+				{ id: 'all', label: 'All' },
+				{ id: 'one-at-a-time', label: 'One at a time' },
+			],
+			value: stringAt(state, 'followUpMode') ?? 'all',
+		},
+		{
+			id: 'interrupt-mode',
+			label: 'Interrupt mode',
+			kind: 'select',
+			options: [
+				{ id: 'immediate', label: 'Immediate' },
+				{ id: 'wait', label: 'Wait' },
+			],
+			value: stringAt(state, 'interruptMode') ?? 'immediate',
 		},
 		{
 			id: 'auto-compaction',
@@ -655,6 +721,10 @@ function controlCommand(controlId: string, value: string | boolean): OmpRpcComma
 		return { type: 'set_thinking_level', level: value };
 	if (controlId === 'steering-mode' && typeof value === 'string')
 		return { type: 'set_steering_mode', mode: value };
+	if (controlId === 'follow-up-mode' && typeof value === 'string')
+		return { type: 'set_follow_up_mode', mode: value };
+	if (controlId === 'interrupt-mode' && typeof value === 'string')
+		return { type: 'set_interrupt_mode', mode: value };
 	if (controlId === 'auto-compaction' && typeof value === 'boolean')
 		return { type: 'set_auto_compaction', enabled: value };
 	if (controlId === 'auto-retry' && typeof value === 'boolean')

@@ -39,7 +39,8 @@ describe('OMP 16.4.8 compatibility table', () => {
 			terminal: 'response',
 		});
 		expect(OMP_16_4_8_COMPATIBILITY.host_uri_request).toMatchObject({
-			disposition: 'unavailable',
+			disposition: 'host',
+			terminal: 'response',
 		});
 		expect(OMP_16_4_8_COMPATIBILITY.agent_start).toMatchObject({
 			disposition: 'projection',
@@ -54,8 +55,11 @@ describe('OMP 16.4.8 compatibility table', () => {
 	it('drift-checks real initialization and callback boundaries against the sanitized transcript', () => {
 		expect(OMP_16_4_8_TRANSCRIPT.initialization.availableCommands.commands[0]).toMatchObject({
 			name: expect.any(String),
+			source: expect.any(String),
 			description: expect.any(String),
 			aliases: expect.any(Array),
+			input: expect.any(Object),
+			subcommands: expect.any(Array),
 		});
 		expect(OMP_16_4_8_TRANSCRIPT.callbacks.hostToolCall).toMatchObject({
 			id: expect.any(String),
@@ -69,7 +73,7 @@ describe('OMP 16.4.8 compatibility table', () => {
 		});
 		expect(OMP_16_4_8_TRANSCRIPT.callbacks.promptResult).toEqual({
 			type: 'prompt_result',
-			agentInvoked: true,
+			agentInvoked: false,
 		});
 		expect(OMP_16_4_8_COMPATIBILITY.prompt.terminal).toBe('response');
 		expect(OMP_16_4_8_COMPATIBILITY.abort_and_prompt.terminal).toBe('response');

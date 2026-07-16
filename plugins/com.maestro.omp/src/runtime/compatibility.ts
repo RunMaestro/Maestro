@@ -185,14 +185,6 @@ function projection(sequence: 'strict' | 'correlated' | 'none' = 'strict'): OmpC
 function host(terminal: OmpTerminal = 'none'): OmpCompatibilityEntry {
 	return { version: '16.4.8', disposition: 'host', terminal, sequence: 'correlated' };
 }
-function unavailable(): OmpCompatibilityEntry {
-	return {
-		version: '16.4.8',
-		disposition: 'unavailable',
-		terminal: 'none',
-		sequence: 'correlated',
-	};
-}
 
 const allStableMembers: readonly OmpStableMember[] = [
 	...OMP_16_4_8_COMMAND_TYPES,
@@ -230,7 +222,7 @@ export const OMP_16_4_8_COMPATIBILITY: Readonly<Record<OmpStableMember, OmpCompa
 					case 'host_uri_request':
 					case 'host_uri_cancel':
 					case 'host_uri_result':
-						return [member, unavailable()];
+						return [member, host('response')];
 					case 'extension_ui_response':
 						return [member, host('response')];
 					default:

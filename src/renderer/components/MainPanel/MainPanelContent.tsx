@@ -2,7 +2,6 @@ import React from 'react';
 
 import { Spinner } from '../ui/Spinner';
 import { AgentApprovals } from '../AgentApprovals/AgentApprovals';
-import { SessionInspector } from '../SessionInspector/SessionInspector';
 import { TerminalOutput } from '../TerminalOutput';
 import {
 	TerminalView,
@@ -674,10 +673,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		);
 	}, []);
 
-	const branchSession = React.useCallback((sessionId: string, entryId: string) => {
-		void window.maestro.process.branchSession(sessionId, entryId);
-	}, []);
-
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
@@ -1176,12 +1171,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					</div>
 				);
 			})}
-			<SessionInspector
-				sessionId={activeSession.id}
-				runtimeFeatures={activeSession.runtimeFeatures}
-				theme={theme}
-				onBranchSession={branchSession}
-			/>
 			<AgentApprovals
 				theme={theme}
 				approvals={activeSession.pendingApprovals ?? []}

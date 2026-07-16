@@ -23,6 +23,7 @@ import {
 	resolveTabPermissionMode,
 } from '../../../../shared/agentMetadata';
 import { AgentRuntimeControls } from './AgentRuntimeControls';
+import { SessionInspector } from '../../SessionInspector/SessionInspector';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -107,6 +108,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const isAiMode = session.inputMode === 'ai';
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
 	const [toolbarExpanded, setToolbarExpanded] = useState(false);
+	const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
 	const showToggleGroup = !isNarrowViewport || toolbarExpanded;
 
 	// Voice dictation is a primary touch affordance, so it stays in the always-
@@ -237,6 +239,17 @@ export const ToolbarControls = memo(function ToolbarControls({
 					setEffortMenuOpen={setEffortMenuOpen}
 					effortMenuRef={effortMenuRef}
 				/>
+				{session.runtimeFeatures && (
+					<button
+						type="button"
+						onClick={() => setSessionDetailsOpen(true)}
+						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
+						title="Open session details"
+						aria-label="Open session details"
+					>
+						<History className="w-4 h-4" />
+					</button>
+				)}
 				<AgentRuntimeControls
 					sessionId={session.id}
 					controls={session.runtimeFeatures?.controls}
@@ -391,6 +404,14 @@ export const ToolbarControls = memo(function ToolbarControls({
 					{formatEnterToSend(enterToSend)}
 				</button>
 			</div>
+			{sessionDetailsOpen && session.runtimeFeatures && (
+				<SessionInspector
+					sessionId={session.id}
+					runtimeFeatures={session.runtimeFeatures}
+					theme={theme}
+					onClose={() => setSessionDetailsOpen(false)}
+				/>
+			)}
 		</div>
 	);
 });

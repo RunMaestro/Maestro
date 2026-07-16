@@ -1,4 +1,4 @@
-import { OMP_RPC_VERSION } from './types';
+import { OMP_16_4_8_RECEIVED_FRAME_TYPES, OMP_RPC_VERSION } from './types';
 import type { OmpRpcCommand, OmpRpcEvent, OmpRpcResponse, OmpRpcTransport } from './types';
 
 export class OmpProtocolError extends Error {
@@ -144,6 +144,10 @@ export class OmpRpcClient {
 				);
 			return;
 		}
+		if (!OMP_16_4_8_RECEIVED_FRAME_TYPES.includes(frame.type as never)) {
+			this.close(`OMP emitted unsupported RPC frame type ${frame.type}`);
+			return;
+		}
 		if (typeof frame.type !== 'string') return;
 		const event = frame as OmpRpcEvent;
 		if (typeof event.sequence === 'number') {
@@ -154,6 +158,13 @@ export class OmpRpcClient {
 			event.type === 'extension_ui_request' ||
 			event.type === 'prompt_result' ||
 			event.type === 'available_commands_update' ||
+			event.type === 'command_output' ||
+			event.type === 'session_info_update' ||
+			event.type === 'config_update' ||
+			event.type === 'host_tool_call' ||
+			event.type === 'host_tool_cancel' ||
+			event.type === 'host_uri_request' ||
+			event.type === 'host_uri_cancel' ||
 			event.type.startsWith('subagent_')
 				? this.callbacks
 				: this.events;
@@ -164,6 +175,7 @@ export class OmpRpcClient {
 		if (this.closed) return;
 		this.closed = true;
 		const error = new OmpProtocolError(reason ?? 'OMP RPC process closed');
+		for (const listener of this.diagnostics) listener(error.message);
 		this.rejectReady(error);
 		for (const [id, pending] of this.pending) {
 			this.pending.delete(id);

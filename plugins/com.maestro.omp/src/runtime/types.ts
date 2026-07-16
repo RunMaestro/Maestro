@@ -122,14 +122,29 @@ export interface OmpSessionState {
 	readonly messageCount: number;
 	readonly queuedMessageCount: number;
 	readonly todoPhases: readonly unknown[];
+	readonly systemPrompt?: readonly string[];
+	readonly dumpTools?: readonly {
+		readonly name: string;
+		readonly description: string;
+		readonly parameters: unknown;
+		readonly examples?: readonly unknown[];
+	}[];
+	readonly contextUsage?: Readonly<Record<string, unknown>>;
 	readonly [key: string]: unknown;
 }
 
 /** OMP slash-command metadata is presentation-only; it does not authorize RPC methods. */
 export interface OmpAvailableSlashCommand {
 	readonly name: string;
+	readonly source: 'builtin' | 'skill' | 'extension' | 'custom' | 'mcp_prompt' | 'file';
 	readonly description?: string;
 	readonly aliases?: readonly string[];
+	readonly input?: { readonly hint?: string };
+	readonly subcommands?: readonly {
+		readonly name: string;
+		readonly description?: string;
+		readonly usage?: string;
+	}[];
 }
 
 export type OmpRpcEventType =
