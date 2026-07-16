@@ -81,12 +81,14 @@ export function useAutoScrollToBottom({
 			resetKeyRef.current = resetKey;
 			setUserScrolledUp(false);
 		}
-		scheduleAutoScroll();
-	}, [resetKey, scheduleAutoScroll, setUserScrolledUp]);
+		if (!enabled || userScrolledUpRef.current) return;
+		scrollToBottom();
+	}, [enabled, resetKey, scrollToBottom, setUserScrolledUp]);
 
 	useEffect(() => {
-		scheduleAutoScroll();
-	}, [scheduleAutoScroll, ...contentDependencies]);
+		if (!enabled || userScrolledUpRef.current) return;
+		scrollToBottom();
+	}, [enabled, scrollToBottom, ...contentDependencies]);
 
 	useEffect(() => {
 		if (!enabled || !containerRef.current || typeof ResizeObserver === 'undefined') return;

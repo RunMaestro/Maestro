@@ -1,8 +1,15 @@
+import { StrictMode } from 'react';
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usePointerResize } from '../../../renderer/hooks/ui/usePointerResize';
 
-function ResizeHandle({ onComplete }: { onComplete: (value: number) => void }) {
+function ResizeHandle({
+	onComplete,
+	onResize = () => undefined,
+}: {
+	onComplete: (value: number) => void;
+	onResize?: (value: number) => void;
+}) {
 	const { isResizing, startResize } = usePointerResize<number>();
 	return (
 		<button
@@ -12,7 +19,7 @@ function ResizeHandle({ onComplete }: { onComplete: (value: number) => void }) {
 				startResize(event, {
 					value: 100,
 					getNextValue: (_initial, deltaX) => Math.max(80, Math.min(200, 100 + deltaX)),
-					onResize: () => undefined,
+					onResize,
 					onComplete,
 				})
 			}
@@ -40,7 +47,29 @@ describe('usePointerResize', () => {
 		expect(handle.dataset.resizing).toBe('false');
 	});
 
-	it('completes once for lost capture and tears down on window blur', () => {
+	it('resizes and completes after StrictMode remounts the hook', () => {
+		const onComplete = vi.fn();
+		const onResize = vi.fn();
+		const { getByTestId } = render(
+			<StrictMode>
+				<ResizeHandle onComplete={onComplete} onResize={onResize} />
+			</StrictMode>
+		);
+		const handle = getByTestId('resize-handle');
+		Object.assign(handle, {
+			setPointerCapture: vi.fn(),
+			releasePointerCapture: vi.fn(),
+		});
+
+		fireEvent.pointerDown(handle, { pointerId: 9, clientX: 10, clientY: 0 });
+		fireEvent.pointerMove(handle, { pointerId: 9, clientX: 40, clientY: 0 });
+		fireEvent.pointerUp(handle, { pointerId: 9, clientX: 40, clientY: 0 });
+
+		expect(onResize).toHaveBeenCalledWith(130);
+		expect(onComplete).toHaveBeenCalledWith(130);
+	});
+
+	it('commits once for lost capture and commits the active value on unmount', () => {
 		const onComplete = vi.fn();
 		const { getByTestId, unmount } = render(<ResizeHandle onComplete={onComplete} />);
 		const handle = getByTestId('resize-handle');
@@ -59,6 +88,7 @@ describe('usePointerResize', () => {
 		fireEvent.pointerDown(handle, { pointerId: 8, clientX: 10, clientY: 0 });
 		unmount();
 		act(() => window.dispatchEvent(new Event('blur')));
-		expect(onComplete).toHaveBeenCalledTimes(1);
+		expect(onComplete).toHaveBeenCalledTimes(2);
+		expect(onComplete).toHaveBeenLastCalledWith(100);
 	});
 });

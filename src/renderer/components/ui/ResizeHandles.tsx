@@ -1,8 +1,9 @@
-import type { PointerEvent } from 'react';
+import { useRef } from 'react';
+import type { ResizeStartEvent } from '../../hooks/ui/usePointerResize';
 import type { ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 
 interface ResizeHandlesProps {
-	onResizeStart: (direction: ModalResizeDirection, event: PointerEvent<HTMLDivElement>) => void;
+	onResizeStart: (direction: ModalResizeDirection, event: ResizeStartEvent<HTMLDivElement>) => void;
 	disabled?: boolean;
 	accentColor?: string;
 }
@@ -38,6 +39,7 @@ export function ResizeHandles({
 	disabled = false,
 	accentColor,
 }: ResizeHandlesProps) {
+	const lastPointerDownTimestampRef = useRef<number | null>(null);
 	if (disabled) return null;
 
 	return (
@@ -50,7 +52,19 @@ export function ResizeHandles({
 					data-testid={`modal-resize-handle-${direction}`}
 					className={`absolute z-20 border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 ${HANDLE_STYLES[direction]}`}
 					style={{ backgroundColor: resolveHandleBackground(accentColor) }}
-					onPointerDown={(event) => onResizeStart(direction, event)}
+					onPointerDown={(event) => {
+						lastPointerDownTimestampRef.current = event.timeStamp;
+						onResizeStart(direction, event);
+					}}
+					onMouseDown={(event) => {
+						if (
+							lastPointerDownTimestampRef.current !== null &&
+							Math.abs(event.timeStamp - lastPointerDownTimestampRef.current) < 50
+						) {
+							return;
+						}
+						onResizeStart(direction, event);
+					}}
 				/>
 			))}
 		</>
