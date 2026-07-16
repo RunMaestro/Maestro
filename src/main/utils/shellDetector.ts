@@ -90,33 +90,3 @@ async function detectShell(shellId: string, shellName: string): Promise<ShellInf
 		};
 	}
 }
-
-/**
- * Get the command for a shell by its ID
- * Returns the shell executable name
- */
-export function getShellCommand(shellId: string): string {
-	// For Windows, map to appropriate commands
-	if (isWindows()) {
-		switch (shellId) {
-			case 'powershell':
-				return 'powershell.exe';
-			case 'pwsh':
-				return 'pwsh.exe';
-			case 'cmd':
-				return 'cmd.exe';
-			case 'wsl':
-				return 'wsl.exe';
-			case 'bash':
-			case 'sh':
-				// On Windows, bash is typically from Git Bash or WSL
-				return 'bash.exe';
-			default:
-				// Default to PowerShell on Windows for unknown shells
-				return 'powershell.exe';
-		}
-	}
-
-	// On Unix-like systems, use the shell ID directly
-	return shellId;
-}

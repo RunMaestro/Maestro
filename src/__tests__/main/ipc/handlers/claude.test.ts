@@ -116,7 +116,6 @@ vi.mock('../../../../main/utils/pricing', () => {
 		return total;
 	};
 	return {
-		calculateClaudeCost: vi.fn(flatCost),
 		calculateModelCost: vi.fn(
 			(tokens: {
 				inputTokens: number;

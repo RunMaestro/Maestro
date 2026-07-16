@@ -66,11 +66,6 @@ vi.mock('../../../main/utils/statsCache', () => ({
 	}),
 }));
 
-// Mock pricing
-vi.mock('../../../main/utils/pricing', () => ({
-	calculateClaudeCost: vi.fn(() => 0.05),
-}));
-
 describe('ClaudeSessionStorage', () => {
 	let storage: ClaudeSessionStorage;
 	let mockStore: {

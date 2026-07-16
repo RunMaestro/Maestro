@@ -74,9 +74,7 @@ Proceeding with implementation in the next subtask.
   - `output_tokens` → mapped to `outputTokens`
   - `cache_read_input_tokens` → mapped to `cacheReadTokens`
   - `cache_creation_input_tokens` → mapped to `cacheCreationTokens`
-  - **Cost:** computed from token counts via
-    `calculateClaudeCost(...)` (model-rate table) → `costUsd` is **always
-    populated** (number, not undefined).
+  - **Cost:** computed by `computeClaudeUsageCost(...)` using model-aware pricing; `costUsd` is **always populated** (number, not undefined).
 - **Aggregation level:** per-message in the file; pre-aggregated to
   per-session totals by `parseSessionContent()`
   (`claude-session-storage.ts:127-189`) using regex matchAll across the

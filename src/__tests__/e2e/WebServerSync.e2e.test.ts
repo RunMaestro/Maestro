@@ -25,7 +25,6 @@ vi.mock('../../main/utils/logger', () => ({
 // Mock network utils to return localhost
 vi.mock('../../main/utils/networkUtils', () => ({
 	getLocalIpAddress: () => Promise.resolve('localhost'),
-	getLocalIpAddressSync: () => 'localhost',
 }));
 
 // Test theme

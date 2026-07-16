@@ -304,10 +304,9 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### Shell Detection (`src/main/utils/shellDetector.ts`)
 
-| Function                   | Signature                    | Purpose                                                                                          |
-| -------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| `detectShells()`           | `() => Promise<ShellInfo[]>` | Detect available shells. Platform-aware (PowerShell/cmd/bash on Windows; zsh/bash/fish on Unix). |
-| `getShellCommand(shellId)` | `(string) => string`         | Map shell ID to executable name.                                                                 |
+| Function         | Signature                    | Purpose                                                                                          |
+| ---------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `detectShells()` | `() => Promise<ShellInfo[]>` | Detect available shells. Platform-aware (PowerShell/cmd/bash on Windows; zsh/bash/fish on Unix). |
 
 ### SSH Spawn Wrapper (`src/main/utils/ssh-spawn-wrapper.ts`)
 
@@ -354,10 +353,9 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### Network (`src/main/utils/networkUtils.ts`)
 
-| Function                  | Signature               | Purpose                                                                    |
-| ------------------------- | ----------------------- | -------------------------------------------------------------------------- |
-| `getLocalIpAddress()`     | `() => Promise<string>` | Detect local IP via UDP socket to 8.8.8.8, fallback to interface scanning. |
-| `getLocalIpAddressSync()` | `() => string`          | Sync version using interface scanning only.                                |
+| Function              | Signature               | Purpose                                                                    |
+| --------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `getLocalIpAddress()` | `() => Promise<string>` | Detect local IP via UDP socket to 8.8.8.8, fallback to interface scanning. |
 
 ### CLI Detection (`src/main/utils/cliDetection.ts`)
 
@@ -375,16 +373,14 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 Per-model token pricing is the single source of truth in `src/shared/modelPricing.ts` (no Electron imports, so the CLI bundles it directly). The main-process `pricing.ts` is a thin re-export kept as a stable import surface. Prefer the model-aware functions for new code.
 
-| Function                                 | Signature                                 | Purpose                                                                                             |
-| ---------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `calculateModelCost(tokens, modelId?)`   | `(TokenCounts, string?) => number`        | **Preferred.** USD cost priced for the given model (family fallback, then Sonnet-tier default).     |
-| `computeClaudeUsageCost(jsonl)`          | `(string) => ClaudeUsageBreakdown`        | **Preferred.** Parse a Claude session JSONL into grand-total tokens + per-model-accurate cost.      |
-| `resolveModelPricing(modelId?)`          | `(string?) => PricingConfig`              | Resolve a model string to its `PricingConfig` (exact → family substring → default).                 |
-| `calculateWithPricing(tokens, pricing?)` | `(TokenCounts, PricingConfig?) => number` | USD cost against an explicit pricing config. Defaults to `DEFAULT_MODEL_PRICING` (Sonnet-tier).     |
-| `calculateCost(tokens, pricing?)`        | `(TokenCounts, PricingConfig?) => number` | Back-compat alias of `calculateWithPricing`. Prefer `calculateModelCost()` when the model is known. |
-| `calculateClaudeCost(...)`               | Individual params version                 | Deprecated. Use `calculateModelCost()` with a model ID, or `calculateCost()`.                       |
+| Function                                 | Signature                                 | Purpose                                                                                         |
+| ---------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `calculateModelCost(tokens, modelId?)`   | `(TokenCounts, string?) => number`        | **Preferred.** USD cost priced for the given model (family fallback, then Sonnet-tier default). |
+| `computeClaudeUsageCost(jsonl)`          | `(string) => ClaudeUsageBreakdown`        | **Preferred.** Parse a Claude session JSONL into grand-total tokens + per-model-accurate cost.  |
+| `resolveModelPricing(modelId?)`          | `(string?) => PricingConfig`              | Resolve a model string to its `PricingConfig` (exact → family substring → default).             |
+| `calculateWithPricing(tokens, pricing?)` | `(TokenCounts, PricingConfig?) => number` | USD cost against an explicit pricing config. Defaults to `DEFAULT_MODEL_PRICING` (Sonnet-tier). |
 
-`MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported. `CLAUDE_PRICING` in `src/main/constants.ts` is now a deprecated re-export of `DEFAULT_MODEL_PRICING`.
+`MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported.
 
 ---
 

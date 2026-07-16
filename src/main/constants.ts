@@ -7,7 +7,6 @@
 
 import path from 'path';
 import * as os from 'node:os';
-import { DEFAULT_MODEL_PRICING } from '../shared/modelPricing';
 
 // ============================================================================
 // Pre-compiled Regex Patterns (Performance Optimization)
@@ -118,12 +117,3 @@ export const CLAUDE_SESSION_PARSE_LIMITS = {
 	/** Max characters for first message preview */
 	FIRST_MESSAGE_PREVIEW_LENGTH: 200,
 } as const;
-
-/**
- * Default Claude API pricing (per million tokens), flat Sonnet-tier fallback.
- *
- * @deprecated Per-model pricing now lives in `src/shared/modelPricing.ts`. This
- * re-export is the unknown-model default; prefer `resolveModelPricing(modelId)`
- * or `calculateModelCost(tokens, modelId)` for accurate per-model cost.
- */
-export const CLAUDE_PRICING = DEFAULT_MODEL_PRICING;

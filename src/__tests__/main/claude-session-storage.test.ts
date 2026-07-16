@@ -27,7 +27,6 @@ vi.mock('../../main/utils/pricing', () => {
 		return total;
 	};
 	return {
-		calculateClaudeCost: vi.fn(flatCost),
 		computeClaudeUsageCost: vi.fn((content: string) => {
 			const inputTokens = sumMatches(content, 'input_tokens');
 			const outputTokens = sumMatches(content, 'output_tokens');

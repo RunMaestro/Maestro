@@ -38,7 +38,7 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 
 ### cue-types.ts (~57 lines)
 
-Thin re-export shim. Most type definitions have moved to `src/shared/cue/` (canonical). This file re-exports the shared types, defines `AgentCompletionData` (main-process only), provides the `createCueEvent()` factory, and exports `CUE_YAML_FILENAME` plus the deprecated `LEGACY_CUE_YAML_FILENAME` alias.
+Thin re-export shim. Most type definitions have moved to `src/shared/cue/` (canonical). This file re-exports the shared types, defines `AgentCompletionData` (main-process only), provides the `createCueEvent()` factory, and exports `CUE_YAML_FILENAME`.
 
 Canonical types now live in `src/shared/cue/contracts.ts` (re-exported via `src/shared/cue/index.ts`):
 
@@ -385,7 +385,6 @@ Path constants:
 
 - `CUE_CONFIG_PATH` = `".maestro/cue.yaml"`
 - `CUE_PROMPTS_DIR` = `".maestro/prompts"`
-- `LEGACY_CUE_CONFIG_PATH` = `"maestro-cue.yaml"` (via `LEGACY_CUE_YAML_FILENAME`)
 
 ---
 
