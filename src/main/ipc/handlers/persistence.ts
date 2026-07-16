@@ -29,10 +29,12 @@ import type { Group, SessionCliActivity } from '../../../shared/types';
 import type { PluginEvent } from '../../../shared/plugins/events';
 import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
+import { isPluginActive } from '../../plugins/plugin-manager-singleton';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
  *
+
  * Replaces a previous `JSON.stringify(prev) !== JSON.stringify(curr)` per
  * session per persistence flush, which was 2× O(stringify) per call. The
  * cliActivity producer (`useCliActivityMonitoring`) only ever sets the field
@@ -40,6 +42,26 @@ import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-i
  * primitive comparison is equivalent at all real call sites and an order of
  * magnitude cheaper.
  */
+
+function omitInactiveOmpRuntimeFeatures(sessions: StoredSession[]): StoredSession[] {
+	if (isPluginActive('com.maestro.omp')) return sessions;
+	return sessions.map((session) => {
+		if (session.toolType !== 'omp') return session;
+		const aiTabs = Array.isArray(session.aiTabs)
+			? session.aiTabs.map((tab: Record<string, unknown>) => ({
+					...tab,
+					runtimeFeatures: undefined,
+					pendingApprovals: [],
+				}))
+			: session.aiTabs;
+		return {
+			...session,
+			runtimeFeatures: undefined,
+			pendingApprovals: [],
+			aiTabs,
+		};
+	});
+}
 function cliActivityChanged(
 	prev: SessionCliActivity | null | undefined,
 	curr: SessionCliActivity | null | undefined
@@ -223,7 +245,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 					'Sessions'
 				);
 				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
-				return relocated;
+				return omitInactiveOmpRuntimeFeatures(relocated);
 			}
 		} catch (err) {
 			// Never let image relocation block loading sessions - fall through and
@@ -235,7 +257,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			);
 		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
-		return sessions;
+		return omitInactiveOmpRuntimeFeatures(sessions);
 	});
 
 	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a

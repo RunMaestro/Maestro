@@ -18,6 +18,7 @@ import {
 } from '../../../../main/ipc/handlers/persistence';
 import type Store from 'electron-store';
 import type { WebServer } from '../../../../main/web-server';
+import { isPluginActive } from '../../../../main/plugins/plugin-manager-singleton';
 
 // Mock electron's ipcMain and app
 vi.mock('electron', () => ({
@@ -29,6 +30,10 @@ vi.mock('electron', () => ({
 		getPath: vi.fn().mockReturnValue('/mock/user/data'),
 		on: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	isPluginActive: vi.fn(() => true),
 }));
 
 // Mock fs/promises
@@ -89,6 +94,7 @@ describe('persistence IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(isPluginActive).mockReturnValue(true);
 
 		// Create mock stores
 		mockSettingsStore = {
@@ -476,7 +482,40 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(mockSessionsStore.get).toHaveBeenCalledWith('sessions', []);
+
 			expect(result).toEqual(mockSessions);
+		});
+
+		it('removes persisted OMP runtime features when the provider plugin is inactive', async () => {
+			vi.mocked(isPluginActive).mockReturnValue(false);
+			mockSessionsStore.get.mockReturnValue([
+				{
+					id: 'omp-session',
+					name: 'OMP Plugin Preview',
+					toolType: 'omp',
+					cwd: '/test',
+					projectRoot: '/test',
+					runtimeFeatures: { controls: [{ id: 'model' }] },
+					pendingApprovals: [{ id: 'stale-approval' }],
+					aiTabs: [
+						{
+							id: 'tab-1',
+							runtimeFeatures: { controls: [{ id: 'model' }] },
+							pendingApprovals: [{ id: 'stale-approval' }],
+						},
+					],
+				},
+			]);
+
+			const handler = handlers.get('sessions:getAll');
+			const result = await handler!();
+			const omp = result[0] as Record<string, unknown>;
+			const tab = (omp.aiTabs as Array<Record<string, unknown>>)[0];
+
+			expect(omp.runtimeFeatures).toBeUndefined();
+			expect(omp.pendingApprovals).toEqual([]);
+			expect(tab.runtimeFeatures).toBeUndefined();
+			expect(tab.pendingApprovals).toEqual([]);
 		});
 
 		it('should return empty array for missing sessions', async () => {
