@@ -46,15 +46,11 @@ vi.mock('../../shared/platformDetection', () => ({
 import * as fs from 'fs';
 import { logger } from '../../main/utils/logger';
 
-import {
-	aggregateModelUsage,
-	ProcessManager,
-	detectNodeVersionManagerBinPaths,
-	buildUnixBasePath,
-	type UsageStats,
-	type ModelStats,
-	type AgentError,
-} from '../../main/process-manager';
+import { ProcessManager } from '../../main/process-manager/ProcessManager';
+import { aggregateModelUsage, type ModelStats } from '../../main/parsers/usage-aggregator';
+import { detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
+import { buildUnixBasePath } from '../../main/process-manager/utils/envBuilder';
+import type { AgentError, UsageStats } from '../../shared/types';
 
 describe('process-manager.ts', () => {
 	describe('aggregateModelUsage', () => {
