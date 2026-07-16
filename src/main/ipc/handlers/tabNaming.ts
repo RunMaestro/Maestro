@@ -28,7 +28,7 @@ import {
 	type ClaudeSpawnDecision,
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
-import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { createSshRemoteStoreAdapter, resolveSshSpawn } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
@@ -229,9 +229,10 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// never produce. Local (non-SSH) spawns skip the probe entirely.
 						let sshMaestroPAvailable: boolean | undefined;
 						if (sshEnabled && sshRemoteId) {
-							const sshRemote = getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+							const sshResolution = resolveSshSpawn(createSshRemoteStoreAdapter(settingsStore), {
 								sessionSshConfig: config.sessionSshRemoteConfig,
-							}).config;
+							});
+							const sshRemote = sshResolution.mode === 'remote' ? sshResolution.remote : null;
 							if (sshRemote) {
 								sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
 							}
@@ -267,12 +268,12 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					let shouldSendPromptViaStdin = false;
 					let promptAlreadyInArgs = false;
 					if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
-						const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-						const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+						const sshResolution = resolveSshSpawn(createSshRemoteStoreAdapter(settingsStore), {
 							sessionSshConfig: config.sessionSshRemoteConfig,
 						});
 
-						if (sshResult.config) {
+						if (sshResolution.mode === 'remote') {
+							const sshRemote = sshResolution.remote;
 							// Use the agent's command (not path) for remote execution
 							// since the path is local and remote host has its own binary location
 							let remoteCommand = agent.command;
@@ -346,7 +347,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								});
 							}
 
-							const sshCommand = await buildSshCommand(sshResult.config, {
+							const sshCommand = await buildSshCommand(sshRemote, {
 								command: remoteCommand,
 								args: finalArgs,
 								cwd: remoteCwd,

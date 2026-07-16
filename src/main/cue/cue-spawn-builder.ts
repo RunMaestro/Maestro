@@ -11,7 +11,7 @@ import type { CueExecutionConfig } from './cue-executor';
 import { getAgentDefinition, getAgentCapabilities } from '../agents';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
 import { wrapSpawnWithSsh, type SshSpawnWrapConfig } from '../utils/ssh-spawn-wrapper';
-import { getSshRemoteConfig } from '../utils/ssh-remote-resolver';
+import { resolveSshSpawn } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
 import {
@@ -163,11 +163,11 @@ export async function buildSpawnSpec(
 	// maestro-p isn't installed on the remote (no UI/readiness probe runs first).
 	let remoteMaestroPAvailable: boolean | undefined;
 	if (sshRemoteConfig?.enabled && sshStore) {
-		const sshRemote = getSshRemoteConfig(sshStore, {
+		const sshResolution = resolveSshSpawn(sshStore, {
 			sessionSshConfig: sshRemoteConfig,
-		}).config;
-		if (sshRemote) {
-			remoteMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
+		});
+		if (sshResolution.mode === 'remote') {
+			remoteMaestroPAvailable = await ensureRemoteMaestroPProbed(sshResolution.remote);
 		}
 	}
 	const tokenMode = getClaudeTokenMode(
