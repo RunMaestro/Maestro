@@ -17,6 +17,10 @@ export type { UseModalLayerOptions } from './useModalLayer';
 export { useClickOutside } from './useClickOutside';
 export type { UseClickOutsideOptions } from './useClickOutside';
 
+// Clipboard feedback lifecycle
+export { useCopyFeedback } from './useCopyFeedback';
+export type { UseCopyFeedbackOptions, UseCopyFeedbackReturn } from './useCopyFeedback';
+
 // Expansion state management (for lists, trees, etc.)
 export { useExpandedSet } from './useExpandedSet';
 export type { UseExpandedSetOptions, UseExpandedSetReturn } from './useExpandedSet';
