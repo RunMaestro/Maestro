@@ -10,20 +10,30 @@ test.describe('first-party OMP regular session', () => {
 		const harness = await launchNativeOmpRegularSessionHarness();
 		try {
 			const { launched } = harness;
-			const result = await launched.window.evaluate(
-				async (config) => window.maestro.process.spawn(config),
-				{
-					sessionId: 'omp-native-e2e-regular-session',
-					toolType: 'omp',
-					cwd: process.cwd(),
-					command: 'omp',
-					args: [],
-					prompt: 'native OMP fixture journey',
-				}
-			);
-			expect(result).toMatchObject({ success: true, pid: expect.any(Number) });
-			expect(launched.output()).not.toMatch(/legacy.*fallback|fallback.*legacy/i);
+			await expect(launched.window.getByRole('button', { name: 'New Agent' })).toBeVisible({
+				timeout: 45_000,
+			});
+			await launched.window.getByRole('button', { name: 'New Agent' }).click();
+			await expect(launched.window.getByRole('dialog')).toBeVisible();
+			await launched.window.getByText('Manual Setup', { exact: true }).click();
+			await launched.window.getByText('Oh My Pi', { exact: true }).click();
+			await launched.window.locator('input').first().fill('Native OMP fixture');
+			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
+			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
+			await expect(
+				launched.window.getByText('Native OMP fixture', { exact: true }).first()
+			).toBeVisible({ timeout: 30_000 });
+			await expect(launched.window.getByRole('dialog')).toHaveCount(0);
+			const composer = launched.window.locator('textarea').last();
+			await expect(composer).toBeVisible();
+			await composer.fill('show ordinary native transcript');
+			await composer.press('Enter');
+			await expect(launched.window.getByText(/fixture response for/).first()).toBeVisible({
+				timeout: 30_000,
+			});
+			await expect(launched.window.getByText('Approve fixture tool?')).toBeVisible();
 			await expect(launched.window.locator('webview')).toHaveCount(0);
+			expect(launched.output()).not.toMatch(/legacy.*fallback|fallback.*legacy/i);
 			await launched.window.screenshot({
 				path: testInfo.outputPath('omp-native-regular-session.png'),
 			});

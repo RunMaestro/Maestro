@@ -42,6 +42,8 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 			MAESTRO_E2E_OMP_TRUST_ROOT: JSON.stringify(fixture.trustRoot),
 		});
 		launched = await launch(seeded.env, INJECTED_ELECTRON_MAIN);
+		const windowsNotice = launched.window.getByRole('button', { name: 'Got it!' });
+		if (await windowsNotice.isVisible().catch(() => false)) await windowsNotice.click();
 		return {
 			seeded,
 			fixture,
