@@ -66,7 +66,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'runtime';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).

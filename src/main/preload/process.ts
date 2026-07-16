@@ -15,6 +15,7 @@ import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type {
 	AgentApprovalRequest,
+	AgentApprovalResponse,
 	AgentRuntimeFeatureState,
 } from '../../shared/agent-runtime-features';
 
@@ -340,8 +341,39 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('process:runtime-features', handler);
 		},
 
-		respondApproval: (sessionId: string, requestId: string, optionId: string): Promise<boolean> =>
-			ipcRenderer.invoke('process:respond-approval', { sessionId, requestId, optionId }),
+		respondApproval: (
+			sessionId: string,
+			requestId: string,
+			response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>
+		): Promise<boolean> =>
+			ipcRenderer.invoke('process:respond-approval', { sessionId, requestId, ...response }),
+
+		onApprovalCancelled: (
+			callback: (sessionId: string, requestId: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, requestId: string) =>
+				callback(sessionId, requestId);
+			ipcRenderer.on('process:approval-cancelled', handler);
+			return () => ipcRenderer.removeListener('process:approval-cancelled', handler);
+		},
+
+		onOpenExternalUrl: (callback: (sessionId: string, url: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, url: string) => callback(sessionId, url);
+			ipcRenderer.on('process:open-external-url', handler);
+			return () => ipcRenderer.removeListener('process:open-external-url', handler);
+		},
+
+		onComposerText: (callback: (sessionId: string, text: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, text: string) => callback(sessionId, text);
+			ipcRenderer.on('process:composer-text', handler);
+			return () => ipcRenderer.removeListener('process:composer-text', handler);
+		},
+
+		onSessionTitle: (callback: (sessionId: string, title: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, title: string) => callback(sessionId, title);
+			ipcRenderer.on('process:session-title', handler);
+			return () => ipcRenderer.removeListener('process:session-title', handler);
+		},
 
 		setAgentControl: (
 			sessionId: string,

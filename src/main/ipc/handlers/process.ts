@@ -30,6 +30,7 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import type { ManagedRuntimeResolver } from '../../plugins/plugin-managed-runtime-service';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -74,6 +75,8 @@ export interface ProcessHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	safeSend?: (channel: string, ...args: unknown[]) => void;
 	sessionsStore: Store<{ sessions: any[] }>;
+	/** First-party OMP runtime resolver required for native JSONL launch. */
+	ompRuntimeResolver?: ManagedRuntimeResolver;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
 	/**
@@ -132,6 +135,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				settingsStore,
 				getMainWindow,
 				safeSend,
+				ompRuntimeResolver: deps.ompRuntimeResolver,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
 			})
@@ -143,14 +147,24 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		withIpcErrorLogging(
 			handlerOpts('respond-approval'),
 			async (_event, payload: unknown): Promise<boolean> => {
-				if (!isOmpPayload(payload, ['sessionId', 'requestId', 'optionId'])) return false;
-				const { sessionId, requestId, optionId } = payload as {
+				if (!isOmpPayload(payload, ['sessionId', 'requestId'])) return false;
+				const { sessionId, requestId, optionId, value, cancelled } = payload as {
 					sessionId: string;
 					requestId: string;
-					optionId: string;
+					optionId?: unknown;
+					value?: unknown;
+					cancelled?: unknown;
 				};
+				if (
+					(optionId !== undefined && typeof optionId !== 'string') ||
+					(value !== undefined && typeof value !== 'string') ||
+					(cancelled !== undefined && typeof cancelled !== 'boolean')
+				)
+					return false;
 				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
-				const responded = adapter ? await adapter.respondApproval(requestId, optionId) : false;
+				const responded = adapter
+					? await adapter.respondApproval(requestId, { optionId, value, cancelled })
+					: false;
 				if (!responded)
 					logger.warn('OMP approval response was rejected', LOG_CONTEXT, {
 						sessionId,

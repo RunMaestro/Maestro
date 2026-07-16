@@ -2,6 +2,7 @@ import { spawn as spawnChild } from 'child_process';
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'child_process';
 import type {
 	AgentApprovalRequest,
+	AgentApprovalResponse,
 	AgentControl,
 	AgentControlOption,
 	AgentRuntimeFeatureState,
@@ -28,6 +29,8 @@ export type OmpChildSpawner = (
 export interface OmpNativeSessionOptions {
 	sessionId: string;
 	cwd: string;
+	/** Resolver-authenticated runtime arguments, e.g. a verified entry script. */
+	prefixArgs?: readonly string[];
 	command: string;
 	env?: NodeJS.ProcessEnv;
 	agentSessionId?: string;
@@ -46,6 +49,8 @@ export class OmpNativeSessionAdapter {
 	private readonly child: ChildProcessWithoutNullStreams;
 	private readonly approvals = new Map<string, OmpRpcEvent>();
 	private readonly resolvedApprovals = new Set<string>();
+	private readonly hostToolCalls = new Map<string, AbortController>();
+	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
 	private autoRetryEnabled = true;
@@ -54,8 +59,7 @@ export class OmpNativeSessionAdapter {
 	private constructor(private readonly options: OmpNativeSessionOptions) {
 		const spawn = options.spawn ?? spawnChild;
 		// Intentionally omit every managed-plugin sandbox flag. Native sessions run
-		// with the user's OMP profile, sessions, extensions, tools, skills, and rules.
-		this.child = spawn(options.command, ['--mode', 'rpc'], {
+		this.child = spawn(options.command, [...(options.prefixArgs ?? []), '--mode', 'rpc'], {
 			cwd: options.cwd,
 			env: options.env ?? process.env,
 			windowsHide: true,
@@ -130,22 +134,17 @@ export class OmpNativeSessionAdapter {
 		await this.client.command({ type: 'abort' });
 	}
 
-	async respondApproval(requestId: string, optionId: string): Promise<boolean> {
+	async respondApproval(
+		requestId: string,
+		response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>
+	): Promise<boolean> {
 		await this.initialized;
 		const request = this.approvals.get(requestId);
 		if (!request) return false;
-		const options = approvalOptions(request);
-		const selected = options.find((option) => option.id === optionId);
-		if (!selected) return false;
-		await this.client.send(
-			selected.kind === 'custom'
-				? { type: 'extension_ui_response', id: requestId, value: selected.id }
-				: {
-						type: 'extension_ui_response',
-						id: requestId,
-						confirmed: selected.kind === 'approve',
-					}
-		);
+		const method = stringAt(request, 'method');
+		const frame = extensionResponse(requestId, method, response, request);
+		if (!frame) return false;
+		await this.client.send(frame);
 		this.approvals.delete(requestId);
 		this.resolvedApprovals.add(requestId);
 		return true;
@@ -219,7 +218,30 @@ export class OmpNativeSessionAdapter {
 			await this.client.command({ type: 'new_session' });
 		}
 		if (this.options.model) await this.applyModel(this.options.model);
-		await this.client.command({ type: 'set_subagent_subscription', level: 'events' });
+		await Promise.all([
+			this.client.command({
+				type: 'set_host_tools',
+				tools: [
+					{
+						name: 'maestro.session.status',
+						label: 'Maestro session status',
+						description: 'Returns bounded metadata for the current Maestro session.',
+						parameters: { type: 'object', properties: {}, additionalProperties: false },
+					},
+				],
+			}),
+			this.client.command({
+				type: 'set_host_uri_schemes',
+				schemes: [
+					{
+						scheme: 'maestro',
+						description: 'Read-only Maestro session metadata',
+						immutable: true,
+					},
+				],
+			}),
+			this.client.command({ type: 'set_subagent_subscription', level: 'events' }),
+		]);
 		await Promise.all([this.emitCommands(), this.refreshFeatures()]);
 	}
 
@@ -275,12 +297,13 @@ export class OmpNativeSessionAdapter {
 
 	private handleEvent(event: OmpRpcEvent): void {
 		if (event.type === 'message_update') {
-			const text = messageUpdateTextFrom(event);
-			if (text) this.options.send('process:data', this.options.sessionId, text);
-		}
-		if (event.type === 'message_update' && event.thinking === true) {
-			const text = messageUpdateTextFrom(event);
-			if (text) this.options.send('process:thinking-chunk', this.options.sessionId, text);
+			const assistantMessageEvent = asRecord(event.assistantMessageEvent);
+			const eventType = stringAt(assistantMessageEvent, 'type');
+			const text = stringAt(assistantMessageEvent, 'delta') ?? textFrom(event);
+			if ((eventType === 'text_delta' || !eventType) && text)
+				this.options.send('process:data', this.options.sessionId, text);
+			if (eventType === 'thinking_delta' && text)
+				this.options.send('process:thinking-chunk', this.options.sessionId, text);
 		}
 		if (event.type.startsWith('tool_execution_')) {
 			this.options.send('process:tool-execution', this.options.sessionId, {
@@ -341,30 +364,64 @@ export class OmpNativeSessionAdapter {
 			if (text) this.options.send('process:data', this.options.sessionId, text);
 			return;
 		}
-		if (callback.type === 'host_uri_request' || callback.type === 'host_uri_cancel') {
-			const id = stringAt(callback, 'id');
-			const detail =
-				callback.type === 'host_uri_request'
-					? 'Maestro has no approved host URI scheme for this OMP session'
-					: 'OMP cancelled a host URI request';
-			this.options.send('process:stderr', this.options.sessionId, detail);
-			if (callback.type === 'host_uri_request' && id) {
-				void this.client.send({ type: 'host_uri_result', id, isError: true, error: detail });
-			}
+		if (callback.type === 'host_tool_call') {
+			void this.handleHostToolCall(callback);
+			return;
+		}
+		if (callback.type === 'host_tool_cancel') {
+			const targetId = stringAt(callback, 'targetId');
+			this.hostToolCalls.get(targetId ?? '')?.abort();
+			return;
+		}
+		if (callback.type === 'host_uri_request') {
+			void this.handleHostUriRequest(callback);
+			return;
+		}
+		if (callback.type === 'host_uri_cancel') {
+			const targetId = stringAt(callback, 'targetId');
+			if (targetId) this.hostUriRequests.delete(targetId);
 			return;
 		}
 		if (callback.type === 'extension_ui_request') {
 			const id = stringAt(callback, 'id');
-			if (!id) {
+			const method = stringAt(callback, 'method');
+			if (!id || !method) {
 				this.options.send(
 					'process:stderr',
 					this.options.sessionId,
-					'OMP extension UI request is missing its response ID'
+					'OMP extension UI request is missing its response ID or method'
 				);
 				return;
 			}
+			if (method === 'cancel') {
+				const targetId = stringAt(callback, 'targetId');
+				if (targetId) {
+					this.approvals.delete(targetId);
+					this.resolvedApprovals.add(targetId);
+					this.options.send('process:approval-cancelled', this.options.sessionId, targetId);
+				}
+				return;
+			}
+			if (method === 'open_url') {
+				const url = stringAt(callback, 'launchUrl') ?? stringAt(callback, 'url');
+				if (url) this.options.send('process:open-external-url', this.options.sessionId, url);
+				else
+					this.options.send(
+						'process:stderr',
+						this.options.sessionId,
+						'OMP open_url request is missing a URL'
+					);
+				return;
+			}
+			if (isNativeProjectionRequest(method)) {
+				this.projectExtensionUi(callback);
+				return;
+			}
 			if (this.resolvedApprovals.has(id)) return;
-			if (isChoiceRequest(stringAt(callback, 'method')) && approvalOptions(callback).length > 0) {
+			if (
+				(isChoiceRequest(method) && approvalOptions(callback).length > 0) ||
+				isTextRequest(method)
+			) {
 				this.approvals.set(id, callback);
 				this.options.send(
 					'process:approval-request',
@@ -384,6 +441,111 @@ export class OmpNativeSessionAdapter {
 			callback.type === 'config_update'
 		)
 			void this.refreshFeatures();
+	}
+
+	private async handleHostToolCall(callback: OmpRpcEvent): Promise<void> {
+		const id = stringAt(callback, 'id');
+		const toolName = stringAt(callback, 'toolName');
+		const args = asRecord(callback.arguments);
+		if (!id || !toolName || Buffer.byteLength(JSON.stringify(args), 'utf8') > 16 * 1024) return;
+		const controller = new AbortController();
+		this.hostToolCalls.set(id, controller);
+		try {
+			if (toolName !== 'maestro.session.status')
+				throw new Error(`Unsupported Maestro host tool: ${toolName}`);
+			if (Object.keys(args).length > 0)
+				throw new Error('maestro.session.status accepts no arguments');
+			const text = JSON.stringify(
+				{ sessionId: this.options.sessionId, cwd: this.options.cwd },
+				undefined,
+				2
+			);
+			await this.client.send({
+				type: 'host_tool_update',
+				id,
+				partialResult: { content: [{ type: 'text', text: 'Reading Maestro session status' }] },
+			});
+			if (controller.signal.aborted) return;
+			await this.client.send({
+				type: 'host_tool_result',
+				id,
+				result: { content: [{ type: 'text', text }] },
+			});
+		} catch (error) {
+			await this.client.send({
+				type: 'host_tool_result',
+				id,
+				isError: true,
+				result: {
+					content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+				},
+			});
+		} finally {
+			this.hostToolCalls.delete(id);
+		}
+	}
+
+	private async handleHostUriRequest(callback: OmpRpcEvent): Promise<void> {
+		const id = stringAt(callback, 'id');
+		const operation = stringAt(callback, 'operation');
+		const url = stringAt(callback, 'url');
+		if (!id || !operation || !url) return;
+		this.hostUriRequests.add(id);
+		try {
+			if (operation !== 'read' || url !== 'maestro://session/status')
+				throw new Error('Maestro only exposes the immutable maestro://session/status URI');
+			const content = JSON.stringify({ sessionId: this.options.sessionId, cwd: this.options.cwd });
+			if (Buffer.byteLength(content, 'utf8') > 16 * 1024)
+				throw new Error('Host URI response exceeds limit');
+			if (!this.hostUriRequests.has(id)) return;
+			await this.client.send({
+				type: 'host_uri_result',
+				id,
+				content,
+				contentType: 'application/json',
+				immutable: true,
+			});
+		} catch (error) {
+			if (this.hostUriRequests.has(id))
+				await this.client.send({
+					type: 'host_uri_result',
+					id,
+					isError: true,
+					error: error instanceof Error ? error.message : String(error),
+				});
+		} finally {
+			this.hostUriRequests.delete(id);
+		}
+	}
+	private projectExtensionUi(callback: OmpRpcEvent): void {
+		const method = stringAt(callback, 'method');
+		if (method === 'notify' || method === 'extension_ui.notify') {
+			const message = stringAt(callback, 'message');
+			if (message)
+				this.options.send('remote:notifyToast', {
+					title: 'OMP',
+					message,
+					color: notificationColor(stringAt(callback, 'notifyType')),
+				});
+			return;
+		}
+		if (method === 'set_editor_text' || method === 'extension_ui.set_editor_text') {
+			const text = stringAt(callback, 'text');
+			if (text !== undefined)
+				this.options.send('process:composer-text', this.options.sessionId, text);
+			return;
+		}
+		if (method === 'setTitle' || method === 'extension_ui.setTitle') {
+			const title = stringAt(callback, 'title');
+			if (title) this.options.send('process:session-title', this.options.sessionId, title);
+			return;
+		}
+		const text =
+			stringAt(callback, 'statusText') ??
+			(Array.isArray(callback.widgetLines)
+				? callback.widgetLines.filter((line): line is string => typeof line === 'string').join('\n')
+				: undefined);
+		if (text) this.options.send('process:data', this.options.sessionId, text);
 	}
 
 	private rejectExtensionUiRequest(id: string, callback: OmpRpcEvent): void {
@@ -436,16 +598,6 @@ function textFrom(record: Record<string, unknown>): string | undefined {
 		if (typeof value === 'string') return value;
 	}
 	return undefined;
-}
-
-function messageUpdateTextFrom(event: OmpRpcEvent): string | undefined {
-	const assistantMessageEvent = asRecord(event.assistantMessageEvent);
-	if (Object.keys(assistantMessageEvent).length > 0) {
-		return assistantMessageEvent.type === 'text_delta'
-			? stringAt(assistantMessageEvent, 'delta')
-			: undefined;
-	}
-	return textFrom(event);
 }
 
 function toOmpImages(images: readonly string[]): OmpRpcImage[] {
@@ -698,6 +850,56 @@ function isChoiceRequest(method: string | undefined): boolean {
 	);
 }
 
+function isTextRequest(method: string | undefined): boolean {
+	return (
+		method === 'input' ||
+		method === 'editor' ||
+		method === 'extension_ui.input' ||
+		method === 'extension_ui.editor'
+	);
+}
+
+function isNativeProjectionRequest(method: string | undefined): boolean {
+	return (
+		method === 'notify' ||
+		method === 'setStatus' ||
+		method === 'setWidget' ||
+		method === 'setTitle' ||
+		method === 'set_editor_text' ||
+		method === 'extension_ui.notify' ||
+		method === 'extension_ui.setStatus' ||
+		method === 'extension_ui.setWidget' ||
+		method === 'extension_ui.setTitle' ||
+		method === 'extension_ui.set_editor_text'
+	);
+}
+
+function notificationColor(type: string | undefined): 'theme' | 'yellow' | 'red' {
+	if (type === 'warning') return 'yellow';
+	if (type === 'error') return 'red';
+	return 'theme';
+}
+
+function extensionResponse(
+	id: string,
+	method: string | undefined,
+	response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>,
+	request: OmpRpcEvent
+): OmpRpcCommand | null {
+	if (response.cancelled === true) return { type: 'extension_ui_response', id, cancelled: true };
+	if (isTextRequest(method)) {
+		if (typeof response.value !== 'string') return null;
+		return { type: 'extension_ui_response', id, value: response.value };
+	}
+	const optionId = response.optionId;
+	if (typeof optionId !== 'string') return null;
+	const selected = approvalOptions(request).find((option) => option.id === optionId);
+	if (!selected) return null;
+	return selected.kind === 'custom'
+		? { type: 'extension_ui_response', id, value: selected.id }
+		: { type: 'extension_ui_response', id, confirmed: selected.kind === 'approve' };
+}
+
 function isRuntimeFeatureRequest(method: string | undefined): boolean {
 	return (
 		method === 'setStatus' ||
@@ -719,6 +921,16 @@ function approvalFrom(callback: OmpRpcEvent, sessionId: string): AgentApprovalRe
 		title: stringAt(callback, 'title') ?? stringAt(callback, 'message') ?? 'OMP approval required',
 		detail: stringAt(callback, 'detail'),
 		options: approvalOptions(callback),
+		...(isTextRequest(stringAt(callback, 'method'))
+			? {
+					textInput: {
+						kind: stringAt(callback, 'method')?.endsWith('editor') ? 'editor' : 'input',
+						placeholder: stringAt(callback, 'placeholder'),
+						prefill: stringAt(callback, 'prefill'),
+						promptStyle: callback.promptStyle === true,
+					},
+				}
+			: {}),
 		createdAt: new Date().toISOString(),
 	};
 }

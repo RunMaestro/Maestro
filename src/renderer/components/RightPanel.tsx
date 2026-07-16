@@ -40,6 +40,61 @@ import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
+import type { AgentRuntimeFeatureState } from '../../shared/agent-runtime-features';
+
+function NativeRuntimePanel({
+	features,
+	theme,
+}: {
+	features: AgentRuntimeFeatureState;
+	theme: Theme;
+}) {
+	const sections = [
+		{
+			title: 'Todo',
+			rows: features.todos?.flatMap((phase) =>
+				phase.items.map((item) => `${phase.name}: ${item.content} (${item.state})`)
+			),
+		},
+		{
+			title: 'Subagents',
+			rows: features.subagents?.map((agent) => `${agent.label}: ${agent.status}`),
+		},
+		{
+			title: 'Session tree',
+			rows: features.tree?.map((entry) => entry.label),
+		},
+		{
+			title: 'Stats',
+			rows: features.stats
+				? Object.entries(features.stats).map(([key, value]) => `${key}: ${String(value)}`)
+				: null,
+		},
+	].filter((section) => section.rows && section.rows.length > 0);
+
+	return (
+		<div data-testid="native-runtime-panel" className="space-y-4 pt-4">
+			{sections.length === 0 ? (
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					No native runtime details are available yet.
+				</p>
+			) : (
+				sections.map((section) => (
+					<section key={section.title}>
+						<h3 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+							{section.title}
+						</h3>
+						<ul className="space-y-1 text-xs" style={{ color: theme.colors.textDim }}>
+							{section.rows?.map((row) => (
+								<li key={row}>{row}</li>
+							))}
+						</ul>
+					</section>
+				))
+			)}
+		</div>
+	);
+}
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
 	focusAutoRun: () => void;
@@ -421,7 +476,6 @@ export const RightPanel = memo(
 			onCreateDocument: onAutoRunCreateDocument,
 			isLoadingDocuments: autoRunIsLoadingDocuments,
 			documentTaskCounts: autoRunDocumentTaskCounts,
-			batchRunState: currentSessionBatchState || undefined,
 			onOpenBatchRunner,
 			onStopBatchRun,
 			onSkipCurrentDocument,
@@ -432,7 +486,6 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onShowFlash,
-			autoFollowEnabled,
 		};
 
 		return (
@@ -474,7 +527,14 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
+					{(
+						[
+							'files',
+							'history',
+							...(autoRunDisabled ? [] : ['autorun']),
+							...(session.runtimeFeatures ? ['runtime'] : []),
+						] as const
+					).map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -485,7 +545,11 @@ export const RightPanel = memo(
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'autorun'
+								? 'Auto Run'
+								: tab === 'runtime'
+									? 'Native'
+									: tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
 
@@ -586,6 +650,10 @@ export const RightPanel = memo(
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
 						</div>
+					)}
+
+					{activeRightTab === 'runtime' && session.runtimeFeatures && (
+						<NativeRuntimePanel features={session.runtimeFeatures} theme={theme} />
 					)}
 				</div>
 

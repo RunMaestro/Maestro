@@ -7,8 +7,10 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
 import { parseSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { openInSystemBrowser } from '../../../utils/openUrl';
+import { useComposerInputStore } from '../../../stores/composerInputStore';
 
-type RuntimePatch = Pick<Session, 'runtimeFeatures' | 'pendingApprovals'>;
+type RuntimePatch = Partial<Session>;
 
 export function useRuntimeFeaturesListener(): void {
 	const ownedGate = useOwnedSessionGate();
@@ -42,9 +44,35 @@ export function useRuntimeFeaturesListener(): void {
 				}));
 			}
 		);
+		const removeApprovalCancelled = window.maestro.process.onApprovalCancelled(
+			(sessionId: string, requestId: string) => {
+				update(sessionId, (session) => ({
+					pendingApprovals: session.pendingApprovals?.filter(
+						(approval) => approval.id !== requestId
+					),
+				}));
+			}
+		);
+		const removeOpenExternalUrl = window.maestro.process.onOpenExternalUrl(
+			(_sessionId: string, url: string) => openInSystemBrowser(url)
+		);
+		const removeComposerText = window.maestro.process.onComposerText(
+			(sessionId: string, text: string) => {
+				if (ownedGate.current?.(sessionId)) useComposerInputStore.getState().setAiValue(text);
+			}
+		);
+		const removeSessionTitle = window.maestro.process.onSessionTitle(
+			(sessionId: string, title: string) => {
+				update(sessionId, () => ({ name: title }));
+			}
+		);
 		return () => {
 			removeRuntimeFeatures();
 			removeApproval();
+			removeApprovalCancelled();
+			removeOpenExternalUrl();
+			removeComposerText();
+			removeSessionTitle();
 		};
 	}, [ownedGate]);
 }

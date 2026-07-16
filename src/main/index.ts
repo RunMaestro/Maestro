@@ -78,6 +78,7 @@ import { createProductionOmpRuntimeDependencies } from './omp-distribution/produ
 import { NativeWorkspaceRootService } from './plugins/native-workspace-root-service';
 import { createConfiguredOmpSupervisedWorkspaceProcess } from './plugins/omp-supervised-workspace-process';
 import { InteractiveRuntimeSandboxEventForwarder } from './plugins/interactive-runtime-sandbox-events';
+import type { ManagedRuntimeResolver } from './plugins/plugin-managed-runtime-service';
 import type {
 	InteractiveRuntimeHandle,
 	WorkspaceRootCapability,
@@ -560,6 +561,7 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+let ompNativeRuntimeResolver: ManagedRuntimeResolver | undefined;
 
 function disposePluginWorkspaceIpc(): void {
 	const lifecycle = pluginWorkspaceIpcLifecycle;
@@ -2451,6 +2453,7 @@ app
 					},
 				})
 			: undefined;
+		ompNativeRuntimeResolver = productionOmpBootstrap?.runtimeResolver;
 		const workspaceRoots =
 			productionOmpBootstrap?.workspaceRoots ??
 			new NativeWorkspaceRootService({
@@ -3690,6 +3693,7 @@ function setupIpcHandlers() {
 		getMainWindow: () => mainWindow,
 		safeSend,
 		sessionsStore,
+		ompRuntimeResolver: ompNativeRuntimeResolver,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
 			// Always query the executor's active process map — processes may still be

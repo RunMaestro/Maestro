@@ -1,24 +1,31 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ShieldQuestion, X } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { AgentApprovalRequest } from '../../../shared/agent-runtime-features';
+import type {
+	AgentApprovalRequest,
+	AgentApprovalResponse,
+} from '../../../shared/agent-runtime-features';
 
 export interface AgentApprovalsProps {
 	theme: Theme;
 	approvals: AgentApprovalRequest[];
-	onRespond: (response: { sessionId: string; requestId: string; optionId: string }) => void;
+	onRespond: (response: AgentApprovalResponse) => void;
 }
 
 function AgentApprovalsInner({ theme, approvals, onRespond }: AgentApprovalsProps) {
 	const request = approvals[0];
+	const [textValue, setTextValue] = useState('');
+	const textInput = request?.textInput;
+
+	useEffect(() => {
+		setTextValue(textInput?.prefill ?? '');
+	}, [request?.id, textInput?.prefill]);
 
 	const respond = useCallback(
-		(optionId: string) => {
-			if (!request) {
-				return;
-			}
-			onRespond({ sessionId: request.sessionId, requestId: request.id, optionId });
+		(response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>) => {
+			if (!request) return;
+			onRespond({ sessionId: request.sessionId, requestId: request.id, ...response });
 		},
 		[onRespond, request]
 	);
@@ -26,19 +33,18 @@ function AgentApprovalsInner({ theme, approvals, onRespond }: AgentApprovalsProp
 	const deny = request?.options.find((option) => option.kind === 'deny');
 	const onKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLDivElement>) => {
-			if (event.key === 'Escape' && deny) {
-				event.preventDefault();
-				respond(deny.id);
-			}
+			if (event.key !== 'Escape') return;
+			event.preventDefault();
+			if (textInput) respond({ cancelled: true });
+			else if (deny) respond({ optionId: deny.id });
 		},
-		[deny, respond]
+		[deny, respond, textInput]
 	);
 
-	if (!request) {
-		return null;
-	}
+	if (!request) return null;
 
 	const titleId = `agent-approval-title-${request.id}`;
+	const submitText = () => respond({ value: textValue });
 
 	return createPortal(
 		<div
@@ -78,37 +84,75 @@ function AgentApprovalsInner({ theme, approvals, onRespond }: AgentApprovalsProp
 						{request.detail}
 					</pre>
 				)}
-				<div className="flex justify-end gap-2">
-					{request.options.map((option) => {
-						const isApprove = option.kind === 'approve';
-						const isDeny = option.kind === 'deny';
-						return (
-							<button
-								key={option.id}
-								type="button"
-								onClick={() => respond(option.id)}
-								autoFocus={isDeny}
-								className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md cursor-pointer transition-colors"
-								style={{
-									backgroundColor: isApprove ? theme.colors.accent : 'transparent',
-									color: isApprove
-										? theme.colors.accentForeground
-										: isDeny
-											? theme.colors.error
-											: theme.colors.textMain,
-									border: `1px solid ${isApprove ? theme.colors.accent : isDeny ? `${theme.colors.error}60` : theme.colors.border}`,
+				{textInput ? (
+					<div className="space-y-3">
+						{textInput.kind === 'editor' ? (
+							<textarea
+								autoFocus
+								value={textValue}
+								placeholder={textInput.placeholder}
+								onChange={(event) => setTextValue(event.target.value)}
+								className="w-full min-h-40 rounded-md border p-2 text-sm"
+								style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+							/>
+						) : (
+							<input
+								autoFocus
+								value={textValue}
+								placeholder={textInput.placeholder}
+								onChange={(event) => setTextValue(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === 'Enter') {
+										event.preventDefault();
+										submitText();
+									}
 								}}
-							>
-								{isApprove ? (
-									<Check className="w-3.5 h-3.5" />
-								) : isDeny ? (
-									<X className="w-3.5 h-3.5" />
-								) : null}
-								{option.label}
+								className="w-full rounded-md border p-2 text-sm"
+								style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+							/>
+						)}
+						<div className="flex justify-end gap-2">
+							<button type="button" onClick={() => respond({ cancelled: true })}>
+								Cancel
 							</button>
-						);
-					})}
-				</div>
+							<button type="button" onClick={submitText}>
+								Submit
+							</button>
+						</div>
+					</div>
+				) : (
+					<div className="flex justify-end gap-2">
+						{request.options.map((option) => {
+							const isApprove = option.kind === 'approve';
+							const isDeny = option.kind === 'deny';
+							return (
+								<button
+									key={option.id}
+									type="button"
+									onClick={() => respond({ optionId: option.id })}
+									autoFocus={isDeny}
+									className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md cursor-pointer transition-colors"
+									style={{
+										backgroundColor: isApprove ? theme.colors.accent : 'transparent',
+										color: isApprove
+											? theme.colors.accentForeground
+											: isDeny
+												? theme.colors.error
+												: theme.colors.textMain,
+										border: `1px solid ${isApprove ? theme.colors.accent : isDeny ? `${theme.colors.error}60` : theme.colors.border}`,
+									}}
+								>
+									{isApprove ? (
+										<Check className="w-3.5 h-3.5" />
+									) : isDeny ? (
+										<X className="w-3.5 h-3.5" />
+									) : null}
+									{option.label}
+								</button>
+							);
+						})}
+					</div>
+				)}
 			</div>
 		</div>,
 		document.body

@@ -43,6 +43,10 @@ import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode'
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import type { SpawnProcessConfig } from './spawn-types';
+import type {
+	ManagedRuntimeResolver,
+	VerifiedRuntimeLaunch,
+} from '../../../plugins/plugin-managed-runtime-service';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -54,6 +58,8 @@ export interface SpawnHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
 	safeSend?: (channel: string, ...args: unknown[]) => void;
+	/** First-party OMP launch authority; absence fails native OMP closed. */
+	ompRuntimeResolver?: ManagedRuntimeResolver;
 	sessionsStore: Store<{ sessions: unknown[] }>;
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
 }
@@ -73,8 +79,8 @@ export async function handleProcessSpawn(
 		settingsStore,
 		getMainWindow,
 		safeSend,
+		ompRuntimeResolver,
 	} = deps;
-
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -95,11 +101,19 @@ export async function handleProcessSpawn(
 			const window = getMainWindow();
 			if (isWebContentsAvailable(window)) window.webContents.send(channel, ...args);
 		};
-		const agent = await agentDetector.getAgent(config.toolType);
+		let launch: VerifiedRuntimeLaunch;
+		try {
+			launch = await resolveVerifiedOmpRuntime(ompRuntimeResolver);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			send('process:stderr', config.sessionId, `OMP native runtime rejected: ${detail}`);
+			return { success: false, pid: 0 };
+		}
 		const adapter = await OmpNativeSessionAdapter.acquire({
 			sessionId: config.sessionId,
 			cwd: config.cwd,
-			command: config.sessionCustomPath || agent?.path || agent?.command || config.command || 'omp',
+			command: launch.executablePath,
+			prefixArgs: launch.prefixArgs,
 			env: { ...process.env, ...config.sessionCustomEnvVars },
 			agentSessionId: config.agentSessionId,
 			model: config.sessionCustomModel || config.modelId,
@@ -950,4 +964,18 @@ export async function handleProcessSpawn(
 				}
 			: undefined,
 	};
+}
+
+async function resolveVerifiedOmpRuntime(
+	resolver: ManagedRuntimeResolver | undefined
+): Promise<VerifiedRuntimeLaunch> {
+	if (!resolver) throw new Error('the verified first-party OMP runtime is unavailable');
+	const discovered = await resolver.resolveSystem();
+	const candidate =
+		discovered ?? (resolver.managedInstallAllowed() ? await resolver.resolveManaged() : null);
+	if (!candidate) throw new Error('no verified OMP 16.4.8 runtime is available');
+	const launch = await candidate.revalidateForLaunch();
+	if (launch.version !== '16.4.8' || launch.provenance !== 'verified')
+		throw new Error('the resolved OMP runtime is not the verified 16.4.8 release');
+	return launch;
 }

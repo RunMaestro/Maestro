@@ -112,7 +112,7 @@ describe('OmpNativeSessionAdapter', () => {
 			'process:approval-request',
 			expect.objectContaining({ id: 'approval-1', sessionId: 'tab-1' })
 		);
-		await expect(adapter.respondApproval('approval-1', 'yes')).resolves.toBe(true);
+		await expect(adapter.respondApproval('approval-1', { optionId: 'yes' })).resolves.toBe(true);
 		await expect(adapter.branch('entry-1')).resolves.toBe(true);
 		expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"type":"branch"'));
 		expect(child.kill).not.toHaveBeenCalled();
@@ -168,10 +168,22 @@ describe('OmpNativeSessionAdapter', () => {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'o' },
 		});
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'thinking_delta', delta: 'reasoning' },
+		});
 		emit(child, { type: 'prompt_result', text: 'ok' });
 		emit(child, { type: 'turn_end' });
 
 		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'ok');
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-2', 'o');
+		expect(send).toHaveBeenCalledWith('process:thinking-chunk', 'tab-2', 'reasoning');
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId, value]) =>
+					channel === 'process:data' && sessionId === 'tab-2' && value === 'reasoning'
+			)
+		).toHaveLength(0);
 		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
 		expect(send).toHaveBeenCalledWith('process:exit', 'tab-2', 0);
 		expect(child.kill).not.toHaveBeenCalled();
@@ -502,18 +514,20 @@ describe('OmpNativeSessionAdapter', () => {
 			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
 			createdAt: expect.any(String),
 		});
-		await expect(adapter.respondApproval('approval-opaque', 'unknown-option')).resolves.toBe(false);
+		await expect(
+			adapter.respondApproval('approval-opaque', { optionId: 'unknown-option' })
+		).resolves.toBe(false);
 		expect(extensionResponses(child)).toEqual([]);
 
-		await expect(adapter.respondApproval('approval-opaque', 'option:deny/opaque')).resolves.toBe(
-			true
-		);
+		await expect(
+			adapter.respondApproval('approval-opaque', { optionId: 'option:deny/opaque' })
+		).resolves.toBe(true);
 		expect(extensionResponses(child)).toEqual([
 			{ type: 'extension_ui_response', id: 'approval-opaque', confirmed: false },
 		]);
-		await expect(adapter.respondApproval('approval-opaque', 'option:deny/opaque')).resolves.toBe(
-			false
-		);
+		await expect(
+			adapter.respondApproval('approval-opaque', { optionId: 'option:deny/opaque' })
+		).resolves.toBe(false);
 
 		emit(child, {
 			type: 'extension_ui_request',
@@ -527,7 +541,7 @@ describe('OmpNativeSessionAdapter', () => {
 		).toHaveLength(1);
 	});
 
-	it('acknowledges noninteractive extension UI callbacks without creating pending approvals', async () => {
+	it('projects noninteractive extension UI callbacks into ordinary Maestro surfaces', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
 			const command = JSON.parse(frame) as { id?: string; type: string };
@@ -554,37 +568,212 @@ describe('OmpNativeSessionAdapter', () => {
 		});
 
 		emit(child, { type: 'ready', version: '16.4.8' });
-		for (const method of [
-			'notify',
-			'setStatus',
-			'setWidget',
-			'setTitle',
-			'set_editor_text',
-			'open_url',
-			'input',
-			'editor',
-		]) {
-			emit(child, {
-				type: 'extension_ui_request',
-				id: `noninteractive-${method}`,
-				method,
-				title: 'Extension request',
-			});
-		}
+		await adapter.ready;
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'noninteractive-notify',
+			method: 'notify',
+			message: 'Runtime notification',
+			notifyType: 'warning',
+		});
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'noninteractive-status',
+			method: 'setStatus',
+			statusText: 'Indexing workspace',
+		});
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'noninteractive-widget',
+			method: 'setWidget',
+			widgetLines: ['Build', 'ready'],
+		});
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'noninteractive-title',
+			method: 'setTitle',
+			title: 'Reviewing changes',
+		});
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'noninteractive-editor',
+			method: 'set_editor_text',
+			text: 'Follow up on the tests',
+		});
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
 		expect(
 			send.mock.calls.filter(([channel]) => channel === 'process:approval-request')
 		).toHaveLength(0);
-		expect(extensionResponses(child)).toEqual(
+		expect(extensionResponses(child)).toEqual([]);
+		expect(send).toHaveBeenCalledWith(
+			'remote:notifyToast',
+			expect.objectContaining({ message: 'Runtime notification', color: 'yellow' })
+		);
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-noninteractive', 'Indexing workspace');
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-noninteractive', 'Build\nready');
+		expect(send).toHaveBeenCalledWith(
+			'process:session-title',
+			'tab-noninteractive',
+			'Reviewing changes'
+		);
+		expect(send).toHaveBeenCalledWith(
+			'process:composer-text',
+			'tab-noninteractive',
+			'Follow up on the tests'
+		);
+	});
+
+	it('serves the bounded native host tool and immutable host URI callbacks', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			return true;
+		});
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-host-bridge',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		emit(child, {
+			type: 'host_tool_call',
+			id: 'tool-1',
+			toolCallId: 'call-1',
+			toolName: 'maestro.session.status',
+			arguments: {},
+		});
+		emit(child, {
+			type: 'host_uri_request',
+			id: 'uri-1',
+			operation: 'read',
+			url: 'maestro://session/status',
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		const frames = child.stdin.write.mock.calls.map(([frame]) => JSON.parse(frame as string));
+		expect(frames).toEqual(
 			expect.arrayContaining([
-				{ type: 'extension_ui_response', id: 'noninteractive-notify', cancelled: true },
-				{ type: 'extension_ui_response', id: 'noninteractive-open_url', cancelled: true },
-				{ type: 'extension_ui_response', id: 'noninteractive-input', cancelled: true },
-				{ type: 'extension_ui_response', id: 'noninteractive-editor', cancelled: true },
+				expect.objectContaining({ type: 'set_host_tools' }),
+				expect.objectContaining({ type: 'set_host_uri_schemes' }),
+				expect.objectContaining({ type: 'host_tool_update', id: 'tool-1' }),
+				expect.objectContaining({ type: 'host_tool_result', id: 'tool-1' }),
+				expect.objectContaining({
+					type: 'host_uri_result',
+					id: 'uri-1',
+					contentType: 'application/json',
+					immutable: true,
+				}),
 			])
 		);
-		await expect(adapter.respondApproval('noninteractive-notify', 'approve')).resolves.toBe(false);
+	});
+
+	it('handles official input and editor requests, targeted cancellation, and login URLs natively', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-text-requests',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'input-1',
+			method: 'input',
+			title: 'Enter OAuth code',
+			placeholder: 'code',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:approval-request',
+			expect.objectContaining({
+				id: 'input-1',
+				textInput: { kind: 'input', placeholder: 'code', prefill: undefined, promptStyle: false },
+			})
+		);
+		await expect(adapter.respondApproval('input-1', { value: 'oauth-code' })).resolves.toBe(true);
+		expect(extensionResponses(child)).toContainEqual({
+			type: 'extension_ui_response',
+			id: 'input-1',
+			value: 'oauth-code',
+		});
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'editor-1',
+			method: 'editor',
+			title: 'Edit instructions',
+			prefill: 'draft',
+			promptStyle: true,
+		});
+		await expect(adapter.respondApproval('editor-1', { value: 'edited' })).resolves.toBe(true);
+		expect(extensionResponses(child)).toContainEqual({
+			type: 'extension_ui_response',
+			id: 'editor-1',
+			value: 'edited',
+		});
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'input-2',
+			method: 'input',
+			title: 'Cancelled input',
+		});
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'cancel-1',
+			method: 'cancel',
+			targetId: 'input-2',
+		});
+		expect(send).toHaveBeenCalledWith('process:approval-cancelled', 'tab-text-requests', 'input-2');
+		await expect(adapter.respondApproval('input-2', { value: 'late' })).resolves.toBe(false);
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'open-url-1',
+			method: 'open_url',
+			url: 'https://login.example.test',
+			launchUrl: 'https://login.example.test/launch',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:open-external-url',
+			'tab-text-requests',
+			'https://login.example.test/launch'
+		);
 	});
 
 	it('replays the captured RPC turn: nested delta, data-less prompt response, and turn completion', async () => {
@@ -596,7 +785,20 @@ describe('OmpNativeSessionAdapter', () => {
 			const command = JSON.parse(frame) as { id?: string; type: string };
 			if (command.id) {
 				const captured = responses.find((response) => response.command === command.type);
-				if (captured) queueMicrotask(() => emit(child, { ...captured, id: command.id }));
+				queueMicrotask(() =>
+					emit(
+						child,
+						captured
+							? { ...captured, id: command.id }
+							: {
+									type: 'response',
+									id: command.id,
+									command: command.type,
+									success: true,
+									data: {},
+								}
+					)
+				);
 			}
 			return true;
 		});

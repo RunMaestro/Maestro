@@ -345,6 +345,15 @@ describe('process IPC handlers', () => {
 				isDestroyed: vi.fn().mockReturnValue(false),
 			},
 		};
+		const verifiedOmpLaunch = {
+			executablePath: '/verified/omp',
+			prefixArgs: [],
+			fileIdentities: [],
+			revalidateForLaunch: vi.fn(),
+			version: '16.4.8' as const,
+			provenance: 'verified' as const,
+		};
+		verifiedOmpLaunch.revalidateForLaunch.mockResolvedValue(verifiedOmpLaunch);
 
 		// Create dependencies
 		deps = {
@@ -354,6 +363,11 @@ describe('process IPC handlers', () => {
 			settingsStore: mockSettingsStore as any,
 			sessionsStore: mockSessionsStore as any,
 			getMainWindow: () => mockMainWindow as any,
+			ompRuntimeResolver: {
+				resolveSystem: vi.fn().mockResolvedValue(verifiedOmpLaunch),
+				managedInstallAllowed: vi.fn().mockReturnValue(false),
+				resolveManaged: vi.fn(),
+			},
 		};
 
 		// Capture all registered handlers
@@ -461,13 +475,47 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(OmpNativeSessionAdapter.acquire).toHaveBeenCalledWith(
-				expect.objectContaining({ model: 'fixture:fixture-fast' })
+				expect.objectContaining({
+					command: '/verified/omp',
+					prefixArgs: [],
+					model: 'fixture:fixture-fast',
+				})
 			);
 			expect(prompt).toHaveBeenCalledWith(
 				'Follow the project rules.\n\n---\n\n# User Request\n\nDescribe this attachment',
 				['data:image/png;base64,cG5nLWJ5dGVz']
 			);
 			expect(result).toEqual({ success: true, pid: 9876 });
+		});
+
+		it('rejects an OMP launch whose revalidated runtime is not 16.4.8', async () => {
+			const wrongLaunch = {
+				executablePath: '/unverified/omp',
+				prefixArgs: [],
+				fileIdentities: [],
+				revalidateForLaunch: vi.fn(),
+				version: '16.4.7',
+				provenance: 'verified',
+			};
+			wrongLaunch.revalidateForLaunch.mockResolvedValue(wrongLaunch);
+			deps.ompRuntimeResolver = {
+				resolveSystem: vi.fn().mockResolvedValue(wrongLaunch as never),
+				managedInstallAllowed: vi.fn().mockReturnValue(false),
+				resolveManaged: vi.fn(),
+			};
+			handlers.clear();
+			registerProcessHandlers(deps);
+
+			const result = await handlers.get('process:spawn')!(undefined, {
+				sessionId: 'native-omp-wrong-version',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+			});
+
+			expect(result).toEqual({ success: false, pid: 0 });
+			expect(OmpNativeSessionAdapter.acquire).not.toHaveBeenCalled();
 		});
 
 		it('uses native OMP when optional third-party plugins are disabled', async () => {

@@ -363,7 +363,18 @@ interface MaestroAPI {
 				state: import('../shared/agent-runtime-features').AgentRuntimeFeatureState
 			) => void
 		) => () => void;
-		respondApproval: (sessionId: string, requestId: string, optionId: string) => Promise<boolean>;
+		respondApproval: (
+			sessionId: string,
+			requestId: string,
+			response: Omit<
+				import('../shared/agent-runtime-features').AgentApprovalResponse,
+				'sessionId' | 'requestId'
+			>
+		) => Promise<boolean>;
+		onApprovalCancelled: (callback: (sessionId: string, requestId: string) => void) => () => void;
+		onOpenExternalUrl: (callback: (sessionId: string, url: string) => void) => () => void;
+		onComposerText: (callback: (sessionId: string, text: string) => void) => () => void;
+		onSessionTitle: (callback: (sessionId: string, title: string) => void) => () => void;
 		setAgentControl: (
 			sessionId: string,
 			controlId: string,

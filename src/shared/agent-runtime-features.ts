@@ -1,3 +1,10 @@
+export interface AgentApprovalTextInput {
+	kind: 'input' | 'editor';
+	placeholder?: string;
+	prefill?: string;
+	promptStyle?: boolean;
+}
+
 export interface AgentApprovalRequest {
 	id: string;
 	sessionId: string;
@@ -5,7 +12,16 @@ export interface AgentApprovalRequest {
 	title: string;
 	detail?: string;
 	options: { id: string; label: string; kind: 'approve' | 'deny' | 'custom' }[];
+	textInput?: AgentApprovalTextInput;
 	createdAt: string;
+}
+
+export interface AgentApprovalResponse {
+	sessionId: string;
+	requestId: string;
+	optionId?: string;
+	value?: string;
+	cancelled?: boolean;
 }
 
 export interface AgentTreeNode {

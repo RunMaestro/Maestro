@@ -44,6 +44,7 @@ import type {
 	UnifiedTabRef,
 	PaneRects,
 } from '../../types';
+import type { AgentApprovalResponse } from '../../../shared/agent-runtime-features';
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
 import type { FileNode } from '../../types/fileTree';
@@ -290,16 +291,20 @@ export interface MainPanelContentProps {
 	onEffortChange?: (effort: string) => void;
 }
 
-type ApprovalResponse = { sessionId: string; requestId: string; optionId: string };
+type ApprovalResponse = AgentApprovalResponse;
 
 export async function respondToAgentApproval(
-	{ sessionId, requestId, optionId }: ApprovalResponse,
-	respondApproval: (sessionId: string, requestId: string, optionId: string) => Promise<boolean>,
+	{ sessionId, requestId, ...response }: ApprovalResponse,
+	respondApproval: (
+		sessionId: string,
+		requestId: string,
+		response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>
+	) => Promise<boolean>,
 	onResolved: () => void,
 	onRejected: () => void
 ): Promise<void> {
 	try {
-		if (await respondApproval(sessionId, requestId, optionId)) {
+		if (await respondApproval(sessionId, requestId, response)) {
 			onResolved();
 			return;
 		}
@@ -655,8 +660,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const respondToApproval = React.useCallback((response: ApprovalResponse) => {
 		void respondToAgentApproval(
 			response,
-			(sessionId, requestId, optionId) =>
-				window.maestro.process.respondApproval(sessionId, requestId, optionId),
+			(sessionId, requestId, approvalResponse) =>
+				window.maestro.process.respondApproval(sessionId, requestId, approvalResponse),
 			() =>
 				updateSessionWith(response.sessionId, (session) => ({
 					...session,
