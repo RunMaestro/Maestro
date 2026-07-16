@@ -31,7 +31,13 @@ describe('OMP 16.4.8 command registry', () => {
 			'get_subagent_messages',
 			'get_branch_messages',
 			'get_last_assistant_text',
-			'get_login_providers',
 		]);
+	});
+
+	it('projects discovered login providers into the native runtime surface', () => {
+		expect(OMP_16_4_8_COMMAND_REGISTRY.get_login_providers).toMatchObject({
+			disposition: 'host',
+			adapterHandler: 'refreshFeatures',
+		});
 	});
 });

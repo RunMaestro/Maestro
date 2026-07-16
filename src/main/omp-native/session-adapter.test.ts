@@ -49,7 +49,9 @@ describe('OmpNativeSessionAdapter', () => {
 										? { subagents: [{ id: 'sub-1', name: 'Scout', status: 'running' }] }
 										: command.type === 'get_session_stats'
 											? { stats: { inputTokens: 12 } }
-											: [];
+											: command.type === 'get_login_providers'
+												? { providers: [{ id: 'fixture-login', name: 'Fixture Login' }] }
+												: [];
 				queueMicrotask(() =>
 					emit(child, {
 						type: 'response',
@@ -97,6 +99,7 @@ describe('OmpNativeSessionAdapter', () => {
 				tree: [{ id: 'entry-1', label: 'Root' }],
 				subagents: [{ id: 'sub-1', label: 'Scout', status: 'running', detail: undefined }],
 				stats: { inputTokens: 12 },
+				loginProviders: [{ id: 'fixture-login', label: 'Fixture Login' }],
 			})
 		);
 		expect(send).toHaveBeenCalledWith(

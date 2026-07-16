@@ -190,9 +190,10 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 		'refreshFeatures',
 		'Messages are projected into the ordinary session tree.'
 	),
-	get_login_providers: unsupported(
+	get_login_providers: host(
 		'get_login_providers',
-		'The ordinary account flow accepts an explicit provider and does not consume provider discovery.'
+		'refreshFeatures',
+		'Provider discovery populates the ordinary runtime-panel login selector.'
 	),
 	login: ui('login', 'setControl', 'account-flow', 'login'),
 });

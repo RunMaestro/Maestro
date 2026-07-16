@@ -313,12 +313,13 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private async refreshFeatures(): Promise<void> {
-		const [state, messages, subagents, stats, models] = await Promise.all([
+		const [state, messages, subagents, stats, models, loginProviders] = await Promise.all([
 			this.client.command({ type: 'get_state' }),
 			this.client.command({ type: 'get_messages' }),
 			this.client.command({ type: 'get_subagents' }),
 			this.client.command({ type: 'get_session_stats' }),
 			this.client.command({ type: 'get_available_models' }),
+			this.client.command({ type: 'get_login_providers' }),
 		]);
 		const stateData = asRecord(state.data);
 		const modelsData = asRecord(models.data).models;
@@ -332,6 +333,7 @@ export class OmpNativeSessionAdapter {
 			todos: todosFromState(stateData),
 			subagents: subagentsFromData(asRecord(subagents.data).subagents),
 			stats: statsProjection,
+			loginProviders: loginProviderOptions(asRecord(loginProviders.data).providers),
 		};
 		this.options.send('process:runtime-features', this.options.sessionId, features);
 		const usage = usageFromStats(statsProjection);
@@ -786,6 +788,16 @@ function modelOption(value: unknown): AgentControlOption {
 		id: provider && id ? `${provider}:${id}` : id,
 		label: stringAt(model, 'label') ?? id,
 	};
+}
+
+function loginProviderOptions(value: unknown): AgentControlOption[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		const provider = asRecord(entry);
+		const id = stringAt(provider, 'id');
+		if (!id) return [];
+		return [{ id, label: stringAt(provider, 'name') ?? id }];
+	});
 }
 function todosFromState(state: Record<string, unknown>): AgentTodoPhase[] {
 	const phases = Array.isArray(state.todoPhases) ? state.todoPhases : [];

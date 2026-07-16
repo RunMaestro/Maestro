@@ -61,4 +61,6 @@ export interface AgentRuntimeFeatureState {
 	todos: AgentTodoPhase[] | null;
 	subagents: AgentSubagent[] | null;
 	stats: Record<string, number | string> | null;
+	/** Login providers discovered from the native runtime; never free-form when present. */
+	loginProviders?: AgentControlOption[] | null;
 }

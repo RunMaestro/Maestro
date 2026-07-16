@@ -89,7 +89,9 @@ test.describe('first-party OMP regular session', () => {
 			await runtimePanel.getByRole('button', { name: 'Resume', exact: true }).click();
 			await runtimePanel.getByPlaceholder('Run OMP shell command').fill('echo native shell');
 			await runtimePanel.getByRole('button', { name: 'Run', exact: true }).click();
-			await runtimePanel.getByPlaceholder('OMP login provider').fill('fixture-login');
+			await launched.window
+				.locator('select[aria-label="OMP login provider"]')
+				.selectOption('fixture-login');
 			await runtimePanel.getByRole('button', { name: 'Login', exact: true }).click();
 			await launched.window.locator('select[aria-label="Thinking level"]').selectOption('max');
 			await launched.window

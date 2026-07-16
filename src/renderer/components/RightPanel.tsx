@@ -181,17 +181,38 @@ function NativeRuntimePanel({
 					</button>
 				</div>
 				<div className="mt-2 flex gap-2">
-					<input
-						value={loginProvider}
-						onChange={(event) => setLoginProvider(event.target.value)}
-						placeholder="OMP login provider"
-						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					/>
+					{features.loginProviders?.length ? (
+						<select
+							aria-label="OMP login provider"
+							value={loginProvider}
+							onChange={(event) => setLoginProvider(event.target.value)}
+							className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						>
+							<option value="">Select login provider</option>
+							{features.loginProviders.map((provider) => (
+								<option key={provider.id} value={provider.id}>
+									{provider.label}
+								</option>
+							))}
+						</select>
+					) : (
+						<input
+							value={loginProvider}
+							onChange={(event) => setLoginProvider(event.target.value)}
+							placeholder="OMP login provider"
+							className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						/>
+					)}
 					<button
 						type="button"
 						disabled={!loginControlId || !loginProvider.trim()}

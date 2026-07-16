@@ -99,7 +99,6 @@ describe('OMP 16.4.8 compatibility table', () => {
 			'get_subagent_messages',
 			'get_branch_messages',
 			'get_last_assistant_text',
-			'get_login_providers',
 		] as const;
 		for (const command of unsupported) {
 			expect(OMP_16_4_8_COMMAND_REGISTRY[command].disposition).toBe('unsupported');
@@ -109,6 +108,10 @@ describe('OMP 16.4.8 compatibility table', () => {
 				sequence: 'correlated',
 			});
 		}
+		expect(OMP_16_4_8_COMPATIBILITY.get_login_providers).toMatchObject({
+			disposition: 'host',
+			terminal: 'response',
+		});
 	});
 
 	it('drift-checks real initialization and callback boundaries against the sanitized transcript', () => {
