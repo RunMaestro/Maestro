@@ -228,6 +228,25 @@ describe('useClickOutside', () => {
 
 			expect(onClickOutside).toHaveBeenCalledTimes(1);
 		});
+
+		it.each(['pointerdown', 'touchstart'] as const)(
+			'responds to an outside %s event when configured',
+			(eventType) => {
+				const onClickOutside = vi.fn();
+
+				renderHook(() => {
+					const ref = useRef<HTMLDivElement>(container);
+					useClickOutside(ref, onClickOutside, true, { eventType });
+					return ref;
+				});
+
+				act(() => {
+					outsideElement.dispatchEvent(new Event(eventType, { bubbles: true }));
+				});
+
+				expect(onClickOutside).toHaveBeenCalledTimes(1);
+			}
+		);
 	});
 
 	describe('delay option', () => {
