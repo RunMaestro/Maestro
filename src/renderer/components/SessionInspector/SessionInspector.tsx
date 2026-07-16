@@ -86,6 +86,7 @@ export const SessionInspector = memo(function SessionInspector({
 	onClose,
 }: SessionInspectorProps) {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [sessionName, setSessionName] = useState('');
 
 	useEffect(() => {
 		if (!onClose) return;
@@ -132,6 +133,37 @@ export const SessionInspector = memo(function SessionInspector({
 						Close
 					</button>
 				</div>
+				<form
+					className="mb-4 flex gap-2"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (!sessionName.trim()) return;
+						void window.maestro.process.setAgentControl(sessionId, 'session-name', sessionName);
+					}}
+				>
+					<label className="sr-only" htmlFor={`omp-session-name-${sessionId}`}>
+						Session name
+					</label>
+					<input
+						id={`omp-session-name-${sessionId}`}
+						value={sessionName}
+						onChange={(event) => setSessionName(event.target.value)}
+						placeholder="Rename OMP session"
+						className="min-w-0 flex-1 rounded border px-2 py-1"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
+					/>
+					<button
+						type="submit"
+						className="rounded border px-2 py-1"
+						style={{ borderColor: theme.colors.border }}
+					>
+						Rename
+					</button>
+				</form>
 				{runtimeFeatures.tree?.length ? (
 					<section className="mb-4">
 						<h2 className="mb-1 text-xs font-semibold">Conversation tree</h2>

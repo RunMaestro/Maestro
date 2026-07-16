@@ -1011,6 +1011,7 @@ describe('OmpNativeSessionAdapter', () => {
 			'abort-bash',
 		])
 			await expect(adapter.setControl(control, true)).resolves.toBe(true);
+		await expect(adapter.setControl('session-name', 'Renamed session')).resolves.toBe(true);
 
 		expect(frames.map((frame) => frame.type)).toEqual(
 			expect.arrayContaining([
@@ -1022,6 +1023,7 @@ describe('OmpNativeSessionAdapter', () => {
 				'cycle_thinking_level',
 				'abort_retry',
 				'abort_bash',
+				'set_session_name',
 			])
 		);
 	});

@@ -733,6 +733,8 @@ function controlCommand(controlId: string, value: string | boolean): OmpRpcComma
 		return { type: 'set_follow_up_mode', mode: value };
 	if (controlId === 'interrupt-mode' && typeof value === 'string')
 		return { type: 'set_interrupt_mode', mode: value };
+	if (controlId === 'session-name' && typeof value === 'string' && value.trim())
+		return { type: 'set_session_name', name: value.trim() };
 	if (controlId === 'auto-compaction' && typeof value === 'boolean')
 		return { type: 'set_auto_compaction', enabled: value };
 	if (controlId === 'auto-retry' && typeof value === 'boolean')
