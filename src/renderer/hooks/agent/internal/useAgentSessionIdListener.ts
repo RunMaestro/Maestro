@@ -103,6 +103,19 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 								return { ...s, aiTabs: updatedAiTabs };
 							}
 
+							// Native OMP owns session switching in its long-lived RPC
+							// process. A successful switch intentionally returns a new
+							// provider session identity and must not be diagnosed using
+							// the legacy one-shot resume heuristic.
+							if (s.toolType === 'omp') {
+								const updatedAiTabs = s.aiTabs.map((tab) =>
+									tab.id === targetTab!.id
+										? { ...tab, agentSessionId, awaitingSessionId: false }
+										: tab
+								);
+								return { ...s, aiTabs: updatedAiTabs, agentSessionId };
+							}
+
 							logger.warn(
 								'[onSessionId] Session resume failed — agent returned a new session ID',
 								undefined,

@@ -123,7 +123,11 @@ function NativeRuntimePanel({
 						onChange={(event) => setSessionPath(event.target.value)}
 						placeholder="OMP session file path"
 						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
-						style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
 					/>
 					<button
 						type="button"
@@ -153,6 +157,11 @@ function NativeRuntimePanel({
 						onChange={(event) => setShellCommand(event.target.value)}
 						placeholder="Run OMP shell command"
 						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
 					/>
 					<button
 						type="button"
@@ -177,6 +186,11 @@ function NativeRuntimePanel({
 						onChange={(event) => setLoginProvider(event.target.value)}
 						placeholder="OMP login provider"
 						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
 					/>
 					<button
 						type="button"

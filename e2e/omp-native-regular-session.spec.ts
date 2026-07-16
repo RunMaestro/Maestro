@@ -132,6 +132,9 @@ test.describe('first-party OMP regular session', () => {
 					{ timeout: 30_000 }
 				)
 				.toBe(true);
+			await expect(launched.window.getByText('Session Resume Failed', { exact: true })).toHaveCount(
+				0
+			);
 			await expect(composer).toBeEditable({ timeout: 30_000 });
 			await composer.fill('second native prompt after agent_end no-approval');
 			await composer.press('Enter');

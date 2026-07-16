@@ -109,6 +109,30 @@ describe('useAgentSessionIdListener', () => {
 		expect(log).toBeDefined();
 	});
 
+	it('adopts an OMP session id returned by an explicit native session switch', async () => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			agentSessionId: 'native-before-switch',
+			awaitingSessionId: true,
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() => useAgentSessionIdListener({ batchedUpdater: batched }));
+		await handler!('sess-1-ai-tab-1', 'native-after-switch');
+
+		expect(batched.updateContextUsage).not.toHaveBeenCalled();
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].agentSessionId).toBe('native-after-switch');
+		expect(updated.aiTabs[0].logs.some((log) => log.text.includes('resume failed'))).toBe(false);
+	});
+
 	it('keeps original id on claude-code mismatch (silent fork)', async () => {
 		const tab = createMockAITab({
 			id: 'tab-1',

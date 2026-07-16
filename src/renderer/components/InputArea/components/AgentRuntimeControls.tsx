@@ -40,7 +40,10 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 	}
 
 	return (
-		<div className="flex min-w-0 items-center gap-1" aria-label="Native runtime controls">
+		<div
+			className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+			aria-label="Native runtime controls"
+		>
 			{visibleControls.map((control) => {
 				if (control.kind === 'select') {
 					const value = typeof control.value === 'string' ? control.value : '';
