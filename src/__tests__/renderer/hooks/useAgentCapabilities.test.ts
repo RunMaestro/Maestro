@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import {
-	useAgentCapabilities,
-	clearCapabilitiesCache,
-} from '../../../renderer/hooks';
+import { useAgentCapabilities, clearCapabilitiesCache } from '../../../renderer/hooks';
 import { DEFAULT_CAPABILITIES } from '../../../shared/types';
 import {
 	hasCapabilityCached,

@@ -10,7 +10,6 @@
 import { resolveAgentId } from '../agentRegistry';
 import { KNOWN_AGENT_RUN_PROVIDERS, type AgentRunProvider } from './types';
 
-
 /**
  * Resolve a canonical provider from a raw toolType. Returns `unknown` for empty
  * input, terminal/non-agent tool types, or any unrecognized string, so a run is

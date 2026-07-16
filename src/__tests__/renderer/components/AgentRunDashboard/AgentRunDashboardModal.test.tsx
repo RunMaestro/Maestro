@@ -333,7 +333,9 @@ describe('AgentRunDashboardModal', () => {
 
 		const providerFilter = screen.getByLabelText('Provider filter') as HTMLSelectElement;
 		expect(Array.from(providerFilter.options, (option) => option.value)).toContain('qwen3-coder');
-		expect(Array.from(providerFilter.options, (option) => option.value)).not.toContain('qwen-coder');
+		expect(Array.from(providerFilter.options, (option) => option.value)).not.toContain(
+			'qwen-coder'
+		);
 
 		fireEvent.change(providerFilter, { target: { value: 'qwen3-coder' } });
 

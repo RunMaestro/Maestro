@@ -221,7 +221,6 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	});
 
-
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({
 	toggleLeftPanel: {
@@ -457,13 +456,28 @@ const IntegrationTestWrapper = ({
 							setSessions((prev) =>
 								prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId } : s))
 							);
-							setDraggingSessionId(null);
-						}
-					}}
-					handleDropOnUngrouped={() => {
-						if (draggingSessionId) {
-							setSessions((prev) =>
-								prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId: undefined } : s))
+						}}
+						handleDragStart={(sessionId) => setDraggingSessionId(sessionId)}
+						handleDragOver={(e) => e.preventDefault()}
+						handleDropOnGroup={(groupId) => {
+							if (draggingSessionId) {
+								setSessions((prev) =>
+									prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId } : s))
+								);
+								setDraggingSessionId(null);
+							}
+						}}
+						handleDropOnUngrouped={() => {
+							if (draggingSessionId) {
+								setSessions((prev) =>
+									prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId: undefined } : s))
+								);
+								setDraggingSessionId(null);
+							}
+						}}
+						finishRenamingGroup={(groupId, newName) => {
+							setGroups((prev) =>
+								prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
 							);
 							setDraggingSessionId(null);
 						}
@@ -505,70 +519,70 @@ const IntegrationTestWrapper = ({
 					onNewAgentSession={() => {}}
 				/>
 
-				{/* Auto Run Panel (only render if active session exists) */}
-				{activeSession && activeSession.autoRunFolderPath && (
-					<div style={{ flex: 1 }} data-testid="autorun-container">
-						<AutoRun
-							theme={theme}
-							sessionId={activeSession.id}
-							folderPath={activeSession.autoRunFolderPath}
-							selectedFile={activeSession.autoRunSelectedFile || ''}
-							documentList={['Phase 1', 'Phase 2']}
-							content={activeSession.autoRunContent || ''}
-							contentVersion={activeSession.autoRunContentVersion || 0}
-							onContentChange={(content) => {
-								setSessions((prev) =>
-									prev.map((s) =>
-										s.id === activeSessionId ? { ...s, autoRunContent: content } : s
-									)
-								);
-							}}
-							mode={activeSession.autoRunMode || 'edit'}
-							onModeChange={(mode) => {
-								setSessions((prev) =>
-									prev.map((s) => (s.id === activeSessionId ? { ...s, autoRunMode: mode } : s))
-								);
-							}}
-							onOpenSetup={() => {}}
-							onRefresh={() => {}}
-							onSelectDocument={(filename) => {
-								setSessions((prev) =>
-									prev.map((s) =>
-										s.id === activeSessionId ? { ...s, autoRunSelectedFile: filename } : s
-									)
-								);
-							}}
-							onCreateDocument={async () => true}
-							onOpenBatchRunner={() => {}}
-							onStopBatchRun={() => {}}
-							sessionState={activeSession.state}
-						/>
-					</div>
-				)}
+					{/* Auto Run Panel (only render if active session exists) */}
+					{activeSession && activeSession.autoRunFolderPath && (
+						<div style={{ flex: 1 }} data-testid="autorun-container">
+							<AutoRun
+								theme={theme}
+								sessionId={activeSession.id}
+								folderPath={activeSession.autoRunFolderPath}
+								selectedFile={activeSession.autoRunSelectedFile || ''}
+								documentList={['Phase 1', 'Phase 2']}
+								content={activeSession.autoRunContent || ''}
+								contentVersion={activeSession.autoRunContentVersion || 0}
+								onContentChange={(content) => {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.id === activeSessionId ? { ...s, autoRunContent: content } : s
+										)
+									);
+								}}
+								mode={activeSession.autoRunMode || 'edit'}
+								onModeChange={(mode) => {
+									setSessions((prev) =>
+										prev.map((s) => (s.id === activeSessionId ? { ...s, autoRunMode: mode } : s))
+									);
+								}}
+								onOpenSetup={() => {}}
+								onRefresh={() => {}}
+								onSelectDocument={(filename) => {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.id === activeSessionId ? { ...s, autoRunSelectedFile: filename } : s
+										)
+									);
+								}}
+								onCreateDocument={async () => true}
+								onOpenBatchRunner={() => {}}
+								onStopBatchRun={() => {}}
+								sessionState={activeSession.state}
+							/>
+						</div>
+					)}
 
-				{/* Auto Run not configured message */}
-				{activeSession && !activeSession.autoRunFolderPath && (
-					<div data-testid="autorun-not-configured">Auto Run not configured for this session</div>
-				)}
+					{/* Auto Run not configured message */}
+					{activeSession && !activeSession.autoRunFolderPath && (
+						<div data-testid="autorun-not-configured">Auto Run not configured for this session</div>
+					)}
 
-				{/* Confirmation Dialog Mock */}
-				{showConfirmDialog && (
-					<div data-testid="confirm-dialog">
-						<p>{showConfirmDialog.message}</p>
-						<button
-							data-testid="confirm-yes"
-							onClick={() => {
-								showConfirmDialog.onConfirm();
-								setShowConfirmDialog(null);
-							}}
-						>
-							Yes
-						</button>
-						<button data-testid="confirm-no" onClick={() => setShowConfirmDialog(null)}>
-							No
-						</button>
-					</div>
-				)}
+					{/* Confirmation Dialog Mock */}
+					{showConfirmDialog && (
+						<div data-testid="confirm-dialog">
+							<p>{showConfirmDialog.message}</p>
+							<button
+								data-testid="confirm-yes"
+								onClick={() => {
+									showConfirmDialog.onConfirm();
+									setShowConfirmDialog(null);
+								}}
+							>
+								Yes
+							</button>
+							<button data-testid="confirm-no" onClick={() => setShowConfirmDialog(null)}>
+								No
+							</button>
+						</div>
+					)}
 				</div>
 			</LayerStackProvider>
 		</InlineWizardProvider>
@@ -600,7 +614,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper onSessionChange={onSessionChange} />);
 
 			// Initially Session 1 is active
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Click on Session 2
 			const session2Item = screen.getByText('Session 2');
@@ -642,7 +658,9 @@ describe('Auto Run + Session List Integration', () => {
 			// Session 1 reverts to its stored content (unsaved local edits lost)
 			// This is expected behavior - users must save before switching
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 		});
 
@@ -658,7 +676,9 @@ describe('Auto Run + Session List Integration', () => {
 			fireEvent.click(session3Item);
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 3\n\n- [ ] Group Task');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 3\n\n- [ ] Group Task'
+				);
 			});
 		});
 
@@ -689,20 +709,26 @@ describe('Auto Run + Session List Integration', () => {
 			);
 
 			// Initially shows Session A content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Document A\n\n- [ ] Task A');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Document A\n\n- [ ] Task A'
+			);
 
 			// Switch to Session B
 			fireEvent.click(screen.getByText('Session B'));
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Document B\n\n- [ ] Task B');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Document B\n\n- [ ] Task B'
+				);
 			});
 
 			// Switch back to Session A
 			fireEvent.click(screen.getByText('Session A'));
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Document A\n\n- [ ] Task A');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Document A\n\n- [ ] Task A'
+				);
 			});
 		});
 
@@ -733,7 +759,9 @@ describe('Auto Run + Session List Integration', () => {
 			);
 
 			// Initially shows configured session's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Configured');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Configured'
+			);
 
 			// Switch to unconfigured session
 			fireEvent.click(screen.getByText('Unconfigured Session'));
@@ -747,7 +775,9 @@ describe('Auto Run + Session List Integration', () => {
 			fireEvent.click(screen.getByText('Configured Session'));
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Configured');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Configured'
+				);
 				expect(screen.queryByTestId('autorun-not-configured')).not.toBeInTheDocument();
 			});
 		});
@@ -766,7 +796,9 @@ describe('Auto Run + Session List Integration', () => {
 			fireEvent.click(screen.getByText('Session 1'));
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 		});
 
@@ -794,7 +826,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper />);
 
 			// Initially on Session 1
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Right-click on Session 1 to open context menu
 			const session1Item = screen.getByText('Session 1');
@@ -823,7 +857,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper />);
 
 			// Initially on Session 1
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Right-click on Session 2 (not active) to delete it
 			const session2Item = screen.getByText('Session 2');
@@ -837,7 +873,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Session 1's Auto Run should still be displayed
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 
 			// Session 2 should no longer be in the list
@@ -862,7 +900,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Session 1's Auto Run should still be displayed (it was active)
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 
 			// Session 3 should no longer be in the list
@@ -885,7 +925,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Session 1 should still be there with its Auto Run content
 			expect(screen.getByText('Session 1')).toBeInTheDocument();
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 		});
 
 		it('deleting last session handles Auto Run gracefully', async () => {
@@ -906,7 +948,9 @@ describe('Auto Run + Session List Integration', () => {
 				/>
 			);
 
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Only Session');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Only Session'
+			);
 
 			// Delete the only session
 			const sessionItem = screen.getByText('Only Session');
@@ -933,7 +977,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Verify Session 3's Auto Run is showing
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 3\n\n- [ ] Group Task');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 3\n\n- [ ] Group Task'
+				);
 			});
 
 			// Collapse the group
@@ -945,7 +991,9 @@ describe('Auto Run + Session List Integration', () => {
 			}
 
 			// Auto Run should still show Session 3's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 3\n\n- [ ] Group Task');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 3\n\n- [ ] Group Task'
+			);
 		});
 
 		it('expanding group does not affect active session Auto Run', async () => {
@@ -1018,7 +1066,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<TestComponent />);
 
 			// Initially Session 1 is active and group is collapsed
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 			expect(screen.getByTestId('group-state')).toHaveTextContent('Group collapsed: yes');
 
 			// Expand the group
@@ -1026,7 +1076,9 @@ describe('Auto Run + Session List Integration', () => {
 			expect(screen.getByTestId('group-state')).toHaveTextContent('Group collapsed: no');
 
 			// Auto Run should still show Session 1's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 		});
 
 		it('toggling multiple groups does not affect active session Auto Run', async () => {
@@ -1062,7 +1114,9 @@ describe('Auto Run + Session List Integration', () => {
 			);
 
 			// Verify initial state
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1'
+			);
 
 			// Toggle Group 1
 			const group1Header = screen.getByText('Group 1');
@@ -1070,7 +1124,9 @@ describe('Auto Run + Session List Integration', () => {
 			if (group1Row) fireEvent.click(group1Row);
 
 			// Auto Run should still show Session 1's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1'
+			);
 
 			// Toggle Group 2
 			const group2Header = screen.getByText('Group 2');
@@ -1078,7 +1134,9 @@ describe('Auto Run + Session List Integration', () => {
 			if (group2Row) fireEvent.click(group2Row);
 
 			// Auto Run should still show Session 1's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1'
+			);
 		});
 
 		it('filtering sessions does not affect active session Auto Run', async () => {
@@ -1087,7 +1145,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper />);
 
 			// Initially showing Session 1's content - use the textarea specifically
-			const autoRunTextarea = screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA') as HTMLTextAreaElement;
+			const autoRunTextarea = screen
+				.getAllByRole('textbox')
+				.find((el) => el.tagName === 'TEXTAREA') as HTMLTextAreaElement;
 			expect(autoRunTextarea).toHaveValue('# Session 1\n\n- [ ] Task 1');
 			expect(autoRunTextarea.tagName).toBe('TEXTAREA'); // Verify it's the Auto Run textarea
 
@@ -1131,7 +1191,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Session 1 is ungrouped, Session 3 is in group-1
 			// Initially showing Session 1's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Right-click on Session 1 to move to group
 			// Use getAllByText and find the one that's a session item (not in the group header)
@@ -1152,7 +1214,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Auto Run should still show Session 1's content
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 		});
 	});
@@ -1162,7 +1226,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper />);
 
 			// Initially on Session 1
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Simulate keyboard selection by clicking Session 2
 			fireEvent.click(screen.getByText('Session 2'));
@@ -1180,7 +1246,9 @@ describe('Auto Run + Session List Integration', () => {
 			render(<IntegrationTestWrapper />);
 
 			// Initially on Session 1
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 
 			// Right-click and bookmark Session 1
 			const session1Item = screen.getByText('Session 1');
@@ -1190,7 +1258,9 @@ describe('Auto Run + Session List Integration', () => {
 			fireEvent.click(bookmarkButton);
 
 			// Auto Run should still show Session 1's content
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Session 1\n\n- [ ] Task 1'
+			);
 		});
 
 		it('selecting bookmarked session loads correct Auto Run content', async () => {
@@ -1217,7 +1287,9 @@ describe('Auto Run + Session List Integration', () => {
 			);
 
 			// Start on Regular Session
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Regular Content');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				'# Regular Content'
+			);
 
 			// Click on bookmarked session - use getAllByText to handle multiple elements
 			const bookmarkedItems = screen.getAllByText('Bookmarked Session');
@@ -1251,7 +1323,9 @@ describe('Auto Run + Session List Integration', () => {
 				/>
 			);
 
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('');
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				''
+			);
 		});
 
 		it('handles session with very long Auto Run content', async () => {
@@ -1272,7 +1346,9 @@ describe('Auto Run + Session List Integration', () => {
 				/>
 			);
 
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA').textContent?.length).toBeGreaterThan(10000);
+			expect(
+				screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA').textContent?.length
+			).toBeGreaterThan(10000);
 		});
 
 		it('handles session with special characters in Auto Run content', async () => {
@@ -1294,7 +1370,9 @@ describe('Auto Run + Session List Integration', () => {
 				/>
 			);
 
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(specialContent);
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				specialContent
+			);
 		});
 
 		it('handles session with unicode in Auto Run content', async () => {
@@ -1315,7 +1393,9 @@ describe('Auto Run + Session List Integration', () => {
 				/>
 			);
 
-			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(unicodeContent);
+			expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+				unicodeContent
+			);
 		});
 
 		it('handles simultaneous session and group operations', async () => {
@@ -1333,7 +1413,9 @@ describe('Auto Run + Session List Integration', () => {
 
 			// Should end up showing Session 1's content
 			await waitFor(() => {
-				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue('# Session 1\n\n- [ ] Task 1');
+				expect(screen.getAllByRole('textbox').find((el) => el.tagName === 'TEXTAREA')).toHaveValue(
+					'# Session 1\n\n- [ ] Task 1'
+				);
 			});
 		});
 	});
