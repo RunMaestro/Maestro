@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
+import type { UpdateStatus } from '../../../shared/types';
 
 // Add updates mock to window.maestro if not present
 if (!(window.maestro as any).updates) {
@@ -1083,6 +1084,35 @@ describe('UpdateCheckModal', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('5 MB / 10 MB')).toBeInTheDocument();
+			});
+		});
+
+		it('uses binary units with trimmed precision and no terabyte suffix', async () => {
+			let statusCallback: ((status: UpdateStatus) => void) | null = null;
+			vi.mocked(window.maestro.updates.onStatus).mockImplementation((callback) => {
+				statusCallback = callback;
+				return vi.fn();
+			});
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+
+			statusCallback!({
+				status: 'downloading',
+				progress: {
+					percent: 50,
+					bytesPerSecond: 1024,
+					total: 1024 ** 4,
+					transferred: 1536,
+				},
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('1.5 KB / 1 undefined')).toBeInTheDocument();
+				expect(screen.getByText('1 KB/s')).toBeInTheDocument();
 			});
 		});
 

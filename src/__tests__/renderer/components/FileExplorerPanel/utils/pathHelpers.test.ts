@@ -225,4 +225,10 @@ describe('formatBytes', () => {
 	it('clamps the suffix for values larger than terabytes', () => {
 		expect(formatBytes(1024 ** 6)).toBe('1048576 TB');
 	});
+
+	it('uses binary units but intentionally trims a zero decimal', () => {
+		expect(formatBytes(1024)).toBe('1 KB');
+		expect(formatBytes(1536)).toBe('1.5 KB');
+		expect(formatBytes(1024 ** 4)).toBe('1 TB');
+	});
 });

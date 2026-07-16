@@ -61,6 +61,12 @@ describe('shared/formatters', () => {
 		});
 	});
 
+	it('uses binary units with a fixed one-decimal precision and a TB suffix', () => {
+		expect(formatSize(1024)).toBe('1.0 KB');
+		expect(formatSize(1536)).toBe('1.5 KB');
+		expect(formatSize(1024 ** 4)).toBe('1.0 TB');
+	});
+
 	// ==========================================================================
 	// formatNumber tests
 	// ==========================================================================
