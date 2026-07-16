@@ -41,8 +41,9 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 
 	return (
 		<div
-			className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+			className="flex w-full min-w-0 flex-wrap items-center gap-1"
 			aria-label="Native runtime controls"
+			data-testid="native-runtime-toolbar-row"
 		>
 			{visibleControls.map((control) => {
 				if (control.kind === 'select') {

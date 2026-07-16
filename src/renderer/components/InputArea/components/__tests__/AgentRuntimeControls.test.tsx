@@ -57,6 +57,7 @@ describe('AgentRuntimeControls', () => {
 			'true'
 		);
 		expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
+		expect(screen.getByTestId('native-runtime-toolbar-row')).toHaveClass('w-full', 'flex-wrap');
 	});
 
 	it('dispatches selected values and toggles for the active session', () => {

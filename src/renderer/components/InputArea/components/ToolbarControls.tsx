@@ -237,11 +237,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 					setEffortMenuOpen={setEffortMenuOpen}
 					effortMenuRef={effortMenuRef}
 				/>
-				<AgentRuntimeControls
-					sessionId={`${session.id}-ai-${session.activeTabId}`}
-					controls={session.runtimeFeatures?.controls}
-					theme={theme}
-				/>
 			</div>
 
 			{isNarrowViewport && (
@@ -391,6 +386,11 @@ export const ToolbarControls = memo(function ToolbarControls({
 					{formatEnterToSend(enterToSend)}
 				</button>
 			</div>
+			<AgentRuntimeControls
+				sessionId={`${session.id}-ai-${session.activeTabId}`}
+				controls={session.runtimeFeatures?.controls}
+				theme={theme}
+			/>
 		</div>
 	);
 });
