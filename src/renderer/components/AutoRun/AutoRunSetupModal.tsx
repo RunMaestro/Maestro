@@ -4,6 +4,7 @@ import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { expandHomePath } from '../../../shared/home-path';
 
 interface AutoRunSetupModalProps {
 	theme: Theme;
@@ -39,14 +40,6 @@ export function AutoRunSetupModal({
 		window.maestro.fs.homeDir().then(setHomeDir);
 	}, []);
 
-	// Expand tilde in path
-	const expandTilde = (path: string): string => {
-		if (!homeDir) return path;
-		if (path === '~') return homeDir;
-		if (path.startsWith('~/')) return homeDir + path.slice(1);
-		return path;
-	};
-
 	// Validate folder and count markdown documents (debounced)
 	useEffect(() => {
 		if (!selectedFolder.trim()) {
@@ -65,15 +58,7 @@ export function AutoRunSetupModal({
 			setFolderValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
-				// Expand tilde inline to avoid closure issues
-				let expandedPath = selectedFolder.trim();
-				if (homeDir) {
-					if (expandedPath === '~') {
-						expandedPath = homeDir;
-					} else if (expandedPath.startsWith('~/')) {
-						expandedPath = homeDir + expandedPath.slice(1);
-					}
-				}
+				const expandedPath = expandHomePath(selectedFolder.trim(), homeDir);
 
 				const result = await window.maestro.autorun.listDocs(expandedPath, sshRemoteId);
 
@@ -118,7 +103,7 @@ export function AutoRunSetupModal({
 	const handleContinue = () => {
 		if (selectedFolder) {
 			// Expand tilde before passing to callback
-			const expandedPath = expandTilde(selectedFolder.trim());
+			const expandedPath = expandHomePath(selectedFolder.trim(), homeDir);
 			onFolderSelected(expandedPath);
 			onClose();
 		}

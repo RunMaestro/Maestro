@@ -26,20 +26,7 @@
  */
 
 import type { AdditionalDirectory } from './types';
-
-/**
- * Expand a leading `~` against the given home directory.
- *
- * Deliberately not `expandTilde` from `shared/pathUtils` - that module imports
- * `os`/`fs`, and this one is bundled into the renderer. Without a `homeDir` the
- * path is left untouched rather than guessed at.
- */
-function expandHome(filePath: string, homeDir?: string): string {
-	if (!homeDir) return filePath;
-	if (filePath === '~') return homeDir;
-	if (filePath.startsWith('~/')) return `${homeDir}/${filePath.slice(2)}`;
-	return filePath;
-}
+import { expandHomePath } from './home-path';
 
 /**
  * Clean a raw list from a form: expand `~`, trim, drop blank paths, and collapse
@@ -58,7 +45,7 @@ export function normalizeAdditionalDirectories(
 
 	const byPath = new Map<string, AdditionalDirectory>();
 	for (const dir of dirs) {
-		const path = expandHome(dir.path.trim(), homeDir);
+		const path = expandHomePath(dir.path.trim(), homeDir);
 		if (!path) continue;
 		byPath.set(path, { path, read: !!dir.read, write: !!dir.write });
 	}

@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { isWindows } from './platformDetection';
+import { expandHomePath } from './home-path';
 
 /**
  * Expand tilde (~) to home directory in paths.
@@ -36,22 +37,7 @@ import { isWindows } from './platformDetection';
  * ```
  */
 export function expandTilde(filePath: string, homeDir?: string): string {
-	if (!filePath) {
-		return filePath;
-	}
-
-	const home = homeDir ?? os.homedir();
-
-	if (filePath === '~') {
-		return home;
-	}
-
-	if (filePath.startsWith('~/')) {
-		// Use POSIX path separator for consistency, especially for SSH remote paths
-		return `${home}/${filePath.slice(2)}`;
-	}
-
-	return filePath;
+	return expandHomePath(filePath, homeDir ?? os.homedir());
 }
 
 /**

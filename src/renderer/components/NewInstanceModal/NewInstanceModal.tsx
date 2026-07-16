@@ -6,6 +6,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { expandHomePath } from '../../../shared/home-path';
 import { FormInput } from '../ui/FormInput';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
@@ -103,14 +104,8 @@ export function NewInstanceModal({
 			.catch(() => setDetectedMaestroPPath(undefined));
 	}, []);
 
-	// Expand tilde in path
 	const expandTilde = React.useCallback(
-		(path: string): string => {
-			if (!homeDir) return path;
-			if (path === '~') return homeDir;
-			if (path.startsWith('~/')) return homeDir + path.slice(1);
-			return path;
-		},
+		(path: string): string => expandHomePath(path, homeDir),
 		[homeDir]
 	);
 
