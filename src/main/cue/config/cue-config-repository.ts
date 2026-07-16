@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
+import { debounce } from '../../utils/debounce';
 import {
 	CUE_CONFIG_PATH,
 	CUE_PROMPTS_DIR,
@@ -294,7 +295,6 @@ export function watchCueConfigFile(
 	// glob keeps the watch set focused. The directory itself can be missing;
 	// chokidar starts watching once it appears.
 	const promptsGlob = path.join(projectRoot, CUE_PROMPTS_DIR, '*.md');
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 
 	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
@@ -314,29 +314,20 @@ export function watchCueConfigFile(
 
 	const debouncedOnChange = () => {
 		if (torn) return;
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-		}
-		debounceTimer = setTimeout(() => {
-			debounceTimer = null;
-			if (torn) return;
-			onChange();
-		}, 1000);
+		onChange();
 	};
+	const notifyChange = debounce(debouncedOnChange, 1000);
 
-	watcher.on('add', debouncedOnChange);
-	watcher.on('change', debouncedOnChange);
-	watcher.on('unlink', debouncedOnChange);
+	watcher.on('add', notifyChange);
+	watcher.on('change', notifyChange);
+	watcher.on('unlink', notifyChange);
 	if (opts?.onReady) {
 		watcher.once('ready', opts.onReady);
 	}
 
 	return () => {
 		torn = true;
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-			debounceTimer = null;
-		}
+		notifyChange.cancel();
 		watcher.close();
 	};
 }

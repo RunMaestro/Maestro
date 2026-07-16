@@ -7,6 +7,7 @@
 import fsSync from 'fs';
 import { logger } from '../utils/logger';
 import { createSafeSend, type GetBroadcastWindows } from '../utils/safe-send';
+import { debounce } from '../utils/debounce';
 
 /** Dependencies for settings watcher */
 export interface SettingsWatcherDependencies {
@@ -44,18 +45,22 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 	const safeSend = createSafeSend(getBroadcastWindows);
 	const watchers: fsSync.FSWatcher[] = [];
 
-	// Debounce: ignore changes within 500ms of an IPC-driven write
-	// This prevents the watcher from firing when the app itself writes settings
-	let settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-	let agentConfigsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	const notifySettingsChanged = debounce(() => {
+		logger.debug(
+			'External change detected in maestro-settings.json, notifying renderer',
+			'SettingsWatcher'
+		);
+		safeSend('settings:externalChange');
+	}, 300);
+	const notifyAgentConfigsChanged = debounce(() => {
+		logger.debug(
+			'External change detected in maestro-agent-configs.json, notifying renderer',
+			'SettingsWatcher'
+		);
+		safeSend('settings:externalChange');
+	}, 300);
 
-	function watchFile(
-		dirPath: string,
-		filename: string,
-		channel: string,
-		getDebounce: () => ReturnType<typeof setTimeout> | null,
-		setDebounce: (t: ReturnType<typeof setTimeout> | null) => void
-	) {
+	function watchFile(dirPath: string, filename: string, notifyChange: () => void) {
 		if (!fsSync.existsSync(dirPath)) {
 			fsSync.mkdirSync(dirPath, { recursive: true });
 		}
@@ -64,18 +69,7 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 			const watcher = fsSync.watch(dirPath, (_eventType, changedFile) => {
 				if (changedFile === filename) {
 					// Debounce to coalesce rapid writes
-					const existing = getDebounce();
-					if (existing) clearTimeout(existing);
-					setDebounce(
-						setTimeout(() => {
-							setDebounce(null);
-							logger.debug(
-								`External change detected in ${filename}, notifying renderer`,
-								'SettingsWatcher'
-							);
-							safeSend(channel);
-						}, 300)
-					);
+					notifyChange();
 				}
 			});
 
@@ -95,40 +89,14 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 			const settingsDir = getSettingsPath();
 			const agentConfigsDir = getAgentConfigsPath();
 
-			watchFile(
-				settingsDir,
-				'maestro-settings.json',
-				'settings:externalChange',
-				() => settingsDebounceTimer,
-				(t) => {
-					settingsDebounceTimer = t;
-				}
-			);
+			watchFile(settingsDir, 'maestro-settings.json', notifySettingsChanged);
 
 			// Only watch agent configs dir separately if it differs from settings dir
 			if (agentConfigsDir !== settingsDir) {
-				watchFile(
-					agentConfigsDir,
-					'maestro-agent-configs.json',
-					'settings:externalChange',
-					() => agentConfigsDebounceTimer,
-					(t) => {
-						agentConfigsDebounceTimer = t;
-					}
-				);
+				watchFile(agentConfigsDir, 'maestro-agent-configs.json', notifyAgentConfigsChanged);
 			} else {
-				// Same dir - extend the existing watcher to also look for agent configs
-				// The first watcher already watches the directory, but we need to
-				// also react to agent config file changes. We'll add a second watcher.
-				watchFile(
-					agentConfigsDir,
-					'maestro-agent-configs.json',
-					'settings:externalChange',
-					() => agentConfigsDebounceTimer,
-					(t) => {
-						agentConfigsDebounceTimer = t;
-					}
-				);
+				// Same dir - extend the existing watcher to also look for agent configs.
+				watchFile(agentConfigsDir, 'maestro-agent-configs.json', notifyAgentConfigsChanged);
 			}
 
 			logger.info('Settings file watcher started', 'Startup');
@@ -139,8 +107,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 				watcher.close();
 			}
 			watchers.length = 0;
-			if (settingsDebounceTimer) clearTimeout(settingsDebounceTimer);
-			if (agentConfigsDebounceTimer) clearTimeout(agentConfigsDebounceTimer);
+			notifySettingsChanged.cancel();
+			notifyAgentConfigsChanged.cancel();
 		},
 	};
 }

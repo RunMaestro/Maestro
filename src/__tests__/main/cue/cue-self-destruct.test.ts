@@ -177,6 +177,34 @@ describe('removeSubscriptionFromYaml', () => {
 		expect(readSpy).toHaveBeenCalledTimes(1);
 	});
 
+	it('cleans its temp file and preserves the original when replacement fails', async () => {
+		const filePath = writeYaml({
+			subscriptions: [
+				{
+					name: 'task-x',
+					event: 'time.once',
+					action: 'notify',
+					agent_id: 'a',
+					fire_at: '2026-05-22T14:00:00Z',
+					notify: { message: 'r' },
+				},
+			],
+		});
+		const original = fs.readFileSync(filePath, 'utf-8');
+		vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(
+			Object.assign(new Error('simulated Windows replacement lock'), { code: 'EPERM' })
+		);
+
+		const result = await removeSubscriptionFromYaml(projectRoot, 'task-x');
+
+		expect(result).toEqual({
+			removed: false,
+			reason: 'write failed: simulated Windows replacement lock',
+		});
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(original);
+		expect(fs.existsSync(`${filePath}.tmp`)).toBe(false);
+	});
+
 	it('returns removed: false with a parse reason on malformed YAML', async () => {
 		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
 		// Intentionally broken YAML - js-yaml will throw on load.

@@ -18,6 +18,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { debounce } from '../utils/debounce';
 import type {
 	MarketplaceManifest,
 	MarketplaceCache,
@@ -672,13 +673,10 @@ export function createLocalManifestWatcher(
 	debounceMs = 500
 ): { stop: () => void } {
 	let watcher: fsSync.FSWatcher | undefined;
-	let debounceTimer: NodeJS.Timeout | undefined;
+	const notifyChange = debounce(onChange, debounceMs);
 	const localManifestPath = getLocalManifestPath(app);
 	try {
-		watcher = fsSync.watch(localManifestPath, () => {
-			if (debounceTimer) clearTimeout(debounceTimer);
-			debounceTimer = setTimeout(onChange, debounceMs);
-		});
+		watcher = fsSync.watch(localManifestPath, notifyChange);
 
 		// Prevent runtime errors (e.g. Windows UNKNOWN, file removed) from
 		// becoming unhandled rejections. Recoverable filesystem codes stay
@@ -700,10 +698,7 @@ export function createLocalManifestWatcher(
 	}
 	return {
 		stop() {
-			if (debounceTimer) {
-				clearTimeout(debounceTimer);
-				debounceTimer = undefined;
-			}
+			notifyChange.cancel();
 			if (watcher) {
 				try {
 					watcher.close();

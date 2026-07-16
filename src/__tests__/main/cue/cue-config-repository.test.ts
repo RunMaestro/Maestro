@@ -10,7 +10,7 @@
  * - prompt file write with arbitrary nested paths
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 
 const mockExistsSync = vi.fn();
@@ -19,6 +19,11 @@ const mockWriteFileSync = vi.fn();
 const mockMkdirSync = vi.fn();
 const mockUnlinkSync = vi.fn();
 const mockReaddirSync = vi.fn();
+const mockWatcher = {
+	on: vi.fn().mockReturnThis(),
+	once: vi.fn().mockReturnThis(),
+	close: vi.fn(),
+};
 const mockRmdirSync = vi.fn();
 
 vi.mock('fs', () => ({
@@ -36,10 +41,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 vi.mock('chokidar', () => ({
-	watch: vi.fn(() => ({
-		on: vi.fn().mockReturnThis(),
-		close: vi.fn(),
-	})),
+	watch: vi.fn(() => mockWatcher),
 }));
 
 import {
@@ -50,6 +52,7 @@ import {
 	resolveCueConfigPath,
 	writeCueConfigFile,
 	writeCuePromptFile,
+	watchCueConfigFile,
 } from '../../../main/cue/config/cue-config-repository';
 
 const PROJECT_ROOT = '/projects/test';
@@ -65,6 +68,10 @@ const PROMPTS_DIR = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts'));
 describe('cue-config-repository', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('resolveCueConfigPath', () => {
@@ -323,5 +330,48 @@ describe('cue-config-repository', () => {
 
 			expect(removed).toBe(false);
 		});
+	});
+});
+
+describe('watchCueConfigFile', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+	});
+
+	function triggerChange(): void {
+		const call = mockWatcher.on.mock.calls.find(([event]) => event === 'change');
+		expect(call).toBeDefined();
+		(call![1] as () => void)();
+	}
+
+	it('is trailing-edge only and reschedules to the final file event', () => {
+		const onChange = vi.fn();
+		watchCueConfigFile(PROJECT_ROOT, onChange);
+
+		triggerChange();
+		vi.advanceTimersByTime(999);
+		expect(onChange).not.toHaveBeenCalled();
+
+		triggerChange();
+		vi.advanceTimersByTime(999);
+		expect(onChange).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(1);
+		expect(onChange).toHaveBeenCalledTimes(1);
+	});
+
+	it('cancels a queued callback during teardown and rejects later events', () => {
+		const onChange = vi.fn();
+		const stop = watchCueConfigFile(PROJECT_ROOT, onChange);
+
+		triggerChange();
+		stop();
+		vi.advanceTimersByTime(1000);
+		triggerChange();
+		vi.advanceTimersByTime(1000);
+
+		expect(onChange).not.toHaveBeenCalled();
+		expect(mockWatcher.close).toHaveBeenCalledOnce();
 	});
 });
