@@ -50,6 +50,7 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { parseImageDataUrl } from '../../shared/imageDataUrl';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -771,12 +772,13 @@ export async function routeUserMessage(
 	if (images && images.length > 0) {
 		savedImageFilenames = [];
 		for (const dataUrl of images) {
-			// Extract base64 data and extension from data URL
-			const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
-			if (match) {
-				const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-				const buffer = Buffer.from(match[2], 'base64');
-				const filename = await saveImage(chat.imagesDir, buffer, `image.${ext}`);
+			const parsed = parseImageDataUrl(dataUrl);
+			if (parsed) {
+				const filename = await saveImage(
+					chat.imagesDir,
+					Buffer.from(parsed.bytes),
+					`image.${parsed.extension}`
+				);
 				savedImageFilenames.push(filename);
 			}
 		}

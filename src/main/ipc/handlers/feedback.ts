@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { generateUUID } from '../../../shared/uuid';
+import { parseImageDataUrl } from '../../../shared/imageDataUrl';
 import { logger } from '../../utils/logger';
 import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -553,15 +554,14 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 	base64: string;
 	filename: string;
 } {
-	const match = attachment.dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
-	if (!match) {
+	const parsed = parseImageDataUrl(attachment.dataUrl, { filename: attachment.name });
+	if (!parsed) {
 		throw new Error(`Unsupported image data for ${attachment.name}.`);
 	}
 
-	const extension = match[1].replace('jpeg', 'jpg');
 	const hasExtension = /\.[a-zA-Z0-9]+$/.test(attachment.name);
-	const filename = hasExtension ? attachment.name : `${attachment.name}.${extension}`;
-	return { base64: match[2], filename };
+	const filename = hasExtension ? attachment.name : `${attachment.name}.${parsed.extension}`;
+	return { base64: parsed.base64, filename };
 }
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {

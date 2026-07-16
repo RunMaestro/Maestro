@@ -149,7 +149,7 @@ describe('feedback handlers', () => {
 				additionalContext: 'Occurs on the first submit attempt.',
 				agentProvider: 'codex',
 				sshRemoteEnabled: false,
-				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }],
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
 			}
 		);
 		const bodyWriteCall = vi
@@ -274,7 +274,7 @@ describe('feedback handlers', () => {
 			{},
 			{
 				feedbackText: 'Please include the screenshot.',
-				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }],
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
 			}
 		);
 

@@ -29,6 +29,7 @@ import {
 	parseGitignoreContent,
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
+import { parseImageDataUrl } from '../../../shared/imageDataUrl';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -604,10 +605,11 @@ export function registerFilesystemHandlers(): void {
 		'fs:writeImageFile',
 		async (_, filePath: string, dataUrl: string, sshRemoteId?: string) => {
 			try {
-				const commaIndex = dataUrl.indexOf(',');
-				const base64 =
-					commaIndex >= 0 && dataUrl.startsWith('data:') ? dataUrl.slice(commaIndex + 1) : dataUrl;
-				const buffer = Buffer.from(base64, 'base64');
+				const parsed = dataUrl.startsWith('data:') ? parseImageDataUrl(dataUrl) : null;
+				if (dataUrl.startsWith('data:') && !parsed) {
+					throw new Error('Invalid image data URL');
+				}
+				const buffer = parsed ? Buffer.from(parsed.bytes) : Buffer.from(dataUrl, 'base64');
 
 				// SSH remote: writeFileRemote accepts a Buffer and base64-encodes it
 				// for safe transfer, decoding on the remote side.
