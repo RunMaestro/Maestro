@@ -26,6 +26,7 @@ const LogViewer = lazy(() =>
 );
 
 import { captureException } from './utils/sentry';
+import { notifyCenterFlash } from './stores/centerFlashStore';
 
 // SymphonyContributionData type moved to useSymphonyContribution hook
 
@@ -1137,8 +1138,7 @@ function MaestroConsoleInner() {
 	}, []);
 
 	const handleGroupChatFlashNotification = useCallback((message: string) => {
-		setSuccessFlashNotification(message);
-		setTimeout(() => setSuccessFlashNotification(null), 2000);
+		notifyCenterFlash({ message, color: 'theme', duration: 2000 });
 	}, []);
 
 	const handlePublishGroupChatMessageGist = useCallback((text: string, messageId?: string) => {
@@ -1532,8 +1532,6 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
-		setFlashNotification,
-		setSuccessFlashNotification,
 	});
 
 	// --- AGENT SESSION MANAGEMENT ---

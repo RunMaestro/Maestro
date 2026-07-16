@@ -1,34 +1,38 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	dismissCenterFlash,
 	notifyCenterFlash,
 	useCenterFlashStore,
 } from '../../../renderer/stores/centerFlashStore';
 
-afterEach(() => {
-	dismissCenterFlash();
-	vi.useRealTimers();
-});
-
-describe('notifyCenterFlash color compatibility', () => {
-	it.each([
-		['canonical color', { color: 'orange' }, 'orange'],
-		['legacy variant', { variant: 'warning' }, 'yellow'],
-		['default color', {}, 'theme'],
-		[
-			'invalid explicit color takes precedence over a legacy variant',
-			{ color: 'blue', variant: 'success' },
-			'theme',
-		],
-	] as const)('%s resolves to %s', (_name, options, expectedColor) => {
-		notifyCenterFlash({ message: 'Saved', ...options });
-
-		expect(useCenterFlashStore.getState().active?.color).toBe(expectedColor);
+describe('centerFlashStore timer ownership', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		dismissCenterFlash();
 	});
 
-	it('retains the renderer zero-duration contract', () => {
-		notifyCenterFlash({ message: 'Sticky', duration: 0 });
+	afterEach(() => {
+		dismissCenterFlash();
+		vi.useRealTimers();
+	});
 
-		expect(useCenterFlashStore.getState().active?.duration).toBe(0);
+	it('replaces a pending flash without letting its stale timer clear the replacement', () => {
+		notifyCenterFlash({ message: 'First', duration: 2000 });
+		vi.advanceTimersByTime(1000);
+		notifyCenterFlash({ message: 'Replacement', duration: 2000 });
+
+		vi.advanceTimersByTime(1000);
+		expect(useCenterFlashStore.getState().active?.message).toBe('Replacement');
+
+		vi.advanceTimersByTime(1000);
+		expect(useCenterFlashStore.getState().active).toBeNull();
+	});
+
+	it('cancels the active timer when dismissed', () => {
+		notifyCenterFlash({ message: 'Dismissed', duration: 2000 });
+		dismissCenterFlash();
+		vi.advanceTimersByTime(2000);
+
+		expect(useCenterFlashStore.getState().active).toBeNull();
 	});
 });

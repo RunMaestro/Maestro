@@ -17,6 +17,7 @@ import {
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
@@ -60,10 +61,6 @@ export interface UseAgentExecutionDeps {
 	processQueuedItemRef: React.MutableRefObject<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>;
-	/** Flash notification setter (bottom-right) */
-	setFlashNotification: (message: string | null) => void;
-	/** Success flash notification setter (center screen) */
-	setSuccessFlashNotification: (message: string | null) => void;
 }
 
 /**
@@ -155,14 +152,7 @@ export interface UseAgentExecutionReturn {
  * @returns Agent execution functions and refs
  */
 export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutionReturn {
-	const {
-		activeSessionId,
-		sessionsRef,
-		setSessions,
-		processQueuedItemRef,
-		setFlashNotification,
-		setSuccessFlashNotification,
-	} = deps;
+	const { activeSessionId, sessionsRef, setSessions, processQueuedItemRef } = deps;
 
 	// Refs for functions that need to be accessed from other callbacks
 	const spawnBackgroundSynopsisRef = useRef<
@@ -878,27 +868,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 		activeSynopsisSessionsRef.current.delete(maestroSessionId);
 	}, []);
 
-	/**
-	 * Show flash notification (bottom-right, auto-dismisses after 2 seconds).
-	 */
-	const showFlashNotification = useCallback(
-		(message: string) => {
-			setFlashNotification(message);
-			setTimeout(() => setFlashNotification(null), 2000);
-		},
-		[setFlashNotification]
-	);
+	/** Emits a 2-second yellow center flash through the shared timer owner. */
+	const showFlashNotification = useCallback((message: string) => {
+		notifyCenterFlash({ message, color: 'yellow', duration: 2000 });
+	}, []);
 
-	/**
-	 * Show success flash notification (center screen, auto-dismisses after 2 seconds).
-	 */
-	const showSuccessFlash = useCallback(
-		(message: string) => {
-			setSuccessFlashNotification(message);
-			setTimeout(() => setSuccessFlashNotification(null), 2000);
-		},
-		[setSuccessFlashNotification]
-	);
+	/** Emits a 2-second themed center flash through the shared timer owner. */
+	const showSuccessFlash = useCallback((message: string) => {
+		notifyCenterFlash({ message, color: 'theme', duration: 2000 });
+	}, []);
 
 	// Update refs for functions that need to be accessed from other callbacks
 	spawnBackgroundSynopsisRef.current = spawnBackgroundSynopsis;

@@ -5,6 +5,7 @@ import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/t
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { dismissCenterFlash, useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -465,12 +466,11 @@ describe('useAgentExecution', () => {
 		});
 	});
 
-	it('auto-dismisses flash notifications', () => {
+	it('delegates replacement and dismissal to the shared flash timer owner', () => {
 		vi.useFakeTimers();
+		dismissCenterFlash();
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
-		const setFlashNotification = vi.fn();
-		const setSuccessFlashNotification = vi.fn();
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
@@ -478,25 +478,28 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
-				setFlashNotification,
-				setSuccessFlashNotification,
 			})
 		);
 
 		act(() => {
 			result.current.showFlashNotification('Saved');
-			result.current.showSuccessFlash('Done');
 		});
-
-		expect(setFlashNotification).toHaveBeenCalledWith('Saved');
-		expect(setSuccessFlashNotification).toHaveBeenCalledWith('Done');
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			message: 'Saved',
+			color: 'yellow',
+			duration: 2000,
+		});
 
 		act(() => {
-			vi.advanceTimersByTime(2000);
+			result.current.showSuccessFlash('Done');
+			vi.advanceTimersByTime(1999);
 		});
+		expect(useCenterFlashStore.getState().active?.message).toBe('Done');
 
-		expect(setFlashNotification).toHaveBeenCalledWith(null);
-		expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+		expect(useCenterFlashStore.getState().active).toBeNull();
 	});
 
 	it('cancels pending synopsis sessions when cancelPendingSynopsis is called', async () => {
