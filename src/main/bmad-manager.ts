@@ -431,23 +431,13 @@ export async function refreshBmadPrompts(): Promise<BmadMetadata> {
 			sourceUrl: BMAD_REPO_URL,
 		};
 
-		const userPromptsDir = manager.getUserPromptsPath();
-		await fs.mkdir(userPromptsDir, { recursive: true });
-		for (const { id, prompt } of downloadedPrompts) {
-			await fs.writeFile(path.join(userPromptsDir, `bmad.${id}.md`), prompt, 'utf-8');
+		await manager.commitRefresh(
+			downloadedPrompts.map(({ id, prompt }) => ({ id, content: prompt })),
+			newMetadata
+		);
+		for (const { id } of downloadedPrompts) {
 			logger.info(`Updated: bmad.${id}.md`, LOG_CONTEXT);
 		}
-		await fs.writeFile(
-			path.join(userPromptsDir, 'metadata.json'),
-			JSON.stringify(newMetadata, null, 2),
-			'utf-8'
-		);
-		const customizations = (await manager.loadUserCustomizations()) ?? {
-			metadata: newMetadata,
-			prompts: {},
-		};
-		customizations.metadata = newMetadata;
-		await manager.saveUserCustomizations(customizations);
 
 		logger.info(`Refreshed BMAD prompts to ${sourceVersion}`, LOG_CONTEXT);
 		return newMetadata;

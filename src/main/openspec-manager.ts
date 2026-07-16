@@ -18,8 +18,6 @@
  * section-parsing refresh strategy.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
 import { logger } from './utils/logger';
 import {
 	createSpecCommandManager,
@@ -184,12 +182,7 @@ export async function refreshOpenSpecPrompts(): Promise<OpenSpecMetadata> {
 		logger.warn('Could not fetch release info, using main branch', LOG_CONTEXT);
 	}
 
-	// Create user prompts directory
-	const userPromptsDir = manager.getUserPromptsPath();
-	await fs.mkdir(userPromptsDir, { recursive: true });
-
-	// Fetch and extract each mapped workflow template.
-	let extractedCount = 0;
+	const refreshedPrompts = [];
 	for (const { id, sourceFile } of UPSTREAM_COMMANDS) {
 		const url = `https://raw.githubusercontent.com/Fission-AI/OpenSpec/${version}/${WORKFLOWS_BASE_PATH}/${sourceFile}`;
 		const response = await fetch(url, {
@@ -198,41 +191,22 @@ export async function refreshOpenSpecPrompts(): Promise<OpenSpecMetadata> {
 		if (!response.ok) {
 			throw new Error(`Failed to fetch ${sourceFile}: ${response.statusText}`);
 		}
-		const tsSource = await response.text();
-		const promptContent = extractInstructions(tsSource);
+		const promptContent = extractInstructions(await response.text());
 		if (promptContent) {
-			const destPath = path.join(userPromptsDir, `openspec.${id}.md`);
-			await fs.writeFile(destPath, promptContent, 'utf8');
-			logger.info(`Updated: openspec.${id}.md`, LOG_CONTEXT);
-			extractedCount++;
+			refreshedPrompts.push({ id, content: promptContent });
 		} else {
 			logger.warn(`Could not extract instructions from ${sourceFile}`, LOG_CONTEXT);
 		}
 	}
-	logger.info(`Extracted ${extractedCount} OpenSpec workflow prompts`, LOG_CONTEXT);
+	logger.info(`Extracted ${refreshedPrompts.length} OpenSpec workflow prompts`, LOG_CONTEXT);
 
-	// Update metadata with new version info
 	const newMetadata: OpenSpecMetadata = {
 		lastRefreshed: new Date().toISOString(),
 		commitSha: version,
 		sourceVersion: version.replace(/^v/, ''),
 		sourceUrl: 'https://github.com/Fission-AI/OpenSpec',
 	};
-
-	// Save metadata to user prompts directory
-	await fs.writeFile(
-		path.join(userPromptsDir, 'metadata.json'),
-		JSON.stringify(newMetadata, null, 2),
-		'utf8'
-	);
-
-	// Also save to customizations file for compatibility
-	const customizations = (await manager.loadUserCustomizations()) ?? {
-		metadata: newMetadata,
-		prompts: {},
-	};
-	customizations.metadata = newMetadata;
-	await manager.saveUserCustomizations(customizations);
+	await manager.commitRefresh(refreshedPrompts, newMetadata);
 
 	logger.info(`Refreshed OpenSpec prompts to ${version}`, LOG_CONTEXT);
 

@@ -11,8 +11,6 @@
  * ZIP refresh strategy.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
 import { logger } from './utils/logger';
 import {
 	createSpecCommandManager,
@@ -283,39 +281,23 @@ export async function refreshSpeckitPrompts(): Promise<SpecKitMetadata> {
 	const releaseInfo = (await releaseResponse.json()) as { tag_name: string };
 	const version = releaseInfo.tag_name;
 
-	const userPromptsDir = manager.getUserPromptsPath();
-	await fs.mkdir(userPromptsDir, { recursive: true });
-
+	const refreshedPrompts = [];
 	for (const cmd of UPSTREAM_COMMANDS) {
 		const url = `https://raw.githubusercontent.com/github/spec-kit/${version}/templates/commands/${cmd}.md`;
 		const raw = await fetchRaw(url);
-		const content = processSpeckitTemplate(raw);
-		const destPath = path.join(userPromptsDir, `speckit.${cmd}.md`);
-		await fs.writeFile(destPath, content, 'utf8');
-		logger.info(`Updated: speckit.${cmd}.md`, LOG_CONTEXT);
+		refreshedPrompts.push({ id: cmd, content: processSpeckitTemplate(raw) });
 	}
 
-	// Update metadata with new version info.
 	const newMetadata: SpecKitMetadata = {
 		lastRefreshed: new Date().toISOString(),
 		commitSha: version,
 		sourceVersion: version.replace(/^v/, ''),
 		sourceUrl: 'https://github.com/github/spec-kit',
 	};
-
-	await fs.writeFile(
-		path.join(userPromptsDir, 'metadata.json'),
-		JSON.stringify(newMetadata, null, 2),
-		'utf8'
-	);
-
-	// Also save to customizations file for compatibility.
-	const customizations = (await manager.loadUserCustomizations()) ?? {
-		metadata: newMetadata,
-		prompts: {},
-	};
-	customizations.metadata = newMetadata;
-	await manager.saveUserCustomizations(customizations);
+	await manager.commitRefresh(refreshedPrompts, newMetadata);
+	for (const { id } of refreshedPrompts) {
+		logger.info(`Updated: speckit.${id}.md`, LOG_CONTEXT);
+	}
 
 	logger.info(`Refreshed spec-kit prompts to ${version}`, LOG_CONTEXT);
 
