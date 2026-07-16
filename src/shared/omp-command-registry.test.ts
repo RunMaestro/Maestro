@@ -23,15 +23,7 @@ describe('OMP 16.4.8 command registry', () => {
 			Object.entries(OMP_16_4_8_COMMAND_REGISTRY)
 				.filter(([, entry]) => entry.disposition === 'unsupported')
 				.map(([id]) => id)
-		).toEqual([
-			'steer',
-			'follow_up',
-			'abort_and_prompt',
-			'set_todos',
-			'get_subagent_messages',
-			'get_branch_messages',
-			'get_last_assistant_text',
-		]);
+		).toEqual(['steer', 'follow_up', 'abort_and_prompt', 'set_todos', 'get_last_assistant_text']);
 	});
 
 	it('projects discovered login providers into the native runtime surface', () => {

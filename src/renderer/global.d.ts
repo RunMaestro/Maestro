@@ -381,6 +381,11 @@ interface MaestroAPI {
 			value: string | boolean
 		) => Promise<boolean>;
 		branchSession: (sessionId: string, entryId: string) => Promise<boolean>;
+		nativeRuntimeDetail: (
+			sessionId: string,
+			kind: 'subagent' | 'branch',
+			entryId: string
+		) => Promise<string[]>;
 		onToolExecution: (
 			callback: (
 				sessionId: string,

@@ -207,6 +207,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		)
 	);
 
+	ipcMain.handle(
+		'process:native-runtime-detail',
+		withIpcErrorLogging(
+			handlerOpts('native-runtime-detail'),
+			async (payload: unknown): Promise<string[]> => {
+				if (!isOmpPayload(payload, ['sessionId', 'kind', 'entryId'])) return [];
+				const { sessionId, kind, entryId } = payload as {
+					sessionId: string;
+					kind: unknown;
+					entryId: string;
+				};
+				const adapter = OmpNativeSessionAdapter.forSession(sessionId);
+				if (!adapter || (kind !== 'subagent' && kind !== 'branch')) return [];
+				return kind === 'subagent'
+					? adapter.subagentMessages(entryId)
+					: adapter.branchMessages(entryId);
+			}
+		)
+	);
+
 	// Write data to a process
 	ipcMain.handle(
 		'process:write',

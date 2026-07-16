@@ -80,6 +80,12 @@ test.describe('first-party OMP regular session', () => {
 			).toBeVisible();
 			await expect(runtimePanel.getByText('Native helper: running')).toBeVisible();
 			await expect(runtimePanel.getByText('inputTokens: 21')).toBeVisible();
+			await runtimePanel.getByRole('button', { name: 'View messages for Native helper' }).click();
+			await expect(runtimePanel.getByText('Native helper detail', { exact: true })).toBeVisible();
+			await runtimePanel
+				.getByRole('button', { name: 'View branch messages for native expanded transcript' })
+				.click();
+			await expect(runtimePanel.getByText('Native branch detail', { exact: true })).toBeVisible();
 			await runtimePanel
 				.getByRole('button', { name: 'Branch from native expanded transcript' })
 				.click();
@@ -123,6 +129,8 @@ test.describe('first-party OMP regular session', () => {
 							'"type":"switch_session"',
 							'"type":"bash"',
 							'"type":"login"',
+							'"type":"get_subagent_messages","subagentId":"native-subagent"',
+							'"type":"get_branch_messages","entryId":"native-message"',
 							'"type":"set_thinking_level","level":"max"',
 							'"type":"set_steering_mode","mode":"one-at-a-time"',
 							'"type":"set_follow_up_mode","mode":"one-at-a-time"',

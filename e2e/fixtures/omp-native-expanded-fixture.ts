@@ -142,9 +142,9 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
     case 'get_available_models': response(request, { models: [model, { provider: 'fixture', id: 'expanded-fast', label: 'Expanded Fast' }] }); break;
     case 'get_messages': response(request, { messages: [{ id: 'native-message', role: 'assistant', text: 'native expanded transcript' }] }); break;
     case 'get_subagents': response(request, { subagents: [{ id: 'native-subagent', label: 'Native helper', status: 'running' }] }); emit({ type: 'subagent_lifecycle', subagentId: 'native-subagent', status: 'running' }); emit({ type: 'subagent_progress', subagentId: 'native-subagent', text: 'working' }); break;
-    case 'get_subagent_messages': response(request, { entries: [{ id: 'native-subagent-message', label: 'Native helper result', status: 'complete' }], fromByte: 0, nextByte: 1, reset: false }); break;
+    case 'get_subagent_messages': response(request, { messages: [{ id: 'native-subagent-message', text: 'Native helper detail' }] }); break;
     case 'get_session_stats': response(request, { stats: { inputTokens: 21, outputTokens: 34, reasoningTokens: 13, totalTokens: 55, contextWindow: 200000 } }); break;
-    case 'get_branch_messages': response(request, { messages: [] }); break;
+    case 'get_branch_messages': response(request, { messages: [{ id: 'native-branch-message', text: 'Native branch detail' }] }); break;
     case 'get_last_assistant_text': response(request, { text: 'native expanded complete' }); break;
     case 'get_login_providers': response(request, { providers: [{ id: 'fixture-login', name: 'Fixture Login', available: true, authenticated: false }] }); break;
     case 'login': response(request, { providerId: String(request.providerId ?? 'fixture-login') }); emit({ type: 'extension_ui_request', id: 'login-' + turn, method: 'open_url', url: 'https://example.com/native-login' }); break;

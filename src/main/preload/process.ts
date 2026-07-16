@@ -386,6 +386,13 @@ export function createProcessApi() {
 		branchSession: (sessionId: string, entryId: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:branch-session', { sessionId, entryId }),
 
+		nativeRuntimeDetail: (
+			sessionId: string,
+			kind: 'subagent' | 'branch',
+			entryId: string
+		): Promise<string[]> =>
+			ipcRenderer.invoke('process:native-runtime-detail', { sessionId, kind, entryId }),
+
 		/**
 		 * Subscribe to thinking/streaming content chunks from AI agents
 		 * Emitted when agents produce partial text events (isPartial: true)

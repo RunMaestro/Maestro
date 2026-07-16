@@ -404,6 +404,7 @@ describe('process IPC handlers', () => {
 				'process:respond-approval',
 				'process:set-agent-control',
 				'process:branch-session',
+				'process:native-runtime-detail',
 			];
 
 			for (const channel of expectedChannels) {
@@ -458,6 +459,18 @@ describe('process IPC handlers', () => {
 			).resolves.toBe(true);
 			expect(setControl).toHaveBeenCalledWith('model', 'fixture:fast');
 			expect(branch).toHaveBeenCalledWith('entry-1');
+			const subagentMessages = vi.fn().mockResolvedValue(['subagent detail']);
+			vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue({
+				subagentMessages,
+			} as unknown as OmpNativeSessionAdapter);
+			await expect(
+				handlers.get('process:native-runtime-detail')!({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					kind: 'subagent',
+					entryId: 'sub-1',
+				})
+			).resolves.toEqual(['subagent detail']);
+			expect(subagentMessages).toHaveBeenCalledWith('sub-1');
 		});
 	});
 

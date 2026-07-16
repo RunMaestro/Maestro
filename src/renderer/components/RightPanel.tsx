@@ -58,6 +58,19 @@ function NativeRuntimePanel({
 	const loginControlId = controlIdForOmpCommand('login');
 	const [shellCommand, setShellCommand] = useState('');
 	const [loginProvider, setLoginProvider] = useState('');
+	const [detail, setDetail] = useState<{ title: string; lines: string[] } | null>(null);
+	const [detailLoading, setDetailLoading] = useState(false);
+	const loadDetail = async (kind: 'subagent' | 'branch', entryId: string, title: string) => {
+		setDetailLoading(true);
+		try {
+			const lines = await window.maestro.process.nativeRuntimeDetail(sessionId, kind, entryId);
+			setDetail({ title, lines });
+		} catch {
+			setDetail({ title, lines: ['Unable to load native runtime detail.'] });
+		} finally {
+			setDetailLoading(false);
+		}
+	};
 	const sections = [
 		{
 			title: 'Todo',
@@ -98,20 +111,60 @@ function NativeRuntimePanel({
 								<li key={row}>{row}</li>
 							))}
 						</ul>
-						{section.title === 'Session tree' &&
-							features.tree?.map((entry) => (
+						{section.title === 'Subagents' &&
+							features.subagents?.map((agent) => (
 								<button
-									key={`branch-${entry.id}`}
+									key={`subagent-detail-${agent.id}`}
 									type="button"
-									onClick={() => void window.maestro.process.branchSession(sessionId, entry.id)}
+									onClick={() => void loadDetail('subagent', agent.id, `${agent.label} messages`)}
 									className="text-xs underline"
 									style={{ color: theme.colors.accent }}
 								>
-									Branch from {entry.label}
+									View messages for {agent.label}
 								</button>
+							))}
+						{section.title === 'Session tree' &&
+							features.tree?.map((entry) => (
+								<div key={`branch-${entry.id}`} className="flex gap-2">
+									<button
+										type="button"
+										onClick={() => void window.maestro.process.branchSession(sessionId, entry.id)}
+										className="text-xs underline"
+										style={{ color: theme.colors.accent }}
+									>
+										Branch from {entry.label}
+									</button>
+									<button
+										aria-label={`View branch messages for ${entry.label}`}
+										type="button"
+										onClick={() => void loadDetail('branch', entry.id, `${entry.label} messages`)}
+										className="text-xs underline"
+										style={{ color: theme.colors.accent }}
+									>
+										View messages
+									</button>
+								</div>
 							))}
 					</section>
 				))
+			)}
+			{detail && (
+				<section aria-label="Native runtime detail">
+					<h3 className="text-xs font-semibold" style={{ color: theme.colors.textMain }}>
+						{detail.title}
+					</h3>
+					{detailLoading ? (
+						<p className="text-xs">Loading…</p>
+					) : detail.lines.length ? (
+						<ul className="text-xs">
+							{detail.lines.map((line) => (
+								<li key={line}>{line}</li>
+							))}
+						</ul>
+					) : (
+						<p className="text-xs">No messages are available.</p>
+					)}
+				</section>
 			)}
 			<section>
 				<h3 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>

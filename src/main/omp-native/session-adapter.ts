@@ -214,6 +214,18 @@ export class OmpNativeSessionAdapter {
 		return true;
 	}
 
+	async subagentMessages(subagentId: string): Promise<string[]> {
+		await this.initialized;
+		const response = await this.client.command({ type: 'get_subagent_messages', subagentId });
+		return detailMessages(response.data);
+	}
+
+	async branchMessages(entryId: string): Promise<string[]> {
+		await this.initialized;
+		const response = await this.client.command({ type: 'get_branch_messages', entryId });
+		return detailMessages(response.data);
+	}
+
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
@@ -698,10 +710,24 @@ function toOmpImages(images: readonly string[]): OmpRpcImage[] {
 function modelCommand(selection: string): OmpRpcCommand {
 	const separator = selection.indexOf(':');
 	const provider = selection.slice(0, separator);
+
 	const modelId = selection.slice(separator + 1);
 	if (separator <= 0 || !modelId)
 		throw new Error('OMP model selection must use the provider:modelId format');
 	return { type: 'set_model', provider, modelId };
+}
+
+function detailMessages(value: unknown): string[] {
+	const data = asRecord(value);
+	const entries = Array.isArray(data.messages)
+		? data.messages
+		: Array.isArray(data.entries)
+			? data.entries
+			: [];
+	return entries.flatMap((entry) => {
+		const text = textFrom(asRecord(entry));
+		return text ? [text] : [];
+	});
 }
 
 function commandName(value: unknown): string | undefined {

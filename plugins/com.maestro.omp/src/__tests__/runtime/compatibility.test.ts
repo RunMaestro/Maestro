@@ -96,8 +96,6 @@ describe('OMP 16.4.8 compatibility table', () => {
 			'follow_up',
 			'abort_and_prompt',
 			'set_todos',
-			'get_subagent_messages',
-			'get_branch_messages',
 			'get_last_assistant_text',
 		] as const;
 		for (const command of unsupported) {

@@ -60,7 +60,9 @@ export interface OmpCommandRegistration {
 		| 'initialize'
 		| 'refreshFeatures'
 		| 'setControl'
-		| 'branch';
+		| 'branch'
+		| 'subagentMessages'
+		| 'branchMessages';
 	/** Existing first-party surface that calls the registered adapter method. */
 	readonly rendererCaller?: OmpRendererCaller;
 	/** Renderer control id, when the command is an ordinary header or panel control. */
@@ -135,10 +137,7 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 		'refreshFeatures',
 		'Projected into the ordinary runtime panel.'
 	),
-	get_subagent_messages: unsupported(
-		'get_subagent_messages',
-		'No ordinary Maestro surface consumes individual subagent message history.'
-	),
+	get_subagent_messages: ui('get_subagent_messages', 'subagentMessages', 'runtime-panel'),
 	set_model: ui('set_model', 'setControl', 'header-controls', 'model'),
 	cycle_model: ui('cycle_model', 'setControl', 'header-controls', 'cycle-model'),
 	get_available_models: host(
@@ -175,10 +174,7 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 	export_html: ui('export_html', 'setControl', 'runtime-panel', 'export-html'),
 	switch_session: ui('switch_session', 'setControl', 'runtime-panel', 'switch-session'),
 	branch: ui('branch', 'branch', 'runtime-panel'),
-	get_branch_messages: unsupported(
-		'get_branch_messages',
-		'No ordinary Maestro surface consumes branch message history.'
-	),
+	get_branch_messages: ui('get_branch_messages', 'branchMessages', 'runtime-panel'),
 	get_last_assistant_text: unsupported(
 		'get_last_assistant_text',
 		'The ordinary transcript is driven by streamed RPC events, not a snapshot query.'
