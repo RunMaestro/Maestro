@@ -190,6 +190,17 @@ interface OpenCodePart {
 	};
 }
 
+interface OpenCodeSessionMessages {
+	messages: OpenCodeMessage[];
+	parts: Map<string, OpenCodePart[]>;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	totalCacheReadTokens: number;
+	totalCacheWriteTokens: number;
+	totalCost: number;
+	byModel: ModelTokenUsage[] | undefined;
+}
+
 // ─── SQLite row types (v1.2+) ────────────────────────────────────────────────
 
 /**
@@ -647,16 +658,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load all messages for a session
 	 */
-	private async loadSessionMessages(sessionId: string): Promise<{
-		messages: OpenCodeMessage[];
-		parts: Map<string, OpenCodePart[]>;
-		totalInputTokens: number;
-		totalOutputTokens: number;
-		totalCacheReadTokens: number;
-		totalCacheWriteTokens: number;
-		totalCost: number;
-		byModel: ModelTokenUsage[] | undefined;
-	}> {
+	private async loadSessionMessages(sessionId: string): Promise<OpenCodeSessionMessages> {
 		const messageDir = this.getMessageDir(sessionId);
 		const messages: OpenCodeMessage[] = [];
 		const parts = new Map<string, OpenCodePart[]>();
@@ -742,15 +744,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	private async loadSessionMessagesRemote(
 		sessionId: string,
 		sshConfig: SshRemoteConfig
-	): Promise<{
-		messages: OpenCodeMessage[];
-		parts: Map<string, OpenCodePart[]>;
-		totalInputTokens: number;
-		totalOutputTokens: number;
-		totalCacheReadTokens: number;
-		totalCacheWriteTokens: number;
-		totalCost: number;
-	}> {
+	): Promise<OpenCodeSessionMessages> {
 		const messageDir = this.getRemoteMessageDir(sessionId);
 		const messages: OpenCodeMessage[] = [];
 		const parts = new Map<string, OpenCodePart[]>();
@@ -759,6 +753,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		let totalCacheReadTokens = 0;
 		let totalCacheWriteTokens = 0;
 		let totalCost = 0;
+		const modelAcc = new ModelUsageAccumulator();
 
 		try {
 			const messageFiles = await listJsonFilesRemote(messageDir, sshConfig);
@@ -777,6 +772,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 					}
 					if (msg.cost) {
 						totalCost += msg.cost;
+					}
+					if (msg.tokens || msg.cost) {
+						modelAcc.add(
+							msg.model?.modelID,
+							{
+								inputTokens: msg.tokens?.input || 0,
+								outputTokens: msg.tokens?.output || 0,
+								cacheReadTokens: msg.tokens?.cache?.read || 0,
+								cacheCreationTokens: msg.tokens?.cache?.write || 0,
+							},
+							msg.cost
+						);
 					}
 
 					// Load parts for this message
@@ -816,6 +823,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			totalCacheReadTokens,
 			totalCacheWriteTokens,
 			totalCost,
+			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
 		};
 	}
 
@@ -825,6 +833,64 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	private extractTextFromParts(parts: OpenCodePart[]): string {
 		const textParts = parts.filter((p) => p.type === 'text' && p.text).map((p) => p.text || '');
 		return textParts.join(' ').trim();
+	}
+	private projectJsonSession(
+		sessionData: OpenCodeSession,
+		projectPath: string,
+		loaded: OpenCodeSessionMessages,
+		sizeBytes: number
+	): AgentSessionInfo {
+		let firstAssistantMessage = '';
+		let firstUserMessage = '';
+
+		for (const message of loaded.messages) {
+			const textContent = this.extractTextFromParts(loaded.parts.get(message.id) || []);
+			if (!firstUserMessage && message.role === 'user' && textContent.trim()) {
+				firstUserMessage = textContent;
+			}
+			if (!firstAssistantMessage && message.role === 'assistant' && textContent.trim()) {
+				firstAssistantMessage = textContent;
+				break;
+			}
+		}
+
+		let durationSeconds = 0;
+		if (loaded.messages.length >= 2) {
+			const startTime = loaded.messages[0].time?.created || 0;
+			const endTime = loaded.messages[loaded.messages.length - 1].time?.created || 0;
+			if (startTime && endTime) {
+				durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+			}
+		}
+
+		const createdAt = sessionData.time?.created
+			? new Date(sessionData.time.created).toISOString()
+			: new Date().toISOString();
+		const updatedAt = sessionData.time?.updated
+			? new Date(sessionData.time.updated).toISOString()
+			: createdAt;
+
+		return {
+			sessionId: sessionData.id,
+			projectPath,
+			timestamp: createdAt,
+			modifiedAt: updatedAt,
+			firstMessage: (firstAssistantMessage || firstUserMessage || sessionData.title || '').slice(
+				0,
+				200
+			),
+			messageCount: loaded.messages.filter(
+				(message) => message.role === 'user' || message.role === 'assistant'
+			).length,
+			sizeBytes,
+			costUsd: loaded.totalCost,
+			inputTokens: loaded.totalInputTokens,
+			outputTokens: loaded.totalOutputTokens,
+			cacheReadTokens: loaded.totalCacheReadTokens,
+			cacheCreationTokens: loaded.totalCacheWriteTokens,
+			durationSeconds,
+			byModel: loaded.byModel,
+		};
 	}
 
 	// ─── SQLite-based methods (OpenCode v1.2+) ──────────────────────────────
@@ -1343,51 +1409,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				continue;
 			}
 
-			// Load messages to get first message and stats
-			const {
-				messages,
-				parts,
-				totalInputTokens,
-				totalOutputTokens,
-				totalCacheReadTokens,
-				totalCacheWriteTokens,
-				totalCost,
-				byModel,
-			} = await this.loadSessionMessages(sessionData.id);
-
-			// Get preview message - prefer first assistant response, fall back to user message or title
-			let firstAssistantMessage = '';
-			let firstUserMessage = '';
-
-			for (const msg of messages) {
-				const msgParts = parts.get(msg.id) || [];
-				const textContent = this.extractTextFromParts(msgParts);
-
-				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
-					firstUserMessage = textContent;
-				}
-				if (!firstAssistantMessage && msg.role === 'assistant' && textContent.trim()) {
-					firstAssistantMessage = textContent;
-					break; // Found first assistant response, stop scanning
-				}
-			}
-
-			// Priority: assistant response > user message > title
-			const previewMessage = firstAssistantMessage || firstUserMessage || sessionData.title || '';
-
-			// Calculate duration using time.created (Unix timestamp in ms)
-			let durationSeconds = 0;
-			if (messages.length >= 2) {
-				const firstMsg = messages[0];
-				const lastMsg = messages[messages.length - 1];
-				const startTime = firstMsg.time?.created || 0;
-				const endTime = lastMsg.time?.created || 0;
-				if (startTime && endTime) {
-					durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-				}
-			}
-
-			// Get file stats for size
+			const loaded = await this.loadSessionMessages(sessionData.id);
 			let sizeBytes = 0;
 			try {
 				const stats = await fs.stat(path.join(sessionDir, file));
@@ -1395,31 +1417,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			} catch {
 				// Ignore stat errors
 			}
-
-			// Convert OpenCode timestamps (Unix ms) to ISO strings
-			const createdAt = sessionData.time?.created
-				? new Date(sessionData.time.created).toISOString()
-				: new Date().toISOString();
-			const updatedAt = sessionData.time?.updated
-				? new Date(sessionData.time.updated).toISOString()
-				: createdAt;
-
-			sessions.push({
-				sessionId: sessionData.id,
-				projectPath,
-				timestamp: createdAt,
-				modifiedAt: updatedAt,
-				firstMessage: previewMessage.slice(0, 200),
-				messageCount: messages.filter((m) => m.role === 'user' || m.role === 'assistant').length,
-				sizeBytes,
-				costUsd: totalCost,
-				inputTokens: totalInputTokens,
-				outputTokens: totalOutputTokens,
-				cacheReadTokens: totalCacheReadTokens,
-				cacheCreationTokens: totalCacheWriteTokens,
-				durationSeconds,
-				byModel,
-			});
+			sessions.push(this.projectJsonSession(sessionData, projectPath, loaded, sizeBytes));
 		}
 
 		// Sort by modified date (newest first)
@@ -1477,79 +1475,13 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				continue;
 			}
 
-			// Load messages to get first message and stats
-			const {
-				messages,
-				parts,
-				totalInputTokens,
-				totalOutputTokens,
-				totalCacheReadTokens,
-				totalCacheWriteTokens,
-				totalCost,
-			} = await this.loadSessionMessagesRemote(sessionData.id, sshConfig);
-
-			// Get preview message - prefer first assistant response, fall back to user message or title
-			let firstAssistantMessage = '';
-			let firstUserMessage = '';
-
-			for (const msg of messages) {
-				const msgParts = parts.get(msg.id) || [];
-				const textContent = this.extractTextFromParts(msgParts);
-
-				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
-					firstUserMessage = textContent;
-				}
-				if (!firstAssistantMessage && msg.role === 'assistant' && textContent.trim()) {
-					firstAssistantMessage = textContent;
-					break; // Found first assistant response, stop scanning
-				}
-			}
-
-			// Priority: assistant response > user message > title
-			const previewMessage = firstAssistantMessage || firstUserMessage || sessionData.title || '';
-
-			// Calculate duration using time.created (Unix timestamp in ms)
-			let durationSeconds = 0;
-			if (messages.length >= 2) {
-				const firstMsg = messages[0];
-				const lastMsg = messages[messages.length - 1];
-				const startTime = firstMsg.time?.created || 0;
-				const endTime = lastMsg.time?.created || 0;
-				if (startTime && endTime) {
-					durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-				}
-			}
-
-			// Get file stats for size via SSH
+			const loaded = await this.loadSessionMessagesRemote(sessionData.id, sshConfig);
 			let sizeBytes = 0;
 			const statResult = await statRemote(`${sessionDir}/${file}`, sshConfig);
 			if (statResult.success && statResult.data) {
 				sizeBytes = statResult.data.size;
 			}
-
-			// Convert OpenCode timestamps (Unix ms) to ISO strings
-			const createdAt = sessionData.time?.created
-				? new Date(sessionData.time.created).toISOString()
-				: new Date().toISOString();
-			const updatedAt = sessionData.time?.updated
-				? new Date(sessionData.time.updated).toISOString()
-				: createdAt;
-
-			sessions.push({
-				sessionId: sessionData.id,
-				projectPath,
-				timestamp: createdAt,
-				modifiedAt: updatedAt,
-				firstMessage: previewMessage.slice(0, 200),
-				messageCount: messages.filter((m) => m.role === 'user' || m.role === 'assistant').length,
-				sizeBytes,
-				costUsd: totalCost,
-				inputTokens: totalInputTokens,
-				outputTokens: totalOutputTokens,
-				cacheReadTokens: totalCacheReadTokens,
-				cacheCreationTokens: totalCacheWriteTokens,
-				durationSeconds,
-			});
+			sessions.push(this.projectJsonSession(sessionData, projectPath, loaded, sizeBytes));
 		}
 
 		// Sort by modified date (newest first)

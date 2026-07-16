@@ -94,6 +94,19 @@ function extractTextFromContent(content: unknown): string {
 	return '';
 }
 
+function parseClaudeTranscript(content: string) {
+	const entries = [];
+	for (const line of content.split('\n')) {
+		if (!line.trim()) continue;
+		try {
+			entries.push(JSON.parse(line));
+		} catch {
+			// Skip malformed JSONL lines.
+		}
+	}
+	return entries;
+}
+
 /**
  * Parse session content and extract metadata
  */
@@ -680,80 +693,74 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			content = await fs.readFile(sessionFile, 'utf-8');
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
-
+		const entries = parseClaudeTranscript(content);
 		const messages: SessionMessage[] = [];
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === 'user' || entry.type === 'assistant') {
-					let msgContent = '';
-					let toolUse = undefined;
-					let images: string[] | undefined;
+		for (const entry of entries) {
+			if (entry.type === 'user' || entry.type === 'assistant') {
+				let msgContent = '';
+				let toolUse = undefined;
+				let images: string[] | undefined;
 
-					if (entry.message?.content) {
-						if (typeof entry.message.content === 'string') {
-							msgContent = entry.message.content;
-						} else if (Array.isArray(entry.message.content)) {
-							const textBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'text'
-							);
-							const toolBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'tool_use'
-							);
-							const imageBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'image'
-							);
+				if (entry.message?.content) {
+					if (typeof entry.message.content === 'string') {
+						msgContent = entry.message.content;
+					} else if (Array.isArray(entry.message.content)) {
+						const textBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'text'
+						);
+						const toolBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'tool_use'
+						);
+						const imageBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'image'
+						);
 
-							// Reconstruct base64 data URLs from image content blocks so a
-							// resumed tab re-renders the original images instead of falling
-							// back to the harness's synthetic `[Image: ...]` placeholder text.
-							if (imageBlocks.length > 0) {
-								const urls = imageBlocks
-									.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
-										const src = b.source;
-										if (src?.type === 'base64' && src.media_type && src.data) {
-											return `data:${src.media_type};base64,${src.data}`;
-										}
-										return null;
-									})
-									.filter((url: string | null): url is string => url !== null);
-								if (urls.length > 0) {
-									images = urls;
-								}
-							}
-
-							// Always drop the synthetic `[Image: ... Multiply coordinates by
-							// ...]` placeholder lines. They are redundant either way: when the
-							// image is in this same message we render the recovered image, and
-							// when the placeholder arrives as its own follow-up message it is a
-							// text echo of an image already shown in a prior message. Filtering
-							// line-by-line lets a placeholder-only message collapse to empty so
-							// it is dropped entirely below.
-							msgContent = stripImagePlaceholderLines(
-								textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
-							);
-							if (toolBlocks.length > 0) {
-								toolUse = toolBlocks;
+						// Reconstruct base64 data URLs from image content blocks so a
+						// resumed tab re-renders the original images instead of falling
+						// back to the harness's synthetic `[Image: ...]` placeholder text.
+						if (imageBlocks.length > 0) {
+							const urls = imageBlocks
+								.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
+									const src = b.source;
+									if (src?.type === 'base64' && src.media_type && src.data) {
+										return `data:${src.media_type};base64,${src.data}`;
+									}
+									return null;
+								})
+								.filter((url: string | null): url is string => url !== null);
+							if (urls.length > 0) {
+								images = urls;
 							}
 						}
-					}
 
-					if ((msgContent && msgContent.trim()) || toolUse || images) {
-						messages.push({
-							type: entry.type,
-							role: entry.message?.role,
-							content: msgContent,
-							timestamp: entry.timestamp,
-							uuid: entry.uuid,
-							toolUse,
-							...(images && { images }),
-						});
+						// Always drop the synthetic `[Image: ... Multiply coordinates by
+						// ...]` placeholder lines. They are redundant either way: when the
+						// image is in this same message we render the recovered image, and
+						// when the placeholder arrives as its own follow-up message it is a
+						// text echo of an image already shown in a prior message. Filtering
+						// line-by-line lets a placeholder-only message collapse to empty so
+						// it is dropped entirely below.
+						msgContent = stripImagePlaceholderLines(
+							textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
+						);
+						if (toolBlocks.length > 0) {
+							toolUse = toolBlocks;
+						}
 					}
 				}
-			} catch {
-				// Skip malformed lines
+
+				if ((msgContent && msgContent.trim()) || toolUse || images) {
+					messages.push({
+						type: entry.type,
+						role: entry.message?.role,
+						content: msgContent,
+						timestamp: entry.timestamp,
+						uuid: entry.uuid,
+						toolUse,
+						...(images && { images }),
+					});
+				}
 			}
 		}
 
@@ -783,23 +790,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
+		const entries = parseClaudeTranscript(content);
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === 'user' || entry.type === 'assistant') {
-					const textContent = extractTextFromContent(entry.message?.content);
-					if (textContent.trim()) {
-						searchableMessages.push({
-							role: entry.type as 'user' | 'assistant',
-							textContent,
-						});
-					}
+		for (const entry of entries) {
+			if (entry.type === 'user' || entry.type === 'assistant') {
+				const textContent = extractTextFromContent(entry.message?.content);
+				if (textContent.trim()) {
+					searchableMessages.push({
+						role: entry.type as 'user' | 'assistant',
+						textContent,
+					});
 				}
-			} catch {
-				// Skip malformed lines
 			}
 		}
 
