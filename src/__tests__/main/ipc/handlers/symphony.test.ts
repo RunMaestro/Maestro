@@ -34,6 +34,7 @@ vi.mock('fs/promises', () => ({
 		mkdir: vi.fn(),
 		rm: vi.fn(),
 		access: vi.fn(),
+		realpath: vi.fn(),
 	},
 }));
 
@@ -122,6 +123,7 @@ describe('Symphony IPC handlers', () => {
 
 		// Default mock for fs operations
 		vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+		vi.mocked(fs.realpath).mockImplementation(async (target) => target);
 		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
 		// Default: no fork needed (user has push access)
@@ -1209,6 +1211,16 @@ describe('Symphony IPC handlers', () => {
 			const result = await handler!({} as any, 'owner/repo', false);
 
 			expect(result.fromCache).toBe(false);
+			expect(mockFetch).toHaveBeenNthCalledWith(
+				1,
+				expect.stringContaining('/repos/owner/repo/issues'),
+				{
+					headers: {
+						Accept: 'application/vnd.github.v3+json',
+						'User-Agent': 'Maestro-Symphony',
+					},
+				}
+			);
 		});
 
 		it('should update cache after fresh fetch', async () => {
@@ -4273,6 +4285,19 @@ describe('Symphony IPC handlers', () => {
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Invalid document path');
 			});
+			it('rejects an untrusted external document before filesystem or network actions', async () => {
+				const handler = getStartContributionHandler();
+				const result = await handler!({} as any, {
+					...validStartContributionParams,
+					documentPaths: [
+						{ name: 'document.md', path: 'https://github.example/document.md', isExternal: true },
+					],
+				});
+
+				expect(result.success).toBe(false);
+				expect(fs.mkdir).not.toHaveBeenCalled();
+				expect(mockFetch).not.toHaveBeenCalled();
+			});
 
 			it('should skip validation for external document URLs', async () => {
 				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
@@ -4527,9 +4552,31 @@ describe('Symphony IPC handlers', () => {
 					documentPaths: [{ name: 'internal.md', path: 'docs/internal.md', isExternal: false }],
 				});
 
-				// Verify fs.access was called to check if file exists
-				// Note: fs.access is not called in the IPC handler, only in symphony-runner
-				// expect(fs.access).toHaveBeenCalled();
+				expect(fs.access).toHaveBeenCalledWith(expect.stringMatching(/docs[\\/]internal\.md$/));
+			});
+			it('does not retain a repository document symlink that escapes the repository', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(fs.realpath).mockImplementation(async (target) =>
+					/docs[\\/]internal\.md$/.test(target) ? '/tmp/outside/internal.md' : target
+				);
+
+				const handler = getStartContributionHandler();
+				const result = await handler!({} as any, {
+					...validStartContributionParams,
+					documentPaths: [{ name: 'internal.md', path: 'docs/internal.md', isExternal: false }],
+				});
+
+				expect(result.success).toBe(true);
+				const metadataCall = vi
+					.mocked(fs.writeFile)
+					.mock.calls.find(([file]) => String(file).endsWith('metadata.json'));
+				expect(metadataCall).toBeDefined();
+				expect(JSON.parse(metadataCall![1] as string).resolvedDocs).toEqual([]);
 			});
 
 			it('should handle non-existent repo-internal documents gracefully', async () => {
