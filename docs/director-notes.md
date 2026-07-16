@@ -102,7 +102,7 @@ The AI Overview renders the same synopsis two ways, switchable with the **Rich /
 You can set which mode opens by default in **Settings > Encore Features > Director's Notes**; the in-tab toggle overrides it for the current session.
 
 **Provider Configuration:**
-Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
+Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed Maestro provider can be used; the default lookback window is also configurable there.
 
 <Note>
 The AI Overview tab becomes available once the synopsis has finished generating. A spinning indicator on the tab shows generation is in progress. Results are cached for the session - switching tabs won't trigger a regeneration.

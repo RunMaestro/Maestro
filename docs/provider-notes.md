@@ -1,10 +1,10 @@
 ---
 title: Provider Notes
-description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
+description: Provider-specific Maestro capability and configuration notes.
 icon: puzzle
 ---
 
-Each AI provider has unique capabilities and limitations. Maestro adapts its UI based on what each provider supports.
+Each AI provider has unique capabilities and limitations. Maestro adapts its UI based on the canonical built-in IDs in `src/shared/agentRegistry.ts` and display names in `src/shared/agentMetadata.ts`; this page is the public owner of the provider capability guidance.
 
 ## Custom Configuration
 

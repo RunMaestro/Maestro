@@ -2471,4 +2471,12 @@ Implementation is tracked in `Plans/dedup-playbook/IMPLEMENTATION-LEDGER.md`. St
 |       75 | Already resolved on fresh `origin/rc` baseline | `window-manager.ts` delegates to `attachGuestWebviewSecurity`; `guest-webview-security.ts` imports the canonical shared partition matcher.                                                                |
 |       94 | Already resolved on fresh `origin/rc` baseline | Zero source conflict markers; process, BrowserTab persistence/helpers, and settings suites passed 290 tests; forced main TypeScript build passed; Electron launched and rendered the Maestro application. |
 
-No production or test source changed for P75/P94. Remaining priorities are pending until their isolated branches pass focused proof and integration review.
+The implementation ledger now records a reviewed, non-pending disposition for every priority. This closure summary is intentionally a status index; the historical investigation evidence above remains unchanged and the ledger owns per-priority verification and rollback detail.
+
+| Disposition                  | Priorities                                                               |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| Implemented                  | 1-15, 17-18, 20-21, 23-37, 40-47, 49-63, 65-69, 72-74, 76-93, 95, 97-120 |
+| Retained                     | 16, 19, 22, 38, 39, 48, 64, 70, 71, 96                                   |
+| Already resolved on baseline | 75, 94                                                                   |
+
+P108 is implemented by the documentation source-of-truth matrix in `Plans/dedup-playbook/16-documentation.md`: runtime registries own template-variable and provider facts; named public pages own their audience-specific references; compatible copies link to those owners. Generated documentation remains source-derived.

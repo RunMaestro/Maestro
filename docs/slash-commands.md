@@ -43,62 +43,9 @@ The `/skills` command is a Maestro feature that reads skill files directly - it 
 
 Create your own slash commands in **Settings → AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
 
-Commands support **template variables** that are automatically substituted at runtime. These same variables also work in [core system prompts](/prompt-customization).
+Commands support **template variables** that are substituted at runtime. The complete variable reference, availability rules, and examples have one public owner: [Prompt Customization → Template Variables](/prompt-customization#template-variables). Slash commands use that same registry; Auto Run- and Cue-only variables remain unavailable unless the command runs in that context.
 
-### Conductor Variables
-
-| Variable                | Description                                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `{{CONDUCTOR_PROFILE}}` | Your "About Me" profile from Settings → General. Tells agents about your background, preferences, and communication style. |
-
-### Agent Variables
-
-| Variable               | Description                                              |
-| ---------------------- | -------------------------------------------------------- |
-| `{{AGENT_NAME}}`       | Agent name                                               |
-| `{{AGENT_PATH}}`       | Agent home directory path (full path to project)         |
-| `{{AGENT_GROUP}}`      | Agent's group name (if grouped)                          |
-| `{{AGENT_SESSION_ID}}` | Agent session ID (for conversation continuity)           |
-| `{{TAB_NAME}}`         | Custom tab name (alias: `SESSION_NAME`)                  |
-| `{{TOOL_TYPE}}`        | Agent type (claude-code, codex, opencode, factory-droid) |
-
-### Path Variables
-
-| Variable             | Description                    |
-| -------------------- | ------------------------------ |
-| `{{CWD}}`            | Current working directory      |
-| `{{AUTORUN_FOLDER}}` | Auto Run documents folder path |
-
-### Auto Run Variables
-
-| Variable            | Description                                                 |
-| ------------------- | ----------------------------------------------------------- |
-| `{{DOCUMENT_NAME}}` | Current Auto Run document name (without .md)                |
-| `{{DOCUMENT_PATH}}` | Full path to current Auto Run document                      |
-| `{{LOOP_NUMBER}}`   | Current loop iteration (5-digit padded: 00001, 00002, etc.) |
-
-### Date/Time Variables
-
-| Variable         | Description                         |
-| ---------------- | ----------------------------------- |
-| `{{DATE}}`       | Current date (YYYY-MM-DD)           |
-| `{{TIME}}`       | Current time (HH:MM:SS)             |
-| `{{DATETIME}}`   | Full datetime (YYYY-MM-DD HH:MM:SS) |
-| `{{TIMESTAMP}}`  | Unix timestamp in milliseconds      |
-| `{{DATE_SHORT}}` | Short date (MM/DD/YY)               |
-| `{{TIME_SHORT}}` | Short time (HH:MM)                  |
-| `{{YEAR}}`       | Current year (YYYY)                 |
-| `{{MONTH}}`      | Current month (01-12)               |
-| `{{DAY}}`        | Current day (01-31)                 |
-| `{{WEEKDAY}}`    | Day of week (Monday, Tuesday, etc.) |
-
-### Git & Context Variables
-
-| Variable            | Description                                 |
-| ------------------- | ------------------------------------------- |
-| `{{GIT_BRANCH}}`    | Current git branch name (requires git repo) |
-| `{{IS_GIT_REPO}}`   | "true" or "false"                           |
-| `{{CONTEXT_USAGE}}` | Current context window usage percentage     |
+This page intentionally keeps only the slash-command context so the factual variable catalog cannot drift from the prompt reference or the runtime registry.
 
 **Example**: A custom `/standup` command with prompt:
 

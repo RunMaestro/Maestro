@@ -222,7 +222,7 @@ Since Maestro spawns a new agent process for each message (batch mode), agent "s
 # ... rest of your hook logic for new sessions only
 ```
 
-This works with any agent provider (Claude Code, Codex, OpenCode) since the environment variable is set by Maestro before spawning the agent process.
+This works with any installed Maestro provider because Maestro sets the environment variable before spawning the agent process.
 
 ## History & Tracking
 

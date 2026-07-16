@@ -12,32 +12,19 @@ Follow the [Installation](./installation) instructions for your platform, then l
 
 ## 2. Create an agent
 
-Maestro supports **Claude Code**, **Codex** (OpenAI), and **OpenCode**, plus **Factory Droid**, **Copilot-CLI**, **Hermes**, **Pi**, **Qwen3 Coder**, and **Oh My Pi** in beta. Make sure at least one is installed and authenticated.
+Maestro detects installed, authenticated providers from the shared provider registry. For the documented provider capabilities and configuration guidance, see [Provider Notes](./provider-notes); the registry is the authority and the provider page is its public capability guide.
 
 <Note>
 Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly. The only difference is batch mode execution - Maestro sends a prompt and receives a response rather than running an interactive session.
 </Note>
 
-Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `Ctrl+N`). You'll see the **New Agent** selector:
+Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `Ctrl+N`). Choose **Manual Setup** to select a detected provider, working directory, optional name, and provider configuration; choose **Guided Setup** to let the Onboarding Wizard configure the same foundations through a project-discovery conversation.
 
 ![New Agent selector](./screenshots/new-agent-selector.png)
 
-**Manual Setup** - Choose your agent, working directory, and configuration options directly. Best for power users who want full control.
+The Wizard saves its initial Auto Run documents under `.maestro/playbooks/Initiation/`. It captures application input until it completes. For a lighter touch, create an agent manually, then run `/wizard` or click the wand button in the Auto Run panel; the in-tab wizard runs alongside your other work.
 
-**Guided Setup** (Recommended for new users) - Launches the **Onboarding Wizard**, which walks you through:
-
-1. Selecting an AI provider
-2. Choosing your project directory
-3. Having a discovery conversation where the AI learns about your project
-4. Generating an initial Auto Run Playbook with tasks
-
-![Wizard Document Generation](./screenshots/wizard-doc-generation.png)
-
-The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `.maestro/playbooks/` to keep them organized separately from documents you create later.
-
-<Note>
-The guided wizard captures application input until it completes. For a lighter touch, create an agent manually, then run the `/wizard` slash command or click the wand button in the Auto Run panel. The in-tab wizard runs alongside your other work.
-</Note>
+For provider-specific custom paths, arguments, environment variables, models, and effort settings, use [Provider Notes](./provider-notes#custom-configuration).
 
 ### Introductory Tour
 

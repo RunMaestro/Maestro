@@ -23,7 +23,7 @@ You can also open it via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Send Feedba
 
 ### 2. Choose an AI Agent
 
-Select which installed AI provider will conduct the feedback conversation. Maestro auto-detects available agents (Claude Code, Codex, OpenCode) and pre-selects the first one found.
+Select which installed AI provider will conduct the feedback conversation. Maestro auto-detects available providers and pre-selects the first one found.
 
 ![Agent selection](./screenshots/feedback-1.png)
 

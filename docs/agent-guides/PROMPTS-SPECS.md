@@ -80,96 +80,9 @@ src/prompts/index.ts
 
 ## Template Variables
 
-Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` syntax and are case-insensitive.
+The runtime authority is `src/shared/templateVariables.ts` (`TEMPLATE_VARIABLES`, `autoRunOnly`, and `cueOnly`). The complete user-facing catalog is owned by [Prompt Customization → Template Variables](../prompt-customization.md#template-variables).
 
-### Variable Categories
-
-#### Conductor Variables (the Maestro user)
-
-| Variable                | Description                           |
-| ----------------------- | ------------------------------------- |
-| `{{CONDUCTOR_PROFILE}}` | User's About Me profile from Settings |
-
-#### Agent Variables
-
-| Variable                 | Description                                                      |
-| ------------------------ | ---------------------------------------------------------------- |
-| `{{AGENT_ID}}`           | Agent UUID (Maestro agent identifier, for CLI targeting)         |
-| `{{AGENT_NAME}}`         | Agent display name                                               |
-| `{{AGENT_PATH}}`         | Agent home directory path (full path to project)                 |
-| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
-| `{{AGENT_SESSION_ID}}`   | Agent session ID (for conversation continuity)                   |
-| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                                |
-| `{{TAB_ID}}`             | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
-| `{{TAB_NAME}}`           | Custom tab name (alias: `SESSION_NAME`)                          |
-| `{{TOOL_TYPE}}`          | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
-
-#### Path Variables
-
-| Variable             | Description                    |
-| -------------------- | ------------------------------ |
-| `{{CWD}}`            | Current working directory      |
-| `{{AUTORUN_FOLDER}}` | Auto Run documents folder path |
-
-#### Auto Run Variables
-
-| Variable            | Description                                           |
-| ------------------- | ----------------------------------------------------- |
-| `{{DOCUMENT_NAME}}` | Current Auto Run document name (without `.md`)        |
-| `{{DOCUMENT_PATH}}` | Full path to current Auto Run document                |
-| `{{LOOP_NUMBER}}`   | Current loop iteration (5-digit padded, e.g. `00001`) |
-
-#### Date/Time Variables
-
-| Variable         | Description                           |
-| ---------------- | ------------------------------------- |
-| `{{DATE}}`       | Current date (`YYYY-MM-DD`)           |
-| `{{TIME}}`       | Current time (`HH:MM:SS`)             |
-| `{{DATETIME}}`   | Full datetime (`YYYY-MM-DD HH:MM:SS`) |
-| `{{TIMESTAMP}}`  | Unix timestamp in milliseconds        |
-| `{{DATE_SHORT}}` | Short date (`MM/DD/YY`)               |
-| `{{TIME_SHORT}}` | Short time (`HH:MM`)                  |
-| `{{YEAR}}`       | Current year                          |
-| `{{MONTH}}`      | Current month (`01-12`)               |
-| `{{DAY}}`        | Current day (`01-31`)                 |
-| `{{WEEKDAY}}`    | Day of week (e.g. `Monday`)           |
-
-#### Git Variables
-
-| Variable          | Description                                 |
-| ----------------- | ------------------------------------------- |
-| `{{GIT_BRANCH}}`  | Current git branch name (requires git repo) |
-| `{{IS_GIT_REPO}}` | `"true"` or `"false"`                       |
-
-#### Context Variables
-
-| Variable            | Description                             |
-| ------------------- | --------------------------------------- |
-| `{{CONTEXT_USAGE}}` | Current context window usage percentage |
-
-#### Deep Link Variables
-
-| Variable              | Description                                                                |
-| --------------------- | -------------------------------------------------------------------------- |
-| `{{AGENT_DEEP_LINK}}` | `maestro://` deep link to this agent                                       |
-| `{{TAB_DEEP_LINK}}`   | `maestro://` deep link to this agent + active tab                          |
-| `{{GROUP_DEEP_LINK}}` | `maestro://` deep link to this agent's group (empty string if not grouped) |
-
-#### Maestro Variables
-
-| Variable               | Description                                                                       |
-| ---------------------- | --------------------------------------------------------------------------------- |
-| `{{MAESTRO_CLI_PATH}}` | Platform-appropriate path to the `maestro-cli` binary (for use in shell commands) |
-
-#### Cue Variables (Cue automation only)
-
-Variables populated only when a prompt is rendered as part of a Maestro Cue run. Accessed on `context.cue` in the substitution function. See `src/shared/templateVariables.ts` for the full list, which includes:
-
-- **Event metadata:** `{{CUE_EVENT_TYPE}}`, `{{CUE_EVENT_TIMESTAMP}}`, `{{CUE_TRIGGER_NAME}}`, `{{CUE_RUN_ID}}`
-- **File change events:** `{{CUE_FILE_PATH}}`, `{{CUE_FILE_NAME}}`, `{{CUE_FILE_DIR}}`, `{{CUE_FILE_EXT}}`, `{{CUE_FILE_CHANGE_TYPE}}`
-- **Agent-completion / chained-run events:** `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}`, `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
-- **Task pending events (`task.pending`):** `{{CUE_TASK_FILE}}`, `{{CUE_TASK_FILE_NAME}}`, `{{CUE_TASK_FILE_DIR}}`, `{{CUE_TASK_COUNT}}`, `{{CUE_TASK_LIST}}`, `{{CUE_TASK_CONTENT}}`
-- **GitHub events (`github.pull_request`, `github.issue`):** `{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`
+This internal architecture guide deliberately does not repeat the variable table: both prompt templates and slash commands resolve the same runtime registry. Cue-only variables are likewise source-owned because their availability depends on the event payload assembled at execution time.
 
 ### Substitution Flow
 
@@ -247,20 +160,7 @@ SpecKit provides structured specification management for software projects. It i
 
 ### Commands
 
-| Command                  | ID              | Description                                                   | Custom? |
-| ------------------------ | --------------- | ------------------------------------------------------------- | ------- |
-| `/speckit.help`          | `help`          | Learn how to use spec-kit with Maestro                        | Yes     |
-| `/speckit.constitution`  | `constitution`  | Create or update the project constitution                     | No      |
-| `/speckit.specify`       | `specify`       | Create or update feature specification                        | No      |
-| `/speckit.clarify`       | `clarify`       | Identify underspecified areas and ask clarification questions | No      |
-| `/speckit.plan`          | `plan`          | Execute implementation planning workflow                      | No      |
-| `/speckit.tasks`         | `tasks`         | Generate actionable, dependency-ordered tasks                 | No      |
-| `/speckit.analyze`       | `analyze`       | Cross-artifact consistency and quality analysis               | No      |
-| `/speckit.checklist`     | `checklist`     | Generate custom checklist for feature                         | No      |
-| `/speckit.taskstoissues` | `taskstoissues` | Convert tasks to GitHub issues                                | No      |
-| `/speckit.implement`     | `implement`     | Execute tasks using Maestro Auto Run with worktree support    | Yes     |
-
-Commands marked "Custom" (`isCustom: true`) are Maestro-specific additions not from the upstream spec-kit repo.
+The public command catalog and workflow guidance are owned by [Spec-Kit Commands](../speckit-commands.md). The runtime authority for command IDs, descriptions, and `isCustom` is `src/prompts/speckit/metadata.json` together with the bundled prompt files; this guide keeps the manager architecture below without duplicating that factual catalog.
 
 ### Files
 
@@ -332,16 +232,7 @@ Registered in `src/main/ipc/handlers/speckit.ts`:
 ## OpenSpec System
 
 OpenSpec provides structured change management for software projects. It follows a three-phase workflow: Proposal, Apply, Archive. It is integrated from the external [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) repository.
-
-### Commands
-
-| Command               | ID          | Description                                                          | Custom? |
-| --------------------- | ----------- | -------------------------------------------------------------------- | ------- |
-| `/openspec.help`      | `help`      | Learn how to use OpenSpec with Maestro                               | Yes     |
-| `/openspec.proposal`  | `proposal`  | Create a change proposal with specs, tasks, and optional design docs | No      |
-| `/openspec.apply`     | `apply`     | Implement an approved change proposal by executing tasks             | No      |
-| `/openspec.archive`   | `archive`   | Archive a completed change after deployment                          | No      |
-| `/openspec.implement` | `implement` | Convert OpenSpec tasks to Maestro Auto Run documents                 | Yes     |
+The public command catalog and workflow guidance are owned by [OpenSpec Commands](../openspec-commands.md). The runtime authority for command IDs, descriptions, and `isCustom` is `src/prompts/openspec/metadata.json` together with the bundled prompt files; this guide keeps the manager architecture below without duplicating that factual catalog.
 
 ### Files
 
@@ -420,22 +311,13 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 2. Prompt text is used directly (e.g., `groupChatModeratorSystemPrompt`)
 3. Template variables (`{{...}}`) are replaced at call sites using `String.replace()`
 4. The fully resolved prompt is passed to the agent spawn configuration
+   The public command catalog and workflow guidance are owned by [OpenSpec Commands](../openspec-commands.md). The runtime authority for command IDs, descriptions, and `isCustom` is `src/prompts/openspec/metadata.json` together with the bundled prompt files; this guide keeps the manager architecture below without duplicating that factual catalog.
 
-### At Runtime (SpecKit/OpenSpec)
-
-1. On IPC call, the manager reads bundled prompts from the compiled module
-2. User customizations are loaded from `{userData}/*-customizations.json`
-3. Customized prompts override bundled defaults (per command ID)
-4. The resolved prompt is returned to the renderer
-5. The renderer sends the prompt to the active agent session
-
-### At Runtime (Auto Run / System Prompt)
-
-1. The renderer collects session context into a `TemplateContext` object
-2. `substituteTemplateVariables(template, context)` performs case-insensitive substitution
-3. Git branch is fetched asynchronously if the session is in a git repo
-4. The conductor profile is loaded from settings
-5. The fully resolved prompt is sent to the agent
+5. The renderer collects session context into a `TemplateContext` object
+6. `substituteTemplateVariables(template, context)` performs case-insensitive substitution
+7. Git branch is fetched asynchronously if the session is in a git repo
+8. The conductor profile is loaded from settings
+9. The fully resolved prompt is sent to the agent
 
 ## Key Source Files
 

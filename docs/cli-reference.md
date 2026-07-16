@@ -1315,7 +1315,7 @@ Author, validate, sign, and package Maestro plugins
 Scaffold a new plugin in <dir> (defaults to the current directory)
 
 | Option          | Description                                          | Default |
-| --------------- | ---------------------------------------------------- | ------- | ---------------------------------------- | --- |
+| --------------- | ---------------------------------------------------- | ------- |
 | `--tier <0      | 1                                                    | 2>`     | Plugin trust/capability tier (default 1) | -   |
 | `--id <id>`     | Plugin id (defaults to a slug of the directory name) | -       |
 | `--name <name>` | Human-readable plugin name (defaults to the id)      | -       |

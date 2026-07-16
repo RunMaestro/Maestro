@@ -15,17 +15,7 @@ Download the latest release for your platform from the [Releases](https://github
 
 ## Requirements
 
-- At least one supported AI coding agent installed and authenticated:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - Anthropic's AI coding assistant (fully integrated)
-  - [Codex](https://github.com/openai/codex) - OpenAI's coding agent (fully integrated)
-  - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant (fully integrated)
-  - [Factory Droid](https://docs.factory.ai/cli) - Factory's AI coding assistant (fully integrated)
-  - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
-  - [Hermes](https://hermes-agent.nousresearch.com/) - Nous Research's AI coding agent (beta integration)
-  - [Pi](https://pi.dev/) - A customizable AI agent harness (beta integration)
-  - [Qwen3 Coder](https://github.com/QwenLM/qwen-code) - Alibaba's Qwen Code agent, a Gemini CLI fork (beta integration)
-  - [Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) - Multi-model coding agent (beta integration, `omp` CLI)
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) - Planned support
+- At least one supported AI coding agent installed and authenticated. Maestro detects the current provider registry at runtime; see [Provider Notes](./provider-notes) for provider-specific installation links and capability differences.
 - Git (optional, for git-aware features)
 
 <Note>
@@ -40,12 +30,12 @@ When developing or running Maestro with WSL2, always clone and run from the **na
 
 Using Windows mounts causes several critical issues:
 
-| Issue                    | Symptom                                                   |
-| ------------------------ | --------------------------------------------------------- |
-| Socket binding failures  | `EPERM: operation not permitted` when starting dev server |
-| Electron sandbox crashes | `FATAL:sandbox_host_linux.cc` errors                      |
-| npm install failures     | Timeouts, `ENOTEMPTY` rename errors                       |
-| Git corruption           | Missing index files, spurious lock files                  |
+| Issue                           | Symptom                                                   |
+| ------------------------------- | --------------------------------------------------------- |
+| Socket binding failures         | `EPERM: operation not permitted` when starting dev server |
+| Electron sandbox crashes        | `FATAL:sandbox_host_linux.cc` errors                      |
+| Bun dependency install failures | Timeouts, `ENOTEMPTY` rename errors                       |
+| Git corruption                  | Missing index files, spurious lock files                  |
 
 ### Recommended WSL2 Setup
 
@@ -56,10 +46,10 @@ git clone https://github.com/RunMaestro/Maestro.git
 cd maestro
 
 # Install dependencies
-npm install
+bun install
 
 # Run in development mode
-npm run dev
+bun run dev
 ```
 
 ### Accessing Files from Windows
@@ -75,7 +65,7 @@ You can browse your WSL2 files from Windows Explorer using:
 If you encounter `electron-rebuild` failures, try setting the temp directory:
 
 ```bash
-TMPDIR=/tmp npm run rebuild
+TMPDIR=/tmp bun run rebuild
 ```
 
 For persistent issues, see [Troubleshooting](./troubleshooting) for additional WSL-specific guidance.
@@ -85,22 +75,22 @@ For persistent issues, see [Troubleshooting](./troubleshooting) for additional W
 If you prefer to build Maestro from source:
 
 ```bash
-# Prerequisites: Node.js 22.0.0 or higher
-node --version  # Verify version
+# Prerequisite: Bun
+bun --version  # Verify Bun is available
 
 # Clone the repository
 git clone https://github.com/RunMaestro/Maestro.git
 cd maestro
 
 # Install dependencies
-npm install
+bun install --frozen-lockfile
 
 # Run in development mode
-npm run dev
+bun run dev
 
 # Or build for production
-npm run build
-npm run package
+bun run build
+bun run package
 ```
 
 <Note>
