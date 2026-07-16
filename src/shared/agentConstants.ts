@@ -61,21 +61,10 @@ export function getModelContextWindowOverride(model: string | null | undefined):
 }
 
 /**
- * Whether Adaptive Mode (a.k.a. maestro-p / automatic Claude token-source
- * management, persisted as `enableMaestroP`) is enabled by default for newly
- * created agents of the given type. This is the single source of truth for the
- * "default on for new agents" rule; the one-shot migration in
- * `src/main/stores/migrations/` keeps existing agents aligned with it.
- *
- * Currently OFF for every agent: new Claude Code agents default to the API
- * token source (`claude --print`). TUI/Dynamic remain available but are now
- * opt-in per agent - the maestro-p TUI path has been a recurring source of
- * trouble, so we no longer flip anyone onto it automatically. Kept as a
- * function so re-enabling a default later is a one-line change.
+ * Adaptive Mode is opt-in: new and reset agents use the API token source.
+ * Existing persisted choices remain authoritative through versioned migrations.
  */
-export function isAdaptiveModeDefaultOn(_agentId: string): boolean {
-	return false;
-}
+export const DEFAULT_ADAPTIVE_MODE_ENABLED = false;
 
 /**
  * Agent Resilience (auto-retry on availability / token-exhaustion errors) is ON

@@ -736,7 +736,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -791,7 +791,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -846,7 +846,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -902,7 +902,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -1456,7 +1456,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -1611,7 +1611,7 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -2773,7 +2773,7 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode
 				true, // retryOnAvailabilityErrors
@@ -3005,7 +3005,7 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				false, // enableMaestroP: API is the canonical default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
@@ -3123,12 +3123,9 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				// The source's token source is unset, so the duplicate falls through to the
-				// same default path as a fresh agent: `undefined ?? (isAdaptiveModeDefaultOn() ||
-				// undefined)`. On rc Adaptive Mode defaults OFF, so this stays unset rather than
-				// pinning a falsy default as an explicit "API" choice. Matches the fresh-agent
-				// SSH case above.
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				// An unset source receives the canonical API default at creation,
+				// making it independent from future Adaptive Mode policy changes.
+				false, // enableMaestroP: API is the default for Claude Code
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
