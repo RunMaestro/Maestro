@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { escapeRegExp } from '../../../shared/stringUtils';
 
 /**
  * Cache for loaded images to avoid repeated IPC calls.
@@ -67,8 +68,6 @@ export interface UseAutoRunImageHandlingReturn {
 	/** Delete an image from lightbox (removes file and content reference) */
 	handleLightboxDelete: (relativePath: string) => Promise<void>;
 }
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const removeImageMarkdownReference = (content: string, relativePath: string): string => {
 	const filename = relativePath.split('/').pop() || relativePath;

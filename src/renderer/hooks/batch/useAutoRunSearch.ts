@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type RefObject } from 'react';
+import { escapeRegExp } from '../../../shared/stringUtils';
 
 export interface UseAutoRunSearchParams {
 	localContent: string;
@@ -66,7 +67,7 @@ export function useAutoRunSearch({
 		if (searchQuery.trim()) {
 			// Debounce the match counting for large documents
 			searchCountTimeoutRef.current = setTimeout(() => {
-				const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				const escapedQuery = escapeRegExp(searchQuery);
 				const regex = new RegExp(escapedQuery, 'gi');
 				const matches = localContent.match(regex);
 				const count = matches ? matches.length : 0;
@@ -122,7 +123,7 @@ export function useAutoRunSearch({
 		if (mode !== 'edit' || !textareaRef.current) return;
 
 		// For edit mode, find the match position in the text and scroll
-		const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const escapedQuery = escapeRegExp(searchQuery);
 		const regex = new RegExp(escapedQuery, 'gi');
 		let matchPosition = -1;
 

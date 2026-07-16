@@ -14,15 +14,11 @@
  * matches in one tier matches in all of them.
  */
 
+import { escapeRegExp } from '../../../../shared/stringUtils';
 export type SearchKind = 'text' | 'regex' | 'line';
 
 /** The order the left-of-input chip cycles through on each click. */
 export const SEARCH_KIND_CYCLE: readonly SearchKind[] = ['text', 'regex', 'line'];
-
-/** Escape regex metacharacters so a literal query is matched verbatim. */
-export function escapeRegExp(query: string): string {
-	return query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 export interface CompileSearchRegexOptions {
 	/** When true, treat `query` as a raw regex source instead of a literal. */

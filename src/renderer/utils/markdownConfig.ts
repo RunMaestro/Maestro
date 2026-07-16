@@ -21,6 +21,7 @@ import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
+import { escapeRegExp } from '../../shared/stringUtils';
 import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import { AlertCallout } from '../components/Markdown/components/AlertCallout';
@@ -262,7 +263,7 @@ function highlightSearchMatches(
 	const processChild = (child: React.ReactNode, childIndex: number): React.ReactNode => {
 		// Handle string children - this is where we do the actual highlighting
 		if (typeof child === 'string') {
-			const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const escapedQuery = escapeRegExp(query);
 			const regex = new RegExp(`(${escapedQuery})`, 'gi');
 			const parts = child.split(regex);
 

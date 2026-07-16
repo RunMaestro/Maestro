@@ -84,3 +84,11 @@ export function stripAnsiCodes(text: string): string {
 
 	return result;
 }
+
+/**
+ * Escapes ECMAScript regular-expression metacharacters for a literal match.
+ * Ordinary Unicode text is returned unchanged.
+ */
+export function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

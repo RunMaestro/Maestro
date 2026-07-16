@@ -8,10 +8,10 @@ import {
 	type SearchKind,
 	SEARCH_KIND_CYCLE,
 	compileSearchRegex,
-	escapeRegExp,
 	parseLineQuery,
 } from '../../components/FilePreview/search/queryMatch';
 import { domScrollToLine } from '../../components/FilePreview/lineSync';
+import { escapeRegExp } from '../../../shared/stringUtils';
 
 /** Maximum search query length to prevent expensive regex operations */
 const MAX_SEARCH_QUERY_LENGTH = 200;

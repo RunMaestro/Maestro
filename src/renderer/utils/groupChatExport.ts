@@ -12,6 +12,7 @@ import {
 	formatDurationCompact,
 	formatTimestamp as formatTimestampShared,
 } from '../../shared/formatters';
+import { escapeRegExp } from '../../shared/stringUtils';
 import { logger } from './logger';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
@@ -61,13 +62,6 @@ function getParticipantColor(groupChat: GroupChat, from: string, theme: Theme): 
 		(p) => p.name.toLowerCase() === from.toLowerCase()
 	);
 	return participant?.color || theme.colors.textDim;
-}
-
-/**
- * Escape special regex characters in a string
- */
-function escapeRegExp(string: string): string {
-	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

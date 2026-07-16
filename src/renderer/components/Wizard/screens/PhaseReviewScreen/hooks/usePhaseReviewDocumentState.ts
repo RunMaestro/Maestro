@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PLAYBOOKS_DIR } from '../../../../../../shared/maestro-paths';
+import { escapeRegExp } from '../../../../../../shared/stringUtils';
 import type { GeneratedDocument, WizardState } from '../../../WizardContext';
 
 export function usePhaseReviewDocumentState({
@@ -73,9 +74,9 @@ export function usePhaseReviewDocumentState({
 			setAttachments((prev) => prev.filter((attachment) => attachment.filename !== filename));
 			await window.maestro.autorun.deleteImage(folderPath, filename);
 
-			const escapedPath = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const escapedPath = escapeRegExp(filename);
 			const fname = filename.split('/').pop() || filename;
-			const escapedFilename = fname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const escapedFilename = escapeRegExp(fname);
 			const regex = new RegExp(`!\\[${escapedFilename}\\]\\(${escapedPath}\\)\\n?`, 'g');
 			setLocalContent((prev) => prev.replace(regex, ''));
 		},

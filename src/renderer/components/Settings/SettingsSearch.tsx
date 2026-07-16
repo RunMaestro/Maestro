@@ -16,6 +16,7 @@ import { Search, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { searchSettings, type SearchableSetting } from './searchableSettings';
+import { escapeRegExp } from '../../../shared/stringUtils';
 
 export interface SettingsSearchProps {
 	theme: Theme;
@@ -303,7 +304,7 @@ function highlightMatch(text: string, query: string, theme: Theme): ReactNode {
 
 	const terms = query.toLowerCase().trim().split(/\s+/);
 	// Build a regex that matches any of the search terms
-	const escapedTerms = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+	const escapedTerms = terms.map(escapeRegExp);
 	const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
 	const parts = text.split(regex);
 
