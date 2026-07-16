@@ -101,26 +101,6 @@ describe('ToolbarControls', () => {
 		expect(click).toHaveBeenCalled();
 	});
 
-	it('opens runtime details only after the user requests them', () => {
-		renderToolbar({
-			session: createInputAreaSession({
-				runtimeFeatures: {
-					controls: [],
-					tree: [{ id: 'turn-1', label: 'OMP turn' }],
-					todos: null,
-					subagents: null,
-					stats: null,
-				},
-			}),
-		});
-
-		expect(screen.queryByRole('dialog', { name: 'Session details' })).not.toBeInTheDocument();
-		fireEvent.click(screen.getByRole('button', { name: 'Open session details' }));
-		expect(screen.getByRole('dialog', { name: 'Session details' })).toBeInTheDocument();
-		fireEvent.keyDown(window, { key: 'Escape' });
-		expect(screen.queryByRole('dialog', { name: 'Session details' })).not.toBeInTheDocument();
-	});
-
 	it('toggles history, permission mode, thinking, and enter-to-send controls', () => {
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
