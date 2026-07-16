@@ -17,6 +17,7 @@ import {
 	MousePointer2,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { HelpSection } from './ui/HelpSection';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
@@ -127,11 +128,14 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 	return (
 		<div className="space-y-6" style={{ color: theme.colors.textMain }}>
 			{/* Section 1: What is Maestro Cue? */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Zap className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">What is Maestro Cue?</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Zap className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">What is Maestro Cue?</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						Maestro Cue is an event-driven automation system. Define triggers in a YAML file, and
@@ -139,14 +143,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						conductor gives the cue - the agents respond.
 					</p>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 2: Getting Started */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<FileText className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Getting Started</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<FileText className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Getting Started</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Editor</strong> tab to
@@ -178,14 +185,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						{'    '}enabled: true
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 3: Event Types */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Radio className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Event Types</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Radio className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Event Types</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<div>
 						<p>
@@ -545,14 +555,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						</div>
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 4: Event Filtering */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Filter className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Event Filtering</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Filter className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Event Filtering</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						Add a{' '}
@@ -643,14 +656,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						{'  '}prompt: prompts/ts-review.md
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 5: Template Variables */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Code className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Template Variables</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Code className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Template Variables</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<div
 						className="font-mono text-xs p-3 rounded border space-y-1"
@@ -843,14 +859,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						</span>
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section: Coordination Patterns */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<GitMerge className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Coordination Patterns</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<GitMerge className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Coordination Patterns</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-4 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						Multi-subscription patterns for orchestrating agents. Any trigger (heartbeat, file
@@ -1097,14 +1116,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						</span>
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 6: Timeouts & Failure Handling */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Timeouts & Failure Handling</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Timeouts &amp; Failure Handling</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						Default timeout is 30 minutes. If a run times out, the chain breaks and the failure is
@@ -1134,14 +1156,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						{'  '}timeout_on_fail: continue
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 7: Concurrency Control */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Concurrency Control</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Concurrency Control</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						By default, each session runs one Cue task at a time. Additional events are queued (up
@@ -1164,14 +1189,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						{'  '}timeout_minutes: 30
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 8: Sleep & Recovery */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Moon className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Sleep & Recovery</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Moon className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Sleep &amp; Recovery</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						When your computer wakes from sleep, Maestro Cue replays missed triggers so a closed
@@ -1202,14 +1230,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						badge in the activity log so you can distinguish them from regular triggers.
 					</p>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Section 9: Visual Pipeline Editor */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Visual Pipeline Editor</h3>
-				</div>
+			<HelpSection
+				heading={
+					<>
+						<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Visual Pipeline Editor</h3>
+					</>
+				}
+			>
 				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						The Pipeline Editor provides a visual canvas for building automation workflows. Drag
@@ -1371,7 +1402,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						</span>
 					</div>
 				</div>
-			</section>
+			</HelpSection>
 
 			{/* Read more link */}
 			<div
