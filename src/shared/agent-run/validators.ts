@@ -1,3 +1,4 @@
+import { hasInvalidOptionalStrings } from '../validation';
 import {
 	AGENT_RUN_CHECK_STATUSES,
 	AGENT_RUN_MERGE_STATUSES,
@@ -52,10 +53,6 @@ function readOptionalMetadata(
 ): AgentRunMetadata | undefined {
 	const value = raw[key];
 	return isPlainObject(value) ? { ...value } : undefined;
-}
-
-function hasInvalidOptionalStrings(raw: Record<string, unknown>, keys: string[]): boolean {
-	return keys.some((key) => raw[key] !== undefined && typeof raw[key] !== 'string');
 }
 
 function hasInvalidOptionalNumbers(raw: Record<string, unknown>, keys: string[]): boolean {

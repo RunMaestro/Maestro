@@ -1,3 +1,4 @@
+import { hasInvalidOptionalStrings } from '../validation';
 import type {
 	Campaign,
 	CampaignMetadata,
@@ -84,10 +85,6 @@ function validateSource(value: unknown): CampaignSource | undefined {
 function validateSummaryValue(value: unknown): CampaignSummaryValue | undefined {
 	if (typeof value === 'string') return value;
 	return validateMetadata(value);
-}
-
-function hasInvalidOptionalStrings(raw: Record<string, unknown>, keys: string[]): boolean {
-	return keys.some((key) => raw[key] !== undefined && typeof raw[key] !== 'string');
 }
 
 function hasInvalidOptionalMetadata(raw: Record<string, unknown>, keys: string[]): boolean {
