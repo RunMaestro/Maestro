@@ -140,6 +140,70 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 
+	it('coalesces self-emitted refresh callbacks while detail requests still resolve', async () => {
+		const child = new FakeChild();
+		const counts = new Map<string, number>();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (!command.id) return true;
+			counts.set(command.type, (counts.get(command.type) ?? 0) + 1);
+			if (command.type === 'get_available_models') {
+				queueMicrotask(() => emit(child, { type: 'config_update', sequence: Date.now() }));
+			}
+			const data =
+				command.type === 'get_subagent_messages'
+					? { messages: [{ text: 'detail complete' }] }
+					: command.type === 'get_state'
+						? { sessionId: 'omp-session', todoPhases: [] }
+						: command.type === 'get_available_commands'
+							? { commands: [] }
+							: command.type === 'get_available_models'
+								? { models: [] }
+								: command.type === 'get_messages'
+									? { messages: [] }
+									: command.type === 'get_subagents'
+										? { subagents: [] }
+										: command.type === 'get_session_stats'
+											? { stats: {} }
+											: { providers: [] };
+			queueMicrotask(() =>
+				emit(child, {
+					type: 'response',
+					id: command.id,
+					command: command.type,
+					success: true,
+					data,
+				})
+			);
+			return true;
+		});
+		const adapter = await OmpNativeSessionAdapter.create({
+			sessionId: 'refresh-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		counts.clear();
+		emit(child, { type: 'config_update', sequence: Date.now() + 1 });
+		await expect(adapter.subagentMessages('subagent-1')).resolves.toEqual(['detail complete']);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		for (const command of [
+			'get_state',
+			'get_messages',
+			'get_subagents',
+			'get_session_stats',
+			'get_available_models',
+			'get_login_providers',
+		]) {
+			expect(counts.get(command)).toBe(1);
+		}
+		expect(counts.get('get_subagent_messages')).toBe(1);
+	});
+
 	it('resolves a base native session to every tab and a decorated session to one tab', async () => {
 		const firstChild = new FakeChild();
 		const secondChild = new FakeChild();
