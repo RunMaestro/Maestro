@@ -7,6 +7,7 @@ const GITHUB_DOCUMENT_HOSTS: Record<string, true> = {
 	'raw.githubusercontent.com': true,
 	'user-images.githubusercontent.com': true,
 	'camo.githubusercontent.com': true,
+	'objects.githubusercontent.com': true,
 };
 
 export interface ValidationResult {
