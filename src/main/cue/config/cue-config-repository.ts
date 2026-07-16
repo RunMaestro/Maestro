@@ -79,6 +79,18 @@ export function deleteCueConfigFile(projectRoot: string): boolean {
 	return true;
 }
 
+function removeEmptyDir(dir: string, operation: string): boolean {
+	if (!fs.existsSync(dir)) return false;
+	try {
+		if (fs.readdirSync(dir).length > 0) return false;
+		fs.rmdirSync(dir);
+		return true;
+	} catch (err) {
+		captureException(err, { operation, dir });
+		return false;
+	}
+}
+
 /**
  * Remove `.maestro/prompts/` if it exists and contains no files. Called
  * after pruning with an empty keep-set (e.g. from `cue:deleteYaml`) so
@@ -91,20 +103,10 @@ export function deleteCueConfigFile(projectRoot: string): boolean {
  * cleanup without failing the surrounding operation.
  */
 export function removeEmptyPromptsDir(projectRoot: string): boolean {
-	const promptsDir = path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR));
-	if (!fs.existsSync(promptsDir)) return false;
-	try {
-		const entries = fs.readdirSync(promptsDir);
-		if (entries.length > 0) return false;
-		fs.rmdirSync(promptsDir);
-		return true;
-	} catch (err) {
-		captureException(err, {
-			operation: 'removeEmptyPromptsDir',
-			dir: promptsDir,
-		});
-		return false;
-	}
+	return removeEmptyDir(
+		path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR)),
+		'removeEmptyPromptsDir'
+	);
 }
 
 /**
@@ -118,20 +120,7 @@ export function removeEmptyPromptsDir(projectRoot: string): boolean {
  * errors (reports to Sentry) so callers can use this as best-effort cleanup.
  */
 export function removeEmptyMaestroDir(projectRoot: string): boolean {
-	const maestroDir = path.resolve(path.join(projectRoot, MAESTRO_DIR));
-	if (!fs.existsSync(maestroDir)) return false;
-	try {
-		const entries = fs.readdirSync(maestroDir);
-		if (entries.length > 0) return false;
-		fs.rmdirSync(maestroDir);
-		return true;
-	} catch (err) {
-		captureException(err, {
-			operation: 'removeEmptyMaestroDir',
-			dir: maestroDir,
-		});
-		return false;
-	}
+	return removeEmptyDir(path.resolve(path.join(projectRoot, MAESTRO_DIR)), 'removeEmptyMaestroDir');
 }
 
 /**

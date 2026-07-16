@@ -49,16 +49,19 @@ import {
 	readCueConfigFile,
 	readCuePromptFile,
 	removeEmptyPromptsDir,
+	removeEmptyMaestroDir,
 	resolveCueConfigPath,
 	writeCueConfigFile,
 	writeCuePromptFile,
 	watchCueConfigFile,
 } from '../../../main/cue/config/cue-config-repository';
+import { captureException } from '../../../main/utils/sentry';
 
 const PROJECT_ROOT = '/projects/test';
 const CANONICAL = path.join(PROJECT_ROOT, '.maestro/cue.yaml');
 const LEGACY = path.join(PROJECT_ROOT, 'maestro-cue.yaml');
 const MAESTRO_DIR = path.join(PROJECT_ROOT, '.maestro');
+const RESOLVED_MAESTRO_DIR = path.resolve(MAESTRO_DIR);
 // Prompt-file operations in the product canonicalize via `path.resolve(...)`
 // for their containment guard, so on Windows these carry the CWD drive letter.
 // Route the expected value through the same primitive so the assertion stays
@@ -68,6 +71,8 @@ const PROMPTS_DIR = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts'));
 describe('cue-config-repository', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockReaddirSync.mockReset();
+		mockRmdirSync.mockReset();
 	});
 
 	afterEach(() => {
@@ -319,17 +324,85 @@ describe('cue-config-repository', () => {
 			expect(mockRmdirSync).not.toHaveBeenCalled();
 		});
 
-		it('swallows rmdirSync errors and returns false', () => {
+		it('reports a readdirSync error and returns false', () => {
+			const error = new Error('EACCES');
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockImplementation(() => {
+				throw error;
+			});
+
+			expect(removeEmptyPromptsDir(PROJECT_ROOT)).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'removeEmptyPromptsDir',
+				dir: PROMPTS_DIR,
+			});
+		});
+
+		it('reports an rmdirSync error and returns false', () => {
+			const error = new Error('EACCES');
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([]);
 			mockRmdirSync.mockImplementation(() => {
-				throw new Error('EACCES');
+				throw error;
 			});
 
-			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
-
-			expect(removed).toBe(false);
+			expect(removeEmptyPromptsDir(PROJECT_ROOT)).toBe(false);
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'removeEmptyPromptsDir',
+				dir: PROMPTS_DIR,
+			});
 		});
+	});
+
+	describe('removeEmptyMaestroDir', () => {
+		it('removes .maestro/ when it exists and is empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue([]);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(true);
+			expect(mockRmdirSync).toHaveBeenCalledWith(RESOLVED_MAESTRO_DIR);
+		});
+
+		it('leaves the directory alone when non-empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue(['other-config.yaml']);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the directory does not exist', () => {
+			mockExistsSync.mockReturnValue(false);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+			expect(mockReaddirSync).not.toHaveBeenCalled();
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it.each(['readdirSync', 'rmdirSync'] as const)(
+			'reports a %s error and returns false',
+			(operation) => {
+				const error = new Error('EACCES');
+				mockExistsSync.mockReturnValue(true);
+				mockReaddirSync.mockReturnValue([]);
+				if (operation === 'readdirSync') {
+					mockReaddirSync.mockImplementation(() => {
+						throw error;
+					});
+				} else {
+					mockRmdirSync.mockImplementation(() => {
+						throw error;
+					});
+				}
+
+				expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+				expect(captureException).toHaveBeenCalledWith(error, {
+					operation: 'removeEmptyMaestroDir',
+					dir: RESOLVED_MAESTRO_DIR,
+				});
+			}
+		);
 	});
 });
 
