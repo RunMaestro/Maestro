@@ -5,7 +5,7 @@
  * These commands integrate with the slash command system.
  */
 
-import type { OpenSpecCommand, OpenSpecMetadata } from '../types';
+import type { OpenSpecCommand } from '../types';
 import { logger } from '../utils/logger';
 
 /**
@@ -21,37 +21,5 @@ export async function getOpenSpecCommands(): Promise<OpenSpecCommand[]> {
 	} catch (error) {
 		logger.error('[OpenSpec] Failed to get commands:', undefined, error);
 		return [];
-	}
-}
-
-/**
- * Get OpenSpec metadata (version, refresh date)
- */
-export async function getOpenSpecMetadata(): Promise<OpenSpecMetadata | null> {
-	try {
-		const result = await window.maestro.openspec.getMetadata();
-		if (result.success && result.metadata) {
-			return result.metadata;
-		}
-		return null;
-	} catch (error) {
-		logger.error('[OpenSpec] Failed to get metadata:', undefined, error);
-		return null;
-	}
-}
-
-/**
- * Get a single OpenSpec command by its slash command string
- */
-export async function getOpenSpecCommand(slashCommand: string): Promise<OpenSpecCommand | null> {
-	try {
-		const result = await window.maestro.openspec.getCommand(slashCommand);
-		if (result.success && result.command) {
-			return result.command;
-		}
-		return null;
-	} catch (error) {
-		logger.error('[OpenSpec] Failed to get command:', undefined, error);
-		return null;
 	}
 }
