@@ -65,6 +65,39 @@ describe('PluginSandboxHost.invokeCommand payload cap', () => {
 		});
 	});
 
+	it('accepts an args JSON value exactly at the UTF-8 byte limit', () => {
+		const args = 'x'.repeat(999_998); // JSON string quotes consume the remaining two bytes.
+
+		expect(host.invokeCommand('p', 'cmd', args)).toBe(true);
+		expect(postMessage).toHaveBeenCalledTimes(1);
+	});
+
+	it('rejects multibyte and nested payloads that exceed the UTF-8 byte limit', () => {
+		const multibyte = '💣'.repeat(250_000);
+
+		expect(host.invokeCommand('p', 'cmd', multibyte)).toBe(false);
+		expect(host.invokeCommand('p', 'cmd', { nested: { multibyte } })).toBe(false);
+		expect(postMessage).not.toHaveBeenCalled();
+	});
+
+	it('treats base64 as serialized JSON bytes, not decoded bytes', () => {
+		const base64 = Buffer.alloc(750_000).toString('base64');
+
+		expect(host.invokeCommand('p', 'cmd', base64)).toBe(false);
+		expect(postMessage).not.toHaveBeenCalled();
+	});
+
+	it('rejects oversized event payloads before forwarding', () => {
+		expect(
+			host.pushEvent('p', {
+				topic: 'plugin.event',
+				at: new Date(0).toISOString(),
+				payload: { nested: '💣'.repeat(250_000) },
+			})
+		).toBe(false);
+		expect(postMessage).not.toHaveBeenCalled();
+	});
+
 	it('returns false when the plugin is not running', () => {
 		expect(host.invokeCommand('not-running', 'cmd', {})).toBe(false);
 		expect(postMessage).not.toHaveBeenCalled();
