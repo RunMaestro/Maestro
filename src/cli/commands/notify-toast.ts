@@ -2,6 +2,12 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import {
+	isNotificationTimeoutWithinLimit,
+	NOTIFICATION_COLORS,
+	parseNotificationTimeout,
+	resolveNotificationColor,
+} from '../../shared/notification';
 
 interface NotifyToastOptions {
 	color?: string;
@@ -17,9 +23,6 @@ interface NotifyToastOptions {
 	json?: boolean;
 }
 
-const ALLOWED_COLORS = ['green', 'yellow', 'orange', 'red', 'theme'] as const;
-type AllowedColor = (typeof ALLOWED_COLORS)[number];
-
 /** Toasts are corner notifications, so the cap is more generous than Center Flash. */
 const MAX_TIMEOUT_SECONDS = 60;
 
@@ -33,17 +36,13 @@ export async function notifyToast(
 		process.exit(1);
 	}
 
-	let color: AllowedColor;
-	if (options.color !== undefined) {
-		const candidate = options.color.toLowerCase();
-		if (!ALLOWED_COLORS.includes(candidate as AllowedColor)) {
-			console.error(`Error: --color must be one of: ${ALLOWED_COLORS.join(', ')}`);
-			process.exit(1);
-		}
-		color = candidate as AllowedColor;
-	} else {
-		color = 'theme';
+	const colorResolution = resolveNotificationColor(options.color?.toLowerCase(), undefined);
+	if (!colorResolution.ok) {
+		console.error(`Error: --color must be one of: ${NOTIFICATION_COLORS.join(', ')}`);
+		process.exit(1);
+		return;
 	}
+	const color = colorResolution.color;
 
 	const dismissible = options.dismissible === true;
 
@@ -56,14 +55,14 @@ export async function notifyToast(
 			process.exit(1);
 		}
 
-		const seconds = Number(options.timeout);
-		if (!Number.isFinite(seconds) || seconds <= 0) {
+		const seconds = parseNotificationTimeout(options.timeout);
+		if (seconds === null || seconds === undefined) {
 			console.error(
 				'Error: --timeout must be a positive number of seconds (use --dismissible for sticky toasts)'
 			);
 			process.exit(1);
 		}
-		if (seconds > MAX_TIMEOUT_SECONDS) {
+		if (!isNotificationTimeoutWithinLimit(seconds, MAX_TIMEOUT_SECONDS)) {
 			console.error(
 				`Error: --timeout cannot exceed ${MAX_TIMEOUT_SECONDS} seconds (use --dismissible to make the toast sticky)`
 			);
