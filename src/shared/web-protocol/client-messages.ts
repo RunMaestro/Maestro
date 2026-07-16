@@ -99,6 +99,20 @@ export const WEB_CLIENT_MESSAGE_TYPES = [
 
 export type WebClientMessageType = (typeof WEB_CLIENT_MESSAGE_TYPES)[number];
 
+type UnknownRecord = Record<string, unknown>;
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const hasOptionalString = (message: UnknownRecord, key: string): boolean =>
+	message[key] === undefined || typeof message[key] === 'string';
+
+const hasOptionalBoolean = (message: UnknownRecord, key: string): boolean =>
+	message[key] === undefined || typeof message[key] === 'boolean';
+
+const hasOptionalInputMode = (message: UnknownRecord, key: string): boolean =>
+	message[key] === undefined || message[key] === 'ai' || message[key] === 'terminal';
+
 /**
  * Transport-only client envelope. Socket ownership stays in main; handler-specific
  * values are intentionally a strict superset of the historical server envelope.
@@ -121,5 +135,27 @@ export interface WebClientMessage {
 export function isWebClientMessageType(value: unknown): value is WebClientMessageType {
 	return (
 		typeof value === 'string' && (WEB_CLIENT_MESSAGE_TYPES as readonly string[]).includes(value)
+	);
+}
+
+/**
+ * Rejects unknown discriminants and malformed transport envelopes before main
+ * dispatches a web-client command. Command-specific validation remains with
+ * each handler because command payloads intentionally evolve independently.
+ */
+export function isWebClientMessage(value: unknown): value is WebClientMessage {
+	if (!isRecord(value) || !isWebClientMessageType(value.type)) return false;
+
+	return (
+		hasOptionalString(value, 'requestId') &&
+		hasOptionalString(value, 'sessionId') &&
+		hasOptionalString(value, 'tabId') &&
+		hasOptionalString(value, 'command') &&
+		hasOptionalInputMode(value, 'mode') &&
+		hasOptionalInputMode(value, 'inputMode') &&
+		hasOptionalString(value, 'newName') &&
+		hasOptionalString(value, 'filePath') &&
+		hasOptionalBoolean(value, 'focus') &&
+		hasOptionalBoolean(value, 'force')
 	);
 }

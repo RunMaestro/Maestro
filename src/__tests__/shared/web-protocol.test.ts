@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	isWebClientMessage,
+	WEB_CLIENT_MESSAGE_TYPES,
+	type WebClientMessage,
+} from '../../shared/web-protocol/client-messages';
+import {
 	isWebServerMessage,
 	WEB_SERVER_MESSAGE_TYPES,
 	type ServerMessage,
@@ -23,6 +28,32 @@ describe('web server protocol contracts', () => {
 	it('rejects malformed payloads at the web runtime boundary', () => {
 		expect(isWebServerMessage({ type: 'sessions_list', sessions: {}, timestamp: 1 })).toBe(false);
 		expect(isWebServerMessage({ type: 'connected', clientId: 1, authenticated: true })).toBe(false);
+	});
+
+	describe('web client protocol contracts', () => {
+		it('derives client discriminants from the canonical transport list', () => {
+			const message: WebClientMessage = { type: 'ping', requestId: 'request' };
+
+			expect(WEB_CLIENT_MESSAGE_TYPES).toContain(message.type);
+		});
+
+		it('rejects unknown and malformed client envelopes before dispatch', () => {
+			expect(isWebClientMessage({ type: 'unrecognized' })).toBe(false);
+			expect(isWebClientMessage({ type: 'ping', requestId: 1 })).toBe(false);
+			expect(isWebClientMessage([])).toBe(false);
+		});
+
+		it('accepts a known client envelope while retaining optional fields', () => {
+			expect(
+				isWebClientMessage({
+					type: 'send_command',
+					sessionId: 'session',
+					command: 'status',
+					inputMode: 'terminal',
+					force: true,
+				})
+			).toBe(true);
+		});
 	});
 
 	it('accepts every server discriminant with a contract fixture', () => {
