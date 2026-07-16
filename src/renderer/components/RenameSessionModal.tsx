@@ -47,9 +47,16 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 				prev.map((s) => (s.id === sessionIdToRename ? { ...s, name: trimmedName } : s))
 			);
 
-			// Also update the agent session name if this session has an associated agent session
-			// Use projectRoot (not cwd) for consistent session storage access
-			if (targetSession?.agentSessionId && targetSession?.projectRoot) {
+			// Native OMP owns its session title over the first-party RPC adapter.
+			// Unlike CLI-backed agents it is addressed by Maestro's session id.
+			if (targetSession?.toolType === 'omp') {
+				void window.maestro.process
+					.setAgentControl(sessionIdToRename, 'session-name', trimmedName)
+					.catch((err) =>
+						logger.error('Failed to update native OMP session name:', undefined, err)
+					);
+			} else if (targetSession?.agentSessionId && targetSession.projectRoot) {
+				// Use projectRoot (not cwd) for consistent session storage access.
 				const agentId = targetSession.toolType || 'claude-code';
 				if (agentId === 'claude-code') {
 					window.maestro.claude
