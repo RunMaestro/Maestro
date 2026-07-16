@@ -329,6 +329,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// Persist name to agent session metadata (async, fire and forget)
 						// Use projectRoot (not cwd) for consistent session storage access
 						const agentId = s.toolType || 'claude-code';
+						if (agentId === 'omp') {
+							void window.maestro.process.setAgentControl(
+								activeSession.id,
+								'session-name',
+								newName.trim()
+							);
+						}
 						if (agentId === 'claude-code') {
 							window.maestro.claude
 								.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')

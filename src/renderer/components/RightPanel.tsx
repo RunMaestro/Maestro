@@ -45,9 +45,11 @@ import type { AgentRuntimeFeatureState } from '../../shared/agent-runtime-featur
 function NativeRuntimePanel({
 	features,
 	theme,
+	sessionId,
 }: {
 	features: AgentRuntimeFeatureState;
 	theme: Theme;
+	sessionId: string;
 }) {
 	const sections = [
 		{
@@ -89,6 +91,18 @@ function NativeRuntimePanel({
 								<li key={row}>{row}</li>
 							))}
 						</ul>
+						{section.title === 'Session tree' &&
+							features.tree?.map((entry) => (
+								<button
+									key={`branch-${entry.id}`}
+									type="button"
+									onClick={() => void window.maestro.process.branchSession(sessionId, entry.id)}
+									className="text-xs underline"
+									style={{ color: theme.colors.accent }}
+								>
+									Branch from {entry.label}
+								</button>
+							))}
 					</section>
 				))
 			)}
@@ -653,7 +667,11 @@ export const RightPanel = memo(
 					)}
 
 					{activeRightTab === 'runtime' && session.runtimeFeatures && (
-						<NativeRuntimePanel features={session.runtimeFeatures} theme={theme} />
+						<NativeRuntimePanel
+							features={session.runtimeFeatures}
+							theme={theme}
+							sessionId={session.id}
+						/>
 					)}
 				</div>
 
