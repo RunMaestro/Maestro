@@ -14,6 +14,7 @@ import {
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { createManagedProcessBase } from '../utils/managedProcess';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -120,16 +121,13 @@ export class PtySpawner {
 			});
 
 			const managedProcess: ManagedProcess = {
-				sessionId,
-				toolType,
+				...createManagedProcessBase(config, {
+					pid: ptyProcess.pid,
+					isTerminal: true,
+					command: ptyCommand,
+					args: ptyArgs,
+				}),
 				ptyProcess,
-				cwd,
-				pid: ptyProcess.pid,
-				isTerminal: true,
-				startTime: Date.now(),
-				command: ptyCommand,
-				args: ptyArgs,
-				// Terminal PTY env only honors shellEnvVars; agents-in-PTY also honor customEnvVars.
 				maestroEnvVars: collectMaestroEnvVars(
 					shellEnvVars,
 					isTerminal ? undefined : customEnvVars,

@@ -29,6 +29,7 @@ import { ExitHandler } from '../handlers/ExitHandler';
 import { opencodeServerManager } from '../../opencode-server/OpencodeServerManager';
 import { OpencodeEventTranslator } from '../../opencode-server/event-translator';
 import type { Event, OpencodeClient } from '@opencode-ai/sdk';
+import { createManagedProcessBase } from '../utils/managedProcess';
 
 /** Parsed agent invocation bits we need from the CLI-style args. */
 interface OpencodeInvocation {
@@ -108,7 +109,7 @@ export class OpencodeServerSpawner {
 	 * Mirrors ChildProcessSpawner: returns immediately; events flow later.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
-		const { sessionId, toolType, cwd, command, args, prompt } = config;
+		const { sessionId, toolType, prompt } = config;
 
 		const outputParser = createOutputParser(toolType) || undefined;
 
@@ -130,21 +131,14 @@ export class OpencodeServerSpawner {
 		};
 
 		const managedProcess: ManagedProcess = {
-			sessionId,
-			toolType,
-			cwd,
-			pid: -1,
-			isTerminal: false,
+			...createManagedProcessBase(config, { pid: -1, isTerminal: false }),
 			isBatchMode: true,
 			isStreamJsonMode: true,
 			jsonBuffer: '',
-			startTime: Date.now(),
 			outputParser,
 			stderrBuffer: '',
 			stdoutBuffer: '',
 			contextWindow: config.contextWindow,
-			command,
-			args,
 			querySource: config.querySource,
 			tabId: config.tabId,
 			projectPath: config.projectPath,
