@@ -67,7 +67,7 @@ import {
 	isGhInstalled,
 	setCachedGhStatus,
 } from '../../../../main/utils/cliDetection';
-import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { execFileNoThrow, type ExecResult } from '../../../../main/utils/execFile';
 import {
 	cleanupTempFiles,
 	saveImageToTempFile,
@@ -156,6 +156,38 @@ describe('feedback handlers', () => {
 			.mocked(fs.writeFile)
 			.mock.calls.find(([targetPath]) => String(targetPath).includes('maestro-feedback-body-'));
 		const writtenBody = String(bodyWriteCall?.[1] ?? '');
+		const contentWriteCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([targetPath]) => String(targetPath).includes('maestro-feedback-content-'));
+		const contentUploadCall = vi
+			.mocked(execFileNoThrow)
+			.mock.calls.find(([, args]) =>
+				args[1]?.startsWith('repos/jeffscottward/maestro-feedback-attachments/contents/')
+			);
+		expect(JSON.parse(String(contentWriteCall?.[1]))).toEqual({
+			message: expect.stringMatching(/^Add feedback screenshot \d+-0$/),
+			content: 'aGVsbG8=',
+			branch: 'main',
+		});
+		expect(contentUploadCall).toEqual([
+			'gh',
+			[
+				'api',
+				expect.stringMatching(
+					/^repos\/jeffscottward\/maestro-feedback-attachments\/contents\/feedback\/\d+-0-bug\.png$/
+				),
+				'--method',
+				'PUT',
+				'-H',
+				'Accept: application/vnd.github+json',
+				'-H',
+				'X-GitHub-Api-Version: 2022-11-28',
+				'--input',
+				expect.stringMatching(/maestro-feedback-content-\d+\.json$/),
+			],
+			undefined,
+			{ PATH: '/usr/bin' },
+		]);
 
 		expect(saveImageToTempFile).not.toHaveBeenCalled();
 		expect(fs.writeFile).toHaveBeenCalled();
@@ -190,6 +222,40 @@ describe('feedback handlers', () => {
 		);
 		expect(mockProcessManager.write).not.toHaveBeenCalled();
 		expect(result).toEqual({ success: true });
+	});
+
+	it.each([
+		['401', 'gh: Bad credentials (HTTP 401)'],
+		['403', 'gh: Resource not accessible by integration (HTTP 403)'],
+		['404', 'gh: Not Found (HTTP 404)'],
+		['409', 'gh: SHA does not match (HTTP 409)'],
+	])('preserves upload %s errors in the submit response envelope', async (_status, uploadError) => {
+		const loginResult: ExecResult = { exitCode: 0, stdout: 'jeffscottward', stderr: '' };
+		const repositoryResult: ExecResult = { exitCode: 0, stdout: '{}', stderr: '' };
+		const uploadResult: ExecResult = { exitCode: 1, stdout: '', stderr: uploadError };
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(loginResult)
+			.mockResolvedValueOnce(repositoryResult)
+			.mockResolvedValueOnce(uploadResult);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-123',
+				category: 'bug_report',
+				summary: 'Feedback modal crashes',
+				expectedBehavior: 'The issue should be created successfully.',
+				details: 'The modal closes without creating a GitHub issue.',
+				reproductionSteps: '1. Open Maestro\n2. Click Feedback\n3. Click Send Feedback',
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
+			}
+		);
+
+		expect(result).toEqual({ success: false, error: uploadError });
+		expect(execFileNoThrow).toHaveBeenCalledTimes(3);
 	});
 
 	it('creates a structured feature request issue without screenshots', async () => {

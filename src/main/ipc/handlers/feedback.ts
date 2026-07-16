@@ -12,6 +12,7 @@ import os from 'os';
 import path from 'path';
 import { generateUUID } from '../../../shared/uuid';
 import { parseImageDataUrl } from '../../../shared/imageDataUrl';
+import { uploadFeedbackGitHubContent } from './feedbackGithubContents';
 import { logger } from '../../utils/logger';
 import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -626,7 +627,7 @@ async function getGitHubLogin(): Promise<string> {
 }
 
 function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
-	base64: string;
+	bytes: Uint8Array;
 	filename: string;
 } {
 	const parsed = parseImageDataUrl(attachment.dataUrl, { filename: attachment.name });
@@ -636,7 +637,7 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 
 	const hasExtension = /\.[a-zA-Z0-9]+$/.test(attachment.name);
 	const filename = hasExtension ? attachment.name : `${attachment.name}.${parsed.extension}`;
-	return { base64: parsed.base64, filename };
+	return { bytes: parsed.bytes, filename };
 }
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {
@@ -687,42 +688,20 @@ async function uploadAttachments(
 	const uploadedMarkdown: string[] = [];
 	for (let index = 0; index < attachments.length; index += 1) {
 		const attachment = attachments[index];
-		const { base64, filename } = parseAttachmentDataUrl(attachment);
+		const { bytes, filename } = parseAttachmentDataUrl(attachment);
 		const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '-');
 		const repoPath = `feedback/${Date.now()}-${index}-${safeFilename}`;
-		const payloadPath = path.join(
-			os.tmpdir(),
-			`maestro-feedback-upload-${Date.now()}-${index}.json`
-		);
-		await fs.writeFile(
-			payloadPath,
-			JSON.stringify({
+		const { rawUrl } = await uploadFeedbackGitHubContent(
+			{
+				owner,
+				repository: ATTACHMENTS_REPO,
+				path: repoPath,
 				message: `Add feedback screenshot ${Date.now()}-${index}`,
-				content: base64,
-			}),
-			'utf8'
+				bytes,
+				branch: 'main',
+			},
+			(args) => execFileNoThrow('gh', args, undefined, getExpandedEnv())
 		);
-		const uploadResult = await execFileNoThrow(
-			'gh',
-			[
-				'api',
-				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-				'--method',
-				'PUT',
-				'--input',
-				payloadPath,
-			],
-			undefined,
-			getExpandedEnv()
-		);
-		await fs.unlink(payloadPath).catch(() => {});
-		if (uploadResult.exitCode !== 0) {
-			throw new Error(uploadResult.stderr || `Failed to upload screenshot ${attachment.name}.`);
-		}
-		const uploadJson = JSON.parse(uploadResult.stdout);
-		const rawUrl =
-			uploadJson.content?.download_url ||
-			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
 		uploadedMarkdown.push(`![${attachment.name}](${rawUrl})`);
 	}
 
@@ -736,44 +715,25 @@ async function uploadAttachments(
  */
 async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<string> {
 	const zipData = await fs.readFile(zipPath);
-	const zipBase64 = zipData.toString('base64');
 	const owner = await getGitHubLogin();
 	await ensureAttachmentsRepo(owner);
 	const zipFilename = path.basename(zipPath);
 	const repoPath = `feedback/${Date.now()}-${zipFilename}`;
-	const payloadPath = path.join(os.tmpdir(), `maestro-feedback-zip-${Date.now()}.json`);
-	await fs.writeFile(
-		payloadPath,
-		JSON.stringify({
-			message: `Add feedback attachment ${Date.now()}`,
-			content: zipBase64,
-		}),
-		'utf8'
-	);
 	try {
-		const uploadResult = await execFileNoThrow(
-			'gh',
-			[
-				'api',
-				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-				'--method',
-				'PUT',
-				'--input',
-				payloadPath,
-			],
-			undefined,
-			getExpandedEnv()
+		const { rawUrl } = await uploadFeedbackGitHubContent(
+			{
+				owner,
+				repository: ATTACHMENTS_REPO,
+				path: repoPath,
+				message: `Add feedback attachment ${Date.now()}`,
+				bytes: zipData,
+				branch: 'main',
+			},
+			(args) => execFileNoThrow('gh', args, undefined, getExpandedEnv())
 		);
-		if (uploadResult.exitCode !== 0) {
-			return '';
-		}
-		const uploadJson = JSON.parse(uploadResult.stdout);
-		const rawUrl =
-			uploadJson.content?.download_url ||
-			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
 		return `[${linkText}](${rawUrl})`;
-	} finally {
-		await fs.unlink(payloadPath).catch(() => {});
+	} catch {
+		return '';
 	}
 }
 
@@ -1216,7 +1176,15 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					sshRemoteEnabled: typeof sshRemoteEnabled === 'boolean' ? sshRemoteEnabled : undefined,
 					attachments: normalizedAttachments,
 				};
-				const { markdown } = await uploadAttachments(normalizedAttachments);
+				let markdown: string;
+				try {
+					({ markdown } = await uploadAttachments(normalizedAttachments));
+				} catch (error) {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 				await ensureFeedbackLabel();
 				const environment = buildEnvironmentSummary(normalizedPayload);
 
@@ -1363,7 +1331,15 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 								a.dataUrl.startsWith('data:image/')
 						)
 					: [];
-				const { markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments);
+				let attachmentMarkdown: string;
+				try {
+					({ markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments));
+				} catch (error) {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 
 				// Generate and upload debug package if requested
 				let debugPackageMarkdown = '';
