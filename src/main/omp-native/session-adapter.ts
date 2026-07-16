@@ -56,6 +56,7 @@ export class OmpNativeSessionAdapter {
 	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
+	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
 	private appliedModel?: string;
@@ -324,7 +325,17 @@ export class OmpNativeSessionAdapter {
 		this.options.send('process:slash-commands', this.options.sessionId, commands);
 	}
 
-	private async refreshFeatures(): Promise<void> {
+	private refreshFeatures(): Promise<void> {
+		if (this.disposed) return Promise.resolve();
+		if (!this.refreshInFlight) {
+			this.refreshInFlight = this.performRefreshFeatures().finally(() => {
+				this.refreshInFlight = undefined;
+			});
+		}
+		return this.refreshInFlight;
+	}
+
+	private async performRefreshFeatures(): Promise<void> {
 		const [state, messages, subagents, stats, models, loginProviders] = await Promise.all([
 			this.client.command({ type: 'get_state' }),
 			this.client.command({ type: 'get_messages' }),
