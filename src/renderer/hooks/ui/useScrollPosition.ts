@@ -325,6 +325,7 @@ export function useScrollPosition(options: UseScrollPositionOptions): UseScrollP
 	const handleScroll = throttleMs > 0 ? throttledHandler : handleScrollInner;
 
 	useEffect(() => {
+		const container = containerRef.current;
 		if (
 			!observeChanges ||
 			!container ||
