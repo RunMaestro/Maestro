@@ -576,10 +576,10 @@ export class OmpNativeSessionAdapter {
 	private completeTurn(): void {
 		if (!this.turnInFlight) return;
 		this.turnInFlight = false;
-		// Match the legacy one-shot lifecycle: command-exit settles shell-command
-		// bookkeeping, while exit drives the AI-tab reducer that dequeues the next prompt.
+		// A native OMP agent_end completes one turn, not the long-lived RPC child.
+		// command-exit releases composer bookkeeping; process:exit would tear down
+		// the regular session and reject every subsequent prompt.
 		this.options.send('process:command-exit', this.options.sessionId, 0);
-		this.options.send('process:exit', this.options.sessionId, 0);
 	}
 }
 

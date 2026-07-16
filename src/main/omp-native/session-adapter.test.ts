@@ -185,7 +185,7 @@ describe('OmpNativeSessionAdapter', () => {
 			)
 		).toHaveLength(0);
 		expect(send).toHaveBeenCalledWith('process:command-exit', 'tab-2', 0);
-		expect(send).toHaveBeenCalledWith('process:exit', 'tab-2', 0);
+		expect(send).not.toHaveBeenCalledWith('process:exit', 'tab-2', 0);
 		expect(child.kill).not.toHaveBeenCalled();
 
 		await adapter.prompt('second prompt');
@@ -216,7 +216,7 @@ describe('OmpNativeSessionAdapter', () => {
 			send.mock.calls.filter(
 				([channel, sessionId]) => channel === 'process:exit' && sessionId === 'tab-2'
 			)
-		).toHaveLength(2);
+		).toHaveLength(0);
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 	it('applies the configured model before prompting and preserves staged image payloads', async () => {
