@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 // Helper to log deprecation warnings
 const logDeprecationWarning = (method: string, replacement?: string) => {
@@ -95,9 +96,7 @@ export function createClaudeApi() {
 			}) => void
 		) => {
 			logDeprecationWarning('onProjectStatsUpdate');
-			const handler = (_: any, stats: any) => callback(stats);
-			ipcRenderer.on('claude:projectStatsUpdate', handler);
-			return () => ipcRenderer.removeListener('claude:projectStatsUpdate', handler);
+			return subscribeIpc('claude:projectStatsUpdate', callback);
 		},
 		getGlobalStats: () => {
 			logDeprecationWarning('getGlobalStats');
@@ -117,9 +116,7 @@ export function createClaudeApi() {
 			}) => void
 		) => {
 			logDeprecationWarning('onGlobalStatsUpdate');
-			const handler = (_: any, stats: any) => callback(stats);
-			ipcRenderer.on('claude:globalStatsUpdate', handler);
-			return () => ipcRenderer.removeListener('claude:globalStatsUpdate', handler);
+			return subscribeIpc('claude:globalStatsUpdate', callback);
 		},
 		readSessionMessages: (
 			projectPath: string,
@@ -292,11 +289,8 @@ export function createAgentSessionsApi() {
 		getAllNamedSessions: (): Promise<NamedSessionEntryWithAgent[]> =>
 			ipcRenderer.invoke('agentSessions:getAllNamedSessions'),
 
-		onGlobalStatsUpdate: (callback: (stats: GlobalStatsUpdate) => void) => {
-			const handler = (_: unknown, stats: GlobalStatsUpdate) => callback(stats);
-			ipcRenderer.on('agentSessions:globalStatsUpdate', handler);
-			return () => ipcRenderer.removeListener('agentSessions:globalStatsUpdate', handler);
-		},
+		onGlobalStatsUpdate: (callback: (stats: GlobalStatsUpdate) => void) =>
+			subscribeIpc('agentSessions:globalStatsUpdate', callback),
 
 		registerSessionOrigin: (
 			projectPath: string,

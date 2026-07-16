@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { ToolType, HistoryEntry } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
 import type {
@@ -142,18 +143,7 @@ export function createDirectorNotesApi() {
 		 */
 		onSynopsisProgress: (
 			callback: (update: { chunkCount: number; bytesReceived: number; elapsedMs: number }) => void
-		): (() => void) => {
-			const handler = (
-				_event: unknown,
-				update: { chunkCount: number; bytesReceived: number; elapsedMs: number }
-			) => {
-				callback(update);
-			};
-			ipcRenderer.on('director-notes:synopsisProgress', handler);
-			return () => {
-				ipcRenderer.removeListener('director-notes:synopsisProgress', handler);
-			};
-		},
+		): (() => void) => subscribeIpc('director-notes:synopsisProgress', callback),
 
 		/**
 		 * Subscribe to new history entries as they are added in real-time.
@@ -161,15 +151,7 @@ export function createDirectorNotesApi() {
 		 */
 		onHistoryEntryAdded: (
 			callback: (entry: HistoryEntry, sourceSessionId: string) => void
-		): (() => void) => {
-			const handler = (_event: unknown, entry: HistoryEntry, sessionId: string) => {
-				callback(entry, sessionId);
-			};
-			ipcRenderer.on('history:entryAdded', handler);
-			return () => {
-				ipcRenderer.removeListener('history:entryAdded', handler);
-			};
-		},
+		): (() => void) => subscribeIpc('history:entryAdded', callback),
 	};
 }
 

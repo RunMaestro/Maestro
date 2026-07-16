@@ -10,6 +10,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type {
 	CueGraphSession,
 	CueRunResult,
@@ -148,13 +149,8 @@ export function createCueApi() {
 		// Listen for real-time activity updates from the main process. Payload
 		// is a typed CueLogPayload discriminated union - narrow on `data.type`
 		// to handle specific events (queueOverflow, runFinished, ...).
-		onActivityUpdate: (callback: (data: CueActivityPayload) => void): (() => void) => {
-			const handler = (_e: unknown, data: CueActivityPayload) => callback(data);
-			ipcRenderer.on('cue:activityUpdate', handler);
-			return () => {
-				ipcRenderer.removeListener('cue:activityUpdate', handler);
-			};
-		},
+		onActivityUpdate: (callback: (data: CueActivityPayload) => void): (() => void) =>
+			subscribeIpc('cue:activityUpdate', callback),
 	};
 }
 

@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 /**
  * Response from showing a notification
@@ -94,20 +95,12 @@ export function createNotificationApi() {
 		 * @param handler - Callback when a notification command completes
 		 * @returns Cleanup function to unsubscribe
 		 */
-		onCommandCompleted: (handler: (notificationId: number) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, notificationId: number) =>
-				handler(notificationId);
-			ipcRenderer.on('notification:commandCompleted', wrappedHandler);
-			return () => ipcRenderer.removeListener('notification:commandCompleted', wrappedHandler);
-		},
+		onCommandCompleted: (handler: (notificationId: number) => void): (() => void) =>
+			subscribeIpc('notification:commandCompleted', handler),
 
 		/** @deprecated Use onCommandCompleted instead */
-		onTtsCompleted: (handler: (notificationId: number) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, notificationId: number) =>
-				handler(notificationId);
-			ipcRenderer.on('notification:commandCompleted', wrappedHandler);
-			return () => ipcRenderer.removeListener('notification:commandCompleted', wrappedHandler);
-		},
+		onTtsCompleted: (handler: (notificationId: number) => void): (() => void) =>
+			subscribeIpc('notification:commandCompleted', handler),
 	};
 }
 

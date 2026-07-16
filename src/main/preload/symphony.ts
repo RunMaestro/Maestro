@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 // Types for Symphony API
 export interface SymphonyRepository {
@@ -367,11 +368,7 @@ export function createSymphonyApi() {
 			ipcRenderer.invoke('symphony:manualCredit', params),
 
 		// Real-time updates
-		onUpdated: (callback: () => void) => {
-			const handler = () => callback();
-			ipcRenderer.on('symphony:updated', handler);
-			return () => ipcRenderer.removeListener('symphony:updated', handler);
-		},
+		onUpdated: (callback: () => void) => subscribeIpc('symphony:updated', callback),
 
 		onContributionStarted: (
 			callback: (data: {
@@ -380,34 +377,11 @@ export function createSymphonyApi() {
 				localPath: string;
 				branchName: string;
 			}) => void
-		) => {
-			const handler = (
-				_event: Electron.IpcRendererEvent,
-				data: {
-					contributionId: string;
-					sessionId: string;
-					localPath: string;
-					branchName: string;
-				}
-			) => callback(data);
-			ipcRenderer.on('symphony:contributionStarted', handler);
-			return () => ipcRenderer.removeListener('symphony:contributionStarted', handler);
-		},
+		) => subscribeIpc('symphony:contributionStarted', callback),
 
 		onPRCreated: (
 			callback: (data: { contributionId: string; prNumber: number; prUrl: string }) => void
-		) => {
-			const handler = (
-				_event: Electron.IpcRendererEvent,
-				data: {
-					contributionId: string;
-					prNumber: number;
-					prUrl: string;
-				}
-			) => callback(data);
-			ipcRenderer.on('symphony:prCreated', handler);
-			return () => ipcRenderer.removeListener('symphony:prCreated', handler);
-		},
+		) => subscribeIpc('symphony:prCreated', callback),
 	};
 }
 

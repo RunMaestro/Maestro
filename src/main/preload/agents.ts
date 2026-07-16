@@ -9,6 +9,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
 import {
 	SNAPSHOT_UPDATED_CHANNEL,
@@ -218,11 +219,8 @@ export function createAgentsApi() {
 		 * The renderer mirror calls this once at startup and updates state
 		 * in place - no polling needed.
 		 */
-		onSnapshotUpdated: (callback: (payload: SnapshotUpdatedPayload) => void): (() => void) => {
-			const handler = (_: unknown, payload: SnapshotUpdatedPayload) => callback(payload);
-			ipcRenderer.on(SNAPSHOT_UPDATED_CHANNEL, handler);
-			return () => ipcRenderer.removeListener(SNAPSHOT_UPDATED_CHANNEL, handler);
-		},
+		onSnapshotUpdated: (callback: (payload: SnapshotUpdatedPayload) => void): (() => void) =>
+			subscribeIpc(SNAPSHOT_UPDATED_CHANNEL, callback),
 
 		/**
 		 * Resolve the auto-detected maestro-p binary path bundled with the app.

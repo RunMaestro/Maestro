@@ -10,6 +10,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 /**
  * Git worktree information
@@ -455,19 +456,11 @@ export function createGitApi() {
 		/**
 		 * Subscribe to discovered worktrees
 		 */
-		onWorktreeDiscovered: (callback: (data: WorktreeDiscoveredData) => void): (() => void) => {
-			const handler = (_event: Electron.IpcRendererEvent, data: WorktreeDiscoveredData) =>
-				callback(data);
-			ipcRenderer.on('worktree:discovered', handler);
-			return () => ipcRenderer.removeListener('worktree:discovered', handler);
-		},
+		onWorktreeDiscovered: (callback: (data: WorktreeDiscoveredData) => void): (() => void) =>
+			subscribeIpc('worktree:discovered', callback),
 
-		onWorktreeRemoved: (callback: (data: WorktreeRemovedData) => void): (() => void) => {
-			const handler = (_event: Electron.IpcRendererEvent, data: WorktreeRemovedData) =>
-				callback(data);
-			ipcRenderer.on('worktree:removed', handler);
-			return () => ipcRenderer.removeListener('worktree:removed', handler);
-		},
+		onWorktreeRemoved: (callback: (data: WorktreeRemovedData) => void): (() => void) =>
+			subscribeIpc('worktree:removed', callback),
 	};
 }
 

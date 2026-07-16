@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { CrossAgentSendRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
 
 /**
@@ -26,12 +27,8 @@ export function createCrossAgentApi() {
 		 * Subscribe to streamed cross-agent response chunks.
 		 * @returns Cleanup function to unsubscribe.
 		 */
-		onChunk: (handler: (chunk: CrossAgentResponseChunk) => void): (() => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, chunk: CrossAgentResponseChunk) =>
-				handler(chunk);
-			ipcRenderer.on('cross-agent:chunk', wrappedHandler);
-			return () => ipcRenderer.removeListener('cross-agent:chunk', wrappedHandler);
-		},
+		onChunk: (handler: (chunk: CrossAgentResponseChunk) => void): (() => void) =>
+			subscribeIpc('cross-agent:chunk', handler),
 	};
 }
 

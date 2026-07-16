@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 /**
  * Debug package options
@@ -151,12 +152,8 @@ export function createDebugApi() {
 
 		// Subscribe to capture progress (stopping -> compressing -> done). Returns
 		// an unsubscribe function. Mirrors the documentGraph:filesChanged pattern.
-		onProfilingProgress: (handler: (event: ProfilingProgressEvent) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, data: ProfilingProgressEvent) =>
-				handler(data);
-			ipcRenderer.on('debug:profilingProgress', wrapped);
-			return () => ipcRenderer.removeListener('debug:profilingProgress', wrapped);
-		},
+		onProfilingProgress: (handler: (event: ProfilingProgressEvent) => void) =>
+			subscribeIpc('debug:profilingProgress', handler),
 	};
 }
 
@@ -172,14 +169,7 @@ export function createDocumentGraphApi() {
 
 		onFilesChanged: (
 			handler: (data: { rootPath: string; changes: DocumentGraphChange[] }) => void
-		) => {
-			const wrappedHandler = (
-				_event: Electron.IpcRendererEvent,
-				data: { rootPath: string; changes: DocumentGraphChange[] }
-			) => handler(data);
-			ipcRenderer.on('documentGraph:filesChanged', wrappedHandler);
-			return () => ipcRenderer.removeListener('documentGraph:filesChanged', wrappedHandler);
-		},
+		) => subscribeIpc('documentGraph:filesChanged', handler),
 	};
 }
 
