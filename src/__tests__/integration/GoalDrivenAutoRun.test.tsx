@@ -22,11 +22,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import type { Session, BatchRunConfig } from '../../renderer/types';
+import type { Session, Group, BatchRunConfig } from '../../renderer/types';
 import { useBatchProcessor } from '../../renderer/hooks';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../renderer/stores/batchStore';
-import { createMockGroup } from '../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import type { GoalExitReason } from '../../shared/goalDriven/types';
 
@@ -61,6 +60,15 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 			...overrides,
 		});
 
+	// Retained locally: the integration harness does not invoke its first spawn
+	// at baseline, so a shared-factory migration cannot be characterized here.
+	const createMockGroup = (): Group => ({
+		id: 'test-group-id',
+		name: 'Test Group',
+		emoji: '🎯',
+		collapsed: false,
+	});
+
 	const goalConfig = (
 		goal: string,
 		exitCriteria: string,
@@ -81,7 +89,7 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 		renderHook(() =>
 			useBatchProcessor({
 				sessions: [createMockSession()],
-				groups: [createMockGroup({ id: 'test-group-id', emoji: '🎯' })],
+				groups: [createMockGroup()],
 				onUpdateSession: mockOnUpdateSession,
 				onSpawnAgent: mockOnSpawnAgent,
 				onAddHistoryEntry: mockOnAddHistoryEntry,
