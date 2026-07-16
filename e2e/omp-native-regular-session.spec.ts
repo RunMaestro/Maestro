@@ -2,7 +2,10 @@ import { expect, test } from '@playwright/test';
 import { launchNativeOmpRegularSessionHarness } from './fixtures/omp-native-regular-session-harness';
 
 test.describe('first-party OMP regular session', () => {
-	test('starts through the injected verified native gate while plugins are disabled', async (_args, testInfo) => {
+	test('starts through the injected verified native gate while plugins are disabled', async ({
+		browserName: _browserName,
+	}, testInfo) => {
+		void _browserName;
 		test.setTimeout(120_000);
 		const harness = await launchNativeOmpRegularSessionHarness();
 		try {
