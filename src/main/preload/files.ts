@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { HistoryGraphData } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
 
@@ -100,11 +101,7 @@ export function createHistoryApi() {
 				types
 			),
 
-		onExternalChange: (handler: () => void) => {
-			const wrappedHandler = () => handler();
-			ipcRenderer.on('history:externalChange', wrappedHandler);
-			return () => ipcRenderer.removeListener('history:externalChange', wrappedHandler);
-		},
+		onExternalChange: (handler: () => void) => subscribeIpc('history:externalChange', handler),
 
 		reload: () => ipcRenderer.invoke('history:reload'),
 	};
@@ -116,11 +113,7 @@ export function createHistoryApi() {
 export function createCliApi() {
 	return {
 		getActivity: () => ipcRenderer.invoke('cli:getActivity'),
-		onActivityChange: (handler: () => void) => {
-			const wrappedHandler = () => handler();
-			ipcRenderer.on('cli:activityChange', wrappedHandler);
-			return () => ipcRenderer.removeListener('cli:activityChange', wrappedHandler);
-		},
+		onActivityChange: (handler: () => void) => subscribeIpc('cli:activityChange', handler),
 	};
 }
 
