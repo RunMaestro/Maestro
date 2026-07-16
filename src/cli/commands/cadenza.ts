@@ -3,14 +3,13 @@
 // user is working on (a "Poke" primitive). Rides the same bridge as notify/toast.
 
 import { readFileSync } from 'fs';
-import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { resolveViewBody, sendViewCommand } from './view-command';
 import {
 	CADENZA_COLORS,
 	CADENZA_VIEW_TYPES,
 	type CadenzaColor,
 	type CadenzaViewType,
-	type CadenzaPayload,
 	type CadenzaDecisionOption,
 } from '../../shared/cadenza-types';
 
@@ -86,54 +85,8 @@ interface ViewUpdateOptions {
 	json?: boolean;
 }
 
-/** Resolve body content from --body (inline) or --body-file (read a file). */
-function resolveBody(body: string | undefined, bodyFile: string | undefined): string | undefined {
-	if (bodyFile) {
-		try {
-			return readFileSync(bodyFile, 'utf8');
-		} catch (error) {
-			console.error(
-				`Error: could not read --body-file: ${error instanceof Error ? error.message : String(error)}`
-			);
-			process.exit(1);
-		}
-	}
-	return body;
-}
-
 interface ViewCloseOptions {
 	json?: boolean;
-}
-
-/** Send one cadenza operation over the bridge and report the result. */
-async function sendCadenza(
-	payload: CadenzaPayload,
-	json: boolean | undefined,
-	successMessage: string
-): Promise<void> {
-	try {
-		const result = await withMaestroClient(async (client) =>
-			client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'cadenza', ...payload },
-				'cadenza_result'
-			)
-		);
-
-		if (result.success) {
-			if (json) console.log(JSON.stringify({ success: true, id: payload.id, op: payload.op }));
-			else console.log(successMessage);
-		} else {
-			const error = result.error || 'Failed to update cadenza view';
-			if (json) console.log(JSON.stringify({ success: false, error }));
-			else console.error(`Error: ${error}`);
-			process.exit(1);
-		}
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (json) console.log(JSON.stringify({ success: false, error: msg }));
-		else console.error(`Error: ${msg}`);
-		process.exit(1);
-	}
 }
 
 /** Resolve --agent to a session id, exiting on an invalid id. Undefined when omitted. */
@@ -174,7 +127,7 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 		process.exit(1);
 	}
 
-	let body = resolveBody(options.body, options.bodyFile);
+	let body = resolveViewBody(options.body, options.bodyFile);
 	if ((viewType === 'markdown' || viewType === 'view' || viewType === 'html') && !body) {
 		console.error(`Error: --body or --body-file is required for --type ${viewType}`);
 		process.exit(1);
@@ -231,21 +184,26 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 		}
 	}
 
-	await sendCadenza(
-		{
-			op: 'open',
-			id,
-			viewType,
-			title: options.title,
-			body,
-			path: options.path,
-			options: decisionOptions,
-			color,
-			sessionId,
+	await sendViewCommand({
+		command: {
+			type: 'cadenza',
+			payload: {
+				op: 'open',
+				id,
+				viewType,
+				title: options.title,
+				body,
+				path: options.path,
+				options: decisionOptions,
+				color,
+				sessionId,
+			},
+			responseType: 'cadenza_result',
 		},
-		options.json,
-		`Cadenza '${id}' opened`
-	);
+		json: options.json,
+		successMessage: `Cadenza '${id}' opened`,
+		failureMessage: 'Failed to update cadenza view',
+	});
 }
 
 export async function cadenzaUpdate(id: string, options: ViewUpdateOptions): Promise<void> {
@@ -264,20 +222,25 @@ export async function cadenzaUpdate(id: string, options: ViewUpdateOptions): Pro
 		color = candidate;
 	}
 
-	const body = resolveBody(options.body, options.bodyFile);
+	const body = resolveViewBody(options.body, options.bodyFile);
 
-	await sendCadenza(
-		{
-			op: 'update',
-			id,
-			title: options.title,
-			body,
-			path: options.path,
-			color,
+	await sendViewCommand({
+		command: {
+			type: 'cadenza',
+			payload: {
+				op: 'update',
+				id,
+				title: options.title,
+				body,
+				path: options.path,
+				color,
+			},
+			responseType: 'cadenza_result',
 		},
-		options.json,
-		`Cadenza '${id}' updated`
-	);
+		json: options.json,
+		successMessage: `Cadenza '${id}' updated`,
+		failureMessage: 'Failed to update cadenza view',
+	});
 }
 
 export async function cadenzaClose(id: string, options: ViewCloseOptions): Promise<void> {
@@ -286,5 +249,14 @@ export async function cadenzaClose(id: string, options: ViewCloseOptions): Promi
 		process.exit(1);
 	}
 
-	await sendCadenza({ op: 'close', id }, options.json, `Cadenza '${id}' closed`);
+	await sendViewCommand({
+		command: {
+			type: 'cadenza',
+			payload: { op: 'close', id },
+			responseType: 'cadenza_result',
+		},
+		json: options.json,
+		successMessage: `Cadenza '${id}' closed`,
+		failureMessage: 'Failed to update cadenza view',
+	});
 }

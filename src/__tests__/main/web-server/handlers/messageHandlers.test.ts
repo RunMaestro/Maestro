@@ -3110,7 +3110,8 @@ describe('WebSocketMessageHandler', () => {
 			expect(lastResponse()).toMatchObject({
 				type: 'notify_toast_result',
 				success: false,
-				error: 'duration must be a positive number of seconds (use dismissible:true for sticky toasts)',
+				error:
+					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)',
 			});
 		});
 
@@ -3151,6 +3152,155 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Cadenza and Movement transport', () => {
+		function responses(): Array<Record<string, unknown>> {
+			const sendMock = client.socket.send as unknown as { mock: { calls: string[][] } };
+			return sendMock.mock.calls.map(([payload]) => JSON.parse(payload));
+		}
+
+		it('preserves each validated payload and correlated response under concurrent dispatch', async () => {
+			const cadenzaView = vi.fn().mockResolvedValue(true);
+			const movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ cadenzaView, movementView });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'cadenza-1',
+				op: 'open',
+				id: 'review',
+				viewType: 'decision',
+				title: 'Review',
+				body: 'Choose',
+				options: [{ label: 'Ship', value: 'ship' }],
+				color: 'green',
+				sessionId: 'agent-1',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'movement-1',
+				op: 'add',
+				id: 'task-1',
+				x: 12,
+				y: 24,
+				width: 300,
+				height: 100,
+				title: 'Ship',
+				body: '{"type":"text"}',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(cadenzaView).toHaveBeenCalledWith({
+				op: 'open',
+				id: 'review',
+				viewType: 'decision',
+				title: 'Review',
+				body: 'Choose',
+				path: undefined,
+				options: [{ label: 'Ship', value: 'ship' }],
+				color: 'green',
+				sessionId: 'agent-1',
+			});
+			expect(movementView).toHaveBeenCalledWith({
+				op: 'add',
+				id: 'task-1',
+				x: 12,
+				y: 24,
+				width: 300,
+				height: 100,
+				title: 'Ship',
+				body: '{"type":"text"}',
+			});
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: true,
+						requestId: 'cadenza-1',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: true,
+						requestId: 'movement-1',
+					}),
+				])
+			);
+		});
+
+		it('preserves malformed operation errors without invoking a callback', () => {
+			const cadenzaView = vi.fn().mockResolvedValue(true);
+			const movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ cadenzaView, movementView });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'bad-cadenza',
+				op: 'unknown',
+				id: 'review',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'bad-movement',
+				op: 'unknown',
+				id: 'task-1',
+			});
+
+			expect(cadenzaView).not.toHaveBeenCalled();
+			expect(movementView).not.toHaveBeenCalled();
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: false,
+						error: 'Invalid or missing op. Must be one of: open, update, close',
+						requestId: 'bad-cadenza',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: false,
+						error: 'Invalid or missing op. Must be one of: add, update, move, remove, clear',
+						requestId: 'bad-movement',
+					}),
+				])
+			);
+		});
+		it('preserves rejection errors and sends on a disconnected client', async () => {
+			handler.setCallbacks({
+				cadenzaView: vi.fn().mockRejectedValue(new Error('cadenza unavailable')),
+				movementView: vi.fn().mockRejectedValue(new Error('movement unavailable')),
+			});
+			Object.assign(client.socket, { readyState: WebSocket.CLOSED });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'reject-cadenza',
+				op: 'close',
+				id: 'review',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'reject-movement',
+				op: 'clear',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: false,
+						error: 'Failed to update cadenza view: cadenza unavailable',
+						requestId: 'reject-cadenza',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: false,
+						error: 'Failed to update movement: movement unavailable',
+						requestId: 'reject-movement',
+					}),
+				])
+			);
+		});
+	});
 });
 
 describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {

@@ -132,6 +132,15 @@ import type {
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
 
+type ViewCommandResponseType = 'cadenza_result' | 'movement_result';
+
+interface ViewCommandRegistration<TPayload> {
+	responseType: ViewCommandResponseType;
+	execute?: (payload: TPayload) => Promise<boolean>;
+	unavailableError: string;
+	failureError: string;
+}
+
 /**
 
  * Session detail for command validation
@@ -391,6 +400,34 @@ export class WebSocketMessageHandler {
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
+	}
+
+	/**
+	 * Send one validated Concerto mutation through its explicitly registered
+	 * callback. Cadenza and Movement retain separate validation and payload types.
+	 */
+	private dispatchViewCommand<TPayload>(
+		client: WebClient,
+		message: WebClientMessage,
+		payload: TPayload,
+		registration: ViewCommandRegistration<TPayload>
+	): void {
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: registration.responseType,
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+		if (!registration.execute) {
+			sendResult(false, registration.unavailableError);
+			return;
+		}
+		registration
+			.execute(payload)
+			.then((success) => sendResult(success, success ? undefined : registration.failureError))
+			.catch((error) => sendResult(false, `${registration.failureError}: ${error.message}`));
 	}
 
 	/**
@@ -4557,14 +4594,14 @@ export class WebSocketMessageHandler {
 			body,
 		};
 
-		if (!this.callbacks.movementView) {
-			sendResult(false, 'Movement not configured');
-			return;
-		}
-		this.callbacks
-			.movementView(payload)
-			.then((success) => sendResult(success, success ? undefined : 'Failed to update movement'))
-			.catch((error) => sendResult(false, `Failed to update movement: ${error.message}`));
+		this.dispatchViewCommand(client, message, payload, {
+			responseType: 'movement_result',
+			execute: this.callbacks.movementView
+				? (viewPayload) => this.callbacks.movementView!(viewPayload)
+				: undefined,
+			unavailableError: 'Movement not configured',
+			failureError: 'Failed to update movement',
+		});
 	}
 
 	/**
@@ -4785,15 +4822,14 @@ export class WebSocketMessageHandler {
 			sessionId: typeof message.sessionId === 'string' ? message.sessionId : undefined,
 		};
 
-		if (!this.callbacks.cadenzaView) {
-			sendResult(false, 'Cadenza views not configured');
-			return;
-		}
-
-		this.callbacks
-			.cadenzaView(payload)
-			.then((success) => sendResult(success, success ? undefined : 'Failed to update cadenza view'))
-			.catch((error) => sendResult(false, `Failed to update cadenza view: ${error.message}`));
+		this.dispatchViewCommand(client, message, payload, {
+			responseType: 'cadenza_result',
+			execute: this.callbacks.cadenzaView
+				? (viewPayload) => this.callbacks.cadenzaView!(viewPayload)
+				: undefined,
+			unavailableError: 'Cadenza views not configured',
+			failureError: 'Failed to update cadenza view',
+		});
 	}
 
 	/**
