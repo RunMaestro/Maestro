@@ -9,6 +9,7 @@ import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
+	parseQuotedArgs,
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
@@ -39,6 +40,43 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		...overrides,
 	};
 }
+
+// ---------------------------------------------------------------------------
+// parseQuotedArgs
+// ---------------------------------------------------------------------------
+
+describe('parseQuotedArgs', () => {
+	it.each([
+		['undefined input', undefined, []],
+		['empty input', '', []],
+		['whitespace-only input', ' \t\n ', []],
+		['double-quoted value', '--name "two words"', ['--name', 'two words']],
+		['single-quoted value', "--name 'two words'", ['--name', 'two words']],
+		['mixed adjacent quoted segments', `--value "two" 'words'`, ['--value', 'two', 'words']],
+		['empty double-quoted value', '--value ""', ['--value', '']],
+		['empty single-quoted value', "--value ''", ['--value', '']],
+		['literal backslashes', '--pattern \\d+ \\w+', ['--pattern', '\\d+', '\\w+']],
+		['literal escaped quotes', '--quote "say \\"hello\\""', ['--quote', 'say \\"hello\\"']],
+		['unicode', '--label "café 東京 😀"', ['--label', 'café 東京 😀']],
+		[
+			'unmatched double quote fallback',
+			'--name "unterminated value',
+			['--name', 'unterminated', 'value'],
+		],
+		[
+			'unmatched single quote fallback',
+			"--name 'unterminated value",
+			['--name', 'unterminated', 'value'],
+		],
+		[
+			'Windows path',
+			`--path 'C:\\Program Files\\Maestro'`,
+			['--path', 'C:\\Program Files\\Maestro'],
+		],
+	])('preserves the established %s contract', (_caseName, input, expected) => {
+		expect(parseQuotedArgs(input)).toEqual(expected);
+	});
+});
 
 // ---------------------------------------------------------------------------
 // buildAgentArgs

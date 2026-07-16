@@ -121,6 +121,27 @@ describe('PtySpawner', () => {
 			expect(args).toContain('--no-rcs');
 		});
 
+		it.each([
+			['empty quoted argument', '--title ""', ['--title', '']],
+			['literal backslashes', '--pattern \\d+ \\w+', ['--pattern', '\\d+', '\\w+']],
+			[
+				'unmatched quote fallback',
+				'--name "unterminated value',
+				['--name', 'unterminated', 'value'],
+			],
+			[
+				'Windows path',
+				`--path 'C:\\Program Files\\Maestro'`,
+				['--path', 'C:\\Program Files\\Maestro'],
+			],
+		])('applies the quoted argument contract to shell %s', (_caseName, shellArgs, expectedArgs) => {
+			const { spawner } = createTestContext();
+			spawner.spawn(createBaseConfig({ shell: 'zsh', shellArgs }));
+
+			const [, args] = mockPtySpawn.mock.calls[0];
+			expect(args).toEqual(['-l', '-i', ...expectedArgs]);
+		});
+
 		it('returns success with pid from PTY process', () => {
 			const { spawner } = createTestContext();
 			const result = spawner.spawn(createBaseConfig({ shell: 'bash' }));
