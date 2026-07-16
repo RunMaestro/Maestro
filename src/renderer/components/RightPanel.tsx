@@ -54,6 +54,10 @@ function NativeRuntimePanel({
 }) {
 	const switchSessionControlId = controlIdForOmpCommand('switch_session');
 	const [sessionPath, setSessionPath] = useState('');
+	const bashControlId = controlIdForOmpCommand('bash');
+	const loginControlId = controlIdForOmpCommand('login');
+	const [shellCommand, setShellCommand] = useState('');
+	const [loginProvider, setLoginProvider] = useState('');
 	const sections = [
 		{
 			title: 'Todo',
@@ -136,6 +140,59 @@ function NativeRuntimePanel({
 						style={{ color: theme.colors.accent }}
 					>
 						Resume
+					</button>
+				</div>
+			</section>
+			<section>
+				<h3 className="text-xs font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+					Native commands
+				</h3>
+				<div className="flex gap-2">
+					<input
+						value={shellCommand}
+						onChange={(event) => setShellCommand(event.target.value)}
+						placeholder="Run OMP shell command"
+						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+					/>
+					<button
+						type="button"
+						disabled={!bashControlId || !shellCommand.trim()}
+						onClick={() =>
+							bashControlId &&
+							void window.maestro.process.setAgentControl(
+								sessionId,
+								bashControlId,
+								shellCommand.trim()
+							)
+						}
+						className="text-xs underline disabled:opacity-50"
+						style={{ color: theme.colors.accent }}
+					>
+						Run
+					</button>
+				</div>
+				<div className="mt-2 flex gap-2">
+					<input
+						value={loginProvider}
+						onChange={(event) => setLoginProvider(event.target.value)}
+						placeholder="OMP login provider"
+						className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+					/>
+					<button
+						type="button"
+						disabled={!loginControlId || !loginProvider.trim()}
+						onClick={() =>
+							loginControlId &&
+							void window.maestro.process.setAgentControl(
+								sessionId,
+								loginControlId,
+								loginProvider.trim()
+							)
+						}
+						className="text-xs underline disabled:opacity-50"
+						style={{ color: theme.colors.accent }}
+					>
+						Login
 					</button>
 				</div>
 			</section>

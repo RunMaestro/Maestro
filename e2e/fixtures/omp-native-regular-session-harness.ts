@@ -1,3 +1,4 @@
+import { _electron as electron, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -7,16 +8,55 @@ import {
 	type LaunchedApp,
 	type SeededEnv,
 } from './plugin-harness';
-import { createBundledOmpFixture, type OmpFixture } from './omp-fixture';
+import { createExpandedNativeFixture, type ExpandedFixture } from './omp-native-expanded-fixture';
 
 const INJECTED_ELECTRON_MAIN = path.join(__dirname, 'omp-native-electron-main.cjs');
 export interface NativeOmpRegularSessionHarness {
 	readonly seeded: SeededEnv;
-	readonly fixture: OmpFixture;
+	readonly fixture: ExpandedFixture;
 	readonly launched: LaunchedApp;
 	close(): Promise<void>;
 }
 
+const MAX_MAIN_OUTPUT_BYTES = 512 * 1024;
+
+function appendMainOutput(current: string, chunk: Buffer): string {
+	if (current.length >= MAX_MAIN_OUTPUT_BYTES) return current;
+	const text = chunk.toString();
+	const bounded =
+		text.length > 16 * 1024
+			? `${text.slice(0, 16 * 1024)}\n[truncated main-process chunk]\n`
+			: text;
+	return current + bounded.slice(0, MAX_MAIN_OUTPUT_BYTES - current.length);
+}
+
+async function launchNative(env: NodeJS.ProcessEnv): Promise<LaunchedApp> {
+	let app: ElectronApplication | undefined;
+	let output = '';
+	try {
+		app = await electron.launch({
+			args: [INJECTED_ELECTRON_MAIN],
+			env,
+			timeout: 60_000,
+		});
+		app.process().stdout?.on('data', (chunk: Buffer) => {
+			output = appendMainOutput(output, chunk);
+		});
+		app.process().stderr?.on('data', (chunk: Buffer) => {
+			output = appendMainOutput(output, chunk);
+		});
+		const window = await app.firstWindow({ timeout: 30_000 });
+		await window.waitForLoadState('domcontentloaded');
+		return { app, window, output: () => output };
+	} catch (error) {
+		await app?.close().catch(() => undefined);
+		const detail = output.trim() || '(no Electron main-process output captured)';
+		throw new Error(
+			`Native OMP Electron startup failed before a window was available:\n${detail}`,
+			{ cause: error }
+		);
+	}
+}
 /** Test-only composition root: production startup receives a signed, exact 16.4.8
  * fixture and verified RuntimeLaunch via its public dependency seam. */
 export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpRegularSessionHarness> {
@@ -33,29 +73,51 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 		};
 		settings.suppressWindowsWarning = true;
 		fs.writeFileSync(settingsPath, JSON.stringify(settings, null, '\t'), 'utf8');
-		const fixture = await createBundledOmpFixture(seeded.demoDir);
+		const fixture = await createExpandedNativeFixture(seeded.demoDir);
 		Object.assign(seeded.env, {
 			MAESTRO_E2E_OMP_ARCHIVE_PATH: fixture.artifactPath,
 			MAESTRO_E2E_OMP_ARCHIVE_SHA256: fixture.sha256,
 			MAESTRO_E2E_OMP_RUNTIME_PATH: fixture.runtimePath,
 			MAESTRO_E2E_OMP_BUN_PATH: process.execPath,
 			MAESTRO_E2E_OMP_TRUST_ROOT: JSON.stringify(fixture.trustRoot),
+			OMP_NATIVE_FIXTURE_LOG: path.join(seeded.demoDir, 'native-expanded', 'frames.jsonl'),
 		});
-		launched = await launch(seeded.env, INJECTED_ELECTRON_MAIN);
+		launched = await launchNative(seeded.env);
 		const windowsNotice = launched.window.getByRole('button', { name: 'Got it!' });
-		if (await windowsNotice.isVisible().catch(() => false)) await windowsNotice.click();
+		await windowsNotice
+			.waitFor({ state: 'visible', timeout: 10_000 })
+			.then(async () => {
+				await windowsNotice.evaluate((button) => (button as HTMLButtonElement).click());
+				await windowsNotice.waitFor({ state: 'hidden', timeout: 10_000 });
+			})
+			.catch(() => undefined);
+		await launched.window.waitForFunction(
+			() => document.getElementById('initial-splash') === null,
+			undefined,
+			{ timeout: 20_000 }
+		);
 		return {
 			seeded,
 			fixture,
 			launched,
 			close: async () => {
-				await launched!.app.close();
-				cleanup(seeded);
+				try {
+					await launched!.app.evaluate(({ app }) => app.quit());
+					await launched!.app.close();
+				} finally {
+					cleanup(seeded);
+				}
 			},
 		};
 	} catch (error) {
-		if (launched) await launched.app.close();
-		cleanup(seeded);
+		try {
+			if (launched) {
+				await launched.app.evaluate(({ app }) => app.quit()).catch(() => undefined);
+				await launched.app.close();
+			}
+		} finally {
+			cleanup(seeded);
+		}
 		throw error;
 	}
 }
