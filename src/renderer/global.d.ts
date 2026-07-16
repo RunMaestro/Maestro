@@ -187,6 +187,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { CoworkingResponseChannel } from '../shared/coworkingResponseChannel';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -4010,6 +4011,7 @@ interface MaestroAPI {
 	};
 
 	// Coworking API (per-agent MCP installer + terminal registry sync)
+
 	coworking: {
 		getInstallStatus: () => Promise<
 			Array<{ agentId: string; configPath: string; installed: boolean }>
@@ -4029,9 +4031,17 @@ interface MaestroAPI {
 		) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		onRequestBuffer: (
-			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
+			callback: (
+				tabUuid: string,
+				sessionId: string,
+				responseChannel: CoworkingResponseChannel<'buffer'>
+			) => void
 		) => () => void;
-		sendBufferResponse: (responseChannel: string, content: string, ok?: boolean) => void;
+		sendBufferResponse: (
+			responseChannel: CoworkingResponseChannel<'buffer'>,
+			content: string,
+			ok?: boolean
+		) => void;
 		syncSessionBrowsers: (
 			sessionId: string,
 			inputs: Array<{
@@ -4053,12 +4063,12 @@ interface MaestroAPI {
 				tabUuid: string,
 				sessionId: string,
 				op: BrowserOp,
-				responseChannel: string,
+				responseChannel: CoworkingResponseChannel<'browser-op'>,
 				needsConfirm?: boolean
 			) => void
 		) => () => void;
 		sendBrowserOpResponse: (
-			responseChannel: string,
+			responseChannel: CoworkingResponseChannel<'browser-op'>,
 			result: {
 				content?: string;
 				dataUrl?: string;

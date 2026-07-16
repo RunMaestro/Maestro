@@ -10,6 +10,11 @@ import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandle
 import { coworkingRegistry } from '../../coworking/coworking-registry';
 import { setBrowserResolver, setTerminalBufferResolver } from '../../coworking/coworking-tools';
 import {
+	createCoworkingRendererRoundTrip,
+	parseBrowserOpResponse,
+	parseTerminalBufferResponse,
+} from '../../coworking/coworking-response-channel';
+import {
 	getInstallStatus,
 	installFor,
 	installForAll,
@@ -128,7 +133,6 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// webContents.send a request with a unique responseChannel + that sessionId (so the
 	// renderer picks the correct TerminalView from its per-session ref map); the renderer
 	// answers via ipcRenderer.send(responseChannel, content).
-	let nextRequestId = 1;
 	const BUFFER_REQUEST_TIMEOUT_MS = 5000;
 	// Browser ops can involve a page-text extraction or a webview activation, so
 	// give them more headroom than terminal reads. Kept under the MCP server's
@@ -139,48 +143,25 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// BROWSER_INTERACT_TIMEOUT_MS (from shared/coworkingBrowser) so the renderer
 	// approval auto-decline stays in lockstep with this cap.
 
-	setTerminalBufferResolver(async (sessionId: string, tabUuid: string): Promise<string> => {
+	setTerminalBufferResolver((sessionId: string, tabUuid: string): Promise<string> => {
 		const win = deps.getMainWindow();
 		if (!win || win.isDestroyed()) {
-			throw new Error('Coworking: main window is not available to read terminal buffer');
+			return Promise.reject(
+				new Error('Coworking: main window is not available to read terminal buffer')
+			);
 		}
-		const responseChannel = `coworking:bufferResponse:${nextRequestId++}`;
-		const expectedSenderId = win.webContents.id;
-		const { promise, resolve, reject } = Promise.withResolvers<string>();
-		const handler = (_event: Electron.IpcMainEvent, content: string, ok?: boolean) => {
-			// Drop responses originating from any renderer other than our main window
-			// - defense-in-depth against a malicious or misconfigured renderer.
-			if (_event.sender.id !== expectedSenderId) return;
-			clearTimeout(timer);
-			ipcMain.removeListener(responseChannel, handler);
-			// The renderer signals a non-live terminal (its TerminalView ref isn't
-			// mounted) via ok:false, mirroring the browser channel's ok:false path,
-			// so readTerminal rejects with a clear error instead of resolving a
-			// false, successful empty read.
-			if (ok === false) {
-				reject(
-					new Error('Coworking: terminal is not live in the renderer (its view is not mounted)')
-				);
-				return;
-			}
-			resolve(typeof content === 'string' ? content : '');
-		};
-		const timer = setTimeout(() => {
-			ipcMain.removeListener(responseChannel, handler);
-			reject(new Error('Coworking: timed out waiting for terminal buffer from renderer'));
-		}, BUFFER_REQUEST_TIMEOUT_MS);
-		ipcMain.on(responseChannel, handler);
-		try {
-			win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
-		} catch (err) {
-			// If `send` throws (e.g. window destroyed between the guard and now),
-			// surface it immediately instead of waiting out the 5s timeout while
-			// the listener leaks.
-			clearTimeout(timer);
-			ipcMain.removeListener(responseChannel, handler);
-			reject(err instanceof Error ? err : new Error(String(err)));
-		}
-		return promise;
+		return createCoworkingRendererRoundTrip({
+			webContents: win.webContents,
+			requestChannel: 'coworking:requestBuffer',
+			requestArgs: [tabUuid, sessionId],
+			responseKind: 'buffer',
+			timeoutMs: BUFFER_REQUEST_TIMEOUT_MS,
+			timeoutError: () =>
+				new Error('Coworking: timed out waiting for terminal buffer from renderer'),
+			destroyedError: () =>
+				new Error('Coworking: renderer was destroyed while waiting for terminal buffer'),
+			parseResponse: parseTerminalBufferResponse,
+		});
 	});
 
 	// ---- Browser-op resolver (main -> renderer -> main) ----
@@ -191,35 +172,13 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// mounted hidden webview and only activates the tab as a fallback) and await
 	// the BrowserOpResult on a unique, sender-validated responseChannel.
 	setBrowserResolver(
-		async (sessionId: string, tabUuid: string, op: BrowserOp): Promise<BrowserOpResult> => {
+		(sessionId: string, tabUuid: string, op: BrowserOp): Promise<BrowserOpResult> => {
 			const win = deps.getMainWindow();
 			if (!win || win.isDestroyed()) {
-				throw new Error('Coworking: main window is not available to drive browser tab');
+				return Promise.reject(
+					new Error('Coworking: main window is not available to drive browser tab')
+				);
 			}
-			const responseChannel = `coworking:browserOpResponse:${nextRequestId++}`;
-			const expectedSenderId = win.webContents.id;
-			const { promise, resolve, reject } = Promise.withResolvers<BrowserOpResult>();
-			const handler = (_event: Electron.IpcMainEvent, result: BrowserOpResult) => {
-				if (_event.sender.id !== expectedSenderId) return;
-				clearTimeout(timer);
-				ipcMain.removeListener(responseChannel, handler);
-				// The renderer reports op failures (tab not live, selector miss, eval
-				// throw) via ok:false + a message in content, so the agent gets a clean
-				// JSON-RPC error instead of a silent empty result.
-				if (result && result.ok === false) {
-					reject(new Error(result.content || 'Coworking: browser op failed'));
-					return;
-				}
-				resolve(result);
-			};
-			const timer = setTimeout(
-				() => {
-					ipcMain.removeListener(responseChannel, handler);
-					reject(new Error('Coworking: timed out waiting for browser op from renderer'));
-				},
-				op.kind === 'read' ? BROWSER_OP_TIMEOUT_MS : BROWSER_INTERACT_TIMEOUT_MS
-			);
-			ipcMain.on(responseChannel, handler);
 			// Main computes the per-call approval requirement from its own mirrored
 			// policy and sends it with the request, so the renderer's approval gate
 			// holds even if the renderer's local settings read is stale. The renderer
@@ -228,21 +187,18 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
 				op.kind
 			);
-			try {
-				win.webContents.send(
-					'coworking:requestBrowserOp',
-					tabUuid,
-					sessionId,
-					op,
-					responseChannel,
-					needsConfirm
-				);
-			} catch (err) {
-				clearTimeout(timer);
-				ipcMain.removeListener(responseChannel, handler);
-				reject(err instanceof Error ? err : new Error(String(err)));
-			}
-			return promise;
+			return createCoworkingRendererRoundTrip({
+				webContents: win.webContents,
+				requestChannel: 'coworking:requestBrowserOp',
+				requestArgs: [tabUuid, sessionId, op],
+				responseArgsAfterChannel: [needsConfirm],
+				responseKind: 'browser-op',
+				timeoutMs: op.kind === 'read' ? BROWSER_OP_TIMEOUT_MS : BROWSER_INTERACT_TIMEOUT_MS,
+				timeoutError: () => new Error('Coworking: timed out waiting for browser op from renderer'),
+				destroyedError: () =>
+					new Error('Coworking: renderer was destroyed while waiting for browser op'),
+				parseResponse: parseBrowserOpResponse,
+			});
 		}
 	);
 }
