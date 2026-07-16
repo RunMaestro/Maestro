@@ -127,7 +127,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
-			<div className="flex min-w-0 flex-1 gap-1 items-center">
+			<div className="flex min-w-0 flex-1 flex-wrap gap-1 items-center">
 				{isTerminalMode && (
 					<div
 						className="text-xs font-mono opacity-60 px-2 truncate"
@@ -237,6 +237,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 					setEffortMenuOpen={setEffortMenuOpen}
 					effortMenuRef={effortMenuRef}
 				/>
+				{isAiMode && (
+					<AgentRuntimeControls
+						sessionId={`${session.id}-ai-${session.activeTabId}`}
+						controls={session.runtimeFeatures?.controls}
+						theme={theme}
+					/>
+				)}
 			</div>
 
 			{isNarrowViewport && (
@@ -386,11 +393,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 					{formatEnterToSend(enterToSend)}
 				</button>
 			</div>
-			<AgentRuntimeControls
-				sessionId={`${session.id}-ai-${session.activeTabId}`}
-				controls={session.runtimeFeatures?.controls}
-				theme={theme}
-			/>
 		</div>
 	);
 });
