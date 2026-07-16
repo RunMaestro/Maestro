@@ -411,13 +411,21 @@ export class OmpNativeSessionAdapter {
 			}
 			if (method === 'open_url') {
 				const url = stringAt(callback, 'launchUrl') ?? stringAt(callback, 'url');
-				if (url) this.options.send('process:open-external-url', this.options.sessionId, url);
-				else
+				if (!url) {
 					this.options.send(
 						'process:stderr',
 						this.options.sessionId,
 						'OMP open_url request is missing a URL'
 					);
+				} else if (isExternalHttpUrl(url)) {
+					this.options.send('process:open-external-url', this.options.sessionId, url);
+				} else {
+					this.options.send(
+						'process:stderr',
+						this.options.sessionId,
+						'OMP open_url request has an invalid URL'
+					);
+				}
 				return;
 			}
 			if (isNativeProjectionRequest(method)) {
@@ -604,6 +612,14 @@ function stringAt(record: Record<string, unknown>, key: string): string | undefi
 	return typeof record[key] === 'string' ? (record[key] as string) : undefined;
 }
 
+function isExternalHttpUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === 'http:' || url.protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
 function textFrom(record: Record<string, unknown>): string | undefined {
 	for (const key of ['delta', 'content', 'text', 'message', 'result']) {
 		const value = record[key];

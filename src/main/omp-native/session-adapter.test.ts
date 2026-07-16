@@ -786,6 +786,41 @@ describe('OmpNativeSessionAdapter', () => {
 			'tab-text-requests',
 			'https://login.example.test/launch'
 		);
+		for (const url of [
+			'javascript:alert(1)',
+			'file:///C:/secret.txt',
+			'maestro://session/status',
+		]) {
+			emit(child, {
+				type: 'extension_ui_request',
+				id: `invalid-url-${url}`,
+				method: 'open_url',
+				url,
+			});
+		}
+		expect(send).not.toHaveBeenCalledWith(
+			'process:open-external-url',
+			'tab-text-requests',
+			'javascript:alert(1)'
+		);
+		expect(send).not.toHaveBeenCalledWith(
+			'process:open-external-url',
+			'tab-text-requests',
+			'file:///C:/secret.txt'
+		);
+		expect(send).not.toHaveBeenCalledWith(
+			'process:open-external-url',
+			'tab-text-requests',
+			'maestro://session/status'
+		);
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId, message]) =>
+					channel === 'process:stderr' &&
+					sessionId === 'tab-text-requests' &&
+					message === 'OMP open_url request has an invalid URL'
+			)
+		).toHaveLength(3);
 	});
 
 	it('replays the captured RPC turn: nested delta, data-less prompt response, and turn completion', async () => {
