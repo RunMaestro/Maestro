@@ -7,38 +7,19 @@
 //   {a:"key", key:"Enter", mods:0}                   -> dispatch keyDown+keyUp via Input domain
 //   {a:"sleep", ms:500}
 // Prints a JSON array of per-action results.
-import WebSocket from 'ws';
+import { connectCdp, getCdpTargets, resolveCdpPort } from './lib/cdp.mjs';
 
-const PORT = process.env.MAESTRO_CDP_PORT || '12345';
+const PORT = resolveCdpPort();
 const actions = JSON.parse(process.argv[2] || '[]');
 
-const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+const targets = await getCdpTargets({ port: PORT });
+const page = targets.find((target) => target.type === 'page' && target.webSocketDebuggerUrl);
 if (!page) {
 	console.error('no page target');
 	process.exit(1);
 }
 
-const ws = new WebSocket(page.webSocketDebuggerUrl, {
-	perMessageDeflate: false,
-	maxPayload: 200 * 1024 * 1024,
-});
-let id = 0;
-const pending = new Map();
-function send(method, params) {
-	return new Promise((resolve) => {
-		const msgId = ++id;
-		pending.set(msgId, resolve);
-		ws.send(JSON.stringify({ id: msgId, method, params }));
-	});
-}
-ws.on('message', (data) => {
-	const msg = JSON.parse(data.toString());
-	if (msg.id && pending.has(msg.id)) {
-		pending.get(msg.id)(msg);
-		pending.delete(msg.id);
-	}
-});
+const { ws, send, close } = connectCdp(page.webSocketDebuggerUrl);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function evalExpr(expr) {
@@ -122,7 +103,7 @@ ws.on('open', async () => {
 		}
 	}
 	console.log(JSON.stringify(results, null, 2));
-	ws.close();
+	close();
 	process.exit(0);
 });
 ws.on('error', (e) => {
