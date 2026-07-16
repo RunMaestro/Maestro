@@ -189,6 +189,46 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+
+	test('settles a local-only native prompt without synthetic agent terminal events', async ({
+		browserName: _browserName,
+	}) => {
+		void _browserName;
+		test.setTimeout(120_000);
+		const harness = await launchNativeOmpRegularSessionHarness();
+		const { launched } = harness;
+		try {
+			await launched.window.getByRole('button', { name: 'New Agent' }).click();
+			await launched.window.getByText('Manual Setup', { exact: true }).click();
+			await launched.window.getByText('Oh My Pi', { exact: true }).click();
+			await launched.window.locator('input').first().fill('Native OMP local-only');
+			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
+			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
+			const composer = launched.window.locator('textarea').last();
+			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
+			await composer.fill('local-only native prompt');
+			await composer.press('Enter');
+			await expect(
+				launched.window.getByText('native local-only output', { exact: true })
+			).toBeVisible({ timeout: 30_000 });
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect
+				.poll(
+					() => {
+						const frames = fs.readFileSync(frameLogPath, 'utf8');
+						return (
+							frames.includes('"agentInvoked":false') &&
+							(frames.match(/"type":"turn_end"/g) ?? []).length === 0 &&
+							(frames.match(/"type":"agent_end"/g) ?? []).length === 0
+						);
+					},
+					{ timeout: 10_000 }
+				)
+				.toBe(true);
+		} finally {
+			await harness.close();
+		}
+	});
 	test('renders select and input native approval requests', async ({
 		browserName: _browserName,
 	}) => {

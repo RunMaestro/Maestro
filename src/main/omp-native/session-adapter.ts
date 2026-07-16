@@ -133,12 +133,13 @@ export class OmpNativeSessionAdapter {
 		this.turnEmittedAssistantText = false;
 		this.turnInFlight = true;
 		try {
-			await this.client.command({
+			const response = await this.client.command({
 				type: 'prompt',
 				message,
 				streamingBehavior: 'steer',
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
+			if (agentWasNotInvoked(response.data)) this.completeTurn();
 		} catch (error) {
 			this.turnInFlight = false;
 			throw error;
@@ -397,6 +398,7 @@ export class OmpNativeSessionAdapter {
 			const text = textFrom(callback);
 			if (text && !this.turnEmittedAssistantText)
 				this.options.send('process:data', this.options.sessionId, text);
+			if (callback.agentInvoked === false) this.completeTurn();
 			return;
 		}
 		if (callback.type === 'available_commands_update') {
@@ -666,6 +668,10 @@ function nativeAdapterBaseSessionId(sessionId: string): string {
 	const aiTabMatch = sessionId.match(/^(.+)-ai-.+?(?:-fp-\d+)?$/);
 	if (aiTabMatch) return aiTabMatch[1];
 	return sessionId.endsWith('-ai') ? sessionId.slice(0, -'-ai'.length) : sessionId;
+}
+
+function agentWasNotInvoked(value: unknown): boolean {
+	return asRecord(value).agentInvoked === false;
 }
 function textFrom(record: Record<string, unknown>): string | undefined {
 	for (const key of ['delta', 'content', 'text', 'message', 'result']) {

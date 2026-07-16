@@ -100,9 +100,10 @@ export interface OmpCompatibilityEntry {
 
 function commandEntry(command: OmpCommandType): OmpCompatibilityEntry {
 	const entry = OMP_16_4_8_COMMAND_REGISTRY[command as OmpCommandId];
+	const disposition = entry.disposition === 'unsupported' ? 'unavailable' : entry.disposition;
 	return {
 		version: '16.4.8',
-		disposition: entry.disposition,
+		disposition,
 		terminal: 'response',
 		sequence: 'correlated',
 		...(entry.disposition === 'ui'

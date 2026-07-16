@@ -57,7 +57,6 @@ const finish = (cancelled = false) => {
   event('message_end', { role: 'assistant', content: cancelled ? 'native turn cancelled' : 'native expanded complete' });
   event('turn_end', { sessionId, cancelled });
   event('agent_end', { sessionId });
-  event('prompt_result', { text: cancelled ? 'native turn cancelled' : 'native expanded complete', agentInvoked: true });
   streaming = false;
   pendingApproval = null;
 };
@@ -71,6 +70,12 @@ const prompt = (request) => {
   const text = String(request.message ?? '');
   turn += 1;
   streaming = true;
+  if (text.includes('local-only')) {
+    response(request, { accepted: true, agentInvoked: false });
+    emit({ type: 'prompt_result', text: 'native local-only output', agentInvoked: false });
+    streaming = false;
+    return;
+  }
   response(request, { accepted: true });
   event('agent_start', { sessionId });
   event('turn_start', { sessionId });

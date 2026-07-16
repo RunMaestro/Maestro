@@ -166,6 +166,58 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(OmpNativeSessionAdapter.forAssociatedSessions('session-base-ai')).toEqual([]);
 	});
 
+	it('settles local-only prompt responses without manufacturing an agent lifecycle', async () => {
+		const child = new FakeChild();
+		const promptResponses = [{ agentInvoked: false }, {}];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id) {
+				const data = command.type === 'prompt' ? promptResponses.shift() : {};
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data,
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-local-only',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('/local');
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-local-only',
+			0,
+			OMP_NATIVE_TURN_COMPLETION
+		);
+		emit(child, { type: 'prompt_result', agentInvoked: false, text: 'local output' });
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-local-only', 'local output');
+		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
+			1
+		);
+
+		await adapter.prompt('/callback-local');
+		emit(child, { type: 'prompt_result', agentInvoked: false, text: 'callback output' });
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-local-only', 'callback output');
+		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
+			2
+		);
+	});
+
 	it('settles each RPC turn and uses prompt results only when no assistant deltas streamed', async () => {
 		const child = new FakeChild();
 		const promptMessages: string[] = [];

@@ -90,6 +90,27 @@ describe('OMP 16.4.8 compatibility table', () => {
 		});
 	});
 
+	it('maps every registry-only command to the public unavailable disposition', () => {
+		const unsupported = [
+			'steer',
+			'follow_up',
+			'abort_and_prompt',
+			'set_todos',
+			'get_subagent_messages',
+			'get_branch_messages',
+			'get_last_assistant_text',
+			'get_login_providers',
+		] as const;
+		for (const command of unsupported) {
+			expect(OMP_16_4_8_COMMAND_REGISTRY[command].disposition).toBe('unsupported');
+			expect(OMP_16_4_8_COMPATIBILITY[command]).toMatchObject({
+				disposition: 'unavailable',
+				terminal: 'response',
+				sequence: 'correlated',
+			});
+		}
+	});
+
 	it('drift-checks real initialization and callback boundaries against the sanitized transcript', () => {
 		expect(OMP_16_4_8_TRANSCRIPT.initialization.availableCommands.commands[0]).toMatchObject({
 			name: expect.any(String),
