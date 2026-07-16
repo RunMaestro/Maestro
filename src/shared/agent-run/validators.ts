@@ -1,4 +1,5 @@
 import { hasInvalidOptionalStrings } from '../validation';
+import { resolveAgentRunProvider } from './provider';
 import {
 	AGENT_RUN_CHECK_STATUSES,
 	AGENT_RUN_MERGE_STATUSES,
@@ -15,7 +16,6 @@ import {
 	type AgentRunPullRequest,
 	type AgentRunReviewFinding,
 	type AgentRunSummary,
-	type AgentRunProvider,
 	type AgentRunStatus,
 } from './types';
 
@@ -334,11 +334,15 @@ function validateAgentRunWithOptions(
 		return null;
 	}
 
+	const resolvedProvider = resolveAgentRunProvider(raw.provider);
+	const provider =
+		resolvedProvider === 'unknown' && raw.provider !== 'unknown' ? raw.provider : resolvedProvider;
+
 	const run: AgentRun = {
 		id: raw.id,
 		createdAt: raw.createdAt,
 		updatedAt: raw.updatedAt,
-		provider: raw.provider as AgentRunProvider,
+		provider,
 		status: raw.status,
 		artifacts,
 		touchedFiles,

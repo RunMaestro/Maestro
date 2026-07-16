@@ -85,7 +85,7 @@ function generateManyAgentsData(numAgents: number): StatsAggregation {
 		'tabnine',
 		'amazon-q',
 		'gemini-cli',
-		'qwen-coder',
+		'qwen3-coder',
 		'deepseek',
 		'codellama',
 		'starcoder',

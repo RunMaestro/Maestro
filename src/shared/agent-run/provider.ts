@@ -7,18 +7,9 @@
  * seam and the CLI capture hook resolve providers identically.
  */
 
+import { resolveAgentId } from '../agentRegistry';
 import { KNOWN_AGENT_RUN_PROVIDERS, type AgentRunProvider } from './types';
 
-/** toolType spellings that differ from the canonical provider id. */
-const TOOL_TYPE_ALIASES: Record<string, AgentRunProvider> = {
-	claude: 'claude-code',
-	claudecode: 'claude-code',
-	copilot: 'copilot-cli',
-	droid: 'factory-droid',
-	factory: 'factory-droid',
-	qwen: 'qwen-coder',
-	'qwen-code': 'qwen-coder',
-};
 
 /**
  * Resolve a canonical provider from a raw toolType. Returns `unknown` for empty
@@ -31,5 +22,9 @@ export function resolveAgentRunProvider(toolType: string | undefined): AgentRunP
 	if ((KNOWN_AGENT_RUN_PROVIDERS as readonly string[]).includes(normalized)) {
 		return normalized as AgentRunProvider;
 	}
-	return TOOL_TYPE_ALIASES[normalized] ?? 'unknown';
+
+	const agentId = resolveAgentId(normalized);
+	return agentId && (KNOWN_AGENT_RUN_PROVIDERS as readonly string[]).includes(agentId)
+		? agentId
+		: 'unknown';
 }

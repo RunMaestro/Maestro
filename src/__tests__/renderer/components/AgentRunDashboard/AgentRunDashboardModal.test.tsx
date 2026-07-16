@@ -314,6 +314,33 @@ describe('AgentRunDashboardModal', () => {
 		});
 	});
 
+	it('offers only canonical Qwen provider filters for persisted Qwen runs', async () => {
+		agentRunApi().list.mockResolvedValue({
+			success: true,
+			runs: [
+				baseRun,
+				{
+					...secondRun,
+					id: 'run-qwen',
+					provider: 'qwen3-coder',
+					prompt: 'Canonical Qwen run',
+				},
+			],
+		});
+
+		renderModal();
+		await screen.findByText('Canonical Qwen run');
+
+		const providerFilter = screen.getByLabelText('Provider filter') as HTMLSelectElement;
+		expect(Array.from(providerFilter.options, (option) => option.value)).toContain('qwen3-coder');
+		expect(Array.from(providerFilter.options, (option) => option.value)).not.toContain('qwen-coder');
+
+		fireEvent.change(providerFilter, { target: { value: 'qwen3-coder' } });
+
+		expect(screen.getByText('Canonical Qwen run')).toBeInTheDocument();
+		expect(screen.queryByText('Implement parser dashboard')).not.toBeInTheDocument();
+	});
+
 	it('surfaces service errors from the hook instead of hiding failed loads', async () => {
 		agentRunApi().list.mockResolvedValue({ success: false, error: 'Agent run store offline' });
 		agentRunApi().campaigns.list.mockResolvedValue({

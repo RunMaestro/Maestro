@@ -19,7 +19,7 @@ export const KNOWN_AGENT_RUN_PROVIDERS = [
 	'opencode',
 	'factory-droid',
 	'copilot-cli',
-	'qwen-coder',
+	'qwen3-coder',
 	'omp',
 	'cursor',
 	'unknown',
