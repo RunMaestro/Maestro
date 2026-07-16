@@ -3,6 +3,7 @@
 import * as crypto from 'crypto';
 import { readSshRemotes, writeSshRemotes, writeSettingValue } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { parseEnvironmentAssignments } from '../utils/environment';
 import type { SshRemoteConfig } from '../../shared/types';
 
 interface CreateSshRemoteOptions {
@@ -44,22 +45,19 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		}
 	}
 
-	// Parse environment variables
+	// Parse environment variables.
 	let remoteEnv: Record<string, string> | undefined;
 	if (options.env && options.env.length > 0) {
-		remoteEnv = {};
-		for (const entry of options.env) {
-			const eqIndex = entry.indexOf('=');
-			if (eqIndex === -1) {
-				const msg = `Invalid --env format "${entry}". Expected KEY=VALUE`;
-				if (options.json) {
-					console.log(JSON.stringify({ success: false, error: msg }));
-				} else {
-					console.error(formatError(msg));
-				}
-				process.exit(1);
+		try {
+			remoteEnv = parseEnvironmentAssignments(options.env);
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (options.json) {
+				console.log(JSON.stringify({ success: false, error: msg }));
+			} else {
+				console.error(formatError(msg));
 			}
-			remoteEnv[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
+			process.exit(1);
 		}
 	}
 
