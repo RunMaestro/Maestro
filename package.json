@@ -329,7 +329,6 @@
 		"autoprefixer": "^10.4.16",
 		"baseline-browser-mapping": "^2.9.17",
 		"canvas": "^3.2.0",
-		"concurrently": "^8.2.2",
 		"cross-env": "^7.0.3",
 		"electron": "^41.5.0",
 		"electron-builder": "^26.8.1",
