@@ -15,13 +15,13 @@ import { SessionList } from '../../renderer/components/SessionList';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { createMockTheme } from '../helpers/mockTheme';
-import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
+import { createMockGroup } from '../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { seedSidebarNav, resetSidebarNavStore } from '../helpers/seedSidebarNav';
 import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { useUIStore } from '../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
-
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
 	const result = render(<LayerStackProvider>{ui}</LayerStackProvider>);
@@ -224,15 +224,6 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		autoRunPreviewScrollPos: 0,
 		...overrides,
 	});
-
-// Create mock group
-const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
-	id: 'group-1',
-	name: 'Test Group',
-	emoji: '📁',
-	collapsed: false,
-	...overrides,
-});
 
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({

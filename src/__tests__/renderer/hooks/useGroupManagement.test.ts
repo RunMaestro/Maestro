@@ -12,25 +12,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupManagement, type UseGroupManagementDeps } from '../../../renderer/hooks';
-import type { Group, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import { createMockGroup } from '../../helpers/mockGroup';
 import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
-const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
-	id: 'group-1',
-	name: 'ALPHA',
-	emoji: '📁',
-	collapsed: false,
-	...overrides,
-});
-
 // createMockSession imported from shared helper
 
 const createDeps = (overrides: Partial<UseGroupManagementDeps> = {}): UseGroupManagementDeps => ({
-	groups: [createMockGroup()],
+	groups: [createMockGroup({ name: 'ALPHA' })],
 	setGroups: vi.fn(),
 	setSessions: vi.fn(),
 	draggingSessionId: null,
@@ -189,8 +182,8 @@ describe('useGroupManagement', () => {
 	});
 
 	it('sets a root group parent', () => {
-		const parent = createMockGroup({ id: 'parent' });
-		const child = createMockGroup({ id: 'child' });
+		const parent = createMockGroup({ id: 'parent', name: 'ALPHA' });
+		const child = createMockGroup({ id: 'child', name: 'ALPHA' });
 		const deps = createDeps({ groups: [parent, child] });
 		const { result } = renderHook(() => useGroupManagement(deps));
 
@@ -203,9 +196,9 @@ describe('useGroupManagement', () => {
 	});
 
 	it('rejects a move that would exceed the depth cap', () => {
-		const parent = createMockGroup({ id: 'parent' });
-		const child = createMockGroup({ id: 'child', parentGroupId: 'parent' });
-		const grandchild = createMockGroup({ id: 'grandchild' });
+		const parent = createMockGroup({ id: 'parent', name: 'ALPHA' });
+		const child = createMockGroup({ id: 'child', name: 'ALPHA', parentGroupId: 'parent' });
+		const grandchild = createMockGroup({ id: 'grandchild', name: 'ALPHA' });
 		const deps = createDeps({ groups: [parent, child, grandchild] });
 		const { result } = renderHook(() => useGroupManagement(deps));
 

@@ -12,7 +12,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type {
 	Session,
-	Group,
 	HistoryEntry,
 	UsageStats,
 	BatchRunConfig,
@@ -25,6 +24,7 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createMockGroup } from '../../helpers/mockGroup';
 
 // Mock notifyToast so we can verify toast notifications
 const { mockNotifyToast } = vi.hoisted(() => ({
@@ -590,13 +590,6 @@ describe('useBatchProcessor hook', () => {
 			...overrides,
 		});
 
-	const createMockGroup = (overrides?: Partial<Group>): Group => ({
-		id: 'test-group-id',
-		name: 'Test Group',
-		collapsed: false,
-		...overrides,
-	});
-
 	// Mock callbacks
 	let mockOnUpdateSession: ReturnType<typeof vi.fn>;
 	let mockOnSpawnAgent: ReturnType<typeof vi.fn>;
@@ -701,7 +694,7 @@ describe('useBatchProcessor hook', () => {
 	describe('hook initialization', () => {
 		it('should initialize with empty batch states', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -723,7 +716,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should provide getBatchState that returns default state for unknown sessions', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -761,7 +754,7 @@ describe('useBatchProcessor hook', () => {
 		 */
 		it('should provide correct initial state via getBatchState', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -783,7 +776,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should track hasAnyActiveBatch correctly', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -806,7 +799,7 @@ describe('useBatchProcessor hook', () => {
 				createMockSession({ id: 'session-1' }),
 				createMockSession({ id: 'session-2' }),
 			];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -833,7 +826,7 @@ describe('useBatchProcessor hook', () => {
 	describe('setCustomPrompt', () => {
 		it('should set custom prompt for a session', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -854,7 +847,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should update custom prompt for a session', () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -884,7 +877,7 @@ describe('useBatchProcessor hook', () => {
 				createMockSession({ id: 'session-1' }),
 				createMockSession({ id: 'session-2' }),
 			];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -910,7 +903,7 @@ describe('useBatchProcessor hook', () => {
 		it('should not start when autoRunDisabled is true', async () => {
 			useSettingsStore.setState({ autoRunDisabled: true });
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -972,7 +965,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should not start if no documents provided', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -1001,7 +994,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should not start if no tasks found in documents', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock empty document with no tasks
 			mockReadDoc.mockResolvedValue({ success: true, content: '# Empty document\nNo tasks here.' });
@@ -1033,7 +1026,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should start batch run and process tasks', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock document with 2 tasks initially, then 1 task, then 0 tasks
 			let callCount = 0;
@@ -1085,7 +1078,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle agent failure gracefully', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock single task - readDoc is called multiple times:
 			// 1. Initial count (line 425)
@@ -1138,7 +1131,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('prefixes the agent New Session Message onto the task spawn prompt', async () => {
 			const sessions = [createMockSession({ newSessionMessage: 'Always check linting first.' })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -1179,7 +1172,7 @@ describe('useBatchProcessor hook', () => {
 	describe('stopBatchRun', () => {
 		it('should set isStopping flag', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Create a deferred promise we can control
 			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
@@ -1244,7 +1237,7 @@ describe('useBatchProcessor hook', () => {
 	describe('killBatchRun', () => {
 		it('should flush stats and history with non-zero elapsed time when force-killed', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Hold the agent response so the batch stays "running" until we kill it
 			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
@@ -1323,7 +1316,7 @@ describe('useBatchProcessor hook', () => {
 			// fresh spawnAgent for the next task - keeping notifications and the agent
 			// process alive after the user clicked Kill.
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Doc with two unchecked tasks so the inner while loop has more work queued
 			// after the first task completes.
@@ -1396,7 +1389,7 @@ describe('useBatchProcessor hook', () => {
 			// dropped from the leaderboard tally. The fix moves the onComplete call into
 			// killBatchRun itself (where the elapsed time is still readable).
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
 			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
@@ -1461,7 +1454,7 @@ describe('useBatchProcessor hook', () => {
 	describe('worktree handling', () => {
 		it('should set up worktree when enabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls (initial count, doc start, template expansion)
 			let callCount = 0;
@@ -1512,7 +1505,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle worktree setup failure', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock worktree setup failure
 			mockWorktreeSetup.mockResolvedValue({ success: false, error: 'Worktree setup failed' });
@@ -1551,7 +1544,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should checkout different branch when worktree exists with branch mismatch', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock worktree exists with different branch
 			mockWorktreeSetup.mockResolvedValue({ success: true, branchMismatch: true });
@@ -1604,7 +1597,7 @@ describe('useBatchProcessor hook', () => {
 	describe('PR creation', () => {
 		it('should create PR when worktree is used and PR creation enabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls
 			let callCount = 0;
@@ -1655,7 +1648,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle PR creation failure', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock PR creation failure
 			mockCreatePR.mockResolvedValue({ success: false, error: 'PR creation failed' });
@@ -1708,7 +1701,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should use custom target branch for PR', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls
 			let callCount = 0;
@@ -1762,7 +1755,7 @@ describe('useBatchProcessor hook', () => {
 	describe('loop mode', () => {
 		it('should stop at max loops', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock document that properly simulates task completion cycle
 			// The batch processor calls readDoc at multiple points - we need to simulate
@@ -1824,7 +1817,7 @@ describe('useBatchProcessor hook', () => {
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy.
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First 3 reads return unchecked task (initial count, doc start, template expansion)
 			// After that, return checked task (agent completed it)
@@ -1869,7 +1862,7 @@ describe('useBatchProcessor hook', () => {
 	describe('audio feedback', () => {
 		it('should speak synopsis when audio feedback is enabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			const mockSpeak = vi.fn().mockResolvedValue(undefined);
 			window.maestro.notification = {
@@ -1917,7 +1910,7 @@ describe('useBatchProcessor hook', () => {
 	describe('state broadcasting', () => {
 		it('should broadcast state to web interface', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls
 			let callCount = 0;
@@ -1958,7 +1951,7 @@ describe('useBatchProcessor hook', () => {
 	describe('history entries', () => {
 		it('should add history entry for each completed task', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls
 			let callCount = 0;
@@ -2003,7 +1996,7 @@ describe('useBatchProcessor hook', () => {
 	describe('hasAnyActiveBatch and activeBatchSessionIds', () => {
 		it('should update when batch starts and ends', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task - need unchecked for first 3 calls
 			let callCount = 0;
@@ -2048,7 +2041,7 @@ describe('useBatchProcessor hook', () => {
 	describe('synopsis parsing', () => {
 		it('should parse synopsis with proper Summary and Details format', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent response with synopsis format (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2108,7 +2101,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle synopsis with ANSI codes and box characters', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent response with ANSI codes and box drawing chars (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2161,7 +2154,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle synopsis without Details section', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent response with only Summary (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2217,7 +2210,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle synopsis without proper format (fallback to first line)', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent response without proper markdown format (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2274,7 +2267,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle empty synopsis response', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent response with empty text (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2331,7 +2324,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle synopsis failure gracefully', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent failure (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockResolvedValue({
@@ -2384,7 +2377,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle synopsis generation error', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock agent throwing error (synopsis is now extracted from agent response)
 			mockOnSpawnAgent.mockRejectedValue(new Error('Agent execution failed'));
@@ -2466,7 +2459,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle document read failure gracefully (no expansion if read fails)', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First read for counting, then task progresses to completion
 			let callCount = 0;
@@ -2513,7 +2506,7 @@ describe('useBatchProcessor hook', () => {
 	describe('git branch detection', () => {
 		it('should get git branch for git repos', async () => {
 			const sessions = [createMockSession({ isGitRepo: true })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockBranch.mockResolvedValue({ stdout: 'feature/test' });
 
@@ -2553,7 +2546,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle git status failure gracefully', async () => {
 			const sessions = [createMockSession({ isGitRepo: true })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockStatus.mockRejectedValue(new Error('Git error'));
 
@@ -2593,7 +2586,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should not fetch git status for non-git repos', async () => {
 			const sessions = [createMockSession({ isGitRepo: false })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -2672,7 +2665,7 @@ describe('useBatchProcessor hook', () => {
 	describe('multiple documents', () => {
 		it('should process multiple documents in order', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Track which document is being read
 			const readOrder: string[] = [];
@@ -2739,7 +2732,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should skip documents with no tasks', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
 				if (filename === 'empty.md') {
@@ -2785,7 +2778,7 @@ describe('useBatchProcessor hook', () => {
 	describe('task error handling', () => {
 		it('should continue to next task on agent spawn error', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Multiple tasks
 			let callCount = 0;
@@ -2836,7 +2829,7 @@ describe('useBatchProcessor hook', () => {
 	describe('error pause handling', () => {
 		it('should pause processing until resumeAfterError is called', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			const contentInitial = '- [ ] Task 1\n- [ ] Task 2';
 			const contentAfterFirst = '- [x] Task 1\n- [ ] Task 2';
@@ -2925,7 +2918,7 @@ describe('useBatchProcessor hook', () => {
 	describe('error pause handling when processTask throws', () => {
 		it('should await error resolution when processTask throws on last task and abort stops batch', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Single task document - processTask will throw on this task
 			mockReadDoc.mockImplementation(async () => ({
@@ -3007,7 +3000,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should await error resolution when processTask throws on last task and resume re-reads document', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let readCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3095,7 +3088,7 @@ describe('useBatchProcessor hook', () => {
 	describe('skip-document across multi-doc boundary', () => {
 		it('should skip errored document and continue processing next document', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Two documents: doc1 has 1 task, doc2 has 1 task
 			// Use filename-based logic: doc1 always has unchecked task (it errors before completing),
@@ -3194,7 +3187,7 @@ describe('useBatchProcessor hook', () => {
 	describe('error state fully cleared after abort', () => {
 		it('should have no lingering error fields after abort completes batch', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockImplementation(async () => ({
 				success: true,
@@ -3279,7 +3272,7 @@ describe('useBatchProcessor hook', () => {
 	describe('rapid error→resume→error cycle', () => {
 		it('should handle sequential error-resume-error without corrupting refs', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Document has 3 tasks
 			let readCount = 0;
@@ -3408,7 +3401,7 @@ describe('useBatchProcessor hook', () => {
 	describe('session claude ID tracking', () => {
 		it('should collect claude session IDs from successful spawns', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Multiple tasks
 			let callCount = 0;
@@ -3463,7 +3456,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle missing claude session ID', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3507,7 +3500,7 @@ describe('useBatchProcessor hook', () => {
 	describe('usage stats tracking', () => {
 		it('should track usage stats from agent spawns', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3568,7 +3561,7 @@ describe('useBatchProcessor hook', () => {
 	describe('elapsed time tracking', () => {
 		it('should track elapsed time for each task', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3616,7 +3609,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should track total elapsed time for batch completion', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3659,7 +3652,7 @@ describe('useBatchProcessor hook', () => {
 	describe('task count handling', () => {
 		it('should handle Claude adding tasks (negative completion count)', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Claude adds a task instead of completing one
 			let callCount = 0;
@@ -3703,7 +3696,7 @@ describe('useBatchProcessor hook', () => {
 	describe('worktree with cwd override', () => {
 		it('should pass worktree path as cwd override to agent', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3748,7 +3741,7 @@ describe('useBatchProcessor hook', () => {
 	describe('session name in completion', () => {
 		it('should use session name in completion callback', async () => {
 			const sessions = [createMockSession({ name: 'My Custom Session' })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3789,7 +3782,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should use cwd folder name as fallback for session name', async () => {
 			const sessions = [createMockSession({ name: '', cwd: '/path/to/myproject' })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -3832,7 +3825,7 @@ describe('useBatchProcessor hook', () => {
 	describe('stopBatchRun', () => {
 		it('should set isStopping flag when called', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Simple test: start batch, call stop immediately, verify isStopping is set
 			let callCount = 0;
@@ -3877,7 +3870,7 @@ describe('useBatchProcessor hook', () => {
 	describe('loop mode with max loops limit', () => {
 		it('should stop after reaching maxLoops', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Simulate task completion: first 3 calls show unchecked, then checked
 			let callCount = 0;
@@ -3922,7 +3915,7 @@ describe('useBatchProcessor hook', () => {
 	describe('worktree setup', () => {
 		it('should handle worktree setup failure', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
 
@@ -3968,7 +3961,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle worktree branch mismatch and checkout', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -4032,7 +4025,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
 
@@ -4087,7 +4080,7 @@ describe('useBatchProcessor hook', () => {
 	describe('PR creation on completion', () => {
 		it('should create PR when worktree completes with createPROnCompletion enabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -4158,7 +4151,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle PR creation failure gracefully', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -4228,7 +4221,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should use custom PR target branch when specified', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -4292,7 +4285,7 @@ describe('useBatchProcessor hook', () => {
 	describe('audio feedback', () => {
 		it('should speak synopsis when audio feedback is enabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -4354,7 +4347,7 @@ describe('useBatchProcessor hook', () => {
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy each loop iteration.
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First 3 calls show unchecked, then checked after agent runs
 			let readCount = 0;
@@ -4398,7 +4391,7 @@ describe('useBatchProcessor hook', () => {
 	describe('PR creation exception handling', () => {
 		it('should handle PR creation throwing an Error', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock worktree setup success
 			mockWorktreeSetup.mockResolvedValue({ success: true });
@@ -4459,7 +4452,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle PR creation throwing a non-Error object', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true });
 			mockCreatePR.mockRejectedValue('String error'); // Non-Error rejection
@@ -4517,7 +4510,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle PR creation exception without onPRResult callback', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true });
 			mockCreatePR.mockRejectedValue(new Error('Git error'));
@@ -4573,7 +4566,7 @@ describe('useBatchProcessor hook', () => {
 	describe('loop mode with multiple iterations', () => {
 		it('should complete loop and add loop summary history entry', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Track document states: first 3 calls show unchecked, then checked
 			let readCount = 0;
@@ -4629,7 +4622,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should exit loop when reaching max loops limit', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First 3 calls show unchecked, then checked
 			let readCount = 0;
@@ -4674,7 +4667,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle loop with reset-on-completion documents', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First 3 calls show unchecked, then checked
 			let readCount = 0;
@@ -4718,7 +4711,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should exit loop when no tasks were processed in an iteration', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// First 3 calls show unchecked, then no tasks
 			let readCount = 0;
@@ -4765,7 +4758,7 @@ describe('useBatchProcessor hook', () => {
 	describe('worktree checkout handling', () => {
 		it('should handle worktree checkout failure due to uncommitted changes', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Worktree exists but on different branch
 			mockWorktreeSetup.mockResolvedValue({ success: true, branchMismatch: true });
@@ -4812,7 +4805,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle worktree checkout failure without uncommitted changes', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true, branchMismatch: true });
 
@@ -4858,7 +4851,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle worktree setup exception', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Worktree setup throws exception
 			mockWorktreeSetup.mockRejectedValue(new Error('Git not found'));
@@ -4901,7 +4894,7 @@ describe('useBatchProcessor hook', () => {
 	describe('PR creation with fallback to default branch', () => {
 		it('should use default branch when prTargetBranch is not specified', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true });
 			mockGetDefaultBranch.mockResolvedValue({ success: true, branch: 'develop' });
@@ -4965,7 +4958,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should fall back to main when getDefaultBranch fails', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true });
 			mockGetDefaultBranch.mockResolvedValue({ success: false });
@@ -5028,7 +5021,7 @@ describe('useBatchProcessor hook', () => {
 		it('should extract session name from cwd when name is not set', async () => {
 			// Session without a name, only cwd
 			const sessions = [createMockSession({ name: '', cwd: '/path/to/MyProject' })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5075,7 +5068,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should use Unknown when cwd has no path segments', async () => {
 			const sessions = [createMockSession({ name: '', cwd: '' })];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5123,7 +5116,7 @@ describe('useBatchProcessor hook', () => {
 	describe('Claude session registration', () => {
 		it('should register session origin as auto-initiated', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5170,7 +5163,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle session registration error gracefully', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockRegisterSessionOrigin.mockRejectedValue(new Error('Registration failed'));
 
@@ -5217,7 +5210,7 @@ describe('useBatchProcessor hook', () => {
 	describe('document with failed read', () => {
 		it('should handle document read returning empty content', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Document read fails (no content)
 			mockReadDoc.mockResolvedValue({ success: true, content: '' });
@@ -5251,7 +5244,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle document read failure', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: false });
 
@@ -5286,7 +5279,7 @@ describe('useBatchProcessor hook', () => {
 	describe('audio feedback edge cases', () => {
 		it('should not speak if audio feedback is disabled', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			const mockSpeak = vi.fn().mockResolvedValue(undefined);
 			window.maestro.notification.speak = mockSpeak;
@@ -5332,7 +5325,7 @@ describe('useBatchProcessor hook', () => {
 
 		it('should handle speak error gracefully', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			const mockSpeak = vi.fn().mockRejectedValue(new Error('TTS not available'));
 			window.maestro.notification.speak = mockSpeak;
@@ -5391,7 +5384,7 @@ describe('useBatchProcessor hook', () => {
 	describe('ghPath for PR creation', () => {
 		it('should pass ghPath to createPR when specified', async () => {
 			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockWorktreeSetup.mockResolvedValue({ success: true });
 			mockCreatePR.mockResolvedValue({ success: true, prUrl: 'https://github.com/test/pr/1' });
@@ -5461,7 +5454,7 @@ describe('useBatchProcessor hook', () => {
 				},
 			});
 			const sessions = [sshSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
@@ -5505,7 +5498,7 @@ describe('useBatchProcessor hook', () => {
 				},
 			});
 			const sessions = [sshSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Start with one unchecked task, then return checked after agent run
 			let callCount = 0;
@@ -5558,7 +5551,7 @@ describe('useBatchProcessor hook', () => {
 				},
 			});
 			const sessions = [sshSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
@@ -5602,7 +5595,7 @@ describe('useBatchProcessor hook', () => {
 				},
 			});
 			const sessions = [sshSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5656,7 +5649,7 @@ describe('useBatchProcessor hook', () => {
 				sessionSshRemoteConfig: undefined,
 			});
 			const sessions = [localSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
@@ -5703,7 +5696,7 @@ describe('useBatchProcessor hook', () => {
 				sessionSshRemoteConfig: undefined,
 			});
 			const sessions = [session];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Done' });
 
@@ -5762,7 +5755,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'feature-branch',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			// Mock task processing: first call returns unchecked, subsequent calls return checked
 			let callCount = 0;
@@ -5849,7 +5842,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'my-feature',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5917,7 +5910,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'feat',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -5973,7 +5966,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'my-branch-from-session',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -6035,7 +6028,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'auto-run-branch',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -6099,7 +6092,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'feature',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -6169,7 +6162,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'pr-branch',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {
@@ -6255,7 +6248,7 @@ describe('useBatchProcessor hook', () => {
 				worktreeBranch: 'fail-branch',
 			});
 			const sessions = [parentSession, worktreeSession];
-			const groups = [createMockGroup()];
+			const groups = [createMockGroup({ id: 'test-group-id' })];
 
 			let callCount = 0;
 			mockReadDoc.mockImplementation(async () => {

@@ -3,7 +3,8 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
-import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
+import type { Session, Theme, Shortcut } from '../../../renderer/types';
+import { createMockGroup } from '../../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
@@ -122,15 +123,6 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		activeTabId: 'tab-1',
 		...overrides,
 	});
-
-// Create mock group
-const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
-	id: 'group-1',
-	name: 'Test Group',
-	emoji: '📁',
-	collapsed: false,
-	...overrides,
-});
 
 // Default props factory
 const createDefaultProps = (
