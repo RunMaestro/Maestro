@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 import type { FlatTreeNode } from '../utils/fileExplorer';
 import type { FileNode } from '../types/fileTree';
+import { resolveUpdater } from '../utils/resolveUpdater';
 
 // ============================================================================
 // Types
@@ -77,13 +78,6 @@ export type FileExplorerStore = FileExplorerStoreState & FileExplorerStoreAction
 // Helpers
 // ============================================================================
 
-/**
- * Resolve a value-or-updater argument, matching React's setState signature.
- */
-function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
-	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
-}
-
 // ============================================================================
 // Store
 // ============================================================================
@@ -102,12 +96,13 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	lastGraphFocusFilePath: undefined,
 
 	// --- Actions ---
-	setSelectedFileIndex: (v) => set((s) => ({ selectedFileIndex: resolve(v, s.selectedFileIndex) })),
-	setFileTreeFilter: (v) => set((s) => ({ fileTreeFilter: resolve(v, s.fileTreeFilter) })),
+	setSelectedFileIndex: (v) =>
+		set((s) => ({ selectedFileIndex: resolveUpdater(v, s.selectedFileIndex) })),
+	setFileTreeFilter: (v) => set((s) => ({ fileTreeFilter: resolveUpdater(v, s.fileTreeFilter) })),
 	setFileTreeFilterOpen: (v) =>
-		set((s) => ({ fileTreeFilterOpen: resolve(v, s.fileTreeFilterOpen) })),
+		set((s) => ({ fileTreeFilterOpen: resolveUpdater(v, s.fileTreeFilterOpen) })),
 
-	setSelectedPaths: (v) => set((s) => ({ selectedPaths: resolve(v, s.selectedPaths) })),
+	setSelectedPaths: (v) => set((s) => ({ selectedPaths: resolveUpdater(v, s.selectedPaths) })),
 	setSelectionAnchorIndex: (index) => set({ selectionAnchorIndex: index }),
 
 	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),

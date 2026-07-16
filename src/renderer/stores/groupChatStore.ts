@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import type { GroupChat, GroupChatMessage, GroupChatState, AgentError } from '../types';
 import type { QueuedItem } from '../types';
+import { resolveUpdater } from '../utils/resolveUpdater';
 
 // ============================================================================
 // Types
@@ -147,13 +148,6 @@ export type GroupChatStore = GroupChatStoreState & GroupChatStoreActions;
 // ============================================================================
 
 /**
- * Resolve a value-or-updater argument, matching React's setState signature.
- */
-function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
-	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
-}
-
-/**
  * Whether the Group Chat panel should render in the window identified by
  * `windowId`. Multi-window: a chat is shown only in the window that initiated it
  * (`initiatorWindowId`, stamped on open). A null `initiatorWindowId` (single-
@@ -192,28 +186,34 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	initiatorWindowId: null,
 
 	// --- Actions ---
-	setGroupChats: (v) => set((s) => ({ groupChats: resolve(v, s.groupChats) })),
-	setActiveGroupChatId: (v) => set((s) => ({ activeGroupChatId: resolve(v, s.activeGroupChatId) })),
-	setGroupChatMessages: (v) => set((s) => ({ groupChatMessages: resolve(v, s.groupChatMessages) })),
-	setGroupChatState: (v) => set((s) => ({ groupChatState: resolve(v, s.groupChatState) })),
-	setParticipantStates: (v) => set((s) => ({ participantStates: resolve(v, s.participantStates) })),
-	setModeratorUsage: (v) => set((s) => ({ moderatorUsage: resolve(v, s.moderatorUsage) })),
-	setGroupChatStates: (v) => set((s) => ({ groupChatStates: resolve(v, s.groupChatStates) })),
+	setGroupChats: (v) => set((s) => ({ groupChats: resolveUpdater(v, s.groupChats) })),
+	setActiveGroupChatId: (v) =>
+		set((s) => ({ activeGroupChatId: resolveUpdater(v, s.activeGroupChatId) })),
+	setGroupChatMessages: (v) =>
+		set((s) => ({ groupChatMessages: resolveUpdater(v, s.groupChatMessages) })),
+	setGroupChatState: (v) => set((s) => ({ groupChatState: resolveUpdater(v, s.groupChatState) })),
+	setParticipantStates: (v) =>
+		set((s) => ({ participantStates: resolveUpdater(v, s.participantStates) })),
+	setModeratorUsage: (v) => set((s) => ({ moderatorUsage: resolveUpdater(v, s.moderatorUsage) })),
+	setGroupChatStates: (v) =>
+		set((s) => ({ groupChatStates: resolveUpdater(v, s.groupChatStates) })),
 	setAllGroupChatParticipantStates: (v) =>
 		set((s) => ({
-			allGroupChatParticipantStates: resolve(v, s.allGroupChatParticipantStates),
+			allGroupChatParticipantStates: resolveUpdater(v, s.allGroupChatParticipantStates),
 		})),
 	setGroupChatExecutionQueue: (v) =>
-		set((s) => ({ groupChatExecutionQueue: resolve(v, s.groupChatExecutionQueue) })),
+		set((s) => ({ groupChatExecutionQueue: resolveUpdater(v, s.groupChatExecutionQueue) })),
 	setGroupChatReadOnlyMode: (v) =>
-		set((s) => ({ groupChatReadOnlyMode: resolve(v, s.groupChatReadOnlyMode) })),
-	setGroupChatRightTab: (v) => set((s) => ({ groupChatRightTab: resolve(v, s.groupChatRightTab) })),
+		set((s) => ({ groupChatReadOnlyMode: resolveUpdater(v, s.groupChatReadOnlyMode) })),
+	setGroupChatRightTab: (v) =>
+		set((s) => ({ groupChatRightTab: resolveUpdater(v, s.groupChatRightTab) })),
 	setGroupChatParticipantColors: (v) =>
-		set((s) => ({ groupChatParticipantColors: resolve(v, s.groupChatParticipantColors) })),
+		set((s) => ({ groupChatParticipantColors: resolveUpdater(v, s.groupChatParticipantColors) })),
 	setGroupChatStagedImages: (v) =>
-		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
-	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
-	setInitiatorWindowId: (v) => set((s) => ({ initiatorWindowId: resolve(v, s.initiatorWindowId) })),
+		set((s) => ({ groupChatStagedImages: resolveUpdater(v, s.groupChatStagedImages) })),
+	setGroupChatError: (v) => set((s) => ({ groupChatError: resolveUpdater(v, s.groupChatError) })),
+	setInitiatorWindowId: (v) =>
+		set((s) => ({ initiatorWindowId: resolveUpdater(v, s.initiatorWindowId) })),
 
 	appendParticipantLiveOutput: (participantName, chunk) =>
 		set((s) => {
