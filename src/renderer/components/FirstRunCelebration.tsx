@@ -169,18 +169,13 @@ export function FirstRunCelebration({
 		}, 1000);
 	}, [isClosing, fireConfetti]);
 
-	// Handle keyboard events
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Enter' || e.key === 'Escape') {
-				e.preventDefault();
-				handleClose();
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [handleClose]);
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			e.stopPropagation();
+			handleClose();
+		}
+	};
 
 	// Register with layer stack
 	useModalLayer(
@@ -215,6 +210,7 @@ export function FirstRunCelebration({
 				aria-modal="true"
 				aria-label="First Auto Run Celebration"
 				tabIndex={-1}
+				onKeyDown={handleKeyDown}
 			>
 				{/* Main content card */}
 				<div
