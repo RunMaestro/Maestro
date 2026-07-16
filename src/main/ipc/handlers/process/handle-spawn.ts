@@ -10,7 +10,10 @@ import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
-import { OmpNativeSessionAdapter } from '../../../omp-native/session-adapter';
+import {
+	normalizeOmpModelSelector,
+	OmpNativeSessionAdapter,
+} from '../../../omp-native/session-adapter';
 import {
 	buildMcpInjection,
 	MCP_CONFIG_BY_AGENT,
@@ -101,6 +104,18 @@ export async function handleProcessSpawn(
 			const window = getMainWindow();
 			if (isWebContentsAvailable(window)) window.webContents.send(channel, ...args);
 		};
+		const configuredModel = config.sessionCustomModel || config.modelId;
+		let model: string | undefined;
+		try {
+			model = configuredModel ? normalizeOmpModelSelector(configuredModel) : undefined;
+		} catch (error) {
+			send(
+				'process:stderr',
+				config.sessionId,
+				error instanceof Error ? error.message : String(error)
+			);
+			return { success: false, pid: 0 };
+		}
 		let launch: VerifiedRuntimeLaunch;
 		try {
 			launch = await resolveVerifiedOmpRuntime(ompRuntimeResolver);
@@ -116,7 +131,7 @@ export async function handleProcessSpawn(
 			prefixArgs: launch.prefixArgs,
 			env: { ...process.env, ...config.sessionCustomEnvVars },
 			agentSessionId: config.agentSessionId,
-			model: config.sessionCustomModel || config.modelId,
+			model,
 			send,
 		});
 		// The OMP RPC protocol has no system-prompt command. Match the legacy

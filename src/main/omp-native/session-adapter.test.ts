@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
-import { OmpNativeSessionAdapter } from './session-adapter';
+import { normalizeOmpModelSelector, OmpNativeSessionAdapter } from './session-adapter';
 import capturedRpcTurn from './fixtures/real-rpc-turn.json';
 import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 import capturedThinkingLevel from './fixtures/real-rpc-thinking-level.json';
@@ -446,6 +446,67 @@ describe('OmpNativeSessionAdapter', () => {
 			streamingBehavior: 'steer',
 			images: [{ image: { mimeType: 'image/png', data: 'cG5nLWJ5dGVz' } }],
 		});
+	});
+	it.each([
+		['native discovery selector', 'openai-codex/gpt-5.6-sol'],
+		['RPC selector', 'openai-codex:gpt-5.6-sol'],
+	])('maps the %s to the native set_model payload before prompting', async (_name, model) => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			frames.push(command);
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data:
+							command.type === 'get_available_models'
+								? { models: [] }
+								: command.type === 'get_available_commands'
+									? { commands: [] }
+									: command.type === 'get_messages'
+										? { messages: [] }
+										: command.type === 'get_subagents'
+											? { subagents: [] }
+											: command.type === 'get_session_stats'
+												? { stats: {} }
+												: { todoPhases: [] },
+					})
+				);
+			}
+			return true;
+		});
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: `tab-model-${model}`,
+			cwd: 'C:/work/project',
+			command: 'omp',
+			model,
+			send: vi.fn(),
+			spawn: vi.fn(() => child as never),
+		});
+
+		emit(child, { type: 'ready', version: '16.4.8' });
+		expect(normalizeOmpModelSelector(model)).toBe('openai-codex:gpt-5.6-sol');
+		await adapter.prompt('run native OMP');
+
+		const modelIndex = frames.findIndex((frame) => frame.type === 'set_model');
+		const promptIndex = frames.findIndex((frame) => frame.type === 'prompt');
+		expect(frames[modelIndex]).toMatchObject({
+			type: 'set_model',
+			provider: 'openai-codex',
+			modelId: 'gpt-5.6-sol',
+		});
+		expect(modelIndex).toBeLessThan(promptIndex);
+	});
+
+	it('rejects malformed OMP model selectors explicitly', () => {
+		expect(() => normalizeOmpModelSelector('gpt-5.6-sol')).toThrow(
+			'OMP model selection must use the provider:modelId format'
+		);
 	});
 	it('reconciles an acquired session model before its next prompt and refreshes the model control', async () => {
 		const child = new FakeChild();

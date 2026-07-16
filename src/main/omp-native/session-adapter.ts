@@ -42,6 +42,33 @@ export interface OmpNativeSessionOptions {
 	spawn?: OmpChildSpawner;
 }
 
+/**
+ * Normalizes the OMP CLI discovery selector (`provider/modelId`) to the
+ * provider-qualified selector consumed by the native RPC boundary.
+ *
+ * The RPC spelling is intentionally colon-delimited so tags in a model ID
+ * (for example `ollama:latest`) remain part of the model ID. Slash-form
+ * selectors are accepted only in the documented two-segment discovery shape.
+ */
+export function normalizeOmpModelSelector(selection: string): string {
+	const normalized = selection.trim();
+	const colon = normalized.indexOf(':');
+	const slash = normalized.indexOf('/');
+	const separator = colon >= 0 ? colon : slash;
+	const provider = normalized.slice(0, separator);
+	const modelId = normalized.slice(separator + 1);
+	const isLegacyDiscoverySelector = colon < 0 && slash >= 0;
+	if (
+		separator <= 0 ||
+		!modelId ||
+		!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(provider) ||
+		/\s/.test(modelId) ||
+		(isLegacyDiscoverySelector && modelId.includes('/'))
+	) {
+		throw new Error('OMP model selection must use the provider:modelId format');
+	}
+	return `${provider}:${modelId}`;
+}
 const adapters = new Map<string, OmpNativeSessionAdapter>();
 
 export class OmpNativeSessionAdapter {
@@ -719,13 +746,13 @@ function toOmpImages(images: readonly string[]): OmpRpcImage[] {
 }
 
 function modelCommand(selection: string): OmpRpcCommand {
-	const separator = selection.indexOf(':');
-	const provider = selection.slice(0, separator);
-
-	const modelId = selection.slice(separator + 1);
-	if (separator <= 0 || !modelId)
-		throw new Error('OMP model selection must use the provider:modelId format');
-	return { type: 'set_model', provider, modelId };
+	const canonical = normalizeOmpModelSelector(selection);
+	const separator = canonical.indexOf(':');
+	return {
+		type: 'set_model',
+		provider: canonical.slice(0, separator),
+		modelId: canonical.slice(separator + 1),
+	};
 }
 
 function detailMessages(value: unknown): string[] {

@@ -249,6 +249,11 @@ vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 }));
 
 vi.mock('../../../../main/omp-native/session-adapter', () => ({
+	normalizeOmpModelSelector: vi.fn((selection: string) => {
+		if (selection === 'gpt-5.6-sol')
+			throw new Error('OMP model selection must use the provider:modelId format');
+		return selection.replace('/', ':');
+	}),
 	OmpNativeSessionAdapter: {
 		acquire: vi.fn(),
 		forSession: vi.fn(() => undefined),
@@ -511,7 +516,7 @@ describe('process IPC handlers', () => {
 			expect(result).toEqual({ pid: 12345, success: true });
 		});
 
-		it('forwards OMP images, configured model, and first-turn system prompt to the native adapter', async () => {
+		it('normalizes the discovered OMP slash selector before passing the native model to the adapter', async () => {
 			const prompt = vi.fn().mockResolvedValue(undefined);
 			const nativeAdapter = {
 				ready: Promise.resolve(),
@@ -534,7 +539,7 @@ describe('process IPC handlers', () => {
 				prompt: 'Describe this attachment',
 				images: ['data:image/png;base64,cG5nLWJ5dGVz'],
 				modelId: 'fallback:unused',
-				sessionCustomModel: 'fixture:fixture-fast',
+				sessionCustomModel: 'openai-codex/gpt-5.6-sol',
 				appendSystemPrompt: 'Follow the project rules.',
 			});
 
@@ -542,7 +547,7 @@ describe('process IPC handlers', () => {
 				expect.objectContaining({
 					command: '/verified/omp',
 					prefixArgs: [],
-					model: 'fixture:fixture-fast',
+					model: 'openai-codex:gpt-5.6-sol',
 				})
 			);
 			expect(prompt).toHaveBeenCalledWith(
@@ -550,6 +555,22 @@ describe('process IPC handlers', () => {
 				['data:image/png;base64,cG5nLWJ5dGVz']
 			);
 			expect(result).toEqual({ success: true, pid: 9876 });
+		});
+
+		it('rejects malformed OMP model selectors before creating a native adapter', async () => {
+			const handler = handlers.get('process:spawn');
+			const result = await handler!(undefined, {
+				sessionId: 'native-omp-malformed-model',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+				prompt: 'Run native OMP',
+				sessionCustomModel: 'gpt-5.6-sol',
+			});
+
+			expect(result).toEqual({ success: false, pid: 0 });
+			expect(OmpNativeSessionAdapter.acquire).not.toHaveBeenCalled();
 		});
 
 		it('rejects an OMP launch whose revalidated runtime is not 16.4.8', async () => {

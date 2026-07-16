@@ -503,7 +503,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				type: 'text',
 				label: 'Model',
 				description:
-					'Fuzzy model override passed to --model (for example, opus, gpt-5.2, or openai/gpt-5.2). Multi-provider; leave empty for the CLI default.',
+					'Model selector from Oh My Pi discovery (for example, anthropic/claude-sonnet-4-5 or openai-codex/gpt-5.6-sol). Leave empty for the CLI default.',
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
 			},
