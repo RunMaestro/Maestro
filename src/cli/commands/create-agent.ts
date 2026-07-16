@@ -2,7 +2,8 @@
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
+import { writeCommandError } from '../output/command-error';
 import {
 	parseEnvironmentAssignments,
 	parseEnvironmentBoolean,
@@ -33,11 +34,7 @@ interface CreateAgentOptions {
 }
 
 function exitWithCommandError(message: string, options: CreateAgentOptions): never {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
+	writeCommandError(options.json, message);
 	return process.exit(1);
 }
 
