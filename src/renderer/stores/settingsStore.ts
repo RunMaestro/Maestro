@@ -52,7 +52,10 @@ import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing
 import { sanitizeModalSizes } from '../utils/modalSizing';
 import { readBoolean, readFiniteNumber, readString, readStringArray } from './settingsStoreDecode';
 import { migrateShortcutSettings } from './settingsStoreMigrations';
-import { createShellAndAppearanceSetters } from './settingsStoreSetters';
+import {
+	createInputAndLayoutSetters,
+	createShellAndAppearanceSetters,
+} from './settingsStoreSetters';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -903,6 +906,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 	return {
 		...createSettingsStoreDefaults(),
 		...createShellAndAppearanceSetters(set, persistSetting),
+		...createInputAndLayoutSetters(set, persistSetting, () => get().modalSizes),
 
 		// ============================================================================
 		// Simple Setters
@@ -932,84 +936,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setApiKey: (value) => {
 			set({ apiKey: value });
 			window.maestro.settings.set('apiKey', value);
-		},
-
-		setEnterToSendAI: (value) => {
-			set({ enterToSendAI: value });
-			window.maestro.settings.set('enterToSendAI', value);
-		},
-
-		setEnterToSendAIExpanded: (value) => {
-			set({ enterToSendAIExpanded: value });
-			window.maestro.settings.set('enterToSendAIExpanded', value);
-		},
-
-		setForcedParallelExecution: (value) => {
-			set({ forcedParallelExecution: value });
-			window.maestro.settings.set('forcedParallelExecution', value);
-		},
-
-		setForcedParallelAcknowledged: (value) => {
-			set({ forcedParallelAcknowledged: value });
-			window.maestro.settings.set('forcedParallelAcknowledged', value);
-		},
-
-		setDefaultSaveToHistory: (value) => {
-			set({ defaultSaveToHistory: value });
-			window.maestro.settings.set('defaultSaveToHistory', value);
-		},
-
-		setSynopsisDebounceSeconds: (value) => {
-			const clamped = Math.max(0, Math.round(value));
-			set({ synopsisDebounceSeconds: clamped });
-			window.maestro.settings.set('synopsisDebounceSeconds', clamped);
-		},
-
-		setDefaultShowThinking: (value) => {
-			set({ defaultShowThinking: value });
-			window.maestro.settings.set('defaultShowThinking', value);
-		},
-
-		setLeftSidebarWidth: (value) => {
-			const clamped = Math.max(256, Math.min(600, value));
-			set({ leftSidebarWidth: clamped });
-			window.maestro.settings.set('leftSidebarWidth', clamped);
-		},
-
-		setRightPanelWidth: (value) => {
-			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
-			set({ rightPanelWidth: clamped });
-			window.maestro.settings.set('rightPanelWidth', clamped);
-		},
-
-		setModalSize: (key, value) => {
-			const normalized = sanitizeModalSizes({ [key]: value })[key];
-			if (!normalized) return;
-			const next = {
-				...get().modalSizes,
-				[key]: normalized,
-			};
-			set({ modalSizes: next });
-			window.maestro.settings.set('modalSizes', next);
-		},
-
-		resetModalSizes: () => {
-			set({ modalSizes: {} });
-			window.maestro.settings.set('modalSizes', {});
-		},
-
-		setMarkdownEditMode: (value) => {
-			set({ markdownEditMode: value });
-			window.maestro.settings.set('markdownEditMode', value);
-		},
-
-		setChatRawTextMode: (value) => {
-			set({ chatRawTextMode: value });
-			window.maestro.settings.set('chatRawTextMode', value);
-		},
-		setGroupChatAutoScroll: (value) => {
-			set({ groupChatAutoScroll: value });
-			window.maestro.settings.set('groupChatAutoScroll', value);
 		},
 
 		setBionifyReadingMode: (value) => {
