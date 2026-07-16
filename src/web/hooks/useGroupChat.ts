@@ -6,7 +6,8 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import type { UseWebSocketReturn, GroupChatState, GroupChatMessage } from './useWebSocket';
+import type { UseWebSocketReturn } from './useWebSocket';
+import type { GroupChatMessage, GroupChatState } from '../../shared/web-protocol/session';
 
 /**
  * Return value from useGroupChat hook.

@@ -389,9 +389,8 @@ export type {
 	WebApi,
 	WebserverApi,
 	LiveApi,
-	AutoRunState,
-	AiTabState,
 } from './web';
+export type { AITabData, AutoRunState } from '../../shared/web-protocol/session';
 export type {
 	// From system
 	DialogApi,

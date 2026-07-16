@@ -6,12 +6,13 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { UseWebSocketReturn, SettingsChangedMessage } from './useWebSocket';
+import type { UseWebSocketReturn } from './useWebSocket';
+import type { ServerMessageFor } from '../../shared/web-protocol/server-messages';
 
 /**
  * Web-facing settings shape (mirrors server-side WebSettings).
  */
-export type WebSettings = SettingsChangedMessage['settings'];
+export type WebSettings = ServerMessageFor<'settings_changed'>['settings'];
 
 /**
  * Setting value type for setSetting.

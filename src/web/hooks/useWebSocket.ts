@@ -10,7 +10,16 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../shared/theme-types';
-import type { UsageStats as BaseUsageStats } from '../../shared/types';
+import type {
+	AITabData,
+	AutoRunState,
+	CustomAICommand,
+	GroupChatMessage,
+	GroupChatState,
+	GroupData,
+	SessionData,
+} from '../../shared/web-protocol/session';
+import { isWebServerMessage, type ServerMessage } from '../../shared/web-protocol/server-messages';
 import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/config';
 import { webLogger } from '../utils/logger';
 
@@ -18,502 +27,7 @@ import { webLogger } from '../utils/logger';
  * WebSocket connection states
  */
 export type WebSocketState =
-	| 'disconnected'
-	| 'connecting'
-	| 'connected'
-	| 'authenticating'
-	| 'authenticated';
-
-/**
- * Usage stats for session cost/token tracking (all fields optional in web context)
- */
-export type UsageStats = Partial<BaseUsageStats>;
-
-/**
- * AI Tab data for multi-tab support within a Maestro session
- */
-export interface AITabData {
-	id: string;
-	agentSessionId: string | null;
-	name: string | null;
-	starred: boolean;
-	inputValue: string;
-	usageStats?: UsageStats | null;
-	createdAt: number;
-	state: 'idle' | 'busy';
-	thinkingStartTime?: number | null;
-	hasUnread?: boolean;
-}
-
-/**
- * Last response preview for mobile display
- * Contains a truncated version of the last AI response
- */
-export interface LastResponsePreview {
-	text: string; // First 3 lines or ~500 chars of the last AI response
-	timestamp: number;
-	source: 'stdout' | 'stderr' | 'system';
-	fullLength: number; // Total length of the original response
-}
-
-/**
- * Session data received from the server
- */
-export interface SessionData {
-	id: string;
-	name: string;
-	toolType: string;
-	state: string;
-	inputMode: string;
-	cwd: string;
-	groupId?: string | null;
-	groupName?: string | null;
-	groupEmoji?: string | null;
-	usageStats?: UsageStats | null;
-	lastResponse?: LastResponsePreview | null;
-	agentSessionId?: string | null;
-	thinkingStartTime?: number | null; // Timestamp when AI started thinking (for elapsed time display)
-	aiTabs?: AITabData[];
-	activeTabId?: string;
-	bookmarked?: boolean; // Whether session is bookmarked (shows in Bookmarks group)
-	// Worktree subagent support
-	parentSessionId?: string | null; // If this is a worktree child, links to parent session
-	worktreeBranch?: string | null; // Git branch for this worktree child
-	// Run-in-Worktree support (mobile AutoRun launch)
-	isGitRepo?: boolean; // Whether the session's cwd is a git repo
-	worktreeBasePath?: string | null; // Base path where worktrees are stored (parent session config)
-	// The session's configured Auto Run folder (null/undefined when not yet set).
-	// Used by the mobile/web folder picker to highlight the current selection.
-	autoRunFolderPath?: string | null;
-}
-
-/**
- * AutoRun state for batch processing
- */
-export interface AutoRunState {
-	isRunning: boolean;
-	totalTasks: number;
-	completedTasks: number;
-	currentTaskIndex: number;
-	isStopping?: boolean;
-	// Multi-document progress fields
-	totalDocuments?: number; // Total number of documents in the run
-	currentDocumentIndex?: number; // Current document being processed (0-based)
-	totalTasksAcrossAllDocs?: number; // Total tasks across all documents
-	completedTasksAcrossAllDocs?: number; // Completed tasks across all documents
-	// Error pause fields (Phase 5.10) - present when batch is paused awaiting resolution
-	errorPaused?: boolean;
-	errorMessage?: string;
-	errorType?: string;
-	errorRecoverable?: boolean;
-	errorDocumentIndex?: number;
-	errorTaskDescription?: string;
-	// Goal-Driven mode fields - present when the run pursues a free-text goal
-	// instead of documents. The web client shows goal percent + iteration in
-	// place of task counts when goalMode is true.
-	goalMode?: boolean;
-	goalProgress?: number; // 0–100 self-reported progress
-	goalRationale?: string; // One-line rationale for the latest progress report
-	goalIteration?: number; // 1-based iteration the goal loop is on
-}
-
-/**
- * Message types sent by the server
- */
-export type ServerMessageType =
-	| 'connected'
-	| 'auth_required'
-	| 'auth_success'
-	| 'auth_failed'
-	| 'sessions_list'
-	| 'session_state_change'
-	| 'session_added'
-	| 'session_removed'
-	| 'active_session_changed'
-	| 'session_output'
-	| 'session_exit'
-	| 'session_live'
-	| 'session_offline'
-	| 'user_input'
-	| 'theme'
-	| 'bionify_reading_mode'
-	| 'custom_commands'
-	| 'autorun_state'
-	| 'autorun_docs_changed'
-	| 'notification_event'
-	| 'settings_changed'
-	| 'groups_changed'
-	| 'tabs_changed'
-	| 'group_chat_message'
-	| 'group_chat_state_change'
-	| 'context_operation_progress'
-	| 'context_operation_complete'
-	| 'cue_activity_event'
-	| 'cue_subscriptions_changed'
-	| 'tool_event'
-	| 'terminal_data'
-	| 'terminal_ready'
-	| 'pong'
-	| 'subscribed'
-	| 'echo'
-	| 'error';
-
-/**
- * Base server message structure
- */
-export interface ServerMessage {
-	type: ServerMessageType;
-	timestamp?: number;
-	[key: string]: unknown;
-}
-
-/**
- * Connected message from server
- */
-export interface ConnectedMessage extends ServerMessage {
-	type: 'connected';
-	clientId: string;
-	message: string;
-	authenticated: boolean;
-}
-
-/**
- * Auth required message from server
- */
-export interface AuthRequiredMessage extends ServerMessage {
-	type: 'auth_required';
-	clientId: string;
-	message: string;
-}
-
-/**
- * Auth success message from server
- */
-export interface AuthSuccessMessage extends ServerMessage {
-	type: 'auth_success';
-	clientId: string;
-	message: string;
-}
-
-/**
- * Auth failed message from server
- */
-export interface AuthFailedMessage extends ServerMessage {
-	type: 'auth_failed';
-	message: string;
-}
-
-/**
- * Sessions list message from server
- */
-export interface SessionsListMessage extends ServerMessage {
-	type: 'sessions_list';
-	sessions: SessionData[];
-}
-
-/**
- * Session state change message from server
- */
-export interface SessionStateChangeMessage extends ServerMessage {
-	type: 'session_state_change';
-	sessionId: string;
-	state: string;
-	name?: string;
-	toolType?: string;
-	inputMode?: string;
-	cwd?: string;
-}
-
-/**
- * Session added message from server
- */
-export interface SessionAddedMessage extends ServerMessage {
-	type: 'session_added';
-	session: SessionData;
-}
-
-/**
- * Session removed message from server
- */
-export interface SessionRemovedMessage extends ServerMessage {
-	type: 'session_removed';
-	sessionId: string;
-}
-
-/**
- * Active session changed message from server
- * Sent when the desktop app switches to a different session
- */
-export interface ActiveSessionChangedMessage extends ServerMessage {
-	type: 'active_session_changed';
-	sessionId: string;
-}
-
-/**
- * Session output message from server (real-time AI/terminal output)
- */
-export interface SessionOutputMessage extends ServerMessage {
-	type: 'session_output';
-	sessionId: string;
-	tabId?: string; // Tab ID for multi-tab sessions (format: {sessionId}-ai-{tabId})
-	data: string;
-	source: 'ai' | 'terminal';
-	msgId?: string; // Unique message ID for deduplication
-}
-
-/**
- * Session exit message from server (process completed)
- */
-export interface SessionExitMessage extends ServerMessage {
-	type: 'session_exit';
-	sessionId: string;
-	exitCode: number;
-}
-
-/**
- * User input message from server (message sent from desktop app)
- */
-export interface UserInputMessage extends ServerMessage {
-	type: 'user_input';
-	sessionId: string;
-	command: string;
-	inputMode: 'ai' | 'terminal';
-}
-
-/**
- * Theme message from server
- */
-export interface ThemeMessage extends ServerMessage {
-	type: 'theme';
-	theme: Theme;
-}
-
-/**
- * Bionify reading-mode message from server
- */
-export interface BionifyReadingModeMessage extends ServerMessage {
-	type: 'bionify_reading_mode';
-	enabled: boolean;
-}
-
-/**
- * Custom AI command definition
- */
-export interface CustomCommand {
-	id: string;
-	command: string;
-	description: string;
-	prompt: string;
-}
-
-/**
- * Custom commands message from server
- */
-export interface CustomCommandsMessage extends ServerMessage {
-	type: 'custom_commands';
-	commands: CustomCommand[];
-}
-
-/**
- * AutoRun state message from server
- * Indicates when batch processing is active on the desktop app
- */
-export interface AutoRunStateMessage extends ServerMessage {
-	type: 'autorun_state';
-	sessionId: string;
-	state: AutoRunState | null;
-}
-
-/**
- * AutoRun documents changed message from server
- * Sent when Auto Run document list changes on the desktop
- */
-export interface AutoRunDocsChangedMessage extends ServerMessage {
-	type: 'autorun_docs_changed';
-	sessionId: string;
-	documents: Array<{
-		filename: string;
-		path: string;
-		taskCount: number;
-		completedCount: number;
-	}>;
-}
-
-/**
- * Notification event message from server
- * Sent when a notification-worthy event occurs (agent complete, error, autorun, etc.)
- */
-export interface NotificationEventMessage extends ServerMessage {
-	type: 'notification_event';
-	eventType:
-		| 'agent_complete'
-		| 'agent_error'
-		| 'autorun_complete'
-		| 'autorun_task_complete'
-		| 'context_warning';
-	sessionId: string;
-	sessionName: string;
-	message: string;
-	severity: 'info' | 'warning' | 'error';
-}
-
-/**
- * Settings changed message from server
- * Sent when settings are modified (from web or desktop)
- */
-export interface SettingsChangedMessage extends ServerMessage {
-	type: 'settings_changed';
-	settings: {
-		theme: string;
-		fontSize: number;
-		enterToSendAI: boolean;
-		defaultSaveToHistory: boolean;
-		defaultShowThinking: string;
-		autoScroll: boolean;
-		notificationsEnabled: boolean;
-		audioFeedbackEnabled: boolean;
-		colorBlindMode: string;
-		conductorProfile: string;
-		/** Max agent output lines per message before truncation. `null` = All (Infinity serialized). */
-		maxOutputLines: number | null;
-		/** User-customized keyboard shortcut overrides (sparse; unset = use default). */
-		shortcuts: Record<string, import('../../shared/shortcut-types').Shortcut>;
-	};
-}
-
-/**
- * Group data for web clients
- */
-export interface GroupData {
-	id: string;
-	name: string;
-	emoji: string | null;
-	parentGroupId?: string;
-	sessionIds: string[];
-}
-
-/**
- * Groups changed message from server
- * Sent when groups are created, renamed, deleted, or membership changes
- */
-export interface GroupsChangedMessage extends ServerMessage {
-	type: 'groups_changed';
-	groups: GroupData[];
-}
-
-/**
- * Tabs changed message from server
- * Sent when tabs are added, removed, or active tab changes in a session
- */
-export interface TabsChangedMessage extends ServerMessage {
-	type: 'tabs_changed';
-	sessionId: string;
-	aiTabs: AITabData[];
-	activeTabId: string;
-}
-
-/**
- * Group chat message data
- */
-export interface GroupChatMessage {
-	id: string;
-	participantId: string;
-	participantName: string;
-	content: string;
-	timestamp: number;
-	role: 'user' | 'assistant';
-}
-
-/**
- * Group chat state data
- */
-export interface GroupChatState {
-	id: string;
-	topic: string;
-	participants: Array<{ sessionId: string; name: string; toolType: string }>;
-	messages: GroupChatMessage[];
-	isActive: boolean;
-	currentTurn?: string;
-}
-
-/**
- * Group chat message broadcast from server
- */
-export interface GroupChatMessageBroadcast extends ServerMessage {
-	type: 'group_chat_message';
-	chatId: string;
-	message: GroupChatMessage;
-}
-
-/**
- * Group chat state change broadcast from server
- */
-export interface GroupChatStateChangeBroadcast extends ServerMessage {
-	type: 'group_chat_state_change';
-	chatId: string;
-	[key: string]: unknown;
-}
-
-/**
- * Tool event message from server (real-time tool execution in thinking stream)
- */
-export interface ToolEventMessage extends ServerMessage {
-	type: 'tool_event';
-	sessionId: string;
-	tabId: string;
-	toolLog: {
-		id: string;
-		timestamp: number;
-		source: 'tool';
-		text: string;
-		metadata?: {
-			toolState?: {
-				name: string;
-				status: 'running' | 'completed' | 'error';
-				input?: Record<string, unknown>;
-			};
-		};
-	};
-}
-
-/**
- * Error message from server
- */
-export interface ErrorMessage extends ServerMessage {
-	type: 'error';
-	message: string;
-}
-
-/**
- * Union type of all possible server messages
- */
-export type TypedServerMessage =
-	| ConnectedMessage
-	| AuthRequiredMessage
-	| AuthSuccessMessage
-	| AuthFailedMessage
-	| SessionsListMessage
-	| SessionStateChangeMessage
-	| SessionAddedMessage
-	| SessionRemovedMessage
-	| ActiveSessionChangedMessage
-	| SessionOutputMessage
-	| SessionExitMessage
-	| UserInputMessage
-	| ThemeMessage
-	| BionifyReadingModeMessage
-	| CustomCommandsMessage
-	| AutoRunStateMessage
-	| AutoRunDocsChangedMessage
-	| NotificationEventMessage
-	| SettingsChangedMessage
-	| GroupsChangedMessage
-	| TabsChangedMessage
-	| GroupChatMessageBroadcast
-	| GroupChatStateChangeBroadcast
-	| ToolEventMessage
-	| ErrorMessage
-	| ServerMessage;
+	'disconnected' | 'connecting' | 'connected' | 'authenticating' | 'authenticated';
 
 /**
  * Event handlers for WebSocket events
@@ -534,7 +48,11 @@ export interface WebSocketEventHandlers {
 	/** Called when the active session changes on the desktop */
 	onActiveSessionChanged?: (sessionId: string) => void;
 	/** Called when a tool execution event is received (real-time tool usage in thinking stream) */
-	onToolEvent?: (sessionId: string, tabId: string, toolLog: ToolEventMessage['toolLog']) => void;
+	onToolEvent?: (
+		sessionId: string,
+		tabId: string,
+		toolLog: Extract<ServerMessage, { type: 'tool_event' }>['toolLog']
+	) => void;
 	/** Called when session output is received (real-time AI/terminal output) */
 	onSessionOutput?: (
 		sessionId: string,
@@ -551,22 +69,24 @@ export interface WebSocketEventHandlers {
 	/** Called when the global Bionify reading-mode setting is received or updated */
 	onBionifyReadingModeUpdate?: (enabled: boolean) => void;
 	/** Called when custom commands are received */
-	onCustomCommands?: (commands: CustomCommand[]) => void;
+	onCustomCommands?: (commands: CustomAICommand[]) => void;
 	/** Called when AutoRun state changes (batch processing on desktop) */
 	onAutoRunStateChange?: (sessionId: string, state: AutoRunState | null) => void;
 	/** Called when AutoRun document list changes */
 	onAutoRunDocsChanged?: (
 		sessionId: string,
-		documents: AutoRunDocsChangedMessage['documents']
+		documents: Extract<ServerMessage, { type: 'autorun_docs_changed' }>['documents']
 	) => void;
 	/** Called when a notification event is received */
-	onNotificationEvent?: (event: NotificationEventMessage) => void;
+	onNotificationEvent?: (event: Extract<ServerMessage, { type: 'notification_event' }>) => void;
 	/** Called when raw terminal PTY data is received (for xterm.js) */
 	onTerminalData?: (sessionId: string, data: string) => void;
 	/** Called when the web terminal PTY is spawned and ready (re-send dimensions) */
 	onTerminalReady?: (sessionId: string) => void;
 	/** Called when settings are changed (from web or desktop) */
-	onSettingsChanged?: (settings: SettingsChangedMessage['settings']) => void;
+	onSettingsChanged?: (
+		settings: Extract<ServerMessage, { type: 'settings_changed' }>['settings']
+	) => void;
 	/** Called when groups are changed (created, renamed, deleted, membership) */
 	onGroupsChanged?: (groups: GroupData[]) => void;
 	/** Called when tabs change in a session */
@@ -580,7 +100,7 @@ export interface WebSocketEventHandlers {
 	/** Called when an error occurs */
 	onError?: (error: string) => void;
 	/** Called for any message (for debugging or custom handling) */
-	onMessage?: (message: TypedServerMessage) => void;
+	onMessage?: (message: ServerMessage) => void;
 }
 
 /**
@@ -766,21 +286,39 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 	const handleMessage = useCallback(
 		(event: MessageEvent) => {
 			try {
-				const message = JSON.parse(event.data) as TypedServerMessage;
+				const parsed: unknown = JSON.parse(event.data);
+				const parsedRecord =
+					typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+						? (parsed as Record<string, unknown>)
+						: null;
 
-				// Check for request-response correlation before dispatching
-				const requestId = (message as any).requestId as string | undefined;
+				// Correlated request responses use command-specific payloads; they are
+				// accepted only for an outstanding request, never as unsolicited events.
+				const requestId =
+					parsedRecord && typeof parsedRecord.requestId === 'string'
+						? parsedRecord.requestId
+						: undefined;
 				if (requestId && pendingRequestsRef.current.has(requestId)) {
 					const pending = pendingRequestsRef.current.get(requestId)!;
 					clearTimeout(pending.timer);
 					pendingRequestsRef.current.delete(requestId);
-					if ((message as any).type === 'error') {
-						pending.reject(new Error((message as any).message ?? 'Server error'));
+					if (parsedRecord?.type === 'error') {
+						pending.reject(
+							new Error(
+								typeof parsedRecord.message === 'string' ? parsedRecord.message : 'Server error'
+							)
+						);
 					} else {
-						pending.resolve(message);
+						pending.resolve(parsed);
 					}
 					return;
 				}
+
+				if (!isWebServerMessage(parsed)) {
+					webLogger.warn('Rejected malformed or unknown WebSocket message', 'WebSocket');
+					return;
+				}
+				const message = parsed;
 
 				// Log all incoming messages for debugging
 				webLogger.debug(`Message received: type=${message.type}`, 'WebSocket');
@@ -790,7 +328,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
 				switch (message.type) {
 					case 'connected': {
-						const connectedMsg = message as ConnectedMessage;
+						const connectedMsg = message;
 						setClientId(connectedMsg.clientId);
 						if (connectedMsg.authenticated) {
 							setState('authenticated');
@@ -806,7 +344,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'auth_required': {
-						const authReqMsg = message as AuthRequiredMessage;
+						const authReqMsg = message;
 						setClientId(authReqMsg.clientId);
 						setState('connected');
 						handlersRef.current?.onConnectionChange?.('connected');
@@ -814,7 +352,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'auth_success': {
-						const authSuccessMsg = message as AuthSuccessMessage;
+						const authSuccessMsg = message;
 						setClientId(authSuccessMsg.clientId);
 						setState('authenticated');
 						handlersRef.current?.onConnectionChange?.('authenticated');
@@ -823,20 +361,20 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'auth_failed': {
-						const authFailedMsg = message as AuthFailedMessage;
+						const authFailedMsg = message;
 						setError(authFailedMsg.message);
 						handlersRef.current?.onError?.(authFailedMsg.message);
 						break;
 					}
 
 					case 'sessions_list': {
-						const sessionsMsg = message as SessionsListMessage;
+						const sessionsMsg = message;
 						handlersRef.current?.onSessionsUpdate?.(sessionsMsg.sessions);
 						break;
 					}
 
 					case 'session_state_change': {
-						const stateChangeMsg = message as SessionStateChangeMessage;
+						const stateChangeMsg = message;
 						handlersRef.current?.onSessionStateChange?.(
 							stateChangeMsg.sessionId,
 							stateChangeMsg.state,
@@ -851,25 +389,25 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'session_added': {
-						const addedMsg = message as SessionAddedMessage;
+						const addedMsg = message;
 						handlersRef.current?.onSessionAdded?.(addedMsg.session);
 						break;
 					}
 
 					case 'session_removed': {
-						const removedMsg = message as SessionRemovedMessage;
+						const removedMsg = message;
 						handlersRef.current?.onSessionRemoved?.(removedMsg.sessionId);
 						break;
 					}
 
 					case 'active_session_changed': {
-						const activeMsg = message as ActiveSessionChangedMessage;
+						const activeMsg = message;
 						handlersRef.current?.onActiveSessionChanged?.(activeMsg.sessionId);
 						break;
 					}
 
 					case 'session_output': {
-						const outputMsg = message as SessionOutputMessage;
+						const outputMsg = message;
 						// Dedupe using message ID if available
 						if (outputMsg.msgId) {
 							if (seenMsgIdsRef.current.has(outputMsg.msgId)) {
@@ -900,19 +438,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'tool_event': {
-						const toolMsg = message as ToolEventMessage;
+						const toolMsg = message;
 						handlersRef.current?.onToolEvent?.(toolMsg.sessionId, toolMsg.tabId, toolMsg.toolLog);
 						break;
 					}
 
 					case 'session_exit': {
-						const exitMsg = message as SessionExitMessage;
+						const exitMsg = message;
 						handlersRef.current?.onSessionExit?.(exitMsg.sessionId, exitMsg.exitCode);
 						break;
 					}
 
 					case 'user_input': {
-						const inputMsg = message as UserInputMessage;
+						const inputMsg = message;
 						handlersRef.current?.onUserInput?.(
 							inputMsg.sessionId,
 							inputMsg.command,
@@ -922,25 +460,25 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'theme': {
-						const themeMsg = message as ThemeMessage;
+						const themeMsg = message;
 						handlersRef.current?.onThemeUpdate?.(themeMsg.theme);
 						break;
 					}
 
 					case 'bionify_reading_mode': {
-						const bionifyMsg = message as BionifyReadingModeMessage;
+						const bionifyMsg = message;
 						handlersRef.current?.onBionifyReadingModeUpdate?.(bionifyMsg.enabled);
 						break;
 					}
 
 					case 'custom_commands': {
-						const commandsMsg = message as CustomCommandsMessage;
+						const commandsMsg = message;
 						handlersRef.current?.onCustomCommands?.(commandsMsg.commands);
 						break;
 					}
 
 					case 'autorun_state': {
-						const autoRunMsg = message as AutoRunStateMessage;
+						const autoRunMsg = message;
 						webLogger.info(
 							`[WS] AutoRun state received: session=${autoRunMsg.sessionId}, isRunning=${autoRunMsg.state?.isRunning}, tasks=${autoRunMsg.state?.completedTasks}/${autoRunMsg.state?.totalTasks}`,
 							'WebSocket'
@@ -950,13 +488,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'autorun_docs_changed': {
-						const docsMsg = message as AutoRunDocsChangedMessage;
+						const docsMsg = message;
 						handlersRef.current?.onAutoRunDocsChanged?.(docsMsg.sessionId, docsMsg.documents);
 						break;
 					}
 
 					case 'notification_event': {
-						const notifMsg = message as NotificationEventMessage;
+						const notifMsg = message;
 						handlersRef.current?.onNotificationEvent?.(notifMsg);
 						break;
 					}
@@ -979,19 +517,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'settings_changed': {
-						const settingsMsg = message as SettingsChangedMessage;
+						const settingsMsg = message;
 						handlersRef.current?.onSettingsChanged?.(settingsMsg.settings);
 						break;
 					}
 
 					case 'groups_changed': {
-						const groupsMsg = message as GroupsChangedMessage;
+						const groupsMsg = message;
 						handlersRef.current?.onGroupsChanged?.(groupsMsg.groups);
 						break;
 					}
 
 					case 'tabs_changed': {
-						const tabsMsg = message as TabsChangedMessage;
+						const tabsMsg = message;
 						handlersRef.current?.onTabsChanged?.(
 							tabsMsg.sessionId,
 							tabsMsg.aiTabs,
@@ -1001,13 +539,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'group_chat_message': {
-						const gcMsg = message as GroupChatMessageBroadcast;
+						const gcMsg = message;
 						handlersRef.current?.onGroupChatMessage?.(gcMsg.chatId, gcMsg.message);
 						break;
 					}
 
 					case 'group_chat_state_change': {
-						const gcStateMsg = message as GroupChatStateChangeBroadcast;
+						const gcStateMsg = message;
 						const { chatId: gcChatId, type: _gcType, timestamp: _gcTs, ...gcState } = gcStateMsg;
 						handlersRef.current?.onGroupChatStateChange?.(
 							gcChatId,
@@ -1017,19 +555,28 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					}
 
 					case 'error': {
-						const errorMsg = message as ErrorMessage;
+						const errorMsg = message;
 						setError(errorMsg.message);
 						handlersRef.current?.onError?.(errorMsg.message);
 						break;
 					}
 
 					case 'pong':
-						// Heartbeat response - no action needed
+					case 'subscribed':
+					case 'echo':
+					case 'session_live':
+					case 'session_offline':
+					case 'context_operation_progress':
+					case 'context_operation_complete':
+					case 'cue_activity_event':
+					case 'cue_subscriptions_changed':
+						// Valid protocol events with no web-hook callback yet.
 						break;
 
-					default:
-						// Unknown message type - ignore or log for debugging
-						break;
+					default: {
+						const exhaustive: never = message;
+						void exhaustive;
+					}
 				}
 			} catch (err) {
 				webLogger.error('Failed to parse WebSocket message', 'WebSocket', err);

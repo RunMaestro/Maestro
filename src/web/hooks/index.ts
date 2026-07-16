@@ -9,26 +9,33 @@ export { useWebSocket, default as useWebSocketDefault } from './useWebSocket';
 
 export type {
 	WebSocketState,
-	SessionData,
-	ServerMessageType,
-	ServerMessage,
-	ConnectedMessage,
-	AuthRequiredMessage,
-	AuthSuccessMessage,
-	AuthFailedMessage,
-	SessionsListMessage,
-	SessionStateChangeMessage,
-	SessionAddedMessage,
-	SessionRemovedMessage,
-	ThemeMessage,
-	ErrorMessage,
-	GroupData,
-	GroupsChangedMessage,
-	TypedServerMessage,
 	WebSocketEventHandlers,
 	UseWebSocketOptions,
 	UseWebSocketReturn,
 } from './useWebSocket';
+export type {
+	AITabData,
+	AutoRunState,
+	GroupChatMessage,
+	GroupChatState,
+	GroupData,
+	SessionData,
+} from '../../shared/web-protocol/session';
+export type {
+	AuthFailedMessage,
+	AuthRequiredMessage,
+	AuthSuccessMessage,
+	ConnectedMessage,
+	ErrorMessage,
+	GroupsChangedMessage,
+	ServerMessage,
+	ServerMessageType,
+	SessionAddedMessage,
+	SessionRemovedMessage,
+	SessionStateChangeMessage,
+	SessionsListMessage,
+	ThemeMessage,
+} from '../../shared/web-protocol/server-messages';
 
 export { useSessions, default as useSessionsDefault } from './useSessions';
 
@@ -157,20 +164,9 @@ export type { UseAgentManagementReturn } from './useAgentManagement';
 
 export { useGitStatus, default as useGitStatusDefault } from './useGitStatus';
 
-export type {
-	GitStatusFile,
-	GitStatusResult,
-	GitDiffResult,
-	UseGitStatusReturn,
-} from './useGitStatus';
+export type { GitDiffResult, GitStatusFile, GitStatusResult } from '../../shared/web-protocol/git';
+export type { UseGitStatusReturn } from './useGitStatus';
 
 export { useGroupChat, default as useGroupChatDefault } from './useGroupChat';
 
 export type { UseGroupChatReturn } from './useGroupChat';
-
-export type {
-	GroupChatMessage,
-	GroupChatState,
-	GroupChatMessageBroadcast,
-	GroupChatStateChangeBroadcast,
-} from './useWebSocket';

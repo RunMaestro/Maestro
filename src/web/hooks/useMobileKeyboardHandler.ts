@@ -26,7 +26,7 @@
 import { useEffect, useRef } from 'react';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { WebShortcutId } from '../constants/webShortcuts';
-import type { AITabData } from './useWebSocket';
+import type { AITabData } from '../../shared/web-protocol/session';
 
 /**
  * Session type for the mobile keyboard handler.

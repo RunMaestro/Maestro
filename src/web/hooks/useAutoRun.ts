@@ -7,7 +7,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { UseWebSocketReturn, AutoRunState } from './useWebSocket';
+import type { UseWebSocketReturn } from './useWebSocket';
+import type { AutoRunState } from '../../shared/web-protocol/session';
 
 /**
  * Default `sendRequest` timeout for `configure_auto_run` (matches the platform
