@@ -139,13 +139,6 @@ vi.mock('../../renderer/hooks/useGitStatusPolling', () => ({
 
 // Mock GitStatusContext to avoid Provider requirement
 vi.mock('../../renderer/contexts/GitStatusContext', () => ({
-	useGitStatus: () => ({
-		gitStatusMap: new Map(),
-		refreshGitStatus: vi.fn().mockResolvedValue(undefined),
-		isLoading: false,
-		getFileCount: () => 0,
-		getStatus: () => undefined,
-	}),
 	useGitFileStatus: () => ({
 		getFileCount: () => 0,
 		hasChanges: () => false,

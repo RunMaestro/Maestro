@@ -40,25 +40,6 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 		getFileDetails: mockGetFileDetails,
 		refreshGitStatus: mockRefreshGitStatus,
 	}),
-	// Legacy hook (still exported for backwards compatibility)
-	useGitStatus: () => ({
-		gitStatusMap: new Map(),
-		getStatus: (sessionId: string) => {
-			const fileCount = mockGetFileCount(sessionId);
-			const details = mockGetFileDetails(sessionId);
-			if (fileCount === 0 && !details) return undefined;
-			return {
-				fileCount,
-				...details,
-				ahead: 0,
-				behind: 0,
-				lastUpdated: Date.now(),
-			};
-		},
-		getFileCount: mockGetFileCount,
-		refreshGitStatus: mockRefreshGitStatus,
-		isLoading: false,
-	}),
 }));
 
 // Helper to create GitStatusData for tests
