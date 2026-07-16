@@ -332,7 +332,12 @@ export function createSpecCommandManager(config: SpecCommandManagerConfig): Spec
 		try {
 			return await fs.readFile(pathname);
 		} catch (error: unknown) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			if (
+				(error as NodeJS.ErrnoException).code === 'ENOENT' ||
+				(error instanceof Error && /ENOENT/.test(error.message))
+			) {
+				return null;
+			}
 			throw error;
 		}
 	}

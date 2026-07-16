@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs/promises';
 
 vi.mock('electron', () => ({
@@ -21,7 +21,11 @@ vi.mock('../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }));
 
-import { getSpeckitPrompts, type SpecKitMetadata } from '../../main/speckit-manager';
+import {
+	getSpeckitPrompts,
+	refreshSpeckitPrompts,
+	type SpecKitMetadata,
+} from '../../main/speckit-manager';
 
 function enoent(): NodeJS.ErrnoException {
 	const error = new Error('ENOENT') as NodeJS.ErrnoException;
@@ -57,6 +61,10 @@ describe('speckit-manager temporary-profile smoke', () => {
 		});
 	});
 
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	it('loads golden bundled commands while retaining a user customization over refreshed source', async () => {
 		const commands = await getSpeckitPrompts();
 
@@ -70,6 +78,35 @@ describe('speckit-manager temporary-profile smoke', () => {
 		);
 		expect(commands.find((command) => command.id === 'help')).toEqual(
 			expect.objectContaining({ prompt: 'bundled golden prompt' })
+		);
+	});
+
+	it('preserves customization while committing a SpecKit refresh', async () => {
+		vi.mocked(fs.readFile).mockImplementation(async (pathname) => {
+			if (pathname.toString().includes('speckit-customizations.json')) {
+				return JSON.stringify({
+					metadata,
+					prompts: { constitution: { content: 'user constitution', isModified: true } },
+				});
+			}
+			throw enoent();
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url.includes('/releases/latest'))
+					return new Response(JSON.stringify({ tag_name: 'v1.2.3' }));
+				return new Response('# refreshed SpecKit prompt');
+			})
+		);
+
+		const refreshed = await refreshSpeckitPrompts();
+
+		expect(refreshed).toMatchObject({ commitSha: 'v1.2.3', sourceVersion: '1.2.3' });
+		expect(fs.writeFile).toHaveBeenCalledWith(
+			expect.stringContaining('speckit-customizations.json'),
+			expect.stringContaining('user constitution'),
+			'utf-8'
 		);
 	});
 });
