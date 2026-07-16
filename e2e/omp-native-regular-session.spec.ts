@@ -69,7 +69,9 @@ test.describe('first-party OMP regular session', () => {
 			await expect(
 				launched.window.getByText('Native OMP fixture ready', { exact: true })
 			).toBeVisible();
-			await expect(launched.window.getByText('expanded-16.4.8', { exact: true })).toBeVisible();
+			await expect(
+				launched.window.getByText('fixture:expanded-16.4.8', { exact: true })
+			).toBeVisible();
 			await launched.window.getByRole('button', { name: 'Native', exact: true }).click();
 			const runtimePanel = launched.window.getByTestId('native-runtime-panel');
 			await expect(runtimePanel).toBeVisible();
@@ -209,10 +211,10 @@ test.describe('first-party OMP regular session', () => {
 
 			await composer.fill('select-approval');
 			await composer.press('Enter');
-			await expect(approvalDialog.getByRole('button', { name: 'Safe', exact: true })).toBeVisible({
+			await expect(approvalDialog.getByRole('button', { name: 'safe', exact: true })).toBeVisible({
 				timeout: 30_000,
 			});
-			await approvalDialog.getByRole('button', { name: 'Safe', exact: true }).click();
+			await approvalDialog.getByRole('button', { name: 'safe', exact: true }).click();
 			await expect(approvalDialog).toHaveCount(0);
 			await expect
 				.poll(

@@ -54,7 +54,9 @@ export function useRuntimeFeaturesListener(): void {
 			}
 		);
 		const removeOpenExternalUrl = window.maestro.process.onOpenExternalUrl(
-			(_sessionId: string, url: string) => openInSystemBrowser(url)
+			(sessionId: string, url: string) => {
+				if (ownedGate.current?.(sessionId)) openInSystemBrowser(url);
+			}
 		);
 		const removeComposerText = window.maestro.process.onComposerText(
 			(sessionId: string, text: string) => {

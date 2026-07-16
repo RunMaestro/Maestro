@@ -51,6 +51,7 @@ export class OmpNativeSessionAdapter {
 	private readonly child: ChildProcessWithoutNullStreams;
 	private readonly approvals = new Map<string, OmpRpcEvent>();
 	private readonly resolvedApprovals = new Set<string>();
+	private readonly inFlightApprovals = new Set<string>();
 	private readonly hostToolCalls = new Map<string, AbortController>();
 	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
@@ -112,6 +113,17 @@ export class OmpNativeSessionAdapter {
 		return adapters.get(sessionId);
 	}
 
+	static forAssociatedSessions(sessionId: string): OmpNativeSessionAdapter[] {
+		const direct = adapters.get(sessionId);
+		if (direct && !sessionId.endsWith('-ai')) return [direct];
+		const baseSessionId = nativeAdapterBaseSessionId(sessionId);
+		return [...adapters.entries()]
+			.filter(
+				([adapterSessionId]) => nativeAdapterBaseSessionId(adapterSessionId) === baseSessionId
+			)
+			.map(([, adapter]) => adapter);
+	}
+
 	get pid(): number {
 		return this.child.pid ?? 0;
 	}
@@ -143,15 +155,34 @@ export class OmpNativeSessionAdapter {
 		response: Omit<AgentApprovalResponse, 'sessionId' | 'requestId'>
 	): Promise<boolean> {
 		await this.initialized;
+		if (
+			this.disposed ||
+			this.resolvedApprovals.has(requestId) ||
+			this.inFlightApprovals.has(requestId)
+		)
+			return false;
 		const request = this.approvals.get(requestId);
 		if (!request) return false;
 		const method = stringAt(request, 'method');
 		const frame = extensionResponse(requestId, method, response, request);
 		if (!frame) return false;
-		await this.client.send(frame);
 		this.approvals.delete(requestId);
-		this.resolvedApprovals.add(requestId);
-		return true;
+		this.inFlightApprovals.add(requestId);
+		try {
+			await this.client.send(frame);
+			return !this.disposed;
+		} catch (error) {
+			this.options.send(
+				'process:stderr',
+				this.options.sessionId,
+				`OMP approval response failed: ${error instanceof Error ? error.message : String(error)}`
+			);
+			this.options.send('process:approval-cancelled', this.options.sessionId, requestId);
+			return false;
+		} finally {
+			this.inFlightApprovals.delete(requestId);
+			this.resolvedApprovals.add(requestId);
+		}
 	}
 
 	async setControl(controlId: string, value: string | boolean): Promise<boolean> {
@@ -186,6 +217,15 @@ export class OmpNativeSessionAdapter {
 		if (this.disposed) return;
 		this.disposed = true;
 		adapters.delete(this.options.sessionId);
+		for (const requestId of this.approvals.keys()) {
+			this.options.send('process:approval-cancelled', this.options.sessionId, requestId);
+		}
+		this.approvals.clear();
+		this.inFlightApprovals.clear();
+		this.resolvedApprovals.clear();
+		for (const controller of this.hostToolCalls.values()) controller.abort();
+		this.hostToolCalls.clear();
+		this.hostUriRequests.clear();
 		this.child.kill();
 	}
 
@@ -300,6 +340,7 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleEvent(event: OmpRpcEvent): void {
+		if (this.disposed) return;
 		if (event.type === 'message_update') {
 			const assistantMessageEvent = asRecord(event.assistantMessageEvent);
 			const eventType = stringAt(assistantMessageEvent, 'type');
@@ -351,6 +392,7 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleCallback(callback: OmpRpcEvent): void {
+		if (this.disposed) return;
 		if (callback.type === 'prompt_result') {
 			const text = textFrom(callback);
 			if (text && !this.turnEmittedAssistantText)
@@ -402,8 +444,7 @@ export class OmpNativeSessionAdapter {
 			}
 			if (method === 'cancel') {
 				const targetId = stringAt(callback, 'targetId');
-				if (targetId) {
-					this.approvals.delete(targetId);
+				if (targetId && this.approvals.delete(targetId)) {
 					this.resolvedApprovals.add(targetId);
 					this.options.send('process:approval-cancelled', this.options.sessionId, targetId);
 				}
@@ -620,6 +661,12 @@ function isExternalHttpUrl(value: string): boolean {
 		return false;
 	}
 }
+
+function nativeAdapterBaseSessionId(sessionId: string): string {
+	const aiTabMatch = sessionId.match(/^(.+)-ai-.+?(?:-fp-\d+)?$/);
+	if (aiTabMatch) return aiTabMatch[1];
+	return sessionId.endsWith('-ai') ? sessionId.slice(0, -'-ai'.length) : sessionId;
+}
 function textFrom(record: Record<string, unknown>): string | undefined {
 	for (const key of ['delta', 'content', 'text', 'message', 'result']) {
 		const value = record[key];
@@ -659,8 +706,7 @@ function controlsFromState(
 	modelOptions: AgentControl['options'],
 	autoRetryEnabled: boolean
 ): AgentControl[] {
-	const model = asRecord(state.model);
-	const modelValue = stringAt(model, 'id');
+	const modelValue = modelOption(state.model).id || undefined;
 	return [
 		{ id: 'model', label: 'Model', kind: 'select', options: modelOptions, value: modelValue },
 		{
@@ -851,15 +897,8 @@ function approvalOptions(callback: OmpRpcEvent): AgentApprovalRequest['options']
 	const raw = Array.isArray(callback.options) ? callback.options : [];
 	const options: AgentApprovalRequest['options'] = [];
 	for (const item of raw) {
-		const option = asRecord(item);
-		const id = stringAt(option, 'id');
-		if (id === undefined) continue;
-		const kind = stringAt(option, 'kind');
-		options.push({
-			id,
-			label: stringAt(option, 'label') ?? id,
-			kind: kind === 'approve' || kind === 'deny' ? kind : 'custom',
-		});
+		if (typeof item !== 'string') continue;
+		options.push({ id: item, label: item, kind: 'custom' });
 	}
 	const method = stringAt(callback, 'method');
 	if (options.length || (method !== 'confirm' && method !== 'extension_ui.confirm')) return options;

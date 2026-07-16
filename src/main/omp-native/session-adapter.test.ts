@@ -31,6 +31,11 @@ describe('OmpNativeSessionAdapter', () => {
 							? {
 									sessionId: 'omp-session',
 									sessionFile: 'C:/work/.omp/sessions/omp-session.jsonl',
+									model: {
+										provider: 'anthropic',
+										id: 'claude-sonnet-4-5',
+										label: 'Sonnet',
+									},
 									thinkingLevel: 'high',
 									todoPhases: [],
 								}
@@ -84,6 +89,10 @@ describe('OmpNativeSessionAdapter', () => {
 						id: 'model',
 						options: [{ id: 'anthropic:claude-sonnet-4-5', label: 'Sonnet' }],
 					}),
+					expect.objectContaining({
+						id: 'model',
+						value: 'anthropic:claude-sonnet-4-5',
+					}),
 				]),
 				tree: [{ id: 'entry-1', label: 'Root' }],
 				subagents: [{ id: 'sub-1', label: 'Scout', status: 'running', detail: undefined }],
@@ -107,16 +116,54 @@ describe('OmpNativeSessionAdapter', () => {
 			id: 'approval-1',
 			method: 'select',
 			title: 'Approve tool?',
-			options: [{ id: 'yes', label: 'Yes', kind: 'approve' }],
+			options: ['yes'],
 		});
 		expect(send).toHaveBeenCalledWith(
 			'process:approval-request',
-			expect.objectContaining({ id: 'approval-1', sessionId: 'tab-1' })
+			expect.objectContaining({
+				id: 'approval-1',
+				sessionId: 'tab-1',
+				options: [{ id: 'yes', label: 'yes', kind: 'custom' }],
+			})
 		);
 		await expect(adapter.respondApproval('approval-1', { optionId: 'yes' })).resolves.toBe(true);
+		expect(extensionResponses(child)).toContainEqual({
+			type: 'extension_ui_response',
+			id: 'approval-1',
+			value: 'yes',
+		});
 		await expect(adapter.branch('entry-1')).resolves.toBe(true);
 		expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"type":"branch"'));
 		expect(child.kill).not.toHaveBeenCalled();
+	});
+
+	it('resolves a base native session to every tab and a decorated session to one tab', async () => {
+		const firstChild = new FakeChild();
+		const secondChild = new FakeChild();
+		const first = await OmpNativeSessionAdapter.acquire({
+			sessionId: 'session-base-ai-tab-a',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => firstChild as never),
+		});
+		const second = await OmpNativeSessionAdapter.acquire({
+			sessionId: 'session-base-ai-tab-b',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => secondChild as never),
+		});
+
+		expect(OmpNativeSessionAdapter.forAssociatedSessions('session-base-ai')).toEqual([
+			first,
+			second,
+		]);
+		expect(OmpNativeSessionAdapter.forAssociatedSessions('session-base-ai-tab-a')).toEqual([first]);
+
+		first.dispose();
+		second.dispose();
+		expect(OmpNativeSessionAdapter.forAssociatedSessions('session-base-ai')).toEqual([]);
 	});
 
 	it('settles each RPC turn and uses prompt results only when no assistant deltas streamed', async () => {
@@ -514,7 +561,7 @@ describe('OmpNativeSessionAdapter', () => {
 			id: 'approval-opaque',
 			method: 'select',
 			title: 'Continue?',
-			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+			options: ['option:deny/opaque'],
 		});
 
 		expect(send).toHaveBeenCalledWith('process:approval-request', {
@@ -523,7 +570,7 @@ describe('OmpNativeSessionAdapter', () => {
 			toolType: 'omp',
 			title: 'Continue?',
 			detail: undefined,
-			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+			options: [{ id: 'option:deny/opaque', label: 'option:deny/opaque', kind: 'custom' }],
 			createdAt: expect.any(String),
 		});
 		await expect(
@@ -535,7 +582,7 @@ describe('OmpNativeSessionAdapter', () => {
 			adapter.respondApproval('approval-opaque', { optionId: 'option:deny/opaque' })
 		).resolves.toBe(true);
 		expect(extensionResponses(child)).toEqual([
-			{ type: 'extension_ui_response', id: 'approval-opaque', confirmed: false },
+			{ type: 'extension_ui_response', id: 'approval-opaque', value: 'option:deny/opaque' },
 		]);
 		await expect(
 			adapter.respondApproval('approval-opaque', { optionId: 'option:deny/opaque' })
@@ -543,14 +590,54 @@ describe('OmpNativeSessionAdapter', () => {
 
 		emit(child, {
 			type: 'extension_ui_request',
+			id: 'approval-race',
+			method: 'select',
+			title: 'Race?',
+			options: ['continue'],
+		});
+		await expect(
+			Promise.all([
+				adapter.respondApproval('approval-race', { optionId: 'continue' }),
+				adapter.respondApproval('approval-race', { optionId: 'continue' }),
+			])
+		).resolves.toEqual([true, false]);
+		expect(extensionResponses(child).filter((response) => response.id === 'approval-race')).toEqual(
+			[{ type: 'extension_ui_response', id: 'approval-race', value: 'continue' }]
+		);
+
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'approval-cancel-race',
+			method: 'select',
+			title: 'Cancel race?',
+			options: ['continue'],
+		});
+		const claimedResponse = adapter.respondApproval('approval-cancel-race', {
+			optionId: 'continue',
+		});
+		await Promise.resolve();
+		emit(child, {
+			type: 'extension_ui_request',
+			id: 'cancel-race',
+			method: 'cancel',
+			targetId: 'approval-cancel-race',
+		});
+		await expect(claimedResponse).resolves.toBe(true);
+		expect(send).not.toHaveBeenCalledWith(
+			'process:approval-cancelled',
+			'tab-approval',
+			'approval-cancel-race'
+		);
+		emit(child, {
+			type: 'extension_ui_request',
 			id: 'approval-opaque',
 			method: 'select',
 			title: 'Continue?',
-			options: [{ id: 'option:deny/opaque', label: 'Decline', kind: 'deny' }],
+			options: ['option:deny/opaque'],
 		});
 		expect(
 			send.mock.calls.filter(([channel]) => channel === 'process:approval-request')
-		).toHaveLength(1);
+		).toHaveLength(3);
 	});
 
 	it('projects noninteractive extension UI callbacks into ordinary Maestro surfaces', async () => {
@@ -1290,9 +1377,9 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
-	function extensionResponses(child: FakeChild): unknown[] {
+	function extensionResponses(child: FakeChild): Array<Record<string, unknown>> {
 		return child.stdin.write.mock.calls
-			.map(([frame]) => JSON.parse(frame as string))
+			.map(([frame]) => JSON.parse(frame as string) as Record<string, unknown>)
 			.filter((frame) => frame.type === 'extension_ui_response');
 	}
 });

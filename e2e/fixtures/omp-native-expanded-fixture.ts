@@ -64,7 +64,7 @@ const finish = (cancelled = false) => {
 const approval = (method, id, message) => {
   pendingApproval = id;
   emit({ type: 'extension_ui_request', id, method, title: 'Native OMP approval', message,
-    options: method === 'select' ? [{ id: 'safe', label: 'Safe', kind: 'approve' }, { id: 'cancel', label: 'Cancel', kind: 'deny' }] : undefined,
+    options: method === 'select' ? ['safe', 'cancel'] : undefined,
     placeholder: method === 'editor' ? 'Write the native editor response' : 'Write the native response', prefill: 'fixture value' });
 };
 const prompt = (request) => {

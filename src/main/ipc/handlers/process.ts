@@ -272,13 +272,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'process:kill',
 		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
-			const processManager = requireProcessManager(getProcessManager);
+			if (typeof sessionId !== 'string') return false;
 			logger.info(`Killing process: ${sessionId}`, LOG_CONTEXT, { sessionId });
-			// Detach any interactive replay listener. A user-initiated kill
-			// shouldn't trigger an API-mode replay even if it happens to exit 2.
 			deps.interactiveReplayController?.clearInteractiveReplay(sessionId);
-			// Add breadcrumb for crash diagnostics (MAESTRO-5A/4Y)
 			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
+			const ompAdapters = OmpNativeSessionAdapter.forAssociatedSessions(sessionId);
+			if (ompAdapters.length > 0) {
+				for (const adapter of ompAdapters) adapter.dispose();
+				return true;
+			}
+			const processManager = requireProcessManager(getProcessManager);
 			return processManager.kill(sessionId);
 		})
 	);

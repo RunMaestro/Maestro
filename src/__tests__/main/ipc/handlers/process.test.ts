@@ -252,6 +252,7 @@ vi.mock('../../../../main/omp-native/session-adapter', () => ({
 	OmpNativeSessionAdapter: {
 		acquire: vi.fn(),
 		forSession: vi.fn(() => undefined),
+		forAssociatedSessions: vi.fn(() => []),
 	},
 }));
 
@@ -383,6 +384,7 @@ describe('process IPC handlers', () => {
 	afterEach(() => {
 		handlers.clear();
 		vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue(undefined);
+		vi.mocked(OmpNativeSessionAdapter.forAssociatedSessions).mockReturnValue([]);
 	});
 
 	describe('registration', () => {
@@ -1417,6 +1419,26 @@ describe('process IPC handlers', () => {
 
 			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-to-kill');
 			expect(result).toBe(true);
+		});
+
+		it('disposes every base-session native OMP tab once and makes repeated kills idempotent', async () => {
+			const disposeFirst = vi.fn();
+			const disposeSecond = vi.fn();
+			vi.mocked(OmpNativeSessionAdapter.forAssociatedSessions)
+				.mockReturnValueOnce([
+					{ dispose: disposeFirst } as unknown as OmpNativeSessionAdapter,
+					{ dispose: disposeSecond } as unknown as OmpNativeSessionAdapter,
+				])
+				.mockReturnValue([]);
+			mockProcessManager.kill.mockReturnValue(false);
+
+			const handler = handlers.get('process:kill');
+			await expect(handler!({} as any, 'session-to-kill-ai')).resolves.toBe(true);
+			await expect(handler!({} as any, 'session-to-kill-ai')).resolves.toBe(false);
+
+			expect(disposeFirst).toHaveBeenCalledOnce();
+			expect(disposeSecond).toHaveBeenCalledOnce();
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-to-kill-ai');
 		});
 
 		it('should handle already dead process', async () => {

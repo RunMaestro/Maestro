@@ -41,7 +41,7 @@ export const OMP_16_4_8_COMMAND_IDS = [
 ] as const;
 
 export type OmpCommandId = (typeof OMP_16_4_8_COMMAND_IDS)[number];
-export type OmpCommandDisposition = 'ui' | 'host';
+export type OmpCommandDisposition = 'ui' | 'host' | 'unsupported';
 export type OmpRendererCaller =
 	| 'composer'
 	| 'command-menu'
@@ -54,7 +54,7 @@ export interface OmpCommandRegistration {
 	readonly id: OmpCommandId;
 	readonly disposition: OmpCommandDisposition;
 	/** Adapter method which emits this exact RPC command. */
-	readonly adapterHandler:
+	readonly adapterHandler?:
 		| 'prompt'
 		| 'interrupt'
 		| 'initialize'
@@ -84,6 +84,12 @@ const host = (
 	rationale: string
 ): OmpCommandRegistration => ({ id, disposition: 'host', adapterHandler, rationale });
 
+const unsupported = (id: OmpCommandId, rationale: string): OmpCommandRegistration => ({
+	id,
+	disposition: 'unsupported',
+	rationale,
+});
+
 /**
  * The only OMP command vocabulary accepted by Maestro.  UI members name both
  * their real renderer entry point and their adapter dispatch method; host
@@ -91,10 +97,13 @@ const host = (
  */
 export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 	prompt: ui('prompt', 'prompt', 'composer'),
-	steer: ui('steer', 'prompt', 'composer'),
-	follow_up: ui('follow_up', 'prompt', 'composer'),
+	steer: unsupported('steer', 'Maestro has no ordinary caller for RPC steering prompts.'),
+	follow_up: unsupported('follow_up', 'Maestro has no ordinary caller for RPC follow-up prompts.'),
 	abort: ui('abort', 'interrupt', 'composer'),
-	abort_and_prompt: ui('abort_and_prompt', 'interrupt', 'composer'),
+	abort_and_prompt: unsupported(
+		'abort_and_prompt',
+		'Maestro has no ordinary caller for the compound abort-and-prompt RPC.'
+	),
 	new_session: ui('new_session', 'setControl', 'header-controls', 'new-session'),
 	get_state: host(
 		'get_state',
@@ -102,10 +111,9 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 		'Pinned runtime state is projected into ordinary session controls.'
 	),
 	get_available_commands: ui('get_available_commands', 'initialize', 'command-menu'),
-	set_todos: host(
+	set_todos: unsupported(
 		'set_todos',
-		'initialize',
-		'Todo state is supplied by the first-party host and projected in the runtime panel.'
+		'Maestro intentionally does not push defaults because that would erase resumed OMP todos.'
 	),
 	set_host_tools: host(
 		'set_host_tools',
@@ -127,10 +135,9 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 		'refreshFeatures',
 		'Projected into the ordinary runtime panel.'
 	),
-	get_subagent_messages: host(
+	get_subagent_messages: unsupported(
 		'get_subagent_messages',
-		'refreshFeatures',
-		'Projected subagent detail is refreshed by the first-party adapter.'
+		'No ordinary Maestro surface consumes individual subagent message history.'
 	),
 	set_model: ui('set_model', 'setControl', 'header-controls', 'model'),
 	cycle_model: ui('cycle_model', 'setControl', 'header-controls', 'cycle-model'),
@@ -168,15 +175,13 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 	export_html: ui('export_html', 'setControl', 'runtime-panel', 'export-html'),
 	switch_session: ui('switch_session', 'setControl', 'runtime-panel', 'switch-session'),
 	branch: ui('branch', 'branch', 'runtime-panel'),
-	get_branch_messages: host(
+	get_branch_messages: unsupported(
 		'get_branch_messages',
-		'refreshFeatures',
-		'Branch messages are projected into the session tree.'
+		'No ordinary Maestro surface consumes branch message history.'
 	),
-	get_last_assistant_text: host(
+	get_last_assistant_text: unsupported(
 		'get_last_assistant_text',
-		'refreshFeatures',
-		'Last assistant text is projected into the ordinary transcript.'
+		'The ordinary transcript is driven by streamed RPC events, not a snapshot query.'
 	),
 	set_session_name: ui('set_session_name', 'setControl', 'session-lifecycle', 'session-name'),
 	handoff: ui('handoff', 'setControl', 'header-controls', 'handoff'),
@@ -185,10 +190,9 @@ export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 		'refreshFeatures',
 		'Messages are projected into the ordinary session tree.'
 	),
-	get_login_providers: host(
+	get_login_providers: unsupported(
 		'get_login_providers',
-		'refreshFeatures',
-		'Providers populate the ordinary account flow.'
+		'The ordinary account flow accepts an explicit provider and does not consume provider discovery.'
 	),
 	login: ui('login', 'setControl', 'account-flow', 'login'),
 });
