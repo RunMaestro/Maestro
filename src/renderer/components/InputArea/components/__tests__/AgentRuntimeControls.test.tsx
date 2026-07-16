@@ -22,6 +22,11 @@ const controls = [
 		value: true,
 	},
 	{
+		id: 'compact',
+		label: 'Compact',
+		kind: 'action' as const,
+	},
+	{
 		id: 'model',
 		label: 'Model',
 		kind: 'select' as const,
@@ -67,9 +72,11 @@ describe('AgentRuntimeControls', () => {
 
 		fireEvent.change(screen.getByLabelText('Thinking level'), { target: { value: 'low' } });
 		fireEvent.click(screen.getByRole('button', { name: 'Auto retry' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Compact' }));
 
 		expect(onSetControl).toHaveBeenNthCalledWith(1, 'session-1', 'thinking-level', 'low');
 		expect(onSetControl).toHaveBeenNthCalledWith(2, 'session-1', 'auto-retry', false);
+		expect(onSetControl).toHaveBeenNthCalledWith(3, 'session-1', 'compact', true);
 	});
 
 	it('renders nothing when no native runtime controls are available', () => {

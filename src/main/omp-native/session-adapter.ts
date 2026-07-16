@@ -493,6 +493,14 @@ function controlsFromState(
 			})),
 			value: stringAt(state, 'thinkingLevel') ?? 'off',
 		},
+		{ id: 'new-session', label: 'New session', kind: 'action' },
+		{ id: 'compact', label: 'Compact', kind: 'action' },
+		{ id: 'handoff', label: 'Handoff', kind: 'action' },
+		{ id: 'export-html', label: 'Export HTML', kind: 'action' },
+		{ id: 'cycle-model', label: 'Cycle model', kind: 'action' },
+		{ id: 'cycle-thinking-level', label: 'Cycle thinking', kind: 'action' },
+		{ id: 'abort-retry', label: 'Abort retry', kind: 'action' },
+		{ id: 'abort-bash', label: 'Abort shell command', kind: 'action' },
 		{
 			id: 'steering-mode',
 			label: 'Steering mode',
@@ -729,5 +737,18 @@ function controlCommand(controlId: string, value: string | boolean): OmpRpcComma
 		return { type: 'set_auto_compaction', enabled: value };
 	if (controlId === 'auto-retry' && typeof value === 'boolean')
 		return { type: 'set_auto_retry', enabled: value };
+	if (value === true) {
+		const actions: Record<string, OmpRpcCommand> = {
+			'new-session': { type: 'new_session' },
+			compact: { type: 'compact' },
+			handoff: { type: 'handoff' },
+			'export-html': { type: 'export_html' },
+			'cycle-model': { type: 'cycle_model' },
+			'cycle-thinking-level': { type: 'cycle_thinking_level' },
+			'abort-retry': { type: 'abort_retry' },
+			'abort-bash': { type: 'abort_bash' },
+		};
+		return actions[controlId] ?? null;
+	}
 	return null;
 }

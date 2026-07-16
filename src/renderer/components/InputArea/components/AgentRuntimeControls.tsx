@@ -24,7 +24,7 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 		(control) =>
 			control.id.toLowerCase() !== 'model' &&
 			control.label.toLowerCase() !== 'model' &&
-			(control.kind === 'select' || control.kind === 'toggle')
+			(control.kind === 'select' || control.kind === 'toggle' || control.kind === 'action')
 	);
 	const setControl = useCallback(
 		(controlId: string, value: string | boolean) => {
@@ -67,6 +67,23 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 								))}
 							</select>
 						</label>
+					);
+				}
+
+				if (control.kind === 'action') {
+					return (
+						<button
+							key={control.id}
+							type="button"
+							onClick={() => setControl(control.id, true)}
+							className="rounded-full border px-2 py-1 text-[10px] transition-all hover:opacity-100"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textDim,
+							}}
+						>
+							{control.label}
+						</button>
 					);
 				}
 

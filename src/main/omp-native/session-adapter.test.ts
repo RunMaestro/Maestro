@@ -970,6 +970,61 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 		await expect(adapter.prompt('must not be sent')).rejects.toThrow('OMP RPC process is closed');
 	});
+	it('maps ordinary composer actions to native OMP lifecycle commands', async () => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			frames.push(command);
+			if (command.id) {
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			}
+			return true;
+		});
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-actions',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		for (const control of [
+			'new-session',
+			'compact',
+			'handoff',
+			'export-html',
+			'cycle-model',
+			'cycle-thinking-level',
+			'abort-retry',
+			'abort-bash',
+		])
+			await expect(adapter.setControl(control, true)).resolves.toBe(true);
+
+		expect(frames.map((frame) => frame.type)).toEqual(
+			expect.arrayContaining([
+				'new_session',
+				'compact',
+				'handoff',
+				'export_html',
+				'cycle_model',
+				'cycle_thinking_level',
+				'abort_retry',
+				'abort_bash',
+			])
+		);
+	});
 
 	function extensionResponses(child: FakeChild): unknown[] {
 		return child.stdin.write.mock.calls
