@@ -48,7 +48,7 @@
  * ```
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useThrottledCallback } from '../utils';
 
 export interface UseScrollPositionOptions {
@@ -95,6 +95,12 @@ export interface UseScrollPositionOptions {
 	 * Initial value for isAtBottom (default: true)
 	 */
 	initialAtBottom?: boolean;
+
+	/**
+	 * Re-measure when the container size or rendered content changes.
+	 * Disabled by default so existing consumers retain event-only semantics.
+	 */
+	observeChanges?: boolean;
 }
 
 export interface UseScrollPositionReturn {
@@ -238,6 +244,7 @@ export function useScrollPosition(options: UseScrollPositionOptions): UseScrollP
 		positionChangeThrottleMs = 200,
 		trackProgress = false,
 		initialAtBottom = true,
+		observeChanges = false,
 	} = options;
 
 	const [scrollTop, setScrollTop] = useState(0);
@@ -316,6 +323,33 @@ export function useScrollPosition(options: UseScrollPositionOptions): UseScrollP
 	// Throttle the scroll handler if throttleMs > 0
 	const throttledHandler = useThrottledCallback(handleScrollInner, throttleMs);
 	const handleScroll = throttleMs > 0 ? throttledHandler : handleScrollInner;
+
+	useEffect(() => {
+		if (
+			!observeChanges ||
+			!container ||
+			typeof ResizeObserver === 'undefined' ||
+			typeof MutationObserver === 'undefined'
+		)
+			return;
+
+		const remeasure = () => handleScrollInner();
+		const resizeObserver = new ResizeObserver(remeasure);
+		const mutationObserver = new MutationObserver(remeasure);
+		resizeObserver.observe(container);
+		mutationObserver.observe(container, {
+			childList: true,
+			subtree: true,
+			characterData: true,
+		});
+
+		return () => {
+			resizeObserver.disconnect();
+			mutationObserver.disconnect();
+		};
+	}, [containerRef, handleScrollInner, observeChanges]);
+
+	useEffect(() => cleanupPositionTimer, [cleanupPositionTimer]);
 
 	/**
 	 * Scroll to a specific position

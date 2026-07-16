@@ -29,6 +29,12 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+export { useAutoScrollToBottom } from './useAutoScrollToBottom';
+export type {
+	UseAutoScrollToBottomOptions,
+	UseAutoScrollToBottomReturn,
+} from './useAutoScrollToBottom';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
 
@@ -53,6 +59,9 @@ export type {
 	UseResizableModalOptions,
 	UseResizableModalReturn,
 } from './useResizableModal';
+
+export { usePointerResize } from './usePointerResize';
+export type { PointerResizeOperation, UsePointerResizeReturn } from './usePointerResize';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

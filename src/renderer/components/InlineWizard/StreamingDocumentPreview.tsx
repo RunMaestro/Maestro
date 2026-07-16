@@ -12,13 +12,14 @@
  * Used by DocumentGenerationView during document generation phase.
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { FileText, Code2, AlignLeft } from 'lucide-react';
 import type { Theme } from '../../types';
 import { generateInlineWizardPreviewProseStyles } from '../../utils/markdownConfig';
 import { Markdown } from '../Markdown';
 import { openUrl } from '../../utils/openUrl';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useAutoScrollToBottom } from '../../hooks/ui/useAutoScrollToBottom';
 
 /**
  * Props for StreamingDocumentPreview
@@ -93,41 +94,12 @@ export function StreamingDocumentPreview({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const [viewMode, setViewMode] = useState<ViewMode>('raw');
-	const userScrolledRef = useRef(false);
-	const lastFilenameRef = useRef(filename ?? '');
-	const [, setScrollRenderTick] = useState(0);
-
-	useMemo(() => {
-		if (lastFilenameRef.current !== (filename ?? '')) {
-			lastFilenameRef.current = filename ?? '';
-			userScrolledRef.current = false;
-		}
-	}, [filename]);
-
-	const updateUserScrolled = (next: boolean) => {
-		if (userScrolledRef.current !== next) {
-			userScrolledRef.current = next;
-			setScrollRenderTick((tick) => tick + 1);
-		}
-	};
-
-	// Auto-scroll to bottom as content streams (unless user has scrolled up)
-	useEffect(() => {
-		if (containerRef.current && !userScrolledRef.current) {
-			containerRef.current.scrollTop = containerRef.current.scrollHeight;
-		}
-	}, [content, filename]);
-
-	// Handle scroll to detect if user has manually scrolled
-	const handleScroll = () => {
-		if (!containerRef.current) return;
-
-		const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-		const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
-
-		// If user scrolls up, stop auto-scroll. If they scroll back to bottom, resume.
-		updateUserScrolled(!isNearBottom);
-	};
+	const { isUserScrolledUp, handleScroll, resumeAutoScroll } = useAutoScrollToBottom({
+		containerRef,
+		contentDependencies: [content],
+		resetKey: filename ?? '',
+		bottomThreshold: 50,
+	});
 
 	// Clean content for markdown preview
 	const cleanedContent = useMemo(() => cleanIncompleteMarkdown(content), [content]);
@@ -261,15 +233,10 @@ export function StreamingDocumentPreview({
 			</div>
 
 			{/* User scroll indicator */}
-			{userScrolledRef.current && (
+			{isUserScrolledUp && (
 				<div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
 					<button
-						onClick={() => {
-							updateUserScrolled(false);
-							if (containerRef.current) {
-								containerRef.current.scrollTop = containerRef.current.scrollHeight;
-							}
-						}}
+						onClick={resumeAutoScroll}
 						className="px-3 py-1.5 rounded-full text-xs shadow-lg transition-colors hover:opacity-90"
 						style={{
 							backgroundColor: theme.colors.accent,
