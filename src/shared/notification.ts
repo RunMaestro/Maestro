@@ -2,12 +2,14 @@ export const NOTIFICATION_COLORS = ['green', 'yellow', 'orange', 'red', 'theme']
 
 export type NotificationColor = (typeof NOTIFICATION_COLORS)[number];
 
-export const NOTIFICATION_VARIANT_COLORS: Readonly<Record<string, NotificationColor>> = {
+export const NOTIFICATION_VARIANT_COLORS = {
 	success: 'green',
 	info: 'theme',
 	warning: 'yellow',
 	error: 'red',
-};
+} as const satisfies Readonly<Record<string, NotificationColor>>;
+
+export type NotificationVariant = keyof typeof NOTIFICATION_VARIANT_COLORS;
 
 export type NotificationColorResolution =
 	{ ok: true; color: NotificationColor } | { ok: false; source: 'color' | 'alias' };

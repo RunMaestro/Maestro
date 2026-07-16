@@ -21,9 +21,10 @@ import {
 	selectToastCount,
 	selectConfig,
 	triggerCustomNotification,
+	resolveToastColor,
+	showOsNotification,
 } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
-import { showOsNotification } from '../../../renderer/stores/notificationStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 // runtimeContext is mocked so tests can flip between the Electron desktop path
@@ -92,6 +93,18 @@ function createToast(overrides: Partial<Toast> = {}): Toast {
 // ============================================================================
 // Tests
 // ============================================================================
+
+describe('resolveToastColor compatibility', () => {
+	it.each([
+		['canonical color', 'red', undefined, 'red'],
+		['legacy type', undefined, 'success', 'green'],
+		['default color', undefined, undefined, 'theme'],
+		['invalid color wins over a legacy type', 'blue', 'success', 'theme'],
+		['invalid legacy type', undefined, 'notice', 'theme'],
+	] as const)('%s resolves to %s', (_name, color, type, expected) => {
+		expect(resolveToastColor({ color, type })).toBe(expected);
+	});
+});
 
 describe('notificationStore', () => {
 	// ==========================================================================

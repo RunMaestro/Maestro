@@ -15,6 +15,11 @@
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
+import {
+	resolveNotificationColor,
+	type NotificationColor,
+	type NotificationVariant,
+} from '../../shared/notification';
 
 // ============================================================================
 // Types
@@ -30,20 +35,13 @@ import { isWebDesktop } from '../utils/runtimeContext';
  *   red    - failed / blocked
  *   theme  - default; matches the active theme's accent color (no semantic)
  */
-export type ToastColor = 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+export type ToastColor = NotificationColor;
 
 /**
- * @deprecated Legacy semantic alias. Prefer `ToastColor` via `color`.
+ * Legacy semantic alias read during the persisted-data migration window.
  *   success → green, info → theme, warning → yellow, error → red
  */
-export type ToastType = 'success' | 'info' | 'warning' | 'error';
-
-const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
-	success: 'green',
-	info: 'theme',
-	warning: 'yellow',
-	error: 'red',
-};
+export type ToastType = NotificationVariant;
 
 /**
  * Discriminated union for what happens when the toast body is clicked.
@@ -110,10 +108,9 @@ export interface Toast {
 	clickAction?: ToastClickAction;
 }
 
-export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {
-	if (opts.color) return opts.color;
-	if (opts.type) return TOAST_TYPE_TO_COLOR[opts.type];
-	return 'theme';
+export function resolveToastColor(opts: { color?: string; type?: string }): ToastColor {
+	const resolution = resolveNotificationColor(opts.color, opts.type);
+	return resolution.ok ? resolution.color : 'theme';
 }
 
 export interface NotificationConfig {
@@ -231,9 +228,10 @@ const autoDismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * `duration` and forces the toast to stay until clicked.
  */
 export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'> & {
-	color?: ToastColor;
-	/** @deprecated Use `color`. */
-	type?: ToastType;
+	/** Canonical colors and persisted legacy values are normalized on receipt. */
+	color?: string;
+	/** Legacy alias accepted during the persisted-data migration window. */
+	type?: string;
 };
 
 /**
@@ -260,15 +258,17 @@ export function notifyToast(toast: NotifyToastInput): string {
 
 	const color = resolveToastColor(toast);
 	// Legacy `type` field - derive from color for callers that still read it.
+	const typeResolution = resolveNotificationColor(undefined, toast.type);
 	const legacyType: ToastType =
-		toast.type ??
-		(color === 'green'
-			? 'success'
-			: color === 'yellow'
-				? 'warning'
-				: color === 'red'
-					? 'error'
-					: 'info');
+		typeResolution.ok && toast.type !== undefined
+			? (toast.type as ToastType)
+			: color === 'green'
+				? 'success'
+				: color === 'yellow'
+					? 'warning'
+					: color === 'red'
+						? 'error'
+						: 'info';
 
 	// Dismissible toasts have no auto-dismiss - duration is forced to 0.
 	// Otherwise: explicit duration wins, then config default, then 0.

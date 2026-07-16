@@ -3017,6 +3017,140 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.createGroup).not.toHaveBeenCalled();
 		});
 	});
+	describe('Notification color compatibility', () => {
+		function lastResponse(): Record<string, unknown> {
+			const calls = (client.socket.send as unknown as { mock: { calls: string[][] } }).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		}
+
+		it('normalizes persisted toast and flash aliases before forwarding', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				toastType: 'success',
+			} as WebClientMessage);
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Heads up',
+				variant: 'warning',
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'green' })
+				);
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'yellow' })
+				);
+			});
+		});
+
+		it('prefers canonical colors and defaults omitted colors to theme', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				color: 'orange',
+				toastType: 'success',
+			} as WebClientMessage);
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'orange' })
+				);
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'theme' })
+				);
+			});
+		});
+
+		it('rejects invalid explicit colors without falling back to a legacy alias', () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				color: 'blue',
+				toastType: 'success',
+			} as WebClientMessage);
+
+			expect(callbacks.notifyToast).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_toast_result',
+				success: false,
+				error: 'Invalid toast color: blue. Must be one of: green, yellow, orange, red, theme',
+			});
+		});
+
+		it('preserves toast seconds and accepts its upper duration bound', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				duration: 60,
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: 60 })
+				);
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				duration: 0,
+			} as WebClientMessage);
+
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_toast_result',
+				success: false,
+				error: 'duration must be a positive number of seconds (use dismissible:true for sticky toasts)',
+			});
+		});
+
+		it('preserves flash milliseconds and enforces its duration bounds', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 5000,
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: 5000 })
+				);
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 0,
+			} as WebClientMessage);
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_center_flash_result',
+				success: false,
+				error: 'duration must be a positive number of milliseconds',
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 5001,
+			} as WebClientMessage);
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_center_flash_result',
+				success: false,
+				error: 'duration cannot exceed 5000 ms for externally-triggered flashes',
+			});
+		});
+	});
+
 });
 
 describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
