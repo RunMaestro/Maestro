@@ -290,4 +290,43 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+	test('surfaces a native crash then reconnect frame without losing the composer', async ({
+		browserName: _browserName,
+	}) => {
+		void _browserName;
+		test.setTimeout(120_000);
+		const harness = await launchNativeOmpRegularSessionHarness();
+		const { launched } = harness;
+		try {
+			await launched.window.getByRole('button', { name: 'New Agent' }).click();
+			await launched.window.getByText('Manual Setup', { exact: true }).click();
+			await launched.window.getByText('Oh My Pi', { exact: true }).click();
+			await launched.window.locator('input').first().fill('Native OMP reconnect');
+			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
+			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
+			const composer = launched.window.locator('textarea').last();
+			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
+
+			await composer.fill('crash-reconnect no-approval');
+			await composer.press('Enter');
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await expect(launched.window.getByText(/OMP Requested fixture crash/)).toBeVisible({
+				timeout: 30_000,
+			});
+			await expect
+				.poll(
+					() => {
+						const frames = fs.readFileSync(frameLogPath, 'utf8');
+						return (
+							frames.includes('"type":"extension_error","code":"fixture_crash"') &&
+							frames.includes('"type":"ready","version":"16.4.8","reconnected":true')
+						);
+					},
+					{ timeout: 30_000 }
+				)
+				.toBe(true);
+		} finally {
+			await harness.close();
+		}
+	});
 });
