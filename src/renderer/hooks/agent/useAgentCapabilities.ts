@@ -12,7 +12,6 @@ import { DEFAULT_CAPABILITIES } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 
 export type { AgentCapabilities };
-export { DEFAULT_CAPABILITIES };
 
 /**
  * Return type for useAgentCapabilities hook.

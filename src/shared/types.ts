@@ -1,15 +1,16 @@
 // Shared type definitions for Maestro CLI and Electron app
 // These types are used by both the CLI tool and the renderer process
+import type { AgentId } from './agentRegistry';
 
-// Re-export agent ID constants and types from the single source of truth
-export { AGENT_IDS, isValidAgentId } from './agentIds';
-export type { AgentId } from './agentIds';
+// Agent ID types are sourced from the shared registry. Runtime registry values
+// must be imported from `shared/agentRegistry` to keep this type module acyclic.
+export type { AgentId } from './agentRegistry';
 
 /**
- * Union type of all valid agent IDs.
- * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
+ * Union type of all valid built-in agent IDs.
+ * Derived from the authoritative shared agent registry.
  */
-export type ToolType = import('./agentIds').AgentId;
+export type ToolType = AgentId;
 
 /**
  * ThinkingMode controls how AI reasoning/thinking content is displayed.

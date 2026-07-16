@@ -20,8 +20,8 @@ import { GOAL_SYNOPSIS_REQUEST_PROMPT } from '../../../../shared/goalDriven/goal
 import {
 	setCapabilitiesCache,
 	clearCapabilitiesCache,
-	DEFAULT_CAPABILITIES,
 } from '../../../../renderer/hooks/agent/useAgentCapabilities';
+import { DEFAULT_CAPABILITIES } from '../../../../shared/types';
 
 // Mock notifyToast so toasts don't blow up and can be inspected if needed.
 const { mockNotifyToast } = vi.hoisted(() => ({ mockNotifyToast: vi.fn() }));

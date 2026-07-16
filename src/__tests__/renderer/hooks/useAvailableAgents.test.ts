@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAvailableAgents, useAvailableAgentsForCapability } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
-import { DEFAULT_CAPABILITIES, type AgentCapabilities } from '../../../renderer/hooks';
+import { DEFAULT_CAPABILITIES, type AgentCapabilities } from '../../../shared/types';
 
 // Define agent config type matching what detect() returns
 interface AgentConfigDetected {

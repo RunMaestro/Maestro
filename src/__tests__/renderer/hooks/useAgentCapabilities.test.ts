@@ -3,8 +3,8 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import {
 	useAgentCapabilities,
 	clearCapabilitiesCache,
-	DEFAULT_CAPABILITIES,
 } from '../../../renderer/hooks';
+import { DEFAULT_CAPABILITIES } from '../../../shared/types';
 import {
 	hasCapabilityCached,
 	setCapabilitiesCache,

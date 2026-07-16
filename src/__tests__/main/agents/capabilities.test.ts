@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-	AgentCapabilities,
-	DEFAULT_CAPABILITIES,
 	AGENT_CAPABILITIES,
 	getAgentCapabilities,
 	hasCapability,
 } from '../../../main/agents';
+import {
+	DEFAULT_CAPABILITIES,
+	type AgentCapabilities,
+} from '../../../shared/types';
 
 describe('agent-capabilities', () => {
 	describe('AgentCapabilities interface', () => {
