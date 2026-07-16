@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { Shortcut } from '../../types';
+import { matchesShortcut } from './shortcutMatcher';
 
 /**
  * Dependencies for useKeyboardShortcutHelpers hook
@@ -55,75 +56,8 @@ export function useKeyboardShortcutHelpers(
 	 */
 	const isShortcut = useCallback(
 		(e: KeyboardEvent, actionId: string): boolean => {
-			const sc = shortcuts[actionId];
-			if (!sc) return false;
-			const keys = sc.keys.map((k) => k.toLowerCase());
-
-			const metaPressed = e.metaKey || e.ctrlKey;
-			const shiftPressed = e.shiftKey;
-			const altPressed = e.altKey;
-			const key = e.key.toLowerCase();
-
-			const configMeta = keys.includes('meta') || keys.includes('ctrl') || keys.includes('command');
-			const configShift = keys.includes('shift');
-			const configAlt = keys.includes('alt');
-
-			if (metaPressed !== configMeta) return false;
-			if (shiftPressed !== configShift) return false;
-			if (altPressed !== configAlt) return false;
-
-			const mainKey = keys[keys.length - 1];
-			if (mainKey === '/' && key === '/') return true;
-			if (mainKey === 'arrowleft' && key === 'arrowleft') return true;
-			if (mainKey === 'arrowright' && key === 'arrowright') return true;
-			if (mainKey === 'arrowup' && key === 'arrowup') return true;
-			if (mainKey === 'arrowdown' && key === 'arrowdown') return true;
-			if (mainKey === 'backspace' && key === 'backspace') return true;
-			// Handle Shift producing different characters for punctuation keys
-			if (mainKey === '[' && (key === '[' || key === '{')) return true;
-			if (mainKey === ']' && (key === ']' || key === '}')) return true;
-			if (mainKey === ',' && (key === ',' || key === '<')) return true;
-			if (mainKey === '.' && (key === '.' || key === '>')) return true;
-			// Handle Shift+number producing symbol (US keyboard layout)
-			// Shift+1='!', Shift+2='@', Shift+3='#', etc.
-			const shiftNumberMap: Record<string, string> = {
-				'!': '1',
-				'@': '2',
-				'#': '3',
-				$: '4',
-				'%': '5',
-				'^': '6',
-				'&': '7',
-				'*': '8',
-				'(': '9',
-				')': '0',
-			};
-			if (shiftNumberMap[key] === mainKey) return true;
-
-			// When Alt is held, e.key may be rewritten by the layout (macOS Alt+p = π,
-			// Alt+l = ¬; Windows/Linux AltGr variants). Fall back to e.code for the
-			// physical key. Must stay symmetric with buildKeysFromEvent in shortcutRecorder.ts.
-			if (altPressed && e.code) {
-				const codeKey = e.code.replace('Key', '').toLowerCase();
-				// Map e.code values to key characters for punctuation keys
-				const codeToKey: Record<string, string> = {
-					comma: ',',
-					period: '.',
-					slash: '/',
-					backslash: '\\',
-					bracketleft: '[',
-					bracketright: ']',
-					semicolon: ';',
-					quote: "'",
-					backquote: '`',
-					minus: '-',
-					equal: '=',
-				};
-				const mappedKey = codeToKey[codeKey] || codeKey;
-				return mappedKey === mainKey;
-			}
-
-			return key === mainKey;
+			const shortcut = shortcuts[actionId];
+			return shortcut ? matchesShortcut(e, shortcut.keys) : false;
 		},
 		[shortcuts]
 	);
@@ -136,53 +70,8 @@ export function useKeyboardShortcutHelpers(
 	 */
 	const isTabShortcut = useCallback(
 		(e: KeyboardEvent, actionId: string): boolean => {
-			const sc = tabShortcuts[actionId] || shortcuts[actionId];
-			if (!sc) return false;
-			const keys = sc.keys.map((k) => k.toLowerCase());
-
-			const metaPressed = e.metaKey || e.ctrlKey;
-			const shiftPressed = e.shiftKey;
-			const altPressed = e.altKey;
-			const key = e.key.toLowerCase();
-
-			const configMeta = keys.includes('meta') || keys.includes('ctrl') || keys.includes('command');
-			const configShift = keys.includes('shift');
-			const configAlt = keys.includes('alt');
-
-			if (metaPressed !== configMeta) return false;
-			if (shiftPressed !== configShift) return false;
-			if (altPressed !== configAlt) return false;
-
-			const mainKey = keys[keys.length - 1];
-			// Handle Shift producing different characters for punctuation keys
-			if (mainKey === '[' && (key === '[' || key === '{')) return true;
-			if (mainKey === ']' && (key === ']' || key === '}')) return true;
-			if (mainKey === ',' && (key === ',' || key === '<')) return true;
-			if (mainKey === '.' && (key === '.' || key === '>')) return true;
-
-			// When Alt is held, e.key may be rewritten by the layout (macOS Alt+t = †;
-			// Windows/Linux AltGr variants). Fall back to e.code for the physical key.
-			if (altPressed && e.code) {
-				const codeKey = e.code.replace('Key', '').toLowerCase();
-				// Map e.code values to key characters for punctuation keys
-				const codeToKey: Record<string, string> = {
-					comma: ',',
-					period: '.',
-					slash: '/',
-					backslash: '\\',
-					bracketleft: '[',
-					bracketright: ']',
-					semicolon: ';',
-					quote: "'",
-					backquote: '`',
-					minus: '-',
-					equal: '=',
-				};
-				const mappedKey = codeToKey[codeKey] || codeKey;
-				return mappedKey === mainKey;
-			}
-
-			return key === mainKey;
+			const shortcut = tabShortcuts[actionId] || shortcuts[actionId];
+			return shortcut ? matchesShortcut(e, shortcut.keys) : false;
 		},
 		[tabShortcuts, shortcuts]
 	);
@@ -197,33 +86,10 @@ export function useKeyboardShortcutHelpers(
 	 */
 	const isPaneShortcut = useCallback(
 		(e: KeyboardEvent, actionId: string): boolean => {
-			const sc = shortcuts[actionId];
-			if (!sc) return false;
-			const keys = sc.keys.map((k) => k.toLowerCase());
-
-			// Both Ctrl and Cmd must be down. On macOS these are distinct physical
-			// modifiers; on Windows/Linux users press Ctrl and the Windows/Meta key.
-			const wantsCtrl = keys.includes('control') || keys.includes('ctrl');
-			const wantsMeta = keys.includes('meta') || keys.includes('command');
-			if (wantsCtrl && !e.ctrlKey) return false;
-			if (wantsMeta && !e.metaKey) return false;
-			if (!wantsCtrl || !wantsMeta) return false;
-
-			const wantsShift = keys.includes('shift');
-			if (e.shiftKey !== wantsShift) return false;
-			// The tiling family never uses Alt; requiring its absence keeps these from
-			// firing on unrelated Alt combos.
-			if (e.altKey) return false;
-
-			const mainKey = keys[keys.length - 1];
-			const key = e.key.toLowerCase();
-			if (mainKey === key) return true;
-			// Arrow keys.
-			if (mainKey.startsWith('arrow') && key === mainKey) return true;
-			// '=' can arrive as '+' when Shift is held on some layouts; the tiling
-			// rebalance binding is unshifted, but tolerate the symbol for robustness.
-			if (mainKey === '=' && (key === '=' || key === '+')) return true;
-			return false;
+			const shortcut = shortcuts[actionId];
+			return shortcut
+				? matchesShortcut(e, shortcut.keys, { requirePhysicalMetaAndCtrl: true })
+				: false;
 		},
 		[shortcuts]
 	);

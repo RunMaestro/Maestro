@@ -18,7 +18,7 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutHint } from './ShortcutHint';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 
@@ -142,15 +142,6 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			restartTerminalTab(tab.id);
 		},
 		[restartTerminalTab, tab.id]
-	);
-
-	const ShortcutHint = ({ keys }: { keys: string[] }) => (
-		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
-			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-		>
-			{formatShortcutKeys(keys)}
-		</span>
 	);
 
 	const handleMouseDown = useCallback(
@@ -529,7 +520,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
 										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -545,7 +536,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Move to Last Position
 										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -601,7 +592,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
-									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
+									{tabShortcuts.closeTab && (
+										<ShortcutHint keys={tabShortcuts.closeTab.keys} theme={theme} />
+									)}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -616,7 +609,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
 										{tabShortcuts.closeOtherTabs && (
-											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -633,7 +626,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
 										{tabShortcuts.closeTabsLeft && (
-											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -655,7 +648,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Close Tabs to Right
 										{tabShortcuts.closeTabsRight && (
-											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} theme={theme} />
 										)}
 									</button>
 								)}
