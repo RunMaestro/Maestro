@@ -2,44 +2,15 @@
 // Supports dot-notation, auto type coercion, --raw for explicit JSON
 
 import { readSettingValue, writeSettingValue } from '../services/storage';
-import { formatSuccess, formatError, formatWarning } from '../output/formatter';
+import { formatSuccess, formatWarning } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { reportSettingsCliError } from '../utils/settings-error';
+import { parseSettingsCliValue } from '../utils/settings-value';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 
 interface SettingsSetOptions {
 	json?: boolean;
 	raw?: string;
-}
-
-/**
- * Parse a CLI value string into the appropriate JS type.
- * - "true"/"false" → boolean
- * - numeric strings → number
- * - "null" → null
- * - JSON arrays/objects → parsed
- * - everything else → string
- */
-function parseValue(input: string): unknown {
-	if (input === 'true') return true;
-	if (input === 'false') return false;
-	if (input === 'null') return null;
-
-	// Try number (but not empty string or strings with leading zeros like "007")
-	if (input !== '' && !/^0\d/.test(input)) {
-		const num = Number(input);
-		if (!isNaN(num) && isFinite(num)) return num;
-	}
-
-	// Try JSON for arrays/objects
-	if (input.startsWith('[') || input.startsWith('{')) {
-		try {
-			return JSON.parse(input);
-		} catch {
-			// Fall through to string
-		}
-	}
-
-	return input;
 }
 
 export function settingsSet(key: string, value: string, options: SettingsSetOptions): void {
@@ -62,7 +33,7 @@ export function settingsSet(key: string, value: string, options: SettingsSetOpti
 				throw new Error(`Invalid JSON in --raw: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		} else {
-			parsedValue = parseValue(value);
+			parsedValue = parseSettingsCliValue(value);
 		}
 
 		writeSettingValue(key, parsedValue);
@@ -78,12 +49,6 @@ export function settingsSet(key: string, value: string, options: SettingsSetOpti
 			console.log(formatSuccess(`${key} = ${JSON.stringify(parsedValue)}`));
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to set "${key}": ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, `Failed to set "${key}"`);
 	}
 }

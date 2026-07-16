@@ -2,8 +2,9 @@
 // Removes the key from the store so the default takes effect
 
 import { readSettingValue, deleteSettingValue } from '../services/storage';
-import { formatSuccess, formatError } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { reportSettingsCliError } from '../utils/settings-error';
 import { SETTINGS_METADATA, getSettingDefault } from '../../shared/settingsMetadata';
 
 interface SettingsResetOptions {
@@ -37,12 +38,6 @@ export function settingsReset(key: string, options: SettingsResetOptions): void 
 			console.log(formatSuccess(`${key} reset to default (${JSON.stringify(defaultValue)})`));
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to reset "${key}": ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, `Failed to reset "${key}"`);
 	}
 }
