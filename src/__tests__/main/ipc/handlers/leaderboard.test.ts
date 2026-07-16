@@ -29,7 +29,6 @@ global.fetch = mockFetch;
 import {
 	registerLeaderboardHandlers,
 	getFetchTimeoutMs,
-	fetchWithTimeout,
 } from '../../../../main/ipc/handlers/leaderboard';
 
 describe('Leaderboard IPC Handlers', () => {
@@ -555,58 +554,9 @@ describe('Leaderboard IPC Handlers', () => {
 		});
 	});
 
-	describe('fetchWithTimeout helper', () => {
+	describe('timeout configuration', () => {
 		it('should return default timeout value', () => {
 			expect(getFetchTimeoutMs()).toBe(30000);
-		});
-
-		it('should complete successfully before timeout', async () => {
-			mockFetch.mockResolvedValue({
-				ok: true,
-				json: () => Promise.resolve({ data: 'test' }),
-			});
-
-			const response = await fetchWithTimeout('https://example.com/api', {});
-			expect(response.ok).toBe(true);
-		});
-
-		it('should abort on timeout', async () => {
-			// Create a fetch that respects the abort signal
-			mockFetch.mockImplementation((_url: string, options: RequestInit) => {
-				return new Promise((_resolve, reject) => {
-					// Check if already aborted
-					if (options.signal?.aborted) {
-						const error = new Error('Aborted');
-						error.name = 'AbortError';
-						reject(error);
-						return;
-					}
-
-					// Listen for abort
-					options.signal?.addEventListener('abort', () => {
-						const error = new Error('Aborted');
-						error.name = 'AbortError';
-						reject(error);
-					});
-				});
-			});
-
-			// Use a very short timeout to test the abort behavior
-			await expect(fetchWithTimeout('https://example.com/api', {}, 10)).rejects.toThrow();
-		});
-
-		it('should pass abort signal to fetch', async () => {
-			mockFetch.mockResolvedValue({ ok: true });
-
-			await fetchWithTimeout('https://example.com/api', { method: 'POST' });
-
-			expect(mockFetch).toHaveBeenCalledWith(
-				'https://example.com/api',
-				expect.objectContaining({
-					method: 'POST',
-					signal: expect.any(AbortSignal),
-				})
-			);
 		});
 	});
 

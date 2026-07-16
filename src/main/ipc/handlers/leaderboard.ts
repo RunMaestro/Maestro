@@ -13,6 +13,7 @@
 import { ipcMain, App } from 'electron';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import type { MaestroSettings } from './persistence';
 
 // ==========================================================================
@@ -191,33 +192,6 @@ export interface LeaderboardHandlerDependencies {
 // Helper Functions
 // ==========================================================================
 
-/**
- * Creates a fetch request with timeout support.
- *
- * @param url - The URL to fetch
- * @param options - Fetch options
- * @param timeoutMs - Timeout in milliseconds (default: FETCH_TIMEOUT_MS)
- * @returns Promise that resolves to the Response or rejects on timeout
- */
-async function fetchWithTimeout(
-	url: string,
-	options: RequestInit = {},
-	timeoutMs: number = FETCH_TIMEOUT_MS
-): Promise<Response> {
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-	try {
-		const response = await fetch(url, {
-			...options,
-			signal: controller.signal,
-		});
-		return response;
-	} finally {
-		clearTimeout(timeoutId);
-	}
-}
-
 // ==========================================================================
 // Handler Registration
 // ==========================================================================
@@ -259,14 +233,18 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					installId: installationId,
 				};
 
-				const response = await fetchWithTimeout(`${M4ESTR0_API_BASE}/submit`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						'User-Agent': `Maestro/${app.getVersion()}`,
+				const response = await fetchWithTimeout(
+					`${M4ESTR0_API_BASE}/submit`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'User-Agent': `Maestro/${app.getVersion()}`,
+						},
+						body: JSON.stringify(submissionData),
 					},
-					body: JSON.stringify(submissionData),
-				});
+					FETCH_TIMEOUT_MS
+				);
 
 				const result = (await response.json()) as {
 					success?: boolean;
@@ -345,7 +323,8 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 						headers: {
 							'User-Agent': `Maestro/${app.getVersion()}`,
 						},
-					}
+					},
+					FETCH_TIMEOUT_MS
 				);
 
 				const result = (await response.json()) as {
@@ -399,17 +378,21 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					email: data.email.substring(0, 3) + '***',
 				});
 
-				const response = await fetchWithTimeout(`${M4ESTR0_API_BASE}/resend-confirmation`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						'User-Agent': `Maestro/${app.getVersion()}`,
+				const response = await fetchWithTimeout(
+					`${M4ESTR0_API_BASE}/resend-confirmation`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'User-Agent': `Maestro/${app.getVersion()}`,
+						},
+						body: JSON.stringify({
+							email: data.email,
+							clientToken: data.clientToken,
+						}),
 					},
-					body: JSON.stringify({
-						email: data.email,
-						clientToken: data.clientToken,
-					}),
-				});
+					FETCH_TIMEOUT_MS
+				);
 
 				const result = (await response.json()) as {
 					success?: boolean;
@@ -459,7 +442,8 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 						headers: {
 							'User-Agent': `Maestro/${app.getVersion()}`,
 						},
-					}
+					},
+					FETCH_TIMEOUT_MS
 				);
 
 				if (response.ok) {
@@ -504,7 +488,8 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 						headers: {
 							'User-Agent': `Maestro/${app.getVersion()}`,
 						},
-					}
+					},
+					FETCH_TIMEOUT_MS
 				);
 
 				if (response.ok) {
@@ -549,17 +534,21 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					email: data.email.substring(0, 3) + '***',
 				});
 
-				const response = await fetchWithTimeout(`${M4ESTR0_API_BASE}/sync`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						'User-Agent': `Maestro/${app.getVersion()}`,
+				const response = await fetchWithTimeout(
+					`${M4ESTR0_API_BASE}/sync`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'User-Agent': `Maestro/${app.getVersion()}`,
+						},
+						body: JSON.stringify({
+							email: data.email,
+							authToken: data.authToken,
+						}),
 					},
-					body: JSON.stringify({
-						email: data.email,
-						authToken: data.authToken,
-					}),
-				});
+					FETCH_TIMEOUT_MS
+				);
 
 				const result = (await response.json()) as {
 					success: boolean;
@@ -650,8 +639,3 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 export function getFetchTimeoutMs(): number {
 	return FETCH_TIMEOUT_MS;
 }
-
-/**
- * Exposed for testing - fetch with timeout helper
- */
-export { fetchWithTimeout };
