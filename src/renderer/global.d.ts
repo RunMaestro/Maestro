@@ -1786,14 +1786,8 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
-			callback: (deepLink: {
-				action: 'focus' | 'session' | 'group';
-				sessionId?: string;
-				tabId?: string;
-				groupId?: string;
-			}) => void
+			callback: (deepLink: import('../shared/types').ParsedDeepLink) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
 	};
