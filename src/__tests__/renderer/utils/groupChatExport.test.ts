@@ -657,6 +657,22 @@ describe('groupChatExport', () => {
 				expect(html).toContain('Agent &lt;Test&gt;');
 			});
 
+			it('preserves exact escaping for special and already-escaped text-context values', () => {
+				const groupChat = createMockGroupChat({ name: `Group & <Team> "O'Reilly"` });
+				const html = generateGroupChatExportHtml(groupChat, [], [], {}, mockTheme);
+
+				expect(html).toContain('Group &amp; &lt;Team&gt; &quot;O&#039;Reilly&quot;');
+
+				const alreadyEscaped = generateGroupChatExportHtml(
+					createMockGroupChat({ name: '&amp; &lt;Team&gt;' }),
+					[],
+					[],
+					{},
+					mockTheme
+				);
+				expect(alreadyEscaped).toContain('&amp;amp; &amp;lt;Team&amp;gt;');
+			});
+
 			it('handles unicode in messages', () => {
 				const groupChat = createMockGroupChat();
 				const messages: GroupChatMessage[] = [

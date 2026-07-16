@@ -587,6 +587,23 @@ describe('tabExport', () => {
 				expect(html).toContain('Tab&#039;s Name');
 			});
 
+			it('preserves exact escaping for special and already-escaped text-context values', () => {
+				const html = generateTabExportHtml(
+					createMockTab({ name: `Tab & <Team> "O'Reilly"` }),
+					mockSession,
+					mockTheme
+				);
+
+				expect(html).toContain('Tab &amp; &lt;Team&gt; &quot;O&#039;Reilly&quot;');
+
+				const alreadyEscaped = generateTabExportHtml(
+					createMockTab({ name: '&amp; &lt;Team&gt;' }),
+					mockSession,
+					mockTheme
+				);
+				expect(alreadyEscaped).toContain('&amp;amp; &amp;lt;Team&amp;gt;');
+			});
+
 			it('escapes source labels in messages', () => {
 				// Source labels are already fixed strings (User, AI, etc.),
 				// but the escapeHtml call wraps them - verify it does not break
