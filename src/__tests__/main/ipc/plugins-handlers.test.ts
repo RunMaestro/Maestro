@@ -34,6 +34,10 @@ vi.mock('electron', () => ({
 	},
 }));
 
+vi.mock('../../../main/omp-native/session-adapter', () => ({
+	OmpNativeSessionAdapter: { disposeAll: vi.fn() },
+}));
+
 vi.mock('../../../main/plugins/plugin-store-main', () => ({
 	readGrants: vi.fn(() => []),
 	setGrants: vi.fn(),
@@ -41,6 +45,7 @@ vi.mock('../../../main/plugins/plugin-store-main', () => ({
 }));
 
 import { registerPluginsHandlers } from '../../../main/ipc/handlers/plugins';
+import { OmpNativeSessionAdapter } from '../../../main/omp-native/session-adapter';
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
@@ -66,8 +71,25 @@ function fakeManager() {
 	};
 }
 
-function settingsStore(plugins: boolean): { get: (key: string) => unknown } {
-	return { get: (key: string) => (key === 'encoreFeatures' ? { plugins } : undefined) };
+function settingsStore(plugins: boolean): {
+	get: (key: string) => unknown;
+	set: (key: string, value: unknown) => void;
+} {
+	let enabled = plugins;
+	return {
+		get: (key: string) => (key === 'encoreFeatures' ? { plugins: enabled } : undefined),
+		set: (key: string, value: unknown) => {
+			if (
+				key === 'encoreFeatures' &&
+				value &&
+				typeof value === 'object' &&
+				'plugins' in value &&
+				value.plugins === true
+			) {
+				enabled = true;
+			}
+		},
+	};
 }
 
 function register(plugins: boolean, sandboxHost?: PluginsHandlerDependencies['sandboxHost']) {
@@ -143,6 +165,16 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		expect(manager.setEnabled).toHaveBeenCalledWith('some-plugin', true);
 	});
 
+	it('disposes active native OMP adapters when the provided plugin is disabled', async () => {
+		const manager = register(true);
+		const handler = handlers.get('plugins:set-enabled');
+		expect(handler).toBeDefined();
+
+		await handler!(event, 'com.maestro.omp', false);
+
+		expect(manager.setEnabled).toHaveBeenCalledWith('com.maestro.omp', false);
+		expect(OmpNativeSessionAdapter.disposeAll).toHaveBeenCalledOnce();
+	});
 	it('mutation channels reject a path-traversal plugin id (InvalidPluginId) and never reach the manager', async () => {
 		const manager = register(true);
 		const handler = handlers.get('plugins:set-enabled');
@@ -249,6 +281,37 @@ describe('plugins:set-enabled gates code-tier activation on ledger authorization
 		const handler = handlers.get('plugins:set-enabled');
 		await expect(handler!(event, 'com.p', true)).resolves.toBeDefined();
 		expect(setEnabledMock).toHaveBeenCalledWith('com.p', true);
+	});
+
+	it('refreshes an installed provided OMP plugin before re-enabling it', async () => {
+		const ompRecord = {
+			id: 'com.maestro.omp',
+			installOwner: 'bundle',
+			manifest: { tier: 1 },
+		};
+		const registry = { records: [ompRecord] } as unknown as PluginRegistry;
+		const manager = {
+			refresh: vi.fn(() => registry),
+			getContributions: vi.fn(() => EMPTY),
+			getRegistry: vi.fn(() => registry),
+			setEnabled: vi.fn(() => registry),
+		};
+		registerPluginsHandlers({
+			settingsStore: settingsStore(false),
+			manager: manager as unknown as PluginManager,
+			authStore: {
+				readGrants: vi.fn(() => []),
+				revoke: vi.fn(),
+				uninstall: vi.fn(),
+				isEnabled: vi.fn(() => true),
+			},
+		});
+
+		const handler = handlers.get('plugins:set-enabled');
+		await expect(handler!(event, 'com.maestro.omp', true)).resolves.toBeDefined();
+
+		expect(manager.refresh).toHaveBeenCalledOnce();
+		expect(manager.setEnabled).toHaveBeenCalledWith('com.maestro.omp', true);
 	});
 });
 

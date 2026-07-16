@@ -316,6 +316,27 @@ describe('production OMP bootstrap', () => {
 			expect(
 				restartedManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
 			).toBe(true);
+
+			persistedSettings.encoreFeatures = { plugins: false };
+			const disabledBootstrap = makeBootstrap();
+			const disabledAuthorization = makeAuthorizationStore();
+			const disabledManager = makeManager(disabledBootstrap, disabledAuthorization);
+			disabledBootstrap.bootstrapBundledArchive({ refresh: () => disabledManager.refresh() });
+
+			expect(
+				disabledManager.getRegistry().records.some((record) => record.id === 'com.maestro.omp')
+			).toBe(true);
+			expect(disabledManager.getActiveRecords()).toEqual([]);
+			expect(
+				enableProvidedPluginRuntimeForConsent('com.maestro.omp', {
+					settingsStore,
+					manager: disabledManager,
+				})
+			).toBe(true);
+			disabledManager.setEnabled('com.maestro.omp', true);
+			expect(
+				disabledManager.getActiveRecords().some((record) => record.id === 'com.maestro.omp')
+			).toBe(true);
 		} finally {
 			if (priorUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 			else process.env.MAESTRO_USER_DATA = priorUserData;

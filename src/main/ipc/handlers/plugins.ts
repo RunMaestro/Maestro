@@ -22,11 +22,13 @@ import type { PluginPublishedGrouping } from '../../plugins/plugin-grouping-regi
 import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
 import { isProvidedPluginId } from '../../../shared/plugins/provided';
 import { setPanelHtmlProvider } from '../../plugins/plugin-panel-host';
+import { enableProvidedPluginRuntimeForConsent } from '../../plugins/provided-plugin-runtime';
 import { getFirstPartyBridge, type FirstPartyBridgeState } from '../../plugins/first-party-bridge';
 import {
 	FIRST_PARTY_PLUGINS,
 	type FirstPartyEncoreFlag,
 } from '../../../shared/plugins/first-party';
+import { OmpNativeSessionAdapter } from '../../omp-native/session-adapter';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -57,6 +59,7 @@ export type PluginGroupingSnapshot = readonly PluginPublishedGrouping[];
 export interface PluginsHandlerDependencies {
 	settingsStore: {
 		get: (key: string) => unknown;
+		set: (key: string, value: unknown) => void;
 	};
 	manager: PluginManager;
 	/** Optional read-only observability source for running tier-1 plugins. When
@@ -120,6 +123,16 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			if (typeof enabled !== 'boolean') throw new Error('InvalidEnabledFlag');
+			if (
+				enabled &&
+				isProvidedPluginId(id) &&
+				!enableProvidedPluginRuntimeForConsent(id, {
+					settingsStore,
+					manager,
+				})
+			) {
+				throw new Error('ProvidedPluginUnavailable');
+			}
 			if (enabled) {
 				const record = manager.getRegistry().records.find((r) => r.id === id);
 				const tier = record?.manifest?.tier ?? 0;
@@ -128,7 +141,9 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				// window via plugins:request-consent). The renderer cannot flip it on.
 				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
 			}
-			return snapshotOf(manager.setEnabled(id, enabled), isPluginsEnabled(settingsStore));
+			const registry = manager.setEnabled(id, enabled);
+			if (id === 'com.maestro.omp' && !enabled) OmpNativeSessionAdapter.disposeAll();
+			return snapshotOf(registry, isPluginsEnabled(settingsStore));
 		}
 	);
 	const wrappedInstall = withIpcErrorLogging(
@@ -255,7 +270,12 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 	ipcMain.handle(
 		'plugins:set-enabled',
 		async (event, id: unknown, enabled: unknown): Promise<PluginListSnapshot> => {
-			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			if (
+				!isPluginsEnabled(settingsStore) &&
+				!(enabled === true && typeof id === 'string' && isProvidedPluginId(id))
+			) {
+				throw new Error('PluginsDisabled');
+			}
 			return wrappedSetEnabled(event, id, enabled);
 		}
 	);
