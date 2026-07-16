@@ -30,6 +30,8 @@ import type { PluginEvent } from '../../../shared/plugins/events';
 import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 import { isPluginActive } from '../../plugins/plugin-manager-singleton';
+import { createDormantOmpRuntimeFeatures } from '../../../shared/omp-native-session';
+import { OmpNativeSessionAdapter } from '../../omp-native/session-adapter';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -43,20 +45,26 @@ import { isPluginActive } from '../../plugins/plugin-manager-singleton';
  * magnitude cheaper.
  */
 
-function omitInactiveOmpRuntimeFeatures(sessions: StoredSession[]): StoredSession[] {
-	if (isPluginActive('com.maestro.omp')) return sessions;
+function projectOmpRuntimeFeatures(sessions: StoredSession[]): StoredSession[] {
 	return sessions.map((session) => {
 		if (session.toolType !== 'omp') return session;
+		const active = isPluginActive('com.maestro.omp');
+		// A restored renderer may ask for sessions while a native adapter is
+		// already live. Its features are authoritative, so never replace them
+		// with the dormant projection.
+		if (active && OmpNativeSessionAdapter.forAssociatedSessions(session.id).length > 0) {
+			return session;
+		}
 		const aiTabs = Array.isArray(session.aiTabs)
 			? session.aiTabs.map((tab: Record<string, unknown>) => ({
 					...tab,
-					runtimeFeatures: undefined,
+					runtimeFeatures: active ? createDormantOmpRuntimeFeatures() : undefined,
 					pendingApprovals: [],
 				}))
 			: session.aiTabs;
 		return {
 			...session,
-			runtimeFeatures: undefined,
+			runtimeFeatures: active ? createDormantOmpRuntimeFeatures() : undefined,
 			pendingApprovals: [],
 			aiTabs,
 		};
@@ -245,7 +253,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 					'Sessions'
 				);
 				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
-				return omitInactiveOmpRuntimeFeatures(relocated);
+				return projectOmpRuntimeFeatures(relocated);
 			}
 		} catch (err) {
 			// Never let image relocation block loading sessions - fall through and
@@ -257,7 +265,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			);
 		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
-		return omitInactiveOmpRuntimeFeatures(sessions);
+		return projectOmpRuntimeFeatures(sessions);
 	});
 
 	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a

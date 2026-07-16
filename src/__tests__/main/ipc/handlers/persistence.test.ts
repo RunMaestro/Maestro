@@ -486,6 +486,39 @@ describe('persistence IPC handlers', () => {
 			expect(result).toEqual(mockSessions);
 		});
 
+		it('projects the dormant OMP native surface for restored sessions before a prompt', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{
+					id: 'omp-session',
+					name: 'OMP Plugin Preview',
+					toolType: 'omp',
+					cwd: '/test',
+					projectRoot: '/test',
+					pendingApprovals: [{ id: 'stale-approval' }],
+					aiTabs: [{ id: 'tab-1', pendingApprovals: [{ id: 'stale-approval' }] }],
+				},
+			]);
+
+			const handler = handlers.get('sessions:getAll');
+			const result = await handler!();
+			const [omp] = result;
+			const [tab] = omp.aiTabs;
+
+			expect(omp.runtimeFeatures).toMatchObject({
+				controls: [],
+				readiness: {
+					state: 'dormant',
+					message: 'OMP Native ready — starts on first message.',
+				},
+			});
+			expect(tab.runtimeFeatures).toMatchObject({
+				controls: [],
+				readiness: { state: 'dormant' },
+			});
+			expect(omp.pendingApprovals).toEqual([]);
+			expect(tab.pendingApprovals).toEqual([]);
+		});
+
 		it('removes persisted OMP runtime features when the provider plugin is inactive', async () => {
 			vi.mocked(isPluginActive).mockReturnValue(false);
 			mockSessionsStore.get.mockReturnValue([

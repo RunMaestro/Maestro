@@ -60,6 +60,7 @@ function NativeRuntimePanel({
 	const [loginProvider, setLoginProvider] = useState('');
 	const [detail, setDetail] = useState<{ title: string; lines: string[] } | null>(null);
 	const [detailLoading, setDetailLoading] = useState(false);
+	const isDormant = features.readiness?.state === 'dormant';
 	const loadDetail = async (kind: 'subagent' | 'branch', entryId: string, title: string) => {
 		setDetailLoading(true);
 		try {
@@ -96,6 +97,15 @@ function NativeRuntimePanel({
 
 	return (
 		<div data-testid="native-runtime-panel" className="space-y-4 pt-4">
+			{isDormant && (
+				<p
+					data-testid="native-runtime-dormant"
+					className="text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					{features.readiness?.message}
+				</p>
+			)}
 			{sections.length === 0 ? (
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
 					No native runtime details are available yet.
@@ -172,6 +182,7 @@ function NativeRuntimePanel({
 				</h3>
 				<div className="flex gap-2">
 					<input
+						disabled={isDormant}
 						value={sessionPath}
 						onChange={(event) => setSessionPath(event.target.value)}
 						placeholder="OMP session file path"
@@ -184,7 +195,7 @@ function NativeRuntimePanel({
 					/>
 					<button
 						type="button"
-						disabled={!sessionPath.trim()}
+						disabled={isDormant || !sessionPath.trim()}
 						onClick={() => {
 							if (!switchSessionControlId) return;
 							void window.maestro.process.setAgentControl(
@@ -206,6 +217,7 @@ function NativeRuntimePanel({
 				</h3>
 				<div className="flex gap-2">
 					<input
+						disabled={isDormant}
 						value={shellCommand}
 						onChange={(event) => setShellCommand(event.target.value)}
 						placeholder="Run OMP shell command"
@@ -218,7 +230,7 @@ function NativeRuntimePanel({
 					/>
 					<button
 						type="button"
-						disabled={!bashControlId || !shellCommand.trim()}
+						disabled={isDormant || !bashControlId || !shellCommand.trim()}
 						onClick={() =>
 							bashControlId &&
 							void window.maestro.process.setAgentControl(
@@ -236,6 +248,7 @@ function NativeRuntimePanel({
 				<div className="mt-2 flex gap-2">
 					{features.loginProviders?.length ? (
 						<select
+							disabled={isDormant}
 							aria-label="OMP login provider"
 							value={loginProvider}
 							onChange={(event) => setLoginProvider(event.target.value)}
@@ -255,6 +268,7 @@ function NativeRuntimePanel({
 						</select>
 					) : (
 						<input
+							disabled={isDormant}
 							value={loginProvider}
 							onChange={(event) => setLoginProvider(event.target.value)}
 							placeholder="OMP login provider"
@@ -268,7 +282,7 @@ function NativeRuntimePanel({
 					)}
 					<button
 						type="button"
-						disabled={!loginControlId || !loginProvider.trim()}
+						disabled={isDormant || !loginControlId || !loginProvider.trim()}
 						onClick={() =>
 							loginControlId &&
 							void window.maestro.process.setAgentControl(

@@ -29,6 +29,7 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../../shared/plugins/first-party';
 import { OmpNativeSessionAdapter } from '../../omp-native/session-adapter';
+import { createDormantOmpRuntimeFeatures } from '../../../shared/omp-native-session';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -53,6 +54,12 @@ export interface PluginGrantsSnapshot {
 
 /** Per-plugin read-only observability keyed by plugin id (running tier-1 only). */
 export type PluginActivityMap = Record<string, ActivitySnapshot>;
+
+interface OmpRuntimeProjectedSession {
+	id: string;
+	toolType?: string;
+	aiTabs?: Array<{ id: string }>;
+}
 export type { ActivitySnapshot };
 export type PluginGroupingSnapshot = readonly PluginPublishedGrouping[];
 
@@ -77,6 +84,36 @@ export interface PluginsHandlerDependencies {
 		uninstall: (pluginId: string) => void;
 		isEnabled: (pluginId: string) => boolean;
 	};
+	/** Live session projection used by the provided OMP plugin lifecycle only. */
+	ompSessionProjection?: {
+		getSessions: () => OmpRuntimeProjectedSession[];
+		safeSend: (channel: string, ...args: unknown[]) => void;
+	};
+}
+
+function projectOmpRuntimeToLiveSessions(
+	projection: PluginsHandlerDependencies['ompSessionProjection'],
+	enabled: boolean
+): void {
+	if (!projection) return;
+	for (const session of projection.getSessions()) {
+		if (session.toolType !== 'omp') continue;
+		// A connected adapter owns the live feature state. Re-broadcasting the
+		// dormant surface would make the renderer regress to a false idle state.
+		if (enabled && OmpNativeSessionAdapter.forAssociatedSessions(session.id).length > 0) continue;
+		projection.safeSend(
+			'process:runtime-features',
+			session.id,
+			enabled ? createDormantOmpRuntimeFeatures() : null
+		);
+		for (const tab of session.aiTabs ?? []) {
+			projection.safeSend(
+				'process:runtime-features',
+				`${session.id}-ai-${tab.id}`,
+				enabled ? createDormantOmpRuntimeFeatures() : null
+			);
+		}
+	}
 }
 
 /** True only when `encoreFeatures.plugins` is explicitly enabled. Read per call. */
@@ -110,7 +147,8 @@ function snapshotOf(registry: PluginRegistry, subsystemEnabled: boolean): Plugin
 }
 
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
-	const { settingsStore, manager, sandboxHost, authStore, groupingRegistry } = deps;
+	const { settingsStore, manager, sandboxHost, authStore, groupingRegistry, ompSessionProjection } =
+		deps;
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
@@ -142,7 +180,12 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
 			}
 			const registry = manager.setEnabled(id, enabled);
-			if (id === 'com.maestro.omp' && !enabled) OmpNativeSessionAdapter.disposeAll();
+			if (id === 'com.maestro.omp') {
+				const ompActive = manager.getActiveRecords().some((record) => record.id === id);
+				if (enabled && !ompActive) throw new Error('ProvidedPluginUnavailable');
+				if (!ompActive) OmpNativeSessionAdapter.disposeAll();
+				projectOmpRuntimeToLiveSessions(ompSessionProjection, ompActive);
+			}
 			return snapshotOf(registry, isPluginsEnabled(settingsStore));
 		}
 	);

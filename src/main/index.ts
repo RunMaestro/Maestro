@@ -3809,6 +3809,10 @@ function setupIpcHandlers() {
 			sandboxHost: pluginSandboxHost ?? undefined,
 			authStore: pluginAuthStore,
 			groupingRegistry: pluginGroupingRegistry ?? undefined,
+			ompSessionProjection: {
+				getSessions: () => sessionsStore.get('sessions', []),
+				safeSend,
+			},
 		});
 	}
 

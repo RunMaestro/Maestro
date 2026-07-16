@@ -35,7 +35,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../../main/omp-native/session-adapter', () => ({
-	OmpNativeSessionAdapter: { disposeAll: vi.fn() },
+	OmpNativeSessionAdapter: { disposeAll: vi.fn(), forAssociatedSessions: vi.fn(() => []) },
 }));
 
 vi.mock('../../../main/plugins/plugin-store-main', () => ({
@@ -66,6 +66,7 @@ function fakeManager() {
 	return {
 		refresh: vi.fn(() => emptyRegistry),
 		getRegistry: vi.fn(() => emptyRegistry),
+		getActiveRecords: vi.fn(() => []),
 		getContributions: vi.fn(() => EMPTY),
 		setEnabled: vi.fn(() => emptyRegistry),
 	};
@@ -92,7 +93,11 @@ function settingsStore(plugins: boolean): {
 	};
 }
 
-function register(plugins: boolean, sandboxHost?: PluginsHandlerDependencies['sandboxHost']) {
+function register(
+	plugins: boolean,
+	sandboxHost?: PluginsHandlerDependencies['sandboxHost'],
+	ompSessionProjection?: PluginsHandlerDependencies['ompSessionProjection']
+) {
 	const manager = fakeManager();
 	registerPluginsHandlers({
 		settingsStore: settingsStore(plugins),
@@ -104,6 +109,7 @@ function register(plugins: boolean, sandboxHost?: PluginsHandlerDependencies['sa
 			uninstall: vi.fn(),
 			isEnabled: vi.fn(() => false),
 		},
+		ompSessionProjection,
 	});
 	return manager;
 }
@@ -174,6 +180,110 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 
 		expect(manager.setEnabled).toHaveBeenCalledWith('com.maestro.omp', false);
 		expect(OmpNativeSessionAdapter.disposeAll).toHaveBeenCalledOnce();
+	});
+
+	it('clears the projected OMP surface and approvals on disable', async () => {
+		const safeSend = vi.fn();
+		register(true, undefined, {
+			getSessions: () => [{ id: 'omp-session', toolType: 'omp', aiTabs: [{ id: 'tab-1' }] }],
+			safeSend,
+		});
+		const handler = handlers.get('plugins:set-enabled');
+
+		await handler!(event, 'com.maestro.omp', false);
+
+		expect(safeSend).toHaveBeenCalledWith('process:runtime-features', 'omp-session', null);
+		expect(safeSend).toHaveBeenCalledWith('process:runtime-features', 'omp-session-ai-tab-1', null);
+	});
+
+	it('projects the dormant OMP surface after a cold or live re-enable', async () => {
+		const safeSend = vi.fn();
+		const registry = {
+			records: [{ id: 'com.maestro.omp', installOwner: 'bundle', manifest: { tier: 0 } }],
+		} as unknown as PluginRegistry;
+		const manager = {
+			refresh: vi.fn(() => registry),
+			getRegistry: vi.fn(() => registry),
+			getActiveRecords: vi.fn(() => registry.records),
+			getContributions: vi.fn(() => EMPTY),
+			setEnabled: vi.fn(() => registry),
+		};
+		registerPluginsHandlers({
+			settingsStore: settingsStore(false),
+			manager: manager as unknown as PluginManager,
+			authStore: {
+				readGrants: vi.fn(() => []),
+				revoke: vi.fn(),
+				uninstall: vi.fn(),
+				isEnabled: vi.fn(() => true),
+			},
+			ompSessionProjection: {
+				getSessions: () => [{ id: 'omp-session', toolType: 'omp', aiTabs: [{ id: 'tab-1' }] }],
+				safeSend,
+			},
+		});
+		const handler = handlers.get('plugins:set-enabled');
+
+		await handler!(event, 'com.maestro.omp', true);
+
+		expect(safeSend).toHaveBeenCalledWith(
+			'process:runtime-features',
+			'omp-session',
+			expect.objectContaining({
+				controls: [],
+				readiness: expect.objectContaining({ state: 'dormant' }),
+			})
+		);
+		expect(safeSend).toHaveBeenCalledWith(
+			'process:runtime-features',
+			'omp-session-ai-tab-1',
+			expect.objectContaining({
+				controls: [],
+				readiness: expect.objectContaining({ state: 'dormant' }),
+			})
+		);
+
+		safeSend.mockClear();
+		vi.mocked(OmpNativeSessionAdapter.forAssociatedSessions).mockReturnValue([
+			{} as OmpNativeSessionAdapter,
+		]);
+		await handler!(event, 'com.maestro.omp', true);
+
+		expect(safeSend).not.toHaveBeenCalled();
+	});
+
+	it('rejects a failed OMP activation without projecting dormant readiness', async () => {
+		const safeSend = vi.fn();
+		const registry = {
+			records: [{ id: 'com.maestro.omp', installOwner: 'bundle', manifest: { tier: 0 } }],
+		} as unknown as PluginRegistry;
+		const manager = {
+			refresh: vi.fn(() => registry),
+			getRegistry: vi.fn(() => registry),
+			getActiveRecords: vi.fn(() => []),
+			getContributions: vi.fn(() => EMPTY),
+			setEnabled: vi.fn(() => registry),
+		};
+		registerPluginsHandlers({
+			settingsStore: settingsStore(false),
+			manager: manager as unknown as PluginManager,
+			authStore: {
+				readGrants: vi.fn(() => []),
+				revoke: vi.fn(),
+				uninstall: vi.fn(),
+				isEnabled: vi.fn(() => true),
+			},
+			ompSessionProjection: {
+				getSessions: () => [{ id: 'omp-session', toolType: 'omp' }],
+				safeSend,
+			},
+		});
+		const handler = handlers.get('plugins:set-enabled');
+
+		await expect(handler!(event, 'com.maestro.omp', true)).rejects.toThrow(
+			'ProvidedPluginUnavailable'
+		);
+		expect(safeSend).not.toHaveBeenCalled();
 	});
 	it('mutation channels reject a path-traversal plugin id (InvalidPluginId) and never reach the manager', async () => {
 		const manager = register(true);
@@ -294,6 +404,7 @@ describe('plugins:set-enabled gates code-tier activation on ledger authorization
 			refresh: vi.fn(() => registry),
 			getContributions: vi.fn(() => EMPTY),
 			getRegistry: vi.fn(() => registry),
+			getActiveRecords: vi.fn(() => registry.records),
 			setEnabled: vi.fn(() => registry),
 		};
 		registerPluginsHandlers({

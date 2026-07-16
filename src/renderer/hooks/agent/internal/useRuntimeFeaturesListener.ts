@@ -33,8 +33,12 @@ export function useRuntimeFeaturesListener(): void {
 			);
 		};
 		const removeRuntimeFeatures = window.maestro.process.onRuntimeFeatures(
-			(sessionId: string, runtimeFeatures: AgentRuntimeFeatureState) => {
-				update(sessionId, () => ({ runtimeFeatures }));
+			(sessionId: string, runtimeFeatures: AgentRuntimeFeatureState | null) => {
+				update(sessionId, () =>
+					runtimeFeatures
+						? { runtimeFeatures, pendingApprovals: [] }
+						: { runtimeFeatures: undefined, pendingApprovals: [] }
+				);
 			}
 		);
 		const removeApproval = window.maestro.process.onApprovalRequest(

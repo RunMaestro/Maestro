@@ -250,6 +250,37 @@ describe('RightPanel', () => {
 			expect(screen.getByTitle(/collapse right panel/i)).toBeInTheDocument();
 		});
 
+		it('renders dormant OMP readiness with native actions disabled', () => {
+			useSessionStore.setState({
+				sessions: [
+					{
+						...mockSession,
+						runtimeFeatures: {
+							controls: [],
+							tree: null,
+							todos: null,
+							subagents: null,
+							stats: null,
+							readiness: {
+								state: 'dormant',
+								message: 'OMP Native ready — starts on first message.',
+							},
+						},
+					},
+				],
+			});
+			useUIStore.setState({ activeRightTab: 'runtime' });
+
+			render(<RightPanel {...createDefaultProps()} />);
+
+			expect(screen.getByTestId('native-runtime-dormant')).toHaveTextContent(
+				'OMP Native ready — starts on first message.'
+			);
+			expect(screen.getByPlaceholderText('OMP session file path')).toBeDisabled();
+			expect(screen.getByPlaceholderText('Run OMP shell command')).toBeDisabled();
+			expect(screen.getByPlaceholderText('OMP login provider')).toBeDisabled();
+		});
+
 		it('should hide content when panel is closed', () => {
 			useUIStore.setState({ rightPanelOpen: false });
 			const props = createDefaultProps();

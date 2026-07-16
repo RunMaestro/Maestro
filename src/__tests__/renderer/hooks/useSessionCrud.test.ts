@@ -230,6 +230,25 @@ describe('useSessionCrud', () => {
 			expect(sessions[0].projectRoot).toBe('/test/project');
 		});
 
+		it('projects dormant native readiness without dead controls when creating an OMP session', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('omp', '/test/project', 'OMP Session');
+			});
+
+			const [session] = useSessionStore.getState().sessions;
+			expect(session.runtimeFeatures).toMatchObject({
+				controls: [],
+				readiness: { state: 'dormant' },
+			});
+			expect(session.aiTabs[0].runtimeFeatures).toMatchObject({
+				controls: [],
+				readiness: { state: 'dormant' },
+			});
+		});
+
 		it('sets active session ID to the new session', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));

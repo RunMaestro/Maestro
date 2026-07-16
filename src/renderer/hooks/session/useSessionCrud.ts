@@ -29,6 +29,7 @@ import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { createDormantOmpRuntimeFeatures } from '../../../shared/omp-native-session';
 
 // ============================================================================
 // Dependencies interface
@@ -233,6 +234,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					state: 'idle',
 					saveToHistory: currentDefaults.defaultSaveToHistory,
 					showThinking: currentDefaults.defaultShowThinking,
+					runtimeFeatures: agentId === 'omp' ? createDormantOmpRuntimeFeatures() : undefined,
+					pendingApprovals: [],
 				};
 
 				const newSession: Session = {
@@ -308,6 +311,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// behavior needs no stored value.
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
+					runtimeFeatures: agentId === 'omp' ? createDormantOmpRuntimeFeatures() : undefined,
+					pendingApprovals: [],
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
