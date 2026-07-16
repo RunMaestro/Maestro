@@ -69,7 +69,7 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 		const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
 		settings.encoreFeatures = {
 			...(settings.encoreFeatures as Record<string, unknown>),
-			plugins: false,
+			plugins: true,
 		};
 		settings.suppressWindowsWarning = true;
 		fs.writeFileSync(settingsPath, JSON.stringify(settings, null, '\t'), 'utf8');
@@ -91,6 +91,7 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 				await windowsNotice.waitFor({ state: 'hidden', timeout: 10_000 });
 			})
 			.catch(() => undefined);
+		await approveOmpConsent(launched);
 		await launched.window.waitForFunction(
 			() => document.getElementById('initial-splash') === null,
 			undefined,
@@ -131,4 +132,18 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 		}
 		throw error;
 	}
+}
+
+async function approveOmpConsent(launched: LaunchedApp): Promise<void> {
+	const consentPromise = launched.app.waitForEvent('window', { timeout: 30_000 });
+	await launched.window.evaluate(
+		(pluginId) => window.maestro.plugins.requestConsent(pluginId),
+		'com.maestro.omp'
+	);
+	const consent = await consentPromise;
+	await consent.waitForLoadState('domcontentloaded');
+	await consent.locator('button.btn-approve').waitFor({ state: 'visible', timeout: 15_000 });
+	await consent.locator('.cap-check-high-risk[data-cap="process:interactive"]').check();
+	await consent.locator('button.btn-approve').click();
+	await consent.waitForEvent('close', { timeout: 15_000 }).catch(() => undefined);
 }

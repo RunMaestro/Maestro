@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { launchNativeOmpRegularSessionHarness } from './fixtures/omp-native-regular-session-harness';
 
 test.describe('first-party OMP regular session', () => {
-	test('starts through the injected verified native gate while plugins are disabled', async ({
+	test('starts through the enabled signed OMP plugin native gate', async ({
 		browserName: _browserName,
 	}, testInfo) => {
 		void _browserName;
@@ -170,6 +170,28 @@ test.describe('first-party OMP regular session', () => {
 			expect(frames).toContain('"type":"agent_end"');
 			await expect(launched.window.locator('webview')).toHaveCount(0);
 			expect(launched.output()).not.toMatch(/legacy.*fallback|fallback.*legacy/i);
+			await launched.window.evaluate(
+				(pluginId) => window.maestro.plugins.setEnabled(pluginId, false),
+				'com.maestro.omp'
+			);
+			await expect(
+				launched.window.getByRole('button', { name: 'Native', exact: true })
+			).toHaveCount(0);
+			await launched.window.evaluate(
+				(pluginId) => window.maestro.plugins.setEnabled(pluginId, true),
+				'com.maestro.omp'
+			);
+			await expect(composer).toBeEditable({ timeout: 30_000 });
+			await composer.fill('native prompt after plugin re-enable no-approval');
+			await composer.press('Enter');
+			await expect(
+				launched.window.getByText('native text: native prompt after plugin re-enable no-approval', {
+					exact: true,
+				})
+			).toBeVisible({ timeout: 30_000 });
+			await expect(
+				launched.window.getByRole('button', { name: 'Native', exact: true })
+			).toBeVisible();
 			await launched.window.screenshot({
 				path: testInfo.outputPath('omp-native-regular-session.png'),
 			});
