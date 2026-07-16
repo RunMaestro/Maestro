@@ -579,7 +579,11 @@ export class OmpNativeSessionAdapter {
 		// A native OMP agent_end completes one turn, not the long-lived RPC child.
 		// command-exit releases composer bookkeeping; process:exit would tear down
 		// the regular session and reject every subsequent prompt.
-		this.options.send('process:command-exit', this.options.sessionId, 0);
+		this.options.send(
+			'process:command-exit',
+			this.options.agentSessionId ?? this.options.sessionId,
+			0
+		);
 	}
 }
 
