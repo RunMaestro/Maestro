@@ -134,6 +134,8 @@ import type {
 	CadenzaViewCallback,
 	MovementViewCallback,
 	GetMovementStateCallback,
+	GetMovementDesignerInspectionCallback,
+	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
 	GetMarketplaceManifestCallback,
 	GetMarketplaceDocumentCallback,
@@ -676,6 +678,14 @@ export class WebServer {
 		this.callbackRegistry.setGetMovementStateCallback(callback);
 	}
 
+	setGetMovementDesignerInspectionCallback(callback: GetMovementDesignerInspectionCallback): void {
+		this.callbackRegistry.setGetMovementDesignerInspectionCallback(callback);
+	}
+
+	setInteractMovementDesignerCallback(callback: InteractMovementDesignerCallback): void {
+		this.callbackRegistry.setInteractMovementDesignerCallback(callback);
+	}
+
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
@@ -1056,6 +1066,10 @@ export class WebServer {
 			cadenzaView: async (params) => this.callbackRegistry.cadenzaView(params),
 			movementView: async (params) => this.callbackRegistry.movementView(params),
 			getMovementState: async () => this.callbackRegistry.getMovementState(),
+			getMovementDesignerInspection: async (id) =>
+				this.callbackRegistry.getMovementDesignerInspection(id),
+			interactMovementDesigner: async (id, action) =>
+				this.callbackRegistry.interactMovementDesigner(id, action),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 			getMarketplaceManifest: async (options) =>
 				this.callbackRegistry.getMarketplaceManifest(options),

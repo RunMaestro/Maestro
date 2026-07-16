@@ -43,4 +43,21 @@ describe('CadenzaLayer', () => {
 
 		expect(screen.getByText('from Acme Metrics')).toHaveAttribute('title', 'from Acme Metrics');
 	});
+
+	it('renders an HTML cadenza in the isolated document frame', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'mini-mockup',
+			viewType: 'html',
+			title: 'Mini mockup',
+			body: '<style>body{margin:0}</style><button>Try it</button>',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+
+		const iframe = screen.getByTestId('concerto-html-iframe');
+		expect(iframe).toHaveAttribute('sandbox', 'allow-scripts');
+		expect(iframe.getAttribute('src')).toContain(
+			'maestro-concerto://render/?surface=cadenza&id=mini-mockup'
+		);
+	});
 });

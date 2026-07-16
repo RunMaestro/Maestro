@@ -13,6 +13,11 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	ConcertoDesignerFrameSnapshot,
+} from '../../shared/concerto-html';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -663,6 +668,46 @@ export function createProcessApi() {
 			snapshot: MovementStateSnapshot | null
 		): void => {
 			ipcRenderer.send(responseChannel, snapshot);
+		},
+
+		/** Ask the renderer for a live HTML Movement frame's crop and diagnostics. */
+		onRequestMovementDesignerInspection: (
+			callback: (id: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, id: string, responseChannel: string) =>
+				callback(id, responseChannel);
+			ipcRenderer.on('remote:getMovementDesignerInspection', handler);
+			return () => ipcRenderer.removeListener('remote:getMovementDesignerInspection', handler);
+		},
+
+		/** Reply with frame geometry and runtime diagnostics for screenshot capture. */
+		sendMovementDesignerInspectionResponse: (
+			responseChannel: string,
+			snapshot: ConcertoDesignerFrameSnapshot | null
+		): void => {
+			ipcRenderer.send(responseChannel, snapshot);
+		},
+
+		/** Ask the sandboxed HTML Movement to perform a selector-scoped action. */
+		onRequestMovementDesignerInteraction: (
+			callback: (id: string, action: ConcertoDesignerAction, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				id: string,
+				action: ConcertoDesignerAction,
+				responseChannel: string
+			) => callback(id, action, responseChannel);
+			ipcRenderer.on('remote:interactMovementDesigner', handler);
+			return () => ipcRenderer.removeListener('remote:interactMovementDesigner', handler);
+		},
+
+		/** Reply with the outcome of a sandboxed designer action. */
+		sendMovementDesignerInteractionResponse: (
+			responseChannel: string,
+			result: ConcertoDesignerActionResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

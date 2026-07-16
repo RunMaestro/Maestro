@@ -23,6 +23,7 @@ import { BrowserWindow, ipcMain, screen } from 'electron';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import { logger } from '../utils/logger';
 import type { WindowRegistry } from '../window-registry';
+import { attachConcertoHtmlNavigationGuard } from '../concerto-html';
 
 /** A card's hit region in HUD-window content coordinates (CSS px == DIP). */
 interface CardRect {
@@ -319,6 +320,7 @@ export function ensureCadenzaHudWindow(
 
 	// The HUD only ever shows its own bundle: deny popups and navigation away.
 	win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+	attachConcertoHtmlNavigationGuard(win.webContents);
 	win.webContents.on('will-navigate', (e) => {
 		if (e.url !== url) e.preventDefault();
 	});

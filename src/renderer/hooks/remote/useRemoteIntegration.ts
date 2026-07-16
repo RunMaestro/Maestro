@@ -12,6 +12,10 @@ import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore'
 import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import {
+	getConcertoDesignerFrameSnapshot,
+	interactWithConcertoDesignerFrame,
+} from '../../components/Concerto/concertoDesignerBridge';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -700,6 +704,41 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementState !== 'function') return;
 		const unsubscribe = proc.onRequestMovementState((responseChannel: string) => {
 			proc.sendMovementStateResponse?.(responseChannel, getMovementSnapshot());
+		});
+		return () => unsubscribe();
+	}, []);
+
+	// Designer feedback for HTML Movements: report the live iframe crop and
+	// diagnostics so main can capture exactly what the user sees.
+	useEffect(() => {
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
+		const unsubscribe = proc.onRequestMovementDesignerInspection((id, responseChannel) => {
+			void getConcertoDesignerFrameSnapshot('movement', id)
+				.then((snapshot) =>
+					proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
+				)
+				.catch(() => proc.sendMovementDesignerInspectionResponse?.(responseChannel, null));
+		});
+		return () => unsubscribe();
+	}, []);
+
+	// Selector-scoped click/type actions stay inside the sandboxed mockup and
+	// let an agent verify interactive states before taking another screenshot.
+	useEffect(() => {
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRequestMovementDesignerInteraction !== 'function') return;
+		const unsubscribe = proc.onRequestMovementDesignerInteraction((id, action, responseChannel) => {
+			void interactWithConcertoDesignerFrame('movement', id, action)
+				.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
+				.catch((error) =>
+					proc.sendMovementDesignerInteractionResponse?.(responseChannel, {
+						ok: false,
+						action: action.kind,
+						selector: action.selector,
+						message: error instanceof Error ? error.message : String(error),
+					})
+				);
 		});
 		return () => unsubscribe();
 	}, []);

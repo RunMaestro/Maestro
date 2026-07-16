@@ -138,10 +138,17 @@ import {
 } from '../../../shared/cadenza-types';
 import {
 	MOVEMENT_OPS,
+	MOVEMENT_VIEW_TYPES,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
+	type MovementViewType,
 } from '../../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../../shared/concerto-html';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -386,6 +393,11 @@ export interface MessageHandlerCallbacks {
 	cadenzaView: (params: CadenzaPayload) => Promise<boolean>;
 	movementView: (params: MovementPayload) => Promise<boolean>;
 	getMovementState: () => Promise<MovementStateSnapshot | null>;
+	getMovementDesignerInspection: (id: string) => Promise<MovementDesignerInspection | null>;
+	interactMovementDesigner: (
+		id: string,
+		action: ConcertoDesignerAction
+	) => Promise<ConcertoDesignerActionResult>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
 	getMarketplaceManifest: (options?: {
 		refresh?: boolean;
@@ -796,6 +808,12 @@ export class WebSocketMessageHandler {
 				break;
 			case 'get_movement_state':
 				this.handleGetMovementState(client, message);
+				break;
+			case 'get_movement_designer_inspection':
+				this.handleGetMovementDesignerInspection(client, message);
+				break;
+			case 'interact_movement_designer':
+				this.handleInteractMovementDesigner(client, message);
 				break;
 			case 'cadenza':
 				this.handleCadenza(client, message);
@@ -4537,6 +4555,19 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		let viewType: MovementViewType | undefined;
+		const rawViewType = typeof message.viewType === 'string' ? message.viewType : undefined;
+		if (rawViewType !== undefined) {
+			if (!MOVEMENT_VIEW_TYPES.includes(rawViewType as MovementViewType)) {
+				sendResult(
+					false,
+					`Invalid viewType: ${rawViewType}. Must be one of: ${MOVEMENT_VIEW_TYPES.join(', ')}`
+				);
+				return;
+			}
+			viewType = rawViewType as MovementViewType;
+		}
+
 		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
 		// v === 'number'`, which would become invalid CSS geometry downstream.
 		const num = (v: unknown): number | undefined =>
@@ -4551,6 +4582,7 @@ export class WebSocketMessageHandler {
 		const payload: MovementPayload = {
 			op,
 			id: id || undefined,
+			viewType,
 			x: num(message.x),
 			y: num(message.y),
 			width: num(message.width),
@@ -4598,6 +4630,98 @@ export class WebSocketMessageHandler {
 					: sendResult(null, 'Movement state unavailable (Concerto off or renderer not responding)')
 			)
 			.catch((error) => sendResult(null, `Failed to read movement state: ${error.message}`));
+	}
+
+	/** Capture a live HTML Movement and return its diagnostics to the CLI. */
+	private handleGetMovementDesignerInspection(client: WebClient, message: WebClientMessage): void {
+		const id = typeof message.id === 'string' ? message.id.trim() : '';
+		const sendResult = (inspection: MovementDesignerInspection | null, error?: string) => {
+			this.send(client, {
+				type: 'movement_designer_inspection_result',
+				success: !error,
+				inspection,
+				error,
+				requestId: message.requestId,
+			});
+		};
+		if (!id) {
+			sendResult(null, 'Missing movement item id');
+			return;
+		}
+		if (!this.callbacks.getMovementDesignerInspection) {
+			sendResult(null, 'Movement designer inspection is not configured');
+			return;
+		}
+		this.callbacks
+			.getMovementDesignerInspection(id)
+			.then((inspection) =>
+				inspection
+					? sendResult(inspection)
+					: sendResult(null, `HTML Movement '${id}' is not visible or did not load`)
+			)
+			.catch((error) => sendResult(null, `Failed to inspect Movement: ${error.message}`));
+	}
+
+	/** Perform a click or text entry inside the sandboxed HTML Movement. */
+	private handleInteractMovementDesigner(client: WebClient, message: WebClientMessage): void {
+		const id = typeof message.id === 'string' ? message.id.trim() : '';
+		const rawAction = message.action as Record<string, unknown> | undefined;
+		const selector = typeof rawAction?.selector === 'string' ? rawAction.selector.trim() : '';
+		const kind = rawAction?.kind;
+		const sendResult = (result: ConcertoDesignerActionResult) => {
+			this.send(client, {
+				type: 'movement_designer_interaction_result',
+				success: result.ok,
+				result,
+				error: result.ok ? undefined : result.message,
+				requestId: message.requestId,
+			});
+		};
+		if (!id || !selector || (kind !== 'click' && kind !== 'type')) {
+			sendResult({
+				ok: false,
+				action: kind === 'type' ? 'type' : 'click',
+				selector,
+				message: 'Interaction requires an id, a CSS selector, and click or type action',
+			});
+			return;
+		}
+		if (selector.length > 2048) {
+			sendResult({
+				ok: false,
+				action: kind,
+				selector,
+				message: 'CSS selector is too long',
+			});
+			return;
+		}
+		const value = typeof rawAction?.value === 'string' ? rawAction.value : '';
+		if (kind === 'type' && value.length > 100_000) {
+			sendResult({ ok: false, action: kind, selector, message: 'Input value is too long' });
+			return;
+		}
+		const action: ConcertoDesignerAction =
+			kind === 'click' ? { kind, selector } : { kind, selector, value };
+		if (!this.callbacks.interactMovementDesigner) {
+			sendResult({
+				ok: false,
+				action: action.kind,
+				selector,
+				message: 'Movement designer interaction is not configured',
+			});
+			return;
+		}
+		this.callbacks
+			.interactMovementDesigner(id, action)
+			.then(sendResult)
+			.catch((error) =>
+				sendResult({
+					ok: false,
+					action: action.kind,
+					selector,
+					message: `Failed to interact with Movement: ${error.message}`,
+				})
+			);
 	}
 
 	/**

@@ -28,6 +28,7 @@ import {
 	Image as ImageIcon,
 	LayoutGrid,
 	Code2,
+	Monitor,
 	ListChecks,
 	ChevronDown,
 	ChevronRight,
@@ -41,6 +42,7 @@ import { getBasename, getParentDir } from '../../../shared/formatters';
 import { Markdown } from '../Markdown';
 import { LocalImage } from '../Markdown/components/LocalImage';
 import { CadenzaBlocks } from './CadenzaBlocks';
+import { ConcertoHtmlPreview } from '../Concerto/ConcertoHtmlPreview';
 
 interface CadenzaLayerProps {
 	theme: Theme;
@@ -59,6 +61,7 @@ const ICON_FOR_TYPE: Record<CadenzaViewType, LucideIcon> = {
 	image: ImageIcon,
 	code: Code2,
 	view: LayoutGrid,
+	html: Monitor,
 	decision: ListChecks,
 };
 
@@ -129,6 +132,7 @@ const CadenzaCard = memo(function CadenzaCard({
 		view.viewType === 'image' ||
 		view.viewType === 'code' ||
 		view.viewType === 'view' ||
+		view.viewType === 'html' ||
 		view.viewType === 'decision';
 	const [collapsed, setCollapsed] = useState(false);
 	const moveCadenza = useCadenzaStore((s) => s.moveCadenza);
@@ -315,6 +319,18 @@ const CadenzaCard = memo(function CadenzaCard({
 							style={{ maxHeight: CONTENT_MAX_HEIGHT }}
 						>
 							<CadenzaBlocks spec={view.body} theme={theme} />
+						</div>
+					)}
+
+					{view.viewType === 'html' && view.body !== undefined && (
+						<div className="overflow-hidden" style={{ height: CONTENT_MAX_HEIGHT }}>
+							<ConcertoHtmlPreview
+								surface="cadenza"
+								id={view.id}
+								revision={view.timestamp}
+								title={view.title}
+								minHeight={CONTENT_MAX_HEIGHT}
+							/>
 						</div>
 					)}
 

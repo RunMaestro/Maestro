@@ -28,4 +28,22 @@ describe('MovementOverlay', () => {
 
 		expect(screen.getByText('from Acme Metrics')).toHaveAttribute('title', 'from Acme Metrics');
 	});
+
+	it('renders an HTML movement in the isolated document frame', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			title: 'Checkout mockup',
+			body: '<button>Buy</button><script>window.clicked=true</script>',
+		});
+
+		render(<MovementOverlay theme={mockTheme} />);
+
+		const iframe = screen.getByTestId('concerto-html-iframe');
+		expect(iframe).toHaveAttribute('sandbox', 'allow-scripts');
+		expect(iframe.getAttribute('src')).toContain(
+			'maestro-concerto://render/?surface=movement&id=mockup'
+		);
+	});
 });

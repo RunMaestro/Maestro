@@ -4,16 +4,25 @@
 // same JSON block vocabulary as `view --type view`). Rides the same bridge as
 // notify/view.
 
-import { readFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import {
 	MOVEMENT_OPS,
+	MOVEMENT_VIEW_TYPES,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
+	type MovementViewType,
 } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 
 interface MovementAddOptions {
+	type?: string;
 	x?: string;
 	y?: string;
 	width?: string;
@@ -21,6 +30,7 @@ interface MovementAddOptions {
 	title?: string;
 	body?: string;
 	bodyFile?: string;
+	htmlFile?: string;
 	json?: boolean;
 }
 
@@ -31,6 +41,18 @@ interface MovementMoveOptions {
 }
 
 interface MovementRemoveOptions {
+	json?: boolean;
+}
+
+interface MovementInspectOptions {
+	output?: string;
+	json?: boolean;
+}
+
+interface MovementInteractOptions {
+	click?: string;
+	type?: string;
+	value?: string;
 	json?: boolean;
 }
 
@@ -47,6 +69,33 @@ function resolveBody(body: string | undefined, bodyFile: string | undefined): st
 		}
 	}
 	return body;
+}
+
+/** Resolve and validate a Movement's native-view or HTML document mode. */
+function resolveViewType(
+	options: MovementAddOptions,
+	defaultToView: boolean
+): MovementViewType | undefined {
+	if (options.htmlFile && options.type && options.type !== 'html') {
+		console.error('Error: --html-file requires --type html (or omit --type)');
+		process.exit(1);
+	}
+	const raw = options.type ?? (options.htmlFile ? 'html' : defaultToView ? 'view' : undefined);
+	if (raw === undefined) return undefined;
+	if (!MOVEMENT_VIEW_TYPES.includes(raw as MovementViewType)) {
+		console.error(`Error: --type must be one of: ${MOVEMENT_VIEW_TYPES.join(', ')}`);
+		process.exit(1);
+	}
+	return raw as MovementViewType;
+}
+
+/** Resolve inline/file content, with --html-file as an ergonomic HTML alias. */
+function resolveMovementBody(options: MovementAddOptions): string | undefined {
+	if (options.bodyFile && options.htmlFile) {
+		console.error('Error: use only one of --body-file or --html-file');
+		process.exit(1);
+	}
+	return resolveBody(options.body, options.htmlFile ?? options.bodyFile);
 }
 
 /** Parse an optional numeric flag, exiting on a non-number. */
@@ -103,15 +152,21 @@ function requireId(id: string, op: MovementOp): void {
 
 export async function movementAdd(id: string, options: MovementAddOptions): Promise<void> {
 	requireId(id, 'add');
-	const body = resolveBody(options.body, options.bodyFile);
+	const viewType = resolveViewType(options, true);
+	const body = resolveMovementBody(options);
 	if (!body) {
-		console.error('Error: --body or --body-file (a JSON block spec) is required');
+		console.error(
+			viewType === 'html'
+				? 'Error: --body, --body-file, or --html-file (an HTML document) is required'
+				: 'Error: --body or --body-file (a JSON block spec) is required'
+		);
 		process.exit(1);
 	}
 	await sendMovement(
 		{
 			op: 'add',
 			id,
+			viewType,
 			x: parseNum('x', options.x),
 			y: parseNum('y', options.y),
 			width: parseNum('width', options.width),
@@ -126,16 +181,18 @@ export async function movementAdd(id: string, options: MovementAddOptions): Prom
 
 export async function movementUpdate(id: string, options: MovementAddOptions): Promise<void> {
 	requireId(id, 'update');
+	const viewType = resolveViewType(options, false);
 	await sendMovement(
 		{
 			op: 'update',
 			id,
+			viewType,
 			x: parseNum('x', options.x),
 			y: parseNum('y', options.y),
 			width: parseNum('width', options.width),
 			height: parseNum('height', options.height),
 			title: options.title,
-			body: resolveBody(options.body, options.bodyFile),
+			body: resolveMovementBody(options),
 		},
 		options.json,
 		`Movement item '${id}' updated`
@@ -188,6 +245,107 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 		}
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		process.exit(1);
+	}
+}
+
+/** Capture the live mockup exactly as rendered and save it as a PNG. */
+export async function movementInspect(id: string, options: MovementInspectOptions): Promise<void> {
+	requireId(id, 'update');
+	if (!options.output) {
+		console.error('Error: movement inspect requires --output <png>');
+		process.exit(1);
+	}
+	try {
+		const result = await withMaestroClient(async (client) =>
+			client.sendCommand<{
+				success: boolean;
+				inspection?: MovementDesignerInspection | null;
+				error?: string;
+			}>({ type: 'get_movement_designer_inspection', id }, 'movement_designer_inspection_result')
+		);
+		if (!result.success || !result.inspection) {
+			console.error(`Error: ${result.error || `Could not inspect HTML Movement '${id}'`}`);
+			process.exit(1);
+		}
+		const match = /^data:image\/png;base64,(.+)$/s.exec(result.inspection.imageDataUrl);
+		if (!match) {
+			console.error('Error: Maestro returned an invalid designer screenshot');
+			process.exit(1);
+		}
+		const output = path.resolve(options.output);
+		mkdirSync(path.dirname(output), { recursive: true });
+		writeFileSync(output, Buffer.from(match[1], 'base64'));
+		const report = {
+			id,
+			output,
+			ready: result.inspection.ready,
+			viewport: result.inspection.viewport,
+			image: result.inspection.image,
+			logs: result.inspection.logs,
+		};
+		if (options.json) {
+			console.log(JSON.stringify(report));
+			return;
+		}
+		console.log(
+			`Saved HTML Movement '${id}' preview to ${output} (${report.viewport.width}x${report.viewport.height} CSS px, ${report.image.width}x${report.image.height} image px at ${report.image.scaleFactor}x)`
+		);
+		if (report.logs.length === 0) {
+			console.log('Runtime diagnostics: clean');
+			return;
+		}
+		console.log(`Runtime diagnostics (${report.logs.length}):`);
+		for (const entry of report.logs) {
+			const location = entry.line ? `:${entry.line}${entry.column ? `:${entry.column}` : ''}` : '';
+			console.log(`  [${entry.level}]${location} ${entry.message}`);
+		}
+	} catch (error) {
+		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		process.exit(1);
+	}
+}
+
+/** Click or enter text inside a live sandboxed HTML Movement by CSS selector. */
+export async function movementInteract(
+	id: string,
+	options: MovementInteractOptions
+): Promise<void> {
+	requireId(id, 'update');
+	const selected = [options.click !== undefined, options.type !== undefined].filter(Boolean).length;
+	if (selected !== 1) {
+		console.error('Error: movement interact requires exactly one of --click or --type');
+		process.exit(1);
+	}
+	if (options.type !== undefined && options.value === undefined) {
+		console.error('Error: --type requires --value');
+		process.exit(1);
+	}
+	const action: ConcertoDesignerAction =
+		options.click !== undefined
+			? { kind: 'click', selector: options.click }
+			: { kind: 'type', selector: options.type ?? '', value: options.value ?? '' };
+	try {
+		const response = await withMaestroClient(async (client) =>
+			client.sendCommand<{
+				success: boolean;
+				result?: ConcertoDesignerActionResult;
+				error?: string;
+			}>({ type: 'interact_movement_designer', id, action }, 'movement_designer_interaction_result')
+		);
+		const result = response.result;
+		if (!response.success || !result?.ok) {
+			const error = result?.message || response.error || 'Designer interaction failed';
+			if (options.json) console.log(JSON.stringify({ success: false, error, result }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		if (options.json) console.log(JSON.stringify({ success: true, result }));
+		else console.log(`${result.message}: ${result.selector}`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+		else console.error(`Error: ${message}`);
 		process.exit(1);
 	}
 }

@@ -121,6 +121,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCadenzaViewCallback = vi.fn();
 			setMovementViewCallback = vi.fn();
 			setGetMovementStateCallback = vi.fn();
+			setGetMovementDesignerInspectionCallback = vi.fn();
+			setInteractMovementDesignerCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;

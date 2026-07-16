@@ -18,6 +18,7 @@ import { X, EyeOff, LayoutGrid } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useMovementStore, type MovementItem } from '../../stores/movementStore';
 import { BlockView } from '../BlockView';
+import { ConcertoHtmlPreview } from '../Concerto/ConcertoHtmlPreview';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 
 interface MovementOverlayProps {
@@ -58,6 +59,7 @@ const MovementPanel = memo(function MovementPanel({
 	};
 
 	const frameRef = useRef<HTMLDivElement>(null);
+	const isHtml = item.viewType === 'html';
 
 	// Report the panel's real rendered height to the store so `movement state`
 	// gives the agent an accurate footprint (even for auto-sized panels).
@@ -125,13 +127,23 @@ const MovementPanel = memo(function MovementPanel({
 				</button>
 			</div>
 			<div
-				className="p-4 overflow-auto select-text"
+				className={isHtml ? 'overflow-hidden select-text' : 'p-4 overflow-auto select-text'}
 				style={{
 					height: item.height ? 'calc(100% - 34px)' : undefined,
 					maxHeight: item.height ? undefined : AUTO_MAX_HEIGHT,
 				}}
 			>
-				<BlockView spec={item.spec} theme={theme} />
+				{isHtml ? (
+					<ConcertoHtmlPreview
+						surface="movement"
+						id={item.id}
+						revision={item.timestamp}
+						title={item.title ?? item.id}
+						minHeight={item.height ? 0 : 480}
+					/>
+				) : (
+					<BlockView spec={item.spec} theme={theme} />
+				)}
 			</div>
 			{/* Resize handle (bottom-right corner). */}
 			<div

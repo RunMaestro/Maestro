@@ -7,16 +7,24 @@
  */
 
 import { create } from 'zustand';
-import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	MovementPayload,
+	MovementStateSnapshot,
+	MovementViewType,
+} from '../../shared/movement-types';
 import type { BlockSpec } from '../components/BlockView';
 import { sourcePluginFromViewId, upsertById, scheduleFlashClear } from './concertoShared';
 
 /** Default item width when the agent doesn't specify one (px). */
 export const MOVEMENT_ITEM_DEFAULT_WIDTH = 500;
+/** HTML mockups open at an artifact-sized canvas unless geometry is explicit. */
+export const MOVEMENT_HTML_DEFAULT_WIDTH = 880;
+export const MOVEMENT_HTML_DEFAULT_HEIGHT = 560;
 
 /** A resolved movement item ready to render (spec parsed, defaults applied). */
 export interface MovementItem {
 	id: string;
+	viewType: MovementViewType;
 	x: number;
 	y: number;
 	/** Fixed width; defaults to MOVEMENT_ITEM_DEFAULT_WIDTH. */
@@ -24,8 +32,10 @@ export interface MovementItem {
 	/** Optional fixed height; unset = sized to content. */
 	height?: number;
 	title?: string;
-	/** Parsed BlockView spec. Parse failures become an error callout. */
+	/** Parsed BlockView spec for native `view` items. */
 	spec: BlockSpec;
+	/** Complete single-page document for isolated `html` items. */
+	html?: string;
 	/** Host-stamped plugin display name (or legacy id inference) for header provenance. */
 	sourcePlugin?: string;
 	/** Actual rendered height (px), measured by the overlay - so `movement state`
@@ -201,29 +211,49 @@ export function applyMovementPayload(p: MovementPayload): void {
 		if (typeof p.width === 'number') patch.width = p.width;
 		if (typeof p.height === 'number') patch.height = p.height;
 		if (p.title !== undefined) patch.title = p.title;
-		if (p.body !== undefined) patch.spec = parseSpec(p.body);
+		if (p.viewType !== undefined) patch.viewType = p.viewType;
+		const targetViewType = p.viewType ?? target?.viewType ?? 'view';
+		if (p.body !== undefined) {
+			if (targetViewType === 'html') patch.html = p.body;
+			else patch.spec = parseSpec(p.body);
+		}
+		if (p.body !== undefined || p.viewType !== undefined) {
+			patch.timestamp = Math.max(Date.now(), (target?.timestamp ?? 0) + 1);
+		}
 		store.patchItem(p.id, patch);
 		return;
 	}
 
 	// op === 'add'. Preserve position if the id already exists; else cascade.
 	const existing = store.items.find((v) => v.id === p.id);
+	const viewType = p.viewType ?? existing?.viewType ?? 'view';
 	const step = (cascadeIndex++ % 6) * 32;
 	// A newly-added panel should surface immediately. Updates intentionally do
 	// not change `hidden`, so a live tracker cannot override the user's stash.
 	store.setHidden(false);
 	store.upsertItem({
 		id: p.id,
+		viewType,
 		...clampPosition(
 			p.x ?? existing?.x ?? 24 + step,
 			p.y ?? existing?.y ?? 24 + step,
 			store.viewportWidth,
 			store.viewportHeight
 		),
-		width: p.width ?? existing?.width ?? MOVEMENT_ITEM_DEFAULT_WIDTH,
-		height: p.height ?? existing?.height,
+		width:
+			p.width ??
+			existing?.width ??
+			(viewType === 'html' ? MOVEMENT_HTML_DEFAULT_WIDTH : MOVEMENT_ITEM_DEFAULT_WIDTH),
+		height:
+			p.height ??
+			existing?.height ??
+			(viewType === 'html' ? MOVEMENT_HTML_DEFAULT_HEIGHT : undefined),
 		title: p.title ?? existing?.title,
-		spec: p.body !== undefined ? parseSpec(p.body) : (existing?.spec ?? { blocks: [] }),
+		spec:
+			viewType === 'view' && p.body !== undefined
+				? parseSpec(p.body)
+				: (existing?.spec ?? { blocks: [] }),
+		html: viewType === 'html' && p.body !== undefined ? p.body : existing?.html,
 		sourcePlugin: p.sourcePlugin ?? existing?.sourcePlugin ?? sourcePluginFromViewId(p.id),
 		timestamp: Date.now(),
 	});

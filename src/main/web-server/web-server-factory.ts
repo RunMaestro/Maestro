@@ -23,9 +23,16 @@ import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	ConcertoDesignerFrameSnapshot,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import { applyCadenzaHtmlPayload, applyMovementHtmlPayload } from '../concerto-html';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -44,9 +51,9 @@ import {
 function requestFromRenderer<T>(
 	win: BrowserWindow,
 	requestChannel: string,
-	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number }
+	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number; args?: unknown[] }
 ): Promise<T> {
-	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000 } = options;
+	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000, args = [] } = options;
 	return new Promise<T>((resolve) => {
 		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
 		let settled = false;
@@ -59,7 +66,7 @@ function requestFromRenderer<T>(
 		};
 		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
 		ipcMain.once(responseChannel, onReply);
-		win.webContents.send(requestChannel, responseChannel);
+		win.webContents.send(requestChannel, ...args, responseChannel);
 		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
 	});
 }
@@ -936,6 +943,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			// opt-in feature stays fully inert (no invisible in-app store population).
 			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
 				return false;
+			applyCadenzaHtmlPayload(params);
 			// Prefer the desktop HUD window (floats over other apps). It buffers the
 			// payload internally until its renderer subscribes.
 			if (deliverCadenza?.(params)) return true;
@@ -960,6 +968,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setMovementViewCallback(async (params) => {
 			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
 				return false;
+			applyMovementHtmlPayload(params);
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for movementView', 'WebServer');
@@ -986,6 +995,78 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				{ fallback: null, parse: (raw) => (raw as MovementStateSnapshot) ?? null }
 			);
 		});
+
+		// Designer inspection asks the renderer for the exact live iframe crop,
+		// then captures that region from Chromium's compositor. The PNG stays in
+		// memory here and is returned to the CLI, which writes it using the agent's
+		// own filesystem permissions.
+		server.setGetMovementDesignerInspectionCallback(async (id) => {
+			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+				return null;
+			const mainWindow = getMainWindow();
+			if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
+			const frame = await requestFromRenderer<ConcertoDesignerFrameSnapshot | null>(
+				mainWindow,
+				'remote:getMovementDesignerInspection',
+				{
+					fallback: null,
+					parse: (raw) => (raw as ConcertoDesignerFrameSnapshot) ?? null,
+					timeoutMs: 4000,
+					args: [id],
+				}
+			);
+			if (!frame) return null;
+			const image = await mainWindow.webContents.capturePage({
+				x: Math.max(0, Math.floor(frame.rect.x)),
+				y: Math.max(0, Math.floor(frame.rect.y)),
+				width: Math.max(1, Math.floor(frame.rect.width)),
+				height: Math.max(1, Math.floor(frame.rect.height)),
+			});
+			const imageSize = image.getSize();
+			const inspection: MovementDesignerInspection = {
+				id,
+				ready: frame.ready,
+				viewport: frame.viewport,
+				image: {
+					width: imageSize.width,
+					height: imageSize.height,
+					scaleFactor:
+						frame.viewport.width > 0
+							? Number((imageSize.width / frame.viewport.width).toFixed(3))
+							: 1,
+				},
+				logs: frame.logs,
+				imageDataUrl: image.toDataURL(),
+			};
+			return inspection;
+		});
+
+		server.setInteractMovementDesignerCallback(
+			async (id: string, action: ConcertoDesignerAction) => {
+				const unavailable = (message: string): ConcertoDesignerActionResult => ({
+					ok: false,
+					action: action.kind,
+					selector: action.selector,
+					message,
+				});
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return unavailable('Concerto is disabled');
+				const mainWindow = getMainWindow();
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+					return unavailable('Maestro renderer is unavailable');
+				}
+				return requestFromRenderer<ConcertoDesignerActionResult>(
+					mainWindow,
+					'remote:interactMovementDesigner',
+					{
+						fallback: unavailable('Designer action timed out'),
+						parse: (raw) => raw as ConcertoDesignerActionResult,
+						timeoutMs: 4000,
+						args: [id, action],
+					}
+				);
+			}
+		);
 
 		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
 			const mainWindow = getMainWindow();

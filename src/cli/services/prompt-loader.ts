@@ -12,11 +12,20 @@ import { getConfigDirectory } from './storage';
 const cliPromptCache = new Map<string, string>();
 let bundledPromptsDir: string | null = null;
 
-function getBundledPromptCandidates(filename: string): string[] {
+export function _getBundledPromptCandidatesForTests(
+	filename: string,
+	moduleDirectory = __dirname
+): string[] {
 	// The CLI runs in three contexts: dev (ts-node from src), packaged Electron
 	// (process.resourcesPath), and standalone bundled CLI (Resources/maestro-cli.js).
-	const projectRoot = path.resolve(__dirname, '..', '..', '..');
-	const candidates = [path.join(projectRoot, 'src', 'prompts', filename)];
+	// Source modules live at src/cli/services, while the development bundle lives
+	// at dist/cli. Probe both possible project-root depths so each can find the
+	// checkout's src/prompts directory.
+	const projectRoots = [
+		path.resolve(moduleDirectory, '..', '..', '..'),
+		path.resolve(moduleDirectory, '..', '..'),
+	];
+	const candidates = projectRoots.map((root) => path.join(root, 'src', 'prompts', filename));
 
 	if (typeof process !== 'undefined' && (process as { resourcesPath?: string }).resourcesPath) {
 		candidates.push(
@@ -27,10 +36,12 @@ function getBundledPromptCandidates(filename: string): string[] {
 	candidates.push(
 		path.join(path.dirname(process.argv[1] || __dirname), 'prompts', 'core', filename)
 	);
-	candidates.push(path.join(__dirname, '..', 'prompts', 'core', filename));
+	candidates.push(path.join(moduleDirectory, '..', 'prompts', 'core', filename));
 
-	return candidates;
+	return [...new Set(candidates)];
 }
+
+const getBundledPromptCandidates = _getBundledPromptCandidatesForTests;
 
 /**
  * Resolve the on-disk directory that holds bundled prompt files. Probes the
