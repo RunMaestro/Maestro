@@ -404,7 +404,7 @@ export function buildExpandedEnv(customEnvVars?: Record<string, string>): NodeJS
 	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
 		const home = os.homedir();
 		for (const [key, value] of Object.entries(customEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+			env[key] = expandHomePath(value, home);
 		}
 	}
 
