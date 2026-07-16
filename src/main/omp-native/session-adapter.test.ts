@@ -172,6 +172,40 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
+	it('suppresses an exact no-newline mount diagnostic before a later RPC text delta', () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const debug = vi.spyOn(logger, 'debug');
+		OmpNativeSessionAdapter.create({
+			sessionId: 'no-newline-diagnostic-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		child.stderr.emit('data', Buffer.from('OMP xd://: mounted maestro.session.status'));
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'Hello! How can I help?' },
+		});
+
+		expect(debug).toHaveBeenCalledWith(
+			'OMP xd://: mounted maestro.session.status',
+			'OmpNativeSessionAdapter'
+		);
+		expect(send).toHaveBeenCalledWith(
+			'process:data',
+			'no-newline-diagnostic-tab',
+			'Hello! How can I help?'
+		);
+		expect(send).not.toHaveBeenCalledWith(
+			'process:stderr',
+			'no-newline-diagnostic-tab',
+			expect.anything()
+		);
+	});
+
 	it('filters a split benign diagnostic while preserving coalesced genuine lines', () => {
 		const child = new FakeChild();
 		const send = vi.fn();
