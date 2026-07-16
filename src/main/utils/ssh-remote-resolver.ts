@@ -4,13 +4,11 @@
  * Provides utilities for resolving which SSH remote configuration should
  * be used for agent execution.
  *
- * SSH is SESSION-LEVEL ONLY:
- * - Each session can have its own SSH config (sessionSshRemoteConfig)
- * - If no session SSH config, execution is local
- * - There is NO agent-level or global default SSH
- *
- * This module is used by the process spawn handlers to determine whether
- * an agent command should be executed locally or via SSH on a remote host.
+ * The legacy `resolveSshRemoteConfig` API remains session-only: an enabled
+ * session config selects SSH and otherwise execution is local. The newer
+ * pure ID-policy API separately models explicit, session, default, and local
+ * precedence before typed lookup. Callers choose the policy appropriate to
+ * their execution surface.
  */
 
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
@@ -22,7 +20,7 @@ export interface SshRemoteResolveOptions {
 	/**
 	 * Session-specific SSH remote configuration (optional).
 	 * If provided and enabled, the session will execute via SSH.
-	 * This is the ONLY way to enable SSH - there are no agent-level or global defaults.
+	 * This compatibility API does not consult agent-level or global defaults.
 	 */
 	sessionSshConfig?: AgentSshRemoteConfig;
 }
