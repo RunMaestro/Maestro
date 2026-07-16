@@ -16,7 +16,12 @@
 
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
-import { isWindowsPlatform } from '../utils/platformUtils';
+import {
+	DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
+	DEFAULT_SSH_REMOTE_IGNORE_PATTERNS,
+	getDefaultUseNativeTitleBar,
+	resolveDefaultShell,
+} from '../../shared/settingsMetadata';
 import type {
 	LLMProvider,
 	ThemeId,
@@ -720,22 +725,21 @@ export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
 // Store Implementation
 // ============================================================================
 
-export const useSettingsStore = create<SettingsStore>()((set, get) => {
-	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
-	let persistentWebLinkRequestSeq = 0;
-
+/**
+ * Construct fresh renderer state. Persisted values are applied separately by
+ * loadAllSettings so absent keys retain their product defaults.
+ */
+export function createSettingsStoreDefaults(
+	platform: string | undefined = window.maestro?.platform
+): SettingsStoreState {
 	return {
-		// ============================================================================
-		// State (defaults)
-		// ============================================================================
-
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
 		llmProvider: 'openrouter',
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
-		defaultShell: isWindowsPlatform() ? 'powershell' : 'zsh',
+		defaultShell: resolveDefaultShell({ platform }),
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
@@ -820,8 +824,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		fileExplorerMaxEntries: DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
 		sshReduceEntryCapEnabled: false,
 		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
-		sshRemoteIgnorePatterns: ['.git', '*cache*'],
-		sshRemoteHonorGitignore: true,
+		sshRemoteIgnorePatterns: [...DEFAULT_SSH_REMOTE_IGNORE_PATTERNS],
+		sshRemoteHonorGitignore: DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		htmlDoubleClickOpensInBrowser: false,
@@ -845,7 +849,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
 		wakatimeDetailedTracking: false,
-		useNativeTitleBar: isWindowsPlatform(),
+		useNativeTitleBar: getDefaultUseNativeTitleBar({ platform }),
 		autoHideMenuBar: false,
 		showAgentName: true,
 		showSessionIdPill: false,
@@ -885,6 +889,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorTextSize: 24,
 		annotatorTextFont: 'sans-serif',
 		annotatorTextBgColor: '',
+	};
+}
+
+export const useSettingsStore = create<SettingsStore>()((set, get) => {
+	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
+	let persistentWebLinkRequestSeq = 0;
+
+	return {
+		...createSettingsStoreDefaults(),
 
 		// ============================================================================
 		// Simple Setters
@@ -2545,8 +2558,7 @@ export async function loadAllSettings(): Promise<void> {
 		} else {
 			// One-time migration: copy from globalStats.totalActiveTimeMs if it exists and is > 0
 			const legacyGlobalStats = allSettings['globalStats'] as
-				| { totalActiveTimeMs?: number }
-				| undefined;
+				{ totalActiveTimeMs?: number } | undefined;
 			if (legacyGlobalStats?.totalActiveTimeMs && legacyGlobalStats.totalActiveTimeMs > 0) {
 				patch.totalActiveTimeMs = legacyGlobalStats.totalActiveTimeMs;
 				window.maestro.settings.set('totalActiveTimeMs', legacyGlobalStats.totalActiveTimeMs);
@@ -2727,12 +2739,7 @@ export async function loadAllSettings(): Promise<void> {
 			const validTimeRanges = ['day', 'week', 'month', 'quarter', 'year', 'all'];
 			if (validTimeRanges.includes(allSettings['defaultStatsTimeRange'] as string)) {
 				patch.defaultStatsTimeRange = allSettings['defaultStatsTimeRange'] as
-					| 'day'
-					| 'week'
-					| 'month'
-					| 'quarter'
-					| 'year'
-					| 'all';
+					'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 			}
 		}
 
