@@ -92,7 +92,6 @@ const prompt = (request) => {
   emit({ type: 'extension_ui_request', id: 'title-' + turn, method: 'setTitle', title: 'Native OMP fixture canvas' });
   emit({ type: 'extension_ui_request', id: 'editor-' + turn, method: 'set_editor_text', text: 'native composer text' });
   emit({ type: 'extension_ui_request', id: 'notice-' + turn, method: 'notify', message: 'Native OMP fixture ready', notificationType: 'info' });
-  emit({ type: 'extension_ui_request', id: 'url-' + turn, method: 'open_url', url: 'https://example.com/native-omp-fixture' });
   if (text.includes('select-approval')) return approval('select', 'select-' + turn, 'Select native action');
   if (text.includes('input-approval')) return approval('input', 'input-' + turn, 'Input native action');
   if (text.includes('editor-approval')) return approval('editor', 'editor-approval-' + turn, 'Edit native action');
@@ -147,7 +146,7 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
     case 'get_branch_messages': response(request, { messages: [{ id: 'native-branch-message', text: 'Native branch detail' }] }); break;
     case 'get_last_assistant_text': response(request, { text: 'native expanded complete' }); break;
     case 'get_login_providers': response(request, { providers: [{ id: 'fixture-login', name: 'Fixture Login', available: true, authenticated: false }] }); break;
-    case 'login': response(request, { providerId: String(request.providerId ?? 'fixture-login') }); emit({ type: 'extension_ui_request', id: 'login-' + turn, method: 'open_url', url: 'https://example.com/native-login' }); break;
+    case 'login': response(request, { providerId: String(request.providerId ?? 'fixture-login') }); break;
     case 'crash': response(request, { accepted: true }); emit({ type: 'extension_error', code: 'fixture_crash', message: 'Requested fixture crash' }); process.exit(86); break;
     case 'reconnect': response(request, { accepted: true }); emit({ type: 'ready', version: '16.4.8', reconnected: true }); break;
     default: response(request, state());
