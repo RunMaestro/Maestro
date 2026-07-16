@@ -115,7 +115,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -182,7 +182,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -226,7 +226,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -270,7 +270,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -316,7 +316,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -360,7 +360,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -407,7 +407,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -474,7 +474,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
@@ -509,7 +509,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef: { current: null },
@@ -559,7 +559,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
@@ -591,7 +591,7 @@ describe('useAgentExecution', () => {
 		function renderForWatchdog(session: Session) {
 			return renderHook(() =>
 				useAgentExecution({
-					activeSession: session,
+					activeSessionId: session.id,
 					sessionsRef: { current: [session] },
 					setSessions: vi.fn(),
 					processQueuedItemRef: { current: null },

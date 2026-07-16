@@ -1541,7 +1541,7 @@ function MaestroConsoleInner() {
 		showSuccessFlash,
 		cancelPendingSynopsis,
 	} = useAgentExecution({
-		activeSession,
+		activeSessionId,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
@@ -2432,7 +2432,7 @@ function MaestroConsoleInner() {
 		confirmModalOpen,
 		renameInstanceModalOpen,
 		renameGroupModalOpen,
-		activeSession,
+		// activeSession resolved at event time via selectActiveSession(getState())
 		fileTreeFilter,
 		fileTreeFilterOpen,
 		fileTreeFilterInputRef,
