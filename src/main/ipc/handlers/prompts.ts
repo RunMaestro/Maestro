@@ -18,6 +18,7 @@ import {
 	getBundledDefault,
 } from '../../prompt-manager';
 import { logger } from '../../utils/logger';
+import { createIpcHandler } from '../../utils/ipcHandler';
 
 const LOG_CONTEXT = '[IPC:Prompts]';
 
@@ -93,14 +94,13 @@ export function registerPromptsHandlers(): void {
 	});
 
 	// Get the prompts directory path (for "Open Folder" button)
-	ipcMain.handle('prompts:getPath', async () => {
-		try {
-			return { success: true, path: getPromptsPath() };
-		} catch (error) {
-			logger.error(`Failed to get prompts path: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
-		}
-	});
+	ipcMain.handle(
+		'prompts:getPath',
+		createIpcHandler(
+			{ context: LOG_CONTEXT, operation: 'get prompts path', logSuccess: false },
+			async () => ({ path: getPromptsPath() })
+		)
+	);
 
 	// Get the current bundled (un-customized) content for a prompt - used by the
 	// drift-detection "View current default" affordance.
@@ -118,15 +118,13 @@ export function registerPromptsHandlers(): void {
 	});
 
 	// List all .md files in prompts directory (includes user-added files)
-	ipcMain.handle('prompts:listFiles', async () => {
-		try {
-			const files = await listPromptFiles();
-			return { success: true, files };
-		} catch (error) {
-			logger.error(`Failed to list prompt files: ${error}`, LOG_CONTEXT);
-			return { success: false, error: String(error) };
-		}
-	});
+	ipcMain.handle(
+		'prompts:listFiles',
+		createIpcHandler(
+			{ context: LOG_CONTEXT, operation: 'list prompt files', logSuccess: false },
+			async () => ({ files: await listPromptFiles() })
+		)
+	);
 
 	logger.info('Prompts IPC handlers registered', LOG_CONTEXT);
 }
