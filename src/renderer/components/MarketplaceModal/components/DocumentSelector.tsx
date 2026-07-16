@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import type { Theme } from '../../../types';
-import { useEventListener } from '../../../hooks/utils/useEventListener';
+import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 
 export interface DocumentSelectorProps {
 	theme: Theme;
@@ -20,15 +20,7 @@ export function DocumentSelector({
 	const [showDocDropdown, setShowDocDropdown] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 
-	useEventListener(
-		'mousedown',
-		(event) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setShowDocDropdown(false);
-			}
-		},
-		{ target: document, enabled: showDocDropdown }
-	);
+	useClickOutside(dropdownRef, () => setShowDocDropdown(false), showDocDropdown);
 
 	const handleDocumentSelect = (filename: string | null) => {
 		if (filename === null) {

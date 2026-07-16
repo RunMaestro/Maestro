@@ -32,6 +32,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
 import { useSaveShortcut } from '../../hooks';
+import { useClickOutside } from '../../hooks/ui/useClickOutside';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -190,16 +191,8 @@ export function SshRemoteModal({
 		}
 	}, [isOpen, initialConfig]);
 
-	// Close dropdown when clicking outside
-	useEffect(() => {
-		const handleClickOutside = (event: MouseEvent) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setShowSshConfigDropdown(false);
-			}
-		};
-		document.addEventListener('mousedown', handleClickOutside);
-		return () => document.removeEventListener('mousedown', handleClickOutside);
-	}, []);
+	// Close dropdown when clicking outside.
+	useClickOutside(dropdownRef, () => setShowSshConfigDropdown(false), showSshConfigDropdown);
 
 	// Reset filter and highlight when dropdown opens, focus filter input
 	useEffect(() => {

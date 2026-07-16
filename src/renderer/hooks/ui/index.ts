@@ -21,6 +21,13 @@ export type { UseClickOutsideOptions } from './useClickOutside';
 export { useCopyFeedback } from './useCopyFeedback';
 export type { UseCopyFeedbackOptions, UseCopyFeedbackReturn } from './useCopyFeedback';
 
+// Command-panel UI state
+export { useCommandPanelState } from './useCommandPanelState';
+export type {
+	UseCommandPanelStateOptions,
+	UseCommandPanelStateReturn,
+} from './useCommandPanelState';
+
 // Expansion state management (for lists, trees, etc.)
 export { useExpandedSet } from './useExpandedSet';
 export type { UseExpandedSetOptions, UseExpandedSetReturn } from './useExpandedSet';

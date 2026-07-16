@@ -25,6 +25,7 @@ import { openUrl } from '../../../utils/openUrl';
 import { STATUS_COLORS } from '../helpers/statusInfo';
 import { useDocumentCycle } from '../hooks/useDocumentCycle';
 import { IssueCard } from './IssueCard';
+import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 
 export interface RepositoryDetailViewProps {
 	theme: Theme;
@@ -78,15 +79,7 @@ export function RepositoryDetailView({
 		[theme]
 	);
 
-	useEffect(() => {
-		const handleClickOutside = (e: MouseEvent) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-				setShowDocDropdown(false);
-			}
-		};
-		document.addEventListener('mousedown', handleClickOutside);
-		return () => document.removeEventListener('mousedown', handleClickOutside);
-	}, []);
+	useClickOutside(dropdownRef, () => setShowDocDropdown(false), showDocDropdown);
 
 	useEffect(() => {
 		if (selectedIssue && selectedIssue.documentPaths.length > 0) {

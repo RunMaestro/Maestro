@@ -15,6 +15,7 @@ import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { useCommandPanelState } from '../hooks/ui/useCommandPanelState';
 
 interface SpecKitCommandsPanelProps {
 	theme: Theme;
@@ -32,12 +33,21 @@ export function SpecKitCommandsPanel({
 	enabled,
 	onEnabledChange,
 }: SpecKitCommandsPanelProps) {
-	const [commands, setCommands] = useState<SpecKitCommand[]>([]);
-	const [metadata, setMetadata] = useState<SpecKitMetadata | null>(null);
-	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
+	const {
+		commands,
+		setCommands,
+		metadata,
+		setMetadata,
+		editingCommand,
+		setEditingCommand,
+		expandedCommands,
+		isLoading,
+		setIsLoading,
+		toggleExpanded,
+		replaceCommand,
+		cancelEditing,
+	} = useCommandPanelState<SpecKitCommand, SpecKitMetadata, EditingCommand>({ commands: [] });
 	const [isRefreshing, setIsRefreshing] = useState(false);
-	const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
-	const [isLoading, setIsLoading] = useState(true);
 
 	const editCommandTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -89,14 +99,11 @@ export function SpecKitCommandsPanel({
 				editingCommand.prompt
 			);
 			if (result.success) {
-				setCommands(
-					commands.map((cmd) =>
-						cmd.id === editingCommand.id
-							? { ...cmd, prompt: editingCommand.prompt, isModified: true }
-							: cmd
-					)
-				);
-				setEditingCommand(null);
+				replaceCommand(editingCommand.id, {
+					prompt: editingCommand.prompt,
+					isModified: true,
+				});
+				cancelEditing();
 			}
 		} catch (error) {
 			logger.error('Failed to save prompt:', undefined, error);
@@ -109,11 +116,7 @@ export function SpecKitCommandsPanel({
 		try {
 			const result = await window.maestro.speckit.resetPrompt(id);
 			if (result.success && result.prompt) {
-				setCommands(
-					commands.map((cmd) =>
-						cmd.id === id ? { ...cmd, prompt: result.prompt!, isModified: false } : cmd
-					)
-				);
+				replaceCommand(id, { prompt: result.prompt, isModified: false });
 			}
 		} catch (error) {
 			logger.error('Failed to reset prompt:', undefined, error);
@@ -137,20 +140,6 @@ export function SpecKitCommandsPanel({
 		} finally {
 			setIsRefreshing(false);
 		}
-	};
-
-	const handleCancelEdit = () => {
-		setEditingCommand(null);
-	};
-
-	const toggleExpanded = (id: string) => {
-		const newExpanded = new Set(expandedCommands);
-		if (newExpanded.has(id)) {
-			newExpanded.delete(id);
-		} else {
-			newExpanded.add(id);
-		}
-		setExpandedCommands(newExpanded);
 	};
 
 	const formatDate = (isoDate: string) => {
@@ -307,7 +296,7 @@ export function SpecKitCommandsPanel({
 									</span>
 									<div className="flex items-center gap-1">
 										<button
-											onClick={handleCancelEdit}
+											onClick={cancelEditing}
 											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
 											style={{
 												backgroundColor: theme.colors.bgActivity,

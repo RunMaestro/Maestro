@@ -743,6 +743,32 @@ describe('useListNavigation', () => {
 		});
 	});
 
+	describe('controlled selection', () => {
+		it('reports navigation through the controlled setter without retaining a divergent index', () => {
+			const onSelectedIndexChange = vi.fn();
+			const { result, rerender } = renderHook(
+				({ selectedIndex }) =>
+					useListNavigation({
+						listLength: 3,
+						onSelect: vi.fn(),
+						selectedIndex,
+						onSelectedIndexChange,
+					}),
+				{ initialProps: { selectedIndex: 0 } }
+			);
+
+			act(() => {
+				result.current.handleKeyDown(createReactKeyboardEvent('ArrowDown'));
+			});
+
+			expect(onSelectedIndexChange).toHaveBeenCalledWith(1);
+			expect(result.current.selectedIndex).toBe(0);
+
+			rerender({ selectedIndex: 1 });
+			expect(result.current.selectedIndex).toBe(1);
+		});
+	});
+
 	describe('edge cases', () => {
 		it('should handle list of length 1', () => {
 			const onSelect = vi.fn();

@@ -16,6 +16,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { GeneratedDocument } from '../WizardContext';
+import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 
 export interface DocumentSelectorProps {
 	/** List of generated documents */
@@ -71,18 +72,8 @@ export function DocumentSelector({
 
 	const selectedDoc = documents[selectedIndex];
 
-	// Handle click outside to close
-	useEffect(() => {
-		function handleClickOutside(event: MouseEvent) {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setIsOpen(false);
-			}
-		}
-		if (isOpen) {
-			document.addEventListener('mousedown', handleClickOutside);
-			return () => document.removeEventListener('mousedown', handleClickOutside);
-		}
-	}, [isOpen]);
+	// Close click-outside handling is active only while the dropdown is open.
+	useClickOutside(dropdownRef, () => setIsOpen(false), isOpen);
 
 	// Handle Escape key to close
 	useEffect(() => {
