@@ -13,7 +13,7 @@ interface ToggleSettingRowProps {
 	clickableRow?: boolean;
 	disabled?: boolean;
 	className?: string;
-	dataSettingId?: string;
+	'data-setting-id'?: string;
 }
 
 export function ToggleSettingRow({
@@ -27,7 +27,7 @@ export function ToggleSettingRow({
 	clickableRow = false,
 	disabled = false,
 	className = '',
-	dataSettingId,
+	'data-setting-id': dataSettingId,
 }: ToggleSettingRowProps) {
 	const toggle = () => {
 		if (!disabled) onChange(!checked);

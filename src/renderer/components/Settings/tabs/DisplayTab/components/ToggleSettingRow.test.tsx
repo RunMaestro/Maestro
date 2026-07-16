@@ -18,7 +18,7 @@ describe('ToggleSettingRow', () => {
 				onChange={onChange}
 				ariaLabel="Enable updates"
 				clickableRow
-				dataSettingId="general-updates"
+				data-setting-id="general-updates"
 			/>
 		);
 

@@ -62,7 +62,7 @@ export function BrowserSection({
 				onChange={setHtmlDoubleClickOpensInBrowser}
 				ariaLabel="Open HTML files in Maestro Browser on double-click"
 				clickableRow
-				dataSettingId="general-html-double-click"
+				data-setting-id="general-html-double-click"
 				className="mt-3 p-3 rounded border hover:bg-opacity-10"
 			/>
 			<div

@@ -41,7 +41,7 @@ export function UpdatesSection({
 					onChange={setCheckForUpdatesOnStartup}
 					ariaLabel="Check for updates automatically"
 					clickableRow
-					dataSettingId="general-updates"
+					data-setting-id="general-updates"
 				/>
 
 				<ToggleSettingRow
@@ -66,7 +66,7 @@ export function UpdatesSection({
 					ariaLabel="Include beta and release candidate updates"
 					borderTop
 					clickableRow
-					dataSettingId="general-beta-updates"
+					data-setting-id="general-beta-updates"
 				/>
 			</div>
 		</div>

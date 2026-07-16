@@ -47,7 +47,7 @@ export function AutoResumeSection({
 					onChange={setAutoResumeOnLimit}
 					ariaLabel="Resume paused sessions when token/API credits are available"
 					clickableRow
-					dataSettingId="general-auto-resume"
+					data-setting-id="general-auto-resume"
 				/>
 
 				{autoResumeOnLimit && (
