@@ -28,14 +28,18 @@ export const DEFAULT_BATCH_FLUSH_INTERVAL = 200;
 /**
  * Accumulated log data for efficient string concatenation
  */
+interface LogChunk {
+	data: string;
+	timestamp: number;
+	sequence: number;
+}
+
 interface LogAccumulator {
 	sessionId: string;
 	tabId: string | null;
 	isAi: boolean;
 	isStderr: boolean;
-	sequence: number;
-	chunks: string[];
-	timestamp: number;
+	chunks: LogChunk[];
 }
 
 /**
@@ -179,32 +183,33 @@ export function useBatchedSessionUpdates(
 					let shellStderrTimestamp = 0;
 
 					for (const [_key, logAcc] of acc.logAccumulators) {
-						const combinedData = logAcc.chunks.join('');
-						if (!combinedData) continue;
+						if (logAcc.chunks.length === 0) continue;
 
 						if (logAcc.isAi && logAcc.tabId) {
-							// Each accumulator is already keyed by source. Keep those
-							// chunks separate so stderr cannot absorb assistant stdout.
+							// Accumulators are keyed by source, but source chunks must retain
+							// their original order relative to chunks from the other source.
 							const logsForTab = aiTabLogs.get(logAcc.tabId);
-							const entry = {
-								data: combinedData,
+							const entries = logAcc.chunks.map((chunk) => ({
+								data: chunk.data,
 								isStderr: logAcc.isStderr,
-								timestamp: logAcc.timestamp,
-								sequence: logAcc.sequence,
-							};
+								timestamp: chunk.timestamp,
+								sequence: chunk.sequence,
+							}));
 							if (logsForTab) {
-								logsForTab.push(entry);
+								logsForTab.push(...entries);
 							} else {
-								aiTabLogs.set(logAcc.tabId, [entry]);
+								aiTabLogs.set(logAcc.tabId, entries);
 							}
 						} else {
 							// Shell log
+							const combinedData = logAcc.chunks.map((chunk) => chunk.data).join('');
+							const timestamp = logAcc.chunks[logAcc.chunks.length - 1].timestamp;
 							if (logAcc.isStderr) {
 								shellStderr += combinedData;
-								shellStderrTimestamp = Math.max(shellStderrTimestamp, logAcc.timestamp);
+								shellStderrTimestamp = Math.max(shellStderrTimestamp, timestamp);
 							} else {
 								shellStdout += combinedData;
-								shellStdoutTimestamp = Math.max(shellStdoutTimestamp, logAcc.timestamp);
+								shellStdoutTimestamp = Math.max(shellStdoutTimestamp, timestamp);
 							}
 						}
 					}
@@ -542,14 +547,15 @@ export function useBatchedSessionUpdates(
 					isAi,
 					isStderr,
 					chunks: [],
-					sequence: acc.nextLogSequence++,
-					timestamp: Date.now(),
 				};
 				acc.logAccumulators.set(key, logAcc);
 			}
 
-			logAcc.chunks.push(data);
-			logAcc.timestamp = Date.now();
+			logAcc.chunks.push({
+				data,
+				timestamp: Date.now(),
+				sequence: acc.nextLogSequence++,
+			});
 			hasPendingRef.current = true;
 		},
 		[getAccumulator]

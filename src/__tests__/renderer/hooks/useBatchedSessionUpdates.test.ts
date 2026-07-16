@@ -55,11 +55,7 @@ describe('useBatchedSessionUpdates', () => {
 
 	it('applies source-separated entries in timestamp order', () => {
 		const { result, unmount } = renderHook(() => useBatchedSessionUpdates());
-		vi.spyOn(Date, 'now')
-			.mockReturnValueOnce(300)
-			.mockReturnValueOnce(300)
-			.mockReturnValueOnce(100)
-			.mockReturnValueOnce(100);
+		vi.spyOn(Date, 'now').mockReturnValueOnce(300).mockReturnValueOnce(100);
 		result.current.appendLog('session-1', 'tab-1', true, 'assistant', false);
 		result.current.appendLog('session-1', 'tab-1', true, 'error', true);
 		result.current.flushNow();
@@ -68,6 +64,23 @@ describe('useBatchedSessionUpdates', () => {
 		expect(logs.map((log) => [log.source, log.text])).toEqual([
 			['stderr', 'error'],
 			['stdout', 'assistant'],
+		]);
+
+		unmount();
+	});
+
+	it('preserves interleaved source chunks within one flush', () => {
+		const { result, unmount } = renderHook(() => useBatchedSessionUpdates());
+		result.current.appendLog('session-1', 'tab-1', true, 'A', false);
+		result.current.appendLog('session-1', 'tab-1', true, 'E', true);
+		result.current.appendLog('session-1', 'tab-1', true, 'B', false);
+		result.current.flushNow();
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs.map((log) => [log.source, log.text])).toEqual([
+			['stdout', 'A'],
+			['stderr', 'E'],
+			['stdout', 'B'],
 		]);
 
 		unmount();

@@ -172,6 +172,64 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
+	it('filters a split benign diagnostic while preserving coalesced genuine lines', () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const debug = vi.spyOn(logger, 'debug');
+		OmpNativeSessionAdapter.create({
+			sessionId: 'split-diagnostic-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		child.stderr.emit('data', Buffer.from('OMP xd://: mounted maestro.'));
+		child.stderr.emit(
+			'data',
+			Buffer.from('session.status\nOMP first genuine error\nOMP second genuine error\n')
+		);
+
+		expect(debug).toHaveBeenCalledWith(
+			'OMP xd://: mounted maestro.session.status',
+			'OmpNativeSessionAdapter'
+		);
+		expect(send).toHaveBeenNthCalledWith(
+			1,
+			'process:stderr',
+			'split-diagnostic-tab',
+			'OMP first genuine error\n'
+		);
+		expect(send).toHaveBeenNthCalledWith(
+			2,
+			'process:stderr',
+			'split-diagnostic-tab',
+			'OMP second genuine error\n'
+		);
+		expect(send).toHaveBeenCalledTimes(2);
+	});
+
+	it('flushes a genuine residual diagnostic on child close', () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		OmpNativeSessionAdapter.create({
+			sessionId: 'residual-diagnostic-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		child.stderr.emit('data', Buffer.from('OMP residual genuine error'));
+		child.emit('close', 0, null);
+
+		expect(send).toHaveBeenCalledWith(
+			'process:stderr',
+			'residual-diagnostic-tab',
+			'OMP residual genuine error'
+		);
+	});
+
 	it('clears projected runtime features when plugin activation revokes native sessions', async () => {
 		const child = new FakeChild();
 		const send = vi.fn();

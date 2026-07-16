@@ -71,6 +71,7 @@ export function normalizeOmpModelSelector(selection: string): string {
 	return `${provider}:${modelId}`;
 }
 const adapters = new Map<string, OmpNativeSessionAdapter>();
+const BENIGN_HOST_TOOL_MOUNT_DIAGNOSTIC = 'OMP xd://: mounted maestro.session.status';
 
 export class OmpNativeSessionAdapter {
 	readonly ready: Promise<void>;
@@ -88,6 +89,7 @@ export class OmpNativeSessionAdapter {
 	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
 	private appliedModel?: string;
+	private diagnosticBuffer = '';
 
 	private constructor(private readonly options: OmpNativeSessionOptions) {
 		const spawn = options.spawn ?? spawnChild;
@@ -97,16 +99,19 @@ export class OmpNativeSessionAdapter {
 			env: options.env ?? process.env,
 			windowsHide: true,
 		});
-		this.client = new OmpRpcClient(this.transport());
-		this.client.onEvent((event) => this.handleEvent(event));
-		this.client.onCallback((callback) => this.handleCallback(callback));
-		this.client.onDiagnostic((message) => this.handleDiagnostic(message));
+		// Register this before OmpRpcClient's close listener so buffered stderr is
+		// delivered before the RPC client emits its close diagnostic.
 		this.child.once('close', (code, signal) => {
+			this.flushDiagnosticBuffer();
 			if (this.disposed) return;
 			this.disposed = true;
 			adapters.delete(options.sessionId);
 			this.options.send('process:exit', options.sessionId, code ?? 0, signal ? 1 : undefined);
 		});
+		this.client = new OmpRpcClient(this.transport());
+		this.client.onEvent((event) => this.handleEvent(event));
+		this.client.onCallback((callback) => this.handleCallback(callback));
+		this.client.onDiagnostic((message) => this.handleDiagnostic(message));
 		this.ready = this.client.ready;
 		this.initialized = this.ready.then(() => this.initialize());
 		void this.initialized.catch((error: unknown) => {
@@ -294,12 +299,42 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleDiagnostic(message: string): void {
-		const diagnostic = message.trim();
-		if (diagnostic === 'OMP xd://: mounted maestro.session.status') {
-			logger.debug(diagnostic, 'OmpNativeSessionAdapter');
+		if (this.disposed) return;
+		// Protocol failures originate from OmpRpcClient rather than stderr chunks,
+		// so they have no line terminator to wait for.
+		if (message.startsWith('OMP emitted ')) {
+			this.flushDiagnosticBuffer();
+			this.options.send('process:stderr', this.options.sessionId, message);
 			return;
 		}
-		this.options.send('process:stderr', this.options.sessionId, message);
+		this.diagnosticBuffer += message;
+
+		let newline = this.diagnosticBuffer.indexOf('\n');
+		while (newline >= 0) {
+			const messageWithNewline = this.diagnosticBuffer.slice(0, newline + 1);
+			this.diagnosticBuffer = this.diagnosticBuffer.slice(newline + 1);
+			const diagnostic = messageWithNewline.endsWith('\r\n')
+				? messageWithNewline.slice(0, -2)
+				: messageWithNewline.slice(0, -1);
+			if (diagnostic === BENIGN_HOST_TOOL_MOUNT_DIAGNOSTIC) {
+				logger.debug(diagnostic, 'OmpNativeSessionAdapter');
+			} else {
+				this.options.send('process:stderr', this.options.sessionId, messageWithNewline);
+			}
+			newline = this.diagnosticBuffer.indexOf('\n');
+		}
+	}
+
+	private flushDiagnosticBuffer(): void {
+		if (!this.diagnosticBuffer) return;
+		const message = this.diagnosticBuffer;
+		this.diagnosticBuffer = '';
+		const diagnostic = message.endsWith('\r') ? message.slice(0, -1) : message;
+		if (diagnostic === BENIGN_HOST_TOOL_MOUNT_DIAGNOSTIC) {
+			logger.debug(diagnostic, 'OmpNativeSessionAdapter');
+		} else {
+			this.options.send('process:stderr', this.options.sessionId, message);
+		}
 	}
 
 	private async initialize(): Promise<void> {
