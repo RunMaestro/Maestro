@@ -238,7 +238,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 					effortMenuRef={effortMenuRef}
 				/>
 				<AgentRuntimeControls
-					sessionId={session.id}
+					sessionId={`${session.id}-ai-${session.activeTabId}`}
 					controls={session.runtimeFeatures?.controls}
 					theme={theme}
 				/>

@@ -103,7 +103,14 @@ export async function launchNativeOmpRegularSessionHarness(): Promise<NativeOmpR
 			close: async () => {
 				try {
 					await launched!.app.evaluate(({ app }) => app.quit());
-					await launched!.app.close();
+					const closed = await Promise.race([
+						launched!.app
+							.close()
+							.then(() => true)
+							.catch(() => false),
+						new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10_000)),
+					]);
+					if (!closed) launched!.app.process().kill('SIGKILL');
 				} finally {
 					cleanup(seeded);
 				}

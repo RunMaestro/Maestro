@@ -71,14 +71,73 @@ test.describe('first-party OMP regular session', () => {
 				launched.window.getByText('Native OMP fixture ready', { exact: true })
 			).toBeVisible();
 			await expect(launched.window.getByText('expanded-16.4.8', { exact: true })).toBeVisible();
+			await launched.window.getByRole('button', { name: 'Native', exact: true }).click();
+			const runtimePanel = launched.window.getByTestId('native-runtime-panel');
+			await expect(runtimePanel).toBeVisible();
+			await expect(
+				runtimePanel.getByText('Native fixture: Render ordinary session (in_progress)')
+			).toBeVisible();
+			await expect(runtimePanel.getByText('Native helper: running')).toBeVisible();
+			await expect(runtimePanel.getByText('inputTokens: 21')).toBeVisible();
+			await runtimePanel
+				.getByRole('button', { name: 'Branch from native expanded transcript' })
+				.click();
+			await runtimePanel
+				.getByPlaceholder('OMP session file path')
+				.fill('/fixture/resumed-native.jsonl');
+			await runtimePanel.getByRole('button', { name: 'Resume', exact: true }).click();
+			await runtimePanel.getByPlaceholder('Run OMP shell command').fill('echo native shell');
+			await runtimePanel.getByRole('button', { name: 'Run', exact: true }).click();
+			await runtimePanel.getByPlaceholder('OMP login provider').fill('fixture-login');
+			await runtimePanel.getByRole('button', { name: 'Login', exact: true }).click();
+			await launched.window.locator('select[aria-label="Thinking level"]').selectOption('max');
+			await launched.window
+				.locator('select[aria-label="Steering mode"]')
+				.selectOption('one-at-a-time');
+			await launched.window
+				.locator('select[aria-label="Follow-up mode"]')
+				.selectOption('one-at-a-time');
+			await launched.window.locator('select[aria-label="Interrupt mode"]').selectOption('wait');
+			const runtimeControls = launched.window.getByLabel('Native runtime controls');
+			const compact = runtimeControls.getByRole('button', { name: 'Compact', exact: true });
+			await compact.focus();
+			await compact.press('Enter');
+			const exportHtml = runtimeControls.getByRole('button', { name: 'Export HTML', exact: true });
+			await exportHtml.focus();
+			await exportHtml.press('Enter');
+			const abortBash = runtimeControls.getByRole('button', {
+				name: 'Abort shell command',
+				exact: true,
+			});
+			await abortBash.focus();
+			await abortBash.press('Enter');
+			await expect
+				.poll(
+					() => {
+						const frameText = fs.readFileSync(frameLogPath, 'utf8');
+						return [
+							'"type":"branch"',
+							'"type":"switch_session"',
+							'"type":"bash"',
+							'"type":"login"',
+							'"type":"set_thinking_level","level":"max"',
+							'"type":"set_steering_mode","mode":"one-at-a-time"',
+							'"type":"set_follow_up_mode","mode":"one-at-a-time"',
+							'"type":"set_interrupt_mode","mode":"wait"',
+							'"type":"compact"',
+							'"type":"export_html"',
+							'"type":"abort_bash"',
+						].every((frame) => frameText.includes(frame));
+					},
+					{ timeout: 30_000 }
+				)
+				.toBe(true);
 			await expect(composer).toBeEditable({ timeout: 30_000 });
-			await composer.fill('second native prompt after agent_end');
+			await composer.fill('second native prompt after agent_end no-approval');
 			await composer.press('Enter');
-			await expect(approvalDialog).toBeVisible({ timeout: 30_000 });
-			await approvalDialog.getByRole('button', { name: 'Approve', exact: true }).click();
 			await expect(
 				launched.window.getByText(
-					/native text: second native prompt after agent_endnative expanded complete/
+					/native text: second native prompt after agent_end no-approvalnative expanded complete/
 				)
 			).toBeVisible({ timeout: 30_000 });
 			await expect(composer).toBeEditable({ timeout: 30_000 });
@@ -87,7 +146,7 @@ test.describe('first-party OMP regular session', () => {
 					() =>
 						fs
 							.readFileSync(frameLogPath, 'utf8')
-							.includes('"message":"second native prompt after agent_end"'),
+							.includes('"message":"second native prompt after agent_end no-approval"'),
 					{ timeout: 10_000 }
 				)
 				.toBe(true);

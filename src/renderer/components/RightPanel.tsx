@@ -760,7 +760,7 @@ export const RightPanel = memo(
 						<NativeRuntimePanel
 							features={session.runtimeFeatures}
 							theme={theme}
-							sessionId={session.id}
+							sessionId={`${session.id}-ai-${session.activeTabId}`}
 						/>
 					)}
 				</div>

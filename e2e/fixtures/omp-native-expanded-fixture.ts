@@ -91,6 +91,7 @@ const prompt = (request) => {
   if (text.includes('select-approval')) return approval('select', 'select-' + turn, 'Select native action');
   if (text.includes('input-approval')) return approval('input', 'input-' + turn, 'Input native action');
   if (text.includes('editor-approval')) return approval('editor', 'editor-approval-' + turn, 'Edit native action');
+  if (text.includes('no-approval')) return finish(false);
   approval('confirm', 'confirm-' + turn, 'Approve native fixture tool?');
 };
 emit({ type: 'ready', version: '16.4.8', fixture: true });
