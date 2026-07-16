@@ -2119,8 +2119,6 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean; notificationId?: number; error?: string }>;
 		stopSpeak: (notificationId: number) => Promise<{ success: boolean; error?: string }>;
 		onCommandCompleted: (handler: (notificationId: number) => void) => () => void;
-		/** @deprecated Use onCommandCompleted instead */
-		onTtsCompleted: (handler: (notificationId: number) => void) => () => void;
 	};
 	attachments: {
 		save: (

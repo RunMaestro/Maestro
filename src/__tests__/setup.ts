@@ -570,7 +570,6 @@ const mockMaestro = {
 		speak: vi.fn().mockResolvedValue({ success: true, notificationId: 1 }),
 		stopSpeak: vi.fn().mockResolvedValue({ success: true }),
 		onCommandCompleted: vi.fn().mockReturnValue(() => {}),
-		onTtsCompleted: vi.fn().mockReturnValue(() => {}), // Legacy alias
 		show: vi.fn().mockResolvedValue(undefined),
 	},
 	dialog: {

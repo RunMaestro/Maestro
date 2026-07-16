@@ -97,10 +97,6 @@ export function createNotificationApi() {
 		 */
 		onCommandCompleted: (handler: (notificationId: number) => void): (() => void) =>
 			subscribeIpc('notification:commandCompleted', handler),
-
-		/** @deprecated Use onCommandCompleted instead */
-		onTtsCompleted: (handler: (notificationId: number) => void): (() => void) =>
-			subscribeIpc('notification:commandCompleted', handler),
 	};
 }
 
