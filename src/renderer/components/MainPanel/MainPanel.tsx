@@ -35,6 +35,7 @@ import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworking
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { resolveRuntimeFeatures } from '../../utils/runtimeFeatures';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -488,8 +489,14 @@ export const MainPanel = React.memo(
 			};
 		}, [activeSession?.toolType]);
 
-		// Resolved current model/effort: tab override > session override > live runtime > agent config
-		const runtimeModel = activeSession?.runtimeFeatures?.controls.find(
+		// Resolved current model/effort: tab override > session override > live runtime > agent config.
+		// Live runtime controls come from the ACTIVE tab's projection (base-session
+		// projection only when the base session owns it) so the pill never shows
+		// another tab's model state.
+		const ownedRuntimeControls = activeSession
+			? resolveRuntimeFeatures(activeSession)?.features.controls
+			: undefined;
+		const runtimeModel = ownedRuntimeControls?.find(
 			(control) => control.id === 'model' && typeof control.value === 'string'
 		)?.value;
 		const resolvedModel =
@@ -502,7 +509,7 @@ export const MainPanel = React.memo(
 		const resolvedPillModels = resolvePillModels(
 			activeSession?.toolType,
 			pillModels,
-			activeSession?.runtimeFeatures?.controls
+			ownedRuntimeControls
 		);
 
 		const setTabModel = useTabStore((s) => s.setTabModel);

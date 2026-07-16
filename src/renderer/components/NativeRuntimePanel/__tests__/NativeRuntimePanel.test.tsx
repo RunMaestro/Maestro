@@ -169,6 +169,99 @@ describe('NativeRuntimePanel live state', () => {
 		expect(screen.queryByText('Native helper detail')).not.toBeInTheDocument();
 	});
 
+	it('ignores a stale detail response that resolves after a newer request', async () => {
+		const pending: Record<
+			string,
+			{ resolve: (lines: string[]) => void; reject: (error: Error) => void }
+		> = {};
+		const onLoadDetail = vi.fn(
+			(_sessionId: string, _kind: string, entryId: string) =>
+				new Promise<string[]>((resolve, reject) => {
+					pending[entryId] = { resolve, reject };
+				})
+		);
+		renderPanel(liveFeatures(), { onLoadDetail });
+
+		// Request A (subagent), then request B (branch) while A is still in flight.
+		fireEvent.click(screen.getByRole('button', { name: 'View messages for Native helper' }));
+		fireEvent.click(
+			screen.getByRole('button', { name: 'View branch messages for native expanded transcript' })
+		);
+
+		// Newer request B resolves first.
+		pending['entry-1'].resolve(['branch line']);
+		await waitFor(() => {
+			expect(screen.getByText('branch line')).toBeInTheDocument();
+		});
+
+		// Older request A resolves late: it must not overwrite B or re-show loading.
+		pending['helper-1'].resolve(['stale helper line']);
+		await waitFor(() => {
+			expect(onLoadDetail).toHaveBeenCalledTimes(2);
+		});
+		expect(screen.queryByText('stale helper line')).not.toBeInTheDocument();
+		expect(screen.getByText('branch line')).toBeInTheDocument();
+		expect(screen.getByText('native expanded transcript messages')).toBeInTheDocument();
+		expect(screen.queryByText('Loading messages…')).not.toBeInTheDocument();
+	});
+
+	it('ignores a stale detail rejection after a newer request resolved', async () => {
+		const pending: Record<
+			string,
+			{ resolve: (lines: string[]) => void; reject: (error: Error) => void }
+		> = {};
+		const onLoadDetail = vi.fn(
+			(_sessionId: string, _kind: string, entryId: string) =>
+				new Promise<string[]>((resolve, reject) => {
+					pending[entryId] = { resolve, reject };
+				})
+		);
+		renderPanel(liveFeatures(), { onLoadDetail });
+
+		fireEvent.click(screen.getByRole('button', { name: 'View messages for Native helper' }));
+		fireEvent.click(
+			screen.getByRole('button', { name: 'View branch messages for native expanded transcript' })
+		);
+
+		pending['entry-1'].resolve(['branch line']);
+		await waitFor(() => {
+			expect(screen.getByText('branch line')).toBeInTheDocument();
+		});
+
+		// The stale request failing must not surface an error over B's content.
+		pending['helper-1'].reject(new Error('stale failure'));
+		await waitFor(() => {
+			expect(onLoadDetail).toHaveBeenCalledTimes(2);
+		});
+		expect(screen.queryByText('Unable to load native runtime detail.')).not.toBeInTheDocument();
+		expect(screen.getByText('branch line')).toBeInTheDocument();
+	});
+
+	it('does not resurrect a closed detail card when its response arrives late', async () => {
+		const pending: Record<
+			string,
+			{ resolve: (lines: string[]) => void; reject: (error: Error) => void }
+		> = {};
+		const onLoadDetail = vi.fn(
+			(_sessionId: string, _kind: string, entryId: string) =>
+				new Promise<string[]>((resolve, reject) => {
+					pending[entryId] = { resolve, reject };
+				})
+		);
+		renderPanel(liveFeatures(), { onLoadDetail });
+
+		fireEvent.click(screen.getByRole('button', { name: 'View messages for Native helper' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Close detail' }));
+		expect(screen.queryByText('Native helper messages')).not.toBeInTheDocument();
+
+		pending['helper-1'].resolve(['late helper line']);
+		await waitFor(() => {
+			expect(onLoadDetail).toHaveBeenCalledTimes(1);
+		});
+		expect(screen.queryByText('late helper line')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('native-runtime-detail')).not.toBeInTheDocument();
+	});
+
 	it('filters markup payloads and duplicates from session activity but keeps branch actions', () => {
 		const { onBranch } = renderPanel(liveFeatures());
 

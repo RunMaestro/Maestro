@@ -29,6 +29,7 @@ import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
+import { resolveRuntimeFeatures } from '../../../utils/runtimeFeatures';
 import { ModelEffortPills } from './ModelEffortPills';
 
 interface ToolbarControlsProps {
@@ -124,6 +125,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// non-functional mode.
 	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
 		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
+	// Native runtime features belong to the active tab first; the base-session
+	// projection applies only when the base session owns them. Every runtime
+	// control action must target the exact owning id.
+	const ownedRuntime = resolveRuntimeFeatures(session);
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -237,10 +242,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 					setEffortMenuOpen={setEffortMenuOpen}
 					effortMenuRef={effortMenuRef}
 				/>
-				{isAiMode && (
+				{isAiMode && ownedRuntime && (
 					<AgentRuntimeControls
-						sessionId={`${session.id}-ai-${session.activeTabId}`}
-						controls={session.runtimeFeatures?.controls}
+						sessionId={ownedRuntime.ownerId}
+						controls={ownedRuntime.features.controls}
 						theme={theme}
 					/>
 				)}

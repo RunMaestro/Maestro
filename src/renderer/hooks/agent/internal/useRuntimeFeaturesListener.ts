@@ -10,7 +10,10 @@ import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { openInSystemBrowser } from '../../../utils/openUrl';
 import { useComposerInputStore } from '../../../stores/composerInputStore';
 
-type RuntimePatch = Partial<Session>;
+// Only the fields these listeners actually patch. Kept narrow so the same
+// patch can be spread into both Session and AITab (a Partial<Session> spread
+// into AITab is a type error: e.g. their `state` unions differ).
+type RuntimePatch = Partial<Pick<Session, 'name' | 'runtimeFeatures' | 'pendingApprovals'>>;
 
 export function useRuntimeFeaturesListener(): void {
 	const ownedGate = useOwnedSessionGate();
@@ -32,9 +35,30 @@ export function useRuntimeFeaturesListener(): void {
 				})
 			);
 		};
+		// Runtime feature projections are ownership-exclusive: a tab-scoped event
+		// updates ONLY that tab and a base-scoped event ONLY the base session.
+		// (`update` above intentionally writes both — approvals/titles are read at
+		// session level by MainPanelContent — but feature projections must never
+		// leak across scopes: a null for inactive tab A would otherwise clear the
+		// parent copy that consumers were rendering for live tab B.)
+		const updateExclusive = (sessionId: string, patch: RuntimePatch) => {
+			if (!ownedGate.current?.(sessionId)) return;
+			const { baseSessionId, tabId } = parseSessionId(sessionId);
+			setSessions((sessions) =>
+				sessions.map((session) => {
+					if (session.id !== baseSessionId) return session;
+					if (!tabId) return { ...session, ...patch };
+					return {
+						...session,
+						aiTabs: session.aiTabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)),
+					};
+				})
+			);
+		};
 		const removeRuntimeFeatures = window.maestro.process.onRuntimeFeatures(
 			(sessionId: string, runtimeFeatures: AgentRuntimeFeatureState | null) => {
-				update(sessionId, () =>
+				updateExclusive(
+					sessionId,
 					runtimeFeatures
 						? { runtimeFeatures, pendingApprovals: [] }
 						: { runtimeFeatures: undefined, pendingApprovals: [] }

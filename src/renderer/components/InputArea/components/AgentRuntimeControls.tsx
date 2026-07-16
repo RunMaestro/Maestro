@@ -6,18 +6,24 @@
  * Live runtime settings collapse into two pills that sit beside the model
  * pill:
  *
- * - a Thinking pill (the one frequently changed setting) with a popover of
- *   levels, mirroring the model/effort pill language, and
- * - a Runtime pill opening a grouped popover: delivery modes (steering /
- *   follow-up / interrupt), automation toggles (auto-compaction / auto-retry),
- *   session actions (new session, compact, handoff, export…), and a visually
- *   separated interrupt group (abort retry / abort shell).
+ * - a Thinking pill (the one frequently changed setting) opening a true menu
+ *   (`role="menu"` of `menuitemradio` levels) with full keyboard support, and
+ * - a Runtime pill opening a non-modal popover dialog with grouped form
+ *   controls: delivery modes (steering / follow-up / interrupt), automation
+ *   toggles (auto-compaction / auto-retry), session actions (new session,
+ *   compact, handoff, export…), and a visually separated interrupt group
+ *   (abort retry / abort shell).
+ *
+ * Keyboard contract (both popovers): opening moves focus into the popup,
+ * Escape closes and restores focus to the trigger (from the trigger or from
+ * inside the popup), and tabbing/clicking outside dismisses. The thinking menu
+ * additionally supports ArrowUp/ArrowDown/Home/End roving focus.
  *
  * Model selection is excluded here — it is owned by the ordinary model pill.
  * When the runtime is dormant there are no controls and nothing renders.
  */
 
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Ban, Brain, Settings2 } from 'lucide-react';
 import type { AgentControl } from '../../../../shared/agent-runtime-features';
 import { isRegisteredOmpControl } from '../../../../shared/omp-command-registry';
@@ -86,10 +92,42 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 	const [thinkingOpen, setThinkingOpen] = useState(false);
 	const [runtimeOpen, setRuntimeOpen] = useState(false);
 	const thinkingRef = useRef<HTMLDivElement>(null);
+	const thinkingTriggerRef = useRef<HTMLButtonElement>(null);
+	const thinkingMenuRef = useRef<HTMLDivElement>(null);
 	const runtimeRef = useRef<HTMLDivElement>(null);
+	const runtimeTriggerRef = useRef<HTMLButtonElement>(null);
+	const runtimeDialogRef = useRef<HTMLDivElement>(null);
 
 	useClickOutside(thinkingRef, () => setThinkingOpen(false), thinkingOpen);
 	useClickOutside(runtimeRef, () => setRuntimeOpen(false), runtimeOpen);
+
+	// Opening a popup moves focus into it — required for keyboard users since
+	// neither popup is rendered until open.
+	useEffect(() => {
+		if (!thinkingOpen) return;
+		const items =
+			thinkingMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
+		if (!items?.length) return;
+		const selected = Array.from(items).find((item) => item.getAttribute('aria-checked') === 'true');
+		(selected ?? items[0]).focus();
+	}, [thinkingOpen]);
+
+	useEffect(() => {
+		if (!runtimeOpen) return;
+		runtimeDialogRef.current
+			?.querySelector<HTMLElement>('select, button, input, [tabindex]')
+			?.focus();
+	}, [runtimeOpen]);
+
+	const closeThinking = useCallback((restoreFocus: boolean) => {
+		setThinkingOpen(false);
+		if (restoreFocus) thinkingTriggerRef.current?.focus();
+	}, []);
+
+	const closeRuntime = useCallback((restoreFocus: boolean) => {
+		setRuntimeOpen(false);
+		if (restoreFocus) runtimeTriggerRef.current?.focus();
+	}, []);
 
 	const setControl = useCallback(
 		(controlId: string, value: string | boolean) => {
@@ -123,18 +161,66 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 		</div>
 	);
 
+	const onThinkingMenuKeyDown = (event: React.KeyboardEvent) => {
+		const menu = thinkingMenuRef.current;
+		if (!menu) return;
+		const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+		if (!items.length) return;
+		const index = items.indexOf(document.activeElement as HTMLButtonElement);
+		if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			items[(index + 1) % items.length].focus();
+		} else if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			items[(index - 1 + items.length) % items.length].focus();
+		} else if (event.key === 'Home') {
+			event.preventDefault();
+			items[0].focus();
+		} else if (event.key === 'End') {
+			event.preventDefault();
+			items[items.length - 1].focus();
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			event.stopPropagation();
+			closeThinking(true);
+		} else if (event.key === 'Tab') {
+			// Tabbing away dismisses the menu; focus continues naturally.
+			closeThinking(false);
+		}
+	};
+
+	/** Dismiss a popup when focus tabs out of it (without stealing focus back). */
+	const closeOnFocusOut =
+		(container: React.RefObject<HTMLDivElement | null>, close: (restore: boolean) => void) =>
+		(event: React.FocusEvent) => {
+			const next = event.relatedTarget as Node | null;
+			if (next && container.current?.contains(next)) return;
+			close(false);
+		};
+
 	return (
 		<div className="flex min-w-0 items-center gap-1" data-testid="omp-runtime-controls">
 			{/* Thinking level pill */}
 			{grouped.thinking && (
 				<div className="relative" ref={thinkingRef}>
 					<button
+						ref={thinkingTriggerRef}
 						type="button"
 						aria-haspopup="menu"
 						aria-expanded={thinkingOpen}
 						onClick={() => {
 							setThinkingOpen((open) => !open);
 							setRuntimeOpen(false);
+						}}
+						onKeyDown={(event) => {
+							if (event.key === 'ArrowDown' && !thinkingOpen) {
+								event.preventDefault();
+								setThinkingOpen(true);
+								setRuntimeOpen(false);
+							} else if (event.key === 'Escape' && thinkingOpen) {
+								event.preventDefault();
+								closeThinking(true);
+							}
 						}}
 						className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] opacity-60 transition-all hover:opacity-100"
 						style={{
@@ -153,8 +239,11 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 					</button>
 					{thinkingOpen && (
 						<div
+							ref={thinkingMenuRef}
 							role="menu"
 							aria-label="Thinking level"
+							onKeyDown={onThinkingMenuKeyDown}
+							onBlur={closeOnFocusOut(thinkingRef, closeThinking)}
 							className="absolute bottom-full left-0 z-50 mb-1 max-h-48 overflow-y-auto rounded border shadow-lg scrollbar-thin"
 							style={menuSurface}
 						>
@@ -166,11 +255,12 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 										type="button"
 										role="menuitemradio"
 										aria-checked={selected}
+										tabIndex={-1}
 										onClick={() => {
 											setControl(THINKING_CONTROL_ID, option.id);
-											setThinkingOpen(false);
+											closeThinking(true);
 										}}
-										className="w-full whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors hover:bg-white/10"
+										className="w-full whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors hover:bg-white/10 focus:bg-white/10 focus:outline-none"
 										style={{
 											color: selected ? theme.colors.warning : theme.colors.textMain,
 											backgroundColor: selected ? 'rgba(255,255,255,0.05)' : undefined,
@@ -189,13 +279,20 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 			{hasMenuContent && (
 				<div className="relative" ref={runtimeRef}>
 					<button
+						ref={runtimeTriggerRef}
 						type="button"
-						aria-haspopup="menu"
+						aria-haspopup="dialog"
 						aria-expanded={runtimeOpen}
 						aria-label="OMP runtime settings"
 						onClick={() => {
 							setRuntimeOpen((open) => !open);
 							setThinkingOpen(false);
+						}}
+						onKeyDown={(event) => {
+							if (event.key === 'Escape' && runtimeOpen) {
+								event.preventDefault();
+								closeRuntime(true);
+							}
 						}}
 						className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] opacity-60 transition-all hover:opacity-100"
 						style={{
@@ -209,10 +306,17 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 					</button>
 					{runtimeOpen && (
 						<div
+							ref={runtimeDialogRef}
+							role="dialog"
 							aria-label="Native runtime controls"
 							onKeyDown={(event) => {
-								if (event.key === 'Escape') setRuntimeOpen(false);
+								if (event.key === 'Escape') {
+									event.preventDefault();
+									event.stopPropagation();
+									closeRuntime(true);
+								}
 							}}
+							onBlur={closeOnFocusOut(runtimeRef, closeRuntime)}
 							className="absolute bottom-full left-0 z-50 mb-1 max-h-80 w-60 overflow-y-auto rounded-md border pb-1.5 shadow-lg scrollbar-thin"
 							style={menuSurface}
 						>
@@ -259,7 +363,7 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 												role="switch"
 												aria-checked={enabled}
 												onClick={() => setControl(control.id, !enabled)}
-												className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5"
+												className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5 focus:bg-white/5"
 												style={{ color: theme.colors.textMain }}
 											>
 												<span className="min-w-0 truncate">{control.label}</span>
@@ -288,9 +392,9 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 											type="button"
 											onClick={() => {
 												setControl(control.id, true);
-												setRuntimeOpen(false);
+												closeRuntime(true);
 											}}
-											className="w-full px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5"
+											className="w-full px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5 focus:bg-white/5"
 											style={{ color: theme.colors.textMain }}
 										>
 											{control.label}
@@ -311,9 +415,9 @@ export const AgentRuntimeControls = memo(function AgentRuntimeControls({
 											type="button"
 											onClick={() => {
 												setControl(control.id, true);
-												setRuntimeOpen(false);
+												closeRuntime(true);
 											}}
-											className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5"
+											className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-white/5 focus:bg-white/5"
 											style={{ color: theme.colors.warning }}
 										>
 											<Ban className="h-3 w-3 shrink-0" aria-hidden="true" />

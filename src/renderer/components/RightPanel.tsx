@@ -41,6 +41,7 @@ import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
 import { NativeRuntimePanel } from './NativeRuntimePanel';
+import { resolveRuntimeFeatures } from '../utils/runtimeFeatures';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -141,6 +142,9 @@ export const RightPanel = memo(
 		// Files/History/Auto Run view. Outside a WindowProvider (single-window /
 		// isolation tests) this is always true, so behaviour is unchanged.
 		const ownsActiveSession = useWindowOwnsSession(session?.id);
+		// Native runtime projection for the ACTIVE tab (base-session projection only
+		// when the base session owns it); actions target exactly the owning id.
+		const ownedRuntime = session ? resolveRuntimeFeatures(session) : null;
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 		const activeRightTab = useUIStore((s) => s.activeRightTab);
@@ -479,7 +483,7 @@ export const RightPanel = memo(
 							'files',
 							'history',
 							...(autoRunDisabled ? [] : ['autorun']),
-							...(session.runtimeFeatures ? ['runtime'] : []),
+							...(ownedRuntime ? ['runtime'] : []),
 						] as const
 					).map((tab) => (
 						<button
@@ -599,11 +603,11 @@ export const RightPanel = memo(
 						</div>
 					)}
 
-					{activeRightTab === 'runtime' && session.runtimeFeatures && (
+					{activeRightTab === 'runtime' && ownedRuntime && (
 						<NativeRuntimePanel
-							features={session.runtimeFeatures}
+							features={ownedRuntime.features}
 							theme={theme}
-							sessionId={`${session.id}-ai-${session.activeTabId}`}
+							sessionId={ownedRuntime.ownerId}
 						/>
 					)}
 				</div>

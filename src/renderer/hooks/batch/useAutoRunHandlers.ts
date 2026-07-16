@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { Session, BatchRunConfig } from '../../types';
+import type { Session, BatchRunConfig, RightPanelTab } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
@@ -27,7 +27,7 @@ export interface UseAutoRunHandlersDeps {
 	setAutoRunIsLoadingDocuments: React.Dispatch<React.SetStateAction<boolean>>;
 	setAutoRunSetupModalOpen: (open: boolean) => void;
 	setBatchRunnerModalOpen: (open: boolean) => void;
-	setActiveRightTab: React.Dispatch<React.SetStateAction<'files' | 'history' | 'autorun'>>;
+	setActiveRightTab: (tab: RightPanelTab | ((prev: RightPanelTab) => RightPanelTab)) => void;
 	setRightPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	setActiveFocus: React.Dispatch<React.SetStateAction<'sidebar' | 'main' | 'right'>>;
 	setSuccessFlashNotification: React.Dispatch<React.SetStateAction<string | null>>;

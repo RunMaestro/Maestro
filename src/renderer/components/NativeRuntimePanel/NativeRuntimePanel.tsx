@@ -13,7 +13,7 @@
  *   reads as status first, controls second.
  */
 
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -175,21 +175,33 @@ export const NativeRuntimePanel = memo(function NativeRuntimePanel({
 	const todoSummary = summarizeTodos(features.todos);
 	const subagents = features.subagents ?? [];
 
+	// Each detail load gets a request id; only the latest request may write
+	// state, so an older response can never overwrite a newer one or clear its
+	// loading indicator. Closing the card invalidates any in-flight request.
+	const detailRequestRef = useRef(0);
 	const loadDetail = useCallback(
 		async (kind: 'subagent' | 'branch', entryId: string, title: string) => {
+			const requestId = ++detailRequestRef.current;
 			setDetailLoading(true);
 			setDetail({ title, lines: [], error: false });
 			try {
 				const lines = await onLoadDetail(sessionId, kind, entryId);
+				if (detailRequestRef.current !== requestId) return;
 				setDetail({ title, lines, error: false });
 			} catch {
+				if (detailRequestRef.current !== requestId) return;
 				setDetail({ title, lines: [], error: true });
 			} finally {
-				setDetailLoading(false);
+				if (detailRequestRef.current === requestId) setDetailLoading(false);
 			}
 		},
 		[onLoadDetail, sessionId]
 	);
+	const closeDetail = useCallback(() => {
+		detailRequestRef.current += 1;
+		setDetail(null);
+		setDetailLoading(false);
+	}, []);
 
 	const copyLine = useCallback(async (line: string) => {
 		const copied = await safeClipboardWrite(line);
@@ -538,7 +550,7 @@ export const NativeRuntimePanel = memo(function NativeRuntimePanel({
 								<button
 									type="button"
 									aria-label="Close detail"
-									onClick={() => setDetail(null)}
+									onClick={closeDetail}
 									className="shrink-0 rounded p-0.5 opacity-60 transition-opacity hover:bg-white/10 hover:opacity-100"
 									style={{ color: theme.colors.textDim }}
 								>
