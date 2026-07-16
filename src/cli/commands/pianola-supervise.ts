@@ -19,7 +19,7 @@ import {
 	type PianolaSupervisedTarget,
 } from '../services/pianola-store';
 import { generateUUID } from '../../shared/uuid';
-import { ensurePianolaEnabled } from './pianola';
+import { ensurePianolaEnabled } from './pianola-gate';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;

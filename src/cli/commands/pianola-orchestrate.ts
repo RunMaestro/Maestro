@@ -28,6 +28,7 @@ import {
 } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
 import { runDispatch } from './dispatch';
+import { createPianolaPollingGate, ensurePianolaEnabled, pianolaEnabledNow } from './pianola-gate';
 import {
 	runOrchestratorIteration,
 	initialOrchestratorState,
@@ -51,7 +52,6 @@ import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
 
-const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
 const HISTORY_TAIL = 12;
 // Memoize the desktop session list for this long so the many getRunState calls
@@ -90,28 +90,6 @@ interface SessionHistoryResult {
 	messages?: RawHistoryMessage[];
 	agentId?: string;
 	projectPath?: string;
-}
-
-/** Exit with a clear message if the Pianola Encore feature is disabled. */
-function ensurePianolaEnabled(json?: boolean): void {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	if (flags?.pianola === true) return;
-	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message, code: 'PIANOLA_DISABLED' }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
-}
-
-/**
- * Non-throwing Encore check, re-read each iteration so revoking consent in
- * Settings halts an in-flight orchestrate run (the startup guard only runs once).
- */
-function pianolaEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true;
 }
 
 /** F8 (ISC-8.12/8.13): the reactive fix/merge loop is gated on autopilot, read
@@ -167,24 +145,12 @@ function auditAgentRunAction(
 	}
 }
 
-/** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
-function parseIntervalSeconds(raw?: string): number {
-	if (!raw) return DEFAULT_INTERVAL_SECONDS;
-	const match = raw.trim().match(/^(\d+)s?$/i);
-	if (!match) return DEFAULT_INTERVAL_SECONDS;
-	return Math.max(1, parseInt(match[1], 10));
-}
-
 /** Parse `--concurrency`; defaults to 3, minimum 1. */
 function parseConcurrency(raw?: string): number {
 	if (!raw) return DEFAULT_CONCURRENCY;
 	const parsed = parseInt(raw.trim(), 10);
 	if (isNaN(parsed)) return DEFAULT_CONCURRENCY;
 	return Math.max(1, parsed);
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** One-line progress summary shared by list, show, and the orchestrate loop. */
@@ -481,13 +447,13 @@ export async function pianolaOrchestrate(
 		return;
 	}
 
-	const intervalMs = parseIntervalSeconds(options.interval) * 1000;
+	const gate = createPianolaPollingGate(options.interval);
+	const intervalMs = gate.intervalMs;
 	const concurrencyLimit = parseConcurrency(options.concurrency);
 	const once = !!options.once;
 
-	let stopped = false;
 	const onSignal = (): void => {
-		stopped = true;
+		gate.stop();
 	};
 	process.on('SIGINT', onSignal);
 
@@ -530,15 +496,13 @@ export async function pianolaOrchestrate(
 			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
 			'session_history_result'
 		);
-		const messages = (result.messages ?? []).map(
-			(m): PianolaMessage => ({
-				id: m.id,
-				role: m.role,
-				source: m.source ?? '',
-				content: m.content,
-				timestamp: m.timestamp,
-			})
-		);
+		const messages = (result.messages ?? []).map((m): PianolaMessage => ({
+			id: m.id,
+			role: m.role,
+			source: m.source ?? '',
+			content: m.content,
+			timestamp: m.timestamp,
+		}));
 		historyCache.set(tabId, { at: now, messages });
 		return messages;
 	};
@@ -753,6 +717,7 @@ export async function pianolaOrchestrate(
 		for (;;) {
 			// Re-check consent each iteration: if Pianola was toggled off in Settings,
 			// stop acting immediately rather than running until the process is killed.
+			if (gate.stopped) break;
 			if (!pianolaEnabledNow()) {
 				console.error('[orchestrator] Pianola disabled in Settings; stopping.');
 				break;
@@ -767,8 +732,8 @@ export async function pianolaOrchestrate(
 				// tick re-polls and re-dispatches from the persisted plan.
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(`[orchestrator] iteration error: ${message}`);
-				if (once || stopped) break;
-				await sleep(intervalMs);
+				if (once || gate.stopped) break;
+				await gate.wait();
 				continue;
 			}
 			recordPianolaAgentRunProgress(result, signals);
@@ -787,10 +752,11 @@ export async function pianolaOrchestrate(
 				break;
 			}
 
-			if (once || stopped) break;
-			await sleep(intervalMs);
+			if (once || gate.stopped) break;
+			await gate.wait();
 		}
 	} finally {
+		gate.stop();
 		process.off('SIGINT', onSignal);
 		client.disconnect();
 	}

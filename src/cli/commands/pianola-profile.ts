@@ -11,7 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ensurePianolaEnabled } from './pianola';
+import { ensurePianolaEnabled } from './pianola-gate';
 import { getPianolaProfile, setPianolaProfile } from '../services/pianola-store';
 
 export interface PianolaProfileReadOptions {

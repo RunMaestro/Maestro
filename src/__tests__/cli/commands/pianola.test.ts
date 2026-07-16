@@ -173,4 +173,20 @@ describe('pianola watch', () => {
 		await expect(pianolaWatch('tab-1', { once: true })).rejects.toThrow('__exit__');
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
+	it('runs the first poll immediately and stops before a second poll when Settings disables Pianola', async () => {
+		vi.useFakeTimers();
+		vi.mocked(readSettingValue)
+			.mockReturnValueOnce({ pianola: true })
+			.mockReturnValueOnce({ pianola: true })
+			.mockReturnValue({ pianola: false });
+		sendCommandMock.mockResolvedValue(questionResponse({ messages: [] }));
+
+		const watching = pianolaWatch('tab-1', { interval: '1' });
+		await vi.waitFor(() => expect(sendCommandMock).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(1000);
+		await watching;
+
+		expect(sendCommandMock).toHaveBeenCalledTimes(1);
+		expect(disconnectMock).toHaveBeenCalledTimes(1);
+	});
 });
