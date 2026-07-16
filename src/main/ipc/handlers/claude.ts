@@ -15,7 +15,11 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
-import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
+import type {
+	AgentSessionOriginsData,
+	ClaudeSessionOrigin,
+	ClaudeSessionOriginsData,
+} from '../../stores/types';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -40,6 +44,7 @@ import {
 } from '../../storage/starred-transcript-mirror';
 import { readVersionedJsonCache } from '../../utils/json-file-readers';
 import { getClaudeProjectDir, getClaudeProjectsDir } from '../../utils/claude-project-path';
+import { readClaudeOrigins, writeClaudeOrigins } from '../../stores/migrations/claude-origins';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -166,7 +171,10 @@ function handlerOpts(operation: string, context: string = LOG_CONTEXT) {
  * Dependencies required for Claude handlers
  */
 export interface ClaudeHandlerDependencies {
+	/** Kept for dual-read and rollback compatibility; never written after cutover. */
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	/** Canonical agent-keyed v2 origins store. */
+	agentSessionOriginsStore: Store<AgentSessionOriginsData>;
 	getMainWindow: () => BrowserWindow | null;
 }
 
@@ -192,7 +200,7 @@ function extractTextFromContent(content: unknown): string {
  * Register all Claude-related IPC handlers.
  */
 export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
-	const { claudeSessionOriginsStore, getMainWindow } = deps;
+	const { claudeSessionOriginsStore, agentSessionOriginsStore, getMainWindow } = deps;
 	const safeSend = createSafeSend(getMainWindow);
 
 	// ============ List Sessions ============
@@ -345,14 +353,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
 
 			// Get Maestro session origins
-			const origins = claudeSessionOriginsStore.get('origins', {});
-			const projectOrigins = origins[projectPath] || {};
+			const projectOrigins =
+				readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore)[projectPath] || {};
 
 			// Add origin info to each session
 			const sessionsWithOrigins = validSessions.map((session) => {
 				const originData = projectOrigins[session.sessionId];
-				const origin = typeof originData === 'string' ? originData : originData?.origin;
-				const sessionName = typeof originData === 'object' ? originData?.sessionName : undefined;
+				const origin = originData?.origin;
+				const sessionName = originData?.sessionName;
 				return {
 					...session,
 					origin: origin as ClaudeSessionOrigin | undefined,
@@ -430,8 +438,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				const nextCursor = hasMore ? pageFiles[pageFiles.length - 1]?.sessionId : null;
 
 				// Get Maestro session origins
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				const projectOrigins = origins[projectPath] || {};
+				const projectOrigins =
+					readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore)[projectPath] || {};
 
 				// Read full content for sessions in this page
 				const sessions = await Promise.all(
@@ -1687,12 +1695,10 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				origin: 'user' | 'auto',
 				sessionName?: string
 			) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-				claudeSessionOriginsStore.set('origins', origins);
+				const origins = readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore);
+				if (!origins[projectPath]) origins[projectPath] = {};
+				origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : { origin };
+				writeClaudeOrigins(agentSessionOriginsStore, origins);
 				logger.debug(
 					`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1708,19 +1714,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionName', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, sessionName: string) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, sessionName };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				const origins = readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore);
+				if (!origins[projectPath]) origins[projectPath] = {};
+				origins[projectPath][agentSessionId] = {
+					...origins[projectPath][agentSessionId],
+					origin: origins[projectPath][agentSessionId]?.origin ?? 'user',
+					sessionName,
+				};
+				writeClaudeOrigins(agentSessionOriginsStore, origins);
 				logger.debug(
 					`Updated Claude session name: ${agentSessionId} = ${sessionName}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1736,19 +1737,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionStarred', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, starred: boolean) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, starred };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, starred };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', starred };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				const origins = readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore);
+				if (!origins[projectPath]) origins[projectPath] = {};
+				origins[projectPath][agentSessionId] = {
+					...origins[projectPath][agentSessionId],
+					origin: origins[projectPath][agentSessionId]?.origin ?? 'user',
+					starred,
+				};
+				writeClaudeOrigins(agentSessionOriginsStore, origins);
 				logger.debug(
 					`Updated Claude session starred: ${agentSessionId} = ${starred}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1758,8 +1754,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				// Mirror the transcript on star / drop it on unstar so the conversation
 				// survives provider-side deletion. Fire-and-forget - see the generic
 				// agentSessions:setSessionStarred handler for the rationale.
-				const starEntry = origins[projectPath][agentSessionId];
-				const starSessionName = typeof starEntry === 'object' ? starEntry.sessionName : undefined;
+				const starSessionName = origins[projectPath][agentSessionId]?.sessionName;
 				if (starred) {
 					void snapshotStarredTranscript({
 						agentId: 'claude-code',
@@ -1780,19 +1775,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionContextUsage', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, contextUsage: number) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				const origins = readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore);
+				if (!origins[projectPath]) origins[projectPath] = {};
+				origins[projectPath][agentSessionId] = {
+					...origins[projectPath][agentSessionId],
+					origin: origins[projectPath][agentSessionId]?.origin ?? 'user',
+					contextUsage,
+				};
+				writeClaudeOrigins(agentSessionOriginsStore, origins);
 				// Don't log - this updates frequently and would spam logs
 				return true;
 			}
@@ -1804,8 +1794,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getSessionOrigins', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				return origins[projectPath] || {};
+				return (
+					readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore)[projectPath] || {}
+				);
 			}
 		)
 	);
@@ -1815,7 +1806,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(handlerOpts('getAllNamedSessions', ORIGINS_LOG_CONTEXT), async () => {
 			const claudeProjectsDir = getClaudeProjectsDir();
 
-			const allOrigins = claudeSessionOriginsStore.get('origins', {});
+			const allOrigins = readClaudeOrigins(agentSessionOriginsStore, claudeSessionOriginsStore);
 			const namedSessions: Array<{
 				agentSessionId: string;
 				projectPath: string;
@@ -1826,7 +1817,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 
 			for (const [projectPath, sessions] of Object.entries(allOrigins)) {
 				for (const [agentSessionId, info] of Object.entries(sessions)) {
-					if (typeof info === 'object' && info.sessionName) {
+					if (info.sessionName) {
 						let lastActivityAt: number | undefined;
 						try {
 							const encodedPath = encodeClaudeProjectPath(projectPath);

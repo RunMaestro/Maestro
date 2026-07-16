@@ -5,7 +5,7 @@
  * initialization for the storage registry.
  */
 
-export { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
+export { ClaudeSessionStorage } from './claude-session-storage';
 export { OpenCodeSessionStorage } from './opencode-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
 export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
@@ -14,8 +14,9 @@ export { OmpSessionStorage } from './omp-session-storage';
 export { GrokSessionStorage } from './grok-session-storage';
 
 import Store from 'electron-store';
+import type { AgentSessionOriginsData } from '../stores/types';
 import { registerSessionStorage } from '../agents';
-import { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
+import { ClaudeSessionStorage } from './claude-session-storage';
 import { OpenCodeSessionStorage } from './opencode-session-storage';
 import { CodexSessionStorage } from './codex-session-storage';
 import { FactoryDroidSessionStorage } from './factory-droid-session-storage';
@@ -27,8 +28,8 @@ import { GrokSessionStorage } from './grok-session-storage';
  * Options for initializing session storages
  */
 export interface InitializeSessionStoragesOptions {
-	/** The shared store for Claude session origins (names, starred status, etc.) */
-	claudeSessionOriginsStore?: Store<ClaudeSessionOriginsData>;
+	/** Shared canonical store for Claude session origins (names, stars, context usage). */
+	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
 }
 
 /**
@@ -38,7 +39,7 @@ export interface InitializeSessionStoragesOptions {
  * @param options - Optional configuration including shared stores
  */
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
-	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
+	registerSessionStorage(new ClaudeSessionStorage(options?.agentSessionOriginsStore));
 	registerSessionStorage(new OpenCodeSessionStorage());
 	registerSessionStorage(new CodexSessionStorage());
 	registerSessionStorage(new FactoryDroidSessionStorage());

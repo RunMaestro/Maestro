@@ -34,21 +34,13 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
-import type {
-	ClaudeSessionOrigin,
-	ClaudeSessionOriginInfo,
-	ClaudeSessionOriginsData,
-} from '../stores/types';
+import type { AgentSessionOriginsData, AgentSessionOriginInfo } from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
-export type { ClaudeSessionOriginsData } from '../stores/types';
 
-/**
- * Origin data structure stored in electron-store
- */
-type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
-
+/** Canonical v2 origin data stored under the `claude-code` agent key. */
+type StoredOriginData = AgentSessionOriginInfo;
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
 
 /**
@@ -294,15 +286,16 @@ async function parseSessionFileRemote(
 export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
 
-	private originsStore: Store<ClaudeSessionOriginsData>;
+	private originsStore: Store<AgentSessionOriginsData>;
 
-	constructor(originsStore?: Store<ClaudeSessionOriginsData>) {
+	constructor(originsStore?: Store<AgentSessionOriginsData>) {
 		super();
-		// Use provided store or create a new one
+		// Use the shared agent-keyed target store; standalone construction keeps
+		// the same target schema rather than creating a second Claude-only file.
 		this.originsStore =
 			originsStore ||
-			new Store<ClaudeSessionOriginsData>({
-				name: 'claude-session-origins',
+			new Store<AgentSessionOriginsData>({
+				name: 'maestro-agent-session-origins',
 				defaults: { origins: {} },
 			});
 	}
@@ -336,7 +329,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private getProjectOrigins(projectPath: string): Record<string, StoredOriginData> {
 		const origins = this.originsStore.get('origins', {});
-		return origins[projectPath] || {};
+		return origins['claude-code']?.[projectPath] || {};
 	}
 
 	/**
@@ -347,9 +340,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		projectOrigins: Record<string, StoredOriginData>
 	): AgentSessionInfo {
 		const originData = projectOrigins[session.sessionId];
-		const origin = typeof originData === 'string' ? originData : originData?.origin;
-		const sessionName = typeof originData === 'object' ? originData?.sessionName : undefined;
-		const starred = typeof originData === 'object' ? originData?.starred : undefined;
+		const origin = originData?.origin;
+		const sessionName = originData?.sessionName;
+		const starred = originData?.starred;
 		return {
 			...session,
 			origin: origin as AgentSessionOrigin | undefined,
@@ -1006,12 +999,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		origin: AgentSessionOrigin,
 		sessionName?: string
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = sessionName ? { origin, sessionName } : { origin };
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(
 			`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 			LOG_CONTEXT
@@ -1019,96 +1009,70 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Update the name of a session
+	 * Update the name of a session.
 	 */
 	updateSessionName(projectPath: string, agentSessionId: string, sessionName: string): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, sessionName };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			sessionName,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(`Updated Claude session name: ${agentSessionId} = ${sessionName}`, LOG_CONTEXT);
 	}
 
 	/**
-	 * Update the starred status of a session
+	 * Update the starred status of a session.
 	 */
 	updateSessionStarred(projectPath: string, agentSessionId: string, starred: boolean): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, starred };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, starred };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', starred };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			starred,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(`Updated Claude session starred: ${agentSessionId} = ${starred}`, LOG_CONTEXT);
 	}
 
 	/**
-	 * Update the context usage percentage of a session
-	 * This persists the last known context window usage so it can be restored on resume
+	 * Update the context usage percentage of a session.
+	 * This persists the last known context window usage so it can be restored on resume.
 	 */
 	updateSessionContextUsage(
 		projectPath: string,
 		agentSessionId: string,
 		contextUsage: number
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			contextUsage,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		// Don't log this - it updates frequently and would spam logs
 	}
 
 	/**
-	 * Get all origin info for a project
+	 * Get all origin info for a project.
 	 */
 	getSessionOrigins(projectPath: string): Record<string, SessionOriginInfo> {
-		const origins = this.originsStore.get('origins', {});
-		const projectOrigins = origins[projectPath] || {};
-
-		// Normalize to SessionOriginInfo format
 		const result: Record<string, SessionOriginInfo> = {};
-		for (const [sessionId, data] of Object.entries(projectOrigins)) {
-			if (typeof data === 'string') {
-				result[sessionId] = { origin: data };
-			} else {
-				result[sessionId] = {
-					origin: data.origin,
-					sessionName: data.sessionName,
-					starred: data.starred,
-					contextUsage: data.contextUsage,
-				};
-			}
+		for (const [sessionId, data] of Object.entries(this.getProjectOrigins(projectPath))) {
+			result[sessionId] = {
+				origin: data.origin as AgentSessionOrigin,
+				sessionName: data.sessionName,
+				starred: data.starred,
+				contextUsage: data.contextUsage,
+			};
 		}
 		return result;
 	}
 
 	/**
-	 * Get all named sessions across all projects
+	 * Get all named sessions across all projects.
 	 */
 	async getAllNamedSessions(): Promise<
 		Array<{
@@ -1119,7 +1083,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			lastActivityAt?: number;
 		}>
 	> {
-		const allOrigins = this.originsStore.get('origins', {});
+		const allOrigins = this.originsStore.get('origins', {})['claude-code'] || {};
 		const namedSessions: Array<{
 			agentSessionId: string;
 			projectPath: string;
@@ -1130,7 +1094,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 
 		for (const [projectPath, sessions] of Object.entries(allOrigins)) {
 			for (const [agentSessionId, info] of Object.entries(sessions)) {
-				if (typeof info === 'object' && info.sessionName) {
+				if (info.sessionName) {
 					let lastActivityAt: number | undefined;
 					try {
 						const sessionFile = this.getSessionPath(projectPath, agentSessionId);
@@ -1164,5 +1128,19 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		return namedSessions;
+	}
+
+	private writeProjectOrigins(
+		projectPath: string,
+		projectOrigins: Record<string, StoredOriginData>
+	): void {
+		const allOrigins = this.originsStore.get('origins', {});
+		this.originsStore.set('origins', {
+			...allOrigins,
+			'claude-code': {
+				...allOrigins['claude-code'],
+				[projectPath]: projectOrigins,
+			},
+		});
 	}
 }
