@@ -107,6 +107,8 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 				);
 			} else {
 				console.log(`Profile saved: ${result.path}`);
+				// Profiling output intentionally always reports decimal seconds, including
+				// durations that the CLI decimal formatter would render in ms or minutes.
 				if (typeof result.durationMs === 'number') {
 					console.log(`  Recording: ${(result.durationMs / 1000).toFixed(1)}s`);
 				}

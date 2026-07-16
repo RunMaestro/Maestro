@@ -1,7 +1,7 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
-import { formatDurationDecimal } from '../../shared/formatters';
+import { formatDurationDecimal } from './duration';
 
 // ANSI color codes
 const colors = {
@@ -688,6 +688,8 @@ export function formatSessions(
 	return lines.join('\n').trimEnd();
 }
 
+// Session durations arrive in seconds; preserving fractional sub-minute seconds
+// avoids the millisecond conversion and sentinel behavior of formatDurationDecimal.
 function formatDurationSeconds(seconds: number): string {
 	if (seconds < 60) return `${seconds}s`;
 	if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;

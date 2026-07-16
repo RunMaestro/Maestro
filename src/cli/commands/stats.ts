@@ -161,6 +161,8 @@ function formatCell(value: unknown): string {
 	return String(value);
 }
 
+// Stats deliberately stays in minutes after one hour (for example, 60.0m);
+// the CLI decimal formatter switches to hours and is not byte-compatible.
 function formatMs(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
 	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
