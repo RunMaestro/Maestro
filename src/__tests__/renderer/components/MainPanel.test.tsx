@@ -251,14 +251,18 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
-// Mock tab helpers
-vi.mock('../../../renderer/utils/tabHelpers', () => ({
-	getActiveTab: vi.fn((session: Session | null) => session?.aiTabs?.[0] || null),
-	getBusyTabs: vi.fn(() => []),
-	// resolveTabRefTitle (panelLayout) resolves AI-tab titles via this helper when
-	// MainPanelContent computes a single-view / group name; keep the mock complete.
-	getTabDisplayName: vi.fn((tab: { name?: string } | null) => tab?.name || 'AI'),
-}));
+// Mock tab helpers. Keep real buildUnifiedTabs / getActiveTab - MainPanel derives
+// tab strip + active tab (including errors) via getTabDerivedState.
+vi.mock('../../../renderer/utils/tabHelpers', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>();
+	return {
+		...actual,
+		getBusyTabs: vi.fn(() => []),
+		// resolveTabRefTitle (panelLayout) resolves AI-tab titles via this helper when
+		// MainPanelContent computes a single-view / group name; keep the mock complete.
+		getTabDisplayName: vi.fn((tab: { name?: string } | null) => tab?.name || 'AI'),
+	};
+});
 
 // Mock shortcut formatter
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
@@ -510,20 +514,80 @@ describe('MainPanel', () => {
 		} as never);
 	}
 
+	/**
+	 * MainPanel derives activeFileTab from the session store (getTabDerivedState),
+	 * not from props. Tests that still pass activeFileTab / activeFileTabId as
+	 * legacy props get those folded into the seeded session here.
+	 */
+	function applyFileTabOverrides(
+		session: Session | null | undefined,
+		activeFileTab: (typeof defaultProps)['activeFileTab'],
+		activeFileTabId: (typeof defaultProps)['activeFileTabId']
+	): Session | null | undefined {
+		if (!session || (!activeFileTab && !activeFileTabId)) return session;
+		const fileTab = activeFileTab ?? null;
+		const fileTabId = activeFileTabId ?? fileTab?.id ?? null;
+		const existingTabs = session.filePreviewTabs ?? [];
+		const filePreviewTabs = fileTab
+			? [...existingTabs.filter((t) => t.id !== fileTab.id), fileTab]
+			: existingTabs;
+		const order = session.unifiedTabOrder ?? [];
+		const hasFileRef = !!fileTabId && order.some((r) => r.type === 'file' && r.id === fileTabId);
+		return {
+			...session,
+			activeFileTabId: fileTabId,
+			filePreviewTabs,
+			unifiedTabOrder:
+				fileTabId && fileTab && !hasFileRef
+					? [...order, { type: 'file' as const, id: fileTabId }]
+					: order,
+		};
+	}
+
 	function renderMainPanel(
 		overrides: Partial<typeof defaultProps> & { activeSession?: Session | null } = {}
 	) {
-		const { activeSession: sessionOverride, ...rest } = overrides;
-		const props = { ...defaultProps, ...rest };
-		const session = sessionOverride !== undefined ? sessionOverride : defaultSession;
+		const { activeSession: sessionOverride, activeFileTab, activeFileTabId, ...rest } = overrides;
+		const props = {
+			...defaultProps,
+			...rest,
+			...(activeFileTab !== undefined ? { activeFileTab } : {}),
+			...(activeFileTabId !== undefined ? { activeFileTabId } : {}),
+		};
+		const baseSession = sessionOverride !== undefined ? sessionOverride : defaultSession;
+		const session = applyFileTabOverrides(
+			baseSession,
+			activeFileTab !== undefined ? activeFileTab : defaultProps.activeFileTab,
+			activeFileTabId !== undefined ? activeFileTabId : defaultProps.activeFileTabId
+		);
 		seedSessionStore(session);
 		const result = render(<MainPanel {...(props as never)} />);
 		const rerenderMainPanel = (
 			nextOverrides: Partial<typeof defaultProps> & { activeSession?: Session | null } = {}
 		) => {
-			const { activeSession: nextSession, ...nextRest } = nextOverrides;
-			const nextProps = { ...defaultProps, ...nextRest };
-			seedSessionStore(nextSession !== undefined ? nextSession : session);
+			const {
+				activeSession: nextSessionOverride,
+				activeFileTab: nextFileTab,
+				activeFileTabId: nextFileTabId,
+				...nextRest
+			} = nextOverrides;
+			const nextProps = {
+				...defaultProps,
+				...nextRest,
+				...(nextFileTab !== undefined ? { activeFileTab: nextFileTab } : {}),
+				...(nextFileTabId !== undefined ? { activeFileTabId: nextFileTabId } : {}),
+			};
+			const nextBase = nextSessionOverride !== undefined ? nextSessionOverride : session;
+			const nextSession = applyFileTabOverrides(
+				nextBase,
+				nextFileTab !== undefined
+					? nextFileTab
+					: (nextProps.activeFileTab as (typeof defaultProps)['activeFileTab']),
+				nextFileTabId !== undefined
+					? nextFileTabId
+					: (nextProps.activeFileTabId as (typeof defaultProps)['activeFileTabId'])
+			);
+			seedSessionStore(nextSession);
 			result.rerender(<MainPanel {...(nextProps as never)} />);
 		};
 		return { ...result, rerender: rerenderMainPanel };

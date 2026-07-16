@@ -1,6 +1,9 @@
 export {
 	useTabHandlers,
+	getTabDerivedState,
+	useTabDerivedState,
 	type TabHandlersReturn,
+	type TabDerivedState,
 	type CloseCurrentTabResult,
 	useTerminalTabHandlers,
 	type TerminalTabHandlersReturn,

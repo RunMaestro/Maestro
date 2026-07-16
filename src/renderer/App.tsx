@@ -952,17 +952,9 @@ function MaestroConsoleInner() {
 	useCueVisibilityWiring();
 
 	// --- TAB HANDLERS (extracted hook) ---
+	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
+	// Handlers stay App-mounted (event-time); do not reintroduce useTabDerivedState here.
 	const {
-		activeTab,
-		unifiedTabs,
-		activeFileTab,
-		activeBrowserTab,
-		isResumingSession,
-		fileTabBackHistory,
-		fileTabForwardHistory,
-		fileTabCanGoBack,
-		fileTabCanGoForward,
-		activeFileTabNavIndex,
 		performTabClose,
 		handleNewAgentSession,
 		handleTabSelect,
@@ -1005,6 +997,44 @@ function MaestroConsoleInner() {
 		handleAtBottomChange,
 		handleDeleteLog,
 	} = useTabHandlers();
+
+	// Thin App-side slice for modals / attach-image gate. Primitives only so log
+	// flushes (new AITab objects) do not wake MaestroConsoleInner.
+	const isResumingSession = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		if (!sess) return false;
+		const tab = sess.aiTabs.find((t) => t.id === sess.activeTabId) ?? sess.aiTabs[0];
+		return !!tab?.agentSessionId;
+	});
+	const promptTabSaveToHistory = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		const tab = sess?.aiTabs.find((t) => t.id === sess.activeTabId) ?? sess?.aiTabs[0];
+		return tab?.saveToHistory ?? false;
+	});
+	const promptTabReadOnlyMode = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		const tab = sess?.aiTabs.find((t) => t.id === sess.activeTabId) ?? sess?.aiTabs[0];
+		return tab?.readOnlyMode ?? false;
+	});
+	const promptTabShowThinking = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		const tab = sess?.aiTabs.find((t) => t.id === sess.activeTabId) ?? sess?.aiTabs[0];
+		return tab?.showThinking ?? 'off';
+	});
+	const currentGraphFileName = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		if (!sess?.activeFileTabId) return undefined;
+		const fileTab = sess.filePreviewTabs.find((t) => t.id === sess.activeFileTabId);
+		if (!fileTab || !/\.(md|markdown)$/i.test(fileTab.name)) return undefined;
+		return fileTab.name;
+	});
+	// File-tab object for gist modal only - filePreviewTabs refs are stable across
+	// AI log flushes, so this does not wake App on streaming.
+	const activeFileTab = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		if (!sess?.activeFileTabId) return null;
+		return sess.filePreviewTabs.find((t) => t.id === sess.activeFileTabId) ?? null;
+	});
 
 	// --- TERMINAL TAB HANDLERS ---
 	const { handleOpenTerminalTab, handleSelectTerminalTab, handleCloseTerminalTab } =
@@ -2644,16 +2674,6 @@ function MaestroConsoleInner() {
 		// File tree
 		fileTree: stableFileTree,
 
-		// File preview navigation (per-tab)
-		canGoBack: fileTabCanGoBack,
-		canGoForward: fileTabCanGoForward,
-		backHistory: fileTabBackHistory,
-		forwardHistory: fileTabForwardHistory,
-		filePreviewHistoryIndex: activeFileTabNavIndex,
-
-		// Active tab for error handling
-		activeTab,
-
 		// Worktree
 		isWorktreeChild: !!activeSession?.parentSessionId,
 
@@ -2672,7 +2692,6 @@ function MaestroConsoleInner() {
 
 		// Gist publishing
 		ghCliAvailable,
-		hasGist: activeFileTab ? !!fileGistUrls[activeFileTab.path] : false,
 
 		// Setters
 		setGitDiffPreview,
@@ -2746,12 +2765,7 @@ function MaestroConsoleInner() {
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
 
-		// Unified tab system (Phase 4)
-		unifiedTabs,
-		activeFileTabId: activeSession?.activeFileTabId ?? null,
-		activeFileTab,
-		activeBrowserTabId: activeSession?.activeBrowserTabId ?? null,
-		activeBrowserTab,
+		// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
 		handleNewFileTab,
@@ -3005,7 +3019,6 @@ function MaestroConsoleInner() {
 			activeGroupChatId={activeGroupChatId}
 			groupChats={groupChats}
 			groups={groups}
-			activeSession={activeSession}
 			hasSessions={hasSessions}
 			sessionsLoaded={sessionsLoaded}
 			emptyStateProps={{
@@ -3332,11 +3345,7 @@ function MaestroConsoleInner() {
 					onPublishGist={() => setGistPublishModalOpen(true)}
 					lastGraphFocusFile={lastGraphFocusFilePath}
 					onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
-					currentGraphFile={
-						activeFileTab && /\.(md|markdown)$/i.test(activeFileTab.name)
-							? activeFileTab.name
-							: undefined
-					}
+					currentGraphFile={currentGraphFileName}
 					onOpenCurrentFileInGraph={mainPanelProps.onOpenInGraph}
 					lightboxImage={lightboxImage}
 					lightboxImages={lightboxImages}
@@ -3397,15 +3406,13 @@ function MaestroConsoleInner() {
 								: undefined
 					}
 					onPromptOpenLightbox={handleSetLightboxImage}
-					promptTabSaveToHistory={activeGroupChatId ? false : (activeTab?.saveToHistory ?? false)}
+					promptTabSaveToHistory={activeGroupChatId ? false : promptTabSaveToHistory}
 					onPromptToggleTabSaveToHistory={
 						activeGroupChatId ? undefined : handlePromptToggleTabSaveToHistory
 					}
-					promptTabReadOnlyMode={
-						activeGroupChatId ? groupChatReadOnlyMode : (activeTab?.readOnlyMode ?? false)
-					}
+					promptTabReadOnlyMode={activeGroupChatId ? groupChatReadOnlyMode : promptTabReadOnlyMode}
 					onPromptToggleTabReadOnlyMode={handlePromptToggleTabReadOnlyMode}
-					promptTabShowThinking={activeGroupChatId ? 'off' : (activeTab?.showThinking ?? 'off')}
+					promptTabShowThinking={activeGroupChatId ? 'off' : promptTabShowThinking}
 					onPromptToggleTabShowThinking={
 						activeGroupChatId ? undefined : handlePromptToggleTabShowThinking
 					}

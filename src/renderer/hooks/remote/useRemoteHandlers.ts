@@ -62,12 +62,6 @@ export interface UseRemoteHandlersReturn {
 }
 
 // ============================================================================
-// Selectors
-// ============================================================================
-
-const selectSessions = (s: ReturnType<typeof useSessionStore.getState>) => s.sessions;
-
-// ============================================================================
 // Hook
 // ============================================================================
 
@@ -83,8 +77,16 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 		sshRemoteConfigs,
 	} = deps;
 
-	// --- Store subscriptions ---
-	const sessions = useSessionStore(selectSessions);
+	// PERF: SSH remote signature only - streaming must not wake App via sessions[].
+	// Remote command handler already reads via sessionsRef / getState().
+	const sessionSshRemoteKey = useSessionStore((s) =>
+		s.sessions
+			.filter(
+				(sess) => sess.sessionSshRemoteConfig?.enabled && sess.sessionSshRemoteConfig.remoteId
+			)
+			.map((sess) => `${sess.name}|${sess.sessionSshRemoteConfig!.remoteId}`)
+			.join('\n')
+	);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 	const addLogToTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
 	const setSuccessFlashNotification = useMemo(
@@ -98,7 +100,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 	const sessionSshRemoteNames = useMemo(() => {
 		const map = new Map<string, string>();
-		for (const session of sessions) {
+		for (const session of useSessionStore.getState().sessions) {
 			if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
 				const sshConfig = sshRemoteConfigs.find(
 					(c) => c.id === session.sessionSshRemoteConfig?.remoteId
@@ -109,7 +111,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 		}
 		return map;
-	}, [sessions, sshRemoteConfigs]);
+		// sessionSshRemoteKey encodes name+remoteId pairs without a full sessions[] sub.
+	}, [sessionSshRemoteKey, sshRemoteConfigs]);
 
 	// ====================================================================
 	// handleRemoteCommand - processes commands from web interface

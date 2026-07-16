@@ -20,6 +20,7 @@ import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
 	breakApartGroup,
 	collectLeafTabRefs,
@@ -291,11 +292,7 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
-			// Unified tab system props (Phase 4)
-			unifiedTabs,
-			activeFileTabId,
-			activeFileTab,
-			activeBrowserTabId,
+			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
 			onNewFileTab,
@@ -315,6 +312,24 @@ export const MainPanel = React.memo(
 			onTerminalTabConfigureStartupCommand,
 		} = props;
 
+		// PERF: Tab strip / file-nav paint derived here from the full session this
+		// panel already subscribes to - not from App chrome equality (which would
+		// wake MaestroConsoleInner on every busy/tab-state flip).
+		const {
+			activeTab: derivedActiveTab,
+			unifiedTabs,
+			activeFileTab,
+			fileTabBackHistory,
+			fileTabForwardHistory,
+			fileTabCanGoBack,
+			fileTabCanGoForward,
+			activeFileTabNavIndex,
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		const activeFileTabId = activeSession?.activeFileTabId ?? null;
+		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
+		const fileGistUrls = useTabStore((s) => s.fileGistUrls);
+		const hasGist = activeFileTab ? !!fileGistUrls[activeFileTab.path] : false;
+
 		// Coworking browser responder - answers browser-op requests by resolving
 		// the target tab's live (or kept-alive hidden) webview handle. It never
 		// switches the user's visible tab. No-ops when the `coworking` Encore flag
@@ -322,16 +337,8 @@ export const MainPanel = React.memo(
 		useCoworkingBrowserResponder(browserViewRefs);
 
 		// Get the active tab for header display
-		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
-		// PERF: Memoize the lookup to avoid O(n) search on every render - will still update when
-		// aiTabs array or activeTabId changes (which happens when tabs change, not on every keystroke)
-		const activeTab = useMemo(
-			() =>
-				activeSession?.aiTabs?.find((tab) => tab.id === activeSession.activeTabId) ??
-				activeSession?.aiTabs?.[0] ??
-				null,
-			[activeSession?.aiTabs, activeSession?.activeTabId]
-		);
+		// Prefer local derivation from the full session (includes live usage/cost).
+		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
 
 		// SSH remote name for header display
@@ -1362,19 +1369,19 @@ export const MainPanel = React.memo(
 									refreshFileTree={props.refreshFileTree}
 									onOpenSavedFileInTab={props.onOpenSavedFileInTab}
 									onShowAgentErrorModal={props.onShowAgentErrorModal}
-									canGoBack={props.canGoBack}
-									canGoForward={props.canGoForward}
+									canGoBack={fileTabCanGoBack}
+									canGoForward={fileTabCanGoForward}
 									onNavigateBack={props.onNavigateBack}
 									onNavigateForward={props.onNavigateForward}
-									backHistory={props.backHistory}
-									forwardHistory={props.forwardHistory}
-									currentHistoryIndex={props.currentHistoryIndex}
+									backHistory={fileTabBackHistory}
+									forwardHistory={fileTabForwardHistory}
+									currentHistoryIndex={activeFileTabNavIndex}
 									onNavigateToIndex={props.onNavigateToIndex}
 									onOpenFuzzySearch={props.onOpenFuzzySearch}
 									onShortcutUsed={props.onShortcutUsed}
 									ghCliAvailable={props.ghCliAvailable}
 									onPublishGist={props.onPublishGist}
-									hasGist={props.hasGist}
+									hasGist={hasGist}
 									onOpenInGraph={props.onOpenInGraph}
 									onOpenInBrowser={props.onOpenInBrowser}
 									onPublishMessageGist={props.onPublishMessageGist}
