@@ -12,15 +12,16 @@
 
 import type { AITab, FilePreviewTab } from '../../renderer/types';
 
+export type MockAITabOverrides = Partial<AITab>;
+export type MockFileTabOverrides = Partial<FilePreviewTab>;
+
 /**
- * Create a mock `AITab` with sensible defaults for all required fields.
- *
  * Defaults: idle state, null agentSessionId, null name, empty logs,
- * empty inputValue, empty stagedImages, fresh createdAt timestamp.
+ * empty inputValue, empty stagedImages, and a deterministic createdAt value.
  *
  * Tests that need a specific non-default value should pass it via `overrides`.
  */
-export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
+export function createMockAITab(overrides: MockAITabOverrides = {}): AITab {
 	return {
 		id: 'tab-1',
 		agentSessionId: null,
@@ -29,7 +30,7 @@ export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 		logs: [],
 		inputValue: '',
 		stagedImages: [],
-		createdAt: Date.now(),
+		createdAt: 0,
 		state: 'idle',
 		...overrides,
 	} as AITab;
@@ -38,7 +39,7 @@ export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 /**
  * Create a mock `FilePreviewTab` with sensible defaults for all required fields.
  */
-export function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): FilePreviewTab {
+export function createMockFileTab(overrides: MockFileTabOverrides = {}): FilePreviewTab {
 	return {
 		id: 'file-tab-1',
 		path: '/test/file.ts',
@@ -49,8 +50,8 @@ export function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): File
 		searchQuery: '',
 		editMode: false,
 		editContent: undefined,
-		createdAt: Date.now(),
-		lastModified: Date.now(),
+		createdAt: 0,
+		lastModified: 0,
 		...overrides,
 	} as FilePreviewTab;
 }

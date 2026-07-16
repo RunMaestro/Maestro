@@ -1,5 +1,7 @@
 import type { Session } from '../../renderer/types';
 
+export type MockSessionOverrides = Partial<Session>;
+
 /**
  * Shared test factory for the `Session` interface.
  *
@@ -13,7 +15,7 @@ import type { Session } from '../../renderer/types';
  * positional signature, etc.) the wrapper should still delegate to this
  * factory rather than duplicating the defaults.
  */
-export function createMockSession(overrides: Partial<Session> = {}): Session {
+export function createMockSession(overrides: MockSessionOverrides = {}): Session {
 	return {
 		id: 'session-1',
 		name: 'Test Session',
