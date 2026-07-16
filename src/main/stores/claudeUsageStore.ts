@@ -21,19 +21,28 @@ import path from 'path';
 import Store from 'electron-store';
 
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
+import { createUsageSnapshotEnvelope } from './usageSnapshotEnvelope';
 
 // Re-export so consumers can grab the type from either module.
 export type { UsageSnapshot } from '../agents/claude-mode-selector';
 
 /** TTL after which a snapshot is treated as expired and pruned. */
 export const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
+const SNAPSHOT_STORE_VERSION = 1;
 
 interface ClaudeUsageStoreData {
+	version?: number;
 	snapshots: Record<string, UsageSnapshot>;
 }
 
 const STORE_NAME = 'claude-usage-snapshots';
-const STORE_DEFAULTS: ClaudeUsageStoreData = { snapshots: {} };
+const STORE_DEFAULTS: ClaudeUsageStoreData = { version: SNAPSHOT_STORE_VERSION, snapshots: {} };
+
+const snapshotEnvelope = createUsageSnapshotEnvelope<UsageSnapshot>({
+	version: SNAPSHOT_STORE_VERSION,
+	ttlMs: SNAPSHOT_TTL_MS,
+	getKey: (snapshot) => snapshot.configDirKey,
+});
 
 let _store: Store<ClaudeUsageStoreData> | null = null;
 
@@ -54,62 +63,21 @@ function getStore(): Store<ClaudeUsageStoreData> {
 }
 
 /**
- * Return true when a snapshot is older than the TTL or its `sampledAt` is
- * unparseable. Both cases are treated identically so a corrupted record
- * self-heals on the next read or write.
- */
-function isExpired(snapshot: UsageSnapshot, now: number): boolean {
-	const sampledAtMs = new Date(snapshot.sampledAt).getTime();
-	if (Number.isNaN(sampledAtMs)) {
-		return true;
-	}
-	return now - sampledAtMs > SNAPSHOT_TTL_MS;
-}
-
-/**
  * Write a snapshot, keyed by its `configDirKey`. Concurrently prunes any
  * expired neighbors so the on-disk file doesn't accumulate dead keys after
  * long-quiet periods.
  */
 export function setSnapshot(snapshot: UsageSnapshot): void {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const next: Record<string, UsageSnapshot> = {};
-	for (const [key, entry] of Object.entries(current)) {
-		if (!isExpired(entry, now)) {
-			next[key] = entry;
-		}
-	}
-	next[snapshot.configDirKey] = snapshot;
-	store.set('snapshots', next);
+	snapshotEnvelope.set(getStore(), snapshot);
 }
 
 /**
  * Read a snapshot by canonical config-dir key. Returns null if missing,
- * expired (older than `SNAPSHOT_TTL_MS`), or carrying an unparseable
- * `sampledAt`. Side-effect: expired entries are pruned from disk on read.
+ * corrupt, incompatible with the current persistence version, expired, or
+ * carrying an unparseable `sampledAt`. Expired entries are pruned on read.
  */
 export function getSnapshot(configDirKey: string): UsageSnapshot | null {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const entry = current[configDirKey];
-	if (!entry) {
-		return null;
-	}
-	if (isExpired(entry, now)) {
-		const next: Record<string, UsageSnapshot> = {};
-		for (const [key, value] of Object.entries(current)) {
-			if (key === configDirKey) continue;
-			if (!isExpired(value, now)) {
-				next[key] = value;
-			}
-		}
-		store.set('snapshots', next);
-		return null;
-	}
-	return entry;
+	return snapshotEnvelope.get(getStore(), configDirKey);
 }
 
 /**
@@ -117,22 +85,7 @@ export function getSnapshot(configDirKey: string): UsageSnapshot | null {
  * Prunes expired entries on read so the on-disk file stays clean.
  */
 export function getAllSnapshots(): Record<string, UsageSnapshot> {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const live: Record<string, UsageSnapshot> = {};
-	let prunedAny = false;
-	for (const [key, entry] of Object.entries(current)) {
-		if (isExpired(entry, now)) {
-			prunedAny = true;
-		} else {
-			live[key] = entry;
-		}
-	}
-	if (prunedAny) {
-		store.set('snapshots', live);
-	}
-	return live;
+	return snapshotEnvelope.getAll(getStore());
 }
 
 /**
@@ -140,7 +93,7 @@ export function getAllSnapshots(): Record<string, UsageSnapshot> {
  * TTL-based pruning.
  */
 export function clear(): void {
-	getStore().set('snapshots', {});
+	snapshotEnvelope.clear(getStore());
 }
 
 /**
