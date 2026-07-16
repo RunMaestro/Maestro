@@ -16,8 +16,9 @@ import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { InlineWizardProvider } from '../../renderer/contexts/InlineWizardContext';
 import { createMockTheme } from '../helpers/mockTheme';
-import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { createMockGroup } from '../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { seedSidebarNav, resetSidebarNavStore } from '../helpers/seedSidebarNav';
 import { useSessionStore } from '../../renderer/stores/sessionStore';
@@ -227,15 +228,6 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	});
 
-// Retained locally: this integration suite's existing provider failure prevents
-// focused characterization of a shared-factory migration.
-const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
-	id: 'group-1',
-	name: 'Test Group',
-	emoji: '📁',
-	collapsed: false,
-	...overrides,
-});
 
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({
