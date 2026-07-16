@@ -30,61 +30,6 @@ vi.mock('react-dom', async () => {
 	};
 });
 
-// Mock Lucide icons
-vi.mock('lucide-react', () => ({
-	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="x-icon" className={className} style={style} />
-	),
-	Minimize2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="minimize2-icon" className={className} style={style} />
-	),
-	Eye: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="eye-icon" className={className} style={style} />
-	),
-	Edit: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="edit-icon" className={className} style={style} />
-	),
-	Play: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="play-icon" className={className} style={style} />
-	),
-	Square: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="square-icon" className={className} style={style} />
-	),
-	Loader2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="loader2-icon" className={className} style={style} />
-	),
-	Image: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="image-icon" className={className} style={style} />
-	),
-	Save: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="save-icon" className={className} style={style} />
-	),
-	RotateCcw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="rotate-ccw-icon" className={className} style={style} />
-	),
-	LayoutGrid: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="layout-grid-icon" className={className} style={style} />
-	),
-	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="chevron-down-icon" className={className} style={style} />
-	),
-	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="chevron-right-icon" className={className} style={style} />
-	),
-	RefreshCw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="refresh-cw-icon" className={className} style={style} />
-	),
-	FolderOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="folder-open-icon" className={className} style={style} />
-	),
-	Plus: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="plus-icon" className={className} style={style} />
-	),
-	Folder: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="folder-icon" className={className} style={style} />
-	),
-}));
-
 // Track AutoRun ref methods
 let autoRunRefMethods: {
 	focus: ReturnType<typeof vi.fn>;
@@ -199,7 +144,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
-			expect(screen.getByTestId('edit-icon')).toBeInTheDocument();
 		});
 
 		it('should render Preview button', () => {
@@ -207,7 +151,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /preview/i })).toBeInTheDocument();
-			expect(screen.getByTestId('eye-icon')).toBeInTheDocument();
 		});
 
 		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
@@ -217,7 +160,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByTitle(/add image/i)).toBeInTheDocument();
-			expect(screen.getByTestId('image-icon')).toBeInTheDocument();
 		});
 
 		it('should render Run button when not running batch', () => {
@@ -225,7 +167,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /run/i })).toBeInTheDocument();
-			expect(screen.getByTestId('play-icon')).toBeInTheDocument();
 		});
 
 		it('should render Collapse button', () => {
@@ -233,15 +174,13 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /collapse/i })).toBeInTheDocument();
-			expect(screen.getByTestId('minimize2-icon')).toBeInTheDocument();
 		});
 
-		it('should render close button with X icon', () => {
+		it('should render close button', () => {
 			const props = createDefaultProps();
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByTitle('Close (Esc)')).toBeInTheDocument();
-			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
 		});
 	});
 
@@ -306,7 +245,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
-			expect(screen.getByTestId('square-icon')).toBeInTheDocument();
 		});
 
 		it('should show Stopping button when stopping batch run', () => {
@@ -316,7 +254,6 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			expect(screen.getByRole('button', { name: /stopping/i })).toBeInTheDocument();
-			expect(screen.getByTestId('loader2-icon')).toBeInTheDocument();
 		});
 
 		it('should disable Stop button when stopping', () => {

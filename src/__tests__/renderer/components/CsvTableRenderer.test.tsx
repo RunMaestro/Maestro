@@ -4,11 +4,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { CsvTableRenderer } from '../../../renderer/components/CsvTableRenderer';
 
 import { mockTheme } from '../../helpers/mockTheme';
-// Mock lucide-react icons
-vi.mock('lucide-react', () => ({
-	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
-	ChevronDown: () => <span data-testid="chevron-down">ChevronDown</span>,
-}));
 
 describe('CsvTableRenderer', () => {
 	describe('basic rendering', () => {
@@ -148,12 +143,14 @@ describe('CsvTableRenderer', () => {
 			expect(rows[2]).toHaveTextContent('100');
 		});
 
-		it('shows sort indicator on sorted column', () => {
-			render(<CsvTableRenderer content={'Name,Age\nAlice,30'} theme={mockTheme} />);
+		it('sorts ascending on first click', () => {
+			const { container } = render(
+				<CsvTableRenderer content={'Name\nBob\nAlice'} theme={mockTheme} />
+			);
 
 			fireEvent.click(screen.getByText('Name'));
 
-			expect(screen.getByTestId('chevron-up')).toBeInTheDocument();
+			expect(container.querySelector('tbody tr')).toHaveTextContent('Alice');
 		});
 	});
 

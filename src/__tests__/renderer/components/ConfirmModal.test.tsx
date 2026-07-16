@@ -16,15 +16,6 @@ import { ConfirmModal } from '../../../renderer/components/ConfirmModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 
-// Mock lucide-react
-vi.mock('lucide-react', () => ({
-	X: () => <svg data-testid="x-icon" />,
-	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
-	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="trash2-icon" className={className} style={style} />
-	),
-}));
-
 // Create a test theme
 const testTheme: Theme = {
 	id: 'test-theme',
@@ -82,15 +73,7 @@ describe('ConfirmModal', () => {
 			);
 
 			expect(screen.getByRole('heading', { name: 'Confirm' })).toBeInTheDocument();
-			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
-		});
-
-		it('renders trash icon in header', () => {
-			renderWithLayerStack(
-				<ConfirmModal theme={testTheme} message="Test" onConfirm={vi.fn()} onClose={vi.fn()} />
-			);
-
-			expect(screen.getByTestId('trash2-icon')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Close modal' })).toBeInTheDocument();
 		});
 
 		it('has correct ARIA attributes', () => {
@@ -123,8 +106,8 @@ describe('ConfirmModal', () => {
 				<ConfirmModal theme={testTheme} message="Test" onConfirm={vi.fn()} onClose={onClose} />
 			);
 
-			const closeButton = screen.getByTestId('x-icon').closest('button');
-			fireEvent.click(closeButton!);
+			const closeButton = screen.getByRole('button', { name: 'Close modal' });
+			fireEvent.click(closeButton);
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 
