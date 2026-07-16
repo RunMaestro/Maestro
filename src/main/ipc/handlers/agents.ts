@@ -45,6 +45,7 @@ import {
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
+import { isPluginActive } from '../../plugins/plugin-manager-singleton';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -58,6 +59,9 @@ const handlerOpts = (
 	operation,
 });
 
+function omitInactiveOmpAgent<T extends { id?: string }>(agents: T[]): T[] {
+	return isPluginActive('com.maestro.omp') ? agents : agents.filter((agent) => agent.id !== 'omp');
+}
 type AuthPathResolver = (env: NodeJS.ProcessEnv) => string;
 
 function getCustomEnvVars(value: unknown): Record<string, unknown> {
@@ -921,7 +925,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						`SSH remote not found or disabled: ${sshRemoteId}, returning unavailable agents`,
 						LOG_CONTEXT
 					);
-					return AGENT_DEFINITIONS.map((agentDef) =>
+					return omitInactiveOmpAgent(AGENT_DEFINITIONS).map((agentDef) =>
 						stripAgentFunctions(
 							{
 								...agentDef,
@@ -935,7 +939,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					);
 				}
 				logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
-				const agents = await detectAgentsRemote(sshConfig);
+				const agents = omitInactiveOmpAgent(await detectAgentsRemote(sshConfig));
 				logger.info(
 					`Detected ${agents.filter((a: any) => a.available).length} agents on remote`,
 					LOG_CONTEXT,
@@ -949,7 +953,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			// Local detection
 			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 			logger.info('Detecting available agents', LOG_CONTEXT);
-			const agents = await agentDetector.detectAgents();
+			const agents = omitInactiveOmpAgent(await agentDetector.detectAgents());
 			logger.info(`Detected ${agents.length} agents`, LOG_CONTEXT, {
 				agents: agents.map((a) => a.id),
 			});

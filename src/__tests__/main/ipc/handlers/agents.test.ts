@@ -12,6 +12,7 @@ import {
 	AgentsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agents';
 import * as agentCapabilities from '../../../../main/agents';
+import { isPluginActive } from '../../../../main/plugins/plugin-manager-singleton';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -19,6 +20,10 @@ vi.mock('electron', () => ({
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	isPluginActive: vi.fn(() => true),
 }));
 
 // Mock agents module (capabilities exports)
@@ -118,6 +123,7 @@ describe('agents IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(isPluginActive).mockReturnValue(true);
 		vi.mocked(fs.readdirSync).mockReturnValue([] as any);
 		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
 
@@ -382,6 +388,37 @@ describe('agents IPC handlers', () => {
 			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe('claude-code');
 			expect(result[1].id).toBe('opencode');
+		});
+
+		it('hides Oh My Pi when its signed provider plugin is inactive', async () => {
+			vi.mocked(isPluginActive).mockReturnValue(false);
+			mockAgentDetector.detectAgents.mockResolvedValue([
+				{
+					id: 'omp',
+					name: 'Oh My Pi',
+					binaryName: 'omp',
+					command: 'omp',
+					args: [],
+					available: true,
+					path: '/usr/local/bin/omp',
+				},
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					binaryName: 'claude',
+					command: 'claude',
+					args: [],
+					available: true,
+					path: '/usr/local/bin/claude',
+				},
+			]);
+
+			const handler = handlers.get('agents:detect') as unknown as () => Promise<
+				Array<{ id: string }>
+			>;
+			const result = await handler();
+
+			expect(result.map((agent) => agent.id)).toEqual(['claude-code']);
 		});
 
 		it('should return empty array when no agents found', async () => {

@@ -8,6 +8,7 @@ import { AgentDetector } from '../../../agents';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
 	getActivePluginManager,
+	isPluginActive,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
 import {
@@ -87,15 +88,26 @@ export async function handleProcessSpawn(
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-	// OMP is a bundled first-party integration. Its native JSONL session is
-	// independently authorized by the first-party package/ledger, not by the
-	// optional community-plugin Encore flag. Selecting OMP must therefore never
-	// silently degrade to the legacy terminal path merely because third-party
-	// plugins are disabled. OMP 16.4.8 has no read-only permission control.
+	// The signed provided plugin is the authority for OMP. Its live registry
+	// record is required for every OMP launch; read-only sessions use the
+	// compatibility CLI path only while that authority remains active.
 	const ompReadOnlyRequiresLegacy =
 		config.permissionMode === 'readonly' ||
 		(config.permissionMode === undefined && config.readOnlyMode === true);
-	if (config.toolType === 'omp' && !ompReadOnlyRequiresLegacy) {
+	const ompNativeRuntimeEnabled = config.toolType === 'omp' && isPluginActive('com.maestro.omp');
+	if (config.toolType === 'omp' && !ompNativeRuntimeEnabled) {
+		const message = 'OMP is unavailable because the signed Oh My Pi plugin is disabled';
+		if (safeSend) {
+			safeSend('process:stderr', config.sessionId, message);
+		} else {
+			const window = getMainWindow();
+			if (isWebContentsAvailable(window)) {
+				window.webContents.send('process:stderr', config.sessionId, message);
+			}
+		}
+		return { success: false, pid: 0 };
+	}
+	if (ompNativeRuntimeEnabled && !ompReadOnlyRequiresLegacy) {
 		const send = (channel: string, ...args: unknown[]) => {
 			if (safeSend) {
 				safeSend(channel, ...args);
@@ -157,7 +169,7 @@ export async function handleProcessSpawn(
 		}
 	}
 	if (config.toolType === 'omp') {
-		logger.warn('OMP native mode is unavailable for read-only sessions', LOG_CONTEXT, {
+		logger.info('OMP is using the active plugin read-only compatibility path', LOG_CONTEXT, {
 			ompReadOnlyRequiresLegacy,
 		});
 	}
