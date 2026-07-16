@@ -43,6 +43,11 @@ describe('OMP 16.4.8 compatibility table', () => {
 						member.testId.length > 0
 				)
 		).toBe(true);
+		expect(
+			Object.values(OMP_16_4_8_COMPATIBILITY)
+				.filter((member) => member.disposition !== 'ui')
+				.every((member) => typeof member.rationale === 'string' && member.rationale.length > 0)
+		).toBe(true);
 		expect(OMP_16_4_8_COMPATIBILITY.set_host_tools).toMatchObject({
 			disposition: 'host',
 			terminal: 'response',

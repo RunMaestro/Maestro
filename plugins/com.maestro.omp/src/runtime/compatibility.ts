@@ -237,10 +237,22 @@ function commandEntry(command: OmpCommandType): OmpCompatibilityEntry {
 }
 
 function projection(sequence: 'strict' | 'correlated' | 'none' = 'strict'): OmpCompatibilityEntry {
-	return { version: '16.4.8', disposition: 'projection', terminal: 'none', sequence };
+	return {
+		version: '16.4.8',
+		disposition: 'projection',
+		terminal: 'none',
+		sequence,
+		rationale: 'Projected into Maestro transcript, runtime state, or notification channels.',
+	};
 }
 function host(terminal: OmpTerminal = 'none'): OmpCompatibilityEntry {
-	return { version: '16.4.8', disposition: 'host', terminal, sequence: 'correlated' };
+	return {
+		version: '16.4.8',
+		disposition: 'host',
+		terminal,
+		sequence: 'correlated',
+		rationale: 'Handled by the bounded first-party host broker without a renderer action.',
+	};
 }
 
 const allStableMembers: readonly OmpStableMember[] = [
