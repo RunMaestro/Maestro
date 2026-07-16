@@ -2,6 +2,7 @@ import { Clock, History } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface HistorySectionProps {
 	theme: Theme;
@@ -32,10 +33,7 @@ export function HistorySection({
 
 			{defaultSaveToHistory && (
 				<div className="mt-3" data-setting-id="general-synopsis-debounce">
-					<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-						<Clock className="w-3 h-3" />
-						Synopsis Debounce
-					</div>
+					<SettingsSectionHeading icon={Clock}>Synopsis Debounce</SettingsSectionHeading>
 					<ToggleButtonGroup
 						options={[
 							{ value: 0, label: 'Off' },

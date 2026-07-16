@@ -1,6 +1,7 @@
 import { Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface AutoRunInactivitySectionProps {
 	theme: Theme;
@@ -20,10 +21,7 @@ export function AutoRunInactivitySection({
 	return (
 		<>
 			<div data-setting-id="general-autorun-inactivity-timeout">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Clock className="w-3 h-3" />
-					Auto Run Inactivity Timeout
-				</div>
+				<SettingsSectionHeading icon={Clock}>Auto Run Inactivity Timeout</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 30, label: '30 min' },
@@ -44,10 +42,7 @@ export function AutoRunInactivitySection({
 				</p>
 			</div>
 			<div data-setting-id="general-autorun-max-task-duration">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Timer className="w-3 h-3" />
-					Auto Run Max Task Duration
-				</div>
+				<SettingsSectionHeading icon={Timer}>Auto Run Max Task Duration</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 60, label: '1 hr' },

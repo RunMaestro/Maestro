@@ -6,6 +6,7 @@ import {
 	formatShortcutKeys,
 } from '../../../../../utils/shortcutFormatter';
 import { ForcedParallelWarningModal } from '../../../../ForcedParallelWarningModal';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import type { ForcedParallelWarningState, GeneralTabSettings } from '../types';
 
 interface InputBehaviorSectionProps {
@@ -35,10 +36,7 @@ export function InputBehaviorSection({
 
 	return (
 		<div data-setting-id="general-input-behavior">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Keyboard className="w-3 h-3" />
-				Input Send Behavior
-			</div>
+			<SettingsSectionHeading icon={Keyboard}>Input Send Behavior</SettingsSectionHeading>
 			<p className="text-xs opacity-50 mb-3">
 				Configure how to send messages. Choose between Enter or {formatMetaKey()}
 				+Enter.

@@ -1,6 +1,7 @@
 import { Brain } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface ThinkingModeSectionProps {
 	theme: Theme;
@@ -15,10 +16,7 @@ export function ThinkingModeSection({
 }: ThinkingModeSectionProps) {
 	return (
 		<div data-setting-id="general-thinking-mode">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Brain className="w-3 h-3" />
-				Default Thinking Mode
-			</div>
+			<SettingsSectionHeading icon={Brain}>Default Thinking Mode</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}

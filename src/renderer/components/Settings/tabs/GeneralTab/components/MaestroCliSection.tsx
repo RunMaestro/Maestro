@@ -1,5 +1,6 @@
 import { Terminal } from 'lucide-react';
 import type { Theme } from '../../../../../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import type { MaestroCliState } from '../types';
 
 interface MaestroCliSectionProps {
@@ -21,10 +22,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 
 	return (
 		<div data-setting-id="general-maestro-cli">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Terminal className="w-3 h-3" />
-				Maestro CLI
-			</div>
+			<SettingsSectionHeading icon={Terminal}>Maestro CLI</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-2"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}

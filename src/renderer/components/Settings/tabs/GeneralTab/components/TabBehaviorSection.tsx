@@ -1,7 +1,8 @@
 import { Tag } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
-import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 
 type TabPlacement = 'end' | 'after-current';
 
@@ -34,42 +35,29 @@ export function TabBehaviorSection({
 }: TabBehaviorSectionProps) {
 	return (
 		<div data-setting-id="general-tab-behavior">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Tag className="w-3 h-3" />
-				Tab Behavior
-			</div>
+			<SettingsSectionHeading icon={Tag}>Tab Behavior</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div
-					className="flex items-center justify-between cursor-pointer"
-					onClick={() => setAutomaticTabNamingEnabled(!automaticTabNamingEnabled)}
-					role="button"
-					tabIndex={0}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							setAutomaticTabNamingEnabled(!automaticTabNamingEnabled);
-						}
-					}}
-				>
-					<div className="flex-1 pr-3">
-						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+				<ToggleSettingRow
+					theme={theme}
+					title={
+						<span className="font-medium" style={{ color: theme.colors.textMain }}>
 							Automatically name tabs based on first message
-						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						</span>
+					}
+					description={
+						<span style={{ color: theme.colors.textDim }}>
 							When you send your first message to a new tab, an AI will analyze it and generate a
 							descriptive tab name. The naming request runs in parallel and leaves no history.
-						</div>
-					</div>
-					<ToggleSwitch
-						checked={automaticTabNamingEnabled}
-						onChange={setAutomaticTabNamingEnabled}
-						theme={theme}
-						ariaLabel="Automatically name tabs based on first message"
-					/>
-				</div>
+						</span>
+					}
+					checked={automaticTabNamingEnabled}
+					onChange={setAutomaticTabNamingEnabled}
+					ariaLabel="Automatically name tabs based on first message"
+					clickableRow
+				/>
 
 				<div>
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>

@@ -1,5 +1,6 @@
 import { Terminal } from 'lucide-react';
 import type { Theme } from '../../../../../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface GitHubCliSectionProps {
 	theme: Theme;
@@ -10,10 +11,7 @@ interface GitHubCliSectionProps {
 export function GitHubCliSection({ theme, ghPath, setGhPath }: GitHubCliSectionProps) {
 	return (
 		<div data-setting-id="general-gh-path">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Terminal className="w-3 h-3" />
-				GitHub CLI (gh) Path
-			</div>
+			<SettingsSectionHeading icon={Terminal}>GitHub CLI (gh) Path</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
