@@ -172,19 +172,19 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
-	it('suppresses an exact no-newline mount diagnostic before a later RPC text delta', () => {
+	it('routes the exact host-tool mount notice to debug without affecting RPC assistant text', () => {
 		const child = new FakeChild();
 		const send = vi.fn();
 		const debug = vi.spyOn(logger, 'debug');
 		OmpNativeSessionAdapter.create({
-			sessionId: 'no-newline-diagnostic-tab',
+			sessionId: 'mount-notice-tab',
 			cwd: 'C:/work/project',
 			command: 'omp',
 			send,
 			spawn: vi.fn(() => child as never),
 		});
 
-		child.stderr.emit('data', Buffer.from('OMP xd://: mounted maestro.session.status'));
+		emit(child, { type: 'notice', message: 'xd://: mounted maestro.session.status' });
 		emit(child, {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'Hello! How can I help?' },
@@ -194,15 +194,31 @@ describe('OmpNativeSessionAdapter', () => {
 			'OMP xd://: mounted maestro.session.status',
 			'OmpNativeSessionAdapter'
 		);
+		expect(send).toHaveBeenCalledWith('process:data', 'mount-notice-tab', 'Hello! How can I help?');
+		expect(send).not.toHaveBeenCalledWith('process:stderr', 'mount-notice-tab', expect.anything());
+	});
+
+	it('preserves an unterminated mount-like stderr prefix with a later continuation', () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const debug = vi.spyOn(logger, 'debug');
+		const debugCallCount = debug.mock.calls.length;
+		OmpNativeSessionAdapter.create({
+			sessionId: 'continued-diagnostic-tab',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+
+		child.stderr.emit('data', Buffer.from('OMP xd://: mounted maestro.session.status'));
+		child.stderr.emit('data', Buffer.from(' additional genuine failure\n'));
+
+		expect(debug).toHaveBeenCalledTimes(debugCallCount);
 		expect(send).toHaveBeenCalledWith(
-			'process:data',
-			'no-newline-diagnostic-tab',
-			'Hello! How can I help?'
-		);
-		expect(send).not.toHaveBeenCalledWith(
 			'process:stderr',
-			'no-newline-diagnostic-tab',
-			expect.anything()
+			'continued-diagnostic-tab',
+			'OMP xd://: mounted maestro.session.status additional genuine failure\n'
 		);
 	});
 

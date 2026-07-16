@@ -323,13 +323,6 @@ export class OmpNativeSessionAdapter {
 			}
 			newline = this.diagnosticBuffer.indexOf('\n');
 		}
-
-		// OMP may terminate this startup notice without a newline before emitting
-		// the assistant response on stdout. An exact buffered notice is complete.
-		if (this.diagnosticBuffer === BENIGN_HOST_TOOL_MOUNT_DIAGNOSTIC) {
-			logger.debug(this.diagnosticBuffer, 'OmpNativeSessionAdapter');
-			this.diagnosticBuffer = '';
-		}
 	}
 
 	private flushDiagnosticBuffer(): void {
@@ -480,7 +473,11 @@ export class OmpNativeSessionAdapter {
 				stringAt(event, 'message') ??
 				stringAt(event, 'error') ??
 				event.type.replaceAll('_', ' ');
-			this.options.send('process:stderr', this.options.sessionId, `OMP ${detail}`);
+			if (event.type === 'notice' && detail === 'xd://: mounted maestro.session.status') {
+				logger.debug(`OMP ${detail}`, 'OmpNativeSessionAdapter');
+			} else {
+				this.options.send('process:stderr', this.options.sessionId, `OMP ${detail}`);
+			}
 		}
 		if (
 			event.type === 'todo_reminder' ||
