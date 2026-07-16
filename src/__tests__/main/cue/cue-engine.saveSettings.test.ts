@@ -81,6 +81,35 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	removeEmptyMaestroDir: vi.fn(() => false),
 }));
 
+const mockUpdateGlobalSettings = vi.fn(
+	async (
+		root: string,
+		settings: {
+			timeout_minutes: number;
+			timeout_on_fail: 'break' | 'continue';
+			max_concurrent: number;
+			queue_size: number;
+		}
+	) => {
+		const file = mockReadCueConfigFile(root);
+		if (!file) return false;
+		const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
+		parsed.settings = { ...(parsed.settings as Record<string, unknown>), ...settings };
+		mockWriteCueConfigFile(root, yaml.dump(parsed));
+		return true;
+	}
+);
+vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
+	createCueConfigMutationService: () => ({
+		setSubscriptionEnabled: vi.fn(),
+		removeSubscription: vi.fn(),
+		updateGlobalSettings: (...args: Parameters<typeof mockUpdateGlobalSettings>) =>
+			mockUpdateGlobalSettings(...args),
+		delete: vi.fn(),
+		replace: vi.fn(),
+	}),
+}));
+
 // Mock sentry so caught errors don't try to invoke the real exporter.
 const mockCaptureException = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
@@ -115,7 +144,7 @@ function startEngineWithSessions(
 }
 
 describe('CueEngine.saveSettings', () => {
-	it('writes the settings block to every unique config root', () => {
+	it('writes the settings block to every unique config root', async () => {
 		const cfg1 = createMockConfig();
 		const cfg2 = createMockConfig();
 		const engine = startEngineWithSessions([
@@ -136,7 +165,7 @@ describe('CueEngine.saveSettings', () => {
 			}),
 		}));
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 99,
 			timeout_on_fail: 'continue',
 			max_concurrent: 4,
@@ -148,7 +177,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(2);
 	});
 
-	it('dedupes when two sessions share the same projectRoot', () => {
+	it('dedupes when two sessions share the same projectRoot', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/shared', config: cfg },
@@ -160,7 +189,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: yaml.dump({ settings: {}, subscriptions: [] }),
 		});
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 45,
 			timeout_on_fail: 'break',
 			max_concurrent: 2,
@@ -171,7 +200,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
 	});
 
-	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', () => {
+	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([{ id: 's1', projectRoot: '/proj', config: cfg }]);
 
@@ -192,7 +221,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: existingYaml,
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 60,
 			timeout_on_fail: 'continue',
 			max_concurrent: 3,
@@ -214,7 +243,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.no_ancestor_fallback).toBe(true);
 	});
 
-	it('never propagates owner_agent_id and preserves each root’s existing one', () => {
+	it('never propagates owner_agent_id and preserves each root’s existing one', async () => {
 		// Regression: owner_agent_id is per-root. Broadcasting an incoming
 		// owner_agent_id into every cue.yaml flagged unrelated single-agent
 		// projects with a bogus "does not match any agent" warning. saveSettings
@@ -240,7 +269,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: existingYaml,
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 60,
 			timeout_on_fail: 'continue',
 			max_concurrent: 3,
@@ -257,7 +286,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.settings.owner_agent_id).toBe('this-roots-own-owner');
 	});
 
-	it('mirrors new settings into in-memory state so getSettings() returns them immediately', () => {
+	it('mirrors new settings into in-memory state so getSettings() returns them immediately', async () => {
 		const cfg = createMockConfig({
 			settings: {
 				timeout_minutes: 30,
@@ -273,7 +302,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: yaml.dump({ settings: {}, subscriptions: [] }),
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 77,
 			timeout_on_fail: 'continue',
 			max_concurrent: 5,
@@ -288,12 +317,12 @@ describe('CueEngine.saveSettings', () => {
 		});
 	});
 
-	it('returns an empty writtenRoots list when no sessions are registered', () => {
+	it('returns an empty writtenRoots list when no sessions are registered', async () => {
 		// Engine constructed but never started → registry empty.
 		const deps = createMockDeps({ getSessions: vi.fn(() => []) });
 		const engine = new CueEngine(deps);
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,
@@ -305,7 +334,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
 	});
 
-	it('skips a root when readCueConfigFile returns null (no yaml on disk yet)', () => {
+	it('skips a root when readCueConfigFile returns null (no yaml on disk yet)', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/has-yaml', config: cfg },
@@ -320,7 +349,7 @@ describe('CueEngine.saveSettings', () => {
 			};
 		});
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,
@@ -332,7 +361,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(mockWriteCueConfigFile).toHaveBeenCalledWith('/has-yaml', expect.any(String));
 	});
 
-	it('isolates errors per root and reports the failure to sentry', () => {
+	it('isolates errors per root and reports the failure to sentry', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/good', config: cfg },
@@ -350,7 +379,7 @@ describe('CueEngine.saveSettings', () => {
 		// Reset before exercising saveSettings - captureException may be called
 		// during engine.start() bootstrap noise we don't care about here.
 		mockCaptureException.mockClear();
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,

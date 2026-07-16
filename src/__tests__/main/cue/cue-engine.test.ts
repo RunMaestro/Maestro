@@ -110,6 +110,32 @@ vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 	};
 });
 
+vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
+	createCueConfigMutationService: () => ({
+		setSubscriptionEnabled: async (
+			projectRoot: string,
+			pipelineName: string,
+			subscriptionName: string,
+			enabled: boolean
+		) => {
+			const file = mockReadCueConfigFile(projectRoot);
+			if (!file) return false;
+			const parsed = yaml.load(file.raw) as { subscriptions?: Array<Record<string, unknown>> };
+			const subscription = parsed.subscriptions?.find(
+				(sub) => sub.name === subscriptionName && sub.pipeline_name === pipelineName
+			);
+			if (!subscription) return false;
+			subscription.enabled = enabled;
+			mockWriteCueConfigFile(projectRoot, yaml.dump(parsed));
+			return true;
+		},
+		updateGlobalSettings: vi.fn(),
+		removeSubscription: vi.fn(),
+		delete: vi.fn(),
+		replace: vi.fn(),
+	}),
+}));
+
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
 // `calculateNextScheduledTime` moved to triggers/cue-schedule-utils as part of
 // the Phase 4 trigger source isolation. cue-subscription-setup.ts is gone.

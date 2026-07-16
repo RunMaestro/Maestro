@@ -18,15 +18,14 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { validateCueConfig } from '../../cue/cue-yaml-loader';
 import { cueDebugLog } from '../../../shared/cueDebug';
 import {
-	deleteCueConfigFile,
 	readCueConfigFile,
 	readCuePromptFile,
 	pruneOrphanedPromptFiles,
 	removeEmptyMaestroDir,
 	removeEmptyPromptsDir,
-	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../cue/config/cue-config-repository';
+import { createCueConfigMutationService } from '../../cue/config/cue-config-mutation-service';
 import { setCueActive } from '../../cue/cue-active-state';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
 import { captureException } from '../../utils/sentry';
@@ -40,6 +39,7 @@ import type {
 import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 
 const LOG_CONTEXT = '[Cue]';
+const cueConfigMutations = createCueConfigMutationService();
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -161,7 +161,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	// Visibility-aware pause: the renderer flips this on visibilitychange so
 	// scanners (file-watcher / task-scanner / github-poller) stop doing
 	// expensive background work while the app is hidden. Different from
-	// enable/disable, which fully starts/stops the engine - setActive only
+	// enable/disable, which fully starts/stops the engine — setActive only
 	// gates the per-tick work and does not tear down state.
 	ipcMain.handle(
 		'cue:setActive',
@@ -241,7 +241,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
-	// Get fan-in health - stalled trackers > 50% timeout (empty = healthy).
+	// Get fan-in health — stalled trackers > 50% timeout (empty = healthy).
 	ipcMain.handle(
 		'cue:getFanInHealth',
 		withIpcErrorLogging(handlerOpts('getFanInHealth'), async () => {
@@ -307,6 +307,18 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					yamlBytes: options.content.length,
 					promptFileCount: Object.keys(options.promptFiles ?? {}).length,
 				});
+				// Reject malformed or invalid documents before mutating adjacent prompt
+				// files; a failed save must not leave a half-applied Cue configuration.
+				try {
+					const validation = validateCueConfig(yaml.load(options.content));
+					if (!validation.valid) {
+						throw new Error(`Cue YAML validation failed: ${validation.errors.join('; ')}`);
+					}
+				} catch (error) {
+					throw new Error(
+						`cue:writeYaml rejected document: ${error instanceof Error ? error.message : String(error)}`
+					);
+				}
 				// Snapshot what's already on disk BEFORE writing so we can tell the
 				// caller whether this save actually changed anything. A pipeline-
 				// editor save that only moved nodes (layout) emits byte-identical
@@ -329,7 +341,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				if (options.promptFiles) {
 					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
 					for (const [relativePath, content] of Object.entries(options.promptFiles)) {
-						// Reject obviously malformed keys before path.resolve - empty
+						// Reject obviously malformed keys before path.resolve — empty
 						// strings would resolve to the project root itself, and
 						// pre-normalized `..` segments make the containment check
 						// harder to reason about even though resolve normalizes them.
@@ -349,7 +361,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 						const normalizedKey =
 							path.sep === '/' ? relativePath.replace(/\\/g, '/') : relativePath;
 						// Reject both '..' (escapes the prompts dir) and '.' (harmless
-						// but ambiguous - `foo/.` and `foo` refer to the same file,
+						// but ambiguous — `foo/.` and `foo` refer to the same file,
 						// so accepting both breaks the keep-set invariant that
 						// distinct keys map to distinct files on disk).
 						if (
@@ -442,7 +454,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// identical bytes still bumps mtime and wakes the config watcher,
 				// which refreshes the session and re-arms its triggers.
 				if (yamlChanged) {
-					writeCueConfigFile(options.projectRoot, options.content);
+					await cueConfigMutations.replace(options.projectRoot, options.content);
 				}
 
 				try {
@@ -476,7 +488,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 
 				// Only prune when we have an authoritative keep-set. If the YAML
 				// failed to parse, the keep-set may be missing prompt files the
-				// YAML actually references - running prune anyway risks
+				// YAML actually references — running prune anyway risks
 				// mass-deleting files we'd lose forever. The next successful save
 				// (with valid YAML) will catch up.
 				let prunedCount = 0;
@@ -509,9 +521,9 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('deleteYaml'),
 			async (options: { projectRoot: string }): Promise<boolean> => {
-				const deleted = deleteCueConfigFile(options.projectRoot);
+				const deleted = await cueConfigMutations.delete(options.projectRoot);
 				// Run prompt cleanup regardless of whether the yaml file was
-				// present - if the user deleted cue.yaml by hand and then
+				// present — if the user deleted cue.yaml by hand and then
 				// invokes this, we still want orphaned prompts cleaned up.
 				pruneOrphanedPromptFiles(options.projectRoot, []);
 				removeEmptyPromptsDir(options.projectRoot);

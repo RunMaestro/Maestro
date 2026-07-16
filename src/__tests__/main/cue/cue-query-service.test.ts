@@ -13,6 +13,7 @@ import {
 	createCueQueryService,
 	type CueQueryServiceDeps,
 } from '../../../main/cue/cue-query-service';
+import { traverseCueSessions } from '../../../main/cue/cue-query-traversal';
 import {
 	DEFAULT_CUE_SETTINGS,
 	type CueConfig,
@@ -231,7 +232,7 @@ describe('getGraphData', () => {
 		expect(createCueQueryService(deps).getGraphData()).toHaveLength(0);
 	});
 
-	it('filters dormant subscriptions via isSubscriptionParticipant - owned by other agent excluded', () => {
+	it('filters dormant subscriptions via isSubscriptionParticipant — owned by other agent excluded', () => {
 		const session = makeSession('s1', 'A');
 		const ownedBySelf: CueSubscription = {
 			name: 'mine',
@@ -320,7 +321,7 @@ describe('getSettings', () => {
 		// Regression: owner_agent_id is per-root (it names an agent that must live
 		// at that cue.yaml's root). When getSettings surfaced the first session's
 		// owner_agent_id, the Settings modal read it and saveSettings broadcast it
-		// into every cue.yaml - flagging unrelated single-agent projects with a
+		// into every cue.yaml — flagging unrelated single-agent projects with a
 		// bogus "owner_agent_id does not match any agent" warning.
 		const state = makeState(
 			makeConfig([], {
@@ -338,5 +339,45 @@ describe('getSettings', () => {
 		// Non-ownership global fields still flow through.
 		expect(settings.timeout_minutes).toBe(60);
 		expect(settings.max_concurrent).toBe(1);
+	});
+});
+
+describe('Cue session traversal', () => {
+	it('preserves active-first order and carries disabled cyclic or unresolved graph metadata without recursion', () => {
+		const active = makeSession('active', 'Active');
+		const dormant = makeSession('dormant', 'Dormant');
+		const missing = makeSession('missing', 'Missing');
+		const disabledCycle: CueSubscription = {
+			name: 'cycle',
+			event: 'time.heartbeat',
+			enabled: false,
+			prompt: 'p',
+			interval_minutes: 30,
+			agent_id: 'dormant',
+			fan_out: ['Dormant', 'Missing'],
+		};
+		const entries = traverseCueSessions({
+			sessions: [dormant, active, missing],
+			sessionStates: new Map([['active', makeState(makeConfig())]]),
+			loadConfigForProjectRoot: (root) =>
+				root === dormant.projectRoot ? makeConfig([disabledCycle]) : null,
+		});
+
+		expect(entries.map((entry) => entry.session.id)).toEqual(['active', 'dormant']);
+		expect(entries[1].config.subscriptions).toEqual([disabledCycle]);
+		expect(entries[1].active).toBe(false);
+	});
+
+	it('applies an explicit deterministic result limit', () => {
+		const first = makeSession('first');
+		const second = makeSession('second');
+		const entries = traverseCueSessions({
+			sessions: [first, second],
+			sessionStates: new Map(),
+			loadConfigForProjectRoot: () => makeConfig(),
+			limit: 1,
+		});
+
+		expect(entries.map((entry) => entry.session.id)).toEqual(['first']);
 	});
 });

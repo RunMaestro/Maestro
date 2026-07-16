@@ -1,21 +1,21 @@
 /**
- * Cue Engine Core - thin façade for Maestro Cue event-driven automation.
+ * Cue Engine Core — thin façade for Maestro Cue event-driven automation.
  *
  * Coordinates a small set of single-responsibility services. The engine itself
- * owns no Cue runtime state - every mutable thing (sessions, dedup keys, run
+ * owns no Cue runtime state — every mutable thing (sessions, dedup keys, run
  * lifecycle, fan-in, etc.) lives behind a service interface.
  *
  * Service map:
- * - CueSessionRegistry      - sole owner of per-session state and dedup keys
- * - CueSessionRuntimeService - session lifecycle (init/refresh/teardown)
- * - CueRunManager           - concurrency, queues, run execution
- * - CueDispatchService      - fan-out routing
- * - CueCompletionService    - agent.completed routing (single + fan-in)
- * - CueFanInTracker         - multi-source agent.completed state machine
- * - CueQueryService         - read-only projections (status, graph, settings)
- * - CueRecoveryService      - DB init, sleep detection, missed-event recovery
- * - CueHeartbeat            - periodic heartbeat write
- * - CueActivityLog          - recent run history
+ * - CueSessionRegistry      — sole owner of per-session state and dedup keys
+ * - CueSessionRuntimeService — session lifecycle (init/refresh/teardown)
+ * - CueRunManager           — concurrency, queues, run execution
+ * - CueDispatchService      — fan-out routing
+ * - CueCompletionService    — agent.completed routing (single + fan-in)
+ * - CueFanInTracker         — multi-source agent.completed state machine
+ * - CueQueryService         — read-only projections (status, graph, settings)
+ * - CueRecoveryService      — DB init, sleep detection, missed-event recovery
+ * - CueHeartbeat            — periodic heartbeat write
+ * - CueActivityLog          — recent run history
  *
  * Supports agent completion chains:
  * - Fan-out: a subscription fires its prompt against multiple target sessions
@@ -26,6 +26,7 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { SessionInfo } from '../../shared/types';
+import { DEFAULT_CUE_SETTINGS } from '../../shared/cue';
 import {
 	createCueEvent,
 	type AgentCompletionData,
@@ -37,6 +38,7 @@ import {
 	type CueRunStatus,
 	type CueEvent,
 	type CueSubscription,
+	type CueSettings,
 } from './cue-types';
 import { getCueRunLiveOutput } from './cue-executor';
 import { scanTaskFilesNow, buildTaskPendingPayload } from './cue-task-scanner';
@@ -64,9 +66,8 @@ import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './c
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
-import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
+import { createCueConfigMutationService } from './config/cue-config-mutation-service';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
-import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
 import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
@@ -77,11 +78,12 @@ import {
 } from '../../shared/cue/subscription-id';
 
 const MAX_CHAIN_DEPTH = 10;
+const cueConfigMutations = createCueConfigMutationService();
 
 /**
  * Stable identity key grouping subs that represent parallel branches of the
  * same visual trigger. Used by manual-trigger dispatch to fire every sibling
- * sub a scheduled tick would fire - e.g. `Schedule → [Cmd1, Cmd2]` serializes
+ * sub a scheduled tick would fire — e.g. `Schedule → [Cmd1, Cmd2]` serializes
  * as two subs sharing event config but targeting different commands; both
  * must fire together when the user clicks Play.
  *
@@ -138,7 +140,7 @@ export interface CueEngineDeps {
 	/** Called to allow system sleep (e.g., when Cue scheduled subscriptions or runs end) */
 	onAllowSleep?: (reason: string) => void;
 	/**
-	 * Phase 01 - gate for `pipeline_id` / `chain_root_id` / `parent_event_id`
+	 * Phase 01 — gate for `pipeline_id` / `chain_root_id` / `parent_event_id`
 	 * writes on the `cue_events` table. Wired through to `CueRunManager`. The
 	 * production wiring reads `encoreFeatures.usageStats` from the settings
 	 * store; tests typically pass `() => true` or omit (defaults to off).
@@ -190,7 +192,7 @@ export class CueEngine {
 
 	/**
 	 * Intercept all onLog calls to route structured payloads into metrics.
-	 * Subsystems stay decoupled from the metrics module - they emit the same
+	 * Subsystems stay decoupled from the metrics module — they emit the same
 	 * typed CueLogPayload they already do, and the engine translates.
 	 *
 	 * Arrow-function field so `this` is bound when we pass it into subsystem deps.
@@ -198,7 +200,7 @@ export class CueEngine {
 	private meteredOnLog: CueEngineDeps['onLog'] = (level, message, data) => {
 		this.recordMetricFromPayload(data);
 		// Preserve original arity: omit `data` when it's undefined so vi.fn() mocks
-		// that assert `toHaveBeenCalledWith(level, msg)` (2 args) still match -
+		// that assert `toHaveBeenCalledWith(level, msg)` (2 args) still match —
 		// this path is hot for every warn/info line the engine emits.
 		if (data === undefined) {
 			this.deps.onLog(level, message);
@@ -212,14 +214,18 @@ export class CueEngine {
 		this.registry = createCueSessionRegistry();
 		const meteredOnLog = this.meteredOnLog;
 
-		// Phase 12A - queue persistence façade. Wired up-front so the run
+		// Phase 12A — queue persistence façade. Wired up-front so the run
 		// manager receives it by construction. Uses the in-process registry +
 		// settings for staleness / session-membership checks.
 		this.queuePersistence = createCueQueuePersistence({
 			onLog: meteredOnLog,
 			getSessionTimeoutMs: (sessionId) => {
 				const state = this.registry.get(sessionId);
-				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
+				return (
+					(state?.config.settings?.timeout_minutes ?? DEFAULT_CUE_SETTINGS.timeout_minutes) *
+					60 *
+					1000
+				);
 			},
 			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
 		});
@@ -252,7 +258,7 @@ export class CueEngine {
 				});
 				// `time.once` subscriptions are one-shot: rewrite cue.yaml to drop
 				// the sub on terminal status. `stopped` (manual abort) routes
-				// through `onRunStopped` instead and never self-destructs - the
+				// through `onRunStopped` instead and never self-destructs — the
 				// user explicitly cancelled and may want to reschedule. The YAML
 				// watcher reloads the config naturally after the rewrite.
 				this.maybeSelfDestructOnce(sessionId, result, subscriptionName);
@@ -297,8 +303,7 @@ export class CueEngine {
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
 				const forwarded = result.event.payload.forwardedOutputs as
-					| Record<string, string>
-					| undefined;
+					Record<string, string> | undefined;
 				this.notifyAgentCompleted(sessionId, {
 					sessionName: result.sessionName,
 					status: result.status,
@@ -308,7 +313,7 @@ export class CueEngine {
 					triggeredBy: subscriptionName,
 					chainDepth: (chainDepth ?? 0) + 1,
 					forwardedOutputs: forwarded,
-					// Phase 01 - propagate chain lineage so the completion
+					// Phase 01 — propagate chain lineage so the completion
 					// service can stamp it onto the next dispatched run's
 					// `cue_events` row.
 					parentRunId: result.runId,
@@ -397,7 +402,7 @@ export class CueEngine {
 					cliOutput,
 					action,
 					command,
-					undefined, // queuedAtOverride - fresh dispatch, not a restore
+					undefined, // queuedAtOverride — fresh dispatch, not a restore
 					pipelineName,
 					chainRootId,
 					parentEventId,
@@ -491,7 +496,7 @@ export class CueEngine {
 			// initializes that session. The legacy `loadCueConfig` skips
 			// validation entirely, so the editor would render subscriptions
 			// that the runtime later silently drops via `loadCueConfigDetailed`
-			// - the user sees the sub in the editor, then activates Cue, and
+			// — the user sees the sub in the editor, then activates Cue, and
 			// it vanishes. Same loader on both paths keeps the views in sync.
 			loadConfigForProjectRoot: (projectRoot) => {
 				const result = loadCueConfigDetailed(projectRoot);
@@ -504,7 +509,11 @@ export class CueEngine {
 			getSessions: () => deps.getSessions().map((s) => ({ id: s.id })),
 			getSessionTimeoutMs: (sessionId) => {
 				const state = this.registry.get(sessionId);
-				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
+				return (
+					(state?.config.settings?.timeout_minutes ?? DEFAULT_CUE_SETTINGS.timeout_minutes) *
+					60 *
+					1000
+				);
 			},
 			getCurrentMinute: () => {
 				const now = new Date();
@@ -551,7 +560,7 @@ export class CueEngine {
 	 *     `requireEngine().start('system-boot')`). app.startup subscriptions fire
 	 *     and are deduped per engine cycle (keys are cleared by stop()).
 	 *   - `'user-toggle'` (default): direct engine.start() call without an explicit
-	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire -
+	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire —
 	 *     only IPC-driven enables and Electron launch use 'system-boot'.
 	 */
 	start(reason: SessionInitReason = 'user-toggle'): void {
@@ -586,7 +595,7 @@ export class CueEngine {
 			this.sessionRuntimeService.initSession(session, { reason });
 		}
 
-		// Phase 12A - restore persisted queue entries AFTER sessions are
+		// Phase 12A — restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
 		// entry is re-executed through the normal path so the run manager
 		// re-applies concurrency gating + re-persists with a new persist id.
@@ -596,7 +605,7 @@ export class CueEngine {
 		const restored = this.queuePersistence.restoreAll();
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
-				// Remove the persisted row immediately - runManager.execute will
+				// Remove the persisted row immediately — runManager.execute will
 				// re-persist with a fresh id when it re-queues (or dispatches
 				// immediately if a slot is available).
 				this.queuePersistence.remove(entry.persistId);
@@ -618,7 +627,7 @@ export class CueEngine {
 					// stripping the `-chain-N` suffix off subscriptionName, so
 					// restored runs degrade gracefully to the legacy label.
 					undefined,
-					// Phase 01 - chain lineage round-tripped through the
+					// Phase 01 — chain lineage round-tripped through the
 					// queue table so resumed runs stay attached to their
 					// chain root in stats. Roots and rows persisted before
 					// usageStats was enabled come back as undefined.
@@ -729,7 +738,7 @@ export class CueEngine {
 	 *
 	 * `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
 	 * the web server's `setGetCueSubscriptionsCallback` emits via
-	 * `composeCueSubscriptionId` - same identity we surface to remote callers
+	 * `composeCueSubscriptionId` — same identity we surface to remote callers
 	 * (CLI / web UI). The pipeline discriminator is what guarantees we don't
 	 * silently mutate the wrong row when two pipelines in the same session
 	 * each define a sub with the same name. Anything that can't be parsed
@@ -746,7 +755,7 @@ export class CueEngine {
 	 * non-engine writer of cue.yaml) is observed and rolled into the next
 	 * write rather than overwritten with stale state.
 	 *
-	 * Comments and field ordering in the raw YAML are NOT preserved - the
+	 * Comments and field ordering in the raw YAML are NOT preserved — the
 	 * implementation parses → mutates → serialises. That matches the existing
 	 * pipeline-editor write path (which also re-emits the YAML from a
 	 * structured graph), and is acceptable for a single-field flip from a
@@ -784,7 +793,7 @@ export class CueEngine {
 		try {
 			return await next;
 		} finally {
-			// Drop the entry once the chain has settled to ours - guard against
+			// Drop the entry once the chain has settled to ours — guard against
 			// dropping a later writer's promise that already replaced ours.
 			if (this.yamlWriteChains.get(projectRoot) === next) {
 				this.yamlWriteChains.delete(projectRoot);
@@ -807,58 +816,27 @@ export class CueEngine {
 		);
 	}
 
-	private runSubscriptionEnabledWrite(
+	private async runSubscriptionEnabledWrite(
 		sessionId: string,
 		projectRoot: string,
 		targetPipeline: string,
 		subName: string,
 		enabled: boolean
-	): boolean {
-		const file = readCueConfigFile(projectRoot);
-		if (!file) return false;
-
-		let parsed: unknown;
+	): Promise<boolean> {
 		try {
-			parsed = yaml.load(file.raw);
-		} catch (err) {
-			captureException(err, { operation: 'setSubscriptionEnabled:yamlLoad', sessionId });
-			return false;
-		}
-		if (!parsed || typeof parsed !== 'object') return false;
-		const subs = (parsed as Record<string, unknown>).subscriptions;
-		if (!Array.isArray(subs)) return false;
-
-		// Match BOTH pipeline AND name. Without the pipeline discriminator,
-		// two same-named subs in different pipelines under one session would
-		// have indistinguishable ids and the first-match heuristic could
-		// silently toggle the wrong row.
-		let found = false;
-		for (const sub of subs) {
-			if (!sub || typeof sub !== 'object') continue;
-			const subRecord = sub as Record<string, unknown>;
-			if (subRecord.name !== subName) continue;
-			const subPipeline = pipelineKeyForSubscription({
-				name: subRecord.name as string,
-				pipeline_name:
-					typeof subRecord.pipeline_name === 'string' ? subRecord.pipeline_name : undefined,
-			});
-			if (subPipeline !== targetPipeline) continue;
-			subRecord.enabled = enabled;
-			found = true;
-			break;
-		}
-		if (!found) return false;
-
-		try {
-			const serialized = yaml.dump(parsed, { lineWidth: -1, noRefs: true });
-			writeCueConfigFile(projectRoot, serialized);
+			const changed = await cueConfigMutations.setSubscriptionEnabled(
+				projectRoot,
+				targetPipeline,
+				subName,
+				enabled
+			);
+			if (!changed) return false;
+			this.refreshSession(sessionId, projectRoot);
+			return true;
 		} catch (err) {
 			captureException(err, { operation: 'setSubscriptionEnabled:yamlWrite', sessionId });
 			return false;
 		}
-
-		this.refreshSession(sessionId, projectRoot);
-		return true;
 	}
 
 	/** Returns the lifetime count of Cue events recorded in the journal. */
@@ -885,13 +863,13 @@ export class CueEngine {
 	/**
 	 * Re-run sleep detection and trigger immediate GitHub polls. Called by the
 	 * Electron main process on `powerMonitor.on('resume')` so a laptop that's
-	 * been asleep - long enough for time-based or PR/issue triggers to be
-	 * missed - catches up within seconds of the lid opening.
+	 * been asleep — long enough for time-based or PR/issue triggers to be
+	 * missed — catches up within seconds of the lid opening.
 	 *
 	 * Sequence:
 	 *  1. Stop the heartbeat writer so its 30s tick can't clobber `last_seen`
 	 *     before the recovery service computes the gap.
-	 *  2. `recoveryService.detectSleepAndReconcile()` - fires one catch-up event
+	 *  2. `recoveryService.detectSleepAndReconcile()` — fires one catch-up event
 	 *     per `time.heartbeat` and `time.scheduled` subscription whose missed
 	 *     interval / scheduled slot fell inside the gap.
 	 *  3. Iterate trigger sources and call `pollNow()` on any that expose it
@@ -947,24 +925,24 @@ export class CueEngine {
 	 * the new values. Used by the Settings → Encore Features → Maestro Cue
 	 * panel, which autosaves on change without involving the pipeline editor.
 	 *
-	 * Strategy: read each unique session config root's raw YAML, swap only the
-	 * `settings:` block via js-yaml parse/dump (subscriptions, no_ancestor_fallback,
-	 * etc. are preserved verbatim from the parsed object - comments and exact
-	 * formatting are lost, same as the pipeline editor's save path).
+	 * Strategy: the typed mutation service patches only the root `settings:`
+	 * scalars in validated raw YAML. User comments, field order, and supported
+	 * unknown keys remain byte-for-byte intact outside those scalar values.
 	 *
 	 * No-op safely when no sessions are registered (engine not yet bootstrapped):
 	 * in-memory settings remain at DEFAULT_CUE_SETTINGS and the next session's
 	 * cue.yaml load wins. The renderer warns the user when the call lands in
 	 * this state by inspecting the returned `writtenRoots` array.
 	 */
-	saveSettings(settings: import('./cue-types').CueSettings): { writtenRoots: string[] } {
-		// Strip `owner_agent_id` - it is a PER-ROOT field (it pins ownership to an
+	async saveSettings(settings: CueSettings): Promise<{ writtenRoots: string[] }> {
+		// Strip `owner_agent_id` — it is a PER-ROOT field (it pins ownership to an
 		// agent that lives at one specific projectRoot) and must never propagate
 		// across roots. Merging it into every cue.yaml here is exactly how every
 		// single-agent project ended up with a bogus
 		// "settings.owner_agent_id ... does not match any agent" warning: one
 		// root's owner leaked through getSettings() and got broadcast to all.
-		// Each file keeps its OWN existing owner_agent_id via the merge below.
+		// Each file keeps its OWN existing owner_agent_id because the mutation
+		// service only receives the global fields below.
 		const { owner_agent_id: _perRootOwner, ...globalSettings } = settings;
 		// Dedupe by config root so two sessions sharing the same cue.yaml don't
 		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
@@ -981,20 +959,9 @@ export class CueEngine {
 		const writtenRoots: string[] = [];
 		for (const root of roots) {
 			try {
-				const file = readCueConfigFile(root);
-				if (!file) continue;
-				const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
-				const existingSettings = (parsed.settings ?? {}) as Record<string, unknown>;
-				parsed.settings = { ...existingSettings, ...globalSettings };
-				const dumped = yaml.dump(parsed, {
-					indent: 2,
-					lineWidth: 120,
-					noRefs: true,
-					quotingType: "'",
-					forceQuotes: false,
-				});
-				writeCueConfigFile(root, dumped);
-				writtenRoots.push(root);
+				if (await cueConfigMutations.updateGlobalSettings(root, globalSettings)) {
+					writtenRoots.push(root);
+				}
 			} catch (err) {
 				void captureException(err, {
 					operation: 'cue.saveSettings',
@@ -1018,7 +985,7 @@ export class CueEngine {
 	}
 
 	/**
-	 * Phase 12D - returns fan-in subscriptions that have completed some sources
+	 * Phase 12D — returns fan-in subscriptions that have completed some sources
 	 * but are stalled past 50% of their configured timeout. Empty array means
 	 * healthy (or no active fan-in at all).
 	 */
@@ -1064,7 +1031,7 @@ export class CueEngine {
 		return this.metrics.snapshot();
 	}
 
-	/** Testing/observability helper - expose the collector so subsystems can be
+	/** Testing/observability helper — expose the collector so subsystems can be
 	 * handed a bound increment function without leaking the engine instance. */
 	getMetricsCollector(): CueMetricsCollector {
 		return this.metrics;
@@ -1073,7 +1040,7 @@ export class CueEngine {
 	/**
 	 * Translate structured onLog payloads into metric counter increments.
 	 * Kept as a single chokepoint so subsystems stay fully decoupled from the
-	 * metrics module - they emit typed CueLogPayload as normal; the engine
+	 * metrics module — they emit typed CueLogPayload as normal; the engine
 	 * observes and counts.
 	 */
 	private recordMetricFromPayload(data: unknown): void {
@@ -1132,12 +1099,12 @@ export class CueEngine {
 	 * Manually trigger subscription(s) by name, bypassing event conditions.
 	 *
 	 * Resolution:
-	 *   1. Exact `sub.name` match - the anchor.
+	 *   1. Exact `sub.name` match — the anchor.
 	 *   2. If no exact match, treat `subscriptionName` as a `pipeline_name`
 	 *      and use the first initial-trigger sub in that pipeline as the
 	 *      anchor. This handles the pipeline-editor Play button case where
 	 *      a freshly-rebuilt (not-yet-reloaded) trigger node carries only
-	 *      `pipelineName` as its fire target - the serializer's per-branch
+	 *      `pipelineName` as its fire target — the serializer's per-branch
 	 *      emission doesn't guarantee any sub is named exactly `pipelineName`
 	 *      (command targets inherit their node's auto-generated name).
 	 *
@@ -1329,7 +1296,7 @@ export class CueEngine {
 	 * No-op for non-`time.once` runs and when the sub is already absent from
 	 * the in-memory config (e.g. removed by a hot-reload between fire and
 	 * finalize). The YAML watcher reloads the config naturally after a
-	 * successful rewrite - callers must not refresh the session manually.
+	 * successful rewrite — callers must not refresh the session manually.
 	 */
 	private maybeSelfDestructOnce(
 		sessionId: string,
@@ -1392,7 +1359,7 @@ export class CueEngine {
 	/**
 	 * Load recent cue_events from sqlite and seed the in-memory activity log.
 	 * stdout/stderr/exitCode are not persisted, so the rehydrated entries show
-	 * the metadata + status + timing only - sufficient for the activity panel.
+	 * the metadata + status + timing only — sufficient for the activity panel.
 	 * Orphaned `running` rows (from a prior app crash before the run could
 	 * finalize) are surfaced as `failed` so the UI doesn't render them as a
 	 * 0ms success.
@@ -1433,13 +1400,13 @@ function recordToRunResult(
 				payload = parsed as Record<string, unknown>;
 			}
 		} catch {
-			// Non-JSON or corrupt payload - leave empty rather than crash hydration.
+			// Non-JSON or corrupt payload — leave empty rather than crash hydration.
 		}
 	}
 	const startedAt = new Date(record.createdAt).toISOString();
 	const endedAt = record.completedAt ? new Date(record.completedAt).toISOString() : '';
 	const durationMs = record.completedAt ? Math.max(0, record.completedAt - record.createdAt) : 0;
-	// Orphaned `running` rows survived an app crash - surface as failed so the
+	// Orphaned `running` rows survived an app crash — surface as failed so the
 	// activity log doesn't paint them as zero-duration successes.
 	const status: CueRunStatus =
 		record.status === 'running' ? 'failed' : (record.status as CueRunStatus);

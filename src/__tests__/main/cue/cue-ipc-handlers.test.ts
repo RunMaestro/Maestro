@@ -57,6 +57,16 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	removeEmptyMaestroDir: vi.fn(() => false),
 }));
 
+const mockDeleteCueConfig = vi.fn<(root: string) => Promise<boolean>>();
+const mockReplaceCueConfig =
+	vi.fn<(root: string, content: string) => Promise<{ changed: boolean }>>();
+vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
+	createCueConfigMutationService: () => ({
+		delete: (root: string) => mockDeleteCueConfig(root),
+		replace: (root: string, content: string) => mockReplaceCueConfig(root, content),
+	}),
+}));
+
 vi.mock('../../../main/cue/pipeline-layout-store', () => ({
 	savePipelineLayout: vi.fn(),
 	loadPipelineLayout: vi.fn(),
@@ -71,8 +81,6 @@ import { validateCueConfig } from '../../../main/cue/cue-yaml-loader';
 import {
 	readCueConfigFile,
 	readCuePromptFile,
-	writeCueConfigFile,
-	deleteCueConfigFile,
 	writeCuePromptFile,
 	pruneOrphanedPromptFiles,
 	removeEmptyPromptsDir,
@@ -119,6 +127,9 @@ describe('Cue IPC Handlers', () => {
 		// read mocks to their "nothing on disk" default each test.
 		vi.mocked(readCueConfigFile).mockReturnValue(null);
 		vi.mocked(readCuePromptFile).mockReturnValue(null);
+		vi.mocked(validateCueConfig).mockReturnValue({ valid: true, errors: [] });
+		mockReplaceCueConfig.mockResolvedValue({ changed: true });
+		mockDeleteCueConfig.mockResolvedValue(false);
 		mockEngine = createMockEngine();
 	});
 
@@ -313,12 +324,12 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:writeYaml', () => {
-		it('should delegate to writeCueConfigFile', async () => {
+		it('delegates replacement to the Cue mutation service', async () => {
 			const content = 'subscriptions:\n  - name: test\n    event: time.heartbeat';
 
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content });
-			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
 		});
 
 		it('returns changed=true and writes when YAML differs from disk', async () => {
@@ -331,7 +342,7 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:writeYaml');
 			const result = await handler(null, { projectRoot: '/projects/test', content });
 
-			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
 			expect(result).toEqual({ changed: true });
 		});
 
@@ -347,7 +358,7 @@ describe('Cue IPC Handlers', () => {
 
 			// Identical content must NOT touch cue.yaml: no mtime bump → the config
 			// watcher stays quiet → the session never re-arms → no re-execution.
-			expect(writeCueConfigFile).not.toHaveBeenCalled();
+			expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			expect(result).toEqual({ changed: false });
 		});
 
@@ -384,7 +395,7 @@ describe('Cue IPC Handlers', () => {
 				promptFiles: { '.maestro/prompts/sub-1.md': 'new body' },
 			});
 
-			expect(writeCueConfigFile).not.toHaveBeenCalled();
+			expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			expect(writeCuePromptFile).toHaveBeenCalledWith(
 				'/projects/test',
 				'.maestro/prompts/sub-1.md',
@@ -437,7 +448,7 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content, promptFiles });
 
-			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
 			expect(writeCuePromptFile).toHaveBeenCalledWith(
 				'/projects/test',
 				'.maestro/prompts/sub-1.md',
@@ -470,7 +481,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/must be a non-empty string/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects absolute paths', async () => {
@@ -483,7 +494,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/must be a relative path/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects paths with parent-directory segments', async () => {
@@ -496,7 +507,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/"\." or "\.\." segment/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects paths with single-dot segments', async () => {
@@ -509,7 +520,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/"\." or "\.\." segment/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects paths that resolve outside .maestro/prompts/', async () => {
@@ -522,7 +533,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/resolves outside the .maestro\/prompts directory/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects paths with mixed-in parent segments that pre-normalize to a valid location', async () => {
@@ -537,7 +548,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/"\." or "\.\." segment/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('rejects non-.md extensions', async () => {
@@ -550,7 +561,7 @@ describe('Cue IPC Handlers', () => {
 					})
 				).rejects.toThrow(/must end with .md/);
 				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(writeCueConfigFile).not.toHaveBeenCalled();
+				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
 			});
 
 			it('normalizes Windows backslash paths to forward-slash before writing', async () => {
@@ -574,17 +585,17 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:deleteYaml', () => {
-		it('should delegate to deleteCueConfigFile and return its result', async () => {
-			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
+		it('delegates deletion to the Cue mutation service', async () => {
+			mockDeleteCueConfig.mockResolvedValue(true);
 
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBe(true);
-			expect(deleteCueConfigFile).toHaveBeenCalledWith('/projects/test');
+			expect(mockDeleteCueConfig).toHaveBeenCalledWith('/projects/test');
 		});
 
 		it('returns false when there is nothing to delete', async () => {
-			vi.mocked(deleteCueConfigFile).mockReturnValue(false);
+			mockDeleteCueConfig.mockResolvedValue(false);
 
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
@@ -595,7 +606,7 @@ describe('Cue IPC Handlers', () => {
 			// The "Remove Cue configuration" button must collapse the project's
 			// `.maestro` footprint - deleting the yaml alone used to leave
 			// orphaned prompt files behind forever.
-			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
+			mockDeleteCueConfig.mockResolvedValue(true);
 
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			await handler(null, { projectRoot: '/projects/test' });
@@ -610,7 +621,7 @@ describe('Cue IPC Handlers', () => {
 		it('prunes prompts even when the yaml file was already absent', async () => {
 			// Users sometimes delete cue.yaml by hand, then click the Remove
 			// button. Cleanup must still run so orphaned prompts don't linger.
-			vi.mocked(deleteCueConfigFile).mockReturnValue(false);
+			mockDeleteCueConfig.mockResolvedValue(false);
 
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			await handler(null, { projectRoot: '/projects/test' });

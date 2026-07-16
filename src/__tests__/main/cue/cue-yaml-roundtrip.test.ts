@@ -23,6 +23,7 @@ import {
 	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../../main/cue/config/cue-config-repository';
+import { createCueConfigMutationService } from '../../../main/cue/config/cue-config-mutation-service';
 
 let projectRoot = '';
 
@@ -145,7 +146,7 @@ describe('orphan prompt file pruning', () => {
 	});
 
 	it('preserves non-.md files (only markdown is managed)', () => {
-		// Someone may have dropped a README.txt or similar next to prompts -
+		// Someone may have dropped a README.txt or similar next to prompts —
 		// pruning should not touch anything that isn't a .md file, since only
 		// .md files are produced by the prompt-file writer.
 		writeCuePromptFile(projectRoot, '.maestro/prompts/referenced.md', 'x');
@@ -215,7 +216,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 			fs.readFileSync(path.join(projectRoot, '.maestro/prompts/output-phase2.md'), 'utf-8')
 		).toBe('phase-2 body');
 
-		// Simulate deleting one subscription and pruning - only referenced files remain
+		// Simulate deleting one subscription and pruning — only referenced files remain
 		const removed = pruneOrphanedPromptFiles(projectRoot, [
 			'.maestro/prompts/morning.md',
 			'.maestro/prompts/output.md',
@@ -227,7 +228,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 
 	it('overwriting YAML+prompts preserves the rest of .maestro/', () => {
 		// User may have unrelated files (e.g. director-notes, other tooling)
-		// in .maestro/ - we must not blow them away.
+		// in .maestro/ — we must not blow them away.
 		const maestroDir = path.join(projectRoot, '.maestro');
 		fs.mkdirSync(maestroDir, { recursive: true });
 		fs.writeFileSync(path.join(maestroDir, 'director-notes.md'), 'notes', 'utf-8');
@@ -236,5 +237,86 @@ describe('yaml + prompt-file full roundtrip', () => {
 		writeCuePromptFile(projectRoot, '.maestro/prompts/x.md', 'body');
 
 		expect(fs.readFileSync(path.join(maestroDir, 'director-notes.md'), 'utf-8')).toBe('notes');
+	});
+});
+
+describe('cue YAML mutation service', () => {
+	const golden = `# Pipeline: preserve this comment
+subscriptions:
+  # Preserve this subscription comment
+  - name: morning
+    pipeline_name: Daily
+    event: time.heartbeat
+    enabled: true # inline comment
+    prompt: wake
+    interval_minutes: 30
+    extension_key: preserve-me
+  - name: evening
+    event: time.heartbeat
+    enabled: false
+    prompt: sleep
+    interval_minutes: 60
+settings:
+  # preserve settings comment
+  timeout_minutes: 30
+  timeout_on_fail: break
+  max_concurrent: 1
+  queue_size: 512
+unknown_supported_key:
+  nested: remains
+`;
+
+	it('preserves golden comments and unknown keys through an atomic targeted update', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		const service = createCueConfigMutationService();
+
+		expect(await service.setSubscriptionEnabled(projectRoot, 'Daily', 'morning', false)).toBe(true);
+		const saved = fs.readFileSync(filePath, 'utf8');
+		expect(saved).toContain('# Pipeline: preserve this comment');
+		expect(saved).toContain('# Preserve this subscription comment');
+		expect(saved).toContain('extension_key: preserve-me');
+		expect(saved).toContain('unknown_supported_key:');
+		expect(saved).toContain('enabled: false');
+		expect(fs.readFileSync(`${filePath}.bak`, 'utf8')).toBe(golden);
+	});
+
+	it('serializes concurrent updates and leaves the original intact on a write failure', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		const service = createCueConfigMutationService();
+
+		await Promise.all([
+			service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 45,
+				timeout_on_fail: 'continue',
+				max_concurrent: 2,
+				queue_size: 100,
+			}),
+			service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 60,
+				timeout_on_fail: 'break',
+				max_concurrent: 3,
+				queue_size: 200,
+			}),
+		]);
+		const saved = fs.readFileSync(filePath, 'utf8');
+		expect(saved).toContain('timeout_minutes: 60');
+		expect(saved).toContain('max_concurrent: 3');
+
+		const failing = createCueConfigMutationService({
+			atomicWrite: async () => {
+				throw new Error('injected write failure');
+			},
+		});
+		await expect(
+			failing.replace(
+				projectRoot,
+				golden.replace('enabled: true # inline comment', 'enabled: false')
+			)
+		).rejects.toThrow('injected write failure');
+		expect(fs.readFileSync(filePath, 'utf8')).toBe(saved);
 	});
 });
