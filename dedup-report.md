@@ -2459,3 +2459,16 @@ Five default Task agents audited engine internals, IPC/preload/service bridges, 
 - All five agents performed static, read-only analysis and changed no source files.
 - Parent reconciliation used LSP and repository search to falsify the only proposed material correction.
 - No runtime, visual, build, or test verification was performed because this workflow produced an audit report, not source changes.
+
+## 45. Implementation Status
+
+Implementation is tracked in `Plans/dedup-playbook/IMPLEMENTATION-LEDGER.md`. Status updates require refreshed source evidence, focused verification, and an explicit rollback unit.
+
+### 45.1 Conflict baseline
+
+| Priority | Disposition                                    | Evidence                                                                                                                                                                                                  |
+| -------: | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|       75 | Already resolved on fresh `origin/rc` baseline | `window-manager.ts` delegates to `attachGuestWebviewSecurity`; `guest-webview-security.ts` imports the canonical shared partition matcher.                                                                |
+|       94 | Already resolved on fresh `origin/rc` baseline | Zero source conflict markers; process, BrowserTab persistence/helpers, and settings suites passed 290 tests; forced main TypeScript build passed; Electron launched and rendered the Maestro application. |
+
+No production or test source changed for P75/P94. Remaining priorities are pending until their isolated branches pass focused proof and integration review.
