@@ -92,6 +92,7 @@ export class OmpNativeSessionAdapter {
 		intent: 'follow_up' | 'abort_and_prompt';
 		deliveryId: string;
 	}> = [];
+	private readonly usedDeliveryIds = new Set<string>();
 	private completionEmitted = false;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
@@ -194,8 +195,10 @@ export class OmpNativeSessionAdapter {
 		message: string,
 		images: readonly string[] | undefined,
 		deliveryId: string
-	): Promise<void> {
+	): Promise<boolean> {
 		await this.initialized;
+		if (this.usedDeliveryIds.has(deliveryId)) return false;
+		this.usedDeliveryIds.add(deliveryId);
 		this.turnEmittedAssistantText = false;
 		if (!this.turnInFlight) this.completionEmitted = false;
 		this.turnInFlight = true;
@@ -210,6 +213,7 @@ export class OmpNativeSessionAdapter {
 			} else if (intent === 'follow_up' || intent === 'abort_and_prompt') {
 				this.pendingContinuationIntents.push({ intent, deliveryId });
 			}
+			return true;
 		} catch (error) {
 			if (intent === 'follow_up' || intent === 'abort_and_prompt') {
 				this.reportRejectedContinuation(intent, deliveryId);

@@ -612,9 +612,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 										? {
 												...tab,
 												logs: tab.logs.map((log) =>
-													log.id === deliveryEntry.id
-														? { ...log, deliveryState: 'failed' as const }
-														: log
+													log === deliveryEntry ? { ...log, deliveryState: 'failed' as const } : log
 												),
 											}
 										: tab

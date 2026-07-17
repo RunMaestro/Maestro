@@ -1760,6 +1760,125 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
+	it('spends delivery IDs per adapter across pending, consumed, and rejected continuations', async () => {
+		const firstChild = new FakeChild();
+		const firstFrames: Array<{ type: string }> = [];
+		firstChild.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			firstFrames.push(command);
+			if (command.id)
+				queueMicrotask(() =>
+					emit(firstChild, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const first = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-delivery-id-first',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => firstChild as never),
+		});
+		emit(firstChild, { type: 'ready', version: '16.4.8' });
+		await first.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await first.prompt('first turn');
+		const sharedId = '00000000-0000-4000-8000-000000000010';
+		await expect(first.deliver('follow_up', 'one', undefined, sharedId)).resolves.toBe(true);
+		await expect(
+			first.deliver('follow_up', 'duplicate pending', undefined, sharedId)
+		).resolves.toBe(false);
+		emit(firstChild, { type: 'turn_end' });
+		emit(firstChild, { type: 'agent_start' });
+		await expect(
+			first.deliver('follow_up', 'duplicate consumed', undefined, sharedId)
+		).resolves.toBe(false);
+		const failedId = '00000000-0000-4000-8000-000000000012';
+		await expect(
+			first.deliver('follow_up', 'will fail before start', undefined, failedId)
+		).resolves.toBe(true);
+		emit(firstChild, { type: 'turn_end' });
+		emit(firstChild, { type: 'extension_error', message: 'continuation failed' });
+		await expect(first.deliver('follow_up', 'duplicate failed', undefined, failedId)).resolves.toBe(
+			false
+		);
+		expect(firstFrames.filter((frame) => frame.type === 'follow_up')).toHaveLength(2);
+
+		const rejectedChild = new FakeChild();
+		const rejectedFrames: Array<{ type: string }> = [];
+		rejectedChild.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			rejectedFrames.push(command);
+			if (command.id)
+				queueMicrotask(() =>
+					emit(rejectedChild, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: command.type !== 'follow_up',
+						error: command.type === 'follow_up' ? 'rejected continuation' : undefined,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const rejected = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-delivery-id-rejected',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => rejectedChild as never),
+		});
+		emit(rejectedChild, { type: 'ready', version: '16.4.8' });
+		await rejected.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await rejected.prompt('first turn');
+		const rejectedId = '00000000-0000-4000-8000-000000000011';
+		await expect(rejected.deliver('follow_up', 'rejected', undefined, rejectedId)).rejects.toThrow(
+			'rejected continuation'
+		);
+		await expect(
+			rejected.deliver('follow_up', 'duplicate rejected', undefined, rejectedId)
+		).resolves.toBe(false);
+		expect(rejectedFrames.filter((frame) => frame.type === 'follow_up')).toHaveLength(1);
+
+		const secondChild = new FakeChild();
+		secondChild.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(secondChild, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const second = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-delivery-id-second',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send: vi.fn(),
+			spawn: vi.fn(() => secondChild as never),
+		});
+		emit(secondChild, { type: 'ready', version: '16.4.8' });
+		await second.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await second.prompt('second tab turn');
+		await expect(
+			second.deliver('follow_up', 'same ID other tab', undefined, sharedId)
+		).resolves.toBe(true);
+	});
+
 	it('continues a queued follow-up on the same RPC child after the preceding turn seals', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {

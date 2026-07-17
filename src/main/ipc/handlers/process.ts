@@ -272,8 +272,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				return false;
 			const adapter = OmpNativeSessionAdapter.forSession(sessionId);
 			if (!adapter) return false;
-			await adapter.deliver(intent as OmpDeliveryIntent, message, images, deliveryId);
-			return true;
+			return (
+				(await adapter.deliver(intent as OmpDeliveryIntent, message, images, deliveryId)) !== false
+			);
 		})
 	);
 
