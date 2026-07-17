@@ -5,7 +5,6 @@ import {
 	selectAiComposerValue,
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
-import { useSessionStore } from '../../stores/sessionStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
@@ -186,25 +185,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				!logs.slice(index + 1).some((next) => next.source === 'ai' || next.source === 'stdout')
 		);
 	}, [activeTab, ompBusy]);
-	const removeOmpFollowUp = useCallback(
-		(entryId: string) => {
-			useSessionStore.getState().setSessions((sessions) =>
-				sessions.map((candidate) =>
-					candidate.id !== session.id
-						? candidate
-						: {
-								...candidate,
-								aiTabs: candidate.aiTabs.map((tab) =>
-									tab.id === session.activeTabId
-										? { ...tab, logs: tab.logs.filter((log) => log.id !== entryId) }
-										: tab
-								),
-							}
-				)
-			);
-		},
-		[session.activeTabId, session.id]
-	);
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
@@ -434,22 +414,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 						>
 							<span className="min-w-0 flex-1 truncate">Queued follow-up · {entry.text}</span>
-							<button
-								type="button"
-								className="shrink-0 hover:opacity-80"
-								onClick={() => setInputValue(entry.text)}
-								aria-label={`Edit queued follow-up: ${entry.text}`}
-							>
-								Edit
-							</button>
-							<button
-								type="button"
-								className="shrink-0 hover:opacity-80"
-								onClick={() => removeOmpFollowUp(entry.id)}
-								aria-label={`Remove queued follow-up: ${entry.text}`}
-							>
-								Remove
-							</button>
 						</div>
 					))}
 				</div>

@@ -2297,4 +2297,34 @@ describe('InputArea', () => {
 			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('OMP queued follow-up ghosts', () => {
+		it('renders delivered follow-ups as status only, never deceptive edit or remove controls', () => {
+			const session = createMockSession({ toolType: 'omp' });
+			session.aiTabs[0] = {
+				...session.aiTabs[0],
+				state: 'busy',
+				logs: [
+					{
+						id: 'follow-up-1',
+						timestamp: 1,
+						source: 'user',
+						text: 'Run the checks after this turn',
+						deliveryIntent: 'follow_up',
+					},
+				],
+			};
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('omp-queued-follow-ups')).toHaveTextContent(
+				'Run the checks after this turn'
+			);
+			expect(
+				screen.queryByRole('button', { name: /edit queued follow-up/i })
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: /remove queued follow-up/i })
+			).not.toBeInTheDocument();
+		});
+	});
 });
