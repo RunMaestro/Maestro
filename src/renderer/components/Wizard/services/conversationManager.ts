@@ -25,6 +25,7 @@ import {
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
 import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import { readEffortFromConfig } from '../../../utils/agentEffort';
 
 /**
  * Configuration for starting a conversation
@@ -38,6 +39,11 @@ export interface ConversationConfig {
 	projectName: string;
 	/** Existing Auto Run documents (when continuing from previous session) */
 	existingDocs?: ExistingDocument[];
+	/** Session-level agent overrides selected in the onboarding wizard. */
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -121,6 +127,11 @@ interface ConversationSession {
 	responseTimeoutId?: ReturnType<typeof setTimeout>;
 	/** Function to reset the inactivity timeout (called on activity) */
 	resetResponseTimeout?: () => void;
+	/** Session-level agent overrides selected in the onboarding wizard. */
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -178,6 +189,10 @@ class ConversationManager {
 			systemPrompt,
 			outputBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
+			customPath: config.customPath,
+			customArgs: config.customArgs,
+			customEnvVars: config.customEnvVars,
+			agentConfigValues: config.agentConfigValues,
 		};
 
 		// Log conversation start
@@ -577,9 +592,10 @@ class ConversationManager {
 			// Each agent has different CLI structure for batch mode
 			const argsForSpawn = this.buildArgsForAgent(agent);
 
-			// Use the agent's resolved path if available, falling back to command name
+			// A wizard custom path is a session override and must win over the
+			// globally detected path without mutating other sessions.
 			// This is critical for packaged Electron apps where PATH may not include agent locations
-			const commandToUse = agent.path || agent.command;
+			const commandToUse = this.session!.customPath || agent.path || agent.command;
 
 			// Log spawn details to main process
 			wizardDebugLogger.log('spawn', 'Preparing to spawn agent process', {
@@ -619,6 +635,18 @@ class ConversationManager {
 					// line length limits for large prompts.
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
+					sessionCustomPath: this.session!.customPath,
+					sessionCustomArgs: this.session!.customArgs,
+					sessionCustomEnvVars: this.session!.customEnvVars,
+					sessionCustomModel:
+						typeof this.session!.agentConfigValues?.model === 'string'
+							? this.session!.agentConfigValues.model
+							: undefined,
+					sessionCustomEffort: readEffortFromConfig(this.session!.agentConfigValues),
+					sessionCustomContextWindow:
+						typeof this.session!.agentConfigValues?.contextWindow === 'number'
+							? this.session!.agentConfigValues.contextWindow
+							: undefined,
 				})
 				.then(() => {
 					wizardDebugLogger.log('spawn', 'Agent process spawned successfully', {

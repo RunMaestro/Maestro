@@ -40,6 +40,7 @@ import {
 	probeWindowsPaths,
 	probeUnixPaths,
 	findAllBinaryPaths,
+	validateAgentBinaryIdentity,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -49,6 +50,29 @@ import { captureException } from '../../../main/utils/sentry';
 describe('path-prober', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('validateAgentBinaryIdentity', () => {
+		it('accepts Cursor help and rejects unrelated generic agent binaries', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: 'Start the Cursor Agent\nCURSOR_API_KEY',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: 'Generic automation agent',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/cursor-agent')).resolves.toBe(
+				true
+			);
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/unrelated-agent')).resolves.toBe(
+				false
+			);
+		});
 	});
 
 	describe('getExpandedEnv', () => {
@@ -396,7 +420,8 @@ describe('path-prober', () => {
 
 		it('should probe the native Cursor CLI agent.cmd shim', async () => {
 			accessMock.mockImplementation(async (candidate) => {
-				if (String(candidate).toLowerCase().endsWith('cursor-agent\\agent.cmd')) return;
+				const normalizedCandidate = String(candidate).toLowerCase().replaceAll('\\', '/');
+				if (normalizedCandidate.endsWith('cursor-agent/agent.cmd')) return;
 				throw new Error('ENOENT');
 			});
 

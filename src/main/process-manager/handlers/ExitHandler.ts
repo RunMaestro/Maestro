@@ -23,6 +23,7 @@ interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
+	processStreamJsonLine: (sessionId: string, managedProcess: ManagedProcess, line: string) => void;
 }
 
 /**
@@ -33,11 +34,13 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private processStreamJsonLine: ExitHandlerDependencies['processStreamJsonLine'];
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+		this.processStreamJsonLine = deps.processStreamJsonLine;
 	}
 
 	/**
@@ -85,6 +88,21 @@ export class ExitHandler {
 				stderrBufferLength: managedProcess.stderrBuffer?.length || 0,
 				stderrPreview: managedProcess.stderrBuffer?.substring(0, 200) || '(empty)',
 			});
+		}
+
+		// Route an unterminated final JSON record through the same pipeline used
+		// for newline-delimited events before provider shutdown reconciliation.
+		// Copilot may report its session ID only in this record, and the shutdown
+		// wait needs that ID to recover the authoritative disk-side final state.
+		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
+			const remainingLine = managedProcess.jsonBuffer.trim();
+			managedProcess.jsonBuffer = '';
+			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
+				sessionId,
+				remainingLineLength: remainingLine.length,
+				remainingLinePreview: remainingLine.substring(0, 200),
+			});
+			this.processStreamJsonLine(sessionId, managedProcess, remainingLine);
 		}
 
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
@@ -201,6 +219,7 @@ export class ExitHandler {
 			code === 0 &&
 			!managedProcess.errorEmitted &&
 			!managedProcess.resultEmitted &&
+			!managedProcess.interrupted &&
 			managedProcess.streamedText
 		) {
 			managedProcess.resultEmitted = true;

@@ -372,10 +372,11 @@ describe('agent-definitions', () => {
 			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan']);
 		});
 
-		it('should run Cursor CLI batch with --trust/--force and plan mode', () => {
+		it('defines safe standard, explicit full, and read-only Cursor contracts', () => {
 			const cursor = getAgentDefinition('cursor-cli');
 			expect(cursor?.binaryName).toBe('agent');
 			expect(cursor?.batchModePrefix).toEqual(['-p', '--trust']);
+			expect(cursor?.batchModeArgs).toBeUndefined();
 			expect(cursor?.yoloModeArgs).toEqual(['--force']);
 			expect(cursor?.readOnlyArgs).toEqual(['--mode', 'plan']);
 			expect(cursor?.jsonOutputArgs).toEqual([
@@ -386,9 +387,6 @@ describe('agent-definitions', () => {
 			expect(cursor?.workingDirArgs?.('/tmp/proj')).toEqual(['--workspace', '/tmp/proj']);
 			expect(cursor?.promptArgs?.('hi')).toEqual(['hi']);
 			expect(cursor?.resumeArgs?.('sess-1')).toEqual(['--resume', 'sess-1']);
-			// Only --force is removable in read-only mode; -p and --trust remain
-			// required for non-interactive trusted-workspace execution.
-			expect(cursor?.batchModeArgs).toEqual(['--force']);
 			expect(cursor?.yoloModeArgs).toContain('--force');
 			expect(
 				cursor?.imagePromptBuilder?.([
