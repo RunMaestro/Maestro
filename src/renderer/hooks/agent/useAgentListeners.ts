@@ -98,8 +98,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
-	useAgentToolExecutionListener();
-	useRuntimeFeaturesListener();
+	useAgentToolExecutionListener(deps.batchedUpdater);
+	useRuntimeFeaturesListener(deps.batchedUpdater);
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
 	// orphan tool entries are released for GC.

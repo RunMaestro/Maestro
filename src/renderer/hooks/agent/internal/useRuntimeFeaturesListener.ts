@@ -9,13 +9,17 @@ import { parseSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { openInSystemBrowser } from '../../../utils/openUrl';
 import { useComposerInputStore } from '../../../stores/composerInputStore';
+import type { BatchedUpdater } from './types';
 
 // Only the fields these listeners actually patch. Kept narrow so the same
 // patch can be spread into both Session and AITab (a Partial<Session> spread
 // into AITab is a type error: e.g. their `state` unions differ).
 type RuntimePatch = Partial<Pick<Session, 'name' | 'runtimeFeatures' | 'pendingApprovals'>>;
+const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow'> = { flushNow: () => undefined };
 
-export function useRuntimeFeaturesListener(): void {
+export function useRuntimeFeaturesListener(
+	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER
+): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -103,6 +107,7 @@ export function useRuntimeFeaturesListener(): void {
 		const completedOmpTurns = new Set<string>();
 		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
 			if (!ownedGate.current?.(sessionId)) return;
+			batchedUpdater.flushNow();
 			if (event.phase === 'continuation_failed' && event.deliveryId) {
 				completedOmpTurns.delete(sessionId);
 				const { baseSessionId, tabId } = parseSessionId(sessionId);
@@ -236,5 +241,5 @@ export function useRuntimeFeaturesListener(): void {
 			removeSessionTitle();
 			removeOmpTurnLifecycle();
 		};
-	}, [ownedGate]);
+	}, [batchedUpdater, ownedGate]);
 }

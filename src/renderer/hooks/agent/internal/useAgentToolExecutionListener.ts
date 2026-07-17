@@ -21,8 +21,13 @@ import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
+import type { BatchedUpdater } from './types';
 
-export function useAgentToolExecutionListener(): void {
+const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow'> = { flushNow: () => undefined };
+
+export function useAgentToolExecutionListener(
+	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER
+): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -46,7 +51,11 @@ export function useAgentToolExecutionListener(): void {
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
 
-				if (!getSessions().some((s) => s.id === actualSessionId)) return;
+				const owningSession = getSessions().find((session) => session.id === actualSessionId);
+				if (!owningSession) return;
+				// OMP lifecycle receipts must observe every earlier streamed chunk
+				// before a synchronous tool entry or turn boundary is appended.
+				if (owningSession.toolType === 'omp') batchedUpdater.flushNow();
 				if (
 					!toolEvent.toolCallId &&
 					getSessions().find((session) => session.id === actualSessionId)?.toolType === 'omp'
@@ -144,5 +153,5 @@ export function useAgentToolExecutionListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, [ownedGate]);
+	}, [batchedUpdater, ownedGate]);
 }

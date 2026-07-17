@@ -236,10 +236,10 @@ export function useBatchedSessionUpdates(
 								// When new assistant text arrives, drop transient thinking/tool entries
 								// from prior reasoning so the final answer replaces them. The matching
 								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
-								// Sticky mode opts out of BOTH clear points.
+								// Sticky mode and OMP turn receipts opt out of BOTH clear points.
 								const existingLogs = tab.logs.filter((log) => {
 									if (log.source === 'thinking' || log.source === 'tool') {
-										return tab.showThinking === 'sticky';
+										return tab.showThinking === 'sticky' || updatedSession.toolType === 'omp';
 									}
 									return true;
 								});

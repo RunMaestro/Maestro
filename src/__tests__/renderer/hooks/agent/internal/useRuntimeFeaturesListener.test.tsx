@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useRuntimeFeaturesListener } from '../../../../../renderer/hooks/agent/internal/useRuntimeFeaturesListener';
+import { useBatchedSessionUpdates } from '../../../../../renderer/hooks/session/useBatchedSessionUpdates';
+import { useAgentToolExecutionListener } from '../../../../../renderer/hooks/agent/internal/useAgentToolExecutionListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import type { AgentRuntimeFeatureState } from '../../../../../shared/agent-runtime-features';
 import type { Session } from '../../../../../renderer/types';
@@ -21,6 +23,17 @@ let onOmpTurnLifecycle:
 				continuation?: boolean;
 				deliveryIntent?: 'follow_up' | 'abort_and_prompt';
 				deliveryId?: string;
+			}
+	  ) => void)
+	| undefined;
+let onToolExecution:
+	| ((
+			sessionId: string,
+			event: {
+				toolName: string;
+				state?: unknown;
+				timestamp: number;
+				toolCallId?: string;
 			}
 	  ) => void)
 	| undefined;
@@ -62,6 +75,22 @@ const mockProcess = {
 			return unsubscribe;
 		}
 	),
+	onToolExecution: vi.fn(
+		(
+			handler: (
+				sessionId: string,
+				event: {
+					toolName: string;
+					state?: unknown;
+					timestamp: number;
+					toolCallId?: string;
+				}
+			) => void
+		) => {
+			onToolExecution = handler;
+			return unsubscribe;
+		}
+	),
 };
 
 function featureState(marker: string): AgentRuntimeFeatureState {
@@ -99,6 +128,7 @@ beforeEach(() => {
 	onOpenExternalUrl = undefined;
 	onRuntimeFeatures = undefined;
 	onOmpTurnLifecycle = undefined;
+	onToolExecution = undefined;
 	// the preload bridge surface is irrelevant to this suite.
 	const processBridge = mockProcess as unknown as typeof window.maestro.process;
 	window.maestro = { ...window.maestro, process: processBridge };
@@ -484,6 +514,78 @@ describe('useRuntimeFeaturesListener', () => {
 			timestamp: 20_000,
 			deliveryState: 'consumed',
 		});
+	});
+
+	it('flushes OMP output and tool activity before lifecycle receipts and continuation output', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				toolType: 'omp',
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									{ id: 'first', timestamp: 1, source: 'user', text: 'First request' },
+									{
+										id: 'queued',
+										timestamp: 2,
+										source: 'user',
+										text: 'Follow-up request',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		const { result } = renderHook(() => {
+			const batchedUpdater = useBatchedSessionUpdates(60_000);
+			useAgentToolExecutionListener(batchedUpdater);
+			useRuntimeFeaturesListener(batchedUpdater);
+			return batchedUpdater;
+		});
+
+		result.current.appendLog('owned-session', 'tab-a', true, 'First output');
+		onToolExecution!('owned-session-ai-tab-a', {
+			toolName: 'bash',
+			toolCallId: 'first-tool',
+			timestamp: 3,
+			state: { status: 'completed' },
+		});
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: 'follow_up',
+			deliveryId: 'queued',
+		});
+		result.current.appendLog('owned-session', 'tab-a', true, 'Follow-up output');
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+
+		const logs = storedSession().aiTabs[0].logs;
+		expect(logs.map((log) => log.text)).toEqual([
+			'First request',
+			'First output',
+			'bash',
+			'',
+			'Follow-up request',
+			'Follow-up output',
+			'',
+		]);
+		expect(logs.map((log) => log.source)).toEqual([
+			'user',
+			'stdout',
+			'tool',
+			'system',
+			'user',
+			'stdout',
+			'system',
+		]);
+		expect(logs[3]?.metadata?.ompTurnBoundary).toBe(true);
+		expect(logs[6]?.metadata?.ompTurnBoundary).toBe(true);
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {
