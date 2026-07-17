@@ -5,13 +5,12 @@
  * `entry` / `parse-error` events.
  *
  * Strategy: drive against real temp files with `fs.mkdtempSync` for
- * isolation and a 10ms poll interval for snappy assertions. No fake timers
- * - the tailer's contract is about real filesystem behavior, and these
- * tests should fail if cross-platform fs semantics change in an
- * incompatible way.
+ * isolation and a 10ms poll interval for snappy assertions. Tests retain
+ * real filesystem I/O; schedule-only polling and backoff waits use fake
+ * timers so their timing does not dominate the suite.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -105,10 +104,15 @@ describe('JsonlTailer', () => {
 		it('ignores pre-existing content', async () => {
 			const { tailer, filePath, entries } = makeHarness('skip.jsonl', { skipExisting: true });
 			fs.writeFileSync(filePath, '{"i":1}\n{"i":2}\n');
-			await tailer.start();
-			// Give the poller several ticks to confirm nothing leaks through.
-			await sleep(FAST_POLL_MS * 5);
-			expect(entries).toEqual([]);
+			vi.useFakeTimers();
+			try {
+				await tailer.start();
+				// Drive several scheduler ticks to confirm nothing leaks through.
+				await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 5);
+				expect(entries).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('emits only entries appended after start()', async () => {
@@ -158,12 +162,16 @@ describe('JsonlTailer', () => {
 		it('skips empty lines silently (no entries, no parse-errors)', async () => {
 			const { tailer, filePath, entries, parseErrors } = makeHarness('empties.jsonl');
 			fs.writeFileSync(filePath, '\n\n{"present":true}\n\n');
-			await tailer.start();
-			await waitUntil(() => entries.length === 1);
-			// Let any erroneous trailing-empty emissions land before snapshotting.
-			await sleep(FAST_POLL_MS * 3);
-			expect(entries).toEqual([{ present: true }]);
-			expect(parseErrors).toEqual([]);
+			vi.useFakeTimers();
+			try {
+				await tailer.start();
+				// Let scheduler ticks process the real file and expose any erroneous trailing empties.
+				await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
+				expect(entries).toEqual([{ present: true }]);
+				expect(parseErrors).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -202,7 +210,14 @@ describe('JsonlTailer', () => {
 				existsTimeoutMs: 100,
 			});
 			activeTailer = tailer;
-			await expect(tailer.start()).rejects.toThrow(/did not appear/);
+			vi.useFakeTimers();
+			try {
+				const rejection = expect(tailer.start()).rejects.toThrow(/did not appear/);
+				await vi.advanceTimersByTimeAsync(175);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -210,16 +225,21 @@ describe('JsonlTailer', () => {
 		it('halts polling - no further events fire after stop(), even on new appends', async () => {
 			const { tailer, filePath, entries } = makeHarness('stop.jsonl');
 			fs.writeFileSync(filePath, '{"i":1}\n');
-			await tailer.start();
-			await waitUntil(() => entries.length === 1);
+			vi.useFakeTimers();
+			try {
+				await tailer.start();
+				await vi.advanceTimersByTimeAsync(FAST_POLL_MS);
+				expect(entries).toEqual([{ i: 1 }]);
 
-			tailer.stop();
-			const snapshotCount = entries.length;
-			fs.appendFileSync(filePath, '{"i":2}\n{"i":3}\n');
-			// Wait several poll cycles to be confident the stopped tailer
-			// genuinely never picks the appends up.
-			await sleep(FAST_POLL_MS * 8);
-			expect(entries.length).toBe(snapshotCount);
+				tailer.stop();
+				const snapshotCount = entries.length;
+				fs.appendFileSync(filePath, '{"i":2}\n{"i":3}\n');
+				// Drive several poll cycles to prove the stopped tailer ignores the append.
+				await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 8);
+				expect(entries.length).toBe(snapshotCount);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -248,10 +268,15 @@ describe('JsonlTailer', () => {
 		it('does not advance when no new bytes are read', async () => {
 			const { tailer, filePath } = makeHarness('idle.jsonl');
 			fs.writeFileSync(filePath, '');
-			await tailer.start();
-			const before = tailer.getLastByteAt();
-			await sleep(FAST_POLL_MS * 5);
-			expect(tailer.getLastByteAt()).toBe(before);
+			vi.useFakeTimers();
+			try {
+				await tailer.start();
+				const before = tailer.getLastByteAt();
+				await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 5);
+				expect(tailer.getLastByteAt()).toBe(before);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 });

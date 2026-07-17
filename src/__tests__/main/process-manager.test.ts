@@ -12,6 +12,16 @@ vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
 
+const { mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
+	mockExecFile: vi.fn(),
+	mockExecFileSync: vi.fn(),
+}));
+
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal();
+	return { ...actual, execFile: mockExecFile, execFileSync: mockExecFileSync };
+});
+
 // Mock logger to avoid any side effects
 vi.mock('../../main/utils/logger', () => ({
 	logger: {
@@ -34,6 +44,7 @@ vi.mock('../../shared/platformDetection', () => ({
 }));
 
 import * as fs from 'fs';
+import { logger } from '../../main/utils/logger';
 
 import {
 	aggregateModelUsage,
@@ -368,6 +379,8 @@ describe('process-manager.ts', () => {
 
 		beforeEach(() => {
 			processManager = new ProcessManager();
+			mockExecFile.mockClear();
+			mockExecFileSync.mockClear();
 		});
 
 		describe('error detection exports', () => {
@@ -591,6 +604,33 @@ describe('process-manager.ts', () => {
 
 				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session', false);
 				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+
+				killWindowsTreeSpy.mockRestore();
+				const error = new Error('taskkill failed');
+				mockExecFile.mockImplementationOnce(
+					(_command: string, _arguments: string[], callback: (callbackError: Error) => void) =>
+						callback(error)
+				);
+				// The private helper is the behavior selected by the public Windows kill path.
+				const managerWithPrivateKill = processManager as unknown as {
+					killWindowsProcessTree: (pid: number, sessionId: string, sync?: boolean) => void;
+				};
+				expect(() =>
+					managerWithPrivateKill.killWindowsProcessTree(12345, 'async-session')
+				).not.toThrow();
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'taskkill',
+					['/pid', '12345', '/t', '/f'],
+					expect.any(Function)
+				);
+				expect(logger.debug).toHaveBeenCalledWith(
+					'[ProcessManager] taskkill exited with error (process may already be terminated)',
+					'ProcessManager',
+					{ sessionId: 'async-session', pid: 12345, error: String(error) }
+				);
+				killWindowsTreeSpy = vi
+					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
+					.mockImplementation(() => {});
 			});
 
 			it('should use SIGTERM for PTY processes on non-Windows', () => {
@@ -741,6 +781,10 @@ describe('process-manager.ts', () => {
 
 				expect(kills).toEqual(expect.arrayContaining(['a', 'b', 'c']));
 				expect(kills).toHaveLength(3);
+				expect(mockExecFileSync).toHaveBeenCalledTimes(3);
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 			});
 
 			it('should pass sync: true to kill() so Windows taskkill blocks until complete', () => {
@@ -767,6 +811,9 @@ describe('process-manager.ts', () => {
 				processManager.killAll();
 
 				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true, shutdown: false });
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 				killSpy.mockRestore();
 			});
 
