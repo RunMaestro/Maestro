@@ -1774,12 +1774,21 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
+		await adapter.prompt('first turn');
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'output A' },
+		});
 		await adapter.deliver('follow_up', 'continue after this turn');
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'output B' },
+		});
 		emit(child, { type: 'turn_end' });
 		emit(child, { type: 'agent_start' });
 		emit(child, {
 			type: 'message_update',
-			assistantMessageEvent: { type: 'text_delta', delta: 'queued output' },
+			assistantMessageEvent: { type: 'text_delta', delta: 'output C' },
 		});
 		emit(child, { type: 'turn_end' });
 
@@ -1788,8 +1797,16 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-follow-up-chain', {
 			phase: 'agent_start',
 			continuation: true,
+			deliveryIntent: 'follow_up',
 		});
-		expect(send).toHaveBeenCalledWith('process:data', 'tab-follow-up-chain', 'queued output');
+		expect(
+			send.mock.calls
+				.filter(
+					([channel, sessionId]) =>
+						channel === 'process:data' && sessionId === 'tab-follow-up-chain'
+				)
+				.map(([, , text]) => text)
+		).toEqual(['output A', 'output B', 'output C']);
 		expect(
 			send.mock.calls.filter(
 				([channel, sessionId]) =>

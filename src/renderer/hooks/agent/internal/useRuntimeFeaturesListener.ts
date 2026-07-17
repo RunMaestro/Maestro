@@ -125,17 +125,20 @@ export function useRuntimeFeaturesListener(): void {
 						thinkingStartTime: Date.now(),
 						aiTabs: session.aiTabs.map((tab) => {
 							if (tab.id !== tabId) return tab;
-							const queuedEntry = tab.logs.find(
-								(log) => log.deliveryIntent === 'follow_up' && log.deliveryState === 'queued'
+							const continuationEntry = tab.logs.find(
+								(log) =>
+									log.deliveryIntent === event.deliveryIntent &&
+									(event.deliveryIntent !== 'follow_up' || log.deliveryState === 'queued')
 							);
 							return {
 								...tab,
 								state: 'busy',
 								thinkingStartTime: Date.now(),
-								logs: queuedEntry
-									? tab.logs.map((log) =>
-											log.id === queuedEntry.id ? { ...log, deliveryState: 'consumed' } : log
-										)
+								logs: continuationEntry
+									? [
+											...tab.logs.filter((log) => log.id !== continuationEntry.id),
+											{ ...continuationEntry, deliveryState: 'consumed' as const },
+										]
 									: tab.logs,
 							};
 						}),

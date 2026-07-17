@@ -9,6 +9,7 @@ export type OmpTurnLifecyclePhase = 'turn_end' | 'agent_start';
 export interface OmpTurnLifecycleEvent {
 	phase: OmpTurnLifecyclePhase;
 	continuation?: boolean;
+	deliveryIntent?: 'follow_up' | 'abort_and_prompt';
 }
 export interface OmpNativeTurnCompletion {
 	readonly kind: 'omp-native-turn';

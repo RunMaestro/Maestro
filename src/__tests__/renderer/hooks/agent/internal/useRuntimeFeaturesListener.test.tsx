@@ -16,7 +16,11 @@ let onRuntimeFeatures:
 let onOmpTurnLifecycle:
 	| ((
 			sessionId: string,
-			event: { phase: 'turn_end' | 'agent_start'; continuation?: boolean }
+			event: {
+				phase: 'turn_end' | 'agent_start';
+				continuation?: boolean;
+				deliveryIntent?: 'follow_up' | 'abort_and_prompt';
+			}
 	  ) => void)
 	| undefined;
 
@@ -45,7 +49,11 @@ const mockProcess = {
 		(
 			handler: (
 				sessionId: string,
-				event: { phase: 'turn_end' | 'agent_start'; continuation?: boolean }
+				event: {
+					phase: 'turn_end' | 'agent_start';
+					continuation?: boolean;
+					deliveryIntent?: 'follow_up' | 'abort_and_prompt';
+				}
 			) => void
 		) => {
 			onOmpTurnLifecycle = handler;
@@ -152,16 +160,23 @@ describe('useRuntimeFeaturesListener', () => {
 					tab.id === 'tab-a'
 						? {
 								...tab,
-								state: 'idle',
 								logs: [
 									{
-										id: 'queued-follow-up',
+										id: 'first-prompt',
 										timestamp: 1,
+										source: 'user',
+										text: 'first request',
+									},
+									{ id: 'output-a', timestamp: 2, source: 'ai', text: 'output A' },
+									{
+										id: 'queued-follow-up',
+										timestamp: 3,
 										source: 'user',
 										text: 'run after this',
 										deliveryIntent: 'follow_up',
 										deliveryState: 'queued',
 									},
+									{ id: 'output-b', timestamp: 4, source: 'ai', text: 'output B' },
 								],
 							}
 						: tab
@@ -174,12 +189,63 @@ describe('useRuntimeFeaturesListener', () => {
 		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
 			phase: 'agent_start',
 			continuation: true,
+			deliveryIntent: 'follow_up',
 		});
 
 		const session = storedSession();
 		expect(session.state).toBe('busy');
 		expect(session.aiTabs[0].state).toBe('busy');
-		expect(session.aiTabs[0].logs[0].deliveryState).toBe('consumed');
+		expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual([
+			'first-prompt',
+			'output-a',
+			'output-b',
+			'queued-follow-up',
+		]);
+		expect(session.aiTabs[0].logs.at(-1)?.deliveryState).toBe('consumed');
+	});
+
+	it('moves a replacement prompt to the continuation boundary', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									{ id: 'first', timestamp: 1, source: 'user', text: 'first' },
+									{ id: 'aborted-output', timestamp: 2, source: 'ai', text: 'aborted' },
+									{
+										id: 'replacement',
+										timestamp: 3,
+										source: 'user',
+										text: 'replacement',
+										deliveryIntent: 'abort_and_prompt',
+									},
+									{ id: 'final-aborted-output', timestamp: 4, source: 'ai', text: 'final aborted' },
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		renderHook(() => useRuntimeFeaturesListener());
+
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: 'abort_and_prompt',
+		});
+
+		const logs = storedSession().aiTabs[0].logs;
+		expect(logs.map((log) => log.id)).toEqual([
+			'first',
+			'aborted-output',
+			'final-aborted-output',
+			'replacement',
+		]);
+		expect(logs.at(-1)?.deliveryState).toBe('consumed');
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {
