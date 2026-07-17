@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.2.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 1024 1024" style="enable-background:new 0 0 1024 1024;" xml:space="preserve">
+<style type="text/css">
+	.st0{display:none;}
+	.st1{display:inline;fill:#606060;}
+	.st2{display:inline;}
+	.st3{fill:none;stroke:#5DB3F9;stroke-width:1.5;stroke-miterlimit:10;}
+	.st4{fill-rule:evenodd;clip-rule:evenodd;fill:none;stroke:#5DB3F9;stroke-width:1.5;stroke-miterlimit:10;}
+	.st5{fill:url(#SVGID_1_);stroke:#000000;stroke-miterlimit:10;}
+</style>
+<g id="Background" class="st0">
+</g>
+<g id="_x31___x2013__Layer" class="st0">
+</g>
+<g id="_x32___x2013__Layer" class="st0">
+</g>
+<g id="_x33___x2013__Layer" class="st0">
+</g>
+<g id="_x34___x2013__Layer" class="st0">
+</g>
+<g id="App_Icon_Shape" class="st0">
+	<path class="st1" d="M0,0v1024h1024V0H0z M1024,651c0,14.24,0.01,28.48-0.08,42.73c-0.07,12-0.21,23.99-0.53,35.98
+		c-0.71,26.13-2.25,52.49-6.89,78.34c-4.71,26.22-12.4,50.62-24.53,74.44c-11.92,23.41-27.49,44.84-46.07,63.41
+		s-40,34.15-63.41,46.07c-23.82,12.12-48.22,19.82-74.44,24.53c-25.84,4.65-52.2,6.18-78.34,6.89c-11.99,0.33-23.99,0.46-35.98,0.53
+		c-14.24,0.09-28.48,0.08-42.73,0.08H373c-14.24,0-28.48,0.01-42.73-0.08c-12-0.07-23.99-0.21-35.98-0.53
+		c-26.13-0.71-52.49-2.25-78.34-6.89c-26.22-4.71-50.62-12.4-74.44-24.53c-23.41-11.92-44.84-27.49-63.41-46.07
+		s-34.15-40-46.07-63.41c-12.12-23.82-19.82-48.22-24.53-74.44c-4.65-25.84-6.18-52.2-6.89-78.34c-0.33-11.99-0.46-23.99-0.53-35.98
+		C-0.01,679.48,0,665.24,0,651V373c0-14.24-0.01-28.48,0.08-42.73c0.07-12,0.21-23.99,0.53-35.98c0.71-26.13,2.25-52.49,6.89-78.34
+		c4.71-26.22,12.4-50.62,24.53-74.44C43.95,118.1,59.53,96.68,78.1,78.1s40-34.15,63.41-46.07c23.82-12.12,48.22-19.82,74.44-24.53
+		c25.84-4.65,52.2-6.18,78.34-6.89c11.99-0.33,23.99-0.46,35.98-0.53C344.52-0.01,358.76,0,373,0h278c14.24,0,28.48-0.01,42.73,0.08
+		c12,0.07,23.99,0.21,35.98,0.53c26.13,0.71,52.49,2.25,78.34,6.89c26.22,4.71,50.62,12.4,74.44,24.53
+		c23.41,11.92,44.84,27.49,63.41,46.07s34.15,40,46.07,63.41c12.12,23.82,19.82,48.22,24.53,74.44c4.65,25.84,6.18,52.2,6.89,78.34
+		c0.33,11.99,0.46,23.99,0.53,35.98c0.09,14.24,0.08,28.48,0.08,42.73V651z"/>
+</g>
+<g id="Grid">
+	<g id="ROUNDED_RECTANGLE" class="st0">
+	</g>
+	<g id="SUBDIVISIONS" class="st0">
+		<g class="st2">
+			<line class="st3" x1="1024" y1="0" x2="0" y2="1024"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="1024" x2="0" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="512" y1="0" x2="512" y2="1024"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="512" x2="0" y2="512"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="512" y1="0" x2="512" y2="1024"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="512" x2="0" y2="512"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="640" x2="0" y2="640"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="768" x2="0" y2="768"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="896" x2="0" y2="896"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="384" x2="0" y2="384"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="256" x2="0" y2="256"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="1024" y1="128" x2="0" y2="128"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="512" y1="1024" x2="512" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="512" y1="1024" x2="512" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="256" y1="1024" x2="256" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="128" y1="1024" x2="128" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="640" y1="1024" x2="640" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="768" y1="1024" x2="768" y2="0"/>
+		</g>
+		<g class="st2">
+			<line class="st3" x1="896" y1="1024" x2="896" y2="0"/>
+		</g>
+	</g>
+	<g id="CIRCLES">
+		<circle class="st4" cx="512" cy="512" r="410"/>
+		<circle class="st4" cx="512" cy="512" r="256"/>
+		<circle class="st4" cx="512" cy="512" r="102"/>
+		<radialGradient id="SVGID_1_" cx="512" cy="512.8904" r="512" gradientUnits="userSpaceOnUse">
+			<stop  offset="0.3039" style="stop-color:#B4008C"/>
+			<stop  offset="0.5057" style="stop-color:#A00B8D"/>
+			<stop  offset="0.9185" style="stop-color:#6B2790"/>
+			<stop  offset="1" style="stop-color:#602D91"/>
+		</radialGradient>
+		<rect x="0" y="0.89" class="st5" width="1024" height="1024"/>
+	</g>
+</g>
+</svg>
