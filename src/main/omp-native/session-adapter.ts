@@ -524,8 +524,7 @@ export class OmpNativeSessionAdapter {
 			event.type === 'agent_start' ||
 			event.type === 'turn_start' ||
 			event.type === 'message_update' ||
-			event.type === 'thinking_delta' ||
-			event.type.startsWith('tool_execution_');
+			event.type === 'thinking_delta';
 		const continuationStartedFromEvidence =
 			continuationEvidence && this.startContinuationAtBoundary();
 		if (this.disposed) return;

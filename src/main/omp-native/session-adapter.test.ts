@@ -1957,6 +1957,22 @@ describe('OmpNativeSessionAdapter', () => {
 			)
 		).toHaveLength(0);
 		emit(child, {
+			type: 'tool_execution_end',
+			toolCallId: 'prior-turn-tool',
+			toolName: 'bash',
+		});
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId, event]) =>
+					channel === 'process:omp-turn-lifecycle' &&
+					sessionId === 'tab-follow-up-chain' &&
+					event &&
+					typeof event === 'object' &&
+					'continuation' in event &&
+					event.continuation === true
+			)
+		).toHaveLength(0);
+		emit(child, {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'output C' },
 		});
