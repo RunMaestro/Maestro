@@ -601,7 +601,10 @@ export class StdoutHandler {
 			const toolType = managedProcess.toolType;
 			if (toolType !== 'copilot-cli') {
 				const requiresReasoningTag =
-					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'opencode' ||
+					toolType === 'cursor-cli';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}

@@ -25,6 +25,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'qwen3-coder': 262144, // Qwen3-Coder native 256K context window
 	omp: 200000, // Oh My Pi (fallback until runtime-specific reporting lands)
 	grok: 500000, // Grok CLI (grok-4.5 default, per ~/.grok/models_cache.json)
+	'cursor-cli': 200000, // Cursor CLI (varies by model; Composer default is conservative)
 	terminal: 0, // Terminal has no context window
 };
 

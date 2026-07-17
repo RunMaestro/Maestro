@@ -601,6 +601,14 @@ function buildArgsForAgent(agent: any): string[] {
 			return args;
 		}
 
+		case 'cursor-cli': {
+			const args = [...(agent.args || [])];
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
+			return args;
+		}
+
 		default: {
 			return [...(agent.args || [])];
 		}

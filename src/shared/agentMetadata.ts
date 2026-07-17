@@ -27,6 +27,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'copilot-cli': 'Copilot-CLI',
 	omp: 'Oh My Pi',
 	grok: 'Grok CLI',
+	'cursor-cli': 'Cursor CLI',
 };
 
 /**
@@ -46,7 +47,11 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'opencode',
+	'cursor-cli',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -140,6 +145,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'qwen3-coder',
 	'omp',
 	'grok',
+	'cursor-cli',
 ]);
 
 /**
@@ -161,6 +167,7 @@ export const AGENT_LOGIN_COMMANDS: Partial<Record<AgentId, string>> = {
 	codex: 'codex login',
 	'copilot-cli': 'gh auth login',
 	grok: 'grok login',
+	'cursor-cli': 'agent login',
 };
 
 /**
