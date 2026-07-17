@@ -1,6 +1,11 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useThrottledCallback } from '../../../hooks';
 
+/** How long a programmatic bottom-jump keeps its scroll-event guard armed. */
+const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
+/** Slack (px) for treating scrollTop as still parked at the recorded bottom. */
+const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
+
 interface UseTerminalOutputScrollOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	initialScrollTop?: number;
@@ -31,6 +36,13 @@ export function useTerminalOutputScroll({
 	const [autoScrollPaused, setAutoScrollPaused] = useState(false);
 
 	const isProgrammaticScrollRef = useRef(false);
+	// Absolute scrollTop the last programmatic bottom-jump parked at. A stream
+	// only grows scrollHeight, so our scrollTop stays here until the user
+	// scrolls; comparing against it tells our own scroll events apart from a
+	// real user scroll-up. -1 = no programmatic jump yet.
+	const programmaticTargetTopRef = useRef(-1);
+	// ONE shared guard timer so overlapping jumps can't clear each other's guard.
+	const programmaticGuardTimerRef = useRef<number | undefined>(undefined);
 	const tabReadStateRef = useRef<Map<string, number>>(new Map());
 	const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const hasRestoredScrollRef = useRef(false);
@@ -39,16 +51,17 @@ export function useTerminalOutputScroll({
 		if (!scrollContainerRef.current) return;
 		const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
 		const atBottom = scrollHeight - scrollTop - clientHeight < 50;
-		// A programmatic scroll (the MutationObserver re-pin or the resume button)
-		// dispatches its own scroll event. If streaming content grew past the jump
-		// target between the scrollTo and this event, `atBottom` reads false even
-		// though we're actively pinning. Consume the one-shot guard but leave the
-		// at-bottom gate untouched so the observer keeps following the stream -
-		// mirroring `false` here would flip `isAtBottomRef` and stop the follow
-		// mid-stream (the reported "scrolls once but won't stick" bug). (#1140)
-		if (!atBottom && isProgrammaticScrollRef.current) {
-			isProgrammaticScrollRef.current = false;
-		} else {
+		// A programmatic bottom-jump (observer re-pin or the pin button) fires its
+		// own scroll event. Streaming content only grows scrollHeight, so our
+		// scrollTop stays parked at the recorded bottom target; a genuine user
+		// scroll-up drops scrollTop below it. Ignore ONLY events that are still
+		// parked at that target while the guard is armed; handle everything else -
+		// including a user scroll-up within the guard window - as a real position
+		// change so it correctly pauses auto-scroll. (#1140)
+		const parkedAtProgrammaticTarget =
+			isProgrammaticScrollRef.current &&
+			scrollTop >= programmaticTargetTopRef.current - PROGRAMMATIC_TARGET_EPSILON_PX;
+		if (atBottom || !parkedAtProgrammaticTarget) {
 			setIsAtBottom(atBottom);
 			// Mirror into the ref synchronously so MutationObserver sees the user's
 			// new position before a content re-render can yank to bottom (#1140).
@@ -89,6 +102,23 @@ export function useTerminalOutputScroll({
 	]);
 
 	const handleScroll = useThrottledCallback(handleScrollInner, 16);
+
+	// Single choke point for programmatic bottom-jumps. Records the clamped
+	// bottom target so handleScrollInner can tell our own scroll events apart
+	// from a user scroll-up, and (re)starts ONE shared guard timer so an earlier
+	// jump's timeout can never clear a later jump's guard.
+	const jumpToBottom = useCallback(() => {
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		isProgrammaticScrollRef.current = true;
+		programmaticTargetTopRef.current = Math.max(0, container.scrollHeight - container.clientHeight);
+		container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+		window.clearTimeout(programmaticGuardTimerRef.current);
+		programmaticGuardTimerRef.current = window.setTimeout(() => {
+			isProgrammaticScrollRef.current = false;
+			programmaticGuardTimerRef.current = undefined;
+		}, PROGRAMMATIC_SCROLL_GUARD_MS);
+	}, [scrollContainerRef]);
 
 	useEffect(() => {
 		if (!activeTabId) {
@@ -155,14 +185,7 @@ export function useTerminalOutputScroll({
 				// Re-check isAtBottomRef inside the rAF so a scroll-up that happens
 				// after schedule but before paint cancels the yank (#1140).
 				if (scrollContainerRef.current && isAtBottomRef.current) {
-					isProgrammaticScrollRef.current = true;
-					scrollContainerRef.current.scrollTo({
-						top: scrollContainerRef.current.scrollHeight,
-						behavior: 'auto',
-					});
-					setTimeout(() => {
-						isProgrammaticScrollRef.current = false;
-					}, 32);
+					jumpToBottom();
 				}
 			});
 		};
@@ -188,7 +211,7 @@ export function useTerminalOutputScroll({
 		});
 
 		return () => observer.disconnect();
-	}, [autoScrollPaused, scrollContainerRef]);
+	}, [autoScrollPaused, scrollContainerRef, jumpToBottom]);
 
 	useEffect(() => {
 		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
@@ -220,6 +243,7 @@ export function useTerminalOutputScroll({
 			if (scrollSaveTimerRef.current) {
 				clearTimeout(scrollSaveTimerRef.current);
 			}
+			window.clearTimeout(programmaticGuardTimerRef.current);
 		};
 	}, []);
 
@@ -242,20 +266,13 @@ export function useTerminalOutputScroll({
 		if (activeTabId) {
 			tabReadStateRef.current.set(activeTabId, filteredLogsLength);
 		}
-		const container = scrollContainerRef.current;
-		if (container) {
-			// Instant jump lands on the *current* bottom. A smooth animation
-			// targets the scrollHeight captured at click time, which streaming
-			// content grows past before the animation settles, so it stops above
-			// the true bottom and never sticks. Guard the resulting scroll event
-			// so a mid-jump content growth doesn't re-pause auto-scroll.
-			isProgrammaticScrollRef.current = true;
-			container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-			setTimeout(() => {
-				isProgrammaticScrollRef.current = false;
-			}, 32);
-		}
-	}, [scrollContainerRef, activeTabId, filteredLogsLength, onAtBottomChange]);
+		// Instant jump to the *current* bottom via the shared helper. A smooth
+		// animation would target a scrollHeight the stream outgrows before it
+		// settles, landing above the true bottom; the helper also records the
+		// target so handleScrollInner keeps following without fighting a real
+		// user scroll-up.
+		jumpToBottom();
+	}, [jumpToBottom, activeTabId, filteredLogsLength, onAtBottomChange]);
 
 	return {
 		isAtBottom,

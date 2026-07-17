@@ -2469,12 +2469,18 @@ describe('TerminalOutput', () => {
 			);
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// jsdom never actually scrolls, so mirror the requested top into
-			// scrollTop; otherwise the geometry checks would still read "not at
-			// bottom" after the programmatic jump.
+			// jsdom never actually scrolls. Mirror the requested top into scrollTop
+			// (clamped to the max, like a real browser) AND dispatch the native
+			// `scroll` event that scrollTo fires, so the handleScrollInner guard
+			// path is genuinely exercised rather than bypassed.
 			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
 				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
-				Object.defineProperty(scrollContainer, 'scrollTop', { value: top, configurable: true });
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
 			});
 			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
 
@@ -2514,6 +2520,75 @@ describe('TerminalOutput', () => {
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('pauses auto-scroll when the user scrolls up after pinning, within the guard window', async () => {
+			// Greptile P1: after the pin button arms the ~100ms programmatic-scroll
+			// guard, a real user scroll-up that lands inside that window must NOT be
+			// mistaken for our own bottom-jump. The guard is anchored to the
+			// recorded bottom target, so a scroll-up (scrollTop below the target)
+			// still leaves the bottom - proven by onAtBottomChange(false) firing.
+			// A position-blind guard would swallow it and keep auto-scroll pinned.
+			const onAtBottomChange = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, onAtBottomChange })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 600, configurable: true });
+
+			// scrollTo clamps to the max and dispatches the native scroll event a
+			// real browser fires, so the handleScrollInner guard path runs.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up so the pin button appears.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
+
+			// Click the pin: synchronously arms the guard (records bottom target
+			// 600, starts the 100ms timer) and jumps to the bottom.
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(/pin/i));
+				vi.advanceTimersByTime(20); // clear the scroll throttle; guard still armed
+			});
+			onAtBottomChange.mockClear();
+			scrollToSpy.mockClear();
+
+			// User scrolls up again, still well inside the guard window.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+
+			// Discriminator: the scroll-up registered as leaving the bottom, and
+			// the pin button is shown again (auto-scroll paused).
+			expect(onAtBottomChange).toHaveBeenCalledWith(false);
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
 		});
 	});
 
