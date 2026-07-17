@@ -15,11 +15,19 @@ interface Turn {
 	entries: Array<{ log: LogEntry; index: number }>;
 }
 
+function isOmpTurnBoundary(log: LogEntry): boolean {
+	return log.metadata?.ompTurnBoundary === true;
+}
+
 function turnsFrom(logs: LogEntry[]): Turn[] {
 	const turns: Turn[] = [];
 	let current: Turn | null = null;
 	for (let index = 0; index < logs.length; index++) {
 		const log = logs[index];
+		if (isOmpTurnBoundary(log)) {
+			if (current) current.entries.push({ log, index });
+			continue;
+		}
 		if (
 			log.source === 'user' &&
 			(!log.deliveryIntent ||
@@ -75,6 +83,7 @@ export function OmpTurnFabric({ logs, theme, isLive, subagents, renderLog }: Omp
 							style={{ borderColor: isCurrent ? theme.colors.accent : theme.colors.border }}
 						>
 							{turn.entries.map(({ log, index }) => {
+								if (isOmpTurnBoundary(log)) return null;
 								if (log.deliveryIntent === 'steer') {
 									return (
 										<div key={log.id} className="my-1 flex min-w-0 items-center gap-2 text-xs">

@@ -84,6 +84,50 @@ describe('OmpTurnFabric', () => {
 		expect(screen.queryByText(/Queued follow-up/)).not.toBeInTheDocument();
 	});
 
+	it('uses turn-end boundaries and continuation-start timestamps for receipt durations', () => {
+		render(
+			<OmpTurnFabric
+				logs={[
+					{ id: 'first', timestamp: 0, source: 'user', text: 'First request' },
+					{ id: 'tool', timestamp: 19_000, source: 'tool', text: 'sleep' },
+					{
+						id: 'first-end',
+						timestamp: 20_000,
+						source: 'system',
+						text: '',
+						metadata: { ompTurnBoundary: true },
+					},
+					{
+						id: 'follow-up',
+						timestamp: 20_000,
+						source: 'user',
+						text: 'Follow-up request',
+						deliveryIntent: 'follow_up',
+						deliveryState: 'consumed',
+					},
+					{ id: 'follow-up-output', timestamp: 21_000, source: 'ai', text: 'Done' },
+					{
+						id: 'follow-up-end',
+						timestamp: 21_000,
+						source: 'system',
+						text: '',
+						metadata: { ompTurnBoundary: true },
+					},
+				]}
+				theme={THEMES.dracula}
+				isLive={false}
+				renderLog={(log) => <span>{log.text}</span>}
+			/>
+		);
+
+		const turns = screen.getAllByLabelText('Completed OMP turn');
+		expect(turns).toHaveLength(2);
+		expect(turns[0]).toHaveTextContent('20s');
+		expect(turns[1]).toHaveTextContent('1s');
+		expect(turns[0]).not.toHaveTextContent('Follow-up request');
+		expect(turns[1]).toHaveTextContent('Follow-up request');
+	});
+
 	it('keeps a failed queued continuation in flow with an explicit failure receipt', () => {
 		render(
 			<OmpTurnFabric

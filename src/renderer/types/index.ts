@@ -247,6 +247,8 @@ export interface LogEntry {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
 		};
+		/** Invisible OMP turn-end timestamp used to seal an in-flow receipt. */
+		ompTurnBoundary?: true;
 		// Provenance for a cross-agent (@mention) response entry: this AI entry
 		// was produced by a DIFFERENT agent that the user consulted via `@target`.
 		// Phase 03 stamps it; Phase 04 renders the attribution pill from it.

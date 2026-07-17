@@ -198,13 +198,10 @@ describe('useRuntimeFeaturesListener', () => {
 		const session = storedSession();
 		expect(session.state).toBe('busy');
 		expect(session.aiTabs[0].state).toBe('busy');
-		expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual([
-			'first-prompt',
-			'output-a',
-			'output-b',
-			'queued-follow-up',
-		]);
-		expect(session.aiTabs[0].logs.at(-1)?.deliveryState).toBe('consumed');
+		const logs = session.aiTabs[0].logs;
+		expect(logs.slice(0, 3).map((log) => log.id)).toEqual(['first-prompt', 'output-a', 'output-b']);
+		expect(logs[3]?.metadata?.ompTurnBoundary).toBe(true);
+		expect(logs.at(-1)?.deliveryState).toBe('consumed');
 	});
 
 	it('marks a queued continuation failed when native cannot start it', () => {
@@ -401,7 +398,7 @@ describe('useRuntimeFeaturesListener', () => {
 		});
 
 		const logs = storedSession().aiTabs[0].logs;
-		expect(logs.map((log) => log.id)).toEqual([
+		expect(logs.filter((log) => !log.metadata?.ompTurnBoundary).map((log) => log.id)).toEqual([
 			'first',
 			'aborted-output',
 			'final-aborted-output',
@@ -414,6 +411,79 @@ describe('useRuntimeFeaturesListener', () => {
 			'replacement-one',
 			'replacement-two',
 		]);
+		const firstReplacement = logs.findIndex((log) => log.id === 'replacement-one');
+		const secondReplacement = logs.findIndex((log) => log.id === 'replacement-two');
+		expect(logs[firstReplacement - 1]?.metadata?.ompTurnBoundary).toBe(true);
+		expect(logs[secondReplacement - 1]?.metadata?.ompTurnBoundary).toBe(true);
+	});
+
+	it('seals the preceding receipt and retimes a consumed continuation to its actual start', () => {
+		vi.spyOn(Date, 'now')
+			.mockReturnValueOnce(20_000)
+			.mockReturnValueOnce(20_000)
+			.mockReturnValueOnce(21_000);
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									{ id: 'first', timestamp: 0, source: 'user', text: 'First request' },
+									{
+										id: 'queued',
+										timestamp: 1_000,
+										source: 'user',
+										text: 'Follow-up request',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		renderHook(() => useRuntimeFeaturesListener());
+
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: 'follow_up',
+			deliveryId: 'queued',
+		});
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									...tab.logs,
+									{ id: 'second-output', timestamp: 21_000, source: 'ai', text: 'Second' },
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+
+		const logs = storedSession().aiTabs[0].logs;
+		expect(logs.map((log) => log.id)).toEqual([
+			'first',
+			'omp-turn-boundary:owned-session-ai-tab-a:20000:2',
+			'queued',
+			'second-output',
+			'omp-turn-boundary:owned-session-ai-tab-a:21000:4',
+		]);
+		expect(logs.find((log) => log.id === 'queued')).toMatchObject({
+			timestamp: 20_000,
+			deliveryState: 'consumed',
+		});
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {

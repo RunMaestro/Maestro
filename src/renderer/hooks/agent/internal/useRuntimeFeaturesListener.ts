@@ -138,6 +138,34 @@ export function useRuntimeFeaturesListener(): void {
 			}
 			if (event.phase === 'turn_end') {
 				completedOmpTurns.add(sessionId);
+				const { baseSessionId, tabId } = parseSessionId(sessionId);
+				if (!tabId) return;
+				const endedAt = Date.now();
+				setSessions((sessions) =>
+					sessions.map((session) => {
+						if (session.id !== baseSessionId) return session;
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id !== tabId
+									? tab
+									: {
+											...tab,
+											logs: [
+												...tab.logs,
+												{
+													id: `omp-turn-boundary:${sessionId}:${endedAt}:${tab.logs.length}`,
+													timestamp: endedAt,
+													source: 'system',
+													text: '',
+													metadata: { ompTurnBoundary: true as const },
+												},
+											],
+										}
+							),
+						};
+					})
+				);
 				return;
 			}
 			const isAtomicReplacement = event.deliveryIntent === 'abort_and_prompt';
@@ -148,6 +176,7 @@ export function useRuntimeFeaturesListener(): void {
 				(!completedOmpTurns.has(sessionId) && !isAtomicReplacement)
 			)
 				return;
+			const continuationStartedAt = Date.now();
 			const { baseSessionId, tabId } = parseSessionId(sessionId);
 			setSessions((sessions) =>
 				sessions.map((session) => {
@@ -166,16 +195,31 @@ export function useRuntimeFeaturesListener(): void {
 						...session,
 						state: 'busy',
 						busySource: 'ai',
-						thinkingStartTime: Date.now(),
+						thinkingStartTime: continuationStartedAt,
 						aiTabs: session.aiTabs.map((tab) => {
 							if (tab.id !== tabId) return tab;
 							return {
 								...tab,
 								state: 'busy',
-								thinkingStartTime: Date.now(),
+								thinkingStartTime: continuationStartedAt,
 								logs: [
 									...tab.logs.filter((log) => log.id !== continuationEntry.id),
-									{ ...continuationEntry, deliveryState: 'consumed' as const },
+									...(isAtomicReplacement
+										? [
+												{
+													id: `omp-turn-boundary:${sessionId}:${continuationStartedAt}:${tab.logs.length - 1}`,
+													timestamp: continuationStartedAt,
+													source: 'system' as const,
+													text: '',
+													metadata: { ompTurnBoundary: true as const },
+												},
+											]
+										: []),
+									{
+										...continuationEntry,
+										timestamp: continuationStartedAt,
+										deliveryState: 'consumed' as const,
+									},
 								],
 							};
 						}),
