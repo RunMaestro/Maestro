@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 /**
  * Serializes first-party OMP renderer mutations per owning tab. OMP emits
@@ -48,7 +48,7 @@ export function useOmpEventCoordinator(commit?: OmpEventCommit): OmpEventCoordin
 		[flush]
 	);
 
-	return { enqueue, flush };
+	return useMemo(() => ({ enqueue, flush }), [enqueue, flush]);
 }
 
 export const NOOP_OMP_EVENT_COORDINATOR = NOOP;
