@@ -2132,7 +2132,6 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		emit(child, { type: 'turn_end' });
-		emit(child, { type: 'agent_end' });
 		emit(child, {
 			type: 'response',
 			id: deferredPrompt!.id,
@@ -2141,6 +2140,7 @@ describe('OmpNativeSessionAdapter', () => {
 			error: 'rejected',
 		});
 		await expect(delivery).rejects.toThrow();
+		emit(child, { type: 'agent_end' });
 		child.emit('close', 1, null);
 
 		expect(

@@ -217,7 +217,10 @@ export class OmpNativeSessionAdapter {
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
 			if (agentWasNotInvoked(response.data)) {
-				if (intent === 'follow_up' && this.removePendingContinuation(deliveryId)) {
+				if (
+					(intent === 'follow_up' && this.removePendingContinuation(deliveryId)) ||
+					intent === 'abort_and_prompt'
+				) {
 					this.reportRejectedContinuation(intent, deliveryId);
 				}
 				this.completeReservedTurnIfEnded();
