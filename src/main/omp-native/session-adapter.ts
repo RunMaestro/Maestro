@@ -206,6 +206,7 @@ export class OmpNativeSessionAdapter {
 		this.turnEmittedAssistantText = false;
 		if (!this.turnInFlight) this.completionEmitted = false;
 		this.turnInFlight = true;
+		if (intent === 'follow_up') this.pendingContinuationIntents.push({ intent, deliveryId });
 		try {
 			const response = await this.client.command({
 				type: 'prompt',
@@ -214,12 +215,13 @@ export class OmpNativeSessionAdapter {
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
 			if (agentWasNotInvoked(response.data)) {
+				if (intent === 'follow_up' && this.removePendingContinuation(deliveryId)) {
+					this.reportRejectedContinuation(intent, deliveryId);
+				}
 				this.completeTurn();
-			} else if (intent === 'follow_up') {
-				this.pendingContinuationIntents.push({ intent, deliveryId });
-			} else if (intent === 'abort_and_prompt') {
-				// OMP atomically aborts and replaces within the current agent turn:
-				// it emits no intermediate turn_end/turn_start pair to consume later.
+				return false;
+			}
+			if (intent === 'abort_and_prompt') {
 				this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 					phase: 'agent_start',
 					continuation: true,
@@ -229,7 +231,10 @@ export class OmpNativeSessionAdapter {
 			}
 			return true;
 		} catch (error) {
-			if (intent === 'follow_up' || intent === 'abort_and_prompt') {
+			if (
+				(intent === 'follow_up' && this.removePendingContinuation(deliveryId)) ||
+				intent === 'abort_and_prompt'
+			) {
 				this.reportRejectedContinuation(intent, deliveryId);
 			} else {
 				this.turnInFlight = false;
@@ -898,6 +903,15 @@ export class OmpNativeSessionAdapter {
 			0,
 			OMP_NATIVE_TURN_COMPLETION
 		);
+	}
+
+	private removePendingContinuation(
+		deliveryId: string
+	): { intent: 'follow_up' | 'abort_and_prompt'; deliveryId: string } | undefined {
+		const index = this.pendingContinuationIntents.findIndex(
+			(continuation) => continuation.deliveryId === deliveryId
+		);
+		return index === -1 ? undefined : this.pendingContinuationIntents.splice(index, 1)[0];
 	}
 
 	private failContinuationChain(): void {
