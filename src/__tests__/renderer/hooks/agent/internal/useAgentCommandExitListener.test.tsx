@@ -119,6 +119,29 @@ describe('useAgentCommandExitListener', () => {
 		expect(updated.aiTabs[0]).toMatchObject({ state: 'idle', thinkingStartTime: undefined });
 	});
 
+	it('settles a failed native continuation and retains an in-flow failure receipt', () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', logs: [] });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+		});
+		useSessionStore.getState().setSessions(() => [session]);
+
+		renderHook(() => useAgentCommandExitListener());
+		handler!('sess-1-ai-tab-1', 1, OMP_NATIVE_TURN_COMPLETION);
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).toBe('idle');
+		expect(updated.aiTabs[0]).toMatchObject({ state: 'idle', thinkingStartTime: undefined });
+		expect(updated.aiTabs[0].logs.at(-1)).toMatchObject({
+			source: 'system',
+			text: 'OMP continuation failed with code 1',
+		});
+	});
+
 	it('transitions session to idle when no AI tabs busy', () => {
 		const tab = createMockAITab({ id: 'tab-1', state: 'idle' });
 		const session = createMockSession({

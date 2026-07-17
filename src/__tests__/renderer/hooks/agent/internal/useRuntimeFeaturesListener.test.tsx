@@ -17,7 +17,7 @@ let onOmpTurnLifecycle:
 	| ((
 			sessionId: string,
 			event: {
-				phase: 'turn_end' | 'agent_start';
+				phase: 'turn_end' | 'agent_start' | 'continuation_failed';
 				continuation?: boolean;
 				deliveryIntent?: 'follow_up' | 'abort_and_prompt';
 			}
@@ -50,7 +50,7 @@ const mockProcess = {
 			handler: (
 				sessionId: string,
 				event: {
-					phase: 'turn_end' | 'agent_start';
+					phase: 'turn_end' | 'agent_start' | 'continuation_failed';
 					continuation?: boolean;
 					deliveryIntent?: 'follow_up' | 'abort_and_prompt';
 				}
@@ -202,6 +202,39 @@ describe('useRuntimeFeaturesListener', () => {
 			'queued-follow-up',
 		]);
 		expect(session.aiTabs[0].logs.at(-1)?.deliveryState).toBe('consumed');
+	});
+
+	it('marks a queued continuation failed when native cannot start it', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									{
+										id: 'failed-follow-up',
+										timestamp: 1,
+										source: 'user',
+										text: 'run after this',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		renderHook(() => useRuntimeFeaturesListener());
+
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+
+		expect(storedSession().aiTabs[0].logs[0].deliveryState).toBe('failed');
 	});
 
 	it('moves each queued replacement exactly once into its own continuation boundary', () => {

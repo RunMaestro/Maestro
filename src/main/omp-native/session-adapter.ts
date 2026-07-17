@@ -89,6 +89,7 @@ export class OmpNativeSessionAdapter {
 	private disposed = false;
 	private turnInFlight = false;
 	private pendingContinuationIntents: Array<'follow_up' | 'abort_and_prompt'> = [];
+	private completionEmitted = false;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
@@ -108,6 +109,7 @@ export class OmpNativeSessionAdapter {
 		this.child.once('close', (code, signal) => {
 			this.flushDiagnosticBuffer();
 			if (this.disposed) return;
+			this.failContinuationChain();
 			this.disposed = true;
 			adapters.delete(options.sessionId);
 			this.options.send('process:exit', options.sessionId, code ?? 0, signal ? 1 : undefined);
@@ -168,6 +170,7 @@ export class OmpNativeSessionAdapter {
 	async prompt(message: string, images?: readonly string[]): Promise<void> {
 		await this.initialized;
 		this.turnEmittedAssistantText = false;
+		this.completionEmitted = false;
 		this.turnInFlight = true;
 		try {
 			const response = await this.client.command({
@@ -190,6 +193,7 @@ export class OmpNativeSessionAdapter {
 	): Promise<void> {
 		await this.initialized;
 		this.turnEmittedAssistantText = false;
+		if (!this.turnInFlight) this.completionEmitted = false;
 		this.turnInFlight = true;
 		try {
 			const response = await this.client.command({
@@ -203,7 +207,11 @@ export class OmpNativeSessionAdapter {
 				this.pendingContinuationIntents.push(intent);
 			}
 		} catch (error) {
-			this.turnInFlight = false;
+			if (intent === 'follow_up' || intent === 'abort_and_prompt') {
+				this.failContinuationChain(intent);
+			} else {
+				this.turnInFlight = false;
+			}
 			throw error;
 		}
 	}
@@ -290,6 +298,7 @@ export class OmpNativeSessionAdapter {
 
 	dispose(): void {
 		if (this.disposed) return;
+		this.failContinuationChain();
 		this.disposed = true;
 		adapters.delete(this.options.sessionId);
 		for (const requestId of this.approvals.keys()) {
@@ -331,9 +340,10 @@ export class OmpNativeSessionAdapter {
 		if (this.disposed) return;
 		// Protocol failures originate from OmpRpcClient rather than stderr chunks,
 		// so they have no line terminator to wait for.
-		if (message.startsWith('OMP emitted ')) {
+		if (message.startsWith('OMP emitted ') || message.startsWith('OMP protocol ')) {
 			this.flushDiagnosticBuffer();
 			this.options.send('process:stderr', this.options.sessionId, message);
+			this.failContinuationChain();
 			return;
 		}
 		this.diagnosticBuffer += message;
@@ -438,6 +448,17 @@ export class OmpNativeSessionAdapter {
 		return this.refreshInFlight;
 	}
 
+	private refreshFeaturesInBackground(): void {
+		void this.refreshFeatures().catch((error: unknown) => {
+			if (this.disposed) return;
+			this.options.send(
+				'process:stderr',
+				this.options.sessionId,
+				error instanceof Error ? error.message : String(error)
+			);
+		});
+	}
+
 	private async performRefreshFeatures(): Promise<void> {
 		const [state, messages, subagents, stats, models, loginProviders] = await Promise.all([
 			this.client.command({ type: 'get_state' }),
@@ -539,6 +560,7 @@ export class OmpNativeSessionAdapter {
 			} else {
 				this.options.send('process:stderr', this.options.sessionId, `OMP ${detail}`);
 			}
+			if (event.type === 'extension_error') this.failContinuationChain();
 		}
 		if (
 			event.type === 'todo_reminder' ||
@@ -546,7 +568,7 @@ export class OmpNativeSessionAdapter {
 			event.type === 'goal_updated' ||
 			event.type === 'thinking_level_changed'
 		) {
-			void this.refreshFeatures();
+			this.refreshFeaturesInBackground();
 		}
 		if (event.type === 'agent_start') {
 			const deliveryIntent = this.pendingContinuationIntents.shift();
@@ -567,7 +589,7 @@ export class OmpNativeSessionAdapter {
 			});
 		if (event.type === 'turn_end' || event.type === 'agent_end') {
 			this.completeTurn();
-			void this.refreshFeatures();
+			this.refreshFeaturesInBackground();
 		}
 	}
 
@@ -677,7 +699,7 @@ export class OmpNativeSessionAdapter {
 			callback.type === 'session_info_update' ||
 			callback.type === 'config_update'
 		)
-			void this.refreshFeatures();
+			this.refreshFeaturesInBackground();
 	}
 
 	private async handleHostToolCall(callback: OmpRpcEvent): Promise<void> {
@@ -796,7 +818,7 @@ export class OmpNativeSessionAdapter {
 					`OMP notification: ${notification}`
 				);
 		}
-		if (isRuntimeFeatureRequest(method)) void this.refreshFeatures();
+		if (isRuntimeFeatureRequest(method)) this.refreshFeaturesInBackground();
 		void this.client
 			.send({ type: 'extension_ui_response', id, cancelled: true })
 			.then(() => this.resolvedApprovals.add(id))
@@ -810,8 +832,10 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private completeTurn(): void {
-		if (!this.turnInFlight || this.pendingContinuationIntents.length > 0) return;
+		if (!this.turnInFlight || this.pendingContinuationIntents.length > 0 || this.completionEmitted)
+			return;
 		this.turnInFlight = false;
+		this.completionEmitted = true;
 		// A native OMP agent_end completes one turn, not the long-lived RPC child.
 		// The process session id identifies the owning Maestro AI tab; the provider
 		// session id is only continuity metadata and cannot route renderer state.
@@ -819,6 +843,28 @@ export class OmpNativeSessionAdapter {
 			'process:command-exit',
 			this.options.sessionId,
 			0,
+			OMP_NATIVE_TURN_COMPLETION
+		);
+	}
+
+	private failContinuationChain(rejectedIntent?: 'follow_up' | 'abort_and_prompt'): void {
+		const intents = [
+			...this.pendingContinuationIntents.splice(0),
+			...(rejectedIntent ? [rejectedIntent] : []),
+		];
+		if (intents.length === 0 || this.completionEmitted) return;
+		this.turnInFlight = false;
+		this.completionEmitted = true;
+		for (const deliveryIntent of intents) {
+			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+				phase: 'continuation_failed',
+				deliveryIntent,
+			});
+		}
+		this.options.send(
+			'process:command-exit',
+			this.options.sessionId,
+			1,
 			OMP_NATIVE_TURN_COMPLETION
 		);
 	}

@@ -1822,6 +1822,234 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 
+	it('finalizes a queued continuation once when OMP reports an extension error before restart', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-failed-continuation',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first turn');
+		await adapter.deliver('follow_up', 'continue after this');
+		emit(child, { type: 'turn_end' });
+		emit(child, { type: 'extension_error', message: 'continuation failed' });
+		child.emit('close', 1, null);
+
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:omp-turn-lifecycle' && sessionId === 'tab-failed-continuation'
+			)
+		).toContainEqual([
+			'process:omp-turn-lifecycle',
+			'tab-failed-continuation',
+			{ phase: 'continuation_failed', deliveryIntent: 'follow_up' },
+		]);
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-failed-continuation'
+			)
+		).toEqual([['process:command-exit', 'tab-failed-continuation', 1, OMP_NATIVE_TURN_COMPLETION]]);
+	});
+
+	it('finalizes a queued continuation once when the RPC child closes before restart', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-closed-continuation',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first turn');
+		await adapter.deliver('follow_up', 'continue after this');
+		emit(child, { type: 'turn_end' });
+		child.emit('close', 1, null);
+
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-closed-continuation', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-closed-continuation'
+			)
+		).toEqual([['process:command-exit', 'tab-closed-continuation', 1, OMP_NATIVE_TURN_COMPLETION]]);
+	});
+
+	it('finalizes a rejected continuation delivery without leaving the current tab busy', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: command.type !== 'follow_up',
+						error: command.type === 'follow_up' ? 'rejected continuation' : undefined,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-rejected-continuation',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first turn');
+		await expect(adapter.deliver('follow_up', 'continue after this')).rejects.toThrow(
+			'rejected continuation'
+		);
+
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-rejected-continuation', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-rejected-continuation',
+			1,
+			OMP_NATIVE_TURN_COMPLETION
+		);
+	});
+
+	it('finalizes a queued continuation when OMP emits a protocol failure before restart', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-protocol-continuation',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first turn');
+		await adapter.deliver('follow_up', 'continue after this');
+		emit(child, { type: 'turn_end' });
+		emit(child, { type: 'unsupported_fixture_frame' });
+
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-protocol-continuation', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-protocol-continuation',
+			1,
+			OMP_NATIVE_TURN_COMPLETION
+		);
+	});
+
+	it('finalizes a queued continuation when disposing the adapter before restart', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-disposed-continuation',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('first turn');
+		await adapter.deliver('follow_up', 'continue after this');
+		emit(child, { type: 'turn_end' });
+		adapter.dispose();
+
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-disposed-continuation', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:command-exit',
+			'tab-disposed-continuation',
+			1,
+			OMP_NATIVE_TURN_COMPLETION
+		);
+	});
+
 	it('normalizes a tool lifecycle by toolCallId and omits id-less native events', async () => {
 		const child = new FakeChild();
 		const send = vi.fn();

@@ -103,6 +103,37 @@ export function useRuntimeFeaturesListener(): void {
 		const completedOmpTurns = new Set<string>();
 		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
 			if (!ownedGate.current?.(sessionId)) return;
+			if (event.phase === 'continuation_failed') {
+				completedOmpTurns.delete(sessionId);
+				const { baseSessionId, tabId } = parseSessionId(sessionId);
+				if (!tabId) return;
+				setSessions((sessions) =>
+					sessions.map((session) => {
+						if (session.id !== baseSessionId) return session;
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) => {
+								if (tab.id !== tabId) return tab;
+								const failedEntry = tab.logs.find(
+									(log) =>
+										log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
+								);
+								return failedEntry
+									? {
+											...tab,
+											logs: tab.logs.map((log) =>
+												log.id === failedEntry.id
+													? { ...log, deliveryState: 'failed' as const }
+													: log
+											),
+										}
+									: tab;
+							}),
+						};
+					})
+				);
+				return;
+			}
 			if (event.phase === 'turn_end') {
 				completedOmpTurns.add(sessionId);
 				return;

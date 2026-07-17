@@ -39,11 +39,24 @@ export function useAgentCommandExitListener(): void {
 						if (session.id !== actualSessionId) return session;
 
 						if (nativeTurnComplete && tabId) {
-							const aiTabs = session.aiTabs.map((tab) =>
-								tab.id === tabId
-									? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-									: tab
-							);
+							const aiTabs = session.aiTabs.map((tab) => {
+								if (tab.id !== tabId) return tab;
+								const failureLog: LogEntry | undefined =
+									code !== 0
+										? {
+												id: generateId(),
+												timestamp: Date.now(),
+												source: 'system',
+												text: `OMP continuation failed with code ${code}`,
+											}
+										: undefined;
+								return {
+									...tab,
+									state: 'idle' as const,
+									thinkingStartTime: undefined,
+									...(failureLog && { logs: [...tab.logs, failureLog] }),
+								};
+							});
 							const anyAiTabBusy = aiTabs.some((tab) => tab.state === 'busy');
 							return {
 								...session,
