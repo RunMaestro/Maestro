@@ -459,9 +459,15 @@ describe('process IPC handlers', () => {
 					sessionId: 'session-1-ai-tab-1',
 					intent: 'abort_and_prompt',
 					message: 'replace current work',
+					deliveryId: 'delivery-replace-1',
 				})
 			).resolves.toBe(true);
-			expect(deliver).toHaveBeenCalledWith('abort_and_prompt', 'replace current work', undefined);
+			expect(deliver).toHaveBeenCalledWith(
+				'abort_and_prompt',
+				'replace current work',
+				undefined,
+				'delivery-replace-1'
+			);
 
 			await expect(
 				handler({} as never, {
