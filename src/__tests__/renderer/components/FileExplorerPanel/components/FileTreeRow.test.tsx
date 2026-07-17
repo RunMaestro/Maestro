@@ -240,6 +240,32 @@ describe('FileTreeRow', () => {
 		vi.useRealTimers();
 	});
 
+	it('cancels its pending long press when unmounted before expiry', () => {
+		vi.useFakeTimers();
+		const openContextMenuAt = vi.fn();
+		const longPressTimerRef = { current: null as number | null };
+
+		try {
+			const { container, unmount } = render(
+				<FileTreeRow
+					{...defaultProps}
+					openContextMenuAt={openContextMenuAt}
+					longPressTimerRef={longPressTimerRef}
+				/>
+			);
+			fireEvent.touchStart(container.firstElementChild!, {
+				touches: [{ clientX: 100, clientY: 200 }],
+			});
+			unmount();
+			vi.advanceTimersByTime(500);
+
+			expect(openContextMenuAt).not.toHaveBeenCalled();
+			expect(longPressTimerRef.current).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('removes long-press capture listeners and suppression timer on unmount', () => {
 		vi.useFakeTimers();
 		const removeListener = vi.spyOn(document, 'removeEventListener');

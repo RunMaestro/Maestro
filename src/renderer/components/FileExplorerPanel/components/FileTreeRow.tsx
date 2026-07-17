@@ -121,6 +121,16 @@ export const FileTreeRow = memo(function FileTreeRow({
 	handleFileClick,
 	onOpenBrowserTabAt,
 }: FileTreeRowProps) {
+	const ownedLongPressTimerRef = useRef<number | null>(null);
+	const clearOwnedLongPress = useCallback(() => {
+		const timerId = ownedLongPressTimerRef.current;
+		if (timerId !== null && longPressTimerRef.current === timerId) {
+			window.clearTimeout(timerId);
+			longPressTimerRef.current = null;
+		}
+		ownedLongPressTimerRef.current = null;
+	}, [longPressTimerRef]);
+
 	const longPressSuppressionTimerRef = useRef<number | null>(null);
 	const longPressSuppressionCleanupRef = useRef<(() => void) | null>(null);
 	const clearLongPressSuppression = useCallback(() => {
@@ -128,7 +138,12 @@ export const FileTreeRow = memo(function FileTreeRow({
 		longPressSuppressionCleanupRef.current = null;
 	}, []);
 
-	useEffect(() => clearLongPressSuppression, [clearLongPressSuppression]);
+	useEffect(() => {
+		return () => {
+			clearOwnedLongPress();
+			clearLongPressSuppression();
+		};
+	}, [clearLongPressSuppression, clearOwnedLongPress]);
 	const { node, path: fullPath, depth, globalIndex } = item;
 	const absolutePath = `${session.fullPath}/${fullPath}`;
 	const isFolder = node.type === 'folder';
@@ -281,14 +296,17 @@ export const FileTreeRow = memo(function FileTreeRow({
 			}}
 			onTouchStart={(e) => {
 				longPressFiredRef.current = false;
-				if (longPressTimerRef.current) {
+				if (longPressTimerRef.current !== null) {
 					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
 				}
 				const touch = e.touches[0];
 				const x = touch.clientX;
 				const y = touch.clientY;
-				longPressTimerRef.current = window.setTimeout(() => {
+				const timerId = window.setTimeout(() => {
+					if (longPressTimerRef.current !== timerId) return;
 					longPressTimerRef.current = null;
+					ownedLongPressTimerRef.current = null;
 					longPressFiredRef.current = true;
 					openContextMenuAt(x, y, node, fullPath, globalIndex);
 					clearLongPressSuppression();
@@ -309,24 +327,17 @@ export const FileTreeRow = memo(function FileTreeRow({
 					document.addEventListener('click', swallow, true);
 					longPressSuppressionTimerRef.current = window.setTimeout(clearLongPressSuppression, 1000);
 				}, 500);
+				ownedLongPressTimerRef.current = timerId;
+				longPressTimerRef.current = timerId;
 			}}
 			onTouchMove={() => {
-				if (longPressTimerRef.current) {
-					window.clearTimeout(longPressTimerRef.current);
-					longPressTimerRef.current = null;
-				}
+				clearOwnedLongPress();
 			}}
 			onTouchEnd={() => {
-				if (longPressTimerRef.current) {
-					window.clearTimeout(longPressTimerRef.current);
-					longPressTimerRef.current = null;
-				}
+				clearOwnedLongPress();
 			}}
 			onTouchCancel={() => {
-				if (longPressTimerRef.current) {
-					window.clearTimeout(longPressTimerRef.current);
-					longPressTimerRef.current = null;
-				}
+				clearOwnedLongPress();
 			}}
 			onClick={(e) => {
 				if (longPressFiredRef.current) {
