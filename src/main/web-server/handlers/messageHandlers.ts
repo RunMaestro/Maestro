@@ -4540,7 +4540,8 @@ export class WebSocketMessageHandler {
 	 */
 	private handleMovement(client: WebClient, message: WebClientMessage): void {
 		const op = typeof message.op === 'string' ? (message.op as MovementOp) : undefined;
-		const id = typeof message.id === 'string' ? message.id : '';
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
 
 		const sendResult = (success: boolean, error?: string) => {
 			this.send(client, { type: 'movement_result', success, error, requestId: message.requestId });
@@ -4552,6 +4553,10 @@ export class WebSocketMessageHandler {
 		}
 		if (op !== 'clear' && !id) {
 			sendResult(false, `Missing movement item id for op '${op}'`);
+			return;
+		}
+		if (op !== 'clear' && rawId !== id) {
+			sendResult(false, 'Movement item id must not contain surrounding whitespace');
 			return;
 		}
 
@@ -4566,6 +4571,11 @@ export class WebSocketMessageHandler {
 				return;
 			}
 			viewType = rawViewType as MovementViewType;
+		}
+		const body = typeof message.body === 'string' ? message.body : undefined;
+		if ((op === 'add' || op === 'update') && viewType === 'html' && body === undefined) {
+			sendResult(false, `Movement ${op} requires HTML content when viewType is 'html'`);
+			return;
 		}
 
 		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
@@ -4588,7 +4598,7 @@ export class WebSocketMessageHandler {
 			width: num(message.width),
 			height: num(message.height),
 			title: typeof message.title === 'string' ? message.title : undefined,
-			body: typeof message.body === 'string' ? message.body : undefined,
+			body,
 		};
 
 		if (!this.callbacks.movementView) {
@@ -4634,7 +4644,8 @@ export class WebSocketMessageHandler {
 
 	/** Capture a live HTML Movement and return its diagnostics to the CLI. */
 	private handleGetMovementDesignerInspection(client: WebClient, message: WebClientMessage): void {
-		const id = typeof message.id === 'string' ? message.id.trim() : '';
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
 		const sendResult = (inspection: MovementDesignerInspection | null, error?: string) => {
 			this.send(client, {
 				type: 'movement_designer_inspection_result',
@@ -4646,6 +4657,10 @@ export class WebSocketMessageHandler {
 		};
 		if (!id) {
 			sendResult(null, 'Missing movement item id');
+			return;
+		}
+		if (rawId !== id) {
+			sendResult(null, 'Movement item id must not contain surrounding whitespace');
 			return;
 		}
 		if (!this.callbacks.getMovementDesignerInspection) {
@@ -4664,7 +4679,8 @@ export class WebSocketMessageHandler {
 
 	/** Perform a click or text entry inside the sandboxed HTML Movement. */
 	private handleInteractMovementDesigner(client: WebClient, message: WebClientMessage): void {
-		const id = typeof message.id === 'string' ? message.id.trim() : '';
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
 		const rawAction = message.action as Record<string, unknown> | undefined;
 		const selector = typeof rawAction?.selector === 'string' ? rawAction.selector.trim() : '';
 		const kind = rawAction?.kind;
@@ -4683,6 +4699,15 @@ export class WebSocketMessageHandler {
 				action: kind === 'type' ? 'type' : 'click',
 				selector,
 				message: 'Interaction requires an id, a CSS selector, and click or type action',
+			});
+			return;
+		}
+		if (rawId !== id) {
+			sendResult({
+				ok: false,
+				action: kind,
+				selector,
+				message: 'Movement item id must not contain surrounding whitespace',
 			});
 			return;
 		}

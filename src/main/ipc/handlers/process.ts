@@ -29,6 +29,7 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import { releaseConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -110,6 +111,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
 	initPermissionRelay(getMainWindow, getProcessManager());
+
+	// Manual renderer closes are ownership events, not remote Movement/Cadenza
+	// mutations. Release their isolated documents explicitly so closed mockups do
+	// not retain memory or consume the bounded registry.
+	ipcMain.on('concerto-html:release', (_event, surface: unknown, id: unknown) => {
+		if ((surface !== 'movement' && surface !== 'cadenza') || typeof id !== 'string' || !id) {
+			return;
+		}
+		releaseConcertoHtmlDocument(surface, id);
+	});
 
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(

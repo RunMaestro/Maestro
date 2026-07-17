@@ -143,15 +143,25 @@ async function sendMovement(
 	}
 }
 
-function requireId(id: string, op: MovementOp): void {
+type MovementIdOperation = MovementOp | 'inspect' | 'interact';
+
+function failMovementCommand(error: string, json: boolean | undefined): never {
+	if (json) console.log(JSON.stringify({ success: false, error }));
+	else console.error(`Error: ${error}`);
+	process.exit(1);
+}
+
+function requireId(id: string, op: MovementIdOperation, json?: boolean): void {
 	if (!id.trim()) {
-		console.error(`Error: id cannot be empty for movement ${op}`);
-		process.exit(1);
+		failMovementCommand(`id cannot be empty for movement ${op}`, json);
+	}
+	if (id !== id.trim()) {
+		failMovementCommand('Movement item id must not contain surrounding whitespace', json);
 	}
 }
 
 export async function movementAdd(id: string, options: MovementAddOptions): Promise<void> {
-	requireId(id, 'add');
+	requireId(id, 'add', options.json);
 	const viewType = resolveViewType(options, true);
 	const body = resolveMovementBody(options);
 	if (!body) {
@@ -180,7 +190,7 @@ export async function movementAdd(id: string, options: MovementAddOptions): Prom
 }
 
 export async function movementUpdate(id: string, options: MovementAddOptions): Promise<void> {
-	requireId(id, 'update');
+	requireId(id, 'update', options.json);
 	const viewType = resolveViewType(options, false);
 	await sendMovement(
 		{
@@ -200,7 +210,7 @@ export async function movementUpdate(id: string, options: MovementAddOptions): P
 }
 
 export async function movementMove(id: string, options: MovementMoveOptions): Promise<void> {
-	requireId(id, 'move');
+	requireId(id, 'move', options.json);
 	const x = parseNum('x', options.x);
 	const y = parseNum('y', options.y);
 	if (x === undefined || y === undefined) {
@@ -211,7 +221,7 @@ export async function movementMove(id: string, options: MovementMoveOptions): Pr
 }
 
 export async function movementRemove(id: string, options: MovementRemoveOptions): Promise<void> {
-	requireId(id, 'remove');
+	requireId(id, 'remove', options.json);
 	await sendMovement({ op: 'remove', id }, options.json, `Movement item '${id}' removed`);
 }
 
@@ -251,58 +261,63 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 
 /** Capture the live mockup exactly as rendered and save it as a PNG. */
 export async function movementInspect(id: string, options: MovementInspectOptions): Promise<void> {
-	requireId(id, 'update');
+	requireId(id, 'inspect', options.json);
 	if (!options.output) {
-		console.error('Error: movement inspect requires --output <png>');
-		process.exit(1);
+		failMovementCommand('movement inspect requires --output <png>', options.json);
 	}
+	let result: {
+		success: boolean;
+		inspection?: MovementDesignerInspection | null;
+		error?: string;
+	};
 	try {
-		const result = await withMaestroClient(async (client) =>
+		result = await withMaestroClient(async (client) =>
 			client.sendCommand<{
 				success: boolean;
 				inspection?: MovementDesignerInspection | null;
 				error?: string;
 			}>({ type: 'get_movement_designer_inspection', id }, 'movement_designer_inspection_result')
 		);
-		if (!result.success || !result.inspection) {
-			console.error(`Error: ${result.error || `Could not inspect HTML Movement '${id}'`}`);
-			process.exit(1);
-		}
-		const match = /^data:image\/png;base64,(.+)$/s.exec(result.inspection.imageDataUrl);
-		if (!match) {
-			console.error('Error: Maestro returned an invalid designer screenshot');
-			process.exit(1);
-		}
-		const output = path.resolve(options.output);
+	} catch (error) {
+		failMovementCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	if (!result.success || !result.inspection) {
+		failMovementCommand(result.error || `Could not inspect HTML Movement '${id}'`, options.json);
+	}
+	const match = /^data:image\/png;base64,(.+)$/s.exec(result.inspection.imageDataUrl);
+	if (!match) {
+		failMovementCommand('Maestro returned an invalid designer screenshot', options.json);
+	}
+	const output = path.resolve(options.output);
+	try {
 		mkdirSync(path.dirname(output), { recursive: true });
 		writeFileSync(output, Buffer.from(match[1], 'base64'));
-		const report = {
-			id,
-			output,
-			ready: result.inspection.ready,
-			viewport: result.inspection.viewport,
-			image: result.inspection.image,
-			logs: result.inspection.logs,
-		};
-		if (options.json) {
-			console.log(JSON.stringify(report));
-			return;
-		}
-		console.log(
-			`Saved HTML Movement '${id}' preview to ${output} (${report.viewport.width}x${report.viewport.height} CSS px, ${report.image.width}x${report.image.height} image px at ${report.image.scaleFactor}x)`
-		);
-		if (report.logs.length === 0) {
-			console.log('Runtime diagnostics: clean');
-			return;
-		}
-		console.log(`Runtime diagnostics (${report.logs.length}):`);
-		for (const entry of report.logs) {
-			const location = entry.line ? `:${entry.line}${entry.column ? `:${entry.column}` : ''}` : '';
-			console.log(`  [${entry.level}]${location} ${entry.message}`);
-		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(1);
+		failMovementCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	const report = {
+		id,
+		output,
+		ready: result.inspection.ready,
+		viewport: result.inspection.viewport,
+		image: result.inspection.image,
+		logs: result.inspection.logs,
+	};
+	if (options.json) {
+		console.log(JSON.stringify(report));
+		return;
+	}
+	console.log(
+		`Saved HTML Movement '${id}' preview to ${output} (${report.viewport.width}x${report.viewport.height} CSS px, ${report.image.width}x${report.image.height} image px at ${report.image.scaleFactor}x)`
+	);
+	if (report.logs.length === 0) {
+		console.log('Runtime diagnostics: clean');
+		return;
+	}
+	console.log(`Runtime diagnostics (${report.logs.length}):`);
+	for (const entry of report.logs) {
+		const location = entry.line ? `:${entry.line}${entry.column ? `:${entry.column}` : ''}` : '';
+		console.log(`  [${entry.level}]${location} ${entry.message}`);
 	}
 }
 
@@ -311,15 +326,16 @@ export async function movementInteract(
 	id: string,
 	options: MovementInteractOptions
 ): Promise<void> {
-	requireId(id, 'update');
+	requireId(id, 'interact', options.json);
 	const selected = [options.click !== undefined, options.type !== undefined].filter(Boolean).length;
 	if (selected !== 1) {
-		console.error('Error: movement interact requires exactly one of --click or --type');
-		process.exit(1);
+		failMovementCommand(
+			'movement interact requires exactly one of --click or --type',
+			options.json
+		);
 	}
 	if (options.type !== undefined && options.value === undefined) {
-		console.error('Error: --type requires --value');
-		process.exit(1);
+		failMovementCommand('--type requires --value', options.json);
 	}
 	const action: ConcertoDesignerAction =
 		options.click !== undefined

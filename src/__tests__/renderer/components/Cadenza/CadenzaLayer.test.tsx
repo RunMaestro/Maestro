@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CadenzaLayer } from '../../../../renderer/components/Cadenza/CadenzaLayer';
 import { applyCadenzaPayload, useCadenzaStore } from '../../../../renderer/stores/cadenzaStore';
@@ -8,6 +8,7 @@ describe('CadenzaLayer', () => {
 	beforeEach(() => {
 		useCadenzaStore.setState({ cadenzas: [], flashedId: null });
 		vi.mocked(window.maestro.fs.readFile).mockReset();
+		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
 	});
 
 	it('loads an image cadenza through the shared local-image IPC path', async () => {
@@ -59,5 +60,12 @@ describe('CadenzaLayer', () => {
 		expect(iframe.getAttribute('src')).toContain(
 			'maestro-concerto://render/?surface=cadenza&id=mini-mockup'
 		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close cadenza' }));
+		expect(window.maestro.process.releaseConcertoHtmlDocument).toHaveBeenCalledWith(
+			'cadenza',
+			'mini-mockup'
+		);
+		expect(useCadenzaStore.getState().cadenzas).toEqual([]);
 	});
 });

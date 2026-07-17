@@ -56,18 +56,43 @@ describe('applyMovementPayload', () => {
 			id: 'mockup',
 			viewType: 'html',
 			body: '<button>First</button>',
+			revision: 7,
 		});
 		expect(useMovementStore.getState().items[0]).toMatchObject({
 			viewType: 'html',
 			html: '<button>First</button>',
 			width: MOVEMENT_HTML_DEFAULT_WIDTH,
 			height: MOVEMENT_HTML_DEFAULT_HEIGHT,
+			timestamp: 7,
 		});
 
-		applyMovementPayload({ op: 'update', id: 'mockup', body: '<button>Second</button>' });
+		applyMovementPayload({
+			op: 'update',
+			id: 'mockup',
+			body: '<button>Second</button>',
+			revision: 8,
+		});
 		expect(useMovementStore.getState().items[0]).toMatchObject({
 			viewType: 'html',
 			html: '<button>Second</button>',
+			timestamp: 8,
+		});
+	});
+
+	it('preserves the prior type when an update switches to HTML without a body', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'view',
+			body: '{"blocks":[]}',
+		});
+		const timestamp = useMovementStore.getState().items[0].timestamp;
+
+		applyMovementPayload({ op: 'update', id: 'mockup', viewType: 'html' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			viewType: 'view',
+			timestamp,
 		});
 	});
 

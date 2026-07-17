@@ -6,8 +6,11 @@ import {
 	clearConcertoHtmlDocumentsForTests,
 	CONCERTO_HTML_CSP,
 	createConcertoHtmlResponse,
+	getConcertoHtmlDocumentRevision,
 	injectConcertoDesignerBootstrap,
 	MAX_CONCERTO_HTML_BYTES,
+	MAX_CONCERTO_HTML_DOCUMENTS,
+	releaseConcertoHtmlDocument,
 } from '../../main/concerto-html';
 import { buildConcertoHtmlUrl, CONCERTO_DESIGNER_CHANNEL } from '../../shared/concerto-html';
 
@@ -30,11 +33,14 @@ describe('Concerto HTML document protocol', () => {
 		expect(served).toContain(html);
 		expect(served).toContain(CONCERTO_DESIGNER_CHANNEL);
 		expect(served).toContain("data.action === 'click'");
+		expect(served.indexOf("'RTCPeerConnection'")).toBeLessThan(served.indexOf('window.ready=true'));
 		expect(response.headers.get('content-security-policy')).toBe(CONCERTO_HTML_CSP);
 		expect(CONCERTO_HTML_CSP).toContain("script-src 'unsafe-inline' blob:");
 		expect(CONCERTO_HTML_CSP).toContain("connect-src 'none'");
+		expect(CONCERTO_HTML_CSP).toContain("webrtc 'block'");
 		expect(CONCERTO_HTML_CSP).toContain("frame-src 'none'");
 		expect(CONCERTO_HTML_CSP).toContain('sandbox allow-scripts');
+		expect(response.headers.get('x-dns-prefetch-control')).toBe('off');
 	});
 
 	it('updates an existing HTML document without requiring viewType again', async () => {
@@ -78,6 +84,60 @@ describe('Concerto HTML document protocol', () => {
 				body: 'x'.repeat(MAX_CONCERTO_HTML_BYTES + 1),
 			})
 		).toThrow(/size limit/);
+	});
+
+	it('assigns a new revision whenever HTML content changes', () => {
+		const first = applyMovementHtmlPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<p>first</p>',
+		});
+		const second = applyMovementHtmlPayload({
+			op: 'update',
+			id: 'mockup',
+			body: '<p>second</p>',
+		});
+
+		expect(first.revision).toBe(1);
+		expect(second.revision).toBe(2);
+		expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBe(2);
+	});
+
+	it('rejects capacity instead of evicting a live document and accepts explicit release', () => {
+		for (let index = 0; index < MAX_CONCERTO_HTML_DOCUMENTS; index += 1) {
+			applyMovementHtmlPayload({
+				op: 'add',
+				id: `mockup-${index}`,
+				viewType: 'html',
+				body: `<p>${index}</p>`,
+			});
+		}
+
+		expect(() =>
+			applyMovementHtmlPayload({
+				op: 'add',
+				id: 'overflow',
+				viewType: 'html',
+				body: '<p>overflow</p>',
+			})
+		).toThrow(/document limit reached/);
+		expect(createConcertoHtmlResponse(buildConcertoHtmlUrl('movement', 'mockup-0', 1)).status).toBe(
+			200
+		);
+
+		releaseConcertoHtmlDocument('movement', 'mockup-0');
+		expect(createConcertoHtmlResponse(buildConcertoHtmlUrl('movement', 'mockup-0', 1)).status).toBe(
+			404
+		);
+		expect(() =>
+			applyMovementHtmlPayload({
+				op: 'add',
+				id: 'replacement',
+				viewType: 'html',
+				body: '<p>replacement</p>',
+			})
+		).not.toThrow();
 	});
 
 	it('blocks an HTML frame from navigating away from the local protocol', () => {

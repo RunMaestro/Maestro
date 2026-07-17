@@ -394,4 +394,70 @@ describe('Process Preload API', () => {
 			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', 'response-channel');
 		});
 	});
+
+	describe('Concerto designer requests', () => {
+		it('forwards the movement response channel and sends the commit ack', () => {
+			const callback = vi.fn();
+			const payload = { op: 'add' as const, id: 'mockup', revision: 11 };
+			let registeredHandler: (
+				event: unknown,
+				params: typeof payload,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:movement') registeredHandler = handler;
+			});
+
+			api.onRemoteMovement(callback);
+			registeredHandler!({}, payload, 'movement-response');
+			api.sendMovementAppliedResponse('movement-response', true);
+
+			expect(callback).toHaveBeenCalledWith(payload, 'movement-response');
+			expect(mockSend).toHaveBeenCalledWith('movement-response', true);
+		});
+
+		it('releases a closed Concerto HTML document', () => {
+			api.releaseConcertoHtmlDocument('cadenza', 'mini-mockup');
+
+			expect(mockSend).toHaveBeenCalledWith('concerto-html:release', 'cadenza', 'mini-mockup');
+		});
+
+		it('forwards the expected revision with inspection requests', () => {
+			const callback = vi.fn();
+			let registeredHandler: (
+				event: unknown,
+				id: string,
+				expectedRevision: number,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:getMovementDesignerInspection') registeredHandler = handler;
+			});
+
+			api.onRequestMovementDesignerInspection(callback);
+			registeredHandler!({}, 'mockup', 12, 'inspection-response');
+
+			expect(callback).toHaveBeenCalledWith('mockup', 12, 'inspection-response');
+		});
+
+		it('forwards the expected revision with interaction requests', () => {
+			const callback = vi.fn();
+			const action = { kind: 'click' as const, selector: '#continue' };
+			let registeredHandler: (
+				event: unknown,
+				id: string,
+				action: typeof action,
+				expectedRevision: number,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:interactMovementDesigner') registeredHandler = handler;
+			});
+
+			api.onRequestMovementDesignerInteraction(callback);
+			registeredHandler!({}, 'mockup', action, 13, 'interaction-response');
+
+			expect(callback).toHaveBeenCalledWith('mockup', action, 13, 'interaction-response');
+		});
+	});
 });

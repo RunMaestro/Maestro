@@ -19,11 +19,9 @@ export interface PointerDragOptions {
 }
 
 export function usePointerDrag() {
-	// Assumes one active drag at a time (true for mouse - a single pointer). The
-	// unmount-cleanup ref tracks only the latest drag; a second concurrent drag
-	// (multi-pointer touch+pen) would overwrite it, but each drag still removes its
-	// own listeners on its own pointer-up, so at worst the earlier drag loses only
-	// unmount protection until then. Revisit if these surfaces gain multi-touch drag.
+	// Concerto surfaces support one drag at a time. Starting another pointer cancels
+	// the previous gesture so its listeners and pointer capture cannot outlive the
+	// cleanup tracked for unmount.
 	const cleanupRef = useRef<(() => void) | null>(null);
 
 	useEffect(() => () => cleanupRef.current?.(), []);
@@ -35,6 +33,7 @@ export function usePointerDrag() {
 			opts: PointerDragOptions = {}
 		) => {
 			if (opts.ignoreButtons && (e.target as HTMLElement).closest('button')) return;
+			cleanupRef.current?.();
 			e.preventDefault();
 			if (opts.stopPropagation) e.stopPropagation();
 			const dragTarget = e.currentTarget;
@@ -64,7 +63,7 @@ export function usePointerDrag() {
 				} catch {
 					// Pointer-up and pointercancel may release capture before cleanup runs.
 				}
-				cleanupRef.current = null;
+				if (cleanupRef.current === cleanup) cleanupRef.current = null;
 			};
 			const onEnd = (ev: PointerEvent) => {
 				if (ev.pointerId !== pointerId) return;

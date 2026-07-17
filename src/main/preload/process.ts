@@ -17,6 +17,7 @@ import type {
 	ConcertoDesignerAction,
 	ConcertoDesignerActionResult,
 	ConcertoDesignerFrameSnapshot,
+	ConcertoHtmlSurface,
 } from '../../shared/concerto-html';
 
 // Re-export for consumers that import from preload
@@ -645,10 +646,23 @@ export function createProcessApi() {
 		 * the CLI/web interface. The renderer applies them to the movement store and
 		 * opens the movement view.
 		 */
-		onRemoteMovement: (callback: (params: MovementPayload) => void): (() => void) => {
-			const handler = (_: unknown, params: MovementPayload) => callback(params);
+		onRemoteMovement: (
+			callback: (params: MovementPayload, responseChannel?: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: MovementPayload, responseChannel?: string) =>
+				callback(params, responseChannel);
 			ipcRenderer.on('remote:movement', handler);
 			return () => ipcRenderer.removeListener('remote:movement', handler);
+		},
+
+		/** Ack a movement mutation after the renderer has committed it. */
+		sendMovementAppliedResponse: (responseChannel: string, applied: boolean): void => {
+			ipcRenderer.send(responseChannel, applied);
+		},
+
+		/** Release an isolated HTML document after its owning UI view is closed. */
+		releaseConcertoHtmlDocument: (surface: ConcertoHtmlSurface, id: string): void => {
+			ipcRenderer.send('concerto-html:release', surface, id);
 		},
 
 		/**
@@ -672,10 +686,10 @@ export function createProcessApi() {
 
 		/** Ask the renderer for a live HTML Movement frame's crop and diagnostics. */
 		onRequestMovementDesignerInspection: (
-			callback: (id: string, responseChannel: string) => void
+			callback: (id: string, expectedRevision: number, responseChannel: string) => void
 		): (() => void) => {
-			const handler = (_: unknown, id: string, responseChannel: string) =>
-				callback(id, responseChannel);
+			const handler = (_: unknown, id: string, expectedRevision: number, responseChannel: string) =>
+				callback(id, expectedRevision, responseChannel);
 			ipcRenderer.on('remote:getMovementDesignerInspection', handler);
 			return () => ipcRenderer.removeListener('remote:getMovementDesignerInspection', handler);
 		},
@@ -690,14 +704,20 @@ export function createProcessApi() {
 
 		/** Ask the sandboxed HTML Movement to perform a selector-scoped action. */
 		onRequestMovementDesignerInteraction: (
-			callback: (id: string, action: ConcertoDesignerAction, responseChannel: string) => void
+			callback: (
+				id: string,
+				action: ConcertoDesignerAction,
+				expectedRevision: number,
+				responseChannel: string
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				id: string,
 				action: ConcertoDesignerAction,
+				expectedRevision: number,
 				responseChannel: string
-			) => callback(id, action, responseChannel);
+			) => callback(id, action, expectedRevision, responseChannel);
 			ipcRenderer.on('remote:interactMovementDesigner', handler);
 			return () => ipcRenderer.removeListener('remote:interactMovementDesigner', handler);
 		},

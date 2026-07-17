@@ -25,6 +25,7 @@ import { stripThinkingFromTranscript } from '../../../../main/agents/claude-tran
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
+		on: vi.fn(),
 		removeHandler: vi.fn(),
 	},
 }));
@@ -372,6 +373,7 @@ describe('process IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
 		});
 	});
 

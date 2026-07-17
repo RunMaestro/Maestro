@@ -32,7 +32,11 @@ import type {
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
-import { applyCadenzaHtmlPayload, applyMovementHtmlPayload } from '../concerto-html';
+import {
+	applyCadenzaHtmlPayload,
+	applyMovementHtmlPayload,
+	getConcertoHtmlDocumentRevision,
+} from '../concerto-html';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -968,7 +972,18 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setMovementViewCallback(async (params) => {
 			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
 				return false;
-			applyMovementHtmlPayload(params);
+			if (
+				params.id &&
+				params.viewType === 'html' &&
+				params.body === undefined &&
+				getConcertoHtmlDocumentRevision('movement', params.id) === null
+			) {
+				logger.warn(
+					`HTML movement '${params.id}' requires a body when changing view type`,
+					'WebServer'
+				);
+				return false;
+			}
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for movementView', 'WebServer');
@@ -978,8 +993,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				logger.warn('webContents is not available for movementView', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send('remote:movement', params);
-			return true;
+			const routedParams = applyMovementHtmlPayload(params);
+			return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
+				fallback: false,
+				parse: (raw) => raw === true,
+				timeoutMs: 4000,
+				args: [routedParams],
+			});
 		});
 
 		// `movement state` read: ask the renderer for the current snapshot (items +
@@ -1005,6 +1025,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				return null;
 			const mainWindow = getMainWindow();
 			if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
+			const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
+			if (expectedRevision === null) return null;
 			const frame = await requestFromRenderer<ConcertoDesignerFrameSnapshot | null>(
 				mainWindow,
 				'remote:getMovementDesignerInspection',
@@ -1012,7 +1034,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					fallback: null,
 					parse: (raw) => (raw as ConcertoDesignerFrameSnapshot) ?? null,
 					timeoutMs: 4000,
-					args: [id],
+					args: [id, expectedRevision],
 				}
 			);
 			if (!frame) return null;
@@ -1055,6 +1077,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
 					return unavailable('Maestro renderer is unavailable');
 				}
+				const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
+				if (expectedRevision === null) {
+					return unavailable(`HTML movement '${id}' is unavailable`);
+				}
 				return requestFromRenderer<ConcertoDesignerActionResult>(
 					mainWindow,
 					'remote:interactMovementDesigner',
@@ -1062,7 +1088,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						fallback: unavailable('Designer action timed out'),
 						parse: (raw) => raw as ConcertoDesignerActionResult,
 						timeoutMs: 4000,
-						args: [id, action],
+						args: [id, action, expectedRevision],
 					}
 				);
 			}

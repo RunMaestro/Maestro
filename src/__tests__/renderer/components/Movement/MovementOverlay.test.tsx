@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovementOverlay } from '../../../../renderer/components/Movement/MovementOverlay';
 import { applyMovementPayload, useMovementStore } from '../../../../renderer/stores/movementStore';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -13,6 +13,7 @@ describe('MovementOverlay', () => {
 			hidden: false,
 			flashedId: null,
 		});
+		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
 	});
 
 	it('labels plugin-namespaced host views with their provenance', () => {
@@ -45,5 +46,12 @@ describe('MovementOverlay', () => {
 		expect(iframe.getAttribute('src')).toContain(
 			'maestro-concerto://render/?surface=movement&id=mockup'
 		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close movement panel' }));
+		expect(window.maestro.process.releaseConcertoHtmlDocument).toHaveBeenCalledWith(
+			'movement',
+			'mockup'
+		);
+		expect(useMovementStore.getState().items).toEqual([]);
 	});
 });

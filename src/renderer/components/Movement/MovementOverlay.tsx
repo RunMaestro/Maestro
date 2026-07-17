@@ -60,6 +60,10 @@ const MovementPanel = memo(function MovementPanel({
 
 	const frameRef = useRef<HTMLDivElement>(null);
 	const isHtml = item.viewType === 'html';
+	const onClose = () => {
+		window.maestro.process.releaseConcertoHtmlDocument?.('movement', item.id);
+		removeItem(item.id);
+	};
 
 	// Report the panel's real rendered height to the store so `movement state`
 	// gives the agent an accurate footprint (even for auto-sized panels).
@@ -117,7 +121,7 @@ const MovementPanel = memo(function MovementPanel({
 				)}
 				<button
 					type="button"
-					onClick={() => removeItem(item.id)}
+					onClick={onClose}
 					className="flex-shrink-0 flex items-center justify-center w-5 h-5 rounded transition-opacity opacity-70 hover:opacity-100"
 					style={{ color: theme.colors.textDim }}
 					title="Close panel"

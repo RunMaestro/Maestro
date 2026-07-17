@@ -29,21 +29,28 @@ interface FrameRecord {
 	revision: number;
 	ready: boolean;
 	logs: ConcertoDesignerLogEntry[];
-	readyWaiters: Set<() => void>;
 	pendingActions: Map<string, PendingAction>;
 }
 
 const records = new Map<string, FrameRecord>();
+const recordWaiters = new Map<string, Set<() => void>>();
 let nextRequestId = 1;
 
 function frameKey(surface: ConcertoHtmlSurface, id: string): string {
 	return `${surface}\0${id}`;
 }
 
-function notifyReady(record: FrameRecord): void {
+function notifyRecordWaiters(key: string): void {
+	const waiters = recordWaiters.get(key);
+	if (!waiters) return;
+	for (const resolve of waiters) resolve();
+	waiters.clear();
+	recordWaiters.delete(key);
+}
+
+function notifyReady(key: string, record: FrameRecord): void {
 	record.ready = true;
-	for (const resolve of record.readyWaiters) resolve();
-	record.readyWaiters.clear();
+	notifyRecordWaiters(key);
 }
 
 function clearRecord(record: FrameRecord): void {
@@ -57,8 +64,6 @@ function clearRecord(record: FrameRecord): void {
 		});
 	}
 	record.pendingActions.clear();
-	for (const resolve of record.readyWaiters) resolve();
-	record.readyWaiters.clear();
 }
 
 export function registerConcertoDesignerFrame(
@@ -75,9 +80,9 @@ export function registerConcertoDesignerFrame(
 		revision,
 		ready: false,
 		logs: [],
-		readyWaiters: new Set(),
 		pendingActions: new Map(),
 	});
+	notifyRecordWaiters(key);
 }
 
 export function unregisterConcertoDesignerFrame(
@@ -90,6 +95,7 @@ export function unregisterConcertoDesignerFrame(
 	if (!record || record.frame !== frame) return;
 	clearRecord(record);
 	records.delete(key);
+	notifyRecordWaiters(key);
 }
 
 function isLogLevel(value: unknown): value is ConcertoDesignerLogLevel {
@@ -102,13 +108,14 @@ export function handleConcertoDesignerMessage(
 	id: string,
 	event: MessageEvent
 ): void {
-	const record = records.get(frameKey(surface, id));
+	const key = frameKey(surface, id);
+	const record = records.get(key);
 	if (!record || event.source !== record.frame.contentWindow) return;
 	const data = event.data as Record<string, unknown> | null;
 	if (!data || data.channel !== CONCERTO_DESIGNER_CHANNEL) return;
 
 	if (data.kind === 'ready') {
-		notifyReady(record);
+		notifyReady(key, record);
 		return;
 	}
 	if (data.kind === 'console' && isLogLevel(data.level) && typeof data.message === 'string') {
@@ -148,27 +155,60 @@ export function handleConcertoDesignerMessage(
 	});
 }
 
-async function waitForReady(record: FrameRecord, timeoutMs: number): Promise<void> {
-	if (record.ready) return;
-	await new Promise<void>((resolve) => {
-		const finish = () => {
-			clearTimeout(timeoutId);
-			record.readyWaiters.delete(finish);
-			resolve();
-		};
-		const timeoutId = setTimeout(finish, timeoutMs);
-		record.readyWaiters.add(finish);
-	});
+function isMatchingReadyRecord(
+	record: FrameRecord | undefined,
+	expectedRevision: number | undefined
+): record is FrameRecord {
+	return (
+		record !== undefined &&
+		record.frame.isConnected &&
+		record.ready &&
+		(expectedRevision === undefined || record.revision === expectedRevision)
+	);
+}
+
+async function waitForMatchingReadyRecord(
+	key: string,
+	expectedRevision: number | undefined,
+	timeoutMs: number
+): Promise<FrameRecord | null> {
+	const deadline = Date.now() + Math.max(0, timeoutMs);
+	while (true) {
+		const record = records.get(key);
+		if (isMatchingReadyRecord(record, expectedRevision)) return record;
+
+		const remainingMs = deadline - Date.now();
+		if (remainingMs <= 0) return null;
+		await new Promise<void>((resolve) => {
+			let waiters = recordWaiters.get(key);
+			if (!waiters) {
+				waiters = new Set();
+				recordWaiters.set(key, waiters);
+			}
+			const finish = () => {
+				clearTimeout(timeoutId);
+				waiters?.delete(finish);
+				if (waiters?.size === 0) recordWaiters.delete(key);
+				resolve();
+			};
+			const timeoutId = setTimeout(finish, remainingMs);
+			waiters.add(finish);
+		});
+	}
 }
 
 export async function getConcertoDesignerFrameSnapshot(
 	surface: ConcertoHtmlSurface,
 	id: string,
-	timeoutMs = DEFAULT_READY_TIMEOUT_MS
+	timeoutMs = DEFAULT_READY_TIMEOUT_MS,
+	expectedRevision?: number
 ): Promise<ConcertoDesignerFrameSnapshot | null> {
-	const record = records.get(frameKey(surface, id));
-	if (!record || !record.frame.isConnected) return null;
-	await waitForReady(record, timeoutMs);
+	const record = await waitForMatchingReadyRecord(
+		frameKey(surface, id),
+		expectedRevision,
+		timeoutMs
+	);
+	if (!record) return null;
 	const rect = record.frame.getBoundingClientRect();
 	if (rect.width <= 0 || rect.height <= 0) return null;
 	return {
@@ -188,10 +228,16 @@ export async function interactWithConcertoDesignerFrame(
 	surface: ConcertoHtmlSurface,
 	id: string,
 	action: ConcertoDesignerAction,
-	timeoutMs = DEFAULT_ACTION_TIMEOUT_MS
+	timeoutMs = DEFAULT_ACTION_TIMEOUT_MS,
+	expectedRevision?: number
 ): Promise<ConcertoDesignerActionResult> {
-	const record = records.get(frameKey(surface, id));
-	if (!record || !record.frame.isConnected || !record.frame.contentWindow) {
+	const startedAt = Date.now();
+	const record = await waitForMatchingReadyRecord(
+		frameKey(surface, id),
+		expectedRevision,
+		timeoutMs
+	);
+	if (!record || !record.frame.contentWindow) {
 		return {
 			ok: false,
 			action: action.kind,
@@ -199,15 +245,7 @@ export async function interactWithConcertoDesignerFrame(
 			message: `HTML ${surface} '${id}' is not visible`,
 		};
 	}
-	await waitForReady(record, DEFAULT_READY_TIMEOUT_MS);
-	if (!record.ready) {
-		return {
-			ok: false,
-			action: action.kind,
-			selector: action.selector,
-			message: `HTML ${surface} '${id}' did not finish loading`,
-		};
-	}
+	const actionTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
 	const requestId = `designer-${Date.now()}-${nextRequestId++}`;
 	return new Promise<ConcertoDesignerActionResult>((resolve) => {
 		const timeoutId = setTimeout(() => {
@@ -218,7 +256,7 @@ export async function interactWithConcertoDesignerFrame(
 				selector: action.selector,
 				message: 'Designer action timed out',
 			});
-		}, timeoutMs);
+		}, actionTimeoutMs);
 		record.pendingActions.set(requestId, { action, resolve, timeoutId });
 		record.frame.contentWindow?.postMessage(
 			{
@@ -238,4 +276,9 @@ export async function interactWithConcertoDesignerFrame(
 export function clearConcertoDesignerFramesForTests(): void {
 	for (const record of records.values()) clearRecord(record);
 	records.clear();
+	for (const waiters of recordWaiters.values()) {
+		for (const resolve of waiters) resolve();
+		waiters.clear();
+	}
+	recordWaiters.clear();
 }

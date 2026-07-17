@@ -16,7 +16,7 @@ import {
 } from '../shared/concerto-html';
 
 export const MAX_CONCERTO_HTML_BYTES = 1_000_000;
-const MAX_CONCERTO_HTML_DOCUMENTS = 64;
+export const MAX_CONCERTO_HTML_DOCUMENTS = 64;
 
 export const CONCERTO_HTML_CSP = [
 	"default-src 'none'",
@@ -26,6 +26,7 @@ export const CONCERTO_HTML_CSP = [
 	'font-src data:',
 	'media-src data: blob:',
 	"connect-src 'none'",
+	"webrtc 'block'",
 	"object-src 'none'",
 	"frame-src 'none'",
 	"child-src 'none'",
@@ -34,7 +35,13 @@ export const CONCERTO_HTML_CSP = [
 	'sandbox allow-scripts',
 ].join('; ');
 
-const documents = new Map<string, string>();
+interface ConcertoHtmlDocument {
+	html: string;
+	revision: number;
+}
+
+const documents = new Map<string, ConcertoHtmlDocument>();
+let nextDocumentRevision = 1;
 
 /**
  * Runs inside the sandboxed mockup. It exposes a narrow designer harness to
@@ -43,6 +50,28 @@ const documents = new Map<string, string>();
  */
 const CONCERTO_DESIGNER_BOOTSTRAP = `<script>
 (() => {
+	// Chromium does not apply connect-src to RTCPeerConnection. Lock both
+	// constructor names before any document-authored script can retain them.
+	for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection']) {
+		let owner = globalThis;
+		while (owner && !Object.prototype.hasOwnProperty.call(owner, name)) {
+			owner = Object.getPrototypeOf(owner);
+		}
+		try {
+			if (owner) Object.defineProperty(owner, name, {
+				value: undefined,
+				writable: false,
+				configurable: false,
+			});
+		} catch {}
+		try {
+			Object.defineProperty(globalThis, name, {
+				value: undefined,
+				writable: false,
+				configurable: false,
+			});
+		} catch {}
+	}
 	const channel = ${JSON.stringify(CONCERTO_DESIGNER_CHANNEL)};
 	const send = (payload) => parent.postMessage({ channel, ...payload }, '*');
 	const format = (value) => {
@@ -153,19 +182,20 @@ function documentKey(surface: ConcertoHtmlSurface, id: string): string {
 	return `${surface}\0${id}`;
 }
 
-function setDocument(surface: ConcertoHtmlSurface, id: string, html: string): void {
+function setDocument(surface: ConcertoHtmlSurface, id: string, html: string): number {
 	const bytes = Buffer.byteLength(html, 'utf8');
 	if (bytes > MAX_CONCERTO_HTML_BYTES) {
 		throw new Error(`Concerto HTML exceeds the ${MAX_CONCERTO_HTML_BYTES}-byte size limit`);
 	}
 	const key = documentKey(surface, id);
-	documents.delete(key);
-	documents.set(key, html);
-	while (documents.size > MAX_CONCERTO_HTML_DOCUMENTS) {
-		const oldest = documents.keys().next().value as string | undefined;
-		if (oldest === undefined) break;
-		documents.delete(oldest);
+	if (!documents.has(key) && documents.size >= MAX_CONCERTO_HTML_DOCUMENTS) {
+		throw new Error(
+			`Concerto HTML document limit reached (${MAX_CONCERTO_HTML_DOCUMENTS}); close an existing HTML view before opening another`
+		);
 	}
+	const revision = nextDocumentRevision++;
+	documents.set(key, { html, revision });
+	return revision;
 }
 
 function deleteDocument(surface: ConcertoHtmlSurface, id: string): void {
@@ -182,23 +212,39 @@ function hasDocument(surface: ConcertoHtmlSurface, id: string): boolean {
 	return documents.has(documentKey(surface, id));
 }
 
-export function applyMovementHtmlPayload(payload: MovementPayload): void {
+export function getConcertoHtmlDocumentRevision(
+	surface: ConcertoHtmlSurface,
+	id: string
+): number | null {
+	return documents.get(documentKey(surface, id))?.revision ?? null;
+}
+
+export function releaseConcertoHtmlDocument(surface: ConcertoHtmlSurface, id: string): void {
+	deleteDocument(surface, id);
+}
+
+export function applyMovementHtmlPayload(payload: MovementPayload): MovementPayload {
 	if (payload.op === 'clear') {
 		clearSurface('movement');
-		return;
+		return payload;
 	}
-	if (!payload.id) return;
+	if (!payload.id) return payload;
 	if (payload.op === 'remove') {
 		deleteDocument('movement', payload.id);
-		return;
+		return payload;
 	}
-	if (payload.op === 'move') return;
+	if (payload.op === 'move') return payload;
 	if (payload.viewType === 'view') {
 		deleteDocument('movement', payload.id);
-		return;
+		return payload;
 	}
 	const isHtml = payload.viewType === 'html' || hasDocument('movement', payload.id);
-	if (isHtml && payload.body !== undefined) setDocument('movement', payload.id, payload.body);
+	if (!isHtml) return payload;
+	const revision =
+		payload.body !== undefined
+			? setDocument('movement', payload.id, payload.body)
+			: getConcertoHtmlDocumentRevision('movement', payload.id);
+	return revision === null ? payload : { ...payload, revision };
 }
 
 export function applyCadenzaHtmlPayload(payload: CadenzaPayload): void {
@@ -217,9 +263,9 @@ export function applyCadenzaHtmlPayload(payload: CadenzaPayload): void {
 export function createConcertoHtmlResponse(requestUrl: string): Response {
 	const target = parseConcertoHtmlUrl(requestUrl);
 	if (!target) return new Response('bad request', { status: 400 });
-	const html = documents.get(documentKey(target.surface, target.id));
-	if (html === undefined) return new Response('not found', { status: 404 });
-	return new Response(injectConcertoDesignerBootstrap(html), {
+	const document = documents.get(documentKey(target.surface, target.id));
+	if (document === undefined) return new Response('not found', { status: 404 });
+	return new Response(injectConcertoDesignerBootstrap(document.html), {
 		status: 200,
 		headers: {
 			'content-type': 'text/html; charset=utf-8',
@@ -227,6 +273,7 @@ export function createConcertoHtmlResponse(requestUrl: string): Response {
 			'content-security-policy': CONCERTO_HTML_CSP,
 			'permissions-policy':
 				'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=(), fullscreen=(), payment=(), usb=()',
+			'x-dns-prefetch-control': 'off',
 			'x-content-type-options': 'nosniff',
 		},
 	});
@@ -247,4 +294,5 @@ export function attachConcertoHtmlNavigationGuard(webContents: WebContents): voi
 /** Test-only reset for the in-memory registry. */
 export function clearConcertoHtmlDocumentsForTests(): void {
 	documents.clear();
+	nextDocumentRevision = 1;
 }

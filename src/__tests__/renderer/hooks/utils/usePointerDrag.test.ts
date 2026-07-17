@@ -88,4 +88,23 @@ describe('usePointerDrag', () => {
 
 		expect(releasePointerCapture).toHaveBeenCalledWith(7);
 	});
+
+	it('cancels the previous pointer before tracking a new drag', () => {
+		const firstDrag = vi.fn();
+		const secondDrag = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(7), firstDrag));
+		act(() => result.current(dragEvent(8), secondDrag));
+
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 40, 50, 7)));
+		act(() => window.dispatchEvent(pointer('pointermove', 45, 55, 8)));
+
+		expect(firstDrag).not.toHaveBeenCalled();
+		expect(secondDrag).toHaveBeenCalledWith(25, 25);
+
+		unmount();
+		expect(releasePointerCapture).toHaveBeenCalledWith(8);
+	});
 });

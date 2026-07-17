@@ -49,6 +49,8 @@ export interface MovementPayload {
 	body?: string;
 	/** Host-stamped plugin display name for a plugin-contributed view. */
 	sourcePlugin?: string;
+	/** Main-process document revision for an HTML frame. */
+	revision?: number;
 }
 
 /** One item's geometry as returned by the `state` read (for agent awareness). */

@@ -211,14 +211,19 @@ export function applyMovementPayload(p: MovementPayload): void {
 		if (typeof p.width === 'number') patch.width = p.width;
 		if (typeof p.height === 'number') patch.height = p.height;
 		if (p.title !== undefined) patch.title = p.title;
-		if (p.viewType !== undefined) patch.viewType = p.viewType;
-		const targetViewType = p.viewType ?? target?.viewType ?? 'view';
+		const isBodylessHtmlTransition =
+			p.viewType === 'html' && target?.viewType !== 'html' && p.body === undefined;
+		if (p.viewType !== undefined && !isBodylessHtmlTransition) patch.viewType = p.viewType;
+		const targetViewType = isBodylessHtmlTransition
+			? (target?.viewType ?? 'view')
+			: (p.viewType ?? target?.viewType ?? 'view');
 		if (p.body !== undefined) {
 			if (targetViewType === 'html') patch.html = p.body;
 			else patch.spec = parseSpec(p.body);
-		}
-		if (p.body !== undefined || p.viewType !== undefined) {
-			patch.timestamp = Math.max(Date.now(), (target?.timestamp ?? 0) + 1);
+			patch.timestamp =
+				targetViewType === 'html' && p.revision !== undefined
+					? p.revision
+					: Math.max(Date.now(), (target?.timestamp ?? 0) + 1);
 		}
 		store.patchItem(p.id, patch);
 		return;
@@ -255,7 +260,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 				: (existing?.spec ?? { blocks: [] }),
 		html: viewType === 'html' && p.body !== undefined ? p.body : existing?.html,
 		sourcePlugin: p.sourcePlugin ?? existing?.sourcePlugin ?? sourcePluginFromViewId(p.id),
-		timestamp: Date.now(),
+		timestamp: viewType === 'html' && p.revision !== undefined ? p.revision : Date.now(),
 	});
 }
 

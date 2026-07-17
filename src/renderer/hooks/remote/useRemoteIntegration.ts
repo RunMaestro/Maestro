@@ -689,8 +689,23 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// crashing the whole app into the error boundary.
 		const proc = window.maestro?.process;
 		if (typeof proc?.onRemoteMovement !== 'function') return;
-		const unsubscribe = proc.onRemoteMovement((params) => {
-			applyMovementPayload(params);
+		const unsubscribe = proc.onRemoteMovement((params, responseChannel) => {
+			const reply = (applied: boolean) => {
+				if (responseChannel) proc.sendMovementAppliedResponse?.(responseChannel, applied);
+			};
+			try {
+				flushSync(() => applyMovementPayload(params));
+			} catch {
+				reply(false);
+				return;
+			}
+			if (params.id && params.revision !== undefined) {
+				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
+					.then((snapshot) => reply(snapshot !== null))
+					.catch(() => reply(false));
+				return;
+			}
+			reply(true);
 		});
 		return () => {
 			unsubscribe();
@@ -713,13 +728,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		const proc = window.maestro?.process;
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
-		const unsubscribe = proc.onRequestMovementDesignerInspection((id, responseChannel) => {
-			void getConcertoDesignerFrameSnapshot('movement', id)
-				.then((snapshot) =>
-					proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
-				)
-				.catch(() => proc.sendMovementDesignerInspectionResponse?.(responseChannel, null));
-		});
+		const unsubscribe = proc.onRequestMovementDesignerInspection(
+			(id, expectedRevision, responseChannel) => {
+				void getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision)
+					.then((snapshot) =>
+						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
+					)
+					.catch(() => proc.sendMovementDesignerInspectionResponse?.(responseChannel, null));
+			}
+		);
 		return () => unsubscribe();
 	}, []);
 
@@ -728,18 +745,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		const proc = window.maestro?.process;
 		if (typeof proc?.onRequestMovementDesignerInteraction !== 'function') return;
-		const unsubscribe = proc.onRequestMovementDesignerInteraction((id, action, responseChannel) => {
-			void interactWithConcertoDesignerFrame('movement', id, action)
-				.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
-				.catch((error) =>
-					proc.sendMovementDesignerInteractionResponse?.(responseChannel, {
-						ok: false,
-						action: action.kind,
-						selector: action.selector,
-						message: error instanceof Error ? error.message : String(error),
-					})
-				);
-		});
+		const unsubscribe = proc.onRequestMovementDesignerInteraction(
+			(id, action, expectedRevision, responseChannel) => {
+				void interactWithConcertoDesignerFrame('movement', id, action, undefined, expectedRevision)
+					.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
+					.catch((error) =>
+						proc.sendMovementDesignerInteractionResponse?.(responseChannel, {
+							ok: false,
+							action: action.kind,
+							selector: action.selector,
+							message: error instanceof Error ? error.message : String(error),
+						})
+					);
+			}
+		);
 		return () => unsubscribe();
 	}, []);
 

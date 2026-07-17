@@ -379,6 +379,13 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 }: CadenzaLayerProps) {
 	const cadenzas = useCadenzaStore((s) => s.cadenzas);
 	const removeCadenza = useCadenzaStore((s) => s.removeCadenza);
+	const closeCadenza = useCallback(
+		(id: string) => {
+			window.maestro.process.releaseConcertoHtmlDocument?.('cadenza', id);
+			removeCadenza(id);
+		},
+		[removeCadenza]
+	);
 
 	// HUD only: report each card's hit region to the main process, which polls the
 	// cursor against them to toggle click-through (cross-platform - no reliance on
@@ -418,13 +425,7 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 	return createPortal(
 		<div className="fixed inset-0 pointer-events-none" style={{ zIndex: 100000 }}>
 			{cadenzas.map((view) => (
-				<CadenzaCard
-					key={view.id}
-					view={view}
-					theme={theme}
-					isHud={isHud}
-					onClose={removeCadenza}
-				/>
+				<CadenzaCard key={view.id} view={view} theme={theme} isHud={isHud} onClose={closeCadenza} />
 			))}
 		</div>,
 		document.body

@@ -10,12 +10,12 @@ import {
 
 describe('concertoDesignerBridge', () => {
 	let frame: HTMLIFrameElement;
+	const extraFrames: HTMLIFrameElement[] = [];
 
-	beforeEach(() => {
-		clearConcertoDesignerFramesForTests();
-		frame = document.createElement('iframe');
-		document.body.appendChild(frame);
-		vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+	function createConnectedFrame(): HTMLIFrameElement {
+		const connectedFrame = document.createElement('iframe');
+		document.body.appendChild(connectedFrame);
+		vi.spyOn(connectedFrame, 'getBoundingClientRect').mockReturnValue({
 			x: 20,
 			y: 40,
 			width: 640,
@@ -26,14 +26,21 @@ describe('concertoDesignerBridge', () => {
 			left: 20,
 			toJSON: () => ({}),
 		});
-		Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 640 });
-		Object.defineProperty(frame, 'clientHeight', { configurable: true, value: 480 });
+		Object.defineProperty(connectedFrame, 'clientWidth', { configurable: true, value: 640 });
+		Object.defineProperty(connectedFrame, 'clientHeight', { configurable: true, value: 480 });
+		return connectedFrame;
+	}
+
+	beforeEach(() => {
+		clearConcertoDesignerFramesForTests();
+		frame = createConnectedFrame();
 		registerConcertoDesignerFrame('movement', 'mockup', 3, frame);
 	});
 
 	afterEach(() => {
 		clearConcertoDesignerFramesForTests();
 		frame.remove();
+		for (const extraFrame of extraFrames.splice(0)) extraFrame.remove();
 		vi.restoreAllMocks();
 	});
 
@@ -117,5 +124,73 @@ describe('concertoDesignerBridge', () => {
 			}),
 			'*'
 		);
+	});
+
+	it('waits for the requested ready revision and ignores a stale replacement', async () => {
+		const snapshotPromise = getConcertoDesignerFrameSnapshot('movement', 'mockup', 1000, 5);
+		const staleFrame = createConnectedFrame();
+		extraFrames.push(staleFrame);
+		registerConcertoDesignerFrame('movement', 'mockup', 4, staleFrame);
+		handleConcertoDesignerMessage('movement', 'mockup', {
+			source: staleFrame.contentWindow,
+			data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+		} as MessageEvent);
+
+		const pendingMarker = Symbol('pending');
+		await expect(Promise.race([snapshotPromise, Promise.resolve(pendingMarker)])).resolves.toBe(
+			pendingMarker
+		);
+
+		const currentFrame = createConnectedFrame();
+		extraFrames.push(currentFrame);
+		registerConcertoDesignerFrame('movement', 'mockup', 5, currentFrame);
+		handleConcertoDesignerMessage('movement', 'mockup', {
+			source: currentFrame.contentWindow,
+			data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+		} as MessageEvent);
+
+		await expect(snapshotPromise).resolves.toMatchObject({ revision: 5, ready: true });
+	});
+
+	it('does not dispatch an action to an older ready revision', async () => {
+		handleConcertoDesignerMessage('movement', 'mockup', {
+			source: frame.contentWindow,
+			data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+		} as MessageEvent);
+		const stalePostMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+		const action = { kind: 'click' as const, selector: '#continue' };
+		const actionPromise = interactWithConcertoDesignerFrame('movement', 'mockup', action, 1000, 4);
+		await Promise.resolve();
+		expect(stalePostMessage).not.toHaveBeenCalled();
+
+		const currentFrame = createConnectedFrame();
+		extraFrames.push(currentFrame);
+		const currentPostMessage = vi
+			.spyOn(currentFrame.contentWindow!, 'postMessage')
+			.mockImplementation((message: unknown) => {
+				const command = message as { requestId: string };
+				queueMicrotask(() =>
+					handleConcertoDesignerMessage('movement', 'mockup', {
+						source: currentFrame.contentWindow,
+						data: {
+							channel: CONCERTO_DESIGNER_CHANNEL,
+							kind: 'command-result',
+							requestId: command.requestId,
+							ok: true,
+							action: 'click',
+							selector: '#continue',
+							message: 'Clicked element',
+						},
+					} as MessageEvent)
+				);
+			});
+		registerConcertoDesignerFrame('movement', 'mockup', 4, currentFrame);
+		handleConcertoDesignerMessage('movement', 'mockup', {
+			source: currentFrame.contentWindow,
+			data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+		} as MessageEvent);
+
+		await expect(actionPromise).resolves.toMatchObject({ ok: true, action: 'click' });
+		expect(currentPostMessage).toHaveBeenCalledTimes(1);
 	});
 });
