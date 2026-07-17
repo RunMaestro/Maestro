@@ -2268,15 +2268,31 @@ describe('OmpNativeSessionAdapter', () => {
 				'00000000-0000-4000-8000-000000000014'
 			)
 		).resolves.toBe(false);
-		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-atomic-uninvoked', {
-			phase: 'continuation_failed',
-			deliveryIntent: 'abort_and_prompt',
-			deliveryId: '00000000-0000-4000-8000-000000000014',
-		});
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId, event]) =>
+					channel === 'process:omp-turn-lifecycle' &&
+					sessionId === 'tab-atomic-uninvoked' &&
+					event &&
+					typeof event === 'object' &&
+					'phase' in event &&
+					event.phase === 'continuation_failed' &&
+					'deliveryIntent' in event &&
+					event.deliveryIntent === 'abort_and_prompt' &&
+					'deliveryId' in event &&
+					event.deliveryId === '00000000-0000-4000-8000-000000000014'
+			)
+		).toHaveLength(1);
 		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
 			0
 		);
 		emit(child, { type: 'prompt_result', text: 'base text' });
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId, text]) =>
+					channel === 'process:data' && sessionId === 'tab-atomic-uninvoked' && text === 'base text'
+			)
+		).toHaveLength(1);
 		emit(child, { type: 'turn_end' });
 		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
 			1
