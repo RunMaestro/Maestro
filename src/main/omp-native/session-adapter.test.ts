@@ -1,6 +1,10 @@
 import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
-import { normalizeOmpModelSelector, OmpNativeSessionAdapter } from './session-adapter';
+import {
+	contextWindowFromOmpRuntime,
+	normalizeOmpModelSelector,
+	OmpNativeSessionAdapter,
+} from './session-adapter';
 import capturedRpcTurn from './fixtures/real-rpc-turn.json';
 import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 import capturedThinkingLevel from './fixtures/real-rpc-thinking-level.json';
@@ -82,6 +86,7 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 		expect((spawn.mock.calls[0] as unknown as [string, string[]])[1]).not.toContain('--no-session');
 		await new Promise<void>((resolve) => setImmediate(resolve));
+		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(send).toHaveBeenCalledWith('process:slash-commands', 'tab-1', ['compact']);
 		expect(send).toHaveBeenCalledWith(
 			'process:runtime-features',
@@ -99,7 +104,7 @@ describe('OmpNativeSessionAdapter', () => {
 				]),
 				tree: [{ id: 'entry-1', label: 'Root' }],
 				subagents: [{ id: 'sub-1', label: 'Scout', status: 'running', detail: undefined }],
-				stats: { inputTokens: 12 },
+				stats: { inputTokens: 12, contextWindow: 200_000 },
 				loginProviders: [{ id: 'fixture-login', label: 'Fixture Login' }],
 			})
 		);
@@ -684,8 +689,18 @@ describe('OmpNativeSessionAdapter', () => {
 						: command.type === 'get_available_models'
 							? {
 									models: [
-										{ provider: 'fixture', id: 'fixture-initial', label: 'Initial' },
-										{ provider: 'fixture', id: 'fixture-reconciled', label: 'Reconciled' },
+										{
+											provider: 'fixture',
+											id: 'fixture-initial',
+											label: 'Initial',
+											contextWindow: 200_000,
+										},
+										{
+											provider: 'fixture',
+											id: 'fixture-reconciled',
+											label: 'Reconciled',
+											contextWindow: 1_000_000,
+										},
 									],
 								}
 							: command.type === 'get_messages'
@@ -753,6 +768,7 @@ describe('OmpNativeSessionAdapter', () => {
 					controls: expect.arrayContaining([
 						expect.objectContaining({ id: 'model', value: 'fixture-reconciled' }),
 					]),
+					stats: expect.objectContaining({ contextWindow: 1_000_000 }),
 				})
 			);
 		} finally {
@@ -1712,6 +1728,69 @@ describe('OmpNativeSessionAdapter', () => {
 				'login',
 			])
 		);
+	});
+
+	it('uses live runtime context metadata before model metadata and only then falls back', () => {
+		expect(
+			contextWindowFromOmpRuntime({
+				state: {
+					contextUsage: { contextWindow: 1_000_000 },
+					model: { provider: 'anthropic', id: 'claude-sonnet', contextWindow: 200_000 },
+				},
+				stats: { contextUsage: { contextWindow: 500_000 } },
+				models: [{ provider: 'anthropic', id: 'claude-sonnet', contextWindow: 200_000 }],
+			})
+		).toBe(1_000_000);
+		expect(
+			contextWindowFromOmpRuntime({
+				state: { model: { provider: 'anthropic', id: 'claude-sonnet', contextWindow: 200_000 } },
+				stats: {},
+				models: [{ provider: 'anthropic', id: 'claude-sonnet', contextWindow: 500_000 }],
+			})
+		).toBe(200_000);
+		expect(
+			contextWindowFromOmpRuntime({
+				state: { model: { provider: 'ollama', id: 'discovered-model' } },
+				stats: {},
+				models: [{ provider: 'ollama', id: 'discovered-model', contextWindow: 65_536 }],
+			})
+		).toBe(65_536);
+		expect(
+			contextWindowFromOmpRuntime({
+				state: { model: { provider: 'unknown', id: 'unknown-model' } },
+				stats: {},
+				models: [],
+			})
+		).toBe(200_000);
+	});
+
+	it('uses refreshed active-model metadata after model switches and session resumes', () => {
+		const models = [
+			{ provider: 'anthropic', id: 'claude-sonnet', contextWindow: 200_000 },
+			{ provider: 'anthropic', id: 'claude-opus', contextWindow: 1_000_000 },
+		];
+		expect(
+			contextWindowFromOmpRuntime({
+				state: { model: { provider: 'anthropic', id: 'claude-sonnet' } },
+				stats: {},
+				models,
+			})
+		).toBe(200_000);
+		expect(
+			contextWindowFromOmpRuntime({
+				state: { model: { provider: 'anthropic', id: 'claude-opus' } },
+				stats: {},
+				models,
+			})
+		).toBe(1_000_000);
+		expect(
+			contextWindowFromOmpRuntime({
+				state: {},
+				stats: {},
+				models,
+				selectedModel: 'anthropic:claude-opus',
+			})
+		).toBe(1_000_000);
 	});
 
 	function extensionResponses(child: FakeChild): Array<Record<string, unknown>> {

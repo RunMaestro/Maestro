@@ -421,7 +421,15 @@ export class OmpNativeSessionAdapter {
 		const modelOptions = Array.isArray(modelsData)
 			? modelsData.map(modelOption).filter((option) => option.id.length > 0)
 			: [];
-		const statsProjection = statsFromData(stats.data);
+		const statsProjection = {
+			...(statsFromData(stats.data) ?? {}),
+			contextWindow: contextWindowFromOmpRuntime({
+				state: stateData,
+				stats: stats.data,
+				models: modelsData,
+				selectedModel: this.appliedModel,
+			}),
+		};
 		const features: AgentRuntimeFeatureState = {
 			controls: controlsFromState(stateData, modelOptions, this.autoRetryEnabled),
 			tree: treeFromMessages(asRecord(messages.data).messages),
@@ -962,6 +970,49 @@ function subagentsFromData(value: unknown): AgentSubagent[] {
 							: 'running',
 		};
 	});
+}
+
+const OMP_CONTEXT_WINDOW_FALLBACK = 200_000;
+
+/**
+ * Resolves the active context window without treating Maestro's display default
+ * as model metadata. OMP's live session state is the runtime authority; the
+ * session-stat snapshot and model registry are used only when it is absent.
+ */
+export function contextWindowFromOmpRuntime(input: {
+	state: unknown;
+	stats: unknown;
+	models: unknown;
+	selectedModel?: string;
+}): number {
+	const state = asRecord(input.state);
+	const statistics = asRecord(input.stats);
+	const nestedStats = asRecord(statistics.stats);
+	const activeModel = asRecord(state.model);
+	const activeProvider = stringAt(activeModel, 'provider');
+	const activeModelId = stringAt(activeModel, 'id') ?? stringAt(activeModel, 'modelId');
+	const selectedModel =
+		activeProvider && activeModelId ? `${activeProvider}:${activeModelId}` : input.selectedModel;
+	const models = Array.isArray(input.models) ? input.models.map(asRecord) : [];
+	const registryModel = models.find((model) => {
+		const provider = stringAt(model, 'provider');
+		const modelId = stringAt(model, 'id') ?? stringAt(model, 'modelId');
+		return provider && modelId && `${provider}:${modelId}` === selectedModel;
+	});
+	const candidates = [
+		asRecord(state.contextUsage).contextWindow,
+		asRecord(statistics.contextUsage).contextWindow,
+		asRecord(nestedStats.contextUsage).contextWindow,
+		statistics.contextWindow,
+		nestedStats.contextWindow,
+		activeModel.contextWindow,
+		registryModel?.contextWindow,
+	];
+	return (
+		candidates.find(
+			(value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0
+		) ?? OMP_CONTEXT_WINDOW_FALLBACK
+	);
 }
 
 function statsFromData(value: unknown): Record<string, number | string> | null {
