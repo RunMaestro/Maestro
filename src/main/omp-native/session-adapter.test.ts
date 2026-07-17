@@ -1905,7 +1905,7 @@ describe('OmpNativeSessionAdapter', () => {
 		).resolves.toBe(true);
 	});
 
-	it('continues a queued follow-up on the same RPC child at the next turn_start boundary', async () => {
+	it('consumes a queued follow-up at turn_end before 16.4.8 streams continuation output', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
 			const command = JSON.parse(frame) as { id?: string; type: string };
@@ -1956,7 +1956,6 @@ describe('OmpNativeSessionAdapter', () => {
 					channel === 'process:command-exit' && sessionId === 'tab-follow-up-chain'
 			)
 		).toHaveLength(0);
-		emit(child, { type: 'turn_start' });
 		emit(child, {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'output C' },

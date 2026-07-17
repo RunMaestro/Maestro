@@ -92,6 +92,9 @@ export class OmpNativeSessionAdapter {
 		intent: 'follow_up' | 'abort_and_prompt';
 		deliveryId: string;
 	}> = [];
+	private activeContinuationIntent:
+		| { intent: 'follow_up' | 'abort_and_prompt'; deliveryId: string }
+		| undefined;
 	private readonly usedDeliveryIds = new Set<string>();
 	private completionEmitted = false;
 	private awaitingContinuationBoundary = false;
@@ -517,6 +520,7 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleEvent(event: OmpRpcEvent): void {
+		let continuationStartedAtTurnEnd = false;
 		if (this.disposed) return;
 		if (event.type === 'message_update') {
 			const assistantMessageEvent = asRecord(event.assistantMessageEvent);
@@ -606,9 +610,19 @@ export class OmpNativeSessionAdapter {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'turn_end',
 			});
-			if (this.pendingContinuationIntents.length > 0) this.awaitingContinuationBoundary = true;
+			if (this.pendingContinuationIntents.length > 0) {
+				this.awaitingContinuationBoundary = true;
+				// OMP 16.4.8 can begin a queued turn's text stream immediately
+				// after turn_end without a distinct turn_start frame. Consume at
+				// the reliable preceding boundary so the renderer receives the
+				// delivery ID before any continuation output.
+				continuationStartedAtTurnEnd = this.startContinuationAtBoundary();
+			}
 		}
-		if (event.type === 'turn_end' || event.type === 'agent_end') {
+		if (
+			(event.type === 'turn_end' || event.type === 'agent_end') &&
+			!continuationStartedAtTurnEnd
+		) {
 			this.completeTurn();
 			this.refreshFeaturesInBackground();
 		}
@@ -863,6 +877,7 @@ export class OmpNativeSessionAdapter {
 		this.awaitingContinuationBoundary = false;
 		this.turnInFlight = true;
 		this.turnEmittedAssistantText = false;
+		this.activeContinuationIntent = continuation;
 		this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 			phase: 'agent_start',
 			continuation: true,
@@ -875,6 +890,7 @@ export class OmpNativeSessionAdapter {
 	private completeTurn(): void {
 		if (!this.turnInFlight || this.pendingContinuationIntents.length > 0 || this.completionEmitted)
 			return;
+		this.activeContinuationIntent = undefined;
 		this.turnInFlight = false;
 		this.awaitingContinuationBoundary = false;
 		this.completionEmitted = true;
@@ -890,7 +906,11 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private failContinuationChain(): void {
-		const continuations = this.pendingContinuationIntents.splice(0);
+		const continuations = [
+			...(this.activeContinuationIntent ? [this.activeContinuationIntent] : []),
+			...this.pendingContinuationIntents.splice(0),
+		];
+		this.activeContinuationIntent = undefined;
 		if (continuations.length === 0 || this.completionEmitted) return;
 		this.turnInFlight = false;
 		this.awaitingContinuationBoundary = false;
