@@ -111,15 +111,27 @@
 			},
 			{
 				"from": "src/prompts/speckit",
-				"to": "prompts/speckit"
+				"to": "prompts/speckit",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
 			},
 			{
 				"from": "src/prompts/openspec",
-				"to": "prompts/openspec"
+				"to": "prompts/openspec",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
 			},
 			{
 				"from": "src/prompts/bmad",
-				"to": "prompts/bmad"
+				"to": "prompts/bmad",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
 			}
 		],
 		"asarUnpack": [
@@ -251,7 +263,6 @@
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-search": "^0.16.0",
 		"@xterm/addon-unicode11": "^0.9.0",
-		"@xterm/addon-web-links": "^0.12.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^6.0.0",
 		"adm-zip": "^0.5.16",
@@ -327,7 +338,6 @@
 		"@vitest/coverage-v8": "^4.1.5",
 		"@welldone-software/why-did-you-render": "^8.0.3",
 		"autoprefixer": "^10.4.16",
-		"baseline-browser-mapping": "^2.9.17",
 		"canvas": "^3.2.0",
 		"cross-env": "^7.0.3",
 		"electron": "^41.5.0",

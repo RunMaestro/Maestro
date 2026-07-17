@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => ({
 		'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
 	},
 
-	esbuild: {
+	oxc: {
 		drop: mode === 'production' ? ['debugger'] : [],
 	},
 
@@ -84,7 +84,7 @@ export default defineConfig(({ mode }) => ({
 			},
 		},
 		target: 'es2020',
-		minify: mode === 'production' ? 'esbuild' : false,
+		minify: mode === 'production' ? 'oxc' : false,
 		cssMinify: 'esbuild',
 	},
 
