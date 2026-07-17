@@ -11,14 +11,18 @@
 import { useEffect } from 'react';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useSessionStore } from '../../../stores/sessionStore';
 import type { BatchedUpdater } from './types';
+import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
 export interface UseAgentStderrListenerDeps {
 	batchedUpdater: BatchedUpdater;
+	ompEventCoordinator?: OmpEventCoordinator;
 }
 
 export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
+	const ompEventCoordinator = deps.ompEventCoordinator ?? NOOP_OMP_EVENT_COORDINATOR;
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onStderr((sessionId: string, data: string) => {
 			// Window scoping: ignore agents this window doesn't own (broadcast events).
@@ -41,6 +45,15 @@ export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
 			}
 
 			if (isFromAi && tabIdFromSession) {
+				const session = useSessionStore
+					.getState()
+					.sessions.find((item) => item.id === actualSessionId);
+				if (session?.toolType === 'omp') {
+					ompEventCoordinator.enqueue(sessionId, () =>
+						deps.batchedUpdater.appendLog(actualSessionId, tabIdFromSession!, true, data, true)
+					);
+					return;
+				}
 				deps.batchedUpdater.appendLog(actualSessionId, tabIdFromSession, true, data, true);
 			} else {
 				deps.batchedUpdater.appendLog(actualSessionId, null, false, data, true);
@@ -50,5 +63,5 @@ export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater, ownedGate]);
+	}, [deps.batchedUpdater, deps.ompEventCoordinator, ownedGate]);
 }

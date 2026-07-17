@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useAgentStderrListener } from '../../../../../renderer/hooks/agent/internal/useAgentStderrListener';
 import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 
 let onStderrHandler: ((sessionId: string, data: string) => void) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -66,5 +67,25 @@ describe('useAgentStderrListener', () => {
 		renderHook(() => useAgentStderrListener({ batchedUpdater: batched }));
 		onStderrHandler!('sess-1-batch-tab-1', 'data');
 		expect(batched.appendLog).not.toHaveBeenCalled();
+	});
+	it('queues OMP stderr onto the tab coordinator instead of writing the global batch', () => {
+		const batched = makeBatched();
+		const enqueue = vi.fn();
+		useSessionStore.setState({
+			sessions: [{ id: 'sess-1', toolType: 'omp' }] as any,
+		});
+		renderHook(() =>
+			useAgentStderrListener({
+				batchedUpdater: batched,
+				ompEventCoordinator: { enqueue, flush: vi.fn() },
+			})
+		);
+
+		onStderrHandler!('sess-1-ai-tab-1', 'ordered stderr');
+
+		expect(enqueue).toHaveBeenCalledTimes(1);
+		expect(batched.appendLog).not.toHaveBeenCalled();
+		enqueue.mock.calls[0][1]();
+		expect(batched.appendLog).toHaveBeenCalledWith('sess-1', 'tab-1', true, 'ordered stderr', true);
 	});
 });

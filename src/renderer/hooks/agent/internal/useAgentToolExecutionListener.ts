@@ -24,11 +24,13 @@ import type { LogEntry } from '../../../types';
 import type { BatchedUpdater } from './types';
 import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
-const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow'> = { flushNow: () => undefined };
+const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = {
+	flushNow: () => undefined,
+};
 const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useAgentToolExecutionListener(
-	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER,
+	batchedUpdater: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = NOOP_BATCHED_UPDATER,
 	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH,
 	ompEventCoordinator: OmpEventCoordinator = NOOP_OMP_EVENT_COORDINATOR
 ): void {
@@ -60,9 +62,12 @@ export function useAgentToolExecutionListener(
 				// OMP lifecycle receipts must observe every earlier streamed chunk
 				// before a synchronous tool entry or turn boundary is appended.
 				if (owningSession.toolType === 'omp') {
-					ompEventCoordinator.flush(sessionId);
+					const flushed = ompEventCoordinator.flush(sessionId);
+					if (!flushed) {
+						if (batchedUpdater.flushSessionNow) batchedUpdater.flushSessionNow(actualSessionId);
+						else batchedUpdater.flushNow();
+					}
 					flushThinkingForSession(sessionId);
-					batchedUpdater.flushNow();
 				}
 				if (!toolEvent.toolCallId && owningSession.toolType === 'omp') return;
 

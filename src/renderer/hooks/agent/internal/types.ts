@@ -35,6 +35,8 @@ export interface BatchedUpdater {
 	updateCycleTokens: (sessionId: string, tokens: number) => void;
 	/** Force an immediate flush of pending batched updates (issue #1022). */
 	flushNow: () => void;
+	/** Flush pending updates for one session without draining unrelated tabs. */
+	flushSessionNow?: (sessionId: string) => void;
 }
 
 /** Dependencies passed from App.tsx to the hook */

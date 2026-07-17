@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { parseSessionId } from '../../utils/sessionIdParser';
 import type { ToolProgressState, UseAgentListenersDeps } from './internal/types';
 import { useAgentSlashCommandsListener } from './internal/useAgentSlashCommandsListener';
 import { useAgentStderrListener } from './internal/useAgentStderrListener';
@@ -55,7 +56,13 @@ export {
  * Call once in App.tsx. Empty dependency array — runs on mount, cleans up on unmount.
  */
 export function useAgentListeners(deps: UseAgentListenersDeps): void {
-	const ompEventCoordinator = useOmpEventCoordinator();
+	const ompEventCoordinator = useOmpEventCoordinator((sessionId) => {
+		if (deps.batchedUpdater.flushSessionNow) {
+			deps.batchedUpdater.flushSessionNow(parseSessionId(sessionId).baseSessionId);
+			return;
+		}
+		deps.batchedUpdater.flushNow();
+	});
 	// Shared ref — written by `onToolExecution`, deleted by `onData` and
 	// `onAgentError`. Hoisted to the coordinator so per-channel hooks operate
 	// on the same Map. Inner listeners that don't read this ref shouldn't
@@ -88,7 +95,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	});
 	useAgentSessionIdListener({ batchedUpdater: deps.batchedUpdater });
 	useAgentSlashCommandsListener();
-	useAgentStderrListener({ batchedUpdater: deps.batchedUpdater });
+	useAgentStderrListener({
+		batchedUpdater: deps.batchedUpdater,
+		ompEventCoordinator,
+	});
 	useAgentCommandExitListener();
 	useAgentUsageListener({
 		batchedUpdater: deps.batchedUpdater,

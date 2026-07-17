@@ -8,31 +8,45 @@ import { useCallback, useRef } from 'react';
  */
 export interface OmpEventCoordinator {
 	enqueue(sessionId: string, mutation: () => void): void;
-	flush(sessionId: string): void;
+	flush(sessionId: string): boolean;
 }
+
+export type OmpEventCommit = (sessionId: string) => void;
 
 const NOOP: OmpEventCoordinator = {
 	enqueue: () => undefined,
-	flush: () => undefined,
+	flush: () => false,
 };
 
-export function useOmpEventCoordinator(): OmpEventCoordinator {
+export function useOmpEventCoordinator(commit?: OmpEventCommit): OmpEventCoordinator {
 	const pendingRef = useRef(new Map<string, Array<{ sequence: number; mutation: () => void }>>());
+	const scheduledRef = useRef(new Set<string>());
+	const commitRef = useRef(commit);
+	commitRef.current = commit;
 	const sequenceRef = useRef(0);
 
-	const enqueue = useCallback((sessionId: string, mutation: () => void) => {
-		const pending = pendingRef.current.get(sessionId) ?? [];
-		pending.push({ sequence: sequenceRef.current++, mutation });
-		pendingRef.current.set(sessionId, pending);
-	}, []);
-
 	const flush = useCallback((sessionId: string) => {
+		scheduledRef.current.delete(sessionId);
 		const pending = pendingRef.current.get(sessionId);
-		if (!pending?.length) return;
+		if (!pending?.length) return false;
 		pendingRef.current.delete(sessionId);
 		pending.sort((first, second) => first.sequence - second.sequence);
 		for (const { mutation } of pending) mutation();
+		commitRef.current?.(sessionId);
+		return true;
 	}, []);
+
+	const enqueue = useCallback(
+		(sessionId: string, mutation: () => void) => {
+			const pending = pendingRef.current.get(sessionId) ?? [];
+			pending.push({ sequence: sequenceRef.current++, mutation });
+			pendingRef.current.set(sessionId, pending);
+			if (scheduledRef.current.has(sessionId)) return;
+			scheduledRef.current.add(sessionId);
+			queueMicrotask(() => flush(sessionId));
+		},
+		[flush]
+	);
 
 	return { enqueue, flush };
 }

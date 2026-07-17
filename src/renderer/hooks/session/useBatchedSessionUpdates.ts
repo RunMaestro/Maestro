@@ -97,6 +97,8 @@ export interface BatchedUpdater {
 	markUnread: (sessionId: string, tabId: string, unread: boolean) => void;
 	/** Force immediate flush of all pending updates */
 	flushNow: () => void;
+	/** Force immediate flush of one session without draining unrelated updates. */
+	flushSessionNow: (sessionId: string) => void;
 }
 
 export interface UseBatchedSessionUpdatesReturn extends BatchedUpdater {
@@ -144,16 +146,29 @@ export function useBatchedSessionUpdates(
 	/**
 	 * Apply all accumulated updates to sessions state
 	 */
-	const flush = useCallback(() => {
-		const updates = accumulatorRef.current;
-		if (updates.size === 0) {
+	const flush = useCallback((sessionIds?: ReadonlySet<string>) => {
+		const allUpdates = accumulatorRef.current;
+		if (allUpdates.size === 0) {
 			hasPendingRef.current = false;
 			return;
 		}
 
-		// Clear the accumulator before applying updates (to avoid race conditions)
-		accumulatorRef.current = new Map();
-		hasPendingRef.current = false;
+		const updates = sessionIds
+			? new Map([...allUpdates].filter(([sessionId]) => sessionIds.has(sessionId)))
+			: allUpdates;
+		if (updates.size === 0) return;
+
+		// Detach only the selected sessions before applying updates. A scoped
+		// OMP turn flush must not consume another tab's independently queued IO.
+		if (sessionIds) {
+			const remaining = new Map(allUpdates);
+			for (const sessionId of sessionIds) remaining.delete(sessionId);
+			accumulatorRef.current = remaining;
+			hasPendingRef.current = remaining.size > 0;
+		} else {
+			accumulatorRef.current = new Map();
+			hasPendingRef.current = false;
+		}
 
 		useSessionStore.getState().setSessions((prev: Session[]) => {
 			// PERF: Track whether any session was actually modified.
@@ -687,6 +702,12 @@ export function useBatchedSessionUpdates(
 	const flushNow = useCallback(() => {
 		flush();
 	}, [flush]);
+	const flushSessionNow = useCallback(
+		(sessionId: string) => {
+			flush(new Set([sessionId]));
+		},
+		[flush]
+	);
 
 	// Return memoized object to prevent unnecessary re-renders in consumers
 	return useMemo(
@@ -702,6 +723,7 @@ export function useBatchedSessionUpdates(
 			updateCycleTokens,
 			markUnread,
 			flushNow,
+			flushSessionNow,
 			get hasPending() {
 				return hasPendingRef.current;
 			},
@@ -718,6 +740,7 @@ export function useBatchedSessionUpdates(
 			updateCycleTokens,
 			markUnread,
 			flushNow,
+			flushSessionNow,
 		]
 	);
 }

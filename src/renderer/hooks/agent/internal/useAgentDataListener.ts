@@ -101,7 +101,6 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 					deps.batchedUpdater.appendLog(actualSessionId, targetTabId!, true, data);
 					deps.batchedUpdater.markDelivered(actualSessionId, targetTabId!);
 					deps.batchedUpdater.updateCycleBytes(actualSessionId, data.length);
-					deps.batchedUpdater.flushNow();
 				});
 				return;
 			}
