@@ -1694,6 +1694,21 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
+		await adapter.deliver('steer', 'keep the existing process');
+		await adapter.deliver('follow_up', 'do this after the turn');
+		await adapter.deliver('abort_and_prompt', 'replace the current turn');
+		expect(
+			frames
+				.filter((frame) =>
+					['steer', 'follow_up', 'abort_and_prompt'].includes(frame.type as string)
+				)
+				.map((frame) => ({ type: frame.type, message: frame.message }))
+		).toEqual([
+			{ type: 'steer', message: 'keep the existing process' },
+			{ type: 'follow_up', message: 'do this after the turn' },
+			{ type: 'abort_and_prompt', message: 'replace the current turn' },
+		]);
+
 		for (const control of [
 			'new-session',
 			'compact',

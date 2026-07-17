@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
+import type { OmpDeliveryIntent } from '../../../shared/omp-native-session';
 import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -150,10 +151,20 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
+	processInput: (
+		text?: string,
+		options?: { forceParallel?: boolean; images?: string[]; ompDeliveryIntent?: OmpDeliveryIntent }
+	) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: {
+				forceParallel?: boolean;
+				images?: string[];
+				ompDeliveryIntent?: OmpDeliveryIntent;
+			}
+		) => void
 	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
@@ -593,7 +604,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: {
+				forceParallel?: boolean;
+				images?: string[];
+				ompDeliveryIntent?: OmpDeliveryIntent;
+			}
+		) => void
 	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;

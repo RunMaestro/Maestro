@@ -1,5 +1,10 @@
 import type { AgentRuntimeFeatureState } from './agent-runtime-features';
 
+/**
+ * Composer-only delivery operations supported by the pinned first-party OMP RPC
+ * process while an active turn is running.
+ */
+export type OmpDeliveryIntent = 'steer' | 'follow_up' | 'abort_and_prompt';
 export interface OmpNativeTurnCompletion {
 	readonly kind: 'omp-native-turn';
 }

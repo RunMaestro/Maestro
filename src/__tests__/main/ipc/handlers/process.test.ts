@@ -402,6 +402,7 @@ describe('process IPC handlers', () => {
 			const expectedChannels = [
 				'process:spawn',
 				'process:write',
+				'process:deliver-omp',
 				'process:broadcast-user-input',
 				'process:interrupt',
 				'process:kill',
@@ -444,6 +445,32 @@ describe('process IPC handlers', () => {
 				value: undefined,
 				cancelled: undefined,
 			});
+		});
+
+		it('delivers only registered composer verbs to the existing OMP adapter', async () => {
+			const deliver = vi.fn().mockResolvedValue(undefined);
+			vi.mocked(OmpNativeSessionAdapter.forSession).mockReturnValue({
+				deliver,
+			} as unknown as OmpNativeSessionAdapter);
+			const handler = handlers.get('process:deliver-omp')!;
+
+			await expect(
+				handler({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					intent: 'abort_and_prompt',
+					message: 'replace current work',
+				})
+			).resolves.toBe(true);
+			expect(deliver).toHaveBeenCalledWith('abort_and_prompt', 'replace current work', undefined);
+
+			await expect(
+				handler({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					intent: 'set_todos',
+					message: 'must fail closed',
+				})
+			).resolves.toBe(false);
+			expect(deliver).toHaveBeenCalledTimes(1);
 		});
 
 		it('forwards set-agent-control and branch payloads after the wrapped IPC event is stripped', async () => {

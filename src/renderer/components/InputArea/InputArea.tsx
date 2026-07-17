@@ -5,6 +5,7 @@ import {
 	selectAiComposerValue,
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
@@ -152,6 +153,58 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Get wizardState from active tab (not session level - wizard state is per-tab)
 	const wizardState = activeTab?.wizardState;
+
+	// Only standard writable first-party OMP tabs expose the in-turn delivery
+	// contract. Read-only compatibility remains on its ordinary queued path.
+	const ompBusy =
+		session.inputMode === 'ai' &&
+		session.toolType === 'omp' &&
+		activeTab?.state === 'busy' &&
+		activeTab.readOnlyMode !== true;
+	const handleComposerKeyDown = useCallback(
+		(event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (ompBusy && event.key === 'Enter') {
+				event.preventDefault();
+				const ompDeliveryIntent = event.ctrlKey
+					? event.shiftKey
+						? 'abort_and_prompt'
+						: 'follow_up'
+					: 'steer';
+				processInput(undefined, { ompDeliveryIntent });
+				return;
+			}
+			handleInputKeyDown(event);
+		},
+		[handleInputKeyDown, ompBusy, processInput]
+	);
+
+	const ompQueuedFollowUps = useMemo(() => {
+		if (!ompBusy || !activeTab) return [];
+		return activeTab.logs.filter(
+			(log, index, logs) =>
+				log.deliveryIntent === 'follow_up' &&
+				!logs.slice(index + 1).some((next) => next.source === 'ai' || next.source === 'stdout')
+		);
+	}, [activeTab, ompBusy]);
+	const removeOmpFollowUp = useCallback(
+		(entryId: string) => {
+			useSessionStore.getState().setSessions((sessions) =>
+				sessions.map((candidate) =>
+					candidate.id !== session.id
+						? candidate
+						: {
+								...candidate,
+								aiTabs: candidate.aiTabs.map((tab) =>
+									tab.id === session.activeTabId
+										? { ...tab, logs: tab.logs.filter((log) => log.id !== entryId) }
+										: tab
+								),
+							}
+				)
+			);
+		},
+		[session.activeTabId, session.id]
+	);
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
@@ -368,6 +421,39 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{ompQueuedFollowUps.length > 0 && (
+				<div
+					className="mb-2 flex min-w-0 flex-col gap-1"
+					aria-label="Queued OMP follow-ups"
+					data-testid="omp-queued-follow-ups"
+				>
+					{ompQueuedFollowUps.map((entry) => (
+						<div
+							key={entry.id}
+							className="flex min-w-0 items-center gap-2 rounded-md border border-dashed px-2 py-1 text-xs"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+						>
+							<span className="min-w-0 flex-1 truncate">Queued follow-up · {entry.text}</span>
+							<button
+								type="button"
+								className="shrink-0 hover:opacity-80"
+								onClick={() => setInputValue(entry.text)}
+								aria-label={`Edit queued follow-up: ${entry.text}`}
+							>
+								Edit
+							</button>
+							<button
+								type="button"
+								className="shrink-0 hover:opacity-80"
+								onClick={() => removeOmpFollowUp(entry.id)}
+								aria-label={`Remove queued follow-up: ${entry.text}`}
+							>
+								Remove
+							</button>
+						</div>
+					))}
+				</div>
+			)}
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
 
@@ -499,8 +585,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							inputRef={inputRef}
 							onInputFocus={onInputFocus}
 							onInputBlur={onInputBlur}
+							handleInputKeyDown={handleComposerKeyDown}
 							onChange={handleTextChange}
-							handleInputKeyDown={handleInputKeyDown}
 							handlePaste={handlePaste}
 							handleDrop={handleDrop}
 						/>
@@ -558,6 +644,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					isTerminalMode={isTerminalMode}
 					processInput={processInput}
+					ompBusy={ompBusy}
+					onOmpDelivery={(ompDeliveryIntent) => processInput(undefined, { ompDeliveryIntent })}
 				/>
 			</div>
 		</div>

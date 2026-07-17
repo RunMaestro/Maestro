@@ -58,7 +58,7 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						if (!thinkingLogsRecorded(targetTab.showThinking)) return s;
+						if (!thinkingLogsRecorded(targetTab.showThinking) && s.toolType !== 'omp') return s;
 
 						const newState = toolEvent.state as
 							| NonNullable<LogEntry['metadata']>['toolState']

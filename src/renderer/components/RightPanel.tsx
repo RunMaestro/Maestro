@@ -40,9 +40,6 @@ import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
-import { NativeRuntimePanel } from './NativeRuntimePanel';
-import { resolveRuntimeFeatures } from '../utils/runtimeFeatures';
-
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
 	focusAutoRun: () => void;
@@ -142,9 +139,6 @@ export const RightPanel = memo(
 		// Files/History/Auto Run view. Outside a WindowProvider (single-window /
 		// isolation tests) this is always true, so behaviour is unchanged.
 		const ownsActiveSession = useWindowOwnsSession(session?.id);
-		// Native runtime projection for the ACTIVE tab (base-session projection only
-		// when the base session owns it); actions target exactly the owning id.
-		const ownedRuntime = session ? resolveRuntimeFeatures(session) : null;
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 		const activeRightTab = useUIStore((s) => s.activeRightTab);
@@ -478,14 +472,7 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(
-						[
-							'files',
-							'history',
-							...(autoRunDisabled ? [] : ['autorun']),
-							...(ownedRuntime ? ['runtime'] : []),
-						] as const
-					).map((tab) => (
+					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -496,11 +483,7 @@ export const RightPanel = memo(
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun'
-								? 'Auto Run'
-								: tab === 'runtime'
-									? 'Native'
-									: tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
 
@@ -601,14 +584,6 @@ export const RightPanel = memo(
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
 						</div>
-					)}
-
-					{activeRightTab === 'runtime' && ownedRuntime && (
-						<NativeRuntimePanel
-							features={ownedRuntime.features}
-							theme={theme}
-							sessionId={ownedRuntime.ownerId}
-						/>
 					)}
 				</div>
 

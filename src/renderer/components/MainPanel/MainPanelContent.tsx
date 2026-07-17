@@ -918,6 +918,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					</div>
 				</>
 			)}
+			{activeSession.toolType === 'omp' && activeSession.inputMode === 'ai' && (
+				<AgentApprovals
+					theme={theme}
+					approvals={activeSession.pendingApprovals ?? []}
+					onRespond={respondToApproval}
+					inline
+				/>
+			)}
+
 			{/* Shared AI input: one bar below whichever content the panel shows - the
 			    single-view routing above OR a tiled group - targeting the focused AI
 			    tab. See shouldShowInputArea for the visibility rules.
@@ -1177,11 +1186,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					</div>
 				);
 			})}
-			<AgentApprovals
-				theme={theme}
-				approvals={activeSession.pendingApprovals ?? []}
-				onRespond={respondToApproval}
-			/>
+			{activeSession.toolType !== 'omp' && (
+				<AgentApprovals
+					theme={theme}
+					approvals={activeSession.pendingApprovals ?? []}
+					onRespond={respondToApproval}
+				/>
+			)}
 		</div>
 	);
 });

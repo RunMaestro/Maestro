@@ -18,12 +18,19 @@ describe('OMP 16.4.8 command registry', () => {
 		}
 	});
 
-	it('marks unimplemented OMP verbs as unsupported instead of borrowing another dispatcher', () => {
+	it('authorizes all composer delivery verbs and keeps unrelated verbs unsupported', () => {
+		for (const command of ['steer', 'follow_up', 'abort_and_prompt'] as const) {
+			expect(OMP_16_4_8_COMMAND_REGISTRY[command]).toMatchObject({
+				disposition: 'ui',
+				rendererCaller: 'composer',
+				adapterHandler: 'prompt',
+			});
+		}
 		expect(
 			Object.entries(OMP_16_4_8_COMMAND_REGISTRY)
 				.filter(([, entry]) => entry.disposition === 'unsupported')
 				.map(([id]) => id)
-		).toEqual(['steer', 'follow_up', 'abort_and_prompt', 'set_todos', 'get_last_assistant_text']);
+		).toEqual(['set_todos', 'get_last_assistant_text']);
 	});
 
 	it('projects discovered login providers into the native runtime surface', () => {

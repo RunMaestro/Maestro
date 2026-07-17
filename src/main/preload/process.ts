@@ -19,6 +19,7 @@ import type {
 	AgentRuntimeFeatureState,
 } from '../../shared/agent-runtime-features';
 import type { OmpNativeTurnCompletion } from '../../shared/omp-native-session';
+import type { OmpDeliveryIntent } from '../../shared/omp-native-session';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -206,6 +207,14 @@ export function createProcessApi() {
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
 
+		/** Deliver a composer action to the already-running first-party OMP RPC session. */
+		deliverOmp: (payload: {
+			sessionId: string;
+			intent: OmpDeliveryIntent;
+			message: string;
+			images?: string[];
+		}): Promise<boolean> => ipcRenderer.invoke('process:deliver-omp', payload),
+
 		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
 			ipcRenderer.invoke('process:broadcast-user-input', payload),
 
@@ -334,9 +343,9 @@ export function createProcessApi() {
 		},
 
 		onRuntimeFeatures: (
-			callback: (sessionId: string, state: AgentRuntimeFeatureState) => void
+			callback: (sessionId: string, state: AgentRuntimeFeatureState | null) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, state: AgentRuntimeFeatureState) =>
+			const handler = (_: unknown, sessionId: string, state: AgentRuntimeFeatureState | null) =>
 				callback(sessionId, state);
 			ipcRenderer.on('process:runtime-features', handler);
 			return () => ipcRenderer.removeListener('process:runtime-features', handler);

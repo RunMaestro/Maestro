@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import type { OmpDeliveryIntent } from '../../../shared/omp-native-session';
 import type {
 	Session,
 	SessionState,
@@ -129,13 +130,21 @@ export interface UseInputProcessingReturn {
 	/** Process the current input (send message or execute command) */
 	processInput: (
 		overrideInputValue?: string,
-		options?: { forceParallel?: boolean; images?: string[] }
+		options?: {
+			forceParallel?: boolean;
+			images?: string[];
+			ompDeliveryIntent?: OmpDeliveryIntent;
+		}
 	) => Promise<void>;
 	/** Ref to processInput for use in callbacks that need latest version */
 	processInputRef: React.MutableRefObject<
 		| ((
 				overrideInputValue?: string,
-				options?: { forceParallel?: boolean; images?: string[] }
+				options?: {
+					forceParallel?: boolean;
+					images?: string[];
+					ompDeliveryIntent?: OmpDeliveryIntent;
+				}
 		  ) => Promise<void>)
 		| null
 	>;
@@ -188,7 +197,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	const processInputRef = useRef<
 		| ((
 				overrideInputValue?: string,
-				options?: { forceParallel?: boolean; images?: string[] }
+				options?: {
+					forceParallel?: boolean;
+					images?: string[];
+					ompDeliveryIntent?: OmpDeliveryIntent;
+				}
 		  ) => Promise<void>)
 		| null
 	>(null);
@@ -199,7 +212,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	const processInput = useCallback(
 		async (
 			overrideInputValue?: string,
-			options?: { forceParallel?: boolean; images?: string[] }
+			options?: {
+				forceParallel?: boolean;
+				images?: string[];
+				ompDeliveryIntent?: OmpDeliveryIntent;
+			}
 		) => {
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
@@ -541,6 +558,62 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					return;
 				}
+			}
+
+			// In-turn OMP delivery is a strict first-party RPC operation. It never
+			// degrades into Maestro's generic queue, stdin, or a replacement child.
+			if (options?.ompDeliveryIntent) {
+				const ompTab = currentMode === 'ai' ? getActiveTab(activeSession) : undefined;
+				const isWritableLiveOmp =
+					currentMode === 'ai' &&
+					activeSession.toolType === 'omp' &&
+					ompTab?.state === 'busy' &&
+					ompTab.readOnlyMode !== true;
+				if (!isWritableLiveOmp || !ompTab) return;
+
+				const delivered = await window.maestro.process.deliverOmp({
+					sessionId: `${activeSession.id}-ai-${ompTab.id}`,
+					intent: options.ompDeliveryIntent,
+					message: effectiveInputValue,
+					...(effectiveImages.length ? { images: [...effectiveImages] } : {}),
+				});
+				if (!delivered) return;
+
+				const deliveryEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					text: effectiveInputValue,
+					images: [...effectiveImages],
+					deliveryIntent: options.ompDeliveryIntent,
+				} satisfies LogEntry;
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== activeSessionId) return session;
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id === ompTab.id ? { ...tab, logs: [...tab.logs, deliveryEntry] } : tab
+							),
+						};
+					})
+				);
+				window.maestro.process
+					.broadcastUserInput({
+						originId: getInputBroadcastOriginId(),
+						sessionId: activeSession.id,
+						tabId: ompTab.id,
+						inputMode: 'ai',
+						entry: deliveryEntry,
+					})
+					.catch((error) =>
+						logger.error('[processInput] Failed to broadcast OMP delivery:', undefined, error)
+					);
+				setInputValue('');
+				if (!usingOverrideImages) setStagedImages([]);
+				syncAiInputToSession('');
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+				return;
 			}
 
 			// Queue messages when AI is busy (only in AI mode)

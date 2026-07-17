@@ -15,6 +15,7 @@ import type {
 	SummarizeProgress,
 	SummarizeResult,
 } from '../../types/contextMerge';
+import type { OmpDeliveryIntent } from '../../../shared/omp-native-session';
 
 export interface SlashCommand {
 	command: string;
@@ -60,7 +61,10 @@ export interface InputAreaProps {
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
 	toggleInputMode: () => void;
-	processInput: () => void;
+	processInput: (
+		text?: string,
+		options?: { forceParallel?: boolean; images?: string[]; ompDeliveryIntent?: OmpDeliveryIntent }
+	) => void;
 	handleInterrupt: () => void;
 	onInputFocus: () => void;
 	onInputBlur?: () => void;

@@ -1,4 +1,5 @@
 // Type definitions for Maestro renderer
+import type { OmpDeliveryIntent } from '../../shared/omp-native-session';
 
 // Re-export context merge types
 export * from './contextMerge';
@@ -66,7 +67,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun' | 'runtime';
+export type RightPanelTab = 'files' | 'history' | 'autorun';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).
@@ -228,6 +229,8 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	/** OMP composer delivery operation for an in-flight native RPC turn. */
+	deliveryIntent?: OmpDeliveryIntent;
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details

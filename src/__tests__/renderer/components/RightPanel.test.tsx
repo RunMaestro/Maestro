@@ -260,7 +260,7 @@ describe('RightPanel', () => {
 			expect(screen.getByTitle(/collapse right panel/i)).toBeInTheDocument();
 		});
 
-		it('renders dormant OMP readiness as a quiet note with no advanced controls', () => {
+		it('does not render a Native tab for OMP runtime projections', () => {
 			useSessionStore.setState({
 				sessions: [
 					{
@@ -270,82 +270,18 @@ describe('RightPanel', () => {
 							tree: null,
 							todos: null,
 							subagents: null,
-							stats: null,
-							readiness: {
-								state: 'dormant',
-								message: 'OMP Native ready — starts on first message.',
-							},
+							stats: { inputTokens: 21 },
 						},
 					},
 				],
 			});
-			useUIStore.setState({ activeRightTab: 'runtime' });
 
 			render(<RightPanel {...createDefaultProps()} />);
 
-			expect(screen.getByTestId('native-runtime-dormant')).toHaveTextContent(
-				'OMP Native ready — starts on first message.'
-			);
-			// Dormant is a readiness note, not a fake toolbar: no advanced controls
-			// (resume/shell/login) exist until the runtime is live.
-			expect(screen.queryByPlaceholderText('OMP session file path')).not.toBeInTheDocument();
-			expect(screen.queryByPlaceholderText('Run OMP shell command')).not.toBeInTheDocument();
-			expect(screen.queryByPlaceholderText('OMP login provider')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Native' })).not.toBeInTheDocument();
 			expect(screen.queryByTestId('native-runtime-stats')).not.toBeInTheDocument();
-		});
-
-		it('prefers the active tab runtime projection over the base-session projection', () => {
-			const dormantBase = {
-				controls: [],
-				tree: null,
-				todos: null,
-				subagents: null,
-				stats: null,
-				readiness: {
-					state: 'dormant' as const,
-					message: 'OMP Native ready — starts on first message.',
-				},
-			};
-			// Cast: the minimal tab shape (id/state/runtimeFeatures) is all RightPanel's
-			// runtime-projection consumers read; a full AITab is irrelevant here.
-			const sessionWithTabs = {
-				...mockSession,
-				runtimeFeatures: dormantBase,
-				activeTabId: 'tab-live',
-				aiTabs: [
-					{
-						id: 'tab-live',
-						name: 'Live tab',
-						logs: [],
-						state: 'idle',
-						runtimeFeatures: {
-							controls: [],
-							tree: null,
-							todos: null,
-							subagents: null,
-							stats: { inputTokens: 21 },
-						},
-					},
-					{
-						id: 'tab-other',
-						name: 'Other tab',
-						logs: [],
-						state: 'idle',
-						// This inactive tab was cleared; it must not affect the active tab.
-						runtimeFeatures: undefined,
-					},
-				],
-			} as unknown as Session;
-			useSessionStore.setState({ sessions: [sessionWithTabs] });
-			useUIStore.setState({ activeRightTab: 'runtime' });
-
-			render(<RightPanel {...createDefaultProps()} />);
-
-			// The live tab projection wins: stats render, no dormant note.
-			const stats = screen.getByTestId('native-runtime-stats');
-			expect(stats).toHaveTextContent('Input');
-			expect(stats).toHaveTextContent('21');
-			expect(screen.queryByTestId('native-runtime-dormant')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
 		});
 
 		it('should hide content when panel is closed', () => {

@@ -30,6 +30,8 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import { ompCommandRegistration } from '../../../shared/omp-command-registry';
+import type { OmpDeliveryIntent } from '../../../shared/omp-native-session';
 import type { ManagedRuntimeResolver } from '../../plugins/plugin-managed-runtime-service';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -237,6 +239,35 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				dataLength: data.length,
 			});
 			return processManager.write(sessionId, data);
+		})
+	);
+
+	// Composer-only OMP delivery path. This intentionally addresses the existing
+	// tab-owned adapter and never falls back to spawn/write when unavailable.
+	ipcMain.handle(
+		'process:deliver-omp',
+		withIpcErrorLogging(handlerOpts('deliver-omp'), async (payload: unknown): Promise<boolean> => {
+			if (!isOmpPayload(payload, ['sessionId', 'intent', 'message'])) return false;
+			const { sessionId, intent, message, images } = payload as {
+				sessionId: string;
+				intent: unknown;
+				message: unknown;
+				images?: unknown;
+			};
+			if (
+				(intent !== 'steer' && intent !== 'follow_up' && intent !== 'abort_and_prompt') ||
+				typeof message !== 'string' ||
+				(images !== undefined &&
+					(!Array.isArray(images) || images.some((image) => typeof image !== 'string')))
+			)
+				return false;
+			const registration = ompCommandRegistration(intent);
+			if (registration.disposition !== 'ui' || registration.rendererCaller !== 'composer')
+				return false;
+			const adapter = OmpNativeSessionAdapter.forSession(sessionId);
+			if (!adapter) return false;
+			await adapter.deliver(intent as OmpDeliveryIntent, message, images);
+			return true;
 		})
 	);
 

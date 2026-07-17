@@ -15,6 +15,7 @@ import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
 import { LogItem } from './components/LogItem';
+import { OmpTurnFabric } from './components/OmpTurnFabric';
 import { OutputSearchBar } from './components/OutputSearchBar';
 import { ScrollToBottomButton } from './components/ScrollToBottomButton';
 import { useLogItemUiState } from './hooks/useLogItemUiState';
@@ -200,6 +201,65 @@ export const TerminalOutput = memo(
 			[theme]
 		);
 
+		const renderLog = (log: LogEntry, index: number) => (
+			<LogItem
+				log={log}
+				index={index}
+				isTerminal={isTerminal}
+				isAIMode={isAIMode}
+				theme={theme}
+				fontFamily={fontFamily}
+				maxOutputLines={maxOutputLines}
+				lastUserCommand={
+					isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
+				}
+				isExpanded={expandedLogs.has(log.id)}
+				onToggleExpanded={toggleExpanded}
+				localFilterQuery={localFilters.get(log.id) || ''}
+				filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
+				activeLocalFilter={activeLocalFilter}
+				onToggleLocalFilter={toggleLocalFilter}
+				onSetLocalFilterQuery={setLocalFilterQuery}
+				onSetFilterMode={setFilterModeForLog}
+				onClearLocalFilter={clearLocalFilter}
+				deleteConfirmLogId={deleteConfirmLogId}
+				onDeleteLog={onDeleteLog}
+				onSetDeleteConfirmLogId={setDeleteConfirmLogId}
+				scrollContainerRef={scrollContainerRef}
+				setLightboxImage={setLightboxImage}
+				copyToClipboard={copyToClipboard}
+				ansiConverter={ansiConverter}
+				markdownEditMode={markdownEditMode}
+				onToggleMarkdownEditMode={toggleMarkdownEditMode}
+				onReplayMessage={onReplayMessage}
+				onForkConversation={onForkConversation}
+				sessionId={session.id}
+				onSessionRecover={onSessionRecover}
+				isRecoveringSession={isRecoveringSession}
+				sessionRecoveryError={sessionRecoveryError}
+				fileTree={fileTree}
+				cwd={cwd}
+				projectRoot={projectRoot}
+				onFileClick={onFileClick}
+				sshRemoteId={
+					session.sessionSshRemoteConfig?.enabled
+						? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
+						: undefined
+				}
+				onShowErrorDetails={onShowErrorDetails}
+				onSaveToFile={handleSaveToFile}
+				ghCliAvailable={ghCliAvailable}
+				onPublishGist={onPublishMessageGist}
+				publishedGistUrl={publishedGists[log.id]?.gistUrl}
+				bionifyReadingMode={globalBionifyReadingMode}
+				bionifyIntensity={globalBionifyIntensity}
+				bionifyAlgorithm={globalBionifyAlgorithm}
+				userMessageAlignment={userMessageAlignment}
+				isClaudeCode={session.toolType === 'claude-code'}
+				isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+			/>
+		);
+
 		return (
 			<div
 				ref={terminalOutputRef}
@@ -341,65 +401,17 @@ export const TerminalOutput = memo(
 					onScroll={handleScroll}
 				>
 					{/* Log entries */}
-					{filteredLogs.map((log, index) => (
-						<LogItem
-							key={log.id}
-							log={log}
-							index={index}
-							isTerminal={isTerminal}
-							isAIMode={isAIMode}
+					{session.toolType === 'omp' ? (
+						<OmpTurnFabric
+							logs={filteredLogs}
 							theme={theme}
-							fontFamily={fontFamily}
-							maxOutputLines={maxOutputLines}
-							lastUserCommand={
-								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
-							}
-							isExpanded={expandedLogs.has(log.id)}
-							onToggleExpanded={toggleExpanded}
-							localFilterQuery={localFilters.get(log.id) || ''}
-							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
-							activeLocalFilter={activeLocalFilter}
-							onToggleLocalFilter={toggleLocalFilter}
-							onSetLocalFilterQuery={setLocalFilterQuery}
-							onSetFilterMode={setFilterModeForLog}
-							onClearLocalFilter={clearLocalFilter}
-							deleteConfirmLogId={deleteConfirmLogId}
-							onDeleteLog={onDeleteLog}
-							onSetDeleteConfirmLogId={setDeleteConfirmLogId}
-							scrollContainerRef={scrollContainerRef}
-							setLightboxImage={setLightboxImage}
-							copyToClipboard={copyToClipboard}
-							ansiConverter={ansiConverter}
-							markdownEditMode={markdownEditMode}
-							onToggleMarkdownEditMode={toggleMarkdownEditMode}
-							onReplayMessage={onReplayMessage}
-							onForkConversation={onForkConversation}
-							sessionId={session.id}
-							onSessionRecover={onSessionRecover}
-							isRecoveringSession={isRecoveringSession}
-							sessionRecoveryError={sessionRecoveryError}
-							fileTree={fileTree}
-							cwd={cwd}
-							projectRoot={projectRoot}
-							onFileClick={onFileClick}
-							sshRemoteId={
-								session.sessionSshRemoteConfig?.enabled
-									? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
-									: undefined
-							}
-							onShowErrorDetails={onShowErrorDetails}
-							onSaveToFile={handleSaveToFile}
-							ghCliAvailable={ghCliAvailable}
-							onPublishGist={onPublishMessageGist}
-							publishedGistUrl={publishedGists[log.id]?.gistUrl}
-							bionifyReadingMode={globalBionifyReadingMode}
-							bionifyIntensity={globalBionifyIntensity}
-							bionifyAlgorithm={globalBionifyAlgorithm}
-							userMessageAlignment={userMessageAlignment}
-							isClaudeCode={session.toolType === 'claude-code'}
-							isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+							isLive={activeTab?.state === 'busy'}
+							subagents={activeTab?.runtimeFeatures?.subagents}
+							renderLog={renderLog}
 						/>
-					))}
+					) : (
+						filteredLogs.map((log, index) => <div key={log.id}>{renderLog(log, index)}</div>)
+					)}
 
 					{/* Queued items section - filtered to active tab */}
 					{session.executionQueue && session.executionQueue.length > 0 && (

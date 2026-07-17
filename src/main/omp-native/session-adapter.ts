@@ -18,8 +18,11 @@ import {
 	type OmpRpcImage,
 	type OmpRpcTransport,
 } from './types';
+import {
+	OMP_NATIVE_TURN_COMPLETION,
+	type OmpDeliveryIntent,
+} from '../../shared/omp-native-session';
 import { isRegisteredOmpControl } from '../../shared/omp-command-registry';
-import { OMP_NATIVE_TURN_COMPLETION } from '../../shared/omp-native-session';
 import { logger } from '../utils/logger';
 
 export type OmpNativeSend = (channel: string, ...args: unknown[]) => void;
@@ -170,6 +173,27 @@ export class OmpNativeSessionAdapter {
 				type: 'prompt',
 				message,
 				streamingBehavior: 'steer',
+				...(images?.length ? { images: toOmpImages(images) } : {}),
+			});
+			if (agentWasNotInvoked(response.data)) this.completeTurn();
+		} catch (error) {
+			this.turnInFlight = false;
+			throw error;
+		}
+	}
+
+	async deliver(
+		intent: OmpDeliveryIntent,
+		message: string,
+		images?: readonly string[]
+	): Promise<void> {
+		await this.initialized;
+		this.turnEmittedAssistantText = false;
+		this.turnInFlight = true;
+		try {
+			const response = await this.client.command({
+				type: intent,
+				message,
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
 			if (agentWasNotInvoked(response.data)) this.completeTurn();
@@ -482,7 +506,7 @@ export class OmpNativeSessionAdapter {
 				textFrom(event) ??
 				stringAt(event, 'message') ??
 				stringAt(event, 'error') ??
-				event.type.replaceAll('_', ' ');
+				event.type.replace(/_/g, ' ');
 			if (event.type === 'notice' && detail === 'xd://: mounted maestro.session.status') {
 				logger.debug(`OMP ${detail}`, 'OmpNativeSessionAdapter');
 			} else {

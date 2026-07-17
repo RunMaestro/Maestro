@@ -99,13 +99,10 @@ const unsupported = (id: OmpCommandId, rationale: string): OmpCommandRegistratio
  */
 export const OMP_16_4_8_COMMAND_REGISTRY: Registry = Object.freeze({
 	prompt: ui('prompt', 'prompt', 'composer'),
-	steer: unsupported('steer', 'Maestro has no ordinary caller for RPC steering prompts.'),
-	follow_up: unsupported('follow_up', 'Maestro has no ordinary caller for RPC follow-up prompts.'),
+	steer: ui('steer', 'prompt', 'composer'),
+	follow_up: ui('follow_up', 'prompt', 'composer'),
 	abort: ui('abort', 'interrupt', 'composer'),
-	abort_and_prompt: unsupported(
-		'abort_and_prompt',
-		'Maestro has no ordinary caller for the compound abort-and-prompt RPC.'
-	),
+	abort_and_prompt: ui('abort_and_prompt', 'prompt', 'composer'),
 	new_session: ui('new_session', 'setControl', 'header-controls', 'new-session'),
 	get_state: host(
 		'get_state',
