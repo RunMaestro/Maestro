@@ -10,13 +10,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { SessionList } from '../../renderer/components/SessionList';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { createMockTheme } from '../helpers/mockTheme';
 import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
+import { seedSidebarNav, resetSidebarNavStore } from '../helpers/seedSidebarNav';
+import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { useUIStore } from '../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useEffect } from 'react';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
@@ -375,6 +380,53 @@ const IntegrationTestWrapper = ({
 		setShowConfirmDialog({ message, onConfirm });
 	}, []);
 
+	// SessionList reads Zustand; keep local harness state mirrored into stores.
+	useEffect(() => {
+		useSessionStore.setState({ sessions, groups, activeSessionId });
+		seedSidebarNav({ sessions, groups, activeSessionId });
+	}, [sessions, groups, activeSessionId]);
+
+	useEffect(() => {
+		useUIStore.setState({
+			leftSidebarOpen,
+			activeFocus,
+			selectedSidebarIndex,
+			editingGroupId,
+			editingSessionId,
+			draggingSessionId,
+			bookmarksCollapsed,
+		});
+		useSettingsStore.setState({
+			leftSidebarWidth,
+			ungroupedCollapsed,
+		});
+	}, [
+		leftSidebarOpen,
+		activeFocus,
+		selectedSidebarIndex,
+		editingGroupId,
+		editingSessionId,
+		draggingSessionId,
+		bookmarksCollapsed,
+		leftSidebarWidth,
+		ungroupedCollapsed,
+	]);
+
+	// SessionList selection updates the store; mirror back for Auto Run panel.
+	useEffect(() => {
+		return useSessionStore.subscribe((state) => {
+			if (state.activeSessionId && state.activeSessionId !== activeSessionId) {
+				handleSessionSelect(state.activeSessionId);
+			}
+			if (state.sessions !== sessions) {
+				setSessions(state.sessions);
+			}
+			if (state.groups !== groups) {
+				setGroups(state.groups);
+			}
+		});
+	});
+
 	const theme = createMockTheme();
 	const shortcuts = createMockShortcuts();
 
@@ -384,38 +436,10 @@ const IntegrationTestWrapper = ({
 				{/* Session List */}
 				<SessionList
 					theme={theme}
-					sessions={sessions}
-					groups={groups}
-					sortedSessions={sessions}
-					starredItems={[]}
-					activateStarredItem={() => {}}
-					activeSessionId={activeSessionId}
-					leftSidebarOpen={leftSidebarOpen}
-					leftSidebarWidthState={leftSidebarWidth}
-					activeFocus={activeFocus}
-					selectedSidebarIndex={selectedSidebarIndex}
-					editingGroupId={editingGroupId}
-					editingSessionId={editingSessionId}
-					draggingSessionId={draggingSessionId}
-					shortcuts={shortcuts}
 					isLiveMode={false}
 					webInterfaceUrl={null}
 					toggleGlobalLive={() => {}}
-					bookmarksCollapsed={bookmarksCollapsed}
-					setBookmarksCollapsed={setBookmarksCollapsed}
-					ungroupedCollapsed={ungroupedCollapsed}
-					setUngroupedCollapsed={setUngroupedCollapsed}
-					setActiveFocus={(focus) => setActiveFocus(focus as 'sidebar' | 'main' | 'right')}
-					setActiveSessionId={handleSessionSelect}
-					setLeftSidebarOpen={setLeftSidebarOpen}
-					setLeftSidebarWidthState={setLeftSidebarWidth}
-					setShortcutsHelpOpen={() => {}}
-					setSettingsModalOpen={() => {}}
-					setSettingsTab={() => {}}
-					setAboutModalOpen={() => {}}
-					setUpdateCheckModalOpen={() => {}}
-					setLogViewerOpen={() => {}}
-					setProcessMonitorOpen={() => {}}
+					restartWebServer={async () => null}
 					toggleGroup={(groupId) => {
 						setGroups((prev) =>
 							prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
@@ -450,8 +474,6 @@ const IntegrationTestWrapper = ({
 					startRenamingGroup={(groupId) => setEditingGroupId(groupId)}
 					startRenamingSession={(sessId) => setEditingSessionId(sessId)}
 					showConfirmation={handleConfirmation}
-					setGroups={setGroups}
-					setSessions={setSessions}
 					createNewGroup={() => {
 						const newGroup: Group = {
 							id: `group-${Date.now()}`,
@@ -461,6 +483,7 @@ const IntegrationTestWrapper = ({
 						};
 						setGroups((prev) => [...prev, newGroup]);
 					}}
+					setGroupParent={() => {}}
 					addNewSession={() => {
 						const newSession = createMockSession({
 							id: `session-${Date.now()}`,
@@ -472,9 +495,9 @@ const IntegrationTestWrapper = ({
 						setSessions((prev) => [...prev, newSession]);
 						setActiveSessionId(newSession.id);
 					}}
-					setRenameInstanceModalOpen={() => {}}
-					setRenameInstanceValue={() => {}}
-					setRenameInstanceSessionId={() => {}}
+					onDeleteSession={handleDeleteSession}
+					onEditAgent={() => {}}
+					onNewAgentSession={() => {}}
 				/>
 
 				{/* Auto Run Panel (only render if active session exists) */}
@@ -550,6 +573,7 @@ describe('Auto Run + Session List Integration', () => {
 	let mockMaestro: ReturnType<typeof setupMaestroMock>;
 
 	beforeEach(() => {
+		resetSidebarNavStore();
 		mockMaestro = setupMaestroMock();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {

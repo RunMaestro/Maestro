@@ -48,7 +48,6 @@ import {
 	useHandsOnTimeTracker,
 	useNavigationHistory,
 	useSessionNavigation,
-	useSortedSessions,
 	useGroupManagement,
 	// Input processing
 	useInputHandlers,
@@ -126,8 +125,6 @@ import {
 	useQuickActionsHandlers,
 	// Session cycling (Cmd+Shift+[/])
 	useCycleSession,
-	// Starred Sessions list + activation (shared by Left Bar render and cycling)
-	useStarredItems,
 	// Input mode toggle (Tier 3A)
 	useInputMode,
 	// Live mode management (Tier 3B)
@@ -135,6 +132,8 @@ import {
 	// Session switching callbacks (navigate to session/tab from various UI surfaces)
 	useSessionSwitchCallbacks,
 } from './hooks';
+import { SidebarNavSync } from './hooks/session/SidebarNavSync';
+import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
@@ -163,7 +162,6 @@ import {
 } from './stores/sessionStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import {
-	sidebarSessionEquality,
 	gitPollSessionEquality,
 	projectRootSessionEquality,
 	activeSessionChromeEquality,
@@ -515,16 +513,7 @@ function MaestroConsoleInner() {
 	// PERF: Do NOT subscribe to the full `sessions` array here. Streaming log/token
 	// updates would re-render the entire console shell. Event-time readers use
 	// sessionsRef / getState(); paint leaves self-source with narrow selectors.
-	// Sidebar-stable view for the sort/navigation pipeline.
-	// `sidebarSessionEquality` ignores log/usage/cycle counters, so the array
-	// reference only flips when something the left bar actually displays
-	// changes. Plumbed into `useSortedSessions` so `sortedSessions` (and the
-	// SessionList tree) stops re-rendering on every 200ms streaming flush.
-	const sessionsForSidebar = useStoreWithEqualityFn(
-		useSessionStore,
-		(s) => s.sessions,
-		sidebarSessionEquality
-	);
+	// Left Bar sort/nav/starred live in sidebarNavStore (SidebarNavSync host).
 	const hasSessions = useSessionStore((s) => s.sessions.length > 0);
 	const hasNoAgents = !hasSessions;
 	const groups = useSessionStore((s) => s.groups);
@@ -2008,23 +1997,13 @@ function MaestroConsoleInner() {
 
 	// handleToastSessionClick, deep link navigation - now in useSessionSwitchCallbacks hook
 
-	// --- SESSION SORTING ---
-	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
-	const { sortedSessions, visibleSessions, navSessions, bookmarkNavSize, navIndexMap } =
-		useSortedSessions({
-			// Use the sidebar-stable projection so log streaming doesn't recompute
-			// the sort/navigation tree every 200ms.
-			sessions: sessionsForSidebar,
-			groups,
-			bookmarksCollapsed,
-			showUnreadAgentsOnly,
-			activeSessionId,
-		});
+	// --- SESSION SORTING / STARRED (sidebarNavStore) ---
+	// SidebarNavSync (mounted below) owns sidebarSessionEquality + sort/star
+	// computation. SessionList and keyboard cycle/nav read the store.
 
 	// --- KEYBOARD NAVIGATION ---
-	// NOTE: useKeyboardNavigation is called further down, after useStarredItems,
-	// so arrow-key navigation can traverse the Starred Sessions + Group Chats
-	// sections (which depend on starredItems / activateStarredItem).
+	// NOTE: useKeyboardNavigation is called further down, after showConfirmation
+	// is available so starred jump handlers can be registered on the store.
 
 	// --- MAIN KEYBOARD HANDLER ---
 	// Extracted hook for main keyboard event listener (empty deps, uses ref pattern)
@@ -2057,6 +2036,14 @@ function MaestroConsoleInner() {
 		pushNavigation,
 	});
 
+	// Register jump/confirm for closed starred activation (store.activateStarredItem).
+	useEffect(() => {
+		useSidebarNavStore.getState().registerStarredHandlers({
+			onJumpToStarredSession: handleJumpToStarredSession,
+			showConfirmation,
+		});
+	}, [handleJumpToStarredSession, showConfirmation]);
+
 	// NOTE: Theme CSS variables and scrollbar fade animations are now handled by useThemeStyles hook
 	// NOTE: Main keyboard handler is now provided by useMainKeyboardHandler hook
 	// NOTE: Sync selectedSidebarIndex with activeSessionId is now handled by useKeyboardNavigation hook
@@ -2071,27 +2058,9 @@ function MaestroConsoleInner() {
 	// NOTE: Auto Run document loading and file watching are now handled by useAutoRunDocumentLoader hook
 
 	// --- ACTIONS ---
-	// Starred Sessions list + activation - single owner shared by the Left Bar
-	// render (SessionList) and Cmd+[ / Cmd+] cycling so both traverse the same rows.
-	const { starredItems, activateStarredItem } = useStarredItems({
-		onJumpToStarredSession: handleJumpToStarredSession,
-		showConfirmation,
-		// Multi-window: scope the Starred section to agents this window owns (same
-		// ownsSession the thinking pill / cycling use). Undefined outside a
-		// WindowProvider, so single-window/web behaviour is unchanged.
-		ownsSession,
-	});
-
-	// cycleSession - event-time getState() via useCycleSession (no store subscriptions)
+	// cycleSession - event-time getState() via useCycleSession (nav/starred from sidebarNavStore)
 	const { cycleSession } = useCycleSession({
-		sortedSessions,
 		handleOpenGroupChat,
-		starredItems,
-		activateStarredItem,
-		navIndexMap,
-		// Multi-window: scope Cmd+[/] cycling to agents THIS window owns. Reuses the
-		// same ownsSession predicate the thinking pill uses (line ~1422); undefined
-		// outside a WindowProvider, so single-window/web cycling is unchanged.
 		ownsSession,
 	});
 
@@ -2101,9 +2070,8 @@ function MaestroConsoleInner() {
 	const tilingShortcuts = useTilingShortcuts();
 
 	// --- KEYBOARD NAVIGATION ---
-	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Placed after
-	// useStarredItems so it can traverse the Starred Sessions (top) and Group
-	// Chats (bottom) sections in addition to the agent list.
+	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Sort/nav/starred
+	// come from sidebarNavStore (no App subscription).
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const starredSessionsCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
@@ -2114,9 +2082,6 @@ function MaestroConsoleInner() {
 		handleEnterToActivate,
 		handleEscapeInMain,
 	} = useKeyboardNavigation({
-		sortedSessions,
-		navSessions,
-		bookmarkNavSize,
 		selectedSidebarIndex,
 		setSelectedSidebarIndex,
 		sidebarExtraSelection,
@@ -2131,8 +2096,6 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
-		starredItems,
-		activateStarredItem,
 		starredSectionCollapsed: starredSessionsCollapsed,
 		setStarredSectionCollapsed: setStarredSessionsCollapsed,
 		groupChats,
@@ -2146,6 +2109,7 @@ function MaestroConsoleInner() {
 	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
 	const goToNextUnreadTab = useCallback(() => {
 		const currentActiveId = useSessionStore.getState().activeSessionId;
+		const sortedSessions = useSidebarNavStore.getState().sortedSessions;
 		// Treat a tab with an active inline wizard as a draft target: an unfinished
 		// wizard is meant to be completed into an Auto Run doc, so the navigation
 		// should stop on it just like any other draft.
@@ -2178,7 +2142,7 @@ function MaestroConsoleInner() {
 		} else {
 			showSuccessFlash('No unread or draft tabs');
 		}
-	}, [sortedSessions, setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
+	}, [setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
 
 	// showConfirmation, performDeleteSession - provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup - provided by useSessionCrud hook
@@ -2438,8 +2402,13 @@ function MaestroConsoleInner() {
 		lightboxImage,
 		hasOpenLayers,
 		hasOpenModal,
-		visibleSessions,
-		sortedSessions,
+		// visibleSessions / sortedSessions: event-time via sidebarNavStore (see handler)
+		get visibleSessions() {
+			return useSidebarNavStore.getState().visibleSessions;
+		},
+		get sortedSessions() {
+			return useSidebarNavStore.getState().sortedSessions;
+		},
 		groups,
 		bookmarksCollapsed,
 		leftSidebarOpen,
@@ -2861,17 +2830,9 @@ function MaestroConsoleInner() {
 		// Theme (computed externally from settingsStore + themeId)
 		theme,
 
-		// Computed values (not raw store fields)
-		sortedSessions,
 		isLiveMode,
 		webInterfaceUrl,
 		showSessionJumpNumbers,
-		visibleSessions,
-		navIndexMap,
-
-		// Starred Sessions (shared with Cmd+[ / Cmd+] cycling via useStarredItems)
-		starredItems,
-		activateStarredItem,
 
 		// Ref
 		sidebarContainerRef,
@@ -2903,7 +2864,6 @@ function MaestroConsoleInner() {
 		handleToggleWorktreeExpanded,
 		handleConfigureCue,
 		maestroCueEnabled: encoreFeatures.maestroCue,
-		handleJumpToStarredSession,
 		openWizardModal,
 		handleOpenFeedbackModal,
 		handleStartTour,
@@ -3004,543 +2964,552 @@ function MaestroConsoleInner() {
 	}, [activeGroupChatId, groupChats, sessionsForProjectRoots]);
 
 	return (
-		<AppShell
-			theme={theme}
-			fontFamily={fontFamily}
-			fontSize={fontSize}
-			keyboardShellOffset={keyboardShellOffset}
-			isMobileLandscape={isMobileLandscape}
-			useNativeTitleBar={useNativeTitleBar}
-			isMdDownViewport={isMdDownViewport}
-			concertoEnabled={encoreFeatures.concerto === true}
-			activeGroupChatId={activeGroupChatId}
-			groupChats={groupChats}
-			groups={groups}
-			hasSessions={hasSessions}
-			sessionsLoaded={sessionsLoaded}
-			emptyStateProps={{
-				shortcuts,
-				onNewAgent: addNewSession,
-				onOpenWizard: openWizardModal,
-				onOpenSettings: () => setSettingsModalOpen(true),
-				onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
-				onOpenAbout: () => setAboutModalOpen(true),
-				onCheckForUpdates: () => setUpdateCheckModalOpen(true),
-			}}
-			sessionListProps={sessionListProps}
-			mainPanelRef={mainPanelRef}
-			mainPanelProps={mainPanelProps}
-			rightPanelRef={rightPanelRef}
-			rightPanelProps={rightPanelProps}
-			isNarrowViewport={isNarrowViewport}
-			leftSidebarOpen={leftSidebarOpen}
-			rightPanelOpen={rightPanelOpen}
-			onCloseDrawers={handleCloseDrawers}
-			drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
-			drawerSwipeEnabled={drawerSwipeEnabled}
-			leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
-			rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
-			logViewerOpen={logViewerOpen}
-			onToastSessionClick={handleToastSessionClick}
-			logViewer={
-				logViewerOpen ? (
-					<div
-						className="flex-1 flex flex-col min-w-0"
-						style={{ backgroundColor: theme.colors.bgMain }}
-					>
-						<Suspense fallback={null}>
-							<LogViewer
-								theme={theme}
-								onClose={handleCloseLogViewer}
-								logLevel={logLevel}
-								savedSelectedLevels={logViewerSelectedLevels}
-								onSelectedLevelsChange={setLogViewerSelectedLevels}
-								onShortcutUsed={handleLogViewerShortcutUsed}
-								onSessionClick={(sessionId, tabId) => {
-									handleCloseLogViewer();
-									handleToastSessionClick(sessionId, tabId);
-								}}
-							/>
-						</Suspense>
-					</div>
-				) : null
-			}
-			groupChatView={
-				!logViewerOpen &&
-				activeGroupChatId &&
-				isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
-				groupChats.find((c) => c.id === activeGroupChatId) ? (
-					<>
+		<>
+			{/* Owns Left Bar sort/nav/starred subscriptions; memoized so App wakes
+			    do not re-run this host. Must sit under WindowProvider (ownsSession). */}
+			<SidebarNavSync />
+			<AppShell
+				theme={theme}
+				fontFamily={fontFamily}
+				fontSize={fontSize}
+				keyboardShellOffset={keyboardShellOffset}
+				isMobileLandscape={isMobileLandscape}
+				useNativeTitleBar={useNativeTitleBar}
+				isMdDownViewport={isMdDownViewport}
+				concertoEnabled={encoreFeatures.concerto === true}
+				activeGroupChatId={activeGroupChatId}
+				groupChats={groupChats}
+				groups={groups}
+				hasSessions={hasSessions}
+				sessionsLoaded={sessionsLoaded}
+				emptyStateProps={{
+					shortcuts,
+					onNewAgent: addNewSession,
+					onOpenWizard: openWizardModal,
+					onOpenSettings: () => setSettingsModalOpen(true),
+					onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
+					onOpenAbout: () => setAboutModalOpen(true),
+					onCheckForUpdates: () => setUpdateCheckModalOpen(true),
+				}}
+				sessionListProps={sessionListProps}
+				mainPanelRef={mainPanelRef}
+				mainPanelProps={mainPanelProps}
+				rightPanelRef={rightPanelRef}
+				rightPanelProps={rightPanelProps}
+				isNarrowViewport={isNarrowViewport}
+				leftSidebarOpen={leftSidebarOpen}
+				rightPanelOpen={rightPanelOpen}
+				onCloseDrawers={handleCloseDrawers}
+				drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
+				drawerSwipeEnabled={drawerSwipeEnabled}
+				leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
+				rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
+				logViewerOpen={logViewerOpen}
+				onToastSessionClick={handleToastSessionClick}
+				logViewer={
+					logViewerOpen ? (
 						<div
-							className="flex-1 flex flex-col min-w-0 relative"
-							{...groupChatDropZone.dragHandlers}
+							className="flex-1 flex flex-col min-w-0"
+							style={{ backgroundColor: theme.colors.bgMain }}
 						>
-							{groupChatDropZone.overlay}
-							<GroupChatPanel
-								theme={theme}
-								groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
-								messages={groupChatMessages}
-								state={groupChatState}
-								groups={groups}
-								onStopAll={handleGroupChatStopAll}
-								totalCost={(() => {
-									const chat = groupChats.find((c) => c.id === activeGroupChatId);
-									const participantsCost = (chat?.participants || []).reduce(
-										(sum, p) => sum + (p.totalCost || 0),
-										0
-									);
-									const modCost = moderatorUsage?.totalCost || 0;
-									return participantsCost + modCost;
-								})()}
-								costIncomplete={(() => {
-									const chat = groupChats.find((c) => c.id === activeGroupChatId);
-									const participants = chat?.participants || [];
-									const anyParticipantMissingCost = participants.some(
-										(p) => p.totalCost === undefined || p.totalCost === null
-									);
-									const moderatorMissingCost =
-										moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
-									return anyParticipantMissingCost || moderatorMissingCost;
-								})()}
-								onSendMessage={handleSendGroupChatMessage}
-								onRename={() =>
-									activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
-								}
-								onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
-								rightPanelOpen={rightPanelOpen}
-								onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
-								shortcuts={shortcuts}
-								onDraftChange={handleGroupChatDraftChange}
-								onOpenPromptComposer={handleOpenGroupChatPromptComposer}
-								draftFlushRef={groupChatDraftFlushRef}
-								stagedImages={groupChatStagedImages}
-								setStagedImages={setGroupChatStagedImages}
-								readOnlyMode={groupChatReadOnlyMode}
-								setReadOnlyMode={setGroupChatReadOnlyMode}
-								inputRef={groupChatInputRef}
-								handlePaste={handlePaste}
-								handleDrop={handleGroupChatDrop}
-								onOpenLightbox={handleSetLightboxImage}
-								executionQueue={groupChatExecutionQueue.filter(
-									(item) => item.tabId === activeGroupChatId
-								)}
-								onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
-								onReorderQueuedItems={handleReorderGroupChatQueueItems}
-								markdownEditMode={chatRawTextMode}
-								onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
-								maxOutputLines={maxOutputLines}
-								enterToSendAI={enterToSendAI}
-								setEnterToSendAI={setEnterToSendAI}
-								showFlashNotification={handleGroupChatFlashNotification}
-								participantColors={groupChatParticipantColors}
-								messagesRef={groupChatMessagesRef}
-								ghCliAvailable={ghCliAvailable}
-								onPublishMessageGist={handlePublishGroupChatMessageGist}
-							/>
+							<Suspense fallback={null}>
+								<LogViewer
+									theme={theme}
+									onClose={handleCloseLogViewer}
+									logLevel={logLevel}
+									savedSelectedLevels={logViewerSelectedLevels}
+									onSelectedLevelsChange={setLogViewerSelectedLevels}
+									onShortcutUsed={handleLogViewerShortcutUsed}
+									onSessionClick={(sessionId, tabId) => {
+										handleCloseLogViewer();
+										handleToastSessionClick(sessionId, tabId);
+									}}
+								/>
+							</Suspense>
 						</div>
-						<GroupChatRightPanel
-							theme={theme}
-							groupChatId={activeGroupChatId}
-							participants={groupChats.find((c) => c.id === activeGroupChatId)?.participants || []}
-							participantStates={participantStates}
-							participantSessionPaths={participantSessionPaths}
-							sessionSshRemoteNames={sessionSshRemoteNames}
-							isOpen={rightPanelOpen}
-							onToggle={() => setRightPanelOpen(!rightPanelOpen)}
-							width={rightPanelWidth}
-							setWidthState={setRightPanelWidth}
-							shortcuts={shortcuts}
-							moderatorAgentId={
-								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
-								'claude-code'
-							}
-							moderatorSessionId={
-								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
-							}
-							moderatorAgentSessionId={
-								groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
-							}
-							moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
-							moderatorUsage={moderatorUsage}
-							activeTab={groupChatRightTab}
-							onTabChange={handleGroupChatRightTabChange}
-							onJumpToMessage={handleJumpToGroupChatMessage}
-							onColorsComputed={setGroupChatParticipantColors}
-						/>
-					</>
-				) : null
-			}
-			modals={
-				<AppModals
-					// Common props (sessions/groups/groupChats + modal booleans self-sourced from stores - Tier 1B)
-					theme={theme}
-					shortcuts={shortcuts}
-					tabShortcuts={tabShortcuts}
-					// AppInfoModals props
-					onCloseShortcutsHelp={handleCloseShortcutsHelp}
-					hasNoAgents={hasNoAgents}
-					keyboardMasteryStats={keyboardMasteryStats}
-					onCloseAboutModal={handleCloseAboutModal}
-					feedbackModalOpen={feedbackModalOpen}
-					onCloseFeedbackModal={handleCloseFeedbackModal}
-					autoRunStats={autoRunStats}
-					usageStats={usageStats}
-					handsOnTimeMs={totalActiveTimeMs}
-					onOpenLeaderboardRegistration={handleOpenLeaderboardRegistrationFromAbout}
-					onSwitchToSession={setActiveSessionId}
-					isLeaderboardRegistered={isLeaderboardRegistered}
-					onCloseUpdateCheckModal={handleCloseUpdateCheckModal}
-					onCloseProcessMonitor={handleCloseProcessMonitor}
-					onNavigateToSession={handleProcessMonitorNavigateToSession}
-					onNavigateToGroupChat={handleProcessMonitorNavigateToGroupChat}
-					onCloseUsageDashboard={() => setUsageDashboardOpen(false)}
-					onCloseAgentRunDashboard={() => setAgentRunDashboardOpen(false)}
-					defaultStatsTimeRange={defaultStatsTimeRange}
-					colorBlindMode={colorBlindMode}
-					// AppConfirmModals props
-					confirmModalMessage={confirmModalMessage}
-					confirmModalOnConfirm={confirmModalOnConfirm}
-					confirmModalTitle={confirmModalTitle}
-					confirmModalDestructive={confirmModalDestructive}
-					onCloseConfirmModal={handleCloseConfirmModal}
-					onConfirmQuit={handleConfirmQuit}
-					onCancelQuit={handleCancelQuit}
-					onQuitWhenIdle={handleQuitWhenIdle}
-					activeBatchSessionIds={activeBatchSessionIds}
-					// AppSessionModals props
-					onCloseNewInstanceModal={handleCloseNewInstanceModal}
-					onCreateSession={createNewSession}
-					duplicatingSessionId={duplicatingSessionId}
-					newInstancePresetGroupId={newInstancePresetGroupId}
-					onCloseEditAgentModal={handleCloseEditAgentModal}
-					onSaveEditAgent={handleSaveEditAgent}
-					editAgentSession={editAgentSession}
-					renameSessionValue={renameInstanceValue}
-					setRenameSessionValue={setRenameInstanceValue}
-					onCloseRenameSessionModal={handleCloseRenameSessionModal}
-					renameSessionTargetId={renameInstanceSessionId}
-					onAfterRename={flushSessionPersistence}
-					renameTabId={renameTabId}
-					renameTabInitialName={renameTabInitialName}
-					onCloseRenameTabModal={handleCloseRenameTabModal}
-					onRenameTab={handleRenameTab}
-					onAutoNameTab={handleAutoNameTab}
-					// AppGroupModals props
-					createGroupModalOpen={createGroupModalOpen}
-					createGroupParentId={createGroupParentId}
-					onCloseCreateGroupModal={handleCloseGroupCreation}
-					onGroupCreated={handleGroupCreated}
-					renameGroupId={renameGroupId}
-					renameGroupValue={renameGroupValue}
-					setRenameGroupValue={setRenameGroupValue}
-					renameGroupEmoji={renameGroupEmoji}
-					setRenameGroupEmoji={setRenameGroupEmoji}
-					renameGroupIcon={renameGroupIcon}
-					setRenameGroupIcon={setRenameGroupIcon}
-					renameGroupColor={renameGroupColor}
-					setRenameGroupColor={setRenameGroupColor}
-					onCloseRenameGroupModal={handleCloseRenameGroupModal}
-					// AppWorktreeModals props
-					onCloseWorktreeConfigModal={handleCloseWorktreeConfigModal}
-					onSaveWorktreeConfig={handleSaveWorktreeConfig}
-					onCreateWorktreeFromConfig={handleCreateWorktreeFromConfig}
-					onDisableWorktreeConfig={handleDisableWorktreeConfig}
-					createWorktreeSession={createWorktreeSession}
-					onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
-					onCreateWorktree={handleCreateWorktree}
-					createPRSession={createPRSession}
-					onCloseCreatePRModal={handleCloseCreatePRModal}
-					onPRCreated={handlePRCreated}
-					deleteWorktreeSession={deleteWorktreeSession}
-					onCloseDeleteWorktreeModal={handleCloseDeleteWorktreeModal}
-					onConfirmDeleteWorktree={handleConfirmDeleteWorktree}
-					onConfirmAndDeleteWorktreeOnDisk={handleConfirmAndDeleteWorktreeOnDisk}
-					// AppUtilityModals props
-					quickActionInitialMode={quickActionInitialMode}
-					setQuickActionOpen={setQuickActionOpen}
-					setActiveSessionId={setActiveSessionId}
-					addNewSession={addNewSession}
-					setRenameInstanceValue={setRenameInstanceValue}
-					setRenameInstanceModalOpen={setRenameInstanceModalOpen}
-					setRenameGroupId={setRenameGroupId}
-					setRenameGroupValueForQuickActions={setRenameGroupValue}
-					setRenameGroupEmojiForQuickActions={setRenameGroupEmoji}
-					setRenameGroupIconForQuickActions={setRenameGroupIcon}
-					setRenameGroupColorForQuickActions={setRenameGroupColor}
-					setRenameGroupModalOpenForQuickActions={setRenameGroupModalOpen}
-					setCreateGroupModalOpenForQuickActions={setCreateGroupModalOpen}
-					setLeftSidebarOpen={setLeftSidebarOpen}
-					setRightPanelOpen={setRightPanelOpen}
-					toggleInputMode={toggleInputMode}
-					deleteSession={deleteSession}
-					setSettingsModalOpen={setSettingsModalOpen}
-					setSettingsTab={setSettingsTab}
-					setShortcutsHelpOpen={setShortcutsHelpOpen}
-					setAboutModalOpen={setAboutModalOpen}
-					setFeedbackModalOpen={setFeedbackModalOpen}
-					setLogViewerOpen={setLogViewerOpen}
-					setProcessMonitorOpen={setProcessMonitorOpen}
-					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
-					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
-					setActiveRightTab={setActiveRightTab}
-					setAgentSessionsOpen={setAgentSessionsOpen}
-					setMemoryViewerOpen={setMemoryViewerOpen}
-					setActiveAgentSessionId={setActiveAgentSessionId}
-					setGitDiffPreview={setGitDiffPreview}
-					setGitLogOpen={setGitLogOpen}
-					isAiMode={activeSession?.inputMode === 'ai'}
-					onQuickActionsRenameTab={handleQuickActionsRenameTab}
-					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
-					onQuickActionsToggleTabShowThinking={handleQuickActionsToggleTabShowThinking}
-					onQuickActionsToggleTabEnterToSend={handleQuickActionsToggleTabEnterToSend}
-					onQuickActionsOpenTabSwitcher={handleQuickActionsOpenTabSwitcher}
-					onCloseAllTabs={handleCloseAllTabs}
-					onCloseOtherTabs={handleCloseOtherTabs}
-					onCloseTabsLeft={handleCloseTabsLeft}
-					onCloseTabsRight={handleCloseTabsRight}
-					setPlaygroundOpen={setPlaygroundOpen}
-					onQuickActionsRefreshGitFileState={handleQuickActionsRefreshGitFileState}
-					onQuickActionsDebugReleaseQueuedItem={handleQuickActionsDebugReleaseQueuedItem}
-					markdownEditMode={activeSession?.activeFileTabId ? markdownEditMode : chatRawTextMode}
-					onQuickActionsToggleMarkdownEditMode={handleQuickActionsToggleMarkdownEditMode}
-					setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
-					openWizard={openWizardModal}
-					wizardGoToStep={wizardGoToStep}
-					setDebugPackageModalOpen={setDebugPackageModalOpen}
-					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
-					startTour={handleQuickActionsStartTour}
-					setFuzzyFileSearchOpen={setFuzzyFileSearchOpen}
-					onEditAgent={handleQuickActionsEditAgent}
-					onNewGroupChat={handleNewGroupChat}
-					onOpenGroupChat={handleOpenGroupChat}
-					onCloseGroupChat={handleCloseGroupChat}
-					onDeleteGroupChat={deleteGroupChatWithConfirmation}
-					hasActiveSessionCapability={hasActiveSessionCapability}
-					onOpenMergeSession={handleQuickActionsOpenMergeSession}
-					onOpenSendToAgent={handleQuickActionsOpenSendToAgent}
-					onQuickCreateWorktree={handleQuickCreateWorktree}
-					onOpenCreatePR={handleQuickActionsOpenCreatePR}
-					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
-					onRunPromptMacro={handleRunPromptMacro}
-					canSummarizeActiveTab={computeCanSummarizeActiveTab()}
-					onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
-					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
-					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
-					onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
-					onToggleAutoRunExpanded={handleQuickActionsToggleAutoRunExpanded}
-					onClearActiveTerminal={handleQuickActionsClearActiveTerminal}
-					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
-					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
-					onMoveTabToLast={handleQuickActionsMoveTabToLast}
-					onFocusActiveTab={handleQuickActionsFocusActiveTab}
-					onCopyTabContext={handleQuickActionsCopyTabContext}
-					onExportTabHtml={handleQuickActionsExportTabHtml}
-					onPublishTabGist={handleQuickActionsPublishTabGist}
-					mainPanelRef={mainPanelRef}
-					isFilePreviewOpen={!!activeSession?.activeFileTabId}
-					ghCliAvailable={ghCliAvailable}
-					onPublishGist={() => setGistPublishModalOpen(true)}
-					lastGraphFocusFile={lastGraphFocusFilePath}
-					onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
-					currentGraphFile={currentGraphFileName}
-					onOpenCurrentFileInGraph={mainPanelProps.onOpenInGraph}
-					lightboxImage={lightboxImage}
-					lightboxImages={lightboxImages}
-					stagedImages={stagedImages}
-					onCloseLightbox={handleCloseLightbox}
-					onNavigateLightbox={handleNavigateLightbox}
-					onDeleteLightboxImage={lightboxAllowDelete ? handleDeleteLightboxImage : undefined}
-					onUpdateLightboxImage={lightboxAllowDelete ? handleUpdateLightboxImage : undefined}
-					gitDiffPreview={gitDiffPreview}
-					gitViewerCwd={gitViewerCwd}
-					onCloseGitDiff={handleCloseGitDiff}
-					onCloseGitLog={handleCloseGitLog}
-					onOpenGitFile={handleOpenGitFile}
-					onCloseAutoRunSetup={handleCloseAutoRunSetup}
-					onAutoRunFolderSelected={handleAutoRunFolderSelected}
-					onCloseBatchRunner={handleCloseBatchRunner}
-					onStartBatchRun={handleStartBatchRun}
-					onSaveBatchPrompt={handleSaveBatchPrompt}
-					showConfirmation={showConfirmation}
-					autoRunDocumentList={autoRunDocumentList}
-					autoRunDocumentTree={autoRunDocumentTree}
-					getDocumentTaskCount={getDocumentTaskCount}
-					onAutoRunRefresh={handleAutoRunRefresh}
-					onOpenMarketplace={handleOpenMarketplace}
-					onOpenSymphony={encoreFeatures.symphony ? () => setSymphonyModalOpen(true) : undefined}
-					onOpenDirectorNotes={
-						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
-					}
-					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
-					onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
-					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
-					onCloseTabSwitcher={handleCloseTabSwitcher}
-					onTabSelect={handleUtilityTabSelect}
-					onFileTabSelect={handleUtilityFileTabSelect}
-					onTerminalTabSelect={handleSelectTerminalTab}
-					onBrowserTabSelect={handleSelectBrowserTab}
-					onNamedSessionSelect={handleNamedSessionSelect}
-					filteredFileTree={filteredFileTree}
-					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
-					onCloseFileSearch={handleCloseFileSearch}
-					onFileSearchSelect={handleFileSearchSelect}
-					onClosePromptComposer={handleClosePromptComposer}
-					onPromptComposerSubmit={handlePromptComposerSubmit}
-					onPromptComposerSend={handlePromptComposerSend}
-					promptComposerSessionName={
-						activeGroupChatId
-							? groupChats.find((c) => c.id === activeGroupChatId)?.name
-							: activeSession?.name
-					}
-					promptComposerStagedImages={
-						activeGroupChatId ? groupChatStagedImages : canAttachImages ? stagedImages : []
-					}
-					setPromptComposerStagedImages={
-						activeGroupChatId
-							? setGroupChatStagedImages
-							: canAttachImages
-								? setStagedImages
-								: undefined
-					}
-					onPromptOpenLightbox={handleSetLightboxImage}
-					promptTabSaveToHistory={activeGroupChatId ? false : promptTabSaveToHistory}
-					onPromptToggleTabSaveToHistory={
-						activeGroupChatId ? undefined : handlePromptToggleTabSaveToHistory
-					}
-					promptTabReadOnlyMode={activeGroupChatId ? groupChatReadOnlyMode : promptTabReadOnlyMode}
-					onPromptToggleTabReadOnlyMode={handlePromptToggleTabReadOnlyMode}
-					promptTabShowThinking={activeGroupChatId ? 'off' : promptTabShowThinking}
-					onPromptToggleTabShowThinking={
-						activeGroupChatId ? undefined : handlePromptToggleTabShowThinking
-					}
-					promptSupportsThinking={
-						!activeGroupChatId && hasActiveSessionCapability('supportsThinkingDisplay')
-					}
-					promptEnterToSend={enterToSendAIExpanded}
-					onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
-					onOpenQueueBrowser={handleOpenQueueBrowser}
-					onCloseQueueBrowser={handleCloseQueueBrowser}
-					onQuickActionsNewTab={handleNewTab}
-					onQuickActionsNewFileTab={handleNewFileTab}
-					onQuickActionsNewBrowserTab={handleNewBrowserTab}
-					onQuickActionsNewTerminalTab={handleOpenTerminalTab}
-					onGoToNextUnread={goToNextUnreadTab}
-					onNavBack={handleNavBack}
-					onNavForward={handleNavForward}
-					onRemoveQueueItem={handleRemoveQueueItem}
-					onSwitchQueueSession={handleSwitchQueueSession}
-					onReorderQueueItems={handleReorderQueueItems}
-					onTogglePauseQueueItem={handleTogglePauseQueueItem}
-					onEditQueueItem={handleEditQueueItem}
-					// AppGroupChatModals props
-					onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
-					onCreateGroupChat={handleCreateGroupChat}
-					showDeleteGroupChatModal={showDeleteGroupChatModal}
-					onCloseDeleteGroupChatModal={handleCloseDeleteGroupChatModal}
-					onConfirmDeleteGroupChat={handleConfirmDeleteGroupChat}
-					showRenameGroupChatModal={showRenameGroupChatModal}
-					onCloseRenameGroupChatModal={handleCloseRenameGroupChatModal}
-					onRenameGroupChatFromModal={handleRenameGroupChatFromModal}
-					showEditGroupChatModal={showEditGroupChatModal}
-					onCloseEditGroupChatModal={handleCloseEditGroupChatModal}
-					onUpdateGroupChat={handleUpdateGroupChat}
-					groupChatMessages={groupChatMessages}
-					onCloseGroupChatInfo={handleCloseGroupChatInfo}
-					onOpenModeratorSession={handleOpenModeratorSession}
-					// AppAgentModals props
-					onCloseLeaderboardRegistration={handleCloseLeaderboardRegistration}
-					leaderboardRegistration={leaderboardRegistration}
-					onSaveLeaderboardRegistration={handleSaveLeaderboardRegistration}
-					onLeaderboardOptOut={handleLeaderboardOptOut}
-					onSyncAutoRunStats={handleSyncAutoRunStats}
-					errorSession={errorSession}
-					effectiveAgentError={effectiveAgentError}
-					recoveryActions={recoveryActions}
-					onDismissAgentError={handleCloseAgentErrorModal}
-					onJumpToAgent={handleJumpToFailingAgent}
-					groupChatError={groupChatError}
-					groupChatRecoveryActions={groupChatRecoveryActions}
-					onClearGroupChatError={handleClearGroupChatError}
-					onCloseMergeSession={handleCloseMergeSession}
-					onMerge={handleMerge}
-					transferState={transferState}
-					transferProgress={transferProgress}
-					transferSourceAgent={transferSourceAgent}
-					transferTargetAgent={transferTargetAgent}
-					onCancelTransfer={handleCancelTransfer}
-					onCompleteTransfer={handleCompleteTransfer}
-					onCloseSendToAgent={handleCloseSendToAgent}
-					onSendToAgent={handleSendToAgent}
-				/>
-			}
-			standaloneModals={
-				<AppStandaloneModals
-					theme={theme}
-					// Debug / Playground
-					onCloseDebugPackage={handleCloseDebugPackage}
-					setSuppressWindowsWarning={setSuppressWindowsWarning}
-					enableBetaUpdates={enableBetaUpdates}
-					setEnableBetaUpdates={setEnableBetaUpdates}
-					// AppOverlays
-					autoRunStats={autoRunStats}
-					onStandingOvationClose={handleStandingOvationClose}
-					onOpenLeaderboardRegistration={handleOpenLeaderboardRegistration}
-					isLeaderboardRegistered={isLeaderboardRegistered}
-					onFirstRunCelebrationClose={handleFirstRunCelebrationClose}
-					onKeyboardMasteryCelebrationClose={handleKeyboardMasteryCelebrationClose}
-					// Marketplace
-					onMarketplaceImportComplete={handleMarketplaceImportComplete}
-					// Symphony
-					setActiveSessionId={setActiveSessionId}
-					onStartContribution={handleStartContribution}
-					encoreFeatures={encoreFeatures}
-					// Director's Notes
-					onDirectorNotesResumeSession={handleDirectorNotesResumeSession}
-					onFileClick={handleFileClick}
-					// Cue
-					shortcuts={shortcuts}
-					// GistPublish
-					gistPublishModalOpen={gistPublishModalOpen}
-					setGistPublishModalOpen={setGistPublishModalOpen}
-					activeFileTab={activeFileTab}
-					saveFileGistUrl={saveFileGistUrl}
-					fileGistUrls={fileGistUrls}
-					// DocumentGraph
-					onOpenFileTab={handleOpenFileTab}
-					mainPanelRef={mainPanelRef}
-					documentGraphShowExternalLinks={documentGraphShowExternalLinks}
-					onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
-					documentGraphMaxNodes={documentGraphMaxNodes}
-					documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}
-					onPreviewCharLimitChange={settings.setDocumentGraphPreviewCharLimit}
-					documentGraphLayoutType={documentGraphLayoutType}
-					onLayoutTypeChange={settings.setDocumentGraphLayoutType}
-					// DeleteAgent
-					onPerformDeleteSession={performDeleteSession}
-					onCloseDeleteAgentModal={handleCloseDeleteAgentModal}
-					// Settings
-					onCloseSettings={handleCloseSettings}
-					hasNoAgents={hasNoAgents}
-					setFlashNotification={setFlashNotification}
-					// Wizard
-					wizardIsOpen={wizardState.isOpen}
-					onWizardLaunchSession={handleWizardLaunchSession}
-					recordWizardStart={recordWizardStart}
-					recordWizardResume={recordWizardResume}
-					recordWizardAbandon={recordWizardAbandon}
-					recordWizardComplete={recordWizardComplete}
-					onWizardResume={handleWizardResume}
-					onWizardStartFresh={handleWizardStartFresh}
-					onWizardResumeClose={handleWizardResumeClose}
-					// Tour
-					setTourCompleted={setTourCompleted}
-					tabShortcuts={tabShortcuts}
-					recordTourStart={recordTourStart}
-					recordTourComplete={recordTourComplete}
-					recordTourSkip={recordTourSkip}
-				/>
-			}
-		/>
+					) : null
+				}
+				groupChatView={
+					!logViewerOpen &&
+					activeGroupChatId &&
+					isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
+					groupChats.find((c) => c.id === activeGroupChatId) ? (
+						<>
+							<div
+								className="flex-1 flex flex-col min-w-0 relative"
+								{...groupChatDropZone.dragHandlers}
+							>
+								{groupChatDropZone.overlay}
+								<GroupChatPanel
+									theme={theme}
+									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
+									messages={groupChatMessages}
+									state={groupChatState}
+									groups={groups}
+									onStopAll={handleGroupChatStopAll}
+									totalCost={(() => {
+										const chat = groupChats.find((c) => c.id === activeGroupChatId);
+										const participantsCost = (chat?.participants || []).reduce(
+											(sum, p) => sum + (p.totalCost || 0),
+											0
+										);
+										const modCost = moderatorUsage?.totalCost || 0;
+										return participantsCost + modCost;
+									})()}
+									costIncomplete={(() => {
+										const chat = groupChats.find((c) => c.id === activeGroupChatId);
+										const participants = chat?.participants || [];
+										const anyParticipantMissingCost = participants.some(
+											(p) => p.totalCost === undefined || p.totalCost === null
+										);
+										const moderatorMissingCost =
+											moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
+										return anyParticipantMissingCost || moderatorMissingCost;
+									})()}
+									onSendMessage={handleSendGroupChatMessage}
+									onRename={() =>
+										activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
+									}
+									onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
+									rightPanelOpen={rightPanelOpen}
+									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
+									shortcuts={shortcuts}
+									onDraftChange={handleGroupChatDraftChange}
+									onOpenPromptComposer={handleOpenGroupChatPromptComposer}
+									draftFlushRef={groupChatDraftFlushRef}
+									stagedImages={groupChatStagedImages}
+									setStagedImages={setGroupChatStagedImages}
+									readOnlyMode={groupChatReadOnlyMode}
+									setReadOnlyMode={setGroupChatReadOnlyMode}
+									inputRef={groupChatInputRef}
+									handlePaste={handlePaste}
+									handleDrop={handleGroupChatDrop}
+									onOpenLightbox={handleSetLightboxImage}
+									executionQueue={groupChatExecutionQueue.filter(
+										(item) => item.tabId === activeGroupChatId
+									)}
+									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
+									onReorderQueuedItems={handleReorderGroupChatQueueItems}
+									markdownEditMode={chatRawTextMode}
+									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
+									maxOutputLines={maxOutputLines}
+									enterToSendAI={enterToSendAI}
+									setEnterToSendAI={setEnterToSendAI}
+									showFlashNotification={handleGroupChatFlashNotification}
+									participantColors={groupChatParticipantColors}
+									messagesRef={groupChatMessagesRef}
+									ghCliAvailable={ghCliAvailable}
+									onPublishMessageGist={handlePublishGroupChatMessageGist}
+								/>
+							</div>
+							<GroupChatRightPanel
+								theme={theme}
+								groupChatId={activeGroupChatId}
+								participants={
+									groupChats.find((c) => c.id === activeGroupChatId)?.participants || []
+								}
+								participantStates={participantStates}
+								participantSessionPaths={participantSessionPaths}
+								sessionSshRemoteNames={sessionSshRemoteNames}
+								isOpen={rightPanelOpen}
+								onToggle={() => setRightPanelOpen(!rightPanelOpen)}
+								width={rightPanelWidth}
+								setWidthState={setRightPanelWidth}
+								shortcuts={shortcuts}
+								moderatorAgentId={
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
+									'claude-code'
+								}
+								moderatorSessionId={
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
+								}
+								moderatorAgentSessionId={
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
+								}
+								moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
+								moderatorUsage={moderatorUsage}
+								activeTab={groupChatRightTab}
+								onTabChange={handleGroupChatRightTabChange}
+								onJumpToMessage={handleJumpToGroupChatMessage}
+								onColorsComputed={setGroupChatParticipantColors}
+							/>
+						</>
+					) : null
+				}
+				modals={
+					<AppModals
+						// Common props (sessions/groups/groupChats + modal booleans self-sourced from stores - Tier 1B)
+						theme={theme}
+						shortcuts={shortcuts}
+						tabShortcuts={tabShortcuts}
+						// AppInfoModals props
+						onCloseShortcutsHelp={handleCloseShortcutsHelp}
+						hasNoAgents={hasNoAgents}
+						keyboardMasteryStats={keyboardMasteryStats}
+						onCloseAboutModal={handleCloseAboutModal}
+						feedbackModalOpen={feedbackModalOpen}
+						onCloseFeedbackModal={handleCloseFeedbackModal}
+						autoRunStats={autoRunStats}
+						usageStats={usageStats}
+						handsOnTimeMs={totalActiveTimeMs}
+						onOpenLeaderboardRegistration={handleOpenLeaderboardRegistrationFromAbout}
+						onSwitchToSession={setActiveSessionId}
+						isLeaderboardRegistered={isLeaderboardRegistered}
+						onCloseUpdateCheckModal={handleCloseUpdateCheckModal}
+						onCloseProcessMonitor={handleCloseProcessMonitor}
+						onNavigateToSession={handleProcessMonitorNavigateToSession}
+						onNavigateToGroupChat={handleProcessMonitorNavigateToGroupChat}
+						onCloseUsageDashboard={() => setUsageDashboardOpen(false)}
+						onCloseAgentRunDashboard={() => setAgentRunDashboardOpen(false)}
+						defaultStatsTimeRange={defaultStatsTimeRange}
+						colorBlindMode={colorBlindMode}
+						// AppConfirmModals props
+						confirmModalMessage={confirmModalMessage}
+						confirmModalOnConfirm={confirmModalOnConfirm}
+						confirmModalTitle={confirmModalTitle}
+						confirmModalDestructive={confirmModalDestructive}
+						onCloseConfirmModal={handleCloseConfirmModal}
+						onConfirmQuit={handleConfirmQuit}
+						onCancelQuit={handleCancelQuit}
+						onQuitWhenIdle={handleQuitWhenIdle}
+						activeBatchSessionIds={activeBatchSessionIds}
+						// AppSessionModals props
+						onCloseNewInstanceModal={handleCloseNewInstanceModal}
+						onCreateSession={createNewSession}
+						duplicatingSessionId={duplicatingSessionId}
+						newInstancePresetGroupId={newInstancePresetGroupId}
+						onCloseEditAgentModal={handleCloseEditAgentModal}
+						onSaveEditAgent={handleSaveEditAgent}
+						editAgentSession={editAgentSession}
+						renameSessionValue={renameInstanceValue}
+						setRenameSessionValue={setRenameInstanceValue}
+						onCloseRenameSessionModal={handleCloseRenameSessionModal}
+						renameSessionTargetId={renameInstanceSessionId}
+						onAfterRename={flushSessionPersistence}
+						renameTabId={renameTabId}
+						renameTabInitialName={renameTabInitialName}
+						onCloseRenameTabModal={handleCloseRenameTabModal}
+						onRenameTab={handleRenameTab}
+						onAutoNameTab={handleAutoNameTab}
+						// AppGroupModals props
+						createGroupModalOpen={createGroupModalOpen}
+						createGroupParentId={createGroupParentId}
+						onCloseCreateGroupModal={handleCloseGroupCreation}
+						onGroupCreated={handleGroupCreated}
+						renameGroupId={renameGroupId}
+						renameGroupValue={renameGroupValue}
+						setRenameGroupValue={setRenameGroupValue}
+						renameGroupEmoji={renameGroupEmoji}
+						setRenameGroupEmoji={setRenameGroupEmoji}
+						renameGroupIcon={renameGroupIcon}
+						setRenameGroupIcon={setRenameGroupIcon}
+						renameGroupColor={renameGroupColor}
+						setRenameGroupColor={setRenameGroupColor}
+						onCloseRenameGroupModal={handleCloseRenameGroupModal}
+						// AppWorktreeModals props
+						onCloseWorktreeConfigModal={handleCloseWorktreeConfigModal}
+						onSaveWorktreeConfig={handleSaveWorktreeConfig}
+						onCreateWorktreeFromConfig={handleCreateWorktreeFromConfig}
+						onDisableWorktreeConfig={handleDisableWorktreeConfig}
+						createWorktreeSession={createWorktreeSession}
+						onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
+						onCreateWorktree={handleCreateWorktree}
+						createPRSession={createPRSession}
+						onCloseCreatePRModal={handleCloseCreatePRModal}
+						onPRCreated={handlePRCreated}
+						deleteWorktreeSession={deleteWorktreeSession}
+						onCloseDeleteWorktreeModal={handleCloseDeleteWorktreeModal}
+						onConfirmDeleteWorktree={handleConfirmDeleteWorktree}
+						onConfirmAndDeleteWorktreeOnDisk={handleConfirmAndDeleteWorktreeOnDisk}
+						// AppUtilityModals props
+						quickActionInitialMode={quickActionInitialMode}
+						setQuickActionOpen={setQuickActionOpen}
+						setActiveSessionId={setActiveSessionId}
+						addNewSession={addNewSession}
+						setRenameInstanceValue={setRenameInstanceValue}
+						setRenameInstanceModalOpen={setRenameInstanceModalOpen}
+						setRenameGroupId={setRenameGroupId}
+						setRenameGroupValueForQuickActions={setRenameGroupValue}
+						setRenameGroupEmojiForQuickActions={setRenameGroupEmoji}
+						setRenameGroupIconForQuickActions={setRenameGroupIcon}
+						setRenameGroupColorForQuickActions={setRenameGroupColor}
+						setRenameGroupModalOpenForQuickActions={setRenameGroupModalOpen}
+						setCreateGroupModalOpenForQuickActions={setCreateGroupModalOpen}
+						setLeftSidebarOpen={setLeftSidebarOpen}
+						setRightPanelOpen={setRightPanelOpen}
+						toggleInputMode={toggleInputMode}
+						deleteSession={deleteSession}
+						setSettingsModalOpen={setSettingsModalOpen}
+						setSettingsTab={setSettingsTab}
+						setShortcutsHelpOpen={setShortcutsHelpOpen}
+						setAboutModalOpen={setAboutModalOpen}
+						setFeedbackModalOpen={setFeedbackModalOpen}
+						setLogViewerOpen={setLogViewerOpen}
+						setProcessMonitorOpen={setProcessMonitorOpen}
+						setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
+						setAgentRunDashboardOpen={setAgentRunDashboardOpen}
+						setActiveRightTab={setActiveRightTab}
+						setAgentSessionsOpen={setAgentSessionsOpen}
+						setMemoryViewerOpen={setMemoryViewerOpen}
+						setActiveAgentSessionId={setActiveAgentSessionId}
+						setGitDiffPreview={setGitDiffPreview}
+						setGitLogOpen={setGitLogOpen}
+						isAiMode={activeSession?.inputMode === 'ai'}
+						onQuickActionsRenameTab={handleQuickActionsRenameTab}
+						onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
+						onQuickActionsToggleTabShowThinking={handleQuickActionsToggleTabShowThinking}
+						onQuickActionsToggleTabEnterToSend={handleQuickActionsToggleTabEnterToSend}
+						onQuickActionsOpenTabSwitcher={handleQuickActionsOpenTabSwitcher}
+						onCloseAllTabs={handleCloseAllTabs}
+						onCloseOtherTabs={handleCloseOtherTabs}
+						onCloseTabsLeft={handleCloseTabsLeft}
+						onCloseTabsRight={handleCloseTabsRight}
+						setPlaygroundOpen={setPlaygroundOpen}
+						onQuickActionsRefreshGitFileState={handleQuickActionsRefreshGitFileState}
+						onQuickActionsDebugReleaseQueuedItem={handleQuickActionsDebugReleaseQueuedItem}
+						markdownEditMode={activeSession?.activeFileTabId ? markdownEditMode : chatRawTextMode}
+						onQuickActionsToggleMarkdownEditMode={handleQuickActionsToggleMarkdownEditMode}
+						setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
+						openWizard={openWizardModal}
+						wizardGoToStep={wizardGoToStep}
+						setDebugPackageModalOpen={setDebugPackageModalOpen}
+						setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
+						startTour={handleQuickActionsStartTour}
+						setFuzzyFileSearchOpen={setFuzzyFileSearchOpen}
+						onEditAgent={handleQuickActionsEditAgent}
+						onNewGroupChat={handleNewGroupChat}
+						onOpenGroupChat={handleOpenGroupChat}
+						onCloseGroupChat={handleCloseGroupChat}
+						onDeleteGroupChat={deleteGroupChatWithConfirmation}
+						hasActiveSessionCapability={hasActiveSessionCapability}
+						onOpenMergeSession={handleQuickActionsOpenMergeSession}
+						onOpenSendToAgent={handleQuickActionsOpenSendToAgent}
+						onQuickCreateWorktree={handleQuickCreateWorktree}
+						onOpenCreatePR={handleQuickActionsOpenCreatePR}
+						onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
+						onRunPromptMacro={handleRunPromptMacro}
+						canSummarizeActiveTab={computeCanSummarizeActiveTab()}
+						onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
+						autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
+						autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
+						onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
+						onToggleAutoRunExpanded={handleQuickActionsToggleAutoRunExpanded}
+						onClearActiveTerminal={handleQuickActionsClearActiveTerminal}
+						onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
+						onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
+						onMoveTabToLast={handleQuickActionsMoveTabToLast}
+						onFocusActiveTab={handleQuickActionsFocusActiveTab}
+						onCopyTabContext={handleQuickActionsCopyTabContext}
+						onExportTabHtml={handleQuickActionsExportTabHtml}
+						onPublishTabGist={handleQuickActionsPublishTabGist}
+						mainPanelRef={mainPanelRef}
+						isFilePreviewOpen={!!activeSession?.activeFileTabId}
+						ghCliAvailable={ghCliAvailable}
+						onPublishGist={() => setGistPublishModalOpen(true)}
+						lastGraphFocusFile={lastGraphFocusFilePath}
+						onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
+						currentGraphFile={currentGraphFileName}
+						onOpenCurrentFileInGraph={mainPanelProps.onOpenInGraph}
+						lightboxImage={lightboxImage}
+						lightboxImages={lightboxImages}
+						stagedImages={stagedImages}
+						onCloseLightbox={handleCloseLightbox}
+						onNavigateLightbox={handleNavigateLightbox}
+						onDeleteLightboxImage={lightboxAllowDelete ? handleDeleteLightboxImage : undefined}
+						onUpdateLightboxImage={lightboxAllowDelete ? handleUpdateLightboxImage : undefined}
+						gitDiffPreview={gitDiffPreview}
+						gitViewerCwd={gitViewerCwd}
+						onCloseGitDiff={handleCloseGitDiff}
+						onCloseGitLog={handleCloseGitLog}
+						onOpenGitFile={handleOpenGitFile}
+						onCloseAutoRunSetup={handleCloseAutoRunSetup}
+						onAutoRunFolderSelected={handleAutoRunFolderSelected}
+						onCloseBatchRunner={handleCloseBatchRunner}
+						onStartBatchRun={handleStartBatchRun}
+						onSaveBatchPrompt={handleSaveBatchPrompt}
+						showConfirmation={showConfirmation}
+						autoRunDocumentList={autoRunDocumentList}
+						autoRunDocumentTree={autoRunDocumentTree}
+						getDocumentTaskCount={getDocumentTaskCount}
+						onAutoRunRefresh={handleAutoRunRefresh}
+						onOpenMarketplace={handleOpenMarketplace}
+						onOpenSymphony={encoreFeatures.symphony ? () => setSymphonyModalOpen(true) : undefined}
+						onOpenDirectorNotes={
+							encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
+						}
+						onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+						onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
+						onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
+						onCloseTabSwitcher={handleCloseTabSwitcher}
+						onTabSelect={handleUtilityTabSelect}
+						onFileTabSelect={handleUtilityFileTabSelect}
+						onTerminalTabSelect={handleSelectTerminalTab}
+						onBrowserTabSelect={handleSelectBrowserTab}
+						onNamedSessionSelect={handleNamedSessionSelect}
+						filteredFileTree={filteredFileTree}
+						fileExplorerExpanded={activeSession?.fileExplorerExpanded}
+						onCloseFileSearch={handleCloseFileSearch}
+						onFileSearchSelect={handleFileSearchSelect}
+						onClosePromptComposer={handleClosePromptComposer}
+						onPromptComposerSubmit={handlePromptComposerSubmit}
+						onPromptComposerSend={handlePromptComposerSend}
+						promptComposerSessionName={
+							activeGroupChatId
+								? groupChats.find((c) => c.id === activeGroupChatId)?.name
+								: activeSession?.name
+						}
+						promptComposerStagedImages={
+							activeGroupChatId ? groupChatStagedImages : canAttachImages ? stagedImages : []
+						}
+						setPromptComposerStagedImages={
+							activeGroupChatId
+								? setGroupChatStagedImages
+								: canAttachImages
+									? setStagedImages
+									: undefined
+						}
+						onPromptOpenLightbox={handleSetLightboxImage}
+						promptTabSaveToHistory={activeGroupChatId ? false : promptTabSaveToHistory}
+						onPromptToggleTabSaveToHistory={
+							activeGroupChatId ? undefined : handlePromptToggleTabSaveToHistory
+						}
+						promptTabReadOnlyMode={
+							activeGroupChatId ? groupChatReadOnlyMode : promptTabReadOnlyMode
+						}
+						onPromptToggleTabReadOnlyMode={handlePromptToggleTabReadOnlyMode}
+						promptTabShowThinking={activeGroupChatId ? 'off' : promptTabShowThinking}
+						onPromptToggleTabShowThinking={
+							activeGroupChatId ? undefined : handlePromptToggleTabShowThinking
+						}
+						promptSupportsThinking={
+							!activeGroupChatId && hasActiveSessionCapability('supportsThinkingDisplay')
+						}
+						promptEnterToSend={enterToSendAIExpanded}
+						onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
+						onOpenQueueBrowser={handleOpenQueueBrowser}
+						onCloseQueueBrowser={handleCloseQueueBrowser}
+						onQuickActionsNewTab={handleNewTab}
+						onQuickActionsNewFileTab={handleNewFileTab}
+						onQuickActionsNewBrowserTab={handleNewBrowserTab}
+						onQuickActionsNewTerminalTab={handleOpenTerminalTab}
+						onGoToNextUnread={goToNextUnreadTab}
+						onNavBack={handleNavBack}
+						onNavForward={handleNavForward}
+						onRemoveQueueItem={handleRemoveQueueItem}
+						onSwitchQueueSession={handleSwitchQueueSession}
+						onReorderQueueItems={handleReorderQueueItems}
+						onTogglePauseQueueItem={handleTogglePauseQueueItem}
+						onEditQueueItem={handleEditQueueItem}
+						// AppGroupChatModals props
+						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
+						onCreateGroupChat={handleCreateGroupChat}
+						showDeleteGroupChatModal={showDeleteGroupChatModal}
+						onCloseDeleteGroupChatModal={handleCloseDeleteGroupChatModal}
+						onConfirmDeleteGroupChat={handleConfirmDeleteGroupChat}
+						showRenameGroupChatModal={showRenameGroupChatModal}
+						onCloseRenameGroupChatModal={handleCloseRenameGroupChatModal}
+						onRenameGroupChatFromModal={handleRenameGroupChatFromModal}
+						showEditGroupChatModal={showEditGroupChatModal}
+						onCloseEditGroupChatModal={handleCloseEditGroupChatModal}
+						onUpdateGroupChat={handleUpdateGroupChat}
+						groupChatMessages={groupChatMessages}
+						onCloseGroupChatInfo={handleCloseGroupChatInfo}
+						onOpenModeratorSession={handleOpenModeratorSession}
+						// AppAgentModals props
+						onCloseLeaderboardRegistration={handleCloseLeaderboardRegistration}
+						leaderboardRegistration={leaderboardRegistration}
+						onSaveLeaderboardRegistration={handleSaveLeaderboardRegistration}
+						onLeaderboardOptOut={handleLeaderboardOptOut}
+						onSyncAutoRunStats={handleSyncAutoRunStats}
+						errorSession={errorSession}
+						effectiveAgentError={effectiveAgentError}
+						recoveryActions={recoveryActions}
+						onDismissAgentError={handleCloseAgentErrorModal}
+						onJumpToAgent={handleJumpToFailingAgent}
+						groupChatError={groupChatError}
+						groupChatRecoveryActions={groupChatRecoveryActions}
+						onClearGroupChatError={handleClearGroupChatError}
+						onCloseMergeSession={handleCloseMergeSession}
+						onMerge={handleMerge}
+						transferState={transferState}
+						transferProgress={transferProgress}
+						transferSourceAgent={transferSourceAgent}
+						transferTargetAgent={transferTargetAgent}
+						onCancelTransfer={handleCancelTransfer}
+						onCompleteTransfer={handleCompleteTransfer}
+						onCloseSendToAgent={handleCloseSendToAgent}
+						onSendToAgent={handleSendToAgent}
+					/>
+				}
+				standaloneModals={
+					<AppStandaloneModals
+						theme={theme}
+						// Debug / Playground
+						onCloseDebugPackage={handleCloseDebugPackage}
+						setSuppressWindowsWarning={setSuppressWindowsWarning}
+						enableBetaUpdates={enableBetaUpdates}
+						setEnableBetaUpdates={setEnableBetaUpdates}
+						// AppOverlays
+						autoRunStats={autoRunStats}
+						onStandingOvationClose={handleStandingOvationClose}
+						onOpenLeaderboardRegistration={handleOpenLeaderboardRegistration}
+						isLeaderboardRegistered={isLeaderboardRegistered}
+						onFirstRunCelebrationClose={handleFirstRunCelebrationClose}
+						onKeyboardMasteryCelebrationClose={handleKeyboardMasteryCelebrationClose}
+						// Marketplace
+						onMarketplaceImportComplete={handleMarketplaceImportComplete}
+						// Symphony
+						setActiveSessionId={setActiveSessionId}
+						onStartContribution={handleStartContribution}
+						encoreFeatures={encoreFeatures}
+						// Director's Notes
+						onDirectorNotesResumeSession={handleDirectorNotesResumeSession}
+						onFileClick={handleFileClick}
+						// Cue
+						shortcuts={shortcuts}
+						// GistPublish
+						gistPublishModalOpen={gistPublishModalOpen}
+						setGistPublishModalOpen={setGistPublishModalOpen}
+						activeFileTab={activeFileTab}
+						saveFileGistUrl={saveFileGistUrl}
+						fileGistUrls={fileGistUrls}
+						// DocumentGraph
+						onOpenFileTab={handleOpenFileTab}
+						mainPanelRef={mainPanelRef}
+						documentGraphShowExternalLinks={documentGraphShowExternalLinks}
+						onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
+						documentGraphMaxNodes={documentGraphMaxNodes}
+						documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}
+						onPreviewCharLimitChange={settings.setDocumentGraphPreviewCharLimit}
+						documentGraphLayoutType={documentGraphLayoutType}
+						onLayoutTypeChange={settings.setDocumentGraphLayoutType}
+						// DeleteAgent
+						onPerformDeleteSession={performDeleteSession}
+						onCloseDeleteAgentModal={handleCloseDeleteAgentModal}
+						// Settings
+						onCloseSettings={handleCloseSettings}
+						hasNoAgents={hasNoAgents}
+						setFlashNotification={setFlashNotification}
+						// Wizard
+						wizardIsOpen={wizardState.isOpen}
+						onWizardLaunchSession={handleWizardLaunchSession}
+						recordWizardStart={recordWizardStart}
+						recordWizardResume={recordWizardResume}
+						recordWizardAbandon={recordWizardAbandon}
+						recordWizardComplete={recordWizardComplete}
+						onWizardResume={handleWizardResume}
+						onWizardStartFresh={handleWizardStartFresh}
+						onWizardResumeClose={handleWizardResumeClose}
+						// Tour
+						setTourCompleted={setTourCompleted}
+						tabShortcuts={tabShortcuts}
+						recordTourStart={recordTourStart}
+						recordTourComplete={recordTourComplete}
+						recordTourSkip={recordTourSkip}
+					/>
+				}
+			/>
+		</>
 	);
 }
 

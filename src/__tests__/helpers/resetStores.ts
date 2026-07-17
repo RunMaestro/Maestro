@@ -35,6 +35,7 @@ import { useRestartPendingStore } from '../../renderer/stores/restartPendingStor
 import { useRetryStore } from '../../renderer/stores/retryStore';
 import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useSidebarNavStore } from '../../renderer/stores/sidebarNavStore';
 import { useTabStore } from '../../renderer/stores/tabStore';
 import { useThoughtStreamStore } from '../../renderer/stores/thoughtStreamStore';
 import { useUIStore } from '../../renderer/stores/uiStore';
@@ -106,6 +107,7 @@ export function resetStore(store: ResettableStore): void {
 /** All renderer Zustand stores that tests commonly seed or assert against. */
 export const ALL_RENDERER_STORES: ResettableStore[] = [
 	useSessionStore,
+	useSidebarNavStore,
 	useUIStore,
 	useSettingsStore,
 	useModalStore,

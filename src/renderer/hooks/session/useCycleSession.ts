@@ -22,31 +22,32 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
 import type { StarredItem } from './useStarredItems';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 
 // ============================================================================
 // Dependencies
 // ============================================================================
 
 export interface CycleSessionDeps {
-	/** Sorted sessions array (used when sidebar is collapsed) */
-	sortedSessions: Session[];
+	/**
+	 * Sorted sessions (sidebar collapsed). Prefer omitting and letting event-time
+	 * code read {@link useSidebarNavStore}; tests may pass an explicit list.
+	 */
+	sortedSessions?: Session[];
 	/** Open a group chat (loads messages etc.) */
 	handleOpenGroupChat: (groupChatId: string) => void;
 	/**
-	 * Starred Sessions rows (open starred tabs + closed starred sessions), in the
-	 * same display order as the Left Bar's "Starred Sessions" section. Cycling
-	 * traverses these at the top of the visual order when the section is shown.
+	 * Starred Sessions rows. Prefer omitting for production (sidebarNavStore);
+	 * tests may pass fixtures.
 	 */
-	starredItems: StarredItem[];
-	/** Activate a starred row (focus its tab, or resume a closed session). */
-	activateStarredItem: (item: StarredItem) => void | Promise<void>;
+	starredItems?: StarredItem[];
+	/** Activate a starred row. Prefer omitting for production (sidebarNavStore). */
+	activateStarredItem?: (item: StarredItem) => void | Promise<void>;
 	/**
-	 * Maps a render-context navKey (`bookmark:{id}`, `group:{gid}:{id}`,
-	 * `ungrouped:{id}`, plus `:wt:` child variants) to its index in navSessions.
-	 * Lets cycling highlight the EXACT occurrence it landed on (e.g. a bookmarked
-	 * agent's group row) instead of the first navSessions occurrence.
+	 * Maps a render-context navKey to its index in navSessions. Prefer omitting
+	 * for production (sidebarNavStore).
 	 */
-	navIndexMap: Map<string, number>;
+	navIndexMap?: Map<string, number>;
 	/**
 	 * Multi-window: optional window-ownership predicate. When provided, cycling
 	 * includes only agent rows THIS window owns, so `Cmd+[` / `Cmd+]` never jumps
@@ -80,14 +81,12 @@ type VisualOrderItem =
  * Left Bar order. Reads all store state at call time.
  */
 export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void {
-	const {
-		sortedSessions,
-		handleOpenGroupChat,
-		starredItems,
-		activateStarredItem,
-		navIndexMap,
-		ownsSession,
-	} = deps;
+	const nav = useSidebarNavStore.getState();
+	const sortedSessions = deps.sortedSessions ?? nav.sortedSessions;
+	const starredItems = deps.starredItems ?? nav.starredItems;
+	const activateStarredItem = deps.activateStarredItem ?? nav.activateStarredItem;
+	const navIndexMap = deps.navIndexMap ?? nav.navIndexMap;
+	const { handleOpenGroupChat, ownsSession } = deps;
 
 	const {
 		sessions,
