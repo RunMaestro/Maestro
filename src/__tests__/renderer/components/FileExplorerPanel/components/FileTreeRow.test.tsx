@@ -266,6 +266,49 @@ describe('FileTreeRow', () => {
 		}
 	});
 
+	it('does not let an unmounted row cancel a newer row long press', () => {
+		vi.useFakeTimers();
+		const openFirst = vi.fn();
+		const openSecond = vi.fn();
+		const longPressTimerRef = { current: null as number | null };
+		const longPressFiredRef = { current: false };
+		const secondNode: FileNode = { name: 'Other.tsx', type: 'file' };
+
+		const Rows = ({ includeFirst }: { includeFirst: boolean }) => (
+			<>
+				{includeFirst && (
+					<FileTreeRow
+						{...defaultProps}
+						openContextMenuAt={openFirst}
+						longPressTimerRef={longPressTimerRef}
+						longPressFiredRef={longPressFiredRef}
+					/>
+				)}
+				<FileTreeRow
+					{...defaultProps}
+					item={makeItem(secondNode)}
+					openContextMenuAt={openSecond}
+					longPressTimerRef={longPressTimerRef}
+					longPressFiredRef={longPressFiredRef}
+				/>
+			</>
+		);
+
+		try {
+			const { container, rerender } = render(<Rows includeFirst />);
+			const [firstRow, secondRow] = Array.from(container.children);
+			fireEvent.touchStart(firstRow!, { touches: [{ clientX: 10, clientY: 20 }] });
+			fireEvent.touchStart(secondRow!, { touches: [{ clientX: 30, clientY: 40 }] });
+			rerender(<Rows includeFirst={false} />);
+			vi.advanceTimersByTime(500);
+
+			expect(openFirst).not.toHaveBeenCalled();
+			expect(openSecond).toHaveBeenCalledWith(30, 40, secondNode, 'Other.tsx', 0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('removes long-press capture listeners and suppression timer on unmount', () => {
 		vi.useFakeTimers();
 		const removeListener = vi.spyOn(document, 'removeEventListener');
