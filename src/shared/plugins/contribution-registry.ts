@@ -71,11 +71,3 @@ export function mergeContributions<T extends RegistryEntry>(
 
 	return { items: [...byId.values()], errors };
 }
-
-/** Convenience: just the merged items (built-ins win), dropping provenance. */
-export function mergedItems<T extends RegistryEntry>(
-	builtins: readonly T[],
-	pluginEntries: readonly PluginEntries<T>[]
-): T[] {
-	return mergeContributions(builtins, pluginEntries).items.map((r) => r.item);
-}

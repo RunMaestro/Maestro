@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pluginThemeToTheme, pluginThemesToRecord } from '../../../shared/plugins/theme-bridge';
+import { pluginThemeToTheme } from '../../../shared/plugins/theme-bridge';
 import type { ThemeColors } from '../../../shared/theme-types';
 import type { ThemeContribution } from '../../../shared/plugins/contributions';
 
@@ -56,7 +56,7 @@ describe('pluginThemeToTheme', () => {
 			baseDark
 		);
 		expect(theme.colors.accent).toBe('#abc');
-		expect((theme.colors as Record<string, string>).notARealKey).toBeUndefined();
+		expect((theme.colors as unknown as Record<string, string>).notARealKey).toBeUndefined();
 		// prototype pollution attempt does not land on the palette
 		expect(Object.prototype.hasOwnProperty.call(theme.colors, '__proto__')).toBe(false);
 	});
@@ -77,22 +77,20 @@ describe('pluginThemeToTheme', () => {
 	});
 });
 
-describe('pluginThemesToRecord', () => {
-	it('keys by namespaced id and picks the base by mode', () => {
-		const rec = pluginThemesToRecord(
-			[
-				contribution({ id: 'com.a/dark1', localId: 'dark1', mode: 'dark', colors: {} }),
-				contribution({ id: 'com.a/light1', localId: 'light1', mode: 'light', colors: {} }),
-			],
-			baseDark,
+describe('pluginThemeToTheme base selection', () => {
+	it('builds dark and light themes from their intended base palettes', () => {
+		const darkTheme = pluginThemeToTheme(
+			contribution({ id: 'com.a/dark1', localId: 'dark1', mode: 'dark', colors: {} }),
+			baseDark
+		);
+		const lightTheme = pluginThemeToTheme(
+			contribution({ id: 'com.a/light1', localId: 'light1', mode: 'light', colors: {} }),
 			baseLight
 		);
-		expect(Object.keys(rec).sort()).toEqual(['com.a/dark1', 'com.a/light1']);
-		expect(rec['com.a/dark1'].colors.bgMain).toBe('#1e1e1e');
-		expect(rec['com.a/light1'].colors.bgMain).toBe('#ffffff');
-	});
 
-	it('returns an empty record for no contributions', () => {
-		expect(pluginThemesToRecord([], baseDark, baseLight)).toEqual({});
+		expect(darkTheme.id).toBe('com.a/dark1');
+		expect(darkTheme.colors.bgMain).toBe('#1e1e1e');
+		expect(lightTheme.id).toBe('com.a/light1');
+		expect(lightTheme.colors.bgMain).toBe('#ffffff');
 	});
 });

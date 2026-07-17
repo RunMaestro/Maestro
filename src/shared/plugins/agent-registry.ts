@@ -80,8 +80,3 @@ export function createAgentRegistry(
 		listAll: (): string[] => [...builtInList, ...runtimeList],
 	});
 }
-
-/** An empty registry (built-ins only). Useful as a default before plugins load. */
-export function emptyAgentRegistry(): AgentRegistry {
-	return createAgentRegistry([]);
-}

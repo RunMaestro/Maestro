@@ -77,22 +77,3 @@ export function pluginThemeToTheme(contribution: ThemeContribution, base: ThemeC
 		colors,
 	};
 }
-
-/**
- * Convert all plugin theme contributions into a `Record<id, Theme>` ready to
- * merge with the built-in THEMES map. `baseDark`/`baseLight` are full base
- * palettes the host supplies (typically a built-in dark and light theme's
- * colors) so contributed themes inherit sensible values for keys they omit.
- */
-export function pluginThemesToRecord(
-	contributions: readonly ThemeContribution[],
-	baseDark: ThemeColors,
-	baseLight: ThemeColors
-): Record<string, Theme> {
-	const out: Record<string, Theme> = {};
-	for (const c of contributions) {
-		const base = c.mode === 'light' ? baseLight : baseDark;
-		out[c.id] = pluginThemeToTheme(c, base);
-	}
-	return out;
-}

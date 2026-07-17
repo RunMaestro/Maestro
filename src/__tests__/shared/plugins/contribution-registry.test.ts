@@ -7,7 +7,6 @@
 import { describe, it, expect } from 'vitest';
 import {
 	mergeContributions,
-	mergedItems,
 	type RegistryEntry,
 } from '../../../shared/plugins/contribution-registry';
 
@@ -49,9 +48,13 @@ describe('mergeContributions', () => {
 		expect(r.errors[0]).toContain('duplicates another contribution');
 	});
 
-	it('mergedItems returns just the surviving items in order', () => {
-		expect(
-			mergedItems([mk('a')], [{ pluginId: 'p', items: [mk('p/b')] }]).map((i) => i.id)
-		).toEqual(['a', 'p/b']);
+	it('returns surviving items in order with their provenance', () => {
+		const result = mergeContributions([mk('a')], [{ pluginId: 'p', items: [mk('p/b')] }]);
+
+		expect(result.items.map((entry) => entry.item.id)).toEqual(['a', 'p/b']);
+		expect(result.items.map((entry) => entry.provenance)).toEqual([
+			{ source: 'builtin' },
+			{ source: 'plugin', pluginId: 'p' },
+		]);
 	});
 });

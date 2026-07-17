@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createAgentRegistry, emptyAgentRegistry } from '../../../shared/plugins/agent-registry';
+import { createAgentRegistry } from '../../../shared/plugins/agent-registry';
 import { AGENT_IDS } from '../../../shared/agentIds';
 import type { AgentContribution } from '../../../shared/plugins/contributions';
 
@@ -18,7 +18,7 @@ function agent(id: string, overrides: Partial<AgentContribution> = {}): AgentCon
 
 describe('createAgentRegistry', () => {
 	it('knows the built-in agents with no plugins', () => {
-		const reg = emptyAgentRegistry();
+		const reg = createAgentRegistry([]);
 		expect(reg.isBuiltIn('claude-code')).toBe(true);
 		expect(reg.isKnown('claude-code')).toBe(true);
 		expect(reg.isRuntime('claude-code')).toBe(false);
