@@ -25,7 +25,8 @@ import { resolveUpdater } from '../utils/resolveUpdater';
  * time - landing on a starred/group-chat row sets selectedSidebarIndex to -1.
  */
 export type SidebarExtraSelection =
-	{ kind: 'starred'; key: string } | { kind: 'groupChat'; id: string };
+	| { kind: 'starred'; key: string }
+	| { kind: 'groupChat'; id: string };
 
 /** Per-window state for the AI chat "Find" bar (one slot per agent+AI-tab). */
 export interface OutputSearchSlot {

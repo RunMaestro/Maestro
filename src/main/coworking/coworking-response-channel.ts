@@ -9,7 +9,8 @@ import {
 import type { BrowserOpResult } from '../../shared/coworkingBrowser';
 
 export type CoworkingResponseOutcome<Value> =
-	{ kind: 'resolve'; value: Value } | { kind: 'reject'; error: Error };
+	| { kind: 'resolve'; value: Value }
+	| { kind: 'reject'; error: Error };
 
 export interface CoworkingRendererRoundTripOptions<Value, Kind extends CoworkingResponseKind> {
 	webContents: WebContents;

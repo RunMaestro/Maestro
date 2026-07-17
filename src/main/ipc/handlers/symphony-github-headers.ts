@@ -2,7 +2,9 @@ const GITHUB_ACCEPT = 'application/vnd.github.v3+json';
 const GITHUB_USER_AGENT = 'Maestro-Symphony';
 
 export type SymphonyRequestHeaders =
-	Headers | Record<string, string> | ReadonlyArray<readonly [string, string]>;
+	| Headers
+	| Record<string, string>
+	| ReadonlyArray<readonly [string, string]>;
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
 	return Object.keys(headers).some((header) => header.toLowerCase() === name.toLowerCase());

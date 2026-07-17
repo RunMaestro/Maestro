@@ -27,7 +27,11 @@ import { webLogger } from '../utils/logger';
  * WebSocket connection states
  */
 export type WebSocketState =
-	'disconnected' | 'connecting' | 'connected' | 'authenticating' | 'authenticated';
+	| 'disconnected'
+	| 'connecting'
+	| 'connected'
+	| 'authenticating'
+	| 'authenticated';
 
 /**
  * Event handlers for WebSocket events

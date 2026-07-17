@@ -496,13 +496,15 @@ export async function pianolaOrchestrate(
 			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
 			'session_history_result'
 		);
-		const messages = (result.messages ?? []).map((m): PianolaMessage => ({
-			id: m.id,
-			role: m.role,
-			source: m.source ?? '',
-			content: m.content,
-			timestamp: m.timestamp,
-		}));
+		const messages = (result.messages ?? []).map(
+			(m): PianolaMessage => ({
+				id: m.id,
+				role: m.role,
+				source: m.source ?? '',
+				content: m.content,
+				timestamp: m.timestamp,
+			})
+		);
 		historyCache.set(tabId, { at: now, messages });
 		return messages;
 	};

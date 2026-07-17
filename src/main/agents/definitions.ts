@@ -78,7 +78,10 @@ interface SelectConfigOption extends BaseConfigOption {
  * Uses discriminated union for full type safety.
  */
 export type AgentConfigOption =
-	CheckboxConfigOption | TextConfigOption | NumberConfigOption | SelectConfigOption;
+	| CheckboxConfigOption
+	| TextConfigOption
+	| NumberConfigOption
+	| SelectConfigOption;
 
 /**
  * Full agent configuration including runtime detection state.

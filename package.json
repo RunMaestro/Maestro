@@ -346,7 +346,7 @@
 		"patch-package": "^8.0.1",
 		"playwright": "^1.59.1",
 		"postcss": "^8.4.33",
-		"prettier": "^3.8.0",
+		"prettier": "3.8.3",
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
 		"tailwindcss": "^3.4.1",

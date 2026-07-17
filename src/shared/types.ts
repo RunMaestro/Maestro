@@ -854,7 +854,13 @@ export interface DirectoryEntry {
  */
 export interface UpdateStatus {
 	status:
-		'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+		| 'idle'
+		| 'checking'
+		| 'available'
+		| 'not-available'
+		| 'downloading'
+		| 'downloaded'
+		| 'error';
 	info?: { version: string };
 	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;

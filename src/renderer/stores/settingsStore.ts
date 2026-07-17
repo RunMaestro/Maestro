@@ -2331,7 +2331,8 @@ export async function loadAllSettings(): Promise<void> {
 		} else {
 			// One-time migration: copy from globalStats.totalActiveTimeMs if it exists and is > 0
 			const legacyGlobalStats = allSettings['globalStats'] as
-				{ totalActiveTimeMs?: number } | undefined;
+				| { totalActiveTimeMs?: number }
+				| undefined;
 			if (legacyGlobalStats?.totalActiveTimeMs && legacyGlobalStats.totalActiveTimeMs > 0) {
 				patch.totalActiveTimeMs = legacyGlobalStats.totalActiveTimeMs;
 				window.maestro.settings.set('totalActiveTimeMs', legacyGlobalStats.totalActiveTimeMs);
@@ -2512,7 +2513,12 @@ export async function loadAllSettings(): Promise<void> {
 			const validTimeRanges = ['day', 'week', 'month', 'quarter', 'year', 'all'];
 			if (validTimeRanges.includes(allSettings['defaultStatsTimeRange'] as string)) {
 				patch.defaultStatsTimeRange = allSettings['defaultStatsTimeRange'] as
-					'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
+					| 'day'
+					| 'week'
+					| 'month'
+					| 'quarter'
+					| 'year'
+					| 'all';
 			}
 		}
 

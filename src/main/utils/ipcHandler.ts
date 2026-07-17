@@ -56,7 +56,8 @@ export type IpcResponse<T = unknown> = IpcSuccessResponse<T> | IpcErrorResponse;
  * (e.g., { success: true, files: [], tree: [] })
  */
 export type IpcCustomResponse<T extends Record<string, unknown>> =
-	(T & { success: true }) | { success: false; error: string };
+	| (T & { success: true })
+	| { success: false; error: string };
 
 /**
  * Options for the IPC handler wrapper

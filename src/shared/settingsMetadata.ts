@@ -80,7 +80,10 @@ export function resolveDefaultShell(environment: SettingsDefaultEnvironment = {}
 	}
 
 	const shell =
-		environment.shell ?? (typeof process === 'undefined' ? undefined : process.env.SHELL);
+		environment.shell ??
+		(environment.platform === undefined && typeof process !== 'undefined'
+			? process.env.SHELL
+			: undefined);
 	const shellName = shell?.split(/[\\/]/).pop();
 	if (shellName && ['bash', 'zsh', 'fish', 'sh', 'tcsh'].includes(shellName)) {
 		return shellName;

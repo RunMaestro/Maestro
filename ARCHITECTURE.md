@@ -1060,7 +1060,8 @@ type UnifiedTabRef = { type: 'ai' | 'file'; id: string };
 
 // Discriminated union for rendering
 type UnifiedTab =
-	{ type: 'ai'; id: string; data: AITab } | { type: 'file'; id: string; data: FilePreviewTab };
+	| { type: 'ai'; id: string; data: AITab }
+	| { type: 'file'; id: string; data: FilePreviewTab };
 ```
 
 ### Session Fields

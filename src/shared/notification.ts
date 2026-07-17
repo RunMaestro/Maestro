@@ -12,7 +12,8 @@ export const NOTIFICATION_VARIANT_COLORS = {
 export type NotificationVariant = keyof typeof NOTIFICATION_VARIANT_COLORS;
 
 export type NotificationColorResolution =
-	{ ok: true; color: NotificationColor } | { ok: false; source: 'color' | 'alias' };
+	| { ok: true; color: NotificationColor }
+	| { ok: false; source: 'color' | 'alias' };
 
 export function resolveNotificationColor(
 	color: string | undefined,
