@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { calculateContextDisplay } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
 import type { Session, AITab } from '../../types';
+import { getModelContextWindowOverride } from '../../../shared/agentConstants';
 
 /**
  * Loads and computes context window metrics for the active tab.
@@ -33,10 +34,22 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
 	const activeTabContextWindow = useMemo(() => {
-		const configured = configuredContextWindow;
 		const reported = activeTab?.usageStats?.contextWindow ?? 0;
-		return configured > 0 ? configured : reported;
-	}, [configuredContextWindow, activeTab?.usageStats?.contextWindow]);
+		const sessionOverride =
+			typeof activeSession?.customContextWindow === 'number' &&
+			activeSession.customContextWindow > 0
+				? activeSession.customContextWindow
+				: getModelContextWindowOverride(activeSession?.customModel) || 0;
+		if (sessionOverride > 0) return sessionOverride;
+		if (activeSession?.toolType === 'omp' && reported > 0) return reported;
+		return configuredContextWindow > 0 ? configuredContextWindow : reported;
+	}, [
+		activeSession?.customContextWindow,
+		activeSession?.customModel,
+		activeSession?.toolType,
+		activeTab?.usageStats?.contextWindow,
+		configuredContextWindow,
+	]);
 
 	// Hold the last trustworthy result per tab so an untrustworthy frame
 	// (overflow without fallback, missing window) preserves the prior good

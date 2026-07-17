@@ -80,6 +80,88 @@ describe('useContextWindow', () => {
 		});
 	});
 
+	it('uses OMP runtime context metadata for the header percentage and tooltip denominator', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200_000 });
+		const session = makeSession({ toolType: 'omp' });
+		const tab = {
+			id: 'omp-tab',
+			usageStats: {
+				contextWindow: 272_000,
+				inputTokens: 27_200,
+				outputTokens: 0,
+				cacheCreationInputTokens: 0,
+				cacheReadInputTokens: 0,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => {
+			expect(mockGetConfig).toHaveBeenCalledWith('omp');
+		});
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(272_000);
+		});
+		expect(result.current.activeTabContextUsage).toBe(10);
+	});
+
+	it('keeps an explicit OMP session context override above live runtime metadata', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200_000 });
+		const session = makeSession({ toolType: 'omp', customContextWindow: 1_000_000 });
+		const tab = {
+			id: 'omp-tab',
+			usageStats: {
+				contextWindow: 272_000,
+				inputTokens: 27_200,
+				outputTokens: 0,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(1_000_000);
+		});
+	});
+
+	it('keeps an explicit OMP model context marker above live runtime metadata', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200_000 });
+		const session = makeSession({ toolType: 'omp', customModel: 'claude-opus[1m]' });
+		const tab = {
+			id: 'omp-tab',
+			usageStats: {
+				contextWindow: 272_000,
+				inputTokens: 27_200,
+				outputTokens: 0,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(1_000_000);
+		});
+	});
+
+	it('uses OMP configured fallback when runtime metadata is unavailable', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200_000 });
+		const session = makeSession({ toolType: 'omp' });
+		const tab = {
+			id: 'omp-tab',
+			usageStats: {
+				contextWindow: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(200_000);
+		});
+	});
+
 	it('calculates context tokens and usage percentage', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		const session = makeSession();

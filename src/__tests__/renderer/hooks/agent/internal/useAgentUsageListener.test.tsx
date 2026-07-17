@@ -243,6 +243,41 @@ describe('useAgentUsageListener', () => {
 		expect(last.percentage).toBe(10); // round(30000 / 300000 * 100)
 	});
 
+	it('uses live OMP metadata rather than its generic configured fallback for Context Timeline points', async () => {
+		window.maestro.agents.getConfig = vi.fn().mockResolvedValue({ contextWindow: 200_000 });
+		const session = createMockSession({ id: 'sess-1', toolType: 'omp' });
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// Prime the async configured-window cache, then exercise the hot path
+		// after the generic 200k fallback is available.
+		handler!('sess-1', {
+			inputTokens: 1,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 272_000,
+		});
+		await vi.waitFor(() => expect(getCachedConfiguredContextWindow(session)).toBe(200_000));
+
+		handler!('sess-1', {
+			inputTokens: 27_200,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 272_000,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const latest = points[points.length - 1];
+		expect(latest.contextWindow).toBe(272_000);
+		expect(latest.percentage).toBe(10);
+	});
+
 	it('falls back to accumulated growth estimate when contextPercentage is null', () => {
 		const session = createMockSession({
 			id: 'sess-1',

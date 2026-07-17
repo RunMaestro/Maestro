@@ -65,20 +65,10 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				: sessionForUsage.sshRemoteId;
 			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
-			// Resolve the effective context window ONCE, matching the header gauge's
-			// precedence (resolveConfiguredContextWindow): a per-agent custom window,
-			// a `[1m]` model marker, or the provider's configured window wins over the
-			// reported/static window, so a session configured for e.g. 1M isn't sized
-			// against a 200k denominator. Shared by the timeline point and the
-			// accumulated-growth fallback so they can never disagree.
-			//
-			// The provider-config source lives behind an async `getConfig` call that
-			// must NOT run on this hot per-turn path, so we read it from a synchronous
-			// cache and prime that cache off-path for the next turn. The two sync
-			// sources (per-session window, model marker) take precedence and cover the
-			// common cases immediately; the cached provider window closes the gap for
-			// agents (e.g. OpenCode) whose window is configured at the provider level
-			// only and would otherwise plot against the static table.
+			// Resolve the effective context window ONCE so header and timeline stay
+			// consistent. Explicit session overrides and model markers always win.
+			// OMP's runtime supplies the active provider/model window, so its live
+			// value is more authoritative than the generic 200k agent fallback.
 			ensureConfiguredContextWindowCached(sessionForUsage);
 			const syncConfiguredWindow =
 				typeof sessionForUsage.customContextWindow === 'number' &&
@@ -89,17 +79,23 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				syncConfiguredWindow > 0
 					? syncConfiguredWindow
 					: getCachedConfiguredContextWindow(sessionForUsage);
+			const liveOmpWindow =
+				agentToolType === 'omp' && usageStats.contextWindow > 0 ? usageStats.contextWindow : 0;
 			const resolvedWindow =
-				configuredWindow > 0
-					? configuredWindow
-					: usageStats.contextWindow > 0
-						? usageStats.contextWindow
-						: agentToolType && agentToolType !== 'terminal'
-							? getContextWindowForAgent(
-									agentToolType,
-									useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-								)
-							: 0;
+				syncConfiguredWindow > 0
+					? syncConfiguredWindow
+					: liveOmpWindow > 0
+						? liveOmpWindow
+						: configuredWindow > 0
+							? configuredWindow
+							: usageStats.contextWindow > 0
+								? usageStats.contextWindow
+								: agentToolType && agentToolType !== 'terminal'
+									? getContextWindowForAgent(
+											agentToolType,
+											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+										)
+									: 0;
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
