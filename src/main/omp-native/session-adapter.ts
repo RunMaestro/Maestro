@@ -88,6 +88,7 @@ export class OmpNativeSessionAdapter {
 	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
+	private pendingContinuationTurns = 0;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
@@ -196,7 +197,11 @@ export class OmpNativeSessionAdapter {
 				message,
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
-			if (agentWasNotInvoked(response.data)) this.completeTurn();
+			if (agentWasNotInvoked(response.data)) {
+				this.completeTurn();
+			} else if (intent === 'follow_up' || intent === 'abort_and_prompt') {
+				this.pendingContinuationTurns += 1;
+			}
 		} catch (error) {
 			this.turnInFlight = false;
 			throw error;
@@ -521,6 +526,22 @@ export class OmpNativeSessionAdapter {
 		) {
 			void this.refreshFeatures();
 		}
+		if (event.type === 'agent_start') {
+			const continuation = this.pendingContinuationTurns > 0;
+			if (continuation) {
+				this.pendingContinuationTurns -= 1;
+				this.turnInFlight = true;
+				this.turnEmittedAssistantText = false;
+			}
+			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+				phase: 'agent_start',
+				continuation,
+			});
+		}
+		if (event.type === 'turn_end')
+			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+				phase: 'turn_end',
+			});
 		if (event.type === 'turn_end' || event.type === 'agent_end') {
 			this.completeTurn();
 			void this.refreshFeatures();

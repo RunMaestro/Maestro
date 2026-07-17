@@ -96,6 +96,53 @@ export function useRuntimeFeaturesListener(): void {
 				update(sessionId, () => ({ name: title }));
 			}
 		);
+
+		// A follow-up remains visible through streamed output from the current
+		// turn. It is consumed only when this exact tab reports a completed turn
+		// followed by the native agent starting the next queued turn.
+		const completedOmpTurns = new Set<string>();
+		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
+			if (!ownedGate.current?.(sessionId)) return;
+			if (event.phase === 'turn_end') {
+				completedOmpTurns.add(sessionId);
+				return;
+			}
+			if (
+				event.phase !== 'agent_start' ||
+				event.continuation !== true ||
+				!completedOmpTurns.delete(sessionId)
+			)
+				return;
+			const { baseSessionId, tabId } = parseSessionId(sessionId);
+			if (!tabId) return;
+			setSessions((sessions) =>
+				sessions.map((session) => {
+					if (session.id !== baseSessionId) return session;
+					return {
+						...session,
+						state: 'busy',
+						busySource: 'ai',
+						thinkingStartTime: Date.now(),
+						aiTabs: session.aiTabs.map((tab) => {
+							if (tab.id !== tabId) return tab;
+							const queuedEntry = tab.logs.find(
+								(log) => log.deliveryIntent === 'follow_up' && log.deliveryState === 'queued'
+							);
+							return {
+								...tab,
+								state: 'busy',
+								thinkingStartTime: Date.now(),
+								logs: queuedEntry
+									? tab.logs.map((log) =>
+											log.id === queuedEntry.id ? { ...log, deliveryState: 'consumed' } : log
+										)
+									: tab.logs,
+							};
+						}),
+					};
+				})
+			);
+		});
 		return () => {
 			removeRuntimeFeatures();
 			removeApproval();
@@ -103,6 +150,7 @@ export function useRuntimeFeaturesListener(): void {
 			removeOpenExternalUrl();
 			removeComposerText();
 			removeSessionTitle();
+			removeOmpTurnLifecycle();
 		};
 	}, [ownedGate]);
 }

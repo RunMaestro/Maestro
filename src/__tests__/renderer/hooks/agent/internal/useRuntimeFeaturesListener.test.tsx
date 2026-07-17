@@ -13,6 +13,12 @@ let onOpenExternalUrl: ((sessionId: string, url: string) => void) | undefined;
 let onRuntimeFeatures:
 	| ((sessionId: string, features: AgentRuntimeFeatureState | null) => void)
 	| undefined;
+let onOmpTurnLifecycle:
+	| ((
+			sessionId: string,
+			event: { phase: 'turn_end' | 'agent_start'; continuation?: boolean }
+	  ) => void)
+	| undefined;
 
 vi.mock('../../../../../renderer/hooks/agent/internal/useOwnedSessionGate', () => ({
 	useOwnedSessionGate: () => ownedGate,
@@ -35,6 +41,17 @@ const mockProcess = {
 	}),
 	onComposerText: vi.fn(() => unsubscribe),
 	onSessionTitle: vi.fn(() => unsubscribe),
+	onOmpTurnLifecycle: vi.fn(
+		(
+			handler: (
+				sessionId: string,
+				event: { phase: 'turn_end' | 'agent_start'; continuation?: boolean }
+			) => void
+		) => {
+			onOmpTurnLifecycle = handler;
+			return unsubscribe;
+		}
+	),
 };
 
 function featureState(marker: string): AgentRuntimeFeatureState {
@@ -71,7 +88,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	onOpenExternalUrl = undefined;
 	onRuntimeFeatures = undefined;
-	// Cast: the hook only subscribes to these six process listeners; the rest of
+	onOmpTurnLifecycle = undefined;
 	// the preload bridge surface is irrelevant to this suite.
 	const processBridge = mockProcess as unknown as typeof window.maestro.process;
 	window.maestro = { ...window.maestro, process: processBridge };
@@ -124,6 +141,45 @@ describe('useRuntimeFeaturesListener', () => {
 		expect(session.runtimeFeatures).toEqual(next);
 		expect(session.aiTabs[0].runtimeFeatures?.controls[0].label).toBe('seed-a');
 		expect(session.aiTabs[1].runtimeFeatures?.controls[0].label).toBe('seed-b');
+	});
+
+	it('reasserts busy and consumes one queued follow-up only at its continuation start', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				state: 'idle',
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								state: 'idle',
+								logs: [
+									{
+										id: 'queued-follow-up',
+										timestamp: 1,
+										source: 'user',
+										text: 'run after this',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		renderHook(() => useRuntimeFeaturesListener());
+
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'agent_start',
+			continuation: true,
+		});
+
+		const session = storedSession();
+		expect(session.state).toBe('busy');
+		expect(session.aiTabs[0].state).toBe('busy');
+		expect(session.aiTabs[0].logs[0].deliveryState).toBe('consumed');
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {

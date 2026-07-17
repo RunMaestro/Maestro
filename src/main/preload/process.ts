@@ -18,8 +18,11 @@ import type {
 	AgentApprovalResponse,
 	AgentRuntimeFeatureState,
 } from '../../shared/agent-runtime-features';
-import type { OmpNativeTurnCompletion } from '../../shared/omp-native-session';
-import type { OmpDeliveryIntent } from '../../shared/omp-native-session';
+import type {
+	OmpDeliveryIntent,
+	OmpNativeTurnCompletion,
+	OmpTurnLifecycleEvent,
+} from '../../shared/omp-native-session';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -349,6 +352,15 @@ export function createProcessApi() {
 				callback(sessionId, state);
 			ipcRenderer.on('process:runtime-features', handler);
 			return () => ipcRenderer.removeListener('process:runtime-features', handler);
+		},
+
+		onOmpTurnLifecycle: (
+			callback: (sessionId: string, event: OmpTurnLifecycleEvent) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, event: OmpTurnLifecycleEvent) =>
+				callback(sessionId, event);
+			ipcRenderer.on('process:omp-turn-lifecycle', handler);
+			return () => ipcRenderer.removeListener('process:omp-turn-lifecycle', handler);
 		},
 
 		respondApproval: (

@@ -1745,6 +1745,60 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 	});
 
+	it('continues a queued follow-up on the same RPC child after the preceding turn seals', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const spawn = vi.fn(() => child as never);
+		const adapter = await OmpNativeSessionAdapter.acquire({
+			sessionId: 'tab-follow-up-chain',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn,
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		await adapter.deliver('follow_up', 'continue after this turn');
+		emit(child, { type: 'turn_end' });
+		emit(child, { type: 'agent_start' });
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'queued output' },
+		});
+		emit(child, { type: 'turn_end' });
+
+		expect(spawn).toHaveBeenCalledOnce();
+		expect(OmpNativeSessionAdapter.forSession('tab-follow-up-chain')).toBe(adapter);
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-follow-up-chain', {
+			phase: 'agent_start',
+			continuation: true,
+		});
+		expect(send).toHaveBeenCalledWith('process:data', 'tab-follow-up-chain', 'queued output');
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-follow-up-chain'
+			)
+		).toHaveLength(2);
+		expect(child.kill).not.toHaveBeenCalled();
+	});
+
 	it('uses live runtime context metadata before model metadata and only then falls back', () => {
 		expect(
 			contextWindowFromOmpRuntime({

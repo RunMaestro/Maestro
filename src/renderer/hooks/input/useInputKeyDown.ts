@@ -10,6 +10,7 @@
  */
 
 import { useCallback } from 'react';
+import type { OmpDeliveryIntent } from '../../../shared/omp-native-session';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
 import {
 	MENTION_CATEGORY_CYCLE,
@@ -48,7 +49,10 @@ export interface InputKeyDownDeps {
 	/** Sync file tree to highlight the tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 	/** Process and send the current input */
-	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
+	processInput: (
+		overrideInputValue?: string,
+		options?: { forceParallel?: boolean; ompDeliveryIntent?: OmpDeliveryIntent }
+	) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (input: string) => TabCompletionSuggestion[];
 	/** Ref to the input textarea */
@@ -285,6 +289,27 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 			const enterToSendAI = activeTab?.enterToSend ?? settings.enterToSendAI;
 
+			// Completion pickers above own Enter first. Once they have declined it,
+			// a writable busy OMP tab maps only genuine send gestures to its pinned
+			// RPC delivery commands. IME composition and Shift+Enter remain native
+			// textarea behavior, so neither can accidentally steer a live turn.
+			const isWritableBusyOmp =
+				activeSession?.inputMode === 'ai' &&
+				activeSession.toolType === 'omp' &&
+				activeTab?.state === 'busy' &&
+				activeTab.readOnlyMode !== true;
+			if (e.key === 'Enter' && isWritableBusyOmp) {
+				if (e.nativeEvent?.isComposing || (e.shiftKey && !e.ctrlKey)) return;
+				let ompDeliveryIntent: OmpDeliveryIntent | null = null;
+				if (e.ctrlKey && e.shiftKey) ompDeliveryIntent = 'abort_and_prompt';
+				else if (e.ctrlKey) ompDeliveryIntent = 'follow_up';
+				else if (!e.metaKey && !e.altKey && !e.shiftKey) ompDeliveryIntent = 'steer';
+				if (ompDeliveryIntent) {
+					e.preventDefault();
+					processInput(undefined, { ompDeliveryIntent });
+					return;
+				}
+			}
 			if (e.key === 'Enter') {
 				// Check for forced parallel send shortcut (only in AI mode, only when feature enabled)
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's

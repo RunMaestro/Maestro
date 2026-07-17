@@ -1534,3 +1534,56 @@ describe('General edge cases — additional', () => {
 		expect(result.current.handleInputKeyDown).toBe(first);
 	});
 });
+
+describe('OMP busy delivery shortcuts', () => {
+	beforeEach(() => {
+		setActiveSession({
+			inputMode: 'ai',
+			toolType: 'omp',
+			activeTabId: 'omp-tab',
+			aiTabs: [{ id: 'omp-tab', state: 'busy', readOnlyMode: false }],
+		});
+	});
+
+	it.each([
+		[{ ctrlKey: true }, 'follow_up'],
+		[{ ctrlKey: true, shiftKey: true }, 'abort_and_prompt'],
+		[{}, 'steer'],
+	] as const)('routes Enter modifiers to %s', (modifiers, intent) => {
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const event = createKeyEvent('Enter', modifiers);
+
+		act(() => result.current.handleInputKeyDown(event));
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { ompDeliveryIntent: intent });
+	});
+
+	it('lets an open mention picker consume Enter before OMP delivery', () => {
+		mockInputContext.atMentionOpen = true;
+		mockInputContext.atMentionStartIndex = 0;
+		mockInputContext.atMentionFilter = '';
+		const deps = createMockDeps({
+			inputValue: '@',
+			atMentionItems: [{ value: '@src/app.ts ', kind: 'file' }],
+		});
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+
+		expect(deps.processInput).not.toHaveBeenCalled();
+		expect(deps.setInputValue).toHaveBeenCalled();
+	});
+
+	it('lets IME composition keep Enter without OMP delivery', () => {
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const event = createKeyEvent('Enter', { nativeEvent: { isComposing: true } as never });
+
+		act(() => result.current.handleInputKeyDown(event));
+
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+});

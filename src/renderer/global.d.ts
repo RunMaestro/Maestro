@@ -188,7 +188,7 @@ import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { PluginWorkspacesApi } from '../shared/plugins/plugin-workspace-bridge';
-import type { OmpDeliveryIntent } from '../shared/omp-native-session';
+import type { OmpDeliveryIntent, OmpTurnLifecycleEvent } from '../shared/omp-native-session';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -369,6 +369,9 @@ interface MaestroAPI {
 				sessionId: string,
 				state: import('../shared/agent-runtime-features').AgentRuntimeFeatureState | null
 			) => void
+		) => () => void;
+		onOmpTurnLifecycle: (
+			callback: (sessionId: string, event: OmpTurnLifecycleEvent) => void
 		) => () => void;
 		respondApproval: (
 			sessionId: string,

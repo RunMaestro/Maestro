@@ -5,6 +5,11 @@ import type { AgentRuntimeFeatureState } from './agent-runtime-features';
  * process while an active turn is running.
  */
 export type OmpDeliveryIntent = 'steer' | 'follow_up' | 'abort_and_prompt';
+export type OmpTurnLifecyclePhase = 'turn_end' | 'agent_start';
+export interface OmpTurnLifecycleEvent {
+	phase: OmpTurnLifecyclePhase;
+	continuation?: boolean;
+}
 export interface OmpNativeTurnCompletion {
 	readonly kind: 'omp-native-turn';
 }
