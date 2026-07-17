@@ -224,8 +224,11 @@ export function NewInstanceModal({
 				configs[agent.id] = config;
 
 				// Extract per-agent settings from the loaded config
-				if (config.customPath) {
-					paths[agent.id] = config.customPath;
+				// Local detection validates and recovers rotating binary paths. SSH paths
+				// belong to the remote host and must not be validated against the local filesystem.
+				const customPath = sshRemoteId ? config.customPath : agent.customPath;
+				if (customPath) {
+					paths[agent.id] = customPath;
 				}
 				if (config.customArgs) {
 					args[agent.id] = config.customArgs;

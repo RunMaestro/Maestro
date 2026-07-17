@@ -154,11 +154,13 @@ export class AgentDetector {
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
+			let resolvedCustomPath: string | undefined;
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
 				if (detection.exists) {
+					resolvedCustomPath = detection.path || customPath;
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
 						LOG_CONTEXT
@@ -193,7 +195,7 @@ export class AgentDetector {
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
-				customPath: customPath || undefined,
+				customPath: resolvedCustomPath,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
 

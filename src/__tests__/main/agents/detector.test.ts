@@ -655,6 +655,7 @@ describe('agent-detector', () => {
 			const claude = agents.find((a) => a.id === 'claude-code');
 			expect(claude?.available).toBe(true);
 			expect(claude?.path).toBe('/usr/bin/claude');
+			expect(claude?.customPath).toBeUndefined();
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('custom path not valid'),
