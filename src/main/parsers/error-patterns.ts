@@ -1296,6 +1296,65 @@ const GROK_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Cursor CLI Error Patterns
+// ============================================================================
+
+const CURSOR_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not (?:logged in|authenticated)|authentication failed|please run.*agent login/i,
+			message: 'Not authenticated. Please run "agent login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid api key|unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Authentication failed. Please run "agent login" to re-authenticate.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Cursor rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Context limit exceeded. Start a new session or compact the conversation.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error connecting to Cursor. Check your connection and try again.',
+			recoverable: true,
+		},
+	],
+	session_not_found: [
+		{
+			pattern: /session.*not found|chat.*not found|invalid.*session/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /unknown model|invalid model|model.*not found|couldn'?t set model/i,
+			message: 'Invalid model. Run "agent models" to see available models.',
+			recoverable: true,
+		},
+		{
+			pattern: /panic|fatal error|unhandled exception|segmentation fault/i,
+			message: 'Cursor Agent crashed unexpectedly. Check the logs and try again.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // Pattern Registry
 // ============================================================================
 
@@ -1309,6 +1368,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['qwen3-coder', QWEN_ERROR_PATTERNS],
 	['omp', OMP_ERROR_PATTERNS],
 	['grok', GROK_ERROR_PATTERNS],
+	['cursor-cli', CURSOR_CLI_ERROR_PATTERNS],
 ]);
 
 /**

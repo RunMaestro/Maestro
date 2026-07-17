@@ -192,6 +192,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `factory-droid` | Factory Droid | **Active** |
 | `copilot-cli`   | Copilot-CLI   | **Beta**   |
 | `grok`          | Grok CLI      | **Beta**   |
+| `cursor-cli`    | Cursor CLI    | **Beta**   |
 | `terminal`      | Terminal      | Internal   |
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.

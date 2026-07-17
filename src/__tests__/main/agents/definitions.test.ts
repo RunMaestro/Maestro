@@ -372,6 +372,31 @@ describe('agent-definitions', () => {
 			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan']);
 		});
 
+		it('should run Cursor CLI batch with --trust/--force and plan mode', () => {
+			const cursor = getAgentDefinition('cursor-cli');
+			expect(cursor?.binaryName).toBe('agent');
+			expect(cursor?.batchModeArgs).toEqual(['--trust', '--force']);
+			expect(cursor?.yoloModeArgs).toEqual(['--force']);
+			expect(cursor?.readOnlyArgs).toEqual(['--mode', 'plan']);
+			expect(cursor?.jsonOutputArgs).toEqual(['--output-format', 'stream-json']);
+			expect(cursor?.workingDirArgs?.('/tmp/proj')).toEqual(['--workspace', '/tmp/proj']);
+			expect(cursor?.promptArgs?.('hi')).toEqual(['-p', 'hi']);
+			expect(cursor?.resumeArgs?.('sess-1')).toEqual(['--resume', 'sess-1']);
+			// --force must be in yoloModeArgs so the CLI read-only filter strips it
+			// while keeping --trust from batchModeArgs.
+			expect(cursor?.yoloModeArgs).toContain('--force');
+			expect(cursor?.batchModeArgs?.filter((a) => a !== '--force')).toEqual(['--trust']);
+		});
+
+		it('should define the Cursor CLI model option as a dynamic select', () => {
+			const cursor = getAgentDefinition('cursor-cli');
+			const modelOption = cursor?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('select');
+			expect((modelOption as { dynamic?: boolean })?.dynamic).toBe(true);
+			expect(modelOption?.argBuilder?.('auto')).toEqual(['--model', 'auto']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+		});
+
 		it('should define the Grok model option as a dynamic select with static fallback', () => {
 			const grok = getAgentDefinition('grok');
 			expect(grok?.configOptions).toBeDefined();

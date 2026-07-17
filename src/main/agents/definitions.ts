@@ -839,6 +839,63 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 		],
 	},
+	{
+		id: 'cursor-cli',
+		name: 'Cursor CLI',
+		binaryName: 'agent',
+		command: 'agent',
+		args: [],
+		requiresPty: false, // Headless batch mode (-p) works over plain pipes
+		// Cursor Agent CLI argument builders (verified against `agent --help`)
+		// Batch mode: agent --workspace <dir> -p "prompt" --output-format stream-json --trust [--force] [--resume <id>]
+		batchModePrefix: [],
+		// --trust skips the interactive workspace trust prompt; --force is YOLO
+		// (auto-approve tools). Keep --force in both batchModeArgs and yoloModeArgs
+		// so (a) CLI batch always gets it via batchModeArgs and (b) the shared
+		// read-only filter strips --force when yoloModeArgs lists it (same pattern
+		// as Grok's --always-approve). Desktop full-access also picks it up via
+		// yoloModeArgs / buildAgentArgs.
+		batchModeArgs: ['--trust', '--force'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--mode', 'plan'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --mode plan
+		yoloModeArgs: ['--force'],
+		workingDirArgs: (dir: string) => ['--workspace', dir],
+		// --add-dir adds an additional workspace root (read + write), repeatable.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		modelArgs: (modelId: string) => {
+			const trimmed = modelId.trim();
+			return trimmed ? ['--model', trimmed] : [];
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select',
+				label: 'Model',
+				description:
+					'Model to use (see `agent models`). Leave empty for the account default (auto).',
+				dynamic: true,
+				options: ['', 'auto'],
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000,
+			},
+		],
+	},
 ];
 
 /**

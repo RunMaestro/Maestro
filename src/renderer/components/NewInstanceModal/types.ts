@@ -17,6 +17,7 @@ export const SUPPORTED_AGENTS = [
 	'hermes',
 	'pi',
 	'grok',
+	'cursor-cli',
 ];
 
 export interface AgentDebugInfo {

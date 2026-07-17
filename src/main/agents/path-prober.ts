@@ -72,6 +72,9 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
+			// Cursor Agent CLI (agent.cmd / agent.exe)
+			path.join(localAppData, 'cursor-agent'),
+			path.join(localAppData, 'cursor-agent', 'versions'),
 			// Python/pip user installs (for Aider)
 			path.join(appData, 'Python', 'Scripts'),
 			path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts'),
@@ -116,6 +119,8 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.cursor/bin`, // Cursor Agent CLI
+			`${home}/.local/share/cursor-agent`, // Alternate Cursor Agent install
 			'/usr/bin',
 			'/bin',
 			'/usr/sbin',
@@ -356,6 +361,13 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			...localBin('omp'),
 		],
+		agent: [
+			// Cursor Agent CLI installer (agent.cmd / versions/*/agent.exe)
+			path.join(localAppData, 'cursor-agent', 'agent.cmd'),
+			path.join(localAppData, 'cursor-agent', 'agent.exe'),
+			...npmGlobal('agent'),
+			...localBin('agent'),
+		],
 		gh: [
 			// GitHub CLI official installer (MSI)
 			path.join(programFiles, 'GitHub CLI', 'gh.exe'),
@@ -506,6 +518,14 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			path.join(home, 'bin', 'omp'),
 			...nodeVersionManagers('omp'),
+		],
+		agent: [
+			// Cursor Agent CLI (~/.local/bin or curl installer)
+			...localBin('agent'),
+			path.join(home, '.cursor', 'bin', 'agent'),
+			...homebrew('agent'),
+			...npmGlobal('agent'),
+			path.join(home, 'bin', 'agent'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

@@ -1656,6 +1656,64 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('ok');
 		});
 
+		it('should spawn cursor-cli with --trust --force stream-json and --workspace', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'Hello cursor');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).toContain('--force');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).toContain('--workspace');
+			expect(args).toContain('/project');
+			expect(args).toContain('-p');
+			expect(args).toContain('Hello cursor');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"system","subtype":"init","session_id":"cursor-sess-1"}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"cursor-sess-1"}\n' +
+						'{"type":"result","subtype":"success","result":"READY","session_id":"cursor-sess-1","usage":{"inputTokens":10,"outputTokens":2,"cacheReadTokens":0,"cacheWriteTokens":0}}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('READY');
+			expect(result.agentSessionId).toBe('cursor-sess-1');
+		});
+
+		it('should run cursor-cli read-only with --mode plan and without --force', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'look around', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).not.toContain('--force');
+			expect(args.filter((a) => a === '--mode')).toHaveLength(1);
+			expect(args[args.indexOf('--mode') + 1]).toBe('plan');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"ok","session_id":"cursor-sess-2"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('ok');
+		});
+
 		it('should resume a grok session via --resume <sessionId> and round-trip the id', async () => {
 			const resultPromise = spawnAgent('grok', '/project', 'follow-up', 'grok-resume-1');
 			await new Promise((resolve) => setTimeout(resolve, 0));

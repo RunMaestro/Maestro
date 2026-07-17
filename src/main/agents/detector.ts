@@ -575,6 +575,48 @@ export class AgentDetector {
 					return [];
 				}
 
+				case 'cursor-cli': {
+					// Cursor Agent CLI: `agent --list-models` or `agent models`.
+					// Lines look like: "auto - Auto (default)" or "gpt-5.3-codex - Codex 5.3"
+					const parseCursorModels = (stdout: string): string[] => {
+						const models: string[] = [];
+						for (const line of stdout.split('\n')) {
+							const match = line.match(/^(\S+)\s+-/);
+							if (match && !models.includes(match[1])) {
+								models.push(match[1]);
+							}
+						}
+						return models;
+					};
+
+					const listResult = await execFileNoThrow(command, ['--list-models'], undefined, env);
+					if (listResult.exitCode === 0) {
+						const models = parseCursorModels(listResult.stdout);
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`agent --list-models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					}
+
+					const modelsResult = await execFileNoThrow(command, ['models'], undefined, env);
+					if (modelsResult.exitCode === 0) {
+						const models = parseCursorModels(modelsResult.stdout);
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`agent models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					}
+					return [];
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);
@@ -751,6 +793,16 @@ export class AgentDetector {
 						// `grok models` CLI fallback). Empty string = use grok's default
 						// model. When discovery returns nothing (fresh install, CLI
 						// unavailable), fall through to the static options below.
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
+						}
+					}
+					break;
+				}
+
+				case 'cursor-cli': {
+					if (optionKey === 'model') {
 						const models = await this.discoverModels(agentId);
 						if (models.length > 0) {
 							return ['', ...models];

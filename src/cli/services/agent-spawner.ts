@@ -21,6 +21,7 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { escapeArgsForShell } from '../../main/process-manager/utils/shellEscape';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -42,6 +43,35 @@ import {
 // implementation is dynamically imported inside maybeWrapSpawnWithSsh().
 type SshSpawnWrapConfig = import('../../main/utils/ssh-spawn-wrapper').SshSpawnWrapConfig;
 type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnWrapResult;
+
+/**
+ * Windows npm/agent shims resolve to `.cmd` batch files. Node refuses to spawn
+ * those without a shell (CVE-2024-27980 / spawn EINVAL). Mirrors the auto-shell
+ * path in ChildProcessSpawner so CLI batch spawns behave like the desktop app,
+ * including cmd.exe argument escaping for prompts with shell metacharacters.
+ */
+function spawnLocalAgentProcess(
+	spawnCommand: string,
+	spawnArgs: string[],
+	options: SpawnOptions
+): ChildProcess {
+	if (isWindows()) {
+		const commandExt = path.extname(spawnCommand).toLowerCase();
+		const commandHasPath = /\\|\//.test(spawnCommand);
+		const needsShell =
+			commandExt === '.cmd' || commandExt === '.bat' || (!commandHasPath && commandExt === '.exe');
+
+		if (needsShell) {
+			let command = spawnCommand;
+			if (/\s/.test(command) && !command.startsWith('"')) {
+				command = `"${command}"`;
+			}
+			return spawn(command, escapeArgsForShell(spawnArgs), { ...options, shell: true });
+		}
+	}
+
+	return spawn(spawnCommand, spawnArgs, options);
+}
 
 /**
  * Locate the maestro-p script shipped beside the bundled CLI. esbuild emits the
@@ -578,7 +608,7 @@ async function spawnClaudeAgent(
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
-		const child = spawn(spawnCommand, spawnArgs, options);
+		const child = spawnLocalAgentProcess(spawnCommand, spawnArgs, options);
 
 		let jsonBuffer = '';
 		let result: string | undefined;
@@ -831,8 +861,10 @@ async function spawnJsonLineAgent(
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
 	}
 
-	// Codex requires explicit working directory arg (other agents use process cwd)
-	if (toolType === 'codex' && def?.workingDirArgs) {
+	// Working-directory flags (Codex `-C`, Cursor `--workspace`, etc.). When
+	// unset the child process still inherits `cwd`; agents that expose a native
+	// directory flag get it so CLI/playbook spawns match the desktop path.
+	if (def?.workingDirArgs) {
 		preOverrideArgs.push(...def.workingDirArgs(cwd));
 	}
 
@@ -946,7 +978,7 @@ async function spawnJsonLineAgent(
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
-		const child = spawn(spawnCommand, spawnArgs, options);
+		const child = spawnLocalAgentProcess(spawnCommand, spawnArgs, options);
 
 		let jsonBuffer = '';
 		let result: string | undefined;

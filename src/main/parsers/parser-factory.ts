@@ -21,6 +21,7 @@ import { PiOutputParser } from './pi-output-parser';
 import { QwenOutputParser } from './qwen-output-parser';
 import { OmpOutputParser } from './omp-output-parser';
 import { GrokOutputParser } from './grok-output-parser';
+import { CursorCliOutputParser } from './cursor-cli-output-parser';
 
 const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	'claude-code': () => new ClaudeOutputParser(),
@@ -32,6 +33,7 @@ const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	'qwen3-coder': () => new QwenOutputParser(),
 	omp: () => new OmpOutputParser(),
 	grok: () => new GrokOutputParser(),
+	'cursor-cli': () => new CursorCliOutputParser(),
 };
 
 /**

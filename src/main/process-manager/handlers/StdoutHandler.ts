@@ -526,7 +526,8 @@ export class StdoutHandler {
 					toolType === 'grok' ||
 					toolType === 'codex' ||
 					toolType === 'claude-code' ||
-					toolType === 'opencode';
+					toolType === 'opencode' ||
+					toolType === 'cursor-cli';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}

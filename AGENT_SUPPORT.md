@@ -1088,3 +1088,45 @@ grok --cwd /path/to/project --always-approve --output-format streaming-json --re
 # Read-only plan mode
 grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
 ```
+
+### Cursor CLI
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Facts below verified against live `agent --help` and stream-json output.
+
+| Item            | Value                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------- |
+| Binary          | `agent` (not `cursor`)                                                                  |
+| Batch Mode      | `-p` / `--print` with `--trust` and `--force`                                           |
+| JSON Output     | `--output-format stream-json` (JSONL: init, thinking deltas, assistant, result + usage) |
+| Resume          | `--resume <chatId>`                                                                     |
+| Read-Only       | `--mode plan` (Plan-Mode in UI)                                                         |
+| Working Dir     | `--workspace <path>`                                                                    |
+| Additional Dirs | `--add-dir <path>` (repeatable)                                                         |
+| Session Storage | Deferred (`~/.cursor/chats/` SQLite `store.db` not wired)                               |
+| Context Window  | 200K default (varies by model)                                                          |
+| Model Selection | `--model`; dynamic discovery from `agent --list-models` / `agent models`                |
+
+**Implementation files:**
+
+- ✅ Output Parser: `src/main/parsers/cursor-cli-output-parser.ts`
+- ❌ Session Storage: deferred (`supportsSessionStorage: false`)
+
+**Known limitations:**
+
+- **No image input:** no image flag observed in `agent --help`
+- **Generic binary name:** PATH detection for bare `agent` can collide with unrelated tools; use custom path if needed
+- **Tool events:** trivial turns emit no tool JSON on stdout; richer tool-call mapping deferred until fixtures exist
+- **Group chat moderation:** capability left false until exercised
+
+**Example invocations:**
+
+```bash
+# Batch mode (full access)
+agent --workspace /path/to/project --trust --force --output-format stream-json -p "prompt"
+
+# Resume a session
+agent --workspace /path/to/project --trust --force --output-format stream-json --resume <session-id> -p "continue"
+
+# Read-only plan mode
+agent --workspace /path/to/project --trust --output-format stream-json --mode plan -p "prompt"
+```
