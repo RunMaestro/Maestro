@@ -138,7 +138,7 @@ export function useRuntimeFeaturesListener(
 								if (tab.id !== tabId) return tab;
 								const failedEntry = tab.logs.find(
 									(log) =>
-										log.id === event.deliveryId &&
+										(log.deliveryId === event.deliveryId || log.id === event.deliveryId) &&
 										log.deliveryIntent === event.deliveryIntent &&
 										log.deliveryState === 'queued'
 								);
@@ -207,7 +207,7 @@ export function useRuntimeFeaturesListener(
 						.find((tab) => tab.id === tabId)
 						?.logs.find(
 							(log) =>
-								log.id === event.deliveryId &&
+								(log.deliveryId === event.deliveryId || log.id === event.deliveryId) &&
 								log.deliveryIntent === event.deliveryIntent &&
 								log.deliveryState === 'queued'
 						);

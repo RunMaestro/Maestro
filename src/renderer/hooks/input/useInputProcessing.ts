@@ -571,13 +571,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					ompTab.readOnlyMode !== true;
 				if (!isWritableLiveOmp || !ompTab) return;
 
+				const deliveryId = generateId();
 				const deliveryEntry = {
-					id: generateId(),
+					id: deliveryId,
 					timestamp: Date.now(),
 					source: 'user',
 					text: effectiveInputValue,
 					images: [...effectiveImages],
 					deliveryIntent: options.ompDeliveryIntent,
+					deliveryId,
 					...((options.ompDeliveryIntent === 'follow_up' ||
 						options.ompDeliveryIntent === 'abort_and_prompt') && {
 						deliveryState: 'queued' as const,
@@ -598,7 +600,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					sessionId: `${activeSession.id}-ai-${ompTab.id}`,
 					intent: options.ompDeliveryIntent,
 					message: effectiveInputValue,
-					deliveryId: deliveryEntry.id,
+					deliveryId,
 					...(effectiveImages.length ? { images: [...effectiveImages] } : {}),
 				});
 				if (!delivered) {

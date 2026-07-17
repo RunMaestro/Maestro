@@ -231,6 +231,8 @@ export interface LogEntry {
 	forceParallel?: boolean;
 	/** OMP composer delivery operation for an in-flight native RPC turn. */
 	deliveryIntent?: OmpDeliveryIntent;
+	/** Stable UUID correlating an OMP queued receipt with adapter lifecycle events. */
+	deliveryId?: string;
 	/** Native lifecycle acknowledgement resolves a queued delivery. */
 	deliveryState?: 'queued' | 'consumed' | 'failed';
 	// For error entries - stores the full AgentError for "View Details" functionality
