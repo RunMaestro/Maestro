@@ -43,7 +43,7 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		}
 		const activeSessionId =
 			'activeSessionId' in rest
-				? (rest.activeSessionId as string | null)
+				? (rest.activeSessionId as string)
 				: activeSessionOverride &&
 					  typeof activeSessionOverride === 'object' &&
 					  activeSessionOverride !== null &&
@@ -62,11 +62,10 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		const session = activeSessionOverride as { id: string };
 		useSessionStore.setState({
 			sessions: [session] as never,
-			activeSessionId:
-				'activeSessionId' in rest ? (rest.activeSessionId as string | null) : session.id,
+			activeSessionId: 'activeSessionId' in rest ? (rest.activeSessionId as string) : session.id,
 		});
 	} else if (activeSessionOverride === null) {
-		useSessionStore.setState({ sessions: [], activeSessionId: null });
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	}
 
 	return {
@@ -81,7 +80,7 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		isShortcut: () => false,
 		isTabShortcut: () => false,
 		sessions: [],
-		activeSessionId: null,
+		activeSessionId: '',
 		activeGroupChatId: null,
 		...rest,
 	};
@@ -118,7 +117,7 @@ describe('useMainKeyboardHandler', () => {
 		// Reset modal store so draft/wizard confirmation tests start clean
 		useModalStore.getState().closeModal('confirm');
 		useModalStore.getState().closeModal('promptComposer');
-		useSessionStore.setState({ sessions: [], activeSessionId: null });
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	});
 
 	afterEach(() => {

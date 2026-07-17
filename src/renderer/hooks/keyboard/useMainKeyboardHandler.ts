@@ -904,7 +904,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// (navigateToNextUnifiedTab, etc.) handle inputMode switching automatically.
 			// Some shortcuts only apply in AI mode (e.g., newTab, toggleReadOnly) - those
 			// are individually gated below. Navigation shortcuts work in ALL modes.
-			if (ctx.activeSessionId && activeSession && !ctx.activeGroupChatId) {
+			// Use event-time activeSession only - do not mix with ctx.activeSessionId
+			// from the last App render, which can lag a store switch by one frame.
+			if (activeSession && !ctx.activeGroupChatId) {
 				if (ctx.isTabShortcut(e, 'tabSwitcher')) {
 					e.preventDefault();
 					ctx.setTabSwitcherOpen(true);
@@ -1199,7 +1201,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.isTabShortcut(e, 'nextTab')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
 						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
@@ -1210,7 +1212,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.isTabShortcut(e, 'prevTab')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
 						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
@@ -1224,7 +1226,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.isTabShortcut(e, 'moveTabToStart')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
 						const updated = moveActiveUnifiedTabToEdge(current, 'start');
 						if (updated === current) return prev;
@@ -1235,7 +1237,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.isTabShortcut(e, 'moveTabToEnd')) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
 						const updated = moveActiveUnifiedTabToEdge(current, 'end');
 						if (updated === current) return prev;
@@ -1254,7 +1256,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
 						e.preventDefault();
 						ctx.setSessions((prev: Session[]) => {
-							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+							const current = prev.find((s: Session) => s.id === activeSession.id);
 							if (!current) return prev;
 							const result = ctx.navigateToUnifiedTabByIndex(current, i - 1, ctx.showUnreadOnly);
 							if (!result) return prev;
@@ -1268,7 +1270,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.isTabShortcut(e, lastTabActionId)) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
 						const result = ctx.navigateToLastUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;

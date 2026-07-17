@@ -486,15 +486,17 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	);
 
 	const updateSessionWorkingDirectory = useCallback(async () => {
+		// Pin before the folder dialog awaits - switching agents while the
+		// picker is open must not retarget the cwd update.
+		const initiatingSessionId = selectActiveSession(useSessionStore.getState())?.id;
+		if (!initiatingSessionId) return;
+
 		const newPath = await window.maestro.dialog.selectFolder();
 		if (!newPath) return;
 
-		const activeSessionId = selectActiveSession(useSessionStore.getState())?.id;
-		if (!activeSessionId) return;
-
 		setSessions((prev) =>
 			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
+				if (s.id !== initiatingSessionId) return s;
 				return {
 					...s,
 					cwd: newPath,
