@@ -48,7 +48,7 @@ Do not repair unrelated baseline failures here. Record each as `pre-existing`, w
 
 ### 3. Create the execution ledger
 
-The ledger must have one row for every priority 1-120 with:
+The ledger must have one row for every priority P1-P134. P1-P120 are the original audit scope; P121-P134 are Wave 14 additions accepted after saturation review. Each row includes:
 
 - priority number and title;
 - stage;
@@ -141,7 +141,7 @@ A deletion requires:
 ## Exit criteria
 
 - All baseline commands and known failures are recorded.
-- The 1-120 ledger exists and matches the stage partition in the index.
+- The P1-P134 ledger exists and matches the stage partition in the index.
 - Branch/worktree and PR conventions are fixed.
 - No production source changed.
 - Stage 01 can begin without risking untracked user work.

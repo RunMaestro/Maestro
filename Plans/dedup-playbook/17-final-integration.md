@@ -10,7 +10,7 @@ Stages 00-16 complete. No priority may remain silently pending.
 
 ## 1. Ledger reconciliation
 
-- Verify priorities 1-120 appear exactly once with `implemented`, `retained`, `rejected`, `deferred with owner`, or `already resolved`.
+- Verify priorities P1-P134 appear exactly once with `implemented`, `retained`, `rejected`, `deferred with owner`, or `already resolved`. P1-P120 are the original audit scope; P121-P134 are Wave 14 additions accepted after saturation review.
 - For retained/rejected findings, include current source evidence and why abstraction/deletion is unsafe or not net-positive.
 - For deferred work, name the external prerequisite and tracking issue; do not call the program complete if the prerequisite is internal work merely postponed.
 - Compare implementation against `dedup-report.md` and update status without erasing original audit evidence.
@@ -146,11 +146,11 @@ The repository CI currently runs format/lint/type checks and the unit suite on U
 
 ## Ledger closure fields
 
-For every P1-P120 row record: final title, stage/commit/PR, disposition, refreshed source anchors, LSP reference result where relevant, characterization or replacement tests, smoke scenario, security/persistence evidence class, net line delta, reviewer, rollback unit, and `dedup-report.md` update anchor. `already resolved`, `retained`, `rejected`, and `deferred` rows require the same evidence rigor as implementation rows. The program is not complete while any row is absent, pending, or justified only by the 2026-07-14 static audit.
+For every P1-P134 row record: final title, stage/commit/PR, disposition, refreshed source anchors, LSP reference result where relevant, characterization or replacement tests, smoke scenario, security/persistence evidence class, net line delta, reviewer, rollback unit, and `dedup-report.md` update anchor. `already resolved`, `retained`, `rejected`, and `deferred` rows require the same evidence rigor as implementation rows. The program is not complete while any row is absent, pending, or justified only by the 2026-07-14 static audit.
 
 ## Final exit criteria
 
-- Every priority 1-120 has a reviewed disposition and evidence.
+- Every priority P1-P134 has a reviewed disposition and evidence.
 - All canonical static checks and supported tests pass or only unchanged Stage 00 baseline failures remain with explicit approval.
 - Electron, web, CLI, plugin, remote, and packaging smoke matrices pass.
 - Security negative tests pass.
