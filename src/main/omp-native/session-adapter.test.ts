@@ -1816,6 +1816,73 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 
+	it('normalizes a tool lifecycle by toolCallId and omits id-less native events', async () => {
+		const child = new FakeChild();
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-tool-lifecycle',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+
+		emit(child, {
+			type: 'tool_execution_start',
+			toolCallId: 'call-1',
+			toolName: 'read',
+			args: { path: 'a.ts' },
+		});
+		emit(child, {
+			type: 'tool_execution_update',
+			toolCallId: 'call-1',
+			toolName: 'read',
+			partialResult: 'partial',
+		});
+		emit(child, {
+			type: 'tool_execution_end',
+			toolCallId: 'call-1',
+			toolName: 'read',
+			result: 'complete',
+		});
+		emit(child, { type: 'tool_execution_start', toolName: 'ignored' });
+
+		const toolEvents = send.mock.calls.filter(([channel]) => channel === 'process:tool-execution');
+		expect(toolEvents).toEqual([
+			[
+				'process:tool-execution',
+				'tab-tool-lifecycle',
+				expect.objectContaining({
+					toolCallId: 'call-1',
+					state: { status: 'running', input: { path: 'a.ts' } },
+				}),
+			],
+			[
+				'process:tool-execution',
+				'tab-tool-lifecycle',
+				expect.objectContaining({
+					toolCallId: 'call-1',
+					state: { status: 'running', output: 'partial' },
+				}),
+			],
+			[
+				'process:tool-execution',
+				'tab-tool-lifecycle',
+				expect.objectContaining({
+					toolCallId: 'call-1',
+					state: { status: 'completed', output: 'complete' },
+				}),
+			],
+		]);
+		expect(send).toHaveBeenCalledWith(
+			'process:stderr',
+			'tab-tool-lifecycle',
+			'OMP tool lifecycle ignored without toolCallId'
+		);
+	});
+
 	it('uses live runtime context metadata before model metadata and only then falls back', () => {
 		expect(
 			contextWindowFromOmpRuntime({

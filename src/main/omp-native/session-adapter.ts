@@ -490,12 +490,34 @@ export class OmpNativeSessionAdapter {
 				this.options.send('process:thinking-chunk', this.options.sessionId, text);
 		}
 		if (event.type.startsWith('tool_execution_')) {
-			this.options.send('process:tool-execution', this.options.sessionId, {
-				toolName: stringAt(event, 'toolName') ?? stringAt(event, 'name') ?? 'tool',
-				state: event,
-				timestamp: Date.now(),
-				toolCallId: stringAt(event, 'id'),
-			});
+			const toolCallId = stringAt(event, 'toolCallId');
+			if (!toolCallId) {
+				this.options.send(
+					'process:stderr',
+					this.options.sessionId,
+					'OMP tool lifecycle ignored without toolCallId'
+				);
+			} else {
+				const type = event.type;
+				const state =
+					type === 'tool_execution_start'
+						? { status: 'running' as const, input: event.args ?? event.input }
+						: type === 'tool_execution_update'
+							? { status: 'running' as const, output: event.partialResult ?? event.output }
+							: {
+									status:
+										event.isError === true || event.status === 'failed' || event.status === 'error'
+											? ('failed' as const)
+											: ('completed' as const),
+									output: event.result ?? event.output,
+								};
+				this.options.send('process:tool-execution', this.options.sessionId, {
+					toolName: stringAt(event, 'toolName') ?? stringAt(event, 'name') ?? 'tool',
+					state,
+					timestamp: Date.now(),
+					toolCallId,
+				});
+			}
 		}
 		if (
 			event.type === 'auto_compaction_start' ||

@@ -549,6 +549,11 @@ export const LogItem = memo(
 												!
 											</span>
 										)}
+										{log.metadata?.toolState?.durationMs !== undefined && (
+											<span className="ml-auto shrink-0 opacity-50">
+												{Math.round(log.metadata.toolState.durationMs / 1000)}s
+											</span>
+										)}
 										{toolSummary?.description && (
 											<span
 												className="opacity-50 break-words"

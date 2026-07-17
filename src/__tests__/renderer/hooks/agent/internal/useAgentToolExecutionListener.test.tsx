@@ -73,6 +73,46 @@ describe('useAgentToolExecutionListener', () => {
 		expect(tabAfter.logs[0].metadata?.toolState?.output).toBe('ok');
 	});
 
+	it('merges an OMP start, update, and end into one completed row with input, output, and duration', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off' });
+		const session = createMockSession({ id: 'sess-1', toolType: 'omp', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] });
+		renderHook(() => useAgentToolExecutionListener());
+
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running', input: { path: 'a.ts' } },
+			timestamp: 1_000,
+			toolCallId: 'omp-call-1',
+		});
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running', output: 'partial' },
+			timestamp: 1_250,
+			toolCallId: 'omp-call-1',
+		});
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'completed', output: 'complete' },
+			timestamp: 1_500,
+			toolCallId: 'omp-call-1',
+		});
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toMatchObject({
+			id: 'tool-omp-call-1',
+			metadata: {
+				toolState: {
+					status: 'completed',
+					input: { path: 'a.ts' },
+					output: 'complete',
+					durationMs: 500,
+				},
+			},
+		});
+	});
+
 	it('skips when tab.showThinking is off', () => {
 		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });

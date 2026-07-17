@@ -47,6 +47,11 @@ export function useAgentToolExecutionListener(): void {
 				const tabId = aiTabMatch[2];
 
 				if (!getSessions().some((s) => s.id === actualSessionId)) return;
+				if (
+					!toolEvent.toolCallId &&
+					getSessions().find((session) => session.id === actualSessionId)?.toolType === 'omp'
+				)
+					return;
 
 				const logId = toolEvent.toolCallId
 					? `tool-${toolEvent.toolCallId}`
@@ -98,6 +103,10 @@ export function useAgentToolExecutionListener(): void {
 								...existingState,
 								...newState,
 								input: newState?.input ?? existingState?.input,
+								output: newState?.output ?? existingState?.output,
+								...(isFinalizing && {
+									durationMs: Math.max(0, toolEvent.timestamp - existing.timestamp),
+								}),
 							};
 							const mergedLog: LogEntry = {
 								...existing,

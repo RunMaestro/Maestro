@@ -231,6 +231,8 @@ export interface LogEntry {
 	forceParallel?: boolean;
 	/** OMP composer delivery operation for an in-flight native RPC turn. */
 	deliveryIntent?: OmpDeliveryIntent;
+	/** Native lifecycle acknowledgement changes a follow-up from queued to consumed. */
+	deliveryState?: 'queued' | 'consumed';
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -239,6 +241,7 @@ export interface LogEntry {
 			status?: 'running' | 'completed' | 'error' | 'failed';
 			input?: unknown;
 			output?: unknown;
+			durationMs?: number;
 		};
 		hiddenProgress?: {
 			kind: 'thinking' | 'tool';

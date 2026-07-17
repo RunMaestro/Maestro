@@ -53,7 +53,7 @@ const state = () => ({
   contextUsage: { inputTokens: 21, outputTokens: 34, contextWindow: 200000 }
 });
 const finish = (cancelled = false) => {
-  event('tool_execution_end', { toolName: 'maestro.session.status', status: cancelled ? 'cancelled' : 'completed' });
+  event('tool_execution_end', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', result: cancelled ? 'cancelled' : 'complete', isError: cancelled });
   event('message_end', { role: 'assistant', content: cancelled ? 'native turn cancelled' : 'native expanded complete' });
   event('turn_end', { sessionId, cancelled });
   event('agent_end', { sessionId });
@@ -82,8 +82,8 @@ const prompt = (request) => {
   event('message_start', { role: 'assistant' });
   event('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'native text: ' + text } });
   event('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'native reasoning: deterministic' } });
-  event('tool_execution_start', { toolName: 'maestro.session.status', input: {} });
-  event('tool_execution_update', { toolName: 'maestro.session.status', status: 'running' });
+  event('tool_execution_start', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', args: {} });
+  event('tool_execution_update', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', partialResult: 'checking' });
   emit({ type: 'host_tool_call', id: 'tool-' + turn, toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', arguments: {} });
   emit({ type: 'host_uri_request', id: 'uri-' + turn, operation: 'read', url: 'maestro://session/status' });
   emit({ type: 'host_tool_cancel', targetId: 'missing-tool-' + turn });
