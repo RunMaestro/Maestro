@@ -34,10 +34,6 @@ export default defineConfig(({ mode }) => ({
 		'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
 	},
 
-	oxc: {
-		drop: mode === 'production' ? ['debugger'] : [],
-	},
-
 	resolve: {
 		alias: {
 			// Aliases for the renderer's own imports.
@@ -55,11 +51,12 @@ export default defineConfig(({ mode }) => ({
 		outDir: path.join(__dirname, 'dist/web-desktop'),
 		emptyOutDir: true,
 		sourcemap: true,
-		rollupOptions: {
+		rolldownOptions: {
 			input: {
 				main: path.join(__dirname, 'src/web-desktop/index.html'),
 			},
 			output: {
+				minify: mode === 'production' ? { compress: { dropDebugger: true } } : false,
 				manualChunks: (id) => {
 					if (id.includes('node_modules/react-dom')) {
 						return 'vendor-react';
@@ -84,7 +81,6 @@ export default defineConfig(({ mode }) => ({
 			},
 		},
 		target: 'es2020',
-		minify: mode === 'production' ? 'oxc' : false,
 		cssMinify: 'esbuild',
 	},
 

@@ -16,23 +16,32 @@ describe('Web Desktop production transform', () => {
 			isPreview: false,
 		});
 
-		expect(config.oxc).toMatchObject({ drop: ['debugger'] });
-		expect(config.build?.minify).toBe('oxc');
-		expect(config.esbuild).toBeUndefined();
+		const output = config.build?.rolldownOptions?.output as
+			| {
+					minify?: { compress?: { dropDebugger?: boolean } };
+			  }
+			| undefined;
+
+		expect(config.oxc).toBeUndefined();
+		expect(output?.minify?.compress?.dropDebugger).toBe(true);
 
 		const result = await build({
 			configFile: false,
 			logLevel: 'silent',
-			oxc: config.oxc,
 			root,
 			build: {
-				minify: config.build?.minify,
-				rollupOptions: { input: debuggerDropFixture },
+				minify: false,
+				rolldownOptions: {
+					input: debuggerDropFixture,
+					output: { minify: output?.minify },
+				},
 				write: false,
 			},
 		});
-		const output = Array.isArray(result) ? result.flatMap((entry) => entry.output) : result.output;
-		const code = output
+		const emittedOutput = Array.isArray(result)
+			? result.flatMap((entry) => entry.output)
+			: result.output;
+		const code = emittedOutput
 			.filter((entry) => entry.type === 'chunk')
 			.map((entry) => entry.code)
 			.join('\n');
