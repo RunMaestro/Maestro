@@ -520,11 +520,14 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleEvent(event: OmpRpcEvent): void {
+		const messageUpdate = asRecord(event.assistantMessageEvent);
+		const messageUpdateType = stringAt(messageUpdate, 'type');
+		const messageUpdateText = stringAt(messageUpdate, 'delta') ?? textFrom(event);
 		const continuationEvidence =
 			event.type === 'agent_start' ||
 			event.type === 'turn_start' ||
-			event.type === 'message_update' ||
-			event.type === 'thinking_delta';
+			((messageUpdateType === 'text_delta' || messageUpdateType === 'thinking_delta') &&
+				Boolean(messageUpdateText));
 		const continuationStartedFromEvidence =
 			continuationEvidence && this.startContinuationAtBoundary();
 		if (this.disposed) return;

@@ -1961,6 +1961,14 @@ describe('OmpNativeSessionAdapter', () => {
 			toolCallId: 'prior-turn-tool',
 			toolName: 'bash',
 		});
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: '' },
+		});
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'metadata', delta: 'ignored' },
+		});
 		expect(
 			send.mock.calls.filter(
 				([channel, sessionId, event]) =>
