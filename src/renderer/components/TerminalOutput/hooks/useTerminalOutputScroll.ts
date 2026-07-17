@@ -39,27 +39,36 @@ export function useTerminalOutputScroll({
 		if (!scrollContainerRef.current) return;
 		const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
 		const atBottom = scrollHeight - scrollTop - clientHeight < 50;
-		setIsAtBottom(atBottom);
-		// Mirror into the ref synchronously so MutationObserver sees the user's
-		// new position before a content re-render can yank to bottom (#1140).
-		isAtBottomRef.current = atBottom;
-
-		if (atBottom !== prevIsAtBottomRef.current) {
-			prevIsAtBottomRef.current = atBottom;
-			onAtBottomChange?.(atBottom);
-		}
-
-		if (atBottom) {
-			setHasNewMessages(false);
-			setNewMessageCount(0);
-			setAutoScrollPaused(false);
-			if (activeTabId) {
-				tabReadStateRef.current.set(activeTabId, filteredLogsLength);
-			}
-		} else if (isProgrammaticScrollRef.current) {
+		// A programmatic scroll (the MutationObserver re-pin or the resume button)
+		// dispatches its own scroll event. If streaming content grew past the jump
+		// target between the scrollTo and this event, `atBottom` reads false even
+		// though we're actively pinning. Consume the one-shot guard but leave the
+		// at-bottom gate untouched so the observer keeps following the stream -
+		// mirroring `false` here would flip `isAtBottomRef` and stop the follow
+		// mid-stream (the reported "scrolls once but won't stick" bug). (#1140)
+		if (!atBottom && isProgrammaticScrollRef.current) {
 			isProgrammaticScrollRef.current = false;
 		} else {
-			setAutoScrollPaused(true);
+			setIsAtBottom(atBottom);
+			// Mirror into the ref synchronously so MutationObserver sees the user's
+			// new position before a content re-render can yank to bottom (#1140).
+			isAtBottomRef.current = atBottom;
+
+			if (atBottom !== prevIsAtBottomRef.current) {
+				prevIsAtBottomRef.current = atBottom;
+				onAtBottomChange?.(atBottom);
+			}
+
+			if (atBottom) {
+				setHasNewMessages(false);
+				setNewMessageCount(0);
+				setAutoScrollPaused(false);
+				if (activeTabId) {
+					tabReadStateRef.current.set(activeTabId, filteredLogsLength);
+				}
+			} else {
+				setAutoScrollPaused(true);
+			}
 		}
 
 		if (onScrollPositionChange) {
@@ -218,13 +227,35 @@ export function useTerminalOutputScroll({
 		setAutoScrollPaused(false);
 		setHasNewMessages(false);
 		setNewMessageCount(0);
-		if (scrollContainerRef.current) {
-			scrollContainerRef.current.scrollTo({
-				top: scrollContainerRef.current.scrollHeight,
-				behavior: 'smooth',
-			});
+		// Flip the at-bottom tracking synchronously. The MutationObserver's
+		// stick-to-bottom gate reads `isAtBottomRef`, not `autoScrollPaused`, so
+		// without this the button scrolls once but the observer refuses to keep
+		// following the streaming thinking output (it still sees the pre-click
+		// `false`). Mirror the state, ref, and prev-ref, mark everything read,
+		// and notify the unread-tracking consumer.
+		setIsAtBottom(true);
+		isAtBottomRef.current = true;
+		if (!prevIsAtBottomRef.current) {
+			prevIsAtBottomRef.current = true;
+			onAtBottomChange?.(true);
 		}
-	}, [scrollContainerRef]);
+		if (activeTabId) {
+			tabReadStateRef.current.set(activeTabId, filteredLogsLength);
+		}
+		const container = scrollContainerRef.current;
+		if (container) {
+			// Instant jump lands on the *current* bottom. A smooth animation
+			// targets the scrollHeight captured at click time, which streaming
+			// content grows past before the animation settles, so it stops above
+			// the true bottom and never sticks. Guard the resulting scroll event
+			// so a mid-jump content growth doesn't re-pause auto-scroll.
+			isProgrammaticScrollRef.current = true;
+			container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+			setTimeout(() => {
+				isProgrammaticScrollRef.current = false;
+			}, 32);
+		}
+	}, [scrollContainerRef, activeTabId, filteredLogsLength, onAtBottomChange]);
 
 	return {
 		isAtBottom,

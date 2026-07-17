@@ -2449,6 +2449,72 @@ describe('TerminalOutput', () => {
 			// Terminal mode always auto-scrolls
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
+
+		it('keeps sticking to the bottom after clicking the pin button while scrolled up', async () => {
+			// Regression (#1140 follow-up): clicking the scroll-to-bottom / pin
+			// button used to scroll once but not re-arm the observer's at-bottom
+			// gate, so streaming thinking output stopped following. web-desktop
+			// surfaced it most visibly, but the bug was shared with desktop.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			// jsdom never actually scrolls, so mirror the requested top into
+			// scrollTop; otherwise the geometry checks would still read "not at
+			// bottom" after the programmatic jump.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				Object.defineProperty(scrollContainer, 'scrollTop', { value: top, configurable: true });
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up: 1000 tall, viewport 400, parked at the top.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// The pin button appears once we're away from the bottom.
+			const pinButton = screen.getByTitle(/pin/i);
+			await act(async () => {
+				fireEvent.click(pinButton);
+				vi.advanceTimersByTime(50);
+			});
+			// The click performs the initial jump to the current bottom.
+			expect(scrollToSpy).toHaveBeenCalled();
+
+			scrollToSpy.mockClear();
+
+			// New streamed content arrives. Because the click re-armed the
+			// at-bottom gate, the observer must follow it (call scrollTo again).
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'resp-2', text: 'More streamed text', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
 	});
 
 	describe('scroll position persistence', () => {
