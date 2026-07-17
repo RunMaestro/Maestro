@@ -72,7 +72,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
-			// Cursor Agent CLI (agent.cmd / agent.exe)
+			// Cursor Agent CLI native installer shims
 			path.join(localAppData, 'cursor-agent'),
 			path.join(localAppData, 'cursor-agent', 'versions'),
 			// Python/pip user installs (for Aider)
@@ -362,9 +362,9 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...localBin('omp'),
 		],
 		agent: [
-			// Cursor Agent CLI installer (agent.cmd / versions/*/agent.exe)
+			// Cursor Agent CLI native installer (`agent` is the documented command).
 			path.join(localAppData, 'cursor-agent', 'agent.cmd'),
-			path.join(localAppData, 'cursor-agent', 'agent.exe'),
+			path.join(localAppData, 'cursor-agent', 'cursor-agent.cmd'),
 			...npmGlobal('agent'),
 			...localBin('agent'),
 		],

@@ -1341,6 +1341,35 @@ describe('agent-detector', () => {
 			expect(models).toEqual([]);
 		});
 
+		it('should discover Cursor models from the documented --list-models output', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/agent' && args[0] === '--list-models') {
+					return {
+						stdout:
+							'Available models\n\n' +
+							'auto - Auto (default)\n' +
+							'gpt-5.3-codex - Codex 5.3\n' +
+							'claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'agent') {
+					return { stdout: '/usr/bin/agent\n', stderr: '', exitCode: 0 };
+				}
+				if (args[0] === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('cursor-cli');
+			expect(models).toEqual(['auto', 'gpt-5.3-codex', 'claude-opus-4-8-thinking-high']);
+		});
+
 		it('should return empty array for unavailable agents', async () => {
 			const models = await detector.discoverModels('openai-codex');
 			expect(models).toEqual([]);

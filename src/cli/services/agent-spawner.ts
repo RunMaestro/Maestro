@@ -1059,12 +1059,15 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			// Soft success: agents like Grok may exit non-zero after a full
-			// answer (e.g. --max-turns) with no structured error event. Prefer
-			// the streamed answer over raw stderr when there is no errorText.
+			// Grok can exit non-zero after a complete answer (for example at its
+			// max-turn boundary). Cursor's documented contract is different:
+			// every non-zero exit is a failure written to stderr, and its stream
+			// may end after partial text without a terminal result. Never turn
+			// that partial Cursor output into a false success.
 			const responseText = result || streamedText || undefined;
 			const hasAnswer = Boolean(responseText?.trim());
-			if (!errorText && (code === 0 || hasAnswer)) {
+			const nonzeroWithAnswerIsSuccess = toolType !== 'cursor-cli' && hasAnswer;
+			if (!errorText && (code === 0 || nonzeroWithAnswerIsSuccess)) {
 				resolve({
 					success: true,
 					response: responseText,

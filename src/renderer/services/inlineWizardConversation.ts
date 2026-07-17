@@ -602,13 +602,10 @@ function buildArgsForAgent(agent: any): string[] {
 			return args;
 		}
 
-		case 'cursor-cli': {
-			const args = [...(agent.args || [])];
-			if (agent.readOnlyArgs) {
-				args.push(...agent.readOnlyArgs);
-			}
-			return args;
-		}
+		case 'cursor-cli':
+			// The main process adds stream JSON + plan-mode flags from the
+			// definition when readOnlyMode is set on the spawn request.
+			return [...(agent.args || [])];
 
 		default: {
 			return [...(agent.args || [])];
@@ -887,6 +884,7 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
+					readOnlyMode: session.agentType === 'cursor-cli',
 					// For stream-json agents (Claude Code, Codex): use JSON format via stdin
 					// For other agents (OpenCode, etc.): use raw text via stdin
 					sendPromptViaStdin: sendViaStdin,

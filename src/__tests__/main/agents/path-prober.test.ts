@@ -247,6 +247,17 @@ describe('path-prober', () => {
 			expect(accessMock).toHaveBeenCalled();
 		});
 
+		it('should probe the native Cursor CLI agent.cmd shim', async () => {
+			accessMock.mockImplementation(async (candidate) => {
+				if (String(candidate).toLowerCase().endsWith('cursor-agent\\agent.cmd')) return;
+				throw new Error('ENOENT');
+			});
+
+			const result = await probeWindowsPaths('agent');
+
+			expect(result?.toLowerCase()).toMatch(/cursor-agent[\\/]agent\.cmd$/);
+		});
+
 		it.each(['hermes', 'pi'])('should probe known Windows paths for %s', async (binaryName) => {
 			accessMock.mockRejectedValue(new Error('ENOENT'));
 

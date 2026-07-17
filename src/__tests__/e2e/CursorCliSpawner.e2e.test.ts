@@ -1,27 +1,19 @@
 /**
  * E2E smoke test for cursor-cli through the CLI spawner path.
- * Run: RUN_INTEGRATION_TESTS=true npx vitest run --config vitest.e2e.config.ts CursorCliSpawner
+ * Run: RUN_INTEGRATION_TESTS=true bunx vitest run --config vitest.e2e.config.ts CursorCliSpawner
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { promisify } from 'util';
-import { exec } from 'child_process';
 import { detectAgent, spawnAgent } from '../../cli/services/agent-spawner';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { buildAgentArgs } from '../../main/utils/agent-args';
 import type { AgentConfig } from '../../main/agents/definitions';
 
-const execAsync = promisify(exec);
 const SKIP_E2E = process.env.RUN_INTEGRATION_TESTS !== 'true';
 const TIMEOUT = 120_000;
 
 async function isAgentAvailable(): Promise<boolean> {
-	try {
-		await execAsync(process.platform === 'win32' ? 'where agent' : 'which agent');
-		return true;
-	} catch {
-		return false;
-	}
+	return (await detectAgent('cursor-cli')).available;
 }
 
 describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
@@ -29,10 +21,10 @@ describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
 
 	beforeAll(async () => {
 		agentAvailable = await isAgentAvailable();
+		expect(agentAvailable).toBe(true);
 	});
 
 	it('detects agent on PATH', async () => {
-		if (!agentAvailable) return;
 		const detected = await detectAgent('cursor-cli');
 		expect(detected.available).toBe(true);
 		expect(detected.path).toBeTruthy();
@@ -51,13 +43,12 @@ describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
 		expect(args).toContain('--output-format');
 		expect(args).toContain('stream-json');
 		expect(args).toContain('--force');
+		expect(args).toContain('--stream-partial-output');
 	});
 
 	it(
 		'spawns a real headless turn and parses the response',
 		async () => {
-			if (!agentAvailable) return;
-
 			const result = await spawnAgent(
 				'cursor-cli',
 				process.cwd(),
@@ -71,6 +62,30 @@ describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
 			expect(result.agentSessionId).toMatch(
 				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 			);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'resumes a real chat by session id',
+		async () => {
+			const first = await spawnAgent(
+				'cursor-cli',
+				process.cwd(),
+				'Reply with exactly: CURSOR_RESUME_FIRST'
+			);
+			expect(first.success).toBe(true);
+			expect(first.agentSessionId).toBeTruthy();
+
+			const resumed = await spawnAgent(
+				'cursor-cli',
+				process.cwd(),
+				'Reply with exactly: CURSOR_RESUME_OK',
+				first.agentSessionId
+			);
+			expect(resumed.success).toBe(true);
+			expect(resumed.response).toContain('CURSOR_RESUME_OK');
+			expect(resumed.agentSessionId).toBe(first.agentSessionId);
 		},
 		TIMEOUT
 	);

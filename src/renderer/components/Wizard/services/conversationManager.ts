@@ -636,6 +636,7 @@ class ConversationManager {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: prompt,
+					readOnlyMode: this.session!.agentType === 'cursor-cli',
 					// When true, the main process will send the prompt via stdin instead of
 					// passing it as a command-line argument. This avoids Windows command
 					// line length limits for large prompts.
@@ -752,16 +753,10 @@ class ConversationManager {
 				return args;
 			}
 
-			case 'cursor-cli': {
-				const args = [...(agent.args || [])];
-				if (agent.jsonOutputArgs) {
-					args.push(...agent.jsonOutputArgs);
-				}
-				if (agent.readOnlyArgs) {
-					args.push(...agent.readOnlyArgs);
-				}
-				return args;
-			}
+			case 'cursor-cli':
+				// The main process adds stream JSON + plan-mode flags from the
+				// definition when readOnlyMode is set on the spawn request.
+				return [...(agent.args || [])];
 
 			default: {
 				// For unknown agents, use base args

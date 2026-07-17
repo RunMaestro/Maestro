@@ -461,25 +461,25 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	/**
 	 * Cursor CLI - Cursor Agent command-line interface
 	 *
-	 * Capabilities verified against live `agent --help` and stream-json output.
-	 * The CLI binary is `agent` (not `cursor`). Headless mode uses -p/--print
-	 * with --output-format stream-json; the event schema closely mirrors Claude
-	 * Code's stream-json (system/init, thinking deltas, assistant, result).
+	 * Capabilities verified against Cursor CLI 2026.07.16-899851b and live
+	 * stream-json output. The primary CLI command is `agent` (the native Windows
+	 * installer also exposes `cursor-agent`). Headless mode uses -p/--print with
+	 * partial stream JSON: system/init, thinking, assistant, tool_call, and result.
 	 */
 	'cursor-cli': {
 		supportsResume: true, // Verified: --resume <chatId>
 		supportsReadOnlyMode: true, // Verified: --mode plan / --plan
 		supportsJsonOutput: true, // Verified: --output-format stream-json
 		supportsSessionId: true, // Verified: session_id on init and result events
-		supportsImageInput: false, // Conservative default: no image flag in agent --help
-		supportsImageInputOnResume: false,
+		supportsImageInput: true, // Official headless docs: include saved image file paths in the prompt
+		supportsImageInputOnResume: true, // Resume accepts the same prompt-based file references
 		supportsSlashCommands: false, // Conservative default: not verified in headless mode
 		supportsSessionStorage: false, // Deferred: sessions live in ~/.cursor/chats/ as SQLite store.db
 		supportsCostTracking: false, // Verified absent: usage reports token counts only
 		supportsUsageStats: true, // Verified: result.usage with inputTokens/outputTokens/cacheReadTokens
 		supportsBatchMode: true, // Verified: -p/--print headless mode
 		requiresPromptToStart: true, // Verified: headless runs require -p; no interactive PTY integration
-		supportsStreaming: true, // Verified: thinking deltas and assistant messages stream on stdout
+		supportsStreaming: true, // Verified: --stream-partial-output emits thinking and assistant text deltas
 		supportsResultMessages: true, // Verified: type=result with subtype=success
 		supportsModelSelection: true, // Verified: --model flag; agent models / --list-models
 		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent

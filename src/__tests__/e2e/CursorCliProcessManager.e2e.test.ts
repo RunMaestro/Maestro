@@ -1,11 +1,9 @@
 /**
  * E2E smoke test for cursor-cli through ProcessManager (desktop spawn path).
- * Run: RUN_INTEGRATION_TESTS=true npx vitest run --config vitest.e2e.config.ts CursorCliProcessManager
+ * Run: RUN_INTEGRATION_TESTS=true bunx vitest run --config vitest.e2e.config.ts CursorCliProcessManager
  */
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import { promisify } from 'util';
-import { exec } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -27,11 +25,13 @@ import type { AgentConfig } from '../../main/agents/definitions';
 import { detectAgent } from '../../cli/services/agent-spawner';
 import { isWindows } from '../../shared/platformDetection';
 
-const execAsync = promisify(exec);
 const SKIP_E2E = process.env.RUN_INTEGRATION_TESTS !== 'true';
 const TIMEOUT = 120_000;
 
-function buildBatchArgs(prompt: string): string[] {
+function buildBatchArgs(
+	prompt: string,
+	options: { readOnlyMode?: boolean; yoloMode?: boolean } = { yoloMode: true }
+): string[] {
 	const agent = getAgentDefinition('cursor-cli');
 	if (!agent) throw new Error('cursor-cli agent definition missing');
 
@@ -39,7 +39,8 @@ function buildBatchArgs(prompt: string): string[] {
 		baseArgs: [...(agent.args || [])],
 		prompt,
 		cwd: process.cwd(),
-		yoloMode: true,
+		readOnlyMode: options.readOnlyMode,
+		yoloMode: options.yoloMode,
 	});
 }
 
@@ -60,12 +61,7 @@ function waitForExit(pm: ProcessManager, sessionId: string, timeoutMs: number): 
 }
 
 async function isAgentAvailable(): Promise<boolean> {
-	try {
-		await execAsync(process.platform === 'win32' ? 'where agent' : 'which agent');
-		return true;
-	} catch {
-		return false;
-	}
+	return (await detectAgent('cursor-cli')).available;
 }
 
 describe.skipIf(SKIP_E2E)('CursorCliProcessManager E2E', () => {
@@ -74,6 +70,7 @@ describe.skipIf(SKIP_E2E)('CursorCliProcessManager E2E', () => {
 
 	beforeAll(async () => {
 		agentAvailable = await isAgentAvailable();
+		expect(agentAvailable).toBe(true);
 	});
 
 	afterEach(() => {
@@ -83,8 +80,6 @@ describe.skipIf(SKIP_E2E)('CursorCliProcessManager E2E', () => {
 	it(
 		'runs one headless turn through ProcessManager and parses stream-json',
 		async () => {
-			if (!agentAvailable) return;
-
 			pm = new ProcessManager();
 			const sessionId = 'test-cursor-cli-basic';
 			const prompt = 'Reply with exactly: E2E_OK';
@@ -96,6 +91,7 @@ describe.skipIf(SKIP_E2E)('CursorCliProcessManager E2E', () => {
 			expect(args).toContain('--trust');
 			expect(args).toContain('--force');
 			expect(args).toContain('stream-json');
+			expect(args).toContain('--stream-partial-output');
 
 			const chunks: string[] = [];
 			const sessionIds: string[] = [];
@@ -128,6 +124,51 @@ describe.skipIf(SKIP_E2E)('CursorCliProcessManager E2E', () => {
 			const text = chunks.join('');
 			expect(text).toContain('E2E_OK');
 			expect(sessionIds.length).toBeGreaterThan(0);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'runs the Windows wizard raw-stdin path in trusted plan mode',
+		async () => {
+			pm = new ProcessManager();
+			const sessionId = 'test-cursor-cli-raw-stdin';
+			const prompt = 'Include this exact token in your response: MAESTRO_CURSOR_STDIN_OK';
+			const args = buildBatchArgs(prompt, { readOnlyMode: true, yoloMode: false });
+			const agent = getAgentDefinition('cursor-cli')!;
+			const detected = await detectAgent('cursor-cli');
+			const command = detected.path ?? agent.command;
+
+			expect(args).toContain('-p');
+			expect(args).toContain('--trust');
+			expect(args).toContain('--mode');
+			expect(args).toContain('plan');
+			expect(args).not.toContain('--force');
+			expect(args).not.toContain(prompt);
+
+			const chunks: string[] = [];
+			pm.on('data', (id, data) => {
+				if (id === sessionId) chunks.push(data);
+			});
+
+			const spawnResult = pm.spawn({
+				sessionId,
+				toolType: 'cursor-cli',
+				cwd: process.cwd(),
+				command,
+				args,
+				prompt,
+				promptArgs: agent.promptArgs,
+				requiresPty: agent.requiresPty,
+				readOnlyMode: true,
+				sendPromptViaStdinRaw: true,
+				runInShell: isWindows(),
+			});
+
+			expect(spawnResult.success).toBe(true);
+			const exitCode = await waitForExit(pm, sessionId, TIMEOUT);
+			expect(exitCode).toBe(0);
+			expect(chunks.join('')).toContain('MAESTRO_CURSOR_STDIN_OK');
 		},
 		TIMEOUT
 	);

@@ -12,7 +12,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
 | `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
 | `grok`          | Grok CLI      | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
-| `cursor-cli`    | Cursor CLI    | **Beta**   | Binary `agent`, `-p` headless, `--output-format stream-json`, `--trust`/`--force`, `--mode plan`, `--resume`, thinking deltas                      |
+| `cursor-cli`    | Cursor CLI    | **Beta**   | Binary `agent`, `-p` headless, stream JSON partials/tool events, `--trust`/`--force`, `--mode plan`, `--resume`, thinking deltas                   |
 | `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
 
 ## Agent Capabilities

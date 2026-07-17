@@ -52,6 +52,7 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
+import { CursorCliOutputParser } from '../../../../main/parsers/cursor-cli-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
 
@@ -2144,6 +2145,103 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			// Factory Droid has no isReasoning split; keep live thinking-panel partials
 			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid');
 			expect(proc.streamedText).toBe('Hello from droid');
+		});
+	});
+
+	describe('Cursor stream routing', () => {
+		it('routes thinking, tool lifecycle, session id, and one final response without duplicates', () => {
+			const parser = new CursorCliOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'cursor-cli',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			const toolSpy = vi.fn();
+			const sessionSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+			emitter.on('tool-execution', toolSpy);
+			emitter.on('session-id', sessionSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				subtype: 'init',
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'thinking',
+				subtype: 'delta',
+				text: 'reading',
+				session_id: 'cursor-session-1',
+				timestamp_ms: 1,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_call',
+				subtype: 'started',
+				call_id: 'tool-1',
+				tool_call: { readToolCall: { args: { path: 'package.json' } } },
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_call',
+				subtype: 'completed',
+				call_id: 'tool-1',
+				tool_call: {
+					readToolCall: {
+						args: { path: 'package.json' },
+						result: { success: { content: '{"name":"maestro"}' } },
+					},
+				},
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'RE' }] },
+				session_id: 'cursor-session-1',
+				timestamp_ms: 2,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'ADY' }] },
+				session_id: 'cursor-session-1',
+				timestamp_ms: 3,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'READY' }] },
+				session_id: 'cursor-session-1',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'READY',
+				session_id: 'cursor-session-1',
+				usage: { inputTokens: 10, outputTokens: 2 },
+			});
+
+			expect(thinkingSpy).toHaveBeenCalledOnce();
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'reading');
+			expect(toolSpy).toHaveBeenCalledTimes(2);
+			expect(toolSpy.mock.calls[0][1]).toEqual(
+				expect.objectContaining({
+					toolName: 'read',
+					toolCallId: 'tool-1',
+					state: expect.objectContaining({ status: 'running' }),
+				})
+			);
+			expect(toolSpy.mock.calls[1][1]).toEqual(
+				expect.objectContaining({
+					toolName: 'read',
+					toolCallId: 'tool-1',
+					state: expect.objectContaining({ status: 'completed' }),
+				})
+			);
+			expect(sessionSpy).toHaveBeenCalledOnce();
+			expect(sessionSpy).toHaveBeenCalledWith(sessionId, 'cursor-session-1');
+			expect(proc.streamedText).toBe('READY');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledOnce();
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'READY');
 		});
 	});
 

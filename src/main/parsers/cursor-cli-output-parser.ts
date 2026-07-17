@@ -24,12 +24,25 @@ interface CursorContentBlock {
 	text?: string;
 }
 
+interface CursorToolCallPayload {
+	function?: {
+		name?: unknown;
+		arguments?: unknown;
+	};
+	toolCallId?: unknown;
+	[key: string]: unknown;
+}
+
 interface CursorRawMessage {
 	type: string;
 	subtype?: string;
 	session_id?: string;
 	result?: string;
 	is_error?: boolean;
+	timestamp_ms?: number;
+	model_call_id?: string;
+	call_id?: string;
+	tool_call?: CursorToolCallPayload;
 	message?: {
 		role?: string;
 		content?: string | CursorContentBlock[];
@@ -51,6 +64,7 @@ function truncateErrorText(text: string): string {
 
 export class CursorCliOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'cursor-cli';
+	private sawAssistantPartialOutput = false;
 
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
@@ -102,10 +116,23 @@ export class CursorCliOutputParser implements AgentOutputParser {
 			};
 		}
 
+		if (msg.type === 'tool_call') {
+			return this.parseToolCall(msg);
+		}
+
 		if (msg.type === 'result') {
 			let resultText = typeof msg.result === 'string' ? msg.result : undefined;
 			if (!resultText && msg.message?.content) {
 				resultText = this.extractTextFromMessage(msg);
+			}
+
+			if (msg.is_error) {
+				return {
+					type: 'error',
+					text: resultText || 'Agent reported an error',
+					sessionId: msg.session_id,
+					raw: msg,
+				};
 			}
 
 			const event: ParsedEvent = {
@@ -132,6 +159,22 @@ export class CursorCliOutputParser implements AgentOutputParser {
 					raw: msg,
 				};
 			}
+
+			// With --stream-partial-output Cursor emits:
+			// 1. timestamped text deltas (new text),
+			// 2. timestamped + model_call_id buffered flushes (duplicates), and
+			// 3. an untimestamped final full-message flush (duplicate).
+			// Without the flag there is only the untimestamped complete message,
+			// which remains useful as a fallback when a terminal result is absent.
+			if (msg.model_call_id) {
+				return null;
+			}
+			if (typeof msg.timestamp_ms === 'number') {
+				this.sawAssistantPartialOutput = true;
+			} else if (this.sawAssistantPartialOutput) {
+				return null;
+			}
+
 			return {
 				type: 'text',
 				text,
@@ -177,6 +220,74 @@ export class CursorCliOutputParser implements AgentOutputParser {
 			.filter((block) => block.type === 'text' && block.text)
 			.map((block) => block.text!)
 			.join('');
+	}
+
+	private parseToolCall(msg: CursorRawMessage): ParsedEvent | null {
+		const payload = msg.tool_call;
+		if (!payload) return null;
+
+		let toolName: string | undefined;
+		let input: unknown;
+		let result: unknown;
+
+		if (payload.function && typeof payload.function === 'object') {
+			toolName = typeof payload.function.name === 'string' ? payload.function.name : undefined;
+			input = this.parseFunctionArguments(payload.function.arguments);
+		} else {
+			const entry = Object.entries(payload).find(
+				([key, value]) => key.endsWith('ToolCall') && value !== null && typeof value === 'object'
+			);
+			if (entry) {
+				const [key, value] = entry as [string, Record<string, unknown>];
+				toolName = key.slice(0, -'ToolCall'.length);
+				input = value.args;
+				result = value.result;
+			}
+		}
+
+		if (!toolName) return null;
+
+		const resultRecord =
+			result !== null && typeof result === 'object'
+				? (result as Record<string, unknown>)
+				: undefined;
+		const failed = Boolean(resultRecord && ('error' in resultRecord || 'failure' in resultRecord));
+		const output = resultRecord
+			? (resultRecord.success ?? resultRecord.error ?? resultRecord.failure ?? result)
+			: result;
+		const completed = msg.subtype === 'completed';
+
+		return {
+			type: 'tool_use',
+			toolName,
+			toolCallId:
+				typeof msg.call_id === 'string'
+					? msg.call_id
+					: typeof payload.toolCallId === 'string'
+						? payload.toolCallId
+						: undefined,
+			toolState: completed
+				? {
+						status: failed ? 'failed' : 'completed',
+						...(input !== undefined ? { input } : {}),
+						...(output !== undefined ? { output } : {}),
+					}
+				: {
+						status: 'running',
+						...(input !== undefined ? { input } : {}),
+					},
+			sessionId: msg.session_id,
+			raw: msg,
+		};
+	}
+
+	private parseFunctionArguments(value: unknown): unknown {
+		if (typeof value !== 'string') return value;
+		try {
+			return JSON.parse(value);
+		} catch {
+			return value;
+		}
 	}
 
 	private extractUsageFromRaw(msg: CursorRawMessage): ParsedEvent['usage'] | null {

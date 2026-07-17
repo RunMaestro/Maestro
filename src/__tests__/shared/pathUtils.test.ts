@@ -232,6 +232,14 @@ describe('buildExpandedPath', () => {
 			expect(result).toMatch(/\.opencode\/bin|\.opencode\\bin/);
 		});
 
+		it('should include Cursor CLI install paths', () => {
+			process.env.PATH = '/usr/bin';
+			const result = buildExpandedPath();
+
+			expect(result).toMatch(/\.cursor[\/\\]bin/);
+			expect(result).toMatch(/\.local[\/\\]share[\/\\]cursor-agent/);
+		});
+
 		it('should not duplicate paths already in PATH', () => {
 			// Seed and split with `path.delimiter` (the same primitive the product
 			// uses). `path.delimiter` is a platform constant that does NOT follow
@@ -315,6 +323,13 @@ describe('buildExpandedPath', () => {
 			expect(result).toMatch(/npm/i);
 			// Check for Git paths (case-insensitive)
 			expect(result).toMatch(/Git/i);
+		});
+
+		it('should include the native Cursor CLI installer directory', () => {
+			process.env.PATH = 'C:\\Windows\\System32';
+			const result = buildExpandedPath();
+
+			expect(result).toMatch(/AppData[\/\\]Local[\/\\]cursor-agent/i);
 		});
 
 		it('should include .NET SDK paths', () => {
