@@ -49,36 +49,6 @@ export function readCueConfigFile(projectRoot: string): { filePath: string; raw:
 	};
 }
 
-/**
- * Write the raw YAML for a project's Cue config to the canonical path.
- * Creates `.maestro/` if it does not exist. Returns the absolute path written.
- *
- * Note: this always writes to the canonical `.maestro/cue.yaml`, never the
- * legacy `maestro-cue.yaml` location, so saves implicitly migrate the file.
- */
-export function writeCueConfigFile(projectRoot: string, content: string): string {
-	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
-	if (!fs.existsSync(maestroDir)) {
-		fs.mkdirSync(maestroDir, { recursive: true });
-	}
-	const filePath = path.join(projectRoot, CUE_CONFIG_PATH);
-	fs.writeFileSync(filePath, content, 'utf-8');
-	return filePath;
-}
-
-/**
- * Delete a project's Cue config file (canonical or legacy, whichever exists).
- * Returns `true` if a file was deleted, `false` if there was nothing to delete.
- */
-export function deleteCueConfigFile(projectRoot: string): boolean {
-	const filePath = resolveCueConfigPath(projectRoot);
-	if (!filePath) {
-		return false;
-	}
-	fs.unlinkSync(filePath);
-	return true;
-}
-
 function removeEmptyDir(dir: string, operation: string): boolean {
 	if (!fs.existsSync(dir)) return false;
 	try {

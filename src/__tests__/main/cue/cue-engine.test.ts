@@ -93,11 +93,11 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `uuid-${Math.random().toString(36).slice(2, 8)}`),
 }));
 
-// Mock the cue-config-repository so `setSubscriptionEnabled`'s YAML
-// read/write path can be exercised without touching the real filesystem.
+// Mock repository reads so the mutation service test double can operate
+// without touching the real filesystem.
 const mockReadCueConfigFile =
 	vi.fn<(projectRoot: string) => { filePath: string; raw: string } | null>();
-const mockWriteCueConfigFile = vi.fn<(projectRoot: string, content: string) => string>();
+const mockPersistToggleMutation = vi.fn<(projectRoot: string, content: string) => string>();
 vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 	const actual = await vi.importActual<
 		typeof import('../../../main/cue/config/cue-config-repository')
@@ -105,8 +105,6 @@ vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 	return {
 		...actual,
 		readCueConfigFile: (projectRoot: string) => mockReadCueConfigFile(projectRoot),
-		writeCueConfigFile: (projectRoot: string, content: string) =>
-			mockWriteCueConfigFile(projectRoot, content),
 	};
 });
 
@@ -126,7 +124,7 @@ vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
 			);
 			if (!subscription) return false;
 			subscription.enabled = enabled;
-			mockWriteCueConfigFile(projectRoot, yaml.dump(parsed));
+			mockPersistToggleMutation(projectRoot, yaml.dump(parsed));
 			return true;
 		},
 		updateGlobalSettings: vi.fn(),
@@ -1026,7 +1024,7 @@ describe('CueEngine', () => {
 		// pipelines under one session that share a sub name don't collide.
 		beforeEach(() => {
 			mockReadCueConfigFile.mockReset();
-			mockWriteCueConfigFile.mockReset();
+			mockPersistToggleMutation.mockReset();
 		});
 
 		it('rejects malformed subscription ids without touching the filesystem', async () => {
@@ -1037,7 +1035,7 @@ describe('CueEngine', () => {
 			expect(await engine.setSubscriptionEnabled('sess::::name', false)).toBe(false);
 			expect(await engine.setSubscriptionEnabled('sess::pipeline::', false)).toBe(false);
 			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
-			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+			expect(mockPersistToggleMutation).not.toHaveBeenCalled();
 		});
 
 		it('returns false when the sessionId does not resolve to a live session', async () => {
@@ -1058,7 +1056,7 @@ describe('CueEngine', () => {
 				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
 			).toBe(false);
 			expect(mockReadCueConfigFile).toHaveBeenCalledWith('/projects/test');
-			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+			expect(mockPersistToggleMutation).not.toHaveBeenCalled();
 		});
 
 		it('returns false when the named subscription is absent from the YAML', async () => {
@@ -1078,7 +1076,7 @@ describe('CueEngine', () => {
 			expect(
 				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
 			).toBe(false);
-			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+			expect(mockPersistToggleMutation).not.toHaveBeenCalled();
 		});
 
 		it('returns false when the name matches but the pipeline does not (no silent cross-pipeline toggle)', async () => {
@@ -1103,7 +1101,7 @@ describe('CueEngine', () => {
 			// Caller asked to toggle a sub in Pipeline B, but only the
 			// Pipeline-A row exists → no match.
 			expect(await engine.setSubscriptionEnabled('session-1::Pipeline B::Foo', false)).toBe(false);
-			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+			expect(mockPersistToggleMutation).not.toHaveBeenCalled();
 		});
 
 		it('toggles the correct row when two pipelines in one session share a sub name', async () => {
@@ -1125,13 +1123,13 @@ describe('CueEngine', () => {
 					'    pipeline_name: Pipeline B',
 				].join('\n'),
 			});
-			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			mockPersistToggleMutation.mockReturnValue('/projects/test/.maestro/cue.yaml');
 			mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
 
 			const engine = new CueEngine(createMockDeps());
 			expect(await engine.setSubscriptionEnabled('session-1::Pipeline B::Foo', false)).toBe(true);
-			expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-			const written = mockWriteCueConfigFile.mock.calls[0][1] as string;
+			expect(mockPersistToggleMutation).toHaveBeenCalledTimes(1);
+			const written = mockPersistToggleMutation.mock.calls[0][1] as string;
 			// Pipeline B's row must be the one flipped to false; Pipeline A
 			// must remain true. Round-trip through js-yaml to verify by
 			// structure rather than regex, since the dumper's field order
@@ -1158,7 +1156,7 @@ describe('CueEngine', () => {
 					'    pipeline_name: My Pipeline',
 				].join('\n'),
 			});
-			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			mockPersistToggleMutation.mockReturnValue('/projects/test/.maestro/cue.yaml');
 			mockLoadCueConfig.mockReturnValue(
 				createMockConfig({
 					subscriptions: [
@@ -1176,7 +1174,7 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(createMockDeps());
 			engine.start();
 			mockReadCueConfigFile.mockClear();
-			mockWriteCueConfigFile.mockClear();
+			mockPersistToggleMutation.mockClear();
 			mockReadCueConfigFile.mockReturnValue({
 				filePath: '/projects/test/.maestro/cue.yaml',
 				raw: [
@@ -1194,8 +1192,8 @@ describe('CueEngine', () => {
 				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
 			).toBe(true);
 
-			expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-			const written = mockWriteCueConfigFile.mock.calls[0][1] as string;
+			expect(mockPersistToggleMutation).toHaveBeenCalledTimes(1);
+			const written = mockPersistToggleMutation.mock.calls[0][1] as string;
 			expect(written).toMatch(/enabled:\s*false/);
 			expect(written).toMatch(/name:\s*Digest Script/);
 		});
@@ -1208,9 +1206,9 @@ describe('CueEngine', () => {
 			// now chains pending writes per `projectRoot` so both flips
 			// observe each other and land in order.
 			//
-			// We model this with read-call ordering: the second call must
-			// `readCueConfigFile` AFTER the first call's `writeCueConfigFile`
-			// - i.e. it sees the first toggle's output as input.
+			// We model this with read-call ordering: the second read happens
+			// after the first mutation's persistence step, so it sees the
+			// first toggle's output as input.
 			const callLog: string[] = [];
 			mockReadCueConfigFile.mockImplementation(() => {
 				callLog.push('read');
@@ -1233,7 +1231,7 @@ describe('CueEngine', () => {
 					].join('\n'),
 				};
 			});
-			mockWriteCueConfigFile.mockImplementation((_root: string) => {
+			mockPersistToggleMutation.mockImplementation((_root: string) => {
 				callLog.push('write');
 				return '/projects/test/.maestro/cue.yaml';
 			});

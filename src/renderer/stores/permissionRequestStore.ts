@@ -12,19 +12,12 @@
  */
 
 import { create } from 'zustand';
+import type {
+	PermissionDecision,
+	PermissionRequestNotification,
+} from '../../shared/permission-relay';
 
-export interface PermissionRequestUI {
-	requestId: string;
-	sessionId: string;
-	tabId?: string;
-	toolName: string;
-	input: Record<string, unknown>;
-	createdAt: number;
-}
-
-export type PermissionDecision =
-	| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-	| { behavior: 'deny'; message: string };
+export type PermissionRequestUI = PermissionRequestNotification;
 
 interface PermissionRequestState {
 	queue: PermissionRequestUI[];

@@ -49,8 +49,6 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: vi.fn(),
 	readCuePromptFile: vi.fn(),
-	writeCueConfigFile: vi.fn(),
-	deleteCueConfigFile: vi.fn(),
 	writeCuePromptFile: vi.fn(),
 	pruneOrphanedPromptFiles: vi.fn(() => []),
 	removeEmptyPromptsDir: vi.fn(() => false),

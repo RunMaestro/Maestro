@@ -19,6 +19,10 @@ import type {
 	ConcertoDesignerFrameSnapshot,
 	ConcertoHtmlSurface,
 } from '../../shared/concerto-html';
+import type {
+	PermissionDecision,
+	PermissionRequestNotification,
+} from '../../shared/permission-relay';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -281,14 +285,7 @@ export function createProcessApi() {
 		 * The renderer shows a prompt and replies via respondPermission().
 		 */
 		onPermissionRequest: (
-			callback: (request: {
-				requestId: string;
-				sessionId: string;
-				tabId?: string;
-				toolName: string;
-				input: Record<string, unknown>;
-				createdAt: number;
-			}) => void
+			callback: (request: PermissionRequestNotification) => void
 		): (() => void) => {
 			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);
 			ipcRenderer.on('process:permission-request', handler);
@@ -298,12 +295,8 @@ export function createProcessApi() {
 		/**
 		 * Send the user's allow/deny decision for a relayed permission request.
 		 */
-		respondPermission: (
-			requestId: string,
-			decision:
-				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-				| { behavior: 'deny'; message: string }
-		): Promise<boolean> => ipcRenderer.invoke('permission:respond', requestId, decision),
+		respondPermission: (requestId: string, decision: PermissionDecision): Promise<boolean> =>
+			ipcRenderer.invoke('permission:respond', requestId, decision),
 
 		/**
 		 * Subscribe to agent session ID events

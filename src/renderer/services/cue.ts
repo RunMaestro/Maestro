@@ -13,6 +13,7 @@ import type {
 	CueRunResult,
 } from '../../shared/cue/contracts';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import type { PipelineLayoutState } from '../../shared/cue-pipeline-types';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -116,7 +117,7 @@ export const cueService = {
 		});
 	},
 
-	async loadPipelineLayout(): Promise<Record<string, unknown> | null> {
+	async loadPipelineLayout(): Promise<PipelineLayoutState | null> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.loadPipelineLayout(),
 			errorContext: 'Cue loadPipelineLayout',
@@ -231,7 +232,7 @@ export const cueService = {
 		});
 	},
 
-	async savePipelineLayout(layout: Record<string, unknown>): Promise<void> {
+	async savePipelineLayout(layout: PipelineLayoutState): Promise<void> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.savePipelineLayout(layout),
 			errorContext: 'Cue savePipelineLayout',

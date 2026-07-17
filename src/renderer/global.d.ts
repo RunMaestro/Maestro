@@ -98,6 +98,9 @@ type ShellInfo = import('../shared/types').ShellInfo;
 type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
+type PermissionDecision = import('../shared/permission-relay').PermissionDecision;
+type PermissionRequestNotification =
+	import('../shared/permission-relay').PermissionRequestNotification;
 
 /**
  * Result type for reading session messages from agent storage.
@@ -335,22 +338,8 @@ interface MaestroAPI {
 		) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
-		onPermissionRequest: (
-			callback: (request: {
-				requestId: string;
-				sessionId: string;
-				tabId?: string;
-				toolName: string;
-				input: Record<string, unknown>;
-				createdAt: number;
-			}) => void
-		) => () => void;
-		respondPermission: (
-			requestId: string,
-			decision:
-				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-				| { behavior: 'deny'; message: string }
-		) => Promise<boolean>;
+		onPermissionRequest: (callback: (request: PermissionRequestNotification) => void) => () => void;
+		respondPermission: (requestId: string, decision: PermissionDecision) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
@@ -3791,69 +3780,10 @@ interface MaestroAPI {
 	};
 
 	// Cue API (event-driven automation)
-	cue: {
-		getSettings: () => Promise<CueSettings>;
-		saveSettings: (settings: CueSettings) => Promise<{ writtenRoots: string[] }>;
-		getStatus: () => Promise<CueSessionStatus[]>;
-		getGraphData: () => Promise<CueGraphSession[]>;
-		getActiveRuns: () => Promise<CueRunResult[]>;
-		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
-		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
-		getEventCount: () => Promise<number>;
-		enable: () => Promise<void>;
-		disable: () => Promise<void>;
-		/**
-		 * Visibility-aware pause. Flip to false while the app is hidden so
-		 * the Cue scanner subsystem skips expensive background work; flip
-		 * back to true on visibility. Different from `disable`, which tears
-		 * the engine down entirely.
-		 */
-		setActive: (active: boolean) => Promise<void>;
-		stopRun: (runId: string) => Promise<boolean>;
-		stopAll: () => Promise<void>;
-		triggerSubscription: (
-			subscriptionName: string,
-			prompt?: string,
-			sourceAgentId?: string
-		) => Promise<boolean>;
-		getQueueStatus: () => Promise<Record<string, number>>;
-		getMetrics: () => Promise<import('../main/cue/cue-metrics').CueMetrics | null>;
-		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
-		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
-		removeSession: (sessionId: string) => Promise<void>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
-		writeYaml: (
-			projectRoot: string,
-			content: string,
-			promptFiles?: Record<string, string>
-		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
-		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
-		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
-		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
-		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
-	};
+	cue: import('../main/preload/cue').CueApi;
 
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
-	cueBackup: {
-		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;
-		list: () => Promise<import('../shared/cue-backup-types').CueBackupSummary[]>;
-		inspect: (filePath: string) => Promise<import('../shared/cue-backup-types').CueBackupManifest>;
-		readFile: (
-			filePath: string,
-			workspaceId: string,
-			relativePath: string
-		) => Promise<string | null>;
-		readLive: (cwd: string, relativePath: string) => Promise<string | null>;
-		restoreFile: (filePath: string, workspaceId: string, relativePath: string) => Promise<void>;
-		restoreAll: (
-			filePath: string
-		) => Promise<import('../shared/cue-backup-types').CueBackupRestoreResult>;
-		getDiffStatus: (
-			filePath: string
-		) => Promise<import('../shared/cue-backup-types').CueBackupDiffStatusMap>;
-		delete: (filePath: string) => Promise<void>;
-	};
+	cueBackup: import('../main/preload/cueBackup').CueBackupApi;
 
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.

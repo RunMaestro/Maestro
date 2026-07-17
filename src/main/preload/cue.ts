@@ -18,6 +18,7 @@ import type {
 	CueSettings,
 } from '../../shared/cue';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import type { PipelineLayoutState } from '../../shared/cue-pipeline-types';
 import type { CueMetrics } from '../cue/cue-metrics';
 import type { FanInHealthEntry } from '../cue/cue-fan-in-tracker';
 export type {
@@ -139,11 +140,11 @@ export function createCueApi() {
 			ipcRenderer.invoke('cue:validateYaml', { content }),
 
 		// Save pipeline layout (node positions, viewport, pipeline selection)
-		savePipelineLayout: (layout: Record<string, unknown>): Promise<void> =>
+		savePipelineLayout: (layout: PipelineLayoutState): Promise<void> =>
 			ipcRenderer.invoke('cue:savePipelineLayout', { layout }),
 
 		// Load saved pipeline layout
-		loadPipelineLayout: (): Promise<Record<string, unknown> | null> =>
+		loadPipelineLayout: (): Promise<PipelineLayoutState | null> =>
 			ipcRenderer.invoke('cue:loadPipelineLayout'),
 
 		// Listen for real-time activity updates from the main process. Payload

@@ -16,16 +16,20 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 import {
-	deleteCueConfigFile,
 	pruneOrphanedPromptFiles,
 	readCueConfigFile,
 	resolveCueConfigPath,
-	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../../main/cue/config/cue-config-repository';
 import { createCueConfigMutationService } from '../../../main/cue/config/cue-config-mutation-service';
 
 let projectRoot = '';
+function writeCueConfigFixture(content: string): string {
+	const configPath = path.join(projectRoot, '.maestro', 'cue.yaml');
+	fs.mkdirSync(path.dirname(configPath), { recursive: true });
+	fs.writeFileSync(configPath, content, 'utf-8');
+	return configPath;
+}
 
 beforeEach(() => {
 	projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-roundtrip-'));
@@ -38,29 +42,29 @@ afterEach(() => {
 });
 
 describe('cue YAML roundtrip', () => {
-	it('write → read returns the exact content with a single trip', () => {
+	it('reads exact content from a canonical fixture', () => {
 		const content =
 			'subscriptions:\n  - name: test-sub\n    event: time.heartbeat\n    interval_minutes: 5\n';
-		writeCueConfigFile(projectRoot, content);
+		writeCueConfigFixture(content);
 
 		const result = readCueConfigFile(projectRoot);
 		expect(result).not.toBeNull();
 		expect(result!.raw).toBe(content);
 	});
 
-	it('write creates .maestro/ directory if missing', () => {
+	it('uses the canonical fixture path', () => {
 		const maestroDir = path.join(projectRoot, '.maestro');
 		expect(fs.existsSync(maestroDir)).toBe(false);
 
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
+		const configPath = writeCueConfigFixture('subscriptions: []');
 
-		expect(fs.existsSync(maestroDir)).toBe(true);
-		expect(fs.existsSync(path.join(maestroDir, 'cue.yaml'))).toBe(true);
+		expect(configPath).toBe(path.join(maestroDir, 'cue.yaml'));
+		expect(fs.existsSync(configPath)).toBe(true);
 	});
 
-	it('roundtrip preserves UTF-8 characters including emoji and CJK', () => {
+	it('reads UTF-8 characters including emoji and CJK', () => {
 		const content = 'subscriptions:\n  - name: "テスト 🎌 中文"\n    event: time.heartbeat\n';
-		writeCueConfigFile(projectRoot, content);
+		writeCueConfigFixture(content);
 		const result = readCueConfigFile(projectRoot);
 		expect(result!.raw).toBe(content);
 	});
@@ -87,16 +91,6 @@ describe('cue YAML roundtrip', () => {
 		const result = readCueConfigFile(projectRoot);
 		expect(result!.raw).toBe('legacy: true');
 		expect(result!.filePath).toBe(legacyPath);
-	});
-
-	it('deleteCueConfigFile removes the file and returns true', () => {
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
-		expect(deleteCueConfigFile(projectRoot)).toBe(true);
-		expect(readCueConfigFile(projectRoot)).toBeNull();
-	});
-
-	it('deleteCueConfigFile returns false when no file exists', () => {
-		expect(deleteCueConfigFile(projectRoot)).toBe(false);
 	});
 });
 
@@ -197,7 +191,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 			'',
 		].join('\n');
 
-		writeCueConfigFile(projectRoot, yaml);
+		writeCueConfigFixture(yaml);
 		writeCuePromptFile(projectRoot, '.maestro/prompts/morning.md', 'morning body');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/output.md', 'output body');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/output-phase2.md', 'phase-2 body');
@@ -233,7 +227,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 		fs.mkdirSync(maestroDir, { recursive: true });
 		fs.writeFileSync(path.join(maestroDir, 'director-notes.md'), 'notes', 'utf-8');
 
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
+		writeCueConfigFixture('subscriptions: []');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/x.md', 'body');
 
 		expect(fs.readFileSync(path.join(maestroDir, 'director-notes.md'), 'utf-8')).toBe('notes');

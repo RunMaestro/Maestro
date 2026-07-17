@@ -13,30 +13,26 @@
  * design. This module is claude-code-only; other agents do not use the relay.
  */
 
+import type {
+	PermissionDecision,
+	PermissionRequestNotification,
+} from '../../shared/permission-relay';
+
 /**
  * The decision returned to Claude Code for a single tool-permission request.
  * Mirrors the Claude Code permission-prompt-tool contract: the tool result's
  * text content must be a JSON string of exactly this shape.
  */
-export type PermissionDecision =
-	| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-	| { behavior: 'deny'; message: string };
+export type { PermissionDecision } from '../../shared/permission-relay';
 
 /**
  * A pending permission request, surfaced to the renderer for a user decision.
  * `requestId` is unique per request; `token` identifies the spawn (and thus
  * the session/tab) that produced it.
  */
-export interface PermissionRequest {
-	requestId: string;
+export interface PermissionRequest extends PermissionRequestNotification {
+	/** Main-process-only per-spawn relay authentication material. */
 	token: string;
-	sessionId: string;
-	tabId?: string;
-	/** The tool Claude wants to run, e.g. "Bash", "Edit", "Write". */
-	toolName: string;
-	/** The tool input Claude proposed (command, file path + contents, etc.). */
-	input: Record<string, unknown>;
-	createdAt: number;
 }
 
 /** Identifies which session/tab a spawn's relay token belongs to. */

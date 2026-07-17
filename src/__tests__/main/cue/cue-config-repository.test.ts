@@ -17,7 +17,6 @@ const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockMkdirSync = vi.fn();
-const mockUnlinkSync = vi.fn();
 const mockReaddirSync = vi.fn();
 const mockWatcher = {
 	on: vi.fn().mockReturnThis(),
@@ -31,7 +30,6 @@ vi.mock('fs', () => ({
 	readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 	mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
-	unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
 	readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
 	rmdirSync: (...args: unknown[]) => mockRmdirSync(...args),
 }));
@@ -45,13 +43,11 @@ vi.mock('chokidar', () => ({
 }));
 
 import {
-	deleteCueConfigFile,
 	readCueConfigFile,
 	readCuePromptFile,
 	removeEmptyPromptsDir,
 	removeEmptyMaestroDir,
 	resolveCueConfigPath,
-	writeCueConfigFile,
 	writeCuePromptFile,
 	watchCueConfigFile,
 } from '../../../main/cue/config/cue-config-repository';
@@ -131,68 +127,6 @@ describe('cue-config-repository', () => {
 
 			expect(readCueConfigFile(PROJECT_ROOT)).toBeNull();
 			expect(mockReadFileSync).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('writeCueConfigFile', () => {
-		it('writes to the canonical path', () => {
-			mockExistsSync.mockReturnValue(true); // .maestro/ already exists
-
-			const result = writeCueConfigFile(PROJECT_ROOT, 'subscriptions: []');
-
-			expect(result).toBe(CANONICAL);
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'subscriptions: []', 'utf-8');
-		});
-
-		it('creates .maestro/ if missing before writing', () => {
-			mockExistsSync.mockImplementation((p: string) => p !== MAESTRO_DIR);
-
-			writeCueConfigFile(PROJECT_ROOT, 'content');
-
-			expect(mockMkdirSync).toHaveBeenCalledWith(MAESTRO_DIR, { recursive: true });
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'content', 'utf-8');
-		});
-
-		it('always writes the canonical path even when only legacy exists', () => {
-			mockExistsSync.mockImplementation((p: string) => p === LEGACY || p === MAESTRO_DIR);
-
-			writeCueConfigFile(PROJECT_ROOT, 'content');
-
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'content', 'utf-8');
-			expect(mockWriteFileSync).not.toHaveBeenCalledWith(
-				LEGACY,
-				expect.anything(),
-				expect.anything()
-			);
-		});
-	});
-
-	describe('deleteCueConfigFile', () => {
-		it('deletes canonical file when present and returns true', () => {
-			mockExistsSync.mockImplementation((p: string) => p === CANONICAL);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(true);
-			expect(mockUnlinkSync).toHaveBeenCalledWith(CANONICAL);
-		});
-
-		it('deletes legacy file when canonical is missing', () => {
-			mockExistsSync.mockImplementation((p: string) => p === LEGACY);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(true);
-			expect(mockUnlinkSync).toHaveBeenCalledWith(LEGACY);
-		});
-
-		it('returns false when no config file exists', () => {
-			mockExistsSync.mockReturnValue(false);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(false);
-			expect(mockUnlinkSync).not.toHaveBeenCalled();
 		});
 	});
 

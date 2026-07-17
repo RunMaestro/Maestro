@@ -62,20 +62,17 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
-// Mock the config repository - saveSettings reads and writes through this.
+// Mock the config repository consumed by Cue session lifecycle setup.
 const mockReadCueConfigFile = vi.fn<(root: string) => { filePath: string; raw: string } | null>();
-const mockWriteCueConfigFile = vi.fn<(root: string, content: string) => string>();
+const mockPersistMutationResult = vi.fn<(root: string, content: string) => string>();
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: (...args: unknown[]) => mockReadCueConfigFile(args[0] as string),
-	writeCueConfigFile: (...args: unknown[]) =>
-		mockWriteCueConfigFile(args[0] as string, args[1] as string),
 	// resolveCueConfigPath is consumed by cue-session-runtime-service to gate
 	// which sessions get a cue.yaml watcher set up. Return a synthetic path so
 	// every session passes the gate during engine.start().
 	resolveCueConfigPath: (root: string) => `${root}/.maestro/cue.yaml`,
 	watchCueConfigFile: vi.fn(() => () => {}),
 	writeCuePromptFile: vi.fn(),
-	deleteCueConfigFile: vi.fn(),
 	pruneOrphanedPromptFiles: vi.fn(() => []),
 	removeEmptyPromptsDir: vi.fn(() => false),
 	removeEmptyMaestroDir: vi.fn(() => false),
@@ -95,7 +92,7 @@ const mockUpdateGlobalSettings = vi.fn(
 		if (!file) return false;
 		const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
 		parsed.settings = { ...(parsed.settings as Record<string, unknown>), ...settings };
-		mockWriteCueConfigFile(root, yaml.dump(parsed));
+		mockPersistMutationResult(root, yaml.dump(parsed));
 		return true;
 	}
 );
@@ -126,7 +123,7 @@ beforeEach(() => {
 		return config ? { ok: true, config, warnings: [] } : { ok: false, reason: 'missing' };
 	});
 	mockWatchCueYaml.mockReturnValue(() => {});
-	mockWriteCueConfigFile.mockReturnValue('/written');
+	mockPersistMutationResult.mockReturnValue('/written');
 });
 
 function startEngineWithSessions(
@@ -174,7 +171,7 @@ describe('CueEngine.saveSettings', () => {
 
 		expect(result.writtenRoots).toHaveLength(2);
 		expect(result.writtenRoots).toEqual(expect.arrayContaining(['/proj1', '/proj2']));
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(2);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(2);
 	});
 
 	it('dedupes when two sessions share the same projectRoot', async () => {
@@ -197,7 +194,7 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/shared']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
 	});
 
 	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', async () => {
@@ -228,8 +225,8 @@ describe('CueEngine.saveSettings', () => {
 			queue_size: 99,
 		});
 
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-		const writtenContent = mockWriteCueConfigFile.mock.calls[0][1];
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
+		const writtenContent = mockPersistMutationResult.mock.calls[0][1];
 		const reparsed = yaml.load(writtenContent) as Record<string, unknown>;
 		expect(reparsed.settings).toMatchObject({
 			timeout_minutes: 60,
@@ -278,7 +275,7 @@ describe('CueEngine.saveSettings', () => {
 			owner_agent_id: 'some-other-agent-uuid',
 		});
 
-		const writtenContent = mockWriteCueConfigFile.mock.calls[0][1];
+		const writtenContent = mockPersistMutationResult.mock.calls[0][1];
 		const reparsed = yaml.load(writtenContent) as { settings: Record<string, unknown> };
 		// Global fields updated...
 		expect(reparsed.settings.timeout_minutes).toBe(60);
@@ -331,7 +328,7 @@ describe('CueEngine.saveSettings', () => {
 
 		expect(result.writtenRoots).toEqual([]);
 		expect(mockReadCueConfigFile).not.toHaveBeenCalled();
-		expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		expect(mockPersistMutationResult).not.toHaveBeenCalled();
 	});
 
 	it('skips a root when readCueConfigFile returns null (no yaml on disk yet)', async () => {
@@ -357,8 +354,8 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/has-yaml']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledWith('/has-yaml', expect.any(String));
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledWith('/has-yaml', expect.any(String));
 	});
 
 	it('isolates errors per root and reports the failure to sentry', async () => {
@@ -387,7 +384,7 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/good']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
 		expect(mockCaptureException).toHaveBeenCalledTimes(1);
 		const [err, ctx] = mockCaptureException.mock.calls[0];
 		expect(err).toBeInstanceOf(Error);

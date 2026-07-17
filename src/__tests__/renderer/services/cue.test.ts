@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 import { cueService } from '../../../renderer/services/cue';
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
@@ -283,10 +284,15 @@ describe('cueService - write methods', () => {
 		await expect(cueService.deleteYaml('/root')).rejects.toThrow('IPC fail');
 	});
 
-	it('savePipelineLayout - rethrows on error', async () => {
+	it('savePipelineLayout passes the canonical layout contract through and rethrows on error', async () => {
+		const layout: PipelineLayoutState = {
+			version: 2,
+			pipelines: [],
+			selectedPipelineId: null,
+		};
 		mockCue.savePipelineLayout.mockRejectedValue(new Error('IPC fail'));
-		await expect(cueService.savePipelineLayout({ x: 1 })).rejects.toThrow('IPC fail');
-		expect(mockCue.savePipelineLayout).toHaveBeenCalledWith({ x: 1 });
+		await expect(cueService.savePipelineLayout(layout)).rejects.toThrow('IPC fail');
+		expect(mockCue.savePipelineLayout).toHaveBeenCalledWith(layout);
 	});
 });
 
