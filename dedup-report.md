@@ -2452,7 +2452,7 @@ Five default Task agents audited engine internals, IPC/preload/service bridges, 
 
 - **Converged:** zero parent-accepted net-new findings in Wave 18.
 - No major unexamined high-value category remains under the audit's threshold: material exact/semantic clones, dead production files/exports, divergent sources of truth, bypassed canonical utilities, stale compatibility code, package/artifact reachability, and correctness/security drift have all received repeated independent coverage.
-- Further progress should move from discovery to implementation of the 120 prioritized cleanup tracks, with verify-first gates preserved.
+- Further progress should move from discovery to implementation of the 134 prioritized cleanup tracks, with verify-first gates preserved. P1-P120 are the original audit scope; P121-P134 are accepted Wave 14 additions after saturation review.
 
 ### 44.4 Wave limitations
 
@@ -2473,10 +2473,21 @@ Implementation is tracked in `Plans/dedup-playbook/IMPLEMENTATION-LEDGER.md`. St
 
 The implementation ledger now records a reviewed, non-pending disposition for every priority. This closure summary is intentionally a status index; the historical investigation evidence above remains unchanged and the ledger owns per-priority verification and rollback detail.
 
-| Disposition                  | Priorities                                                               |
-| ---------------------------- | ------------------------------------------------------------------------ |
-| Implemented                  | 1-15, 17-18, 20-21, 23-37, 40-47, 49-63, 65-69, 72-74, 76-93, 95, 97-120 |
-| Retained                     | 16, 19, 22, 38, 39, 48, 64, 70, 71, 96                                   |
-| Already resolved on baseline | 75, 94                                                                   |
+| Disposition                  | Count | Priorities                                                               |
+| ---------------------------- | ----: | ------------------------------------------------------------------------ |
+| Implemented                  |   122 | 1-15, 17-18, 20-21, 23-37, 40-47, 49-63, 65-69, 72-74, 76-93, 95, 97-134 |
+| Retained                     |    10 | 16, 19, 22, 38, 39, 48, 64, 70, 71, 96                                   |
+| Already resolved on baseline |     2 | 75, 94                                                                   |
 
 P108 is implemented by the documentation source-of-truth matrix in `Plans/dedup-playbook/16-documentation.md`: runtime registries own template-variable and provider facts; named public pages own their audience-specific references; compatible copies link to those owners. Generated documentation remains source-derived.
+
+### 45.2 Wave 14 — accepted after saturation review
+
+Wave 14 added P121-P134 after the original 120-priority audit had converged. These accepted findings are post-saturation implementation and regression work, not retrospective changes to the original investigation. The ledger records their integrated commit evidence, focused verification, and rollback units:
+
+- P121 uses a token-free renderer DTO for permission relay; P123-P124 remove dead synchronous Cue config exports and establish canonical Cue bridge/layout types (`bb6e585b9`).
+- P122 prevents stale renderer results: Agent Sessions search, AutoRun folder validation, and worktree validation cancel superseded effects, while Cue YAML validation gates completion by request epoch (`c45d10205`).
+- P125 gives `FileTreeRow` row-local long-press listener/timer ownership and covers cross-row interaction (`a165f39c0`, `d826a3a2e`).
+- P126 removes test-only plugin convenience exports and corrects the canonical plugin plan (`d3d59e818`, `932d608f6`).
+- P127-P130 remove dead prompt artifacts/orphan modules and unused package dependencies (`4476ca236`); P131 removes unsupported Rolldown debugger configuration (`f0d0f7b98`).
+- P132-P134 canonicalize tab-handler resets and renderer test fixtures for `IntersectionObserver` and coarse-pointer `matchMedia` (`f8ef24338`).
