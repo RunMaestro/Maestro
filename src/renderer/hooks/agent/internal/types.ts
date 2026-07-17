@@ -37,6 +37,8 @@ export interface BatchedUpdater {
 	flushNow: () => void;
 	/** Flush pending updates for one session without draining unrelated tabs. */
 	flushSessionNow?: (sessionId: string) => void;
+	/** Flush pending updates for one raw AI-tab target without siblings. */
+	flushTargetNow?: (targetId: string) => void;
 }
 
 /** Dependencies passed from App.tsx to the hook */

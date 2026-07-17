@@ -552,8 +552,8 @@ describe('useRuntimeFeaturesListener', () => {
 		}));
 		const { result } = renderHook(() => {
 			const batchedUpdater = useBatchedSessionUpdates(60_000);
-			const ompEventCoordinator = useOmpEventCoordinator(() =>
-				batchedUpdater.flushSessionNow('owned-session')
+			const ompEventCoordinator = useOmpEventCoordinator((sessionId) =>
+				batchedUpdater.flushTargetNow(sessionId)
 			);
 			const flushThinkingForSession = useAgentThinkingListener(ompEventCoordinator);
 			useAgentToolExecutionListener(batchedUpdater, flushThinkingForSession, ompEventCoordinator);

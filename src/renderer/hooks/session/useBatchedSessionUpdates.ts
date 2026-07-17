@@ -17,6 +17,7 @@ import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { parseSessionId } from '../../utils/sessionIdParser';
 
 // Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
 // - 150ms collided with high-throughput streams (jitter from setInterval drift
@@ -99,6 +100,8 @@ export interface BatchedUpdater {
 	flushNow: () => void;
 	/** Force immediate flush of one session without draining unrelated updates. */
 	flushSessionNow: (sessionId: string) => void;
+	/** Flush one raw AI-tab target without consuming sibling tab accumulations. */
+	flushTargetNow: (targetId: string) => void;
 }
 
 export interface UseBatchedSessionUpdatesReturn extends BatchedUpdater {
@@ -708,6 +711,73 @@ export function useBatchedSessionUpdates(
 		},
 		[flush]
 	);
+	const flushTargetNow = useCallback(
+		(targetId: string) => {
+			const { baseSessionId, tabId } = parseSessionId(targetId);
+			if (!tabId) {
+				flushSessionNow(baseSessionId);
+				return;
+			}
+
+			const allUpdates = accumulatorRef.current;
+			const accumulator = allUpdates.get(baseSessionId);
+			if (!accumulator) return;
+
+			const selectMap = <T>(entries: Map<string, T> | undefined) =>
+				new Map([...(entries ?? [])].filter(([key]) => key === tabId));
+			const retainMap = <T>(entries: Map<string, T> | undefined) =>
+				new Map([...(entries ?? [])].filter(([key]) => key !== tabId));
+			const selectedLogs = new Map(
+				[...accumulator.logAccumulators].filter(([, log]) => log.tabId === tabId)
+			);
+			const selectedTabStatuses = selectMap(accumulator.tabStatuses);
+			const selectedUsage = new Map(
+				[...(accumulator.usageDeltas ?? [])].filter(([key]) => key === tabId)
+			);
+			const selectedDelivered = new Set(
+				[...(accumulator.deliveredTabs ?? [])].filter((value) => value === tabId)
+			);
+			const selectedUnread = selectMap(accumulator.unreadTabs);
+			if (
+				selectedLogs.size === 0 &&
+				selectedTabStatuses.size === 0 &&
+				selectedUsage.size === 0 &&
+				selectedDelivered.size === 0 &&
+				selectedUnread.size === 0
+			) {
+				return;
+			}
+
+			const selected: SessionAccumulator = {
+				logAccumulators: selectedLogs,
+				nextLogSequence: accumulator.nextLogSequence,
+				tabStatuses: selectedTabStatuses,
+				usageDeltas: selectedUsage,
+				deliveredTabs: selectedDelivered,
+				unreadTabs: selectedUnread,
+			};
+			const remaining: SessionAccumulator = {
+				...accumulator,
+				logAccumulators: new Map(
+					[...accumulator.logAccumulators].filter(([, log]) => log.tabId !== tabId)
+				),
+				tabStatuses: retainMap(accumulator.tabStatuses),
+				usageDeltas: new Map([...(accumulator.usageDeltas ?? [])].filter(([key]) => key !== tabId)),
+				deliveredTabs: new Set(
+					[...(accumulator.deliveredTabs ?? [])].filter((value) => value !== tabId)
+				),
+				unreadTabs: retainMap(accumulator.unreadTabs),
+			};
+
+			accumulatorRef.current = new Map([[baseSessionId, selected]]);
+			flush();
+			const restored = new Map(allUpdates);
+			restored.set(baseSessionId, remaining);
+			accumulatorRef.current = restored;
+			hasPendingRef.current = restored.size > 0;
+		},
+		[flush, flushSessionNow]
+	);
 
 	// Return memoized object to prevent unnecessary re-renders in consumers
 	return useMemo(
@@ -724,6 +794,7 @@ export function useBatchedSessionUpdates(
 			markUnread,
 			flushNow,
 			flushSessionNow,
+			flushTargetNow,
 			get hasPending() {
 				return hasPendingRef.current;
 			},
@@ -741,6 +812,7 @@ export function useBatchedSessionUpdates(
 			markUnread,
 			flushNow,
 			flushSessionNow,
+			flushTargetNow,
 		]
 	);
 }

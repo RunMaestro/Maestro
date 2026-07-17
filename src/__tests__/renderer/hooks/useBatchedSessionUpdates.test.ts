@@ -85,4 +85,33 @@ describe('useBatchedSessionUpdates', () => {
 
 		unmount();
 	});
+
+	it('flushes one raw AI target without consuming a sibling tab accumulator', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: [createMockAITab({ id: 'tab-a' }), createMockAITab({ id: 'tab-b' })],
+				activeTabId: 'tab-a',
+			})),
+		}));
+		const { result, unmount } = renderHook(() => useBatchedSessionUpdates(60_000));
+
+		result.current.appendLog('session-1', 'tab-a', true, 'A stdout');
+		result.current.appendLog('session-1', 'tab-b', true, 'B stderr', true);
+		result.current.flushTargetNow('session-1-ai-tab-a');
+
+		let tabs = useSessionStore.getState().sessions[0].aiTabs;
+		expect(tabs.find((tab) => tab.id === 'tab-a')?.logs.map((log) => log.text)).toEqual([
+			'A stdout',
+		]);
+		expect(tabs.find((tab) => tab.id === 'tab-b')?.logs).toHaveLength(0);
+
+		result.current.flushTargetNow('session-1-ai-tab-b');
+		tabs = useSessionStore.getState().sessions[0].aiTabs;
+		expect(tabs.find((tab) => tab.id === 'tab-b')?.logs.map((log) => log.text)).toEqual([
+			'B stderr',
+		]);
+		expect(tabs.find((tab) => tab.id === 'tab-b')?.logs[0]?.source).toBe('stderr');
+		unmount();
+	});
 });

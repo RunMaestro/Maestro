@@ -16,7 +16,6 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { parseSessionId } from '../../utils/sessionIdParser';
 import type { ToolProgressState, UseAgentListenersDeps } from './internal/types';
 import { useAgentSlashCommandsListener } from './internal/useAgentSlashCommandsListener';
 import { useAgentStderrListener } from './internal/useAgentStderrListener';
@@ -57,8 +56,8 @@ export {
  */
 export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	const ompEventCoordinator = useOmpEventCoordinator((sessionId) => {
-		if (deps.batchedUpdater.flushSessionNow) {
-			deps.batchedUpdater.flushSessionNow(parseSessionId(sessionId).baseSessionId);
+		if (deps.batchedUpdater.flushTargetNow) {
+			deps.batchedUpdater.flushTargetNow(sessionId);
 			return;
 		}
 		deps.batchedUpdater.flushNow();
