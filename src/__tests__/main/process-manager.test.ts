@@ -750,6 +750,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should kill all processes even when kill() deletes from the map', () => {
+				mockIsWindows.mockReturnValue(true);
 				const kills: string[] = [];
 				const originalKill = processManager.kill.bind(processManager);
 				processManager.kill = (sessionId: string, opts?: { sync?: boolean }) => {
@@ -788,6 +789,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should pass sync: true to kill() so Windows taskkill blocks until complete', () => {
+				mockIsWindows.mockReturnValue(true);
 				const killSpy = vi.spyOn(processManager, 'kill');
 
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -849,6 +851,8 @@ describe('process-manager.ts', () => {
 				expect(mockPtyKill).toHaveBeenCalledTimes(1);
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGKILL');
 				expect(mockOnExit).not.toHaveBeenCalled();
+				expect(mockExecFile).not.toHaveBeenCalled();
+				expect(mockExecFileSync).not.toHaveBeenCalled();
 			});
 		});
 	});
