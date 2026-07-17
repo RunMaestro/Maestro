@@ -240,6 +240,27 @@ describe('FileTreeRow', () => {
 		vi.useRealTimers();
 	});
 
+	it('removes long-press capture listeners and suppression timer on unmount', () => {
+		vi.useFakeTimers();
+		const removeListener = vi.spyOn(document, 'removeEventListener');
+		const clearTimer = vi.spyOn(window, 'clearTimeout');
+
+		try {
+			const { container, unmount } = render(<FileTreeRow {...defaultProps} />);
+			fireEvent.touchStart(container.firstElementChild!, {
+				touches: [{ clientX: 100, clientY: 200 }],
+			});
+			vi.advanceTimersByTime(500);
+			unmount();
+
+			expect(removeListener).toHaveBeenCalledWith('mousedown', expect.any(Function), true);
+			expect(removeListener).toHaveBeenCalledWith('click', expect.any(Function), true);
+			expect(clearTimer).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('applies keyboard-selected background when globalIndex matches selectedFileIndex', () => {
 		const item: FlattenedNode = { node: fileNode, path: 'App.tsx', depth: 0, globalIndex: 3 };
 		const { container } = render(

@@ -501,6 +501,48 @@ describe('AutoRunSetupModal', () => {
 
 			expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith('/abc', undefined);
 		});
+
+		it('keeps the newest folder validation when an older request resolves last', async () => {
+			let resolveFirst!: (value: { success: boolean; files: string[] }) => void;
+			let resolveSecond!: (value: { success: boolean; files: string[] }) => void;
+			const first = new Promise<{ success: boolean; files: string[] }>((resolve) => {
+				resolveFirst = resolve;
+			});
+			const second = new Promise<{ success: boolean; files: string[] }>((resolve) => {
+				resolveSecond = resolve;
+			});
+			vi.mocked(window.maestro.autorun.listDocs)
+				.mockImplementationOnce(() => first)
+				.mockImplementationOnce(() => second);
+
+			renderWithLayerStack(
+				<AutoRunSetupModal theme={theme} onClose={vi.fn()} onFolderSelected={vi.fn()} />
+			);
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			const input = screen.getByPlaceholderText(/Select Auto Run folder/);
+			fireEvent.change(input, { target: { value: '/older' } });
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+			fireEvent.change(input, { target: { value: '/newer' } });
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			await act(async () => {
+				resolveSecond({ success: true, files: ['new.md'] });
+				await Promise.resolve();
+			});
+			await act(async () => {
+				resolveFirst({ success: true, files: ['old-1.md', 'old-2.md'] });
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText('Found 1 markdown document')).toBeInTheDocument();
+		});
 	});
 
 	describe('tilde expansion', () => {

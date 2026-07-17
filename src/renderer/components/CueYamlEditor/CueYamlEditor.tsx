@@ -47,6 +47,7 @@ export function CueYamlEditor({
 	const [loading, setLoading] = useState(true);
 
 	const validateTimerRef = useRef<ReturnType<typeof setTimeout>>();
+	const validationEpochRef = useRef(0);
 
 	const session = useSessionStore(selectSessionById(sessionId));
 
@@ -68,9 +69,10 @@ export function CueYamlEditor({
 				const initial = content ?? CUE_YAML_TEMPLATE;
 				setYamlContent(initial);
 				setOriginalContent(initial);
+				const validationEpoch = ++validationEpochRef.current;
 				try {
 					const validationResult = await cueService.validateYaml(initial);
-					if (!cancelled) {
+					if (!cancelled && validationEpoch === validationEpochRef.current) {
 						setIsValid(validationResult.valid);
 						setValidationErrors(validationResult.errors);
 					}
@@ -84,7 +86,7 @@ export function CueYamlEditor({
 					captureException(err, {
 						extra: { operation: 'cueYamlEditor.loadValidate', projectRoot },
 					});
-					if (!cancelled) {
+					if (!cancelled && validationEpoch === validationEpochRef.current) {
 						setIsValid(false);
 						setValidationErrors([
 							`Failed to validate YAML: ${err instanceof Error ? err.message : String(err)}`,
@@ -109,17 +111,23 @@ export function CueYamlEditor({
 
 	// Debounced validation
 	const validateYaml = useCallback((content: string) => {
+		const validationEpoch = ++validationEpochRef.current;
 		if (validateTimerRef.current) {
 			clearTimeout(validateTimerRef.current);
 		}
 		validateTimerRef.current = setTimeout(async () => {
+			if (validationEpoch !== validationEpochRef.current) return;
 			try {
 				const result = await cueService.validateYaml(content);
-				setIsValid(result.valid);
-				setValidationErrors(result.errors);
+				if (validationEpoch === validationEpochRef.current) {
+					setIsValid(result.valid);
+					setValidationErrors(result.errors);
+				}
 			} catch {
-				setIsValid(false);
-				setValidationErrors(['Failed to validate YAML']);
+				if (validationEpoch === validationEpochRef.current) {
+					setIsValid(false);
+					setValidationErrors(['Failed to validate YAML']);
+				}
 			}
 		}, 500);
 	}, []);
@@ -127,6 +135,7 @@ export function CueYamlEditor({
 	// Cleanup validation timer
 	useEffect(() => {
 		return () => {
+			validationEpochRef.current += 1;
 			if (validateTimerRef.current) {
 				clearTimeout(validateTimerRef.current);
 			}
@@ -179,10 +188,13 @@ export function CueYamlEditor({
 			if (content != null) {
 				setYamlContent(content);
 				setOriginalContent(content);
+				const validationEpoch = ++validationEpochRef.current;
 				try {
 					const result = await cueService.validateYaml(content);
-					setIsValid(result.valid);
-					setValidationErrors(result.errors);
+					if (validationEpoch === validationEpochRef.current) {
+						setIsValid(result.valid);
+						setValidationErrors(result.errors);
+					}
 				} catch (err: unknown) {
 					// Same gating as loadValidate: don't leave isValid=true after
 					// a validation failure or the user could save unvalidated
@@ -190,10 +202,12 @@ export function CueYamlEditor({
 					captureException(err, {
 						extra: { operation: 'cueYamlEditor.refreshValidate', projectRoot },
 					});
-					setIsValid(false);
-					setValidationErrors([
-						`Failed to validate YAML: ${err instanceof Error ? err.message : String(err)}`,
-					]);
+					if (validationEpoch === validationEpochRef.current) {
+						setIsValid(false);
+						setValidationErrors([
+							`Failed to validate YAML: ${err instanceof Error ? err.message : String(err)}`,
+						]);
+					}
 				}
 			}
 		} catch (err: unknown) {

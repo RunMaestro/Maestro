@@ -26,6 +26,7 @@ export function useAgentSessionsSearch({
 	const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 	useEffect(() => {
+		let cancelled = false;
 		if (searchTimeoutRef.current) {
 			clearTimeout(searchTimeoutRef.current);
 		}
@@ -39,6 +40,7 @@ export function useAgentSessionsSearch({
 
 		setIsSearching(true);
 		searchTimeoutRef.current = setTimeout(async () => {
+			if (cancelled) return;
 			if (!projectPathForSessions || !search.trim()) {
 				setSearchResults([]);
 				setIsSearching(false);
@@ -53,19 +55,25 @@ export function useAgentSessionsSearch({
 					searchMode,
 					sshRemoteId
 				);
-				setSearchResults(results);
+				if (!cancelled) {
+					setSearchResults(results);
+				}
 			} catch (error) {
+				if (cancelled) return;
 				logger.error('Search failed:', undefined, error);
 				captureException(error, {
 					extra: { fn: 'useAgentSessionsSearch', agentId, projectPathForSessions },
 				});
 				setSearchResults([]);
 			} finally {
-				setIsSearching(false);
+				if (!cancelled) {
+					setIsSearching(false);
+				}
 			}
 		}, 300);
 
 		return () => {
+			cancelled = true;
 			if (searchTimeoutRef.current) {
 				clearTimeout(searchTimeoutRef.current);
 			}

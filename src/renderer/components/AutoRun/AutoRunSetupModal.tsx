@@ -37,11 +37,20 @@ export function AutoRunSetupModal({
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
-		window.maestro.fs.homeDir().then(setHomeDir);
+		let cancelled = false;
+		window.maestro.fs.homeDir().then((directory) => {
+			if (!cancelled) {
+				setHomeDir(directory);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	// Validate folder and count markdown documents (debounced)
 	useEffect(() => {
+		let cancelled = false;
 		if (!selectedFolder.trim()) {
 			setFolderValidation({ checking: false, valid: false, docCount: 0 });
 			return;
@@ -55,12 +64,14 @@ export function AutoRunSetupModal({
 
 		// Debounce the validation
 		const timeoutId = setTimeout(async () => {
+			if (cancelled) return;
 			setFolderValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
 				const expandedPath = expandHomePath(selectedFolder.trim(), homeDir);
 
 				const result = await window.maestro.autorun.listDocs(expandedPath, sshRemoteId);
+				if (cancelled) return;
 
 				if (result.success) {
 					setFolderValidation({
@@ -77,16 +88,21 @@ export function AutoRunSetupModal({
 					});
 				}
 			} catch {
-				setFolderValidation({
-					checking: false,
-					valid: false,
-					docCount: 0,
-					error: 'Failed to access folder',
-				});
+				if (!cancelled) {
+					setFolderValidation({
+						checking: false,
+						valid: false,
+						docCount: 0,
+						error: 'Failed to access folder',
+					});
+				}
 			}
 		}, 300);
 
-		return () => clearTimeout(timeoutId);
+		return () => {
+			cancelled = true;
+			clearTimeout(timeoutId);
+		};
 	}, [selectedFolder, homeDir, sshRemoteId]);
 
 	const handleSelectFolder = async () => {
