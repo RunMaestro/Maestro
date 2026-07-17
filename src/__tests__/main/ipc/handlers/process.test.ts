@@ -459,15 +459,32 @@ describe('process IPC handlers', () => {
 					sessionId: 'session-1-ai-tab-1',
 					intent: 'abort_and_prompt',
 					message: 'replace current work',
-					deliveryId: 'delivery-replace-1',
+					deliveryId: 'd07a9818-9a20-4c4c-9f9f-5a3f42d72d9e',
 				})
 			).resolves.toBe(true);
 			expect(deliver).toHaveBeenCalledWith(
 				'abort_and_prompt',
 				'replace current work',
 				undefined,
-				'delivery-replace-1'
+				'd07a9818-9a20-4c4c-9f9f-5a3f42d72d9e'
 			);
+
+			await expect(
+				handler({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					intent: 'follow_up',
+					message: 'missing receipt correlation',
+				})
+			).resolves.toBe(false);
+			await expect(
+				handler({} as never, {
+					sessionId: 'session-1-ai-tab-1',
+					intent: 'follow_up',
+					message: 'malformed receipt correlation',
+					deliveryId: 'not-a-uuid',
+				})
+			).resolves.toBe(false);
+			expect(deliver).toHaveBeenCalledTimes(1);
 
 			await expect(
 				handler({} as never, {

@@ -103,7 +103,7 @@ export function useRuntimeFeaturesListener(): void {
 		const completedOmpTurns = new Set<string>();
 		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
 			if (!ownedGate.current?.(sessionId)) return;
-			if (event.phase === 'continuation_failed') {
+			if (event.phase === 'continuation_failed' && event.deliveryId) {
 				completedOmpTurns.delete(sessionId);
 				const { baseSessionId, tabId } = parseSessionId(sessionId);
 				if (!tabId) return;
@@ -114,13 +114,12 @@ export function useRuntimeFeaturesListener(): void {
 							...session,
 							aiTabs: session.aiTabs.map((tab) => {
 								if (tab.id !== tabId) return tab;
-								const failedEntry = event.deliveryId
-									? tab.logs.find((log) => log.id === event.deliveryId)
-									: tab.logs.find(
-											(log) =>
-												log.deliveryIntent === event.deliveryIntent &&
-												log.deliveryState === 'queued'
-										);
+								const failedEntry = tab.logs.find(
+									(log) =>
+										log.id === event.deliveryId &&
+										log.deliveryIntent === event.deliveryIntent &&
+										log.deliveryState === 'queued'
+								);
 								return failedEntry
 									? {
 											...tab,
@@ -144,14 +143,24 @@ export function useRuntimeFeaturesListener(): void {
 			if (
 				event.phase !== 'agent_start' ||
 				event.continuation !== true ||
-				!completedOmpTurns.delete(sessionId)
+				!event.deliveryId ||
+				!completedOmpTurns.has(sessionId)
 			)
 				return;
 			const { baseSessionId, tabId } = parseSessionId(sessionId);
-			if (!tabId) return;
 			setSessions((sessions) =>
 				sessions.map((session) => {
 					if (session.id !== baseSessionId) return session;
+					const continuationEntry = session.aiTabs
+						.find((tab) => tab.id === tabId)
+						?.logs.find(
+							(log) =>
+								log.id === event.deliveryId &&
+								log.deliveryIntent === event.deliveryIntent &&
+								log.deliveryState === 'queued'
+						);
+					if (!continuationEntry) return session;
+					completedOmpTurns.delete(sessionId);
 					return {
 						...session,
 						state: 'busy',
@@ -159,22 +168,14 @@ export function useRuntimeFeaturesListener(): void {
 						thinkingStartTime: Date.now(),
 						aiTabs: session.aiTabs.map((tab) => {
 							if (tab.id !== tabId) return tab;
-							const continuationEntry = event.deliveryId
-								? tab.logs.find((log) => log.id === event.deliveryId)
-								: tab.logs.find(
-										(log) =>
-											log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
-									);
 							return {
 								...tab,
 								state: 'busy',
 								thinkingStartTime: Date.now(),
-								logs: continuationEntry
-									? [
-											...tab.logs.filter((log) => log.id !== continuationEntry.id),
-											{ ...continuationEntry, deliveryState: 'consumed' as const },
-										]
-									: tab.logs,
+								logs: [
+									...tab.logs.filter((log) => log.id !== continuationEntry.id),
+									{ ...continuationEntry, deliveryState: 'consumed' as const },
+								],
 							};
 						}),
 					};

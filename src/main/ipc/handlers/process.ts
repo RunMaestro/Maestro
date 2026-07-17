@@ -36,6 +36,9 @@ import type { ManagedRuntimeResolver } from '../../plugins/plugin-managed-runtim
 
 const LOG_CONTEXT = '[ProcessManager]';
 
+const OMP_DELIVERY_ID =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * Helper to create handler options with consistent context
  */
@@ -253,12 +256,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				intent: unknown;
 				message: unknown;
 				images?: unknown;
-				deliveryId?: unknown;
+				deliveryId: unknown;
 			};
 			if (
 				(intent !== 'steer' && intent !== 'follow_up' && intent !== 'abort_and_prompt') ||
 				typeof message !== 'string' ||
-				(deliveryId !== undefined && typeof deliveryId !== 'string') ||
+				typeof deliveryId !== 'string' ||
+				!OMP_DELIVERY_ID.test(deliveryId) ||
 				(images !== undefined &&
 					(!Array.isArray(images) || images.some((image) => typeof image !== 'string')))
 			)

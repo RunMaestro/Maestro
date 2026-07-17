@@ -216,7 +216,7 @@ export function createProcessApi() {
 			intent: OmpDeliveryIntent;
 			message: string;
 			images?: string[];
-			deliveryId?: string;
+			deliveryId: string;
 		}): Promise<boolean> => ipcRenderer.invoke('process:deliver-omp', payload),
 
 		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>

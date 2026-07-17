@@ -90,7 +90,7 @@ export class OmpNativeSessionAdapter {
 	private turnInFlight = false;
 	private pendingContinuationIntents: Array<{
 		intent: 'follow_up' | 'abort_and_prompt';
-		deliveryId?: string;
+		deliveryId: string;
 	}> = [];
 	private completionEmitted = false;
 	private refreshInFlight?: Promise<void>;
@@ -192,8 +192,8 @@ export class OmpNativeSessionAdapter {
 	async deliver(
 		intent: OmpDeliveryIntent,
 		message: string,
-		images?: readonly string[],
-		deliveryId?: string
+		images: readonly string[] | undefined,
+		deliveryId: string
 	): Promise<void> {
 		await this.initialized;
 		this.turnEmittedAssistantText = false;
@@ -862,7 +862,7 @@ export class OmpNativeSessionAdapter {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'continuation_failed',
 				deliveryIntent: continuation.intent,
-				...(continuation.deliveryId && { deliveryId: continuation.deliveryId }),
+				deliveryId: continuation.deliveryId,
 			});
 		}
 		this.options.send(
@@ -875,12 +875,12 @@ export class OmpNativeSessionAdapter {
 
 	private reportRejectedContinuation(
 		deliveryIntent: 'follow_up' | 'abort_and_prompt',
-		deliveryId?: string
+		deliveryId: string
 	): void {
 		this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 			phase: 'continuation_failed',
 			deliveryIntent,
-			...(deliveryId && { deliveryId }),
+			deliveryId,
 		});
 	}
 }

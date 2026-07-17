@@ -192,6 +192,7 @@ describe('useRuntimeFeaturesListener', () => {
 			phase: 'agent_start',
 			continuation: true,
 			deliveryIntent: 'follow_up',
+			deliveryId: 'queued-follow-up',
 		});
 
 		const session = storedSession();
@@ -250,6 +251,79 @@ describe('useRuntimeFeaturesListener', () => {
 		]);
 	});
 
+	it('never mutates queued receipts for missing, spoofed, wrong-intent, consumed, or cross-tab IDs', () => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) => ({
+					...tab,
+					logs:
+						tab.id === 'tab-a'
+							? [
+									{
+										id: 'tab-a-follow-up',
+										timestamp: 1,
+										source: 'user',
+										text: 'tab A',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+									{
+										id: 'consumed-follow-up',
+										timestamp: 2,
+										source: 'user',
+										text: 'already consumed',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'consumed',
+									},
+								]
+							: [
+									{
+										id: 'tab-b-follow-up',
+										timestamp: 3,
+										source: 'user',
+										text: 'tab B',
+										deliveryIntent: 'follow_up',
+										deliveryState: 'queued',
+									},
+								],
+				})),
+			})),
+		}));
+		renderHook(() => useRuntimeFeaturesListener());
+
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+		});
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+			deliveryId: 'old-or-spoofed-id',
+		});
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'abort_and_prompt',
+			deliveryId: 'tab-a-follow-up',
+		});
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+			deliveryId: 'tab-b-follow-up',
+		});
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'follow_up',
+			deliveryId: 'consumed-follow-up',
+		});
+
+		expect(
+			storedSession()
+				.aiTabs.flatMap((tab) => tab.logs)
+				.map((log) => log.deliveryState)
+		).toEqual(['queued', 'consumed', 'queued']);
+	});
+
 	it('moves each queued replacement exactly once into its own continuation boundary', () => {
 		useSessionStore.setState((state) => ({
 			sessions: state.sessions.map((session) => ({
@@ -283,6 +357,7 @@ describe('useRuntimeFeaturesListener', () => {
 			phase: 'agent_start',
 			continuation: true,
 			deliveryIntent: 'abort_and_prompt',
+			deliveryId: 'replacement-one',
 		});
 		useSessionStore.setState((state) => ({
 			sessions: state.sessions.map((session) => ({
@@ -324,6 +399,7 @@ describe('useRuntimeFeaturesListener', () => {
 			phase: 'agent_start',
 			continuation: true,
 			deliveryIntent: 'abort_and_prompt',
+			deliveryId: 'replacement-two',
 		});
 
 		const logs = storedSession().aiTabs[0].logs;

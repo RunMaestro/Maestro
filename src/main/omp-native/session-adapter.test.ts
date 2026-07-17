@@ -1694,9 +1694,24 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 
-		await adapter.deliver('steer', 'keep the existing process');
-		await adapter.deliver('follow_up', 'do this after the turn');
-		await adapter.deliver('abort_and_prompt', 'replace the current turn');
+		await adapter.deliver(
+			'steer',
+			'keep the existing process',
+			undefined,
+			'00000000-0000-4000-8000-000000000001'
+		);
+		await adapter.deliver(
+			'follow_up',
+			'do this after the turn',
+			undefined,
+			'00000000-0000-4000-8000-000000000002'
+		);
+		await adapter.deliver(
+			'abort_and_prompt',
+			'replace the current turn',
+			undefined,
+			'00000000-0000-4000-8000-000000000003'
+		);
 		expect(
 			frames
 				.filter((frame) =>
@@ -1779,7 +1794,12 @@ describe('OmpNativeSessionAdapter', () => {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'output A' },
 		});
-		await adapter.deliver('follow_up', 'continue after this turn');
+		await adapter.deliver(
+			'follow_up',
+			'continue after this turn',
+			undefined,
+			'00000000-0000-4000-8000-000000000004'
+		);
 		emit(child, {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'output B' },
@@ -1804,6 +1824,7 @@ describe('OmpNativeSessionAdapter', () => {
 			phase: 'agent_start',
 			continuation: true,
 			deliveryIntent: 'follow_up',
+			deliveryId: '00000000-0000-4000-8000-000000000004',
 		});
 		expect(
 			send.mock.calls
@@ -1850,7 +1871,12 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
-		await adapter.deliver('follow_up', 'continue after this');
+		await adapter.deliver(
+			'follow_up',
+			'continue after this',
+			undefined,
+			'00000000-0000-4000-8000-000000000005'
+		);
 		emit(child, { type: 'turn_end' });
 		emit(child, { type: 'extension_error', message: 'continuation failed' });
 		child.emit('close', 1, null);
@@ -1863,7 +1889,11 @@ describe('OmpNativeSessionAdapter', () => {
 		).toContainEqual([
 			'process:omp-turn-lifecycle',
 			'tab-failed-continuation',
-			{ phase: 'continuation_failed', deliveryIntent: 'follow_up' },
+			{
+				phase: 'continuation_failed',
+				deliveryIntent: 'follow_up',
+				deliveryId: '00000000-0000-4000-8000-000000000005',
+			},
 		]);
 		expect(
 			send.mock.calls.filter(
@@ -1901,13 +1931,19 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
-		await adapter.deliver('follow_up', 'continue after this');
+		await adapter.deliver(
+			'follow_up',
+			'continue after this',
+			undefined,
+			'00000000-0000-4000-8000-000000000006'
+		);
 		emit(child, { type: 'turn_end' });
 		child.emit('close', 1, null);
 
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-closed-continuation', {
 			phase: 'continuation_failed',
 			deliveryIntent: 'follow_up',
+			deliveryId: '00000000-0000-4000-8000-000000000006',
 		});
 		expect(
 			send.mock.calls.filter(
@@ -1947,13 +1983,18 @@ describe('OmpNativeSessionAdapter', () => {
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
 		await expect(
-			adapter.deliver('follow_up', 'continue after this', undefined, 'rejected-follow-up')
+			adapter.deliver(
+				'follow_up',
+				'continue after this',
+				undefined,
+				'00000000-0000-4000-8000-000000000009'
+			)
 		).rejects.toThrow('rejected continuation');
 
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-rejected-continuation', {
 			phase: 'continuation_failed',
 			deliveryIntent: 'follow_up',
-			deliveryId: 'rejected-follow-up',
+			deliveryId: '00000000-0000-4000-8000-000000000009',
 		});
 		expect(
 			send.mock.calls.filter(
@@ -2007,13 +2048,19 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
-		await adapter.deliver('follow_up', 'continue after this');
+		await adapter.deliver(
+			'follow_up',
+			'continue after this',
+			undefined,
+			'00000000-0000-4000-8000-000000000007'
+		);
 		emit(child, { type: 'turn_end' });
 		emit(child, { type: 'unsupported_fixture_frame' });
 
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-protocol-continuation', {
 			phase: 'continuation_failed',
 			deliveryIntent: 'follow_up',
+			deliveryId: '00000000-0000-4000-8000-000000000007',
 		});
 		expect(send).toHaveBeenCalledWith(
 			'process:command-exit',
@@ -2051,13 +2098,19 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
-		await adapter.deliver('follow_up', 'continue after this');
+		await adapter.deliver(
+			'follow_up',
+			'continue after this',
+			undefined,
+			'00000000-0000-4000-8000-000000000008'
+		);
 		emit(child, { type: 'turn_end' });
 		adapter.dispose();
 
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-disposed-continuation', {
 			phase: 'continuation_failed',
 			deliveryIntent: 'follow_up',
+			deliveryId: '00000000-0000-4000-8000-000000000008',
 		});
 		expect(send).toHaveBeenCalledWith(
 			'process:command-exit',
