@@ -79,6 +79,21 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	});
 
+/** Seed useSessionStore so handlers resolve Session via selectActiveSession(getState()). */
+function seedActiveSession(session: Session | null, extraSessions: Session[] = []) {
+	if (!session) {
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+		return;
+	}
+	const byId = new Map<string, Session>();
+	for (const s of extraSessions) byId.set(s.id, s);
+	byId.set(session.id, session);
+	useSessionStore.setState({
+		sessions: Array.from(byId.values()),
+		activeSessionId: session.id,
+	} as any);
+}
+
 const createMockDeps = () => ({
 	setSessions: vi.fn(),
 	setAutoRunDocumentList: vi.fn(),
@@ -132,7 +147,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				loopEnabled: false,
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -159,7 +175,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				loopEnabled: false,
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -201,7 +218,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -243,7 +260,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -280,7 +297,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -310,7 +327,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -359,7 +377,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -407,7 +425,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -449,7 +467,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -486,7 +504,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -522,7 +540,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -558,7 +576,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -596,7 +615,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -632,7 +652,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -668,7 +689,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -709,7 +731,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -748,7 +771,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -809,7 +833,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -864,7 +888,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -924,7 +948,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -977,7 +1001,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1016,7 +1040,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1052,7 +1077,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1082,7 +1108,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1118,7 +1145,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1147,7 +1175,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1182,14 +1211,18 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
 			const sessions = useSessionStore.getState().sessions;
-			expect(sessions).toHaveLength(0);
+			// Parent must be seeded for the handler; failure must not spawn a worktree child.
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0].id).toBe(session.id);
+			expect(sessions[0].parentSessionId).toBeUndefined();
 		});
 
 		it('handles unexpected exception from worktreeSetup gracefully', async () => {
@@ -1211,7 +1244,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1250,7 +1284,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1288,7 +1323,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1319,7 +1355,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1351,7 +1388,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1392,7 +1430,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1440,7 +1479,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1479,7 +1519,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1507,7 +1548,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1545,7 +1587,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1589,7 +1632,8 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1646,7 +1690,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(child, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1701,7 +1745,7 @@ describe('handleStartBatchRun - worktree dispatch integration', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(child, deps));
+			const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);

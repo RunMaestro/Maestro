@@ -10,15 +10,62 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
  * Creates a minimal mock context with all required handler functions.
  * The keyboard handler requires these functions to be present to avoid
  * "is not a function" errors when processing keyboard events.
+ *
+ * Active Session is resolved at event time via selectActiveSession(getState()).
+ * Passing `activeSession` (or `sessions`) seeds useSessionStore; it is not
+ * kept on the keyboardHandlerRef context object.
  */
 function createMockContext(overrides: Record<string, unknown> = {}) {
-	// Keyboard gates (toggleSidebar / quickAction / agentSwitcher) read
-	// session count via useSessionStore.getState(), not ctx.sessions.
-	// Only sync when the test explicitly provides `sessions` so other
-	// suites that pre-seed the store (e.g. output-search Cmd+F) are not wiped.
-	if ('sessions' in overrides) {
-		const sessions = Array.isArray(overrides.sessions) ? overrides.sessions : [];
-		useSessionStore.setState({ sessions: sessions as never });
+	const { activeSession: activeSessionOverride, ...rest } = overrides;
+
+	// Seed the store for event-time Session reads. Only sync when the test
+	// explicitly provides `sessions` or `activeSession` so suites that
+	// pre-seed the store (e.g. output-search Cmd+F) are not wiped.
+	// When both are provided, merge activeSession into the matching list entry
+	// so thin `sessions` arrays (used for length gates) do not wipe chrome fields
+	// like inputMode that shortcuts read via selectActiveSession.
+	if ('sessions' in rest) {
+		const sessions = Array.isArray(rest.sessions) ? [...rest.sessions] : [];
+		if (
+			activeSessionOverride &&
+			typeof activeSessionOverride === 'object' &&
+			activeSessionOverride !== null
+		) {
+			const session = activeSessionOverride as { id: string };
+			const idx = sessions.findIndex(
+				(s) => s && typeof s === 'object' && (s as { id?: string }).id === session.id
+			);
+			if (idx >= 0) {
+				sessions[idx] = { ...(sessions[idx] as object), ...session };
+			} else {
+				sessions.push(session);
+			}
+		}
+		const activeSessionId =
+			'activeSessionId' in rest
+				? (rest.activeSessionId as string)
+				: activeSessionOverride &&
+					  typeof activeSessionOverride === 'object' &&
+					  activeSessionOverride !== null &&
+					  'id' in activeSessionOverride
+					? String((activeSessionOverride as { id: string }).id)
+					: undefined;
+		useSessionStore.setState({
+			sessions: sessions as never,
+			...(activeSessionId !== undefined ? { activeSessionId } : {}),
+		});
+	} else if (
+		activeSessionOverride &&
+		typeof activeSessionOverride === 'object' &&
+		activeSessionOverride !== null
+	) {
+		const session = activeSessionOverride as { id: string };
+		useSessionStore.setState({
+			sessions: [session] as never,
+			activeSessionId: 'activeSessionId' in rest ? (rest.activeSessionId as string) : session.id,
+		});
+	} else if (activeSessionOverride === null) {
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	}
 
 	return {
@@ -33,10 +80,9 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		isShortcut: () => false,
 		isTabShortcut: () => false,
 		sessions: [],
-		activeSession: null,
-		activeSessionId: null,
+		activeSessionId: '',
 		activeGroupChatId: null,
-		...overrides,
+		...rest,
 	};
 }
 
@@ -71,6 +117,7 @@ describe('useMainKeyboardHandler', () => {
 		// Reset modal store so draft/wizard confirmation tests start clean
 		useModalStore.getState().closeModal('confirm');
 		useModalStore.getState().closeModal('promptComposer');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	});
 
 	afterEach(() => {
@@ -1299,7 +1346,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			it('should use current session from store, not stale ref (stale-state safety)', () => {
+			it('should use current session from setSessions updater, not a stale snapshot (stale-state safety)', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
 				const staleSession = {
@@ -1325,11 +1372,13 @@ describe('useMainKeyboardHandler', () => {
 					}
 				});
 
+				// Seed store with stale snapshot so event-time selectActiveSession passes
+				// the outer gate; navigation must still read freshness from setSessions(prev).
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
 					navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
 					setSessions: mockSetSessions,
-					activeSession: staleSession, // Stale session in the ref
+					activeSession: staleSession,
 				});
 
 				act(() => {
@@ -1343,7 +1392,7 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Navigation should use the FRESH session from the store, not the stale ref
+				// Navigation should use the FRESH session from the setSessions updater, not the seed
 				expect(mockNavigateToNextUnifiedTab).toHaveBeenCalledWith(freshSession, false);
 			});
 		});

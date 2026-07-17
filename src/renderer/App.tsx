@@ -1271,8 +1271,6 @@ function MaestroConsoleInner() {
 		expandAllFolders,
 		collapseAllFolders,
 	} = useAppHandlers({
-		activeSession,
-		activeSessionId,
 		setSessions,
 		setActiveFocus,
 		setConfirmModalMessage,
@@ -1413,7 +1411,7 @@ function MaestroConsoleInner() {
 		cancelTab,
 		canSummarize,
 		handleSummarizeAndContinue,
-	} = useSummarizeAndContinue(activeSession ?? null);
+	} = useSummarizeAndContinue();
 
 	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
 	const computeCanSummarizeActiveTab = () => {
@@ -1541,7 +1539,7 @@ function MaestroConsoleInner() {
 		showSuccessFlash,
 		cancelPendingSynopsis,
 	} = useAgentExecution({
-		activeSession,
+		activeSessionId,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
@@ -1553,7 +1551,6 @@ function MaestroConsoleInner() {
 	// Extracted hook for agent-specific session operations (history, session clear, resume)
 	const { addHistoryEntry, addHistoryEntryRef, handleJumpToAgentSession, handleResumeSession } =
 		useAgentSessionManagement({
-			activeSession,
 			setSessions,
 			setActiveAgentSessionId,
 			setAgentSessionsOpen,
@@ -1965,7 +1962,7 @@ function MaestroConsoleInner() {
 		handleAutoRunRefresh,
 		handleAutoRunOpenSetup,
 		handleAutoRunCreateDocument,
-	} = useAutoRunHandlers(activeSession, {
+	} = useAutoRunHandlers({
 		setSessions,
 		setAutoRunDocumentList,
 		setAutoRunDocumentTree,
@@ -2101,7 +2098,7 @@ function MaestroConsoleInner() {
 	// Tab tiling (split panes): Ctrl+Cmd pane focus / split / close / zoom /
 	// rebalance handlers. All act only on the active window's active tab group and
 	// no-op when nothing is tiled. Dispatched by the main keyboard handler.
-	const tilingShortcuts = useTilingShortcuts(activeSession);
+	const tilingShortcuts = useTilingShortcuts();
 
 	// --- KEYBOARD NAVIGATION ---
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Placed after
@@ -2432,7 +2429,7 @@ function MaestroConsoleInner() {
 		confirmModalOpen,
 		renameInstanceModalOpen,
 		renameGroupModalOpen,
-		activeSession,
+		// activeSession resolved at event time via selectActiveSession(getState())
 		fileTreeFilter,
 		fileTreeFilterOpen,
 		fileTreeFilterInputRef,
