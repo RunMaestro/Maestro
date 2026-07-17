@@ -28,6 +28,7 @@ interface UseAgentConfigurationPanelArgs {
 	setWizardCustomPath: (value: string | undefined) => void;
 	setWizardCustomArgs: (value: string | undefined) => void;
 	setWizardCustomEnvVars: (value: Record<string, string> | undefined) => void;
+	setWizardAgentConfigValues: (value: Record<string, unknown> | undefined) => void;
 	setWizardSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig) => void;
 	customPath: string;
 	customEnvVars: Record<string, string>;
@@ -46,6 +47,7 @@ export function useAgentConfigurationPanel({
 	setWizardCustomPath,
 	setWizardCustomArgs,
 	setWizardCustomEnvVars,
+	setWizardAgentConfigValues,
 	setWizardSessionSshRemoteConfig,
 	customPath,
 	customEnvVars,
@@ -56,6 +58,7 @@ export function useAgentConfigurationPanel({
 }: UseAgentConfigurationPanelArgs) {
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
 	const agentConfigRef = useRef<Record<string, any>>({});
+	const configLoadRequestRef = useRef(0);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -88,9 +91,13 @@ export function useAgentConfigurationPanel({
 
 	const handleOpenConfig = useCallback(
 		async (agentId: string) => {
+			const requestId = ++configLoadRequestRef.current;
+			setSelectedAgent(agentId);
 			const config = await window.maestro.agents.getConfig(agentId);
+			if (requestId !== configLoadRequestRef.current) return;
 			agentConfigRef.current = config || {};
 			setAgentConfig(config || {});
+			setWizardAgentConfigValues(config || {});
 			setConfiguringAgentId(agentId);
 
 			const agent = detectedAgents.find((candidate) => candidate.id === agentId);
@@ -99,8 +106,10 @@ export function useAgentConfigurationPanel({
 				const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
 				try {
 					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
+					if (requestId !== configLoadRequestRef.current) return;
 					setAvailableModels(models);
 				} catch (error) {
+					if (requestId !== configLoadRequestRef.current) return;
 					logger.error('Failed to load models:', undefined, error);
 					captureException(error, {
 						extra: {
@@ -110,11 +119,12 @@ export function useAgentConfigurationPanel({
 						},
 					});
 				} finally {
-					setLoadingModels(false);
+					if (requestId === configLoadRequestRef.current) {
+						setLoadingModels(false);
+					}
 				}
 			}
 
-			setSelectedAgent(agentId);
 			showConfigView();
 
 			const tile = AGENT_TILES.find((candidate) => candidate.id === agentId);
@@ -127,6 +137,7 @@ export function useAgentConfigurationPanel({
 			setSelectedAgent,
 			showConfigView,
 			sshRemoteConfig,
+			setWizardAgentConfigValues,
 		]
 	);
 
@@ -181,11 +192,15 @@ export function useAgentConfigurationPanel({
 		await refreshAgentDetection();
 	}, [configuringAgentId, customPath, refreshAgentDetection]);
 
-	const handleConfigChange = useCallback((key: string, value: any) => {
-		const updatedConfig = { ...agentConfigRef.current, [key]: value };
-		agentConfigRef.current = updatedConfig;
-		setAgentConfig(updatedConfig);
-	}, []);
+	const handleConfigChange = useCallback(
+		(key: string, value: unknown) => {
+			const updatedConfig = { ...agentConfigRef.current, [key]: value };
+			agentConfigRef.current = updatedConfig;
+			setAgentConfig(updatedConfig);
+			setWizardAgentConfigValues(updatedConfig);
+		},
+		[setWizardAgentConfigValues]
+	);
 
 	const handleConfigBlur = useCallback(
 		async (key: string, value: any) => {
@@ -193,9 +208,10 @@ export function useAgentConfigurationPanel({
 			const updatedConfig = { ...agentConfigRef.current, [key]: value };
 			agentConfigRef.current = updatedConfig;
 			setAgentConfig(updatedConfig);
+			setWizardAgentConfigValues(updatedConfig);
 			await window.maestro.agents.setConfig(configuringAgentId, updatedConfig);
 		},
-		[configuringAgentId]
+		[configuringAgentId, setWizardAgentConfigValues]
 	);
 
 	const handleEnvVarKeyChange = useCallback(

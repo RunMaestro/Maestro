@@ -1165,6 +1165,7 @@ export async function generateInlineDocuments(
 						sendPromptViaStdinRaw: sendViaStdinRaw,
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+						permissionMode: agentType === 'cursor-cli' ? 'full' : undefined,
 						// Pass session-level overrides
 						sessionCustomPath: config.sessionCustomPath,
 						sessionCustomArgs: config.sessionCustomArgs,

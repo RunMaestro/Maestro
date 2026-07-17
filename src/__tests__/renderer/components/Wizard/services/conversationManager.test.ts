@@ -73,6 +73,47 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			await conversationManager.endConversation();
 		});
 
+		it('consumes restored session overrides for onboarding conversation spawns', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				path: '/detected/agent',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Restored Project',
+				customPath: '/restored/cursor-agent',
+				customArgs: '--header "X-Test: one"',
+				customEnvVars: { CURSOR_API_KEY: 'key' },
+				agentConfigValues: {
+					model: 'gpt-5.3-codex',
+					reasoningEffort: 'high',
+					contextWindow: 300000,
+				},
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+			expect(mockMaestro.process.spawn.mock.calls[0][0]).toEqual(
+				expect.objectContaining({
+					command: '/restored/cursor-agent',
+					sessionCustomPath: '/restored/cursor-agent',
+					sessionCustomArgs: '--header "X-Test: one"',
+					sessionCustomEnvVars: { CURSOR_API_KEY: 'key' },
+					sessionCustomModel: 'gpt-5.3-codex',
+					sessionCustomEffort: 'high',
+					sessionCustomContextWindow: 300000,
+				})
+			);
+
+			mockMaestro.process.onExit.mock.calls[0][0](sessionId, 0);
+			await messagePromise;
+			await conversationManager.endConversation();
+		});
 		it('should fall back to agent.command when agent.path is not available', async () => {
 			// When path detection fails but agent is still available (e.g., through PATH)
 			const mockAgent = {

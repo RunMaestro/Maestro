@@ -13,6 +13,7 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
+import { readEffortFromConfig } from '../../../utils/agentEffort';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -49,6 +50,11 @@ export interface GenerationConfig {
 	conversationHistory: WizardMessage[];
 	/** Optional subfolder within Auto Run Docs (e.g., "Initiation") */
 	subfolder?: string;
+	/** Session-level agent overrides selected in the onboarding wizard. */
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -1131,9 +1137,8 @@ class PhaseGenerator {
 				}
 			}
 
-			// Use the agent's resolved path if available, falling back to command name
-			// This is critical for packaged Electron apps where PATH may not include agent locations
-			const commandToUse = agent.path || agent.command;
+			// A wizard custom path is session-scoped and wins over global detection.
+			const commandToUse = config.customPath || agent.path || agent.command;
 
 			const isSshSession = Boolean(config.sshRemoteConfig?.enabled);
 			const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
@@ -1167,6 +1172,19 @@ class PhaseGenerator {
 					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
+					permissionMode: config.agentType === 'cursor-cli' ? 'full' : undefined,
+					sessionCustomPath: config.customPath,
+					sessionCustomArgs: config.customArgs,
+					sessionCustomEnvVars: config.customEnvVars,
+					sessionCustomModel:
+						typeof config.agentConfigValues?.model === 'string'
+							? config.agentConfigValues.model
+							: undefined,
+					sessionCustomEffort: readEffortFromConfig(config.agentConfigValues),
+					sessionCustomContextWindow:
+						typeof config.agentConfigValues?.contextWindow === 'number'
+							? config.agentConfigValues.contextWindow
+							: undefined,
 				})
 				.then(() => {
 					logger.info('[PhaseGenerator] Agent spawned successfully');

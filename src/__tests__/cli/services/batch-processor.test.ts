@@ -367,6 +367,7 @@ describe('batch-processor', () => {
 			// Spawn call #0 is the task spawn - must carry appendSystemPrompt
 			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
 			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
+			expect(taskSpawnOpts?.permissionMode).toBe('full');
 		});
 
 		it('prefixes the agent New Session Message onto the task spawn prompt', async () => {

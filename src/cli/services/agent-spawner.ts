@@ -23,6 +23,11 @@ import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import { escapeArgsForShell } from '../../main/process-manager/utils/shellEscape';
 import {
+	checkBinaryExists,
+	checkCustomPath,
+	validateAgentBinaryIdentity,
+} from '../../main/agents/path-prober';
+import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
@@ -135,14 +140,20 @@ async function maybeWrapSpawnWithSsh(
 }
 
 /**
- * Finalize child stdin for a spawned agent. When SSH stdin passthrough is in
- * effect, write the pre-built script before closing; otherwise just close.
+ * Finalize child stdin for a spawned agent. SSH owns stdin when it supplies a
+ * wrapper script; local Cursor batch mode receives the raw prompt directly.
  */
-function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void {
+function finalizeAgentStdin(
+	child: ChildProcess,
+	sshStdinScript?: string,
+	rawPrompt?: string
+): void {
 	if (sshStdinScript) {
 		child.stdin?.write(sshStdinScript);
+		child.stdin?.end();
+		return;
 	}
-	child.stdin?.end();
+	child.stdin?.end(rawPrompt);
 }
 
 type SpawnOverrides = Pick<
@@ -312,28 +323,12 @@ export interface DetectResult {
 	source?: 'settings' | 'path';
 }
 
-/**
- * Build an expanded PATH that includes common binary installation locations
- */
-function getExpandedPath(): string {
-	return buildExpandedPath();
-}
-
-/**
- * Check if a file exists and is executable
- */
 async function isExecutable(filePath: string): Promise<boolean> {
 	try {
 		const stats = await fs.promises.stat(filePath);
 		if (!stats.isFile()) return false;
-
-		// On Unix, check executable permission
 		if (!isWindows()) {
-			try {
-				await fs.promises.access(filePath, fs.constants.X_OK);
-			} catch {
-				return false;
-			}
+			await fs.promises.access(filePath, fs.constants.X_OK);
 		}
 		return true;
 	} catch {
@@ -341,33 +336,20 @@ async function isExecutable(filePath: string): Promise<boolean> {
 	}
 }
 
-/**
- * Find a command in PATH using 'which' (Unix) or 'where' (Windows)
- */
 async function findCommandInPath(commandName: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const env = { ...process.env, PATH: getExpandedPath() };
-		const command = getWhichCommand();
-
-		const proc = spawn(command, [commandName], { env });
-		let stdout = '';
-
-		proc.stdout?.on('data', (data) => {
-			stdout += data.toString();
-		});
-
-		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]);
-			} else {
-				resolve(undefined);
-			}
-		});
-
-		proc.on('error', () => {
-			resolve(undefined);
-		});
+	const { promise, resolve } = Promise.withResolvers<string | undefined>();
+	const proc = spawn(getWhichCommand(), [commandName], {
+		env: { ...process.env, PATH: buildExpandedPath() },
 	});
+	let stdout = '';
+	proc.stdout?.on('data', (data) => {
+		stdout += data.toString();
+	});
+	proc.on('close', (code) => {
+		resolve(code === 0 && stdout.trim() ? stdout.trim().split('\n')[0] : undefined);
+	});
+	proc.on('error', () => resolve(undefined));
+	return promise;
 }
 
 /**
@@ -383,23 +365,52 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	const def = getAgentDefinition(toolType);
 	const defaultCommand = def?.binaryName || toolType;
 
-	// 1. Check for custom path in settings
+	if (toolType !== 'cursor-cli') {
+		const customPath = getAgentCustomPath(toolType);
+		if (customPath) {
+			if (await isExecutable(customPath)) {
+				cachedPaths.set(toolType, customPath);
+				return { available: true, path: customPath, source: 'settings' };
+			}
+			console.error(
+				`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
+			);
+		}
+
+		const pathResult = await findCommandInPath(defaultCommand);
+		if (pathResult) {
+			cachedPaths.set(toolType, pathResult);
+			return { available: true, path: pathResult, source: 'path' };
+		}
+		return { available: false };
+	}
+
+	// 1. Check for a custom path, including provider identity for generic names.
+	const validateIdentity = (candidatePath: string) =>
+		validateAgentBinaryIdentity(toolType, candidatePath);
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedPaths.set(toolType, customPath);
-			return { available: true, path: customPath, source: 'settings' };
+		const customDetection = await checkCustomPath(customPath);
+		if (
+			customDetection.exists &&
+			customDetection.path &&
+			(await validateIdentity(customDetection.path))
+		) {
+			cachedPaths.set(toolType, customDetection.path);
+			return { available: true, path: customDetection.path, source: 'settings' };
 		}
 		console.error(
-			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
+			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not a valid ${def?.name || toolType} executable, falling back to automatic detection`
 		);
 	}
 
-	// 2. Fall back to PATH detection
-	const pathResult = await findCommandInPath(defaultCommand);
-	if (pathResult) {
-		cachedPaths.set(toolType, pathResult);
-		return { available: true, path: pathResult, source: 'path' };
+	// 2. Prefer known native install locations, then search PATH. The shared
+	// identity validator prevents an unrelated generic `agent` binary from
+	// being cached as Cursor CLI.
+	const detection = await checkBinaryExists(defaultCommand, validateIdentity);
+	if (detection.exists && detection.path) {
+		cachedPaths.set(toolType, detection.path);
+		return { available: true, path: detection.path, source: 'path' };
 	}
 
 	return { available: false };
@@ -830,6 +841,7 @@ async function spawnJsonLineAgent(
 	prompt: string,
 	agentSessionId?: string,
 	readOnlyMode?: boolean,
+	permissionMode?: 'full' | 'standard' | 'readonly',
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
@@ -841,21 +853,28 @@ async function spawnJsonLineAgent(
 	const preOverrideArgs: string[] = [];
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
-	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
-	// (they override read-only flags). In normal mode, apply all batchModeArgs.
-	// Skip filtering for agents without CLI-level read-only enforcement
-	// (e.g., Gemini CLI needs -y to avoid interactive prompts that hang with closed stdin).
+	const effectiveReadOnly =
+		permissionMode === 'readonly' || (permissionMode === undefined && readOnlyMode);
 	if (def?.batchModeArgs) {
-		if (readOnlyMode && def.readOnlyCliEnforced !== false && def.yoloModeArgs?.length) {
+		if (
+			(permissionMode === 'standard' || effectiveReadOnly) &&
+			def.readOnlyCliEnforced !== false &&
+			def.yoloModeArgs?.length
+		) {
 			const yoloSet = new Set(def.yoloModeArgs);
-			preOverrideArgs.push(...def.batchModeArgs.filter((a) => !yoloSet.has(a)));
+			preOverrideArgs.push(...def.batchModeArgs.filter((argument) => !yoloSet.has(argument)));
 		} else {
 			preOverrideArgs.push(...def.batchModeArgs);
 		}
 	}
+	if (permissionMode === 'full' && def?.yoloModeArgs) {
+		for (const argument of def.yoloModeArgs) {
+			if (!preOverrideArgs.includes(argument)) preOverrideArgs.push(argument);
+		}
+	}
 
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
-	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
+	if (effectiveReadOnly && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
 	if (agentSessionId && def?.resumeArgs) {
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
@@ -920,16 +939,18 @@ async function spawnJsonLineAgent(
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
 
-	// Local prompt embedding mirrors wrapSpawnWithSsh's default behavior.
-	// Mirror ChildProcessSpawner's precedence so agents like Copilot/Gemini
-	// that ship a `promptArgs` builder (e.g. ['-p', prompt]) get the prompt
-	// via their flag instead of the bare '--' separator (which Copilot CLI
-	// doesn't accept as a positional prompt).
-	const localArgs = def?.promptArgs
-		? [...baseArgs, ...def.promptArgs(effectivePrompt)]
-		: noPromptSeparator
-			? [...baseArgs, effectivePrompt]
-			: [...baseArgs, '--', effectivePrompt];
+	// Cursor's local print mode accepts its prompt over raw stdin. Keep the user
+	// message out of argv on every platform so large playbook/goal prompts cannot
+	// exceed Windows command-line limits. SSH keeps its existing wrapped-command
+	// transport because stdin carries the remote script there.
+	const useRawLocalStdin = toolType === 'cursor-cli' && !sshRemoteConfig?.enabled;
+	const localArgs = useRawLocalStdin
+		? baseArgs
+		: def?.promptArgs
+			? [...baseArgs, ...def.promptArgs(effectivePrompt)]
+			: noPromptSeparator
+				? [...baseArgs, effectivePrompt]
+				: [...baseArgs, '--', effectivePrompt];
 
 	const agentCommand = getAgentCommand(toolType);
 
@@ -1050,7 +1071,7 @@ async function spawnJsonLineAgent(
 			stderr += data.toString();
 		});
 
-		finalizeAgentStdin(child, sshStdinScript);
+		finalizeAgentStdin(child, sshStdinScript, useRawLocalStdin ? effectivePrompt : undefined);
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code) => {
@@ -1102,6 +1123,8 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Explicit access level. Full mode applies the agent's unattended-write flags. */
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	/** Per-session model override (wins over agent-level model). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level). */
@@ -1156,6 +1179,7 @@ export async function spawnAgent(
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
 	const readOnly = options?.readOnlyMode;
+	const permissionMode = options?.permissionMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
 		customModel: options?.customModel,
@@ -1187,6 +1211,7 @@ export async function spawnAgent(
 			prompt,
 			agentSessionId,
 			readOnly,
+			permissionMode,
 			sshRemoteConfig,
 			overrides
 		);

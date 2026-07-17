@@ -1656,19 +1656,23 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('ok');
 		});
 
-		it('should spawn cursor-cli with --trust --force stream-json and --workspace', async () => {
-			const resultPromise = spawnAgent('cursor-cli', '/project', 'Hello cursor');
+		it('spawns Cursor standard mode without --force and sends the raw prompt via stdin', async () => {
+			const prompt = `Hello cursor ${'x'.repeat(20_000)}`;
+			const resultPromise = spawnAgent('cursor-cli', '/project', prompt, undefined, {
+				permissionMode: 'standard',
+			});
 			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
 			expect(args).toContain('--trust');
-			expect(args).toContain('--force');
+			expect(args).not.toContain('--force');
 			expect(args).toContain('--output-format');
 			expect(args).toContain('stream-json');
 			expect(args).toContain('--workspace');
 			expect(args).toContain('/project');
 			expect(args).toContain('-p');
-			expect(args).toContain('Hello cursor');
+			expect(args).not.toContain(prompt);
+			expect(mockStdin.end).toHaveBeenCalledWith(prompt);
 			expect(args).not.toContain('--mode');
 
 			mockStdout.emit(
@@ -1686,6 +1690,29 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 			expect(result.response).toBe('READY');
 			expect(result.agentSessionId).toBe('cursor-sess-1');
+		});
+
+		it('spawns Cursor full mode with --force for unattended write runs', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
 		});
 
 		it('should run cursor-cli read-only with --mode plan and without --force', async () => {

@@ -574,6 +574,36 @@ describe('useInlineWizard', () => {
 			expect(result.current.conversationHistory[0].content).toBe('Hello wizard');
 		});
 
+		it('forwards staged images to the conversation service and retained history', async () => {
+			const { sendWizardMessage } =
+				await import('../../../renderer/services/inlineWizardConversation');
+			const mockSendWizardMessage = vi.mocked(sendWizardMessage);
+			mockSendWizardMessage.mockClear();
+			const images = ['data:image/png;base64,wizard'];
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					undefined,
+					undefined,
+					'/test/project',
+					'claude-code',
+					'Image Project'
+				);
+			});
+			await act(async () => {
+				await result.current.sendMessage('Inspect this', images);
+			});
+
+			expect(result.current.conversationHistory[0].images).toEqual(images);
+			expect(mockSendWizardMessage).toHaveBeenCalledWith(
+				expect.any(Object),
+				'Inspect this',
+				expect.any(Array),
+				undefined,
+				images
+			);
+		});
 		it('should auto-create session when sending message in ask mode', async () => {
 			const { startInlineWizardConversation } =
 				await import('../../../renderer/services/inlineWizardConversation');

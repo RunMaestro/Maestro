@@ -33,6 +33,7 @@ import {
 	checkBinaryExists,
 	probeWindowsPaths,
 	probeUnixPaths,
+	validateAgentBinaryIdentity,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -41,6 +42,29 @@ import { logger } from '../../../main/utils/logger';
 describe('path-prober', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe('validateAgentBinaryIdentity', () => {
+		it('accepts Cursor help and rejects unrelated generic agent binaries', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: 'Start the Cursor Agent\nCURSOR_API_KEY',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: 'Generic automation agent',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/cursor-agent')).resolves.toBe(
+				true
+			);
+			await expect(validateAgentBinaryIdentity('cursor-cli', '/bin/unrelated-agent')).resolves.toBe(
+				false
+			);
+		});
 	});
 
 	describe('getExpandedEnv', () => {

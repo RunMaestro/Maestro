@@ -22,6 +22,7 @@ interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
+	processStreamJsonLine: (sessionId: string, managedProcess: ManagedProcess, line: string) => void;
 }
 
 /**
@@ -32,11 +33,13 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private processStreamJsonLine: ExitHandlerDependencies['processStreamJsonLine'];
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+		this.processStreamJsonLine = deps.processStreamJsonLine;
 	}
 
 	/**
@@ -82,6 +85,21 @@ export class ExitHandler {
 			});
 		}
 
+		// Route an unterminated final JSON record through the same pipeline used
+		// for newline-delimited events before provider shutdown reconciliation.
+		// Copilot may report its session ID only in this record, and the shutdown
+		// wait needs that ID to recover the authoritative disk-side final state.
+		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
+			const remainingLine = managedProcess.jsonBuffer.trim();
+			managedProcess.jsonBuffer = '';
+			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
+				sessionId,
+				remainingLineLength: remainingLine.length,
+				remainingLinePreview: remainingLine.substring(0, 200),
+			});
+			this.processStreamJsonLine(sessionId, managedProcess, remainingLine);
+		}
+
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
 		// `exit`. Copilot can keep working in subagent processes after our
 		// parent process closes, and `session.shutdown` is only ever
@@ -97,54 +115,6 @@ export class ExitHandler {
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
 			this.handleBatchModeExit(sessionId, managedProcess);
-		}
-
-		// Handle stream-json mode: process any remaining jsonBuffer content
-		// The jsonBuffer may contain the last line if it didn't end with \n.
-		// Without this, short-lived processes (tab-naming, batch ops) can lose
-		// their result message if it's the last line without a trailing newline.
-		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
-			const remainingLine = managedProcess.jsonBuffer.trim();
-			managedProcess.jsonBuffer = '';
-			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
-				sessionId,
-				remainingLineLength: remainingLine.length,
-				remainingLinePreview: remainingLine.substring(0, 200),
-			});
-			try {
-				const event = outputParser.parseJsonLine(remainingLine);
-				const agentError = !managedProcess.errorEmitted
-					? event?.raw !== undefined
-						? outputParser.detectErrorFromParsed(event.raw)
-						: outputParser.detectErrorFromLine(remainingLine)
-					: null;
-
-				if (agentError) {
-					managedProcess.errorEmitted = true;
-					agentError.sessionId = sessionId;
-					if (managedProcess.sshRemoteId) {
-						agentError.sshRemoteId = managedProcess.sshRemoteId;
-					}
-					logger.debug('[ProcessManager] Error detected from exit remainder', 'ProcessManager', {
-						sessionId,
-						exitCode: code,
-						errorType: agentError.type,
-						errorMessage: agentError.message,
-					});
-					this.emitter.emit('agent-error', sessionId, agentError);
-				} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
-					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
-					}
-				}
-			} catch {
-				// If parsing fails, emit the raw line as data unless the stream already failed.
-				if (!managedProcess.errorEmitted) {
-					this.bufferManager.emitDataBuffered(sessionId, remainingLine);
-				}
-			}
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -177,6 +147,7 @@ export class ExitHandler {
 			code === 0 &&
 			!managedProcess.errorEmitted &&
 			!managedProcess.resultEmitted &&
+			!managedProcess.interrupted &&
 			managedProcess.streamedText
 		) {
 			managedProcess.resultEmitted = true;

@@ -846,15 +846,14 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'agent',
 		args: [],
 		requiresPty: false, // Headless batch mode (-p) works over plain pipes
-		// Cursor Agent CLI argument builders (verified against `agent --help`).
 		// -p and --trust are batch requirements even in read-only mode, so they
-		// live in the prefix; --force remains the removable full-access flag.
-		// Batch: agent -p --trust --workspace <dir> [--force] --output-format stream-json --stream-partial-output [--mode plan] [--resume <id>] "prompt"
+		// live in the prefix. Standard mode keeps Cursor's default approval
+		// contract; only explicit full access adds --force.
+		// Batch: agent -p --trust --workspace <dir> [--force for full] --output-format stream-json --stream-partial-output [--mode plan] [--resume <id>] [prompt via argv/stdin]
 		batchModePrefix: ['-p', '--trust'],
-		batchModeArgs: ['--force'],
 		jsonOutputArgs: ['--output-format', 'stream-json', '--stream-partial-output'],
-		// Keep the prompt positional so raw-stdin spawns retain -p without also
-		// putting a potentially long prompt on the Windows command line.
+		// Desktop callers may still use a positional prompt; local CLI-service
+		// Cursor spawns intentionally select raw stdin instead.
 		promptArgs: (prompt: string) => [prompt],
 		imagePromptBuilder: (imagePaths: string[]) =>
 			imagePaths.length > 0

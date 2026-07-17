@@ -43,4 +43,26 @@ describe('WizardContext reducer internals', () => {
 
 		expect(wizardReducer(restored, { type: 'RESET_WIZARD' })).toEqual(initialState);
 	});
+
+	it('clears provider-specific overrides when selecting a different agent', () => {
+		const cursorState = {
+			...initialState,
+			selectedAgent: 'cursor-cli' as const,
+			customPath: '/cursor/agent',
+			customArgs: '--cursor-only',
+			customEnvVars: { CURSOR_API_KEY: 'key' },
+			agentConfigValues: { model: 'cursor-model', contextWindow: 200000 },
+		};
+
+		const switched = wizardReducer(cursorState, {
+			type: 'SET_SELECTED_AGENT',
+			agent: 'claude-code',
+		});
+
+		expect(switched.selectedAgent).toBe('claude-code');
+		expect(switched.customPath).toBeUndefined();
+		expect(switched.customArgs).toBeUndefined();
+		expect(switched.customEnvVars).toBeUndefined();
+		expect(switched.agentConfigValues).toBeUndefined();
+	});
 });

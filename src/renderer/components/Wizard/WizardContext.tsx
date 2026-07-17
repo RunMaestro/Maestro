@@ -143,6 +143,10 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		dispatch({ type: 'SET_CUSTOM_ENV_VARS', envVars });
 	}, []);
 
+	const setAgentConfigValues = useCallback((values: Record<string, unknown> | undefined) => {
+		dispatch({ type: 'SET_AGENT_CONFIG_VALUES', values });
+	}, []);
+
 	const setEnableMaestroP = useCallback((value: boolean | undefined) => {
 		dispatch({ type: 'SET_ENABLE_MAESTRO_P', value });
 	}, []);
@@ -335,6 +339,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setCustomPath,
 			setCustomArgs,
 			setCustomEnvVars,
+			setAgentConfigValues,
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,
@@ -384,6 +389,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setCustomPath,
 			setCustomArgs,
 			setCustomEnvVars,
+			setAgentConfigValues,
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,

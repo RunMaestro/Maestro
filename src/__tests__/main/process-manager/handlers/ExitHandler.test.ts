@@ -62,8 +62,10 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { CursorCliOutputParser } from '../../../../main/parsers/cursor-cli-output-parser';
+import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { captureException } from '../../../../main/utils/sentry';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
@@ -104,11 +106,17 @@ function createMockOutputParser(overrides: Partial<AgentOutputParser> = {}): Age
 	return {
 		agentId: 'claude-code',
 		parseJsonLine: vi.fn(() => null),
+		parseJsonObject: vi.fn((parsed) =>
+			(overrides.parseJsonLine as AgentOutputParser['parseJsonLine'] | undefined)?.(
+				JSON.stringify(parsed)
+			)
+		),
 		extractUsage: vi.fn(() => null),
 		extractSessionId: vi.fn(() => null),
 		extractSlashCommands: vi.fn(() => null),
 		isResultMessage: vi.fn(() => false),
 		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
 		detectErrorFromExit: vi.fn(() => null),
 		...overrides,
 	} as unknown as AgentOutputParser;
@@ -126,7 +134,14 @@ describe('ExitHandler', () => {
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
-		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		const stdoutHandler = new StdoutHandler({ processes, emitter, bufferManager });
+		exitHandler = new ExitHandler({
+			processes,
+			emitter,
+			bufferManager,
+			processStreamJsonLine: (sessionId, managedProcess, line) =>
+				stdoutHandler.processLine(sessionId, managedProcess, line),
+		});
 		// Default: no SSH remote resolves and no remote reads happen. Individual
 		// SSH tests override these. Reset so per-test mock values don't leak.
 		vi.mocked(getSshRemoteById)
@@ -210,13 +225,9 @@ describe('ExitHandler', () => {
 			expect(dataEvents).not.toContain('Tab Name');
 		});
 
-		it('should emit raw line as data when JSON parsing fails', async () => {
+		it('suppresses an invalid final JSONL record just like newline-delimited parser noise', async () => {
 			const invalidJson = 'not valid json at all';
-			const mockParser = createMockOutputParser({
-				parseJsonLine: vi.fn(() => {
-					throw new Error('JSON parse error');
-				}) as unknown as AgentOutputParser['parseJsonLine'],
-			});
+			const mockParser = createMockOutputParser();
 
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -231,7 +242,7 @@ describe('ExitHandler', () => {
 
 			await exitHandler.handleExit('test-session', 0);
 
-			expect(dataEvents).toContain(invalidJson);
+			expect(dataEvents).not.toContain(invalidJson);
 		});
 
 		// Regression (MAESTRO-V9): in plain batch mode the whole jsonBuffer is
@@ -382,6 +393,25 @@ describe('ExitHandler', () => {
 
 			expect(dataEvents).not.toContain('Should not be emitted');
 		});
+
+		it('does not finalize accumulated Cursor text after interruption reports code zero', async () => {
+			const proc = createMockProcess({
+				toolType: 'cursor-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				interrupted: true,
+				streamedText: 'unfinished Cursor answer',
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toEqual([]);
+			expect(proc.resultEmitted).toBe(false);
+		});
 	});
 
 	describe('stream-json error ordering', () => {
@@ -426,6 +456,10 @@ describe('ExitHandler', () => {
 				[];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 			emitter.on('agent-error', (sid: string, error) => errors.push([sid, error]));
+			const sessionIds: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIds.push(agentSessionId)
+			);
 
 			await exitHandler.handleExit('test-session', 0);
 
@@ -439,6 +473,36 @@ describe('ExitHandler', () => {
 				}),
 			]);
 			expect(dataEvents).toEqual([]);
+			expect(sessionIds).toEqual(['cursor-session']);
+		});
+
+		it('preserves usage, session, and result ordering for an unterminated Cursor result', async () => {
+			const proc = createMockProcess({
+				toolType: 'cursor-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'complete answer',
+					session_id: 'cursor-success-session',
+					usage: { inputTokens: 7, outputTokens: 3 },
+				}),
+				outputParser: new CursorCliOutputParser(),
+			});
+			processes.set('test-session', proc);
+
+			const events: string[] = [];
+			emitter.on('usage', () => events.push('usage'));
+			emitter.on('session-id', () => events.push('session-id'));
+			emitter.on('data', (_sid: string, data: string) => {
+				if (data === 'complete answer') events.push('data');
+			});
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(events).toEqual(['usage', 'session-id', 'data']);
+			expect(proc.resultEmitted).toBe(true);
 		});
 	});
 
@@ -537,6 +601,57 @@ describe('ExitHandler', () => {
 	});
 
 	describe('Copilot post-exit shutdown wait', () => {
+		it('discovers a Copilot session ID from an unterminated final record before shutdown reconciliation', async () => {
+			const fs = await import('fs/promises');
+			const os = await import('os');
+			const path = await import('path');
+			const configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-exit-copilot-tail-'));
+			const agentSessionId = 'cp-unterminated-session';
+			const eventsPath = path.join(configDir, 'session-state', agentSessionId, 'events.jsonl');
+			await fs.mkdir(path.dirname(eventsPath), { recursive: true });
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({ type: 'session.start', data: { sessionId: agentSessionId } }),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'Authoritative disk answer.', toolRequests: [] },
+					}),
+					JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 42 } }),
+				].join('\n') + '\n'
+			);
+			const previousConfigDir = process.env.COPILOT_CONFIG_DIR;
+			process.env.COPILOT_CONFIG_DIR = configDir;
+
+			try {
+				const proc = createMockProcess({
+					toolType: 'copilot-cli',
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					jsonBuffer: JSON.stringify({
+						type: 'session.start',
+						data: { sessionId: agentSessionId },
+					}),
+					outputParser: new CopilotOutputParser(),
+				});
+				processes.set('test-session', proc);
+				const dataEvents: string[] = [];
+				emitter.on('data', (_sessionId: string, data: string) => dataEvents.push(data));
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(proc.agentSessionId).toBe(agentSessionId);
+				expect(dataEvents).toContain('Authoritative disk answer.');
+			} finally {
+				if (previousConfigDir === undefined) {
+					delete process.env.COPILOT_CONFIG_DIR;
+				} else {
+					process.env.COPILOT_CONFIG_DIR = previousConfigDir;
+				}
+				await fs.rm(configDir, { recursive: true, force: true });
+			}
+		});
+
 		it('blocks `exit` until events.jsonl shutdown marker is observed and overrides streamedText with the on-disk final answer', async () => {
 			// Set up a real Copilot events.jsonl on a temp config dir. The
 			// streamedText our parent captured is the stale planning narration;

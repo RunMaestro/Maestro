@@ -7,12 +7,23 @@ import {
 import { initialState } from '../../../../../renderer/components/Wizard/WizardContext/reducer';
 
 describe('WizardContext persistence helpers', () => {
-	it('serializes resumable wizard state with SSH remote config', () => {
+	it('serializes every session override needed after wizard resume', () => {
 		const serializable = buildSerializableWizardState({
 			...initialState,
 			currentStep: 'directory-selection',
 			selectedAgent: 'claude-code',
 			agentName: 'Remote Project',
+			customPath: 'C:/Cursor/agent.cmd',
+			customArgs: '--header "X-Test: one"',
+			customEnvVars: { CURSOR_API_KEY: 'secret' },
+			agentConfigValues: {
+				model: 'gpt-5.3-codex',
+				reasoningEffort: 'high',
+				contextWindow: 200000,
+			},
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			maestroPPath: 'C:/tools/maestro-p.exe',
 			directoryPath: '/srv/project',
 			isGitRepo: true,
 			sessionSshRemoteConfig: {
@@ -29,6 +40,17 @@ describe('WizardContext persistence helpers', () => {
 				agentName: 'Remote Project',
 				directoryPath: '/srv/project',
 				isGitRepo: true,
+				customPath: 'C:/Cursor/agent.cmd',
+				customArgs: '--header "X-Test: one"',
+				customEnvVars: { CURSOR_API_KEY: 'secret' },
+				agentConfigValues: {
+					model: 'gpt-5.3-codex',
+					reasoningEffort: 'high',
+					contextWindow: 200000,
+				},
+				enableMaestroP: true,
+				maestroPMode: 'dynamic',
+				maestroPPath: 'C:/tools/maestro-p.exe',
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'remote-1',

@@ -100,6 +100,45 @@ describe('phaseGenerator - Windows stdin transport flags', () => {
 		expect(spawnCall.sendPromptViaStdin).toBe(false);
 	});
 
+	it('uses restored wizard overrides during document generation', async () => {
+		mockMaestro.agents.get.mockResolvedValue({
+			id: 'cursor-cli',
+			available: true,
+			command: 'agent',
+			path: '/detected/agent',
+			args: [],
+			capabilities: { supportsStreamJsonInput: false },
+		});
+		setupSpawnMock();
+
+		await phaseGenerator.generateDocuments({
+			agentType: 'cursor-cli',
+			directoryPath: '/test/project',
+			projectName: 'Restored Project',
+			conversationHistory: [],
+			customPath: '/restored/cursor-agent',
+			customArgs: '--header "X-Test: one"',
+			customEnvVars: { CURSOR_API_KEY: 'key' },
+			agentConfigValues: {
+				model: 'gpt-5.3-codex',
+				reasoningEffort: 'high',
+				contextWindow: 300000,
+			},
+		});
+
+		expect(mockMaestro.process.spawn.mock.calls[0][0]).toEqual(
+			expect.objectContaining({
+				command: '/restored/cursor-agent',
+				permissionMode: 'full',
+				sessionCustomPath: '/restored/cursor-agent',
+				sessionCustomArgs: '--header "X-Test: one"',
+				sessionCustomEnvVars: { CURSOR_API_KEY: 'key' },
+				sessionCustomModel: 'gpt-5.3-codex',
+				sessionCustomEffort: 'high',
+				sessionCustomContextWindow: 300000,
+			})
+		);
+	});
 	it('should NOT pass stdin flags when SSH is enabled', async () => {
 		const mockAgent = {
 			id: 'claude-code',

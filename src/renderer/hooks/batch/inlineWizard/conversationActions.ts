@@ -304,7 +304,7 @@ export function useInlineWizardConversationActions({
 				const currentState = tabStatesRef.current.get(tabId);
 				const currentHistory = currentState?.conversationHistory || [];
 
-				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
+				const result = await sendWizardMessage(session, content, currentHistory, callbacks, images);
 
 				if (result.success && result.response) {
 					const assistantMessage = {

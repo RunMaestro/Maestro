@@ -236,6 +236,7 @@ export async function* runGoal(
 				},
 				() =>
 					spawnAgent(session.toolType, session.cwd, prompt, undefined, {
+						permissionMode: 'full',
 						customModel: session.customModel,
 						customEffort: session.customEffort,
 						customArgs: session.customArgs,

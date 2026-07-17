@@ -20,7 +20,12 @@ import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
-import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
+import {
+	checkBinaryExists,
+	checkCustomPath,
+	getExpandedEnv,
+	validateAgentBinaryIdentity,
+} from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
@@ -154,10 +159,19 @@ export class AgentDetector {
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
+			const validateIdentity = (candidatePath: string) =>
+				validateAgentBinaryIdentity(agentDef.id, candidatePath);
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
+				if (detection.exists && detection.path && !(await validateIdentity(detection.path))) {
+					logger.warn(
+						`Agent "${agentDef.name}" custom path has the wrong executable identity: ${customPath}`,
+						LOG_CONTEXT
+					);
+					detection = { exists: false };
+				}
 				if (detection.exists) {
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
@@ -166,7 +180,7 @@ export class AgentDetector {
 				} else {
 					logger.warn(`Agent "${agentDef.name}" custom path not valid: ${customPath}`, LOG_CONTEXT);
 					// Fall back to PATH detection
-					detection = await checkBinaryExists(agentDef.binaryName);
+					detection = await checkBinaryExists(agentDef.binaryName, validateIdentity);
 					if (detection.exists) {
 						logger.info(
 							`Agent "${agentDef.name}" found in PATH at: ${detection.path}`,
@@ -175,7 +189,7 @@ export class AgentDetector {
 					}
 				}
 			} else {
-				detection = await checkBinaryExists(agentDef.binaryName);
+				detection = await checkBinaryExists(agentDef.binaryName, validateIdentity);
 
 				if (detection.exists) {
 					logger.info(`Agent "${agentDef.name}" found at: ${detection.path}`, LOG_CONTEXT);

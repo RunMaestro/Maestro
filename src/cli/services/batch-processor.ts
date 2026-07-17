@@ -477,6 +477,7 @@ export async function* runPlaybook(
 						},
 						() =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+								permissionMode: 'full',
 								customModel: session.customModel,
 								customEffort: session.customEffort,
 								customArgs: session.customArgs,

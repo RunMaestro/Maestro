@@ -41,6 +41,8 @@ export interface WizardState {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** Provider configuration selected in the wizard (model, effort, context window, etc.). */
+	agentConfigValues?: Record<string, unknown>;
 	// Claude token-source choice (claude-code only). Mirrors the per-session
 	// fields so the wizard-created session inherits the user's API/TUI/Dynamic
 	// pick. Undefined means "never chosen" - the per-agent default applies.
@@ -86,6 +88,7 @@ export type WizardAction =
 	| { type: 'SET_CUSTOM_PATH'; path: string | undefined }
 	| { type: 'SET_CUSTOM_ARGS'; args: string | undefined }
 	| { type: 'SET_CUSTOM_ENV_VARS'; envVars: Record<string, string> | undefined }
+	| { type: 'SET_AGENT_CONFIG_VALUES'; values: Record<string, unknown> | undefined }
 	| { type: 'SET_ENABLE_MAESTRO_P'; value: boolean | undefined }
 	| { type: 'SET_MAESTRO_P_MODE'; mode: 'interactive' | 'dynamic' }
 	| { type: 'SET_MAESTRO_P_PATH'; path: string | undefined }
@@ -121,6 +124,13 @@ export interface SerializableWizardState {
 	selectedAgent: ToolType | null;
 	agentName: string;
 	directoryPath: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
+	enableMaestroP?: boolean;
+	maestroPMode?: 'interactive' | 'dynamic';
+	maestroPPath?: string;
 	additionalDirectories?: AdditionalDirectory[];
 	isGitRepo: boolean;
 	conversationHistory: WizardMessage[];
@@ -149,6 +159,7 @@ export interface WizardContextAPI {
 	setCustomPath: (path: string | undefined) => void;
 	setCustomArgs: (args: string | undefined) => void;
 	setCustomEnvVars: (envVars: Record<string, string> | undefined) => void;
+	setAgentConfigValues: (values: Record<string, unknown> | undefined) => void;
 	setEnableMaestroP: (value: boolean | undefined) => void;
 	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
 	setMaestroPPath: (path: string | undefined) => void;

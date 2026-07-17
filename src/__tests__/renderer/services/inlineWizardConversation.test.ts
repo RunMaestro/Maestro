@@ -639,6 +639,55 @@ describe('inlineWizardConversation', () => {
 			await messagePromise;
 		});
 
+		it('retains current and prior images in Cursor prompt context and spawn config', async () => {
+			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+				capabilities: { supportsStreamJsonInput: false },
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Image Project',
+				mode: 'ask',
+			});
+			const priorImage = 'data:image/png;base64,prior';
+			const currentImage = 'data:image/jpeg;base64,current';
+			const history = [
+				{
+					id: 'prior',
+					role: 'user' as const,
+					content: 'Previous screenshot',
+					timestamp: 1,
+					images: [priorImage],
+				},
+			];
+
+			const messagePromise = sendWizardMessage(
+				session,
+				'Inspect the new screenshot',
+				history,
+				undefined,
+				[currentImage]
+			);
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.images).toEqual([priorImage, currentImage]);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.prompt).toContain('User [1 attached image]: Previous screenshot');
+			expect(spawnCall.prompt).toContain('[1 attached image]\nInspect the new screenshot');
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
 		it('should use sendPromptViaStdinRaw for opencode on Windows', async () => {
 			// Mock Windows platform
 			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };

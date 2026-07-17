@@ -1343,6 +1343,13 @@ describe('agent-detector', () => {
 
 		it('should discover Cursor models from the documented --list-models output', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/agent' && args[0] === '--help') {
+					return {
+						stdout: 'Start the Cursor Agent\nCURSOR_API_KEY',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
 				if (cmd === '/usr/bin/agent' && args[0] === '--list-models') {
 					return {
 						stdout:
