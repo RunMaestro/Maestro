@@ -2140,6 +2140,12 @@ describe('OmpNativeSessionAdapter', () => {
 			error: 'rejected',
 		});
 		await expect(delivery).rejects.toThrow();
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-deferred-rejection'
+			)
+		).toHaveLength(1);
 		emit(child, { type: 'agent_end' });
 		child.emit('close', 1, null);
 
@@ -2214,6 +2220,67 @@ describe('OmpNativeSessionAdapter', () => {
 					channel === 'process:command-exit' && sessionId === 'tab-atomic-replacement'
 			)
 		).toEqual([['process:command-exit', 'tab-atomic-replacement', 0, OMP_NATIVE_TURN_COMPLETION]]);
+	});
+
+	it('fails an uninvoked atomic receipt without ending the base turn', async () => {
+		const child = new FakeChild();
+		let promptCount = 0;
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data:
+							command.type === 'prompt' && ++promptCount === 2
+								? { agentInvoked: false }
+								: command.type === 'get_state'
+									? { todoPhases: [] }
+									: {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-atomic-uninvoked',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('base');
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'base text' },
+		});
+		await expect(
+			adapter.deliver(
+				'abort_and_prompt',
+				'replace',
+				undefined,
+				'00000000-0000-4000-8000-000000000014'
+			)
+		).resolves.toBe(false);
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-atomic-uninvoked', {
+			phase: 'continuation_failed',
+			deliveryIntent: 'abort_and_prompt',
+			deliveryId: '00000000-0000-4000-8000-000000000014',
+		});
+		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
+			0
+		);
+		emit(child, { type: 'prompt_result', text: 'base text' });
+		emit(child, { type: 'turn_end' });
+		expect(send.mock.calls.filter(([channel]) => channel === 'process:command-exit')).toHaveLength(
+			1
+		);
 	});
 
 	it('finalizes a queued continuation once when OMP reports an extension error before restart', async () => {
