@@ -26,9 +26,11 @@ import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { SessionState } from '../../../types';
 import type { BatchedUpdater, ToolProgressState } from './types';
+import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
 export interface UseAgentDataListenerDeps {
 	batchedUpdater: BatchedUpdater;
+	ompEventCoordinator?: OmpEventCoordinator;
 	activeHiddenToolRef: React.RefObject<
 		Map<string, { toolName: string; toolState?: ToolProgressState }>
 	>;
@@ -37,6 +39,7 @@ export interface UseAgentDataListenerDeps {
 export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
+		const ompEventCoordinator = deps.ompEventCoordinator ?? NOOP_OMP_EVENT_COORDINATOR;
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
@@ -93,6 +96,15 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 				return;
 			}
 
+			if (session?.toolType === 'omp') {
+				ompEventCoordinator.enqueue(sessionId, () => {
+					deps.batchedUpdater.appendLog(actualSessionId, targetTabId!, true, data);
+					deps.batchedUpdater.markDelivered(actualSessionId, targetTabId!);
+					deps.batchedUpdater.updateCycleBytes(actualSessionId, data.length);
+					deps.batchedUpdater.flushNow();
+				});
+				return;
+			}
 			deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${targetTabId}`);
 
 			const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
@@ -169,5 +181,5 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater, deps.activeHiddenToolRef, ownedGate]);
+	}, [deps.activeHiddenToolRef, deps.batchedUpdater, deps.ompEventCoordinator, ownedGate]);
 }

@@ -25,8 +25,11 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
+import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
-export function useAgentThinkingListener(): (sessionId: string) => void {
+export function useAgentThinkingListener(
+	ompEventCoordinator: OmpEventCoordinator = NOOP_OMP_EVENT_COORDINATOR
+): (sessionId: string) => void {
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
 	const ownedGate = useOwnedSessionGate();
@@ -115,11 +118,19 @@ export function useAgentThinkingListener(): (sessionId: string) => void {
 				if (!ownedGate.current?.(sessionId)) return;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (!aiTabMatch) return;
-
 				const bufferKey = `${aiTabMatch[1]}:${aiTabMatch[2]}`;
+				const session = useSessionStore
+					.getState()
+					.sessions.find((item) => item.id === aiTabMatch[1]);
+				if (session?.toolType === 'omp') {
+					ompEventCoordinator.enqueue(sessionId, () =>
+						flushThinkingChunks(new Map([[bufferKey, content]]))
+					);
+					return;
+				}
+
 				thinkingChunkBuffer.set(bufferKey, (thinkingChunkBuffer.get(bufferKey) || '') + content);
 				if (thinkingChunkRafIdRef.current !== null) return;
-
 				thinkingChunkRafIdRef.current = requestAnimationFrame(() => {
 					const buffer = thinkingChunkBufferRef.current;
 					if (buffer.size === 0) {
@@ -142,7 +153,7 @@ export function useAgentThinkingListener(): (sessionId: string) => void {
 			}
 			thinkingChunkBuffer.clear();
 		};
-	}, [flushThinkingChunks, ownedGate]);
+	}, [flushThinkingChunks, ompEventCoordinator, ownedGate]);
 
 	return flushThinkingForSession;
 }

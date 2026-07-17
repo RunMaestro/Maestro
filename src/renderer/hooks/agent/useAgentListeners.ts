@@ -29,6 +29,7 @@ import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeMod
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
 import { useAgentDataListener } from './internal/useAgentDataListener';
 import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
+import { useOmpEventCoordinator } from './internal/useOmpEventCoordinator';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
 import { useRuntimeFeaturesListener } from './internal/useRuntimeFeaturesListener';
@@ -54,6 +55,7 @@ export {
  * Call once in App.tsx. Empty dependency array — runs on mount, cleans up on unmount.
  */
 export function useAgentListeners(deps: UseAgentListenersDeps): void {
+	const ompEventCoordinator = useOmpEventCoordinator();
 	// Shared ref — written by `onToolExecution`, deleted by `onData` and
 	// `onAgentError`. Hoisted to the coordinator so per-channel hooks operate
 	// on the same Map. Inner listeners that don't read this ref shouldn't
@@ -69,7 +71,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// React mounts the underlying useEffects in the same sequence — this
 	// preserves any cross-listener event ordering the existing tests depend on.
 	// ----------------------------------------------------------------
-	useAgentDataListener({ batchedUpdater: deps.batchedUpdater, activeHiddenToolRef });
+	useAgentDataListener({
+		batchedUpdater: deps.batchedUpdater,
+		activeHiddenToolRef,
+		ompEventCoordinator,
+	});
 	useAgentUserInputListener();
 	useAgentExitListener({
 		getBatchStateRef: deps.getBatchStateRef,
@@ -94,15 +100,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		addHistoryEntryRef: deps.addHistoryEntryRef,
 		activeHiddenToolRef,
 	});
-	const flushThinkingForSession = useAgentThinkingListener();
+	const flushThinkingForSession = useAgentThinkingListener(ompEventCoordinator);
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
-	useAgentToolExecutionListener(deps.batchedUpdater, flushThinkingForSession);
-	useRuntimeFeaturesListener(deps.batchedUpdater, flushThinkingForSession);
+	useAgentToolExecutionListener(deps.batchedUpdater, flushThinkingForSession, ompEventCoordinator);
+	useRuntimeFeaturesListener(deps.batchedUpdater, flushThinkingForSession, ompEventCoordinator);
 
-	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
-	// orphan tool entries are released for GC.
+	// Cleanup shared hidden-tool state on unmount.
 	useEffect(() => {
 		const activeHiddenTools = activeHiddenToolRef.current;
 		return () => {

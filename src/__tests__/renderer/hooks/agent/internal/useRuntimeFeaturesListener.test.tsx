@@ -4,6 +4,7 @@ import { useRuntimeFeaturesListener } from '../../../../../renderer/hooks/agent/
 import { useBatchedSessionUpdates } from '../../../../../renderer/hooks/session/useBatchedSessionUpdates';
 import { useAgentToolExecutionListener } from '../../../../../renderer/hooks/agent/internal/useAgentToolExecutionListener';
 import { useAgentThinkingListener } from '../../../../../renderer/hooks/agent/internal/useAgentThinkingListener';
+import { useOmpEventCoordinator } from '../../../../../renderer/hooks/agent/internal/useOmpEventCoordinator';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import type { AgentRuntimeFeatureState } from '../../../../../shared/agent-runtime-features';
 import type { Session } from '../../../../../renderer/types';
@@ -551,9 +552,10 @@ describe('useRuntimeFeaturesListener', () => {
 		}));
 		const { result } = renderHook(() => {
 			const batchedUpdater = useBatchedSessionUpdates(60_000);
-			const flushThinkingForSession = useAgentThinkingListener();
-			useAgentToolExecutionListener(batchedUpdater, flushThinkingForSession);
-			useRuntimeFeaturesListener(batchedUpdater, flushThinkingForSession);
+			const ompEventCoordinator = useOmpEventCoordinator();
+			const flushThinkingForSession = useAgentThinkingListener(ompEventCoordinator);
+			useAgentToolExecutionListener(batchedUpdater, flushThinkingForSession, ompEventCoordinator);
+			useRuntimeFeaturesListener(batchedUpdater, flushThinkingForSession, ompEventCoordinator);
 			return batchedUpdater;
 		});
 

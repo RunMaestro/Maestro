@@ -10,6 +10,7 @@ import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { openInSystemBrowser } from '../../../utils/openUrl';
 import { useComposerInputStore } from '../../../stores/composerInputStore';
 import type { BatchedUpdater } from './types';
+import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
 // Only the fields these listeners actually patch. Kept narrow so the same
 // patch can be spread into both Session and AITab (a Partial<Session> spread
@@ -20,7 +21,8 @@ const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useRuntimeFeaturesListener(
 	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER,
-	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH
+	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH,
+	ompEventCoordinator: OmpEventCoordinator = NOOP_OMP_EVENT_COORDINATOR
 ): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
@@ -109,6 +111,7 @@ export function useRuntimeFeaturesListener(
 		const completedOmpTurns = new Set<string>();
 		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
 			if (!ownedGate.current?.(sessionId)) return;
+			ompEventCoordinator.flush(sessionId);
 			flushThinkingForSession(sessionId);
 			batchedUpdater.flushNow();
 			if (event.phase === 'continuation_failed' && event.deliveryId) {
@@ -244,5 +247,5 @@ export function useRuntimeFeaturesListener(
 			removeSessionTitle();
 			removeOmpTurnLifecycle();
 		};
-	}, [batchedUpdater, flushThinkingForSession, ownedGate]);
+	}, [batchedUpdater, flushThinkingForSession, ompEventCoordinator, ownedGate]);
 }
