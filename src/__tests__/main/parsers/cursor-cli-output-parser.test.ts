@@ -15,6 +15,12 @@ const ASSISTANT_LINE =
 const RESULT_LINE =
 	'{"type":"result","subtype":"success","duration_ms":2282,"duration_api_ms":2282,"is_error":false,"result":"OK","session_id":"160dac18-6ea0-43dd-8c25-5e82a2dc787d","request_id":"f715cf78-b7ac-4075-883a-690908eeb16d","usage":{"inputTokens":18411,"outputTokens":131,"cacheReadTokens":5959,"cacheWriteTokens":0}}';
 
+const PARTIAL_ASSISTANT_LINE =
+	'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"RE"}]},"session_id":"160dac18-6ea0-43dd-8c25-5e82a2dc787d","timestamp_ms":1784174438859}';
+
+const FINAL_ASSISTANT_FLUSH_LINE =
+	'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"160dac18-6ea0-43dd-8c25-5e82a2dc787d"}';
+
 describe('CursorCliOutputParser', () => {
 	it('parses init events with session_id', () => {
 		const parser = new CursorCliOutputParser();
@@ -56,6 +62,80 @@ describe('CursorCliOutputParser', () => {
 			})
 		);
 		expect(event?.isReasoning).toBeUndefined();
+	});
+
+	it('emits timestamped assistant deltas but skips the duplicate final flush', () => {
+		const parser = new CursorCliOutputParser();
+
+		expect(parser.parseJsonLine(PARTIAL_ASSISTANT_LINE)).toEqual(
+			expect.objectContaining({
+				type: 'text',
+				text: 'RE',
+				isPartial: true,
+			})
+		);
+		expect(parser.parseJsonLine(FINAL_ASSISTANT_FLUSH_LINE)).toBeNull();
+	});
+
+	it('skips buffered pre-tool assistant flushes identified by model_call_id', () => {
+		const parser = new CursorCliOutputParser();
+		const event = parser.parseJsonLine(
+			'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"sess-1","timestamp_ms":1,"model_call_id":"model-call-1"}'
+		);
+
+		expect(event).toBeNull();
+	});
+
+	it('normalizes Cursor tool-call start and completion events', () => {
+		const parser = new CursorCliOutputParser();
+		const started = parser.parseJsonLine(
+			'{"type":"tool_call","subtype":"started","call_id":"tool-1","tool_call":{"readToolCall":{"args":{"path":"package.json","limit":20}},"toolCallId":"tool-1"},"session_id":"sess-1"}'
+		);
+		const completed = parser.parseJsonLine(
+			'{"type":"tool_call","subtype":"completed","call_id":"tool-1","tool_call":{"readToolCall":{"args":{"path":"package.json","limit":20},"result":{"success":{"content":"{\\"name\\":\\"maestro\\"}"}}},"toolCallId":"tool-1"},"session_id":"sess-1"}'
+		);
+
+		expect(started).toEqual(
+			expect.objectContaining({
+				type: 'tool_use',
+				toolName: 'read',
+				toolCallId: 'tool-1',
+				toolState: {
+					status: 'running',
+					input: { path: 'package.json', limit: 20 },
+				},
+			})
+		);
+		expect(completed).toEqual(
+			expect.objectContaining({
+				type: 'tool_use',
+				toolName: 'read',
+				toolCallId: 'tool-1',
+				toolState: expect.objectContaining({
+					status: 'completed',
+					output: { content: '{"name":"maestro"}' },
+				}),
+			})
+		);
+	});
+
+	it('normalizes generic function tool calls', () => {
+		const parser = new CursorCliOutputParser();
+		const event = parser.parseJsonLine(
+			'{"type":"tool_call","subtype":"started","call_id":"tool-2","tool_call":{"function":{"name":"custom_search","arguments":"{\\"query\\":\\"cursor\\"}"}},"session_id":"sess-1"}'
+		);
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'tool_use',
+				toolName: 'custom_search',
+				toolCallId: 'tool-2',
+				toolState: {
+					status: 'running',
+					input: { query: 'cursor' },
+				},
+			})
+		);
 	});
 
 	it('parses result events with usage and session id', () => {
@@ -129,6 +209,25 @@ describe('CursorCliOutputParser', () => {
 				agentId: 'cursor-cli',
 			})
 		);
+	});
+
+	it('parses is_error result events as errors for CLI batch spawning', () => {
+		const parser = new CursorCliOutputParser();
+		const event = parser.parseJsonObject({
+			type: 'result',
+			is_error: true,
+			result: 'Unexpected Cursor failure',
+			session_id: 'sess-err',
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'error',
+				text: 'Unexpected Cursor failure',
+				sessionId: 'sess-err',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
 	});
 
 	it('detects agent crash from non-zero exit', () => {

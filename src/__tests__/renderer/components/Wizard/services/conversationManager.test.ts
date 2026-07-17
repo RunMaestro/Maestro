@@ -437,5 +437,46 @@ describe('conversationManager (Onboarding Wizard)', () => {
 
 			await conversationManager.endConversation();
 		});
+
+		it('marks Cursor wizard spawns read-only so batch mode does not add --force', async () => {
+			const mockAgent = {
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+				jsonOutputArgs: ['--output-format', 'stream-json', '--stream-partial-output'],
+				readOnlyArgs: ['--mode', 'plan'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.args).toEqual([]);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(sessionId, '{"confidence":90,"ready":true,"message":"Cursor discovery ready"}');
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: expect.objectContaining({
+						parseSuccess: true,
+						structured: expect.objectContaining({ message: 'Cursor discovery ready' }),
+					}),
+				})
+			);
+			await conversationManager.endConversation();
+		});
 	});
 });

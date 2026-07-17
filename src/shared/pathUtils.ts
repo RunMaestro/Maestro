@@ -319,6 +319,8 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
+			// Cursor Agent CLI native installer
+			path.join(localAppData, 'cursor-agent'),
 			// Python/pip user installs
 			path.join(appData, 'Python', 'Scripts'),
 			path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts'),
@@ -365,6 +367,8 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
 			'/home/linuxbrew/.linuxbrew/bin', // Linuxbrew
+			`${home}/.cursor/bin`, // Cursor Agent CLI
+			`${home}/.local/share/cursor-agent`, // Alternate Cursor Agent install
 			'/usr/bin',
 			'/bin',
 			'/usr/sbin',

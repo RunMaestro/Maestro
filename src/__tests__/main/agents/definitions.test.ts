@@ -375,17 +375,29 @@ describe('agent-definitions', () => {
 		it('should run Cursor CLI batch with --trust/--force and plan mode', () => {
 			const cursor = getAgentDefinition('cursor-cli');
 			expect(cursor?.binaryName).toBe('agent');
-			expect(cursor?.batchModeArgs).toEqual(['--trust', '--force']);
+			expect(cursor?.batchModePrefix).toEqual(['-p', '--trust']);
 			expect(cursor?.yoloModeArgs).toEqual(['--force']);
 			expect(cursor?.readOnlyArgs).toEqual(['--mode', 'plan']);
-			expect(cursor?.jsonOutputArgs).toEqual(['--output-format', 'stream-json']);
+			expect(cursor?.jsonOutputArgs).toEqual([
+				'--output-format',
+				'stream-json',
+				'--stream-partial-output',
+			]);
 			expect(cursor?.workingDirArgs?.('/tmp/proj')).toEqual(['--workspace', '/tmp/proj']);
-			expect(cursor?.promptArgs?.('hi')).toEqual(['-p', 'hi']);
+			expect(cursor?.promptArgs?.('hi')).toEqual(['hi']);
 			expect(cursor?.resumeArgs?.('sess-1')).toEqual(['--resume', 'sess-1']);
-			// --force must be in yoloModeArgs so the CLI read-only filter strips it
-			// while keeping --trust from batchModeArgs.
+			// Only --force is removable in read-only mode; -p and --trust remain
+			// required for non-interactive trusted-workspace execution.
+			expect(cursor?.batchModeArgs).toEqual(['--force']);
 			expect(cursor?.yoloModeArgs).toContain('--force');
-			expect(cursor?.batchModeArgs?.filter((a) => a !== '--force')).toEqual(['--trust']);
+			expect(
+				cursor?.imagePromptBuilder?.([
+					'/tmp/cursor-screenshot-1.png',
+					'/tmp/cursor-screenshot-2.jpg',
+				])
+			).toBe(
+				'Use these attached images as context:\n/tmp/cursor-screenshot-1.png\n/tmp/cursor-screenshot-2.jpg\n\n'
+			);
 		});
 
 		it('should define the Cursor CLI model option as a dynamic select', () => {

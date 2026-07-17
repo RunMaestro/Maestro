@@ -846,18 +846,20 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'agent',
 		args: [],
 		requiresPty: false, // Headless batch mode (-p) works over plain pipes
-		// Cursor Agent CLI argument builders (verified against `agent --help`)
-		// Batch mode: agent --workspace <dir> -p "prompt" --output-format stream-json --trust [--force] [--resume <id>]
-		batchModePrefix: [],
-		// --trust skips the interactive workspace trust prompt; --force is YOLO
-		// (auto-approve tools). Keep --force in both batchModeArgs and yoloModeArgs
-		// so (a) CLI batch always gets it via batchModeArgs and (b) the shared
-		// read-only filter strips --force when yoloModeArgs lists it (same pattern
-		// as Grok's --always-approve). Desktop full-access also picks it up via
-		// yoloModeArgs / buildAgentArgs.
-		batchModeArgs: ['--trust', '--force'],
-		jsonOutputArgs: ['--output-format', 'stream-json'],
-		promptArgs: (prompt: string) => ['-p', prompt],
+		// Cursor Agent CLI argument builders (verified against `agent --help`).
+		// -p and --trust are batch requirements even in read-only mode, so they
+		// live in the prefix; --force remains the removable full-access flag.
+		// Batch: agent -p --trust --workspace <dir> [--force] --output-format stream-json --stream-partial-output [--mode plan] [--resume <id>] "prompt"
+		batchModePrefix: ['-p', '--trust'],
+		batchModeArgs: ['--force'],
+		jsonOutputArgs: ['--output-format', 'stream-json', '--stream-partial-output'],
+		// Keep the prompt positional so raw-stdin spawns retain -p without also
+		// putting a potentially long prompt on the Windows command line.
+		promptArgs: (prompt: string) => [prompt],
+		imagePromptBuilder: (imagePaths: string[]) =>
+			imagePaths.length > 0
+				? `Use these attached images as context:\n${imagePaths.join('\n')}\n\n`
+				: '',
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
 		readOnlyArgs: ['--mode', 'plan'],
 		readOnlyCliEnforced: true, // CLI enforces read-only via --mode plan

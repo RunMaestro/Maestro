@@ -158,6 +158,14 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsGroupChatModeration).toBe(true);
 		});
 
+		it('should expose Cursor prompt-based image support', () => {
+			const capabilities = AGENT_CAPABILITIES['cursor-cli'];
+
+			expect(capabilities).toBeDefined();
+			expect(capabilities.supportsImageInput).toBe(true);
+			expect(capabilities.supportsImageInputOnResume).toBe(true);
+		});
+
 		it('should expose Pi capabilities backed by its documented CLI contract', () => {
 			const capabilities = AGENT_CAPABILITIES.pi;
 
