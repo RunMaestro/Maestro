@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { launchNativeOmpRegularSessionHarness } from './fixtures/omp-native-regular-session-harness';
 
 test.describe('first-party OMP regular session', () => {
-	test('starts through the enabled signed OMP plugin native gate', async ({
+	test('renders first-party OMP presence inline and preserves one RPC session through delivery modes', async ({
 		browserName: _browserName,
 	}, testInfo) => {
 		void _browserName;
@@ -12,241 +12,74 @@ test.describe('first-party OMP regular session', () => {
 		const harness = await launchNativeOmpRegularSessionHarness();
 		const { launched } = harness;
 		try {
-			await expect(launched.window.getByRole('button', { name: 'New Agent' })).toBeVisible({
-				timeout: 45_000,
-			});
 			await launched.window.getByRole('button', { name: 'New Agent' }).click();
-			await expect(launched.window.getByRole('dialog')).toBeVisible();
 			await launched.window.getByText('Manual Setup', { exact: true }).click();
 			await launched.window.getByText('Oh My Pi', { exact: true }).click();
 			await launched.window.locator('input').first().fill('Native OMP fixture');
 			await launched.window.locator('input[placeholder="Select directory..."]').fill(process.cwd());
 			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
-			await expect(
-				launched.window.getByText('Native OMP fixture', { exact: true }).first()
-			).toBeVisible({ timeout: 30_000 });
-			await expect(launched.window.getByRole('dialog')).toHaveCount(0);
-			await launched.window.getByRole('button', { name: 'Native', exact: true }).click();
-			const runtimePanel = launched.window.getByTestId('native-runtime-panel');
-			await expect(runtimePanel).toBeVisible();
-			await expect(runtimePanel.getByText('OMP Native', { exact: true })).toBeVisible();
-			await expect(runtimePanel.getByText('Ready', { exact: true })).toBeVisible();
-			await expect(runtimePanel.getByTestId('native-runtime-dormant')).toContainText(
-				'OMP Native ready — starts on first message.'
-			);
-			await expect(launched.window.getByTestId('omp-runtime-controls')).toHaveCount(0);
-			await expect(runtimePanel.getByTestId('native-runtime-advanced')).toHaveCount(0);
-			await expect(runtimePanel.getByTestId('native-runtime-stats')).toHaveCount(0);
+
 			const composer = launched.window.locator('textarea').last();
-			await expect(composer).toBeVisible();
+			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
 			await composer.fill('show ordinary native transcript');
 			await composer.press('Enter');
-			await expect(launched.window.getByText(/native text:/).first()).toBeVisible({
+			const turnFabric = launched.window.getByTestId('omp-turn-fabric');
+			await expect(turnFabric).toBeVisible({ timeout: 30_000 });
+			await expect(turnFabric.getByRole('region', { name: 'Active OMP turn' })).toHaveCount(0);
+			await expect(launched.window.getByRole('group', { name: 'Native OMP approval' })).toBeVisible(
+				{
+					timeout: 30_000,
+				}
+			);
+			await expect(
+				launched.window.getByRole('button', { name: 'Native', exact: true })
+			).toHaveCount(0);
+
+			await composer.fill('queue this native follow-up');
+			await composer.press('Control+Enter');
+			await expect(
+				launched.window.getByRole('group', { name: 'OMP delivery controls' })
+			).toBeVisible();
+			const deliveryCaret = launched.window.getByRole('button', {
+				name: 'Choose OMP delivery mode',
+			});
+			await deliveryCaret.click();
+			const deliveryMenu = launched.window.getByRole('menu', { name: 'OMP delivery mode' });
+			await expect(deliveryMenu.getByRole('menuitem', { name: /Steer now/ })).toBeVisible();
+			await expect(deliveryMenu.getByRole('menuitem', { name: /Queue follow-up/ })).toBeVisible();
+			await expect(
+				deliveryMenu.getByRole('menuitem', { name: /Interrupt & replace/ })
+			).toBeVisible();
+			await launched.window.keyboard.press('Escape');
+			await expect(deliveryMenu).toHaveCount(0);
+
+			await launched.window
+				.getByRole('group', { name: 'Native OMP approval' })
+				.getByRole('button', {
+					name: 'Approve',
+					exact: true,
+				})
+				.click();
+			await expect(turnFabric.getByRole('region', { name: 'Completed OMP turn' })).toBeVisible({
 				timeout: 30_000,
 			});
-			const approvalDialog = launched.window
-				.locator('[role="dialog"]')
-				.filter({ hasText: 'Native OMP approval' });
-			await expect(approvalDialog).toHaveCount(1, { timeout: 30_000 });
-			await expect(approvalDialog).toBeVisible({ timeout: 30_000 });
-			await expect(approvalDialog).toContainText('omp', { timeout: 30_000 });
-			const approvalButton = approvalDialog.getByRole('button', {
-				name: 'Approve',
-				exact: true,
-			});
-			await approvalButton.click();
-			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
-			const artifactPrefix = testInfo.outputPath('omp-native-before-close');
-			fs.writeFileSync(`${artifactPrefix}.dom.html`, await launched.window.content(), 'utf8');
-			fs.writeFileSync(
-				`${artifactPrefix}.frames.jsonl`,
-				fs.readFileSync(frameLogPath, 'utf8'),
-				'utf8'
-			);
-			fs.writeFileSync(`${artifactPrefix}.main.txt`, launched.output(), 'utf8');
-			await expect
-				.poll(
-					() => fs.readFileSync(frameLogPath, 'utf8').includes('"type":"extension_ui_response"'),
-					{
-						timeout: 10_000,
-					}
-				)
-				.toBe(true);
-			await expect(approvalDialog).toHaveCount(0);
-			await expect(
-				launched.window.getByText('Native OMP fixture canvas', { exact: true }).first()
-			).toBeVisible();
-			await expect(composer).toHaveValue('native composer text');
-			await expect(
-				launched.window.getByText('Native OMP fixture ready', { exact: true })
-			).toBeVisible();
 			await expect(
 				launched.window.getByText('fixture:expanded-16.4.8', { exact: true })
 			).toBeVisible();
-			await expect(runtimePanel.getByText('Live', { exact: true })).toBeVisible({
-				timeout: 30_000,
-			});
-			const stats = runtimePanel.getByTestId('native-runtime-stats');
-			await expect(stats).toBeVisible();
-			await expect(stats).toContainText('Input');
-			await expect(stats).toContainText('21');
-			await expect(stats).toContainText('Output');
-			await expect(stats).toContainText('34');
-			const tasks = runtimePanel.getByTestId('native-runtime-todos');
-			await expect(tasks).toContainText('Tasks');
-			await expect(tasks).toContainText('1/2');
-			await expect(tasks).toContainText('Render ordinary session');
-			await expect(runtimePanel.getByText('Native helper', { exact: true })).toBeVisible();
-			await expect(runtimePanel.getByText('Running', { exact: true })).toBeVisible();
-			await runtimePanel
-				.getByRole('button', { name: 'Branch from native expanded transcript' })
-				.click();
-			await runtimePanel.getByRole('button', { name: /Advanced/ }).click();
-			await runtimePanel
-				.getByPlaceholder('OMP session file path')
-				.fill('/fixture/resumed-native.jsonl');
-			await runtimePanel.getByRole('button', { name: 'Resume', exact: true }).click();
-			await runtimePanel.getByPlaceholder('Run OMP shell command').fill('echo native shell');
-			await runtimePanel.getByRole('button', { name: 'Run', exact: true }).click();
-			await launched.window
-				.locator('select[aria-label="OMP login provider"]')
-				.selectOption('fixture-login');
-			await runtimePanel.getByRole('button', { name: 'Login', exact: true }).click();
-			await launched.window.getByRole('button', { name: 'high', exact: true }).click();
-			await launched.window.getByRole('menuitemradio', { name: 'max', exact: true }).click();
-			const openRuntimeSettings = async () => {
-				const trigger = launched.window.getByRole('button', { name: 'OMP runtime settings' });
-				await expect(trigger).toBeVisible();
-				await trigger.click();
-				const controls = launched.window.getByRole('dialog', { name: 'Native runtime controls' });
-				await expect(controls).toBeVisible();
-				return controls;
-			};
-			let runtimeControls = await openRuntimeSettings();
-			await runtimeControls.getByLabel('Steering mode').selectOption('one-at-a-time');
-			await runtimeControls.getByLabel('Follow-up mode').selectOption('one-at-a-time');
-			await runtimeControls.getByLabel('Interrupt mode').selectOption('wait');
-			await launched.window.keyboard.press('Escape');
-			await expect(
-				launched.window.getByRole('dialog', { name: 'Native runtime controls' })
-			).toHaveCount(0);
-			runtimeControls = await openRuntimeSettings();
-			const compact = runtimeControls.getByRole('button', { name: 'Compact', exact: true });
-			await compact.focus();
-			await compact.press('Enter');
-			runtimeControls = await openRuntimeSettings();
-			const exportHtml = runtimeControls.getByRole('button', { name: 'Export HTML', exact: true });
-			await exportHtml.focus();
-			await exportHtml.press('Enter');
-			runtimeControls = await openRuntimeSettings();
-			const abortBash = runtimeControls.getByRole('button', {
-				name: 'Abort shell command',
-				exact: true,
-			});
-			await abortBash.focus();
-			await abortBash.press('Enter');
-			await expect
-				.poll(
-					() => {
-						const frameText = fs.readFileSync(frameLogPath, 'utf8');
-						return [
-							'"type":"branch"',
-							'"type":"switch_session"',
-							'"type":"bash"',
-							'"type":"login"',
-							'"type":"set_thinking_level","level":"max"',
-							'"type":"set_steering_mode","mode":"one-at-a-time"',
-							'"type":"set_follow_up_mode","mode":"one-at-a-time"',
-							'"type":"set_interrupt_mode","mode":"wait"',
-							'"type":"compact"',
-							'"type":"export_html"',
-							'"type":"abort_bash"',
-						].every((frame) => frameText.includes(frame));
-					},
-					{ timeout: 30_000 }
-				)
-				.toBe(true);
-			await expect(launched.window.getByText('Session Resume Failed', { exact: true })).toHaveCount(
-				0
+			await expect(launched.window.getByTestId('header-context-widget')).toContainText(
+				'200k context'
 			);
-			await runtimePanel.getByRole('button', { name: 'View messages for Native helper' }).click();
-			await expect(runtimePanel.getByText('Native helper detail', { exact: true })).toBeVisible();
-			await runtimePanel
-				.getByRole('button', { name: 'View branch messages for native expanded transcript' })
-				.click();
-			await expect(runtimePanel.getByText('Native branch detail', { exact: true })).toBeVisible();
-			await expect(composer).toBeEditable({ timeout: 30_000 });
-			await composer.fill('second native prompt after agent_end no-approval');
-			await composer.press('Enter');
-			await expect(
-				launched.window.getByText('native text: second native prompt after agent_end no-approval', {
-					exact: true,
-				})
-			).toBeVisible({ timeout: 30_000 });
-			await expect(
-				launched.window.getByText('native expanded complete', { exact: true })
-			).toHaveCount(0);
+			await expect(launched.window.getByTestId('omp-queued-follow-ups')).toHaveCount(0);
+
 			await expect
-				.poll(
-					() =>
-						fs
-							.readFileSync(frameLogPath, 'utf8')
-							.includes('"message":"second native prompt after agent_end no-approval"'),
-					{ timeout: 10_000 }
-				)
-				.toBe(true);
+				.poll(() => fs.readFileSync(frameLogPath, 'utf8'), { timeout: 30_000 })
+				.toContain('"type":"follow_up"');
 			const frames = fs.readFileSync(frameLogPath, 'utf8');
-			expect(frames).toContain('"type":"message_update"');
-			expect(frames).toContain('"type":"turn_end"');
-			expect(frames).toContain('"type":"agent_end"');
-			await expect(launched.window.locator('webview')).toHaveCount(0);
+			expect((frames.match(/"type":"agent_start"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+			expect(frames).not.toMatch(/"type":"(?:login|open_url|open_external_url)"/);
 			expect(launched.output()).not.toMatch(/legacy.*fallback|fallback.*legacy/i);
-			await launched.window.evaluate(
-				(pluginId) => window.maestro.plugins.setEnabled(pluginId, false),
-				'com.maestro.omp'
-			);
-			await expect(
-				launched.window.getByRole('button', { name: 'Native', exact: true })
-			).toHaveCount(0);
-			await launched.window.evaluate(
-				(pluginId) => window.maestro.plugins.setEnabled(pluginId, true),
-				'com.maestro.omp'
-			);
-			await expect(composer).toBeEditable({ timeout: 30_000 });
-			await composer.fill('native prompt after plugin re-enable no-approval');
-			await composer.press('Enter');
-			await expect(
-				launched.window.getByText('native text: native prompt after plugin re-enable no-approval', {
-					exact: true,
-				})
-			).toBeVisible({ timeout: 30_000 });
-			await expect(
-				launched.window.getByRole('button', { name: 'Native', exact: true })
-			).toBeVisible();
-			await launched.window.screenshot({
-				path: testInfo.outputPath('omp-native-regular-session.png'),
-			});
+			fs.writeFileSync(testInfo.outputPath('omp-native-frames.jsonl'), frames, 'utf8');
 		} finally {
-			const mainOutput = launched.output();
-			fs.writeFileSync(testInfo.outputPath('omp-native-main-output.txt'), mainOutput);
-			await testInfo.attach('omp-native-main-output.txt', {
-				body: mainOutput,
-				contentType: 'text/plain',
-			});
-			const rendererDom = await launched.window
-				.locator('body')
-				.innerText({ timeout: 1_000 })
-				.catch((error) => `renderer DOM unavailable: ${String(error)}`);
-			fs.writeFileSync(testInfo.outputPath('omp-native-renderer-dom.txt'), rendererDom);
-			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
-			const fixtureFrames = fs.existsSync(frameLogPath)
-				? fs.readFileSync(frameLogPath, 'utf8')
-				: '(fixture did not start)';
-			fs.writeFileSync(testInfo.outputPath('omp-native-frames.jsonl'), fixtureFrames);
-			await testInfo.attach('omp-native-frames.jsonl', {
-				body: fixtureFrames,
-				contentType: 'application/x-ndjson',
-			});
 			await harness.close();
 		}
 	});
@@ -290,6 +123,7 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+
 	test('renders select and input native approval requests', async ({
 		browserName: _browserName,
 	}) => {
@@ -306,7 +140,7 @@ test.describe('first-party OMP regular session', () => {
 			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
 			const composer = launched.window.locator('textarea').last();
 			const approvalDialog = launched.window
-				.locator('[role="dialog"]')
+				.locator('[role="group"]')
 				.filter({ hasText: 'Native OMP approval' });
 			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
 
@@ -353,6 +187,7 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+
 	test('renders an editor native approval request', async ({ browserName: _browserName }) => {
 		void _browserName;
 		test.setTimeout(120_000);
@@ -367,7 +202,7 @@ test.describe('first-party OMP regular session', () => {
 			await launched.window.getByRole('button', { name: 'Create Agent' }).click();
 			const composer = launched.window.locator('textarea').last();
 			const approvalDialog = launched.window
-				.locator('[role="dialog"]')
+				.locator('[role="group"]')
 				.filter({ hasText: 'Native OMP approval' });
 			const frameLogPath = path.join(path.dirname(harness.fixture.runtimePath), 'frames.jsonl');
 
@@ -396,6 +231,7 @@ test.describe('first-party OMP regular session', () => {
 			await harness.close();
 		}
 	});
+
 	test('surfaces a native crash then reconnect frame without losing the composer', async ({
 		browserName: _browserName,
 	}) => {

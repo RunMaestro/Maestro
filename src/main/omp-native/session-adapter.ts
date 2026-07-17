@@ -810,7 +810,7 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private completeTurn(): void {
-		if (!this.turnInFlight) return;
+		if (!this.turnInFlight || this.pendingContinuationIntents.length > 0) return;
 		this.turnInFlight = false;
 		// A native OMP agent_end completes one turn, not the long-lived RPC child.
 		// The process session id identifies the owning Maestro AI tab; the provider

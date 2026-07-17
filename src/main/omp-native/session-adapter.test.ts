@@ -1785,6 +1785,12 @@ describe('OmpNativeSessionAdapter', () => {
 			assistantMessageEvent: { type: 'text_delta', delta: 'output B' },
 		});
 		emit(child, { type: 'turn_end' });
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-follow-up-chain'
+			)
+		).toHaveLength(0);
 		emit(child, { type: 'agent_start' });
 		emit(child, {
 			type: 'message_update',
@@ -1812,7 +1818,7 @@ describe('OmpNativeSessionAdapter', () => {
 				([channel, sessionId]) =>
 					channel === 'process:command-exit' && sessionId === 'tab-follow-up-chain'
 			)
-		).toHaveLength(2);
+		).toHaveLength(1);
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 

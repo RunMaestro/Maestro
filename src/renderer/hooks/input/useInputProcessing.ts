@@ -586,6 +586,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					text: effectiveInputValue,
 					images: [...effectiveImages],
 					deliveryIntent: options.ompDeliveryIntent,
+					...((options.ompDeliveryIntent === 'follow_up' ||
+						options.ompDeliveryIntent === 'abort_and_prompt') && {
+						deliveryState: 'queued' as const,
+					}),
 				} satisfies LogEntry;
 				setSessions((prev) =>
 					prev.map((session) => {

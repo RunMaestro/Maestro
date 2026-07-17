@@ -204,7 +204,7 @@ describe('useRuntimeFeaturesListener', () => {
 		expect(session.aiTabs[0].logs.at(-1)?.deliveryState).toBe('consumed');
 	});
 
-	it('moves a replacement prompt to the continuation boundary', () => {
+	it('moves each queued replacement exactly once into its own continuation boundary', () => {
 		useSessionStore.setState((state) => ({
 			sessions: state.sessions.map((session) => ({
 				...session,
@@ -216,11 +216,12 @@ describe('useRuntimeFeaturesListener', () => {
 									{ id: 'first', timestamp: 1, source: 'user', text: 'first' },
 									{ id: 'aborted-output', timestamp: 2, source: 'ai', text: 'aborted' },
 									{
-										id: 'replacement',
+										id: 'replacement-one',
 										timestamp: 3,
 										source: 'user',
-										text: 'replacement',
+										text: 'replacement one',
 										deliveryIntent: 'abort_and_prompt',
+										deliveryState: 'queued',
 									},
 									{ id: 'final-aborted-output', timestamp: 4, source: 'ai', text: 'final aborted' },
 								],
@@ -237,15 +238,62 @@ describe('useRuntimeFeaturesListener', () => {
 			continuation: true,
 			deliveryIntent: 'abort_and_prompt',
 		});
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) =>
+					tab.id === 'tab-a'
+						? {
+								...tab,
+								logs: [
+									...tab.logs,
+									{
+										id: 'replacement-output',
+										timestamp: 5,
+										source: 'ai',
+										text: 'replacement output',
+									},
+									{
+										id: 'replacement-two',
+										timestamp: 6,
+										source: 'user',
+										text: 'replacement two',
+										deliveryIntent: 'abort_and_prompt',
+										deliveryState: 'queued',
+									},
+									{
+										id: 'second-aborted-output',
+										timestamp: 7,
+										source: 'ai',
+										text: 'second aborted',
+									},
+								],
+							}
+						: tab
+				),
+			})),
+		}));
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
+		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: 'abort_and_prompt',
+		});
 
 		const logs = storedSession().aiTabs[0].logs;
 		expect(logs.map((log) => log.id)).toEqual([
 			'first',
 			'aborted-output',
 			'final-aborted-output',
-			'replacement',
+			'replacement-one',
+			'replacement-output',
+			'second-aborted-output',
+			'replacement-two',
 		]);
-		expect(logs.at(-1)?.deliveryState).toBe('consumed');
+		expect(logs.filter((log) => log.deliveryState === 'consumed').map((log) => log.id)).toEqual([
+			'replacement-one',
+			'replacement-two',
+		]);
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {

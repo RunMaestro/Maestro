@@ -127,8 +127,7 @@ export function useRuntimeFeaturesListener(): void {
 							if (tab.id !== tabId) return tab;
 							const continuationEntry = tab.logs.find(
 								(log) =>
-									log.deliveryIntent === event.deliveryIntent &&
-									(event.deliveryIntent !== 'follow_up' || log.deliveryState === 'queued')
+									log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
 							);
 							return {
 								...tab,
