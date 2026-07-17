@@ -29,6 +29,23 @@ async function sleep(ms: number): Promise<void> {
 	await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+function expectDiscoveryRejection(
+	promise: Promise<unknown>,
+	message: RegExp | string
+): Promise<void> {
+	return promise.then(
+		() => {
+			throw new Error('Expected session discovery to reject');
+		},
+		(error: unknown) => {
+			expect(error).toBeInstanceOf(Error);
+			if (error instanceof Error) {
+				expect(error.message).toMatch(message);
+			}
+		}
+	);
+}
+
 describe('session-watcher', () => {
 	let tempDir: string;
 	let configDir: string;
@@ -207,16 +224,18 @@ describe('session-watcher', () => {
 			writeJsonl('some-other-id');
 			vi.useFakeTimers();
 			try {
-				const rejection = expect(
-					discoverSessionId({
-						configDir,
-						cwd,
-						spawnTimestamp,
-						expectSessionId: 'never-written-id',
-						timeoutMs: 250,
-						pollIntervalMs: FAST_POLL_MS,
-					})
-				).rejects.toThrow(/never-written-id\.jsonl did not appear/);
+				const discoveryPromise = discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp,
+					expectSessionId: 'never-written-id',
+					timeoutMs: 250,
+					pollIntervalMs: FAST_POLL_MS,
+				});
+				const rejection = expectDiscoveryRejection(
+					discoveryPromise,
+					/never-written-id\.jsonl did not appear/
+				);
 				await vi.advanceTimersByTimeAsync(250);
 				await rejection;
 			} finally {
@@ -289,15 +308,14 @@ describe('session-watcher', () => {
 			const spawnTimestamp = Date.now();
 			vi.useFakeTimers();
 			try {
-				const rejection = expect(
-					discoverSessionId({
-						configDir,
-						cwd,
-						spawnTimestamp,
-						timeoutMs: 100,
-						pollIntervalMs: FAST_POLL_MS,
-					})
-				).rejects.toThrow(/no new \.jsonl appeared/);
+				const discoveryPromise = discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp,
+					timeoutMs: 100,
+					pollIntervalMs: FAST_POLL_MS,
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
 				await vi.advanceTimersByTimeAsync(100);
 				await rejection;
 			} finally {
@@ -312,15 +330,14 @@ describe('session-watcher', () => {
 			const spawnTimestamp = Date.now();
 			vi.useFakeTimers();
 			try {
-				const rejection = expect(
-					discoverSessionId({
-						configDir,
-						cwd,
-						spawnTimestamp,
-						timeoutMs: 100,
-						pollIntervalMs: FAST_POLL_MS,
-					})
-				).rejects.toThrow(/no new \.jsonl appeared/);
+				const discoveryPromise = discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp,
+					timeoutMs: 100,
+					pollIntervalMs: FAST_POLL_MS,
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
 				await vi.advanceTimersByTimeAsync(100);
 				await rejection;
 			} finally {
@@ -338,35 +355,31 @@ describe('session-watcher', () => {
 
 			vi.useFakeTimers();
 			try {
-				const wrongPathRejection = expect(
-					discoverSessionId({
-						configDir,
-						cwd,
-						spawnTimestamp,
-						timeoutMs: 100,
-						pollIntervalMs: FAST_POLL_MS,
-					})
-				).rejects.toThrow(/no new \.jsonl appeared/);
+				const wrongPathPromise = discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp,
+					timeoutMs: 100,
+					pollIntervalMs: FAST_POLL_MS,
+				});
+				const wrongPathRejection = expectDiscoveryRejection(
+					wrongPathPromise,
+					/no new \.jsonl appeared/
+				);
 				await vi.advanceTimersByTimeAsync(100);
 				await wrongPathRejection;
 
 				// And the error mentions the correct (expected) directory.
-				let caught: Error | null = null;
-				const expectedPathRejection = discoverSessionId({
+				const expectedPathPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 50,
 					pollIntervalMs: FAST_POLL_MS,
 				});
+				const expectedPathRejection = expectDiscoveryRejection(expectedPathPromise, expectedSlug);
 				await vi.advanceTimersByTimeAsync(50);
-				try {
-					await expectedPathRejection;
-				} catch (err) {
-					caught = err as Error;
-				}
-				expect(caught).not.toBeNull();
-				expect(caught!.message).toContain(expectedSlug);
+				await expectedPathRejection;
 			} finally {
 				vi.useRealTimers();
 			}
