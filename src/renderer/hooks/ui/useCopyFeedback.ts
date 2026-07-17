@@ -34,6 +34,7 @@ export function useCopyFeedback(
 	}, []);
 
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
 			mountedRef.current = false;
 			clearFeedbackTimeout();
