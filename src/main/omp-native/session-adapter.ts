@@ -520,7 +520,14 @@ export class OmpNativeSessionAdapter {
 	}
 
 	private handleEvent(event: OmpRpcEvent): void {
-		let continuationStartedAtTurnEnd = false;
+		const continuationEvidence =
+			event.type === 'agent_start' ||
+			event.type === 'turn_start' ||
+			event.type === 'message_update' ||
+			event.type === 'thinking_delta' ||
+			event.type.startsWith('tool_execution_');
+		const continuationStartedFromEvidence =
+			continuationEvidence && this.startContinuationAtBoundary();
 		if (this.disposed) return;
 		if (event.type === 'message_update') {
 			const assistantMessageEvent = asRecord(event.assistantMessageEvent);
@@ -594,35 +601,21 @@ export class OmpNativeSessionAdapter {
 			this.refreshFeaturesInBackground();
 		}
 		if (event.type === 'agent_start') {
-			if (!this.startContinuationAtBoundary())
+			if (!continuationStartedFromEvidence)
 				this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 					phase: 'agent_start',
 					continuation: false,
 				});
 		}
-		if (event.type === 'turn_start') {
-			// A real queued OMP follow-up starts its next turn without a second
-			// agent_start. Synthetic runtimes may send agent_start instead, so the
-			// boundary guard keeps this idempotent across both valid sequences.
-			this.startContinuationAtBoundary();
-		}
 		if (event.type === 'turn_end') {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'turn_end',
 			});
-			if (this.pendingContinuationIntents.length > 0) {
-				this.awaitingContinuationBoundary = true;
-				// OMP 16.4.8 can begin a queued turn's text stream immediately
-				// after turn_end without a distinct turn_start frame. Consume at
-				// the reliable preceding boundary so the renderer receives the
-				// delivery ID before any continuation output.
-				continuationStartedAtTurnEnd = this.startContinuationAtBoundary();
-			}
+			if (this.pendingContinuationIntents.length > 0) this.awaitingContinuationBoundary = true;
 		}
-		if (
-			(event.type === 'turn_end' || event.type === 'agent_end') &&
-			!continuationStartedAtTurnEnd
-		) {
+		if (event.type === 'agent_end' && this.awaitingContinuationBoundary) {
+			this.failContinuationChain();
+		} else if (event.type === 'turn_end' || event.type === 'agent_end') {
 			this.completeTurn();
 			this.refreshFeaturesInBackground();
 		}
