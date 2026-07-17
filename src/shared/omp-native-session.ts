@@ -10,6 +10,7 @@ export interface OmpTurnLifecycleEvent {
 	phase: OmpTurnLifecyclePhase;
 	continuation?: boolean;
 	deliveryIntent?: 'follow_up' | 'abort_and_prompt';
+	deliveryId?: string;
 }
 export interface OmpNativeTurnCompletion {
 	readonly kind: 'omp-native-turn';

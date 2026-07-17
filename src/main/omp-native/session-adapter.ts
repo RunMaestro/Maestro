@@ -88,7 +88,10 @@ export class OmpNativeSessionAdapter {
 	private readonly hostUriRequests = new Set<string>();
 	private disposed = false;
 	private turnInFlight = false;
-	private pendingContinuationIntents: Array<'follow_up' | 'abort_and_prompt'> = [];
+	private pendingContinuationIntents: Array<{
+		intent: 'follow_up' | 'abort_and_prompt';
+		deliveryId?: string;
+	}> = [];
 	private completionEmitted = false;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
@@ -189,7 +192,8 @@ export class OmpNativeSessionAdapter {
 	async deliver(
 		intent: OmpDeliveryIntent,
 		message: string,
-		images?: readonly string[]
+		images?: readonly string[],
+		deliveryId?: string
 	): Promise<void> {
 		await this.initialized;
 		this.turnEmittedAssistantText = false;
@@ -204,11 +208,11 @@ export class OmpNativeSessionAdapter {
 			if (agentWasNotInvoked(response.data)) {
 				this.completeTurn();
 			} else if (intent === 'follow_up' || intent === 'abort_and_prompt') {
-				this.pendingContinuationIntents.push(intent);
+				this.pendingContinuationIntents.push({ intent, deliveryId });
 			}
 		} catch (error) {
 			if (intent === 'follow_up' || intent === 'abort_and_prompt') {
-				this.failContinuationChain(intent);
+				this.reportRejectedContinuation(intent, deliveryId);
 			} else {
 				this.turnInFlight = false;
 			}
@@ -571,16 +575,18 @@ export class OmpNativeSessionAdapter {
 			this.refreshFeaturesInBackground();
 		}
 		if (event.type === 'agent_start') {
-			const deliveryIntent = this.pendingContinuationIntents.shift();
-			const continuation = deliveryIntent !== undefined;
+			const continuation = this.pendingContinuationIntents.shift();
 			if (continuation) {
 				this.turnInFlight = true;
 				this.turnEmittedAssistantText = false;
 			}
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'agent_start',
-				continuation,
-				...(deliveryIntent && { deliveryIntent }),
+				continuation: continuation !== undefined,
+				...(continuation && {
+					deliveryIntent: continuation.intent,
+					deliveryId: continuation.deliveryId,
+				}),
 			});
 		}
 		if (event.type === 'turn_end')
@@ -847,18 +853,16 @@ export class OmpNativeSessionAdapter {
 		);
 	}
 
-	private failContinuationChain(rejectedIntent?: 'follow_up' | 'abort_and_prompt'): void {
-		const intents = [
-			...this.pendingContinuationIntents.splice(0),
-			...(rejectedIntent ? [rejectedIntent] : []),
-		];
-		if (intents.length === 0 || this.completionEmitted) return;
+	private failContinuationChain(): void {
+		const continuations = this.pendingContinuationIntents.splice(0);
+		if (continuations.length === 0 || this.completionEmitted) return;
 		this.turnInFlight = false;
 		this.completionEmitted = true;
-		for (const deliveryIntent of intents) {
+		for (const continuation of continuations) {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'continuation_failed',
-				deliveryIntent,
+				deliveryIntent: continuation.intent,
+				...(continuation.deliveryId && { deliveryId: continuation.deliveryId }),
 			});
 		}
 		this.options.send(
@@ -867,6 +871,17 @@ export class OmpNativeSessionAdapter {
 			1,
 			OMP_NATIVE_TURN_COMPLETION
 		);
+	}
+
+	private reportRejectedContinuation(
+		deliveryIntent: 'follow_up' | 'abort_and_prompt',
+		deliveryId?: string
+	): void {
+		this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+			phase: 'continuation_failed',
+			deliveryIntent,
+			...(deliveryId && { deliveryId }),
+		});
 	}
 }
 

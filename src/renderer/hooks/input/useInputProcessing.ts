@@ -571,14 +571,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					ompTab.readOnlyMode !== true;
 				if (!isWritableLiveOmp || !ompTab) return;
 
-				const delivered = await window.maestro.process.deliverOmp({
-					sessionId: `${activeSession.id}-ai-${ompTab.id}`,
-					intent: options.ompDeliveryIntent,
-					message: effectiveInputValue,
-					...(effectiveImages.length ? { images: [...effectiveImages] } : {}),
-				});
-				if (!delivered) return;
-
 				const deliveryEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -602,6 +594,36 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 					})
 				);
+				const delivered = await window.maestro.process.deliverOmp({
+					sessionId: `${activeSession.id}-ai-${ompTab.id}`,
+					intent: options.ompDeliveryIntent,
+					message: effectiveInputValue,
+					deliveryId: deliveryEntry.id,
+					...(effectiveImages.length ? { images: [...effectiveImages] } : {}),
+				});
+				if (!delivered) {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== activeSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === ompTab.id
+										? {
+												...tab,
+												logs: tab.logs.map((log) =>
+													log.id === deliveryEntry.id
+														? { ...log, deliveryState: 'failed' as const }
+														: log
+												),
+											}
+										: tab
+								),
+							};
+						})
+					);
+					return;
+				}
 				window.maestro.process
 					.broadcastUserInput({
 						originId: getInputBroadcastOriginId(),

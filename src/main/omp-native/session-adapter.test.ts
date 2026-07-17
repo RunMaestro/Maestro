@@ -1917,7 +1917,7 @@ describe('OmpNativeSessionAdapter', () => {
 		).toEqual([['process:command-exit', 'tab-closed-continuation', 1, OMP_NATIVE_TURN_COMPLETION]]);
 	});
 
-	it('finalizes a rejected continuation delivery without leaving the current tab busy', async () => {
+	it('reports a rejected continuation while the original turn remains busy until its real end', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
 			const command = JSON.parse(frame) as { id?: string; type: string };
@@ -1946,18 +1946,35 @@ describe('OmpNativeSessionAdapter', () => {
 		await adapter.ready;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await adapter.prompt('first turn');
-		await expect(adapter.deliver('follow_up', 'continue after this')).rejects.toThrow(
-			'rejected continuation'
-		);
+		await expect(
+			adapter.deliver('follow_up', 'continue after this', undefined, 'rejected-follow-up')
+		).rejects.toThrow('rejected continuation');
 
 		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-rejected-continuation', {
 			phase: 'continuation_failed',
 			deliveryIntent: 'follow_up',
+			deliveryId: 'rejected-follow-up',
 		});
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-rejected-continuation'
+			)
+		).toHaveLength(0);
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'original turn continues' },
+		});
+		expect(send).toHaveBeenCalledWith(
+			'process:data',
+			'tab-rejected-continuation',
+			'original turn continues'
+		);
+		emit(child, { type: 'turn_end' });
 		expect(send).toHaveBeenCalledWith(
 			'process:command-exit',
 			'tab-rejected-continuation',
-			1,
+			0,
 			OMP_NATIVE_TURN_COMPLETION
 		);
 	});

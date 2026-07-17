@@ -248,15 +248,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:deliver-omp',
 		withIpcErrorLogging(handlerOpts('deliver-omp'), async (payload: unknown): Promise<boolean> => {
 			if (!isOmpPayload(payload, ['sessionId', 'intent', 'message'])) return false;
-			const { sessionId, intent, message, images } = payload as {
+			const { sessionId, intent, message, images, deliveryId } = payload as {
 				sessionId: string;
 				intent: unknown;
 				message: unknown;
 				images?: unknown;
+				deliveryId?: unknown;
 			};
 			if (
 				(intent !== 'steer' && intent !== 'follow_up' && intent !== 'abort_and_prompt') ||
 				typeof message !== 'string' ||
+				(deliveryId !== undefined && typeof deliveryId !== 'string') ||
 				(images !== undefined &&
 					(!Array.isArray(images) || images.some((image) => typeof image !== 'string')))
 			)
@@ -266,7 +268,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				return false;
 			const adapter = OmpNativeSessionAdapter.forSession(sessionId);
 			if (!adapter) return false;
-			await adapter.deliver(intent as OmpDeliveryIntent, message, images);
+			await adapter.deliver(intent as OmpDeliveryIntent, message, images, deliveryId);
 			return true;
 		})
 	);

@@ -271,6 +271,7 @@ interface MaestroAPI {
 			intent: OmpDeliveryIntent;
 			message: string;
 			images?: string[];
+			deliveryId?: string;
 		}) => Promise<boolean>;
 		broadcastUserInput: (payload: {
 			originId: string;

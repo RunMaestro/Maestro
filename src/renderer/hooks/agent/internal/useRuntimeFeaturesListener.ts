@@ -114,10 +114,13 @@ export function useRuntimeFeaturesListener(): void {
 							...session,
 							aiTabs: session.aiTabs.map((tab) => {
 								if (tab.id !== tabId) return tab;
-								const failedEntry = tab.logs.find(
-									(log) =>
-										log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
-								);
+								const failedEntry = event.deliveryId
+									? tab.logs.find((log) => log.id === event.deliveryId)
+									: tab.logs.find(
+											(log) =>
+												log.deliveryIntent === event.deliveryIntent &&
+												log.deliveryState === 'queued'
+										);
 								return failedEntry
 									? {
 											...tab,
@@ -156,10 +159,12 @@ export function useRuntimeFeaturesListener(): void {
 						thinkingStartTime: Date.now(),
 						aiTabs: session.aiTabs.map((tab) => {
 							if (tab.id !== tabId) return tab;
-							const continuationEntry = tab.logs.find(
-								(log) =>
-									log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
-							);
+							const continuationEntry = event.deliveryId
+								? tab.logs.find((log) => log.id === event.deliveryId)
+								: tab.logs.find(
+										(log) =>
+											log.deliveryIntent === event.deliveryIntent && log.deliveryState === 'queued'
+									);
 							return {
 								...tab,
 								state: 'busy',
