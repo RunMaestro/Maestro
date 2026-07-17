@@ -97,6 +97,7 @@ export class OmpNativeSessionAdapter {
 		| undefined;
 	private readonly usedDeliveryIds = new Set<string>();
 	private completionEmitted = false;
+	private turnEnded = false;
 	private awaitingContinuationBoundary = false;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
@@ -178,6 +179,7 @@ export class OmpNativeSessionAdapter {
 	async prompt(message: string, images?: readonly string[]): Promise<void> {
 		await this.initialized;
 		this.turnEmittedAssistantText = false;
+		this.turnEnded = false;
 		this.completionEmitted = false;
 		this.turnInFlight = true;
 		try {
@@ -203,9 +205,9 @@ export class OmpNativeSessionAdapter {
 		await this.initialized;
 		if (this.usedDeliveryIds.has(deliveryId)) return false;
 		this.usedDeliveryIds.add(deliveryId);
-		this.turnEmittedAssistantText = false;
 		if (!this.turnInFlight) this.completionEmitted = false;
 		this.turnInFlight = true;
+		if (intent !== 'follow_up') this.turnEnded = false;
 		if (intent === 'follow_up') this.pendingContinuationIntents.push({ intent, deliveryId });
 		try {
 			const response = await this.client.command({
@@ -218,7 +220,7 @@ export class OmpNativeSessionAdapter {
 				if (intent === 'follow_up' && this.removePendingContinuation(deliveryId)) {
 					this.reportRejectedContinuation(intent, deliveryId);
 				}
-				this.completeTurn();
+				this.completeReservedTurnIfEnded();
 				return false;
 			}
 			if (intent === 'abort_and_prompt') {
@@ -239,6 +241,7 @@ export class OmpNativeSessionAdapter {
 			} else {
 				this.turnInFlight = false;
 			}
+			this.completeReservedTurnIfEnded();
 			throw error;
 		}
 	}
@@ -615,6 +618,7 @@ export class OmpNativeSessionAdapter {
 				});
 		}
 		if (event.type === 'turn_end') {
+			this.turnEnded = true;
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'turn_end',
 			});
@@ -875,6 +879,7 @@ export class OmpNativeSessionAdapter {
 			return false;
 		}
 		this.awaitingContinuationBoundary = false;
+		this.turnEnded = false;
 		this.turnInFlight = true;
 		this.turnEmittedAssistantText = false;
 		this.activeContinuationIntent = continuation;
@@ -903,6 +908,16 @@ export class OmpNativeSessionAdapter {
 			0,
 			OMP_NATIVE_TURN_COMPLETION
 		);
+	}
+
+	private completeReservedTurnIfEnded(): void {
+		if (
+			this.turnEnded &&
+			!this.activeContinuationIntent &&
+			this.pendingContinuationIntents.length === 0
+		) {
+			this.completeTurn();
+		}
 	}
 
 	private removePendingContinuation(
