@@ -24,9 +24,11 @@ import type { LogEntry } from '../../../types';
 import type { BatchedUpdater } from './types';
 
 const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow'> = { flushNow: () => undefined };
+const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useAgentToolExecutionListener(
-	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER
+	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER,
+	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH
 ): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
@@ -55,12 +57,11 @@ export function useAgentToolExecutionListener(
 				if (!owningSession) return;
 				// OMP lifecycle receipts must observe every earlier streamed chunk
 				// before a synchronous tool entry or turn boundary is appended.
-				if (owningSession.toolType === 'omp') batchedUpdater.flushNow();
-				if (
-					!toolEvent.toolCallId &&
-					getSessions().find((session) => session.id === actualSessionId)?.toolType === 'omp'
-				)
-					return;
+				if (owningSession.toolType === 'omp') {
+					flushThinkingForSession(sessionId);
+					batchedUpdater.flushNow();
+				}
+				if (!toolEvent.toolCallId && owningSession.toolType === 'omp') return;
 
 				const logId = toolEvent.toolCallId
 					? `tool-${toolEvent.toolCallId}`
@@ -153,5 +154,5 @@ export function useAgentToolExecutionListener(
 		return () => {
 			unsubscribe?.();
 		};
-	}, [batchedUpdater, ownedGate]);
+	}, [batchedUpdater, flushThinkingForSession, ownedGate]);
 }

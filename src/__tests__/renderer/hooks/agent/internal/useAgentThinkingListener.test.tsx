@@ -125,6 +125,27 @@ describe('useAgentThinkingListener', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
 	});
 
+	it('flushes only the requested tab synchronously and leaves its scheduled RAF harmless', () => {
+		const firstTab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const secondTab = createMockAITab({ id: 'tab-2', showThinking: 'on' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [firstTab, secondTab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const { result } = renderHook(() => useAgentThinkingListener());
+		handler!('sess-1-ai-tab-1', 'first thinking');
+		handler!('sess-1-ai-tab-2', 'second thinking');
+
+		result.current('sess-1-ai-tab-1');
+		let tabs = useSessionStore.getState().sessions[0].aiTabs;
+		expect(tabs[0].logs.map((log) => log.text)).toEqual(['first thinking']);
+		expect(tabs[1].logs).toHaveLength(0);
+
+		flushRaf();
+		tabs = useSessionStore.getState().sessions[0].aiTabs;
+		expect(tabs[0].logs.map((log) => log.text)).toEqual(['first thinking']);
+		expect(tabs[1].logs.map((log) => log.text)).toEqual(['second thinking']);
+	});
+
 	it('ignores non-AI session ids', () => {
 		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });

@@ -16,9 +16,11 @@ import type { BatchedUpdater } from './types';
 // into AITab is a type error: e.g. their `state` unions differ).
 type RuntimePatch = Partial<Pick<Session, 'name' | 'runtimeFeatures' | 'pendingApprovals'>>;
 const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow'> = { flushNow: () => undefined };
+const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useRuntimeFeaturesListener(
-	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER
+	batchedUpdater: Pick<BatchedUpdater, 'flushNow'> = NOOP_BATCHED_UPDATER,
+	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH
 ): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
@@ -107,6 +109,7 @@ export function useRuntimeFeaturesListener(
 		const completedOmpTurns = new Set<string>();
 		const removeOmpTurnLifecycle = window.maestro.process.onOmpTurnLifecycle((sessionId, event) => {
 			if (!ownedGate.current?.(sessionId)) return;
+			flushThinkingForSession(sessionId);
 			batchedUpdater.flushNow();
 			if (event.phase === 'continuation_failed' && event.deliveryId) {
 				completedOmpTurns.delete(sessionId);
@@ -241,5 +244,5 @@ export function useRuntimeFeaturesListener(
 			removeSessionTitle();
 			removeOmpTurnLifecycle();
 		};
-	}, [batchedUpdater, ownedGate]);
+	}, [batchedUpdater, flushThinkingForSession, ownedGate]);
 }

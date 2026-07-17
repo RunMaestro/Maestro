@@ -3,6 +3,7 @@ import { renderHook } from '@testing-library/react';
 import { useRuntimeFeaturesListener } from '../../../../../renderer/hooks/agent/internal/useRuntimeFeaturesListener';
 import { useBatchedSessionUpdates } from '../../../../../renderer/hooks/session/useBatchedSessionUpdates';
 import { useAgentToolExecutionListener } from '../../../../../renderer/hooks/agent/internal/useAgentToolExecutionListener';
+import { useAgentThinkingListener } from '../../../../../renderer/hooks/agent/internal/useAgentThinkingListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import type { AgentRuntimeFeatureState } from '../../../../../shared/agent-runtime-features';
 import type { Session } from '../../../../../renderer/types';
@@ -37,6 +38,7 @@ let onToolExecution:
 			}
 	  ) => void)
 	| undefined;
+let onThinkingChunk: ((sessionId: string, content: string) => void) | undefined;
 
 vi.mock('../../../../../renderer/hooks/agent/internal/useOwnedSessionGate', () => ({
 	useOwnedSessionGate: () => ownedGate,
@@ -91,6 +93,10 @@ const mockProcess = {
 			return unsubscribe;
 		}
 	),
+	onThinkingChunk: vi.fn((handler: (sessionId: string, content: string) => void) => {
+		onThinkingChunk = handler;
+		return unsubscribe;
+	}),
 };
 
 function featureState(marker: string): AgentRuntimeFeatureState {
@@ -129,6 +135,7 @@ beforeEach(() => {
 	onRuntimeFeatures = undefined;
 	onOmpTurnLifecycle = undefined;
 	onToolExecution = undefined;
+	onThinkingChunk = undefined;
 	// the preload bridge surface is irrelevant to this suite.
 	const processBridge = mockProcess as unknown as typeof window.maestro.process;
 	window.maestro = { ...window.maestro, process: processBridge };
@@ -525,6 +532,7 @@ describe('useRuntimeFeaturesListener', () => {
 					tab.id === 'tab-a'
 						? {
 								...tab,
+								showThinking: 'on',
 								logs: [
 									{ id: 'first', timestamp: 1, source: 'user', text: 'First request' },
 									{
@@ -543,11 +551,13 @@ describe('useRuntimeFeaturesListener', () => {
 		}));
 		const { result } = renderHook(() => {
 			const batchedUpdater = useBatchedSessionUpdates(60_000);
-			useAgentToolExecutionListener(batchedUpdater);
-			useRuntimeFeaturesListener(batchedUpdater);
+			const flushThinkingForSession = useAgentThinkingListener();
+			useAgentToolExecutionListener(batchedUpdater, flushThinkingForSession);
+			useRuntimeFeaturesListener(batchedUpdater, flushThinkingForSession);
 			return batchedUpdater;
 		});
 
+		onThinkingChunk!('owned-session-ai-tab-a', 'First thinking');
 		result.current.appendLog('owned-session', 'tab-a', true, 'First output');
 		onToolExecution!('owned-session-ai-tab-a', {
 			toolName: 'bash',
@@ -568,6 +578,7 @@ describe('useRuntimeFeaturesListener', () => {
 		const logs = storedSession().aiTabs[0].logs;
 		expect(logs.map((log) => log.text)).toEqual([
 			'First request',
+			'First thinking',
 			'First output',
 			'bash',
 			'',
@@ -577,6 +588,7 @@ describe('useRuntimeFeaturesListener', () => {
 		]);
 		expect(logs.map((log) => log.source)).toEqual([
 			'user',
+			'thinking',
 			'stdout',
 			'tool',
 			'system',
@@ -584,8 +596,8 @@ describe('useRuntimeFeaturesListener', () => {
 			'stdout',
 			'system',
 		]);
-		expect(logs[3]?.metadata?.ompTurnBoundary).toBe(true);
-		expect(logs[6]?.metadata?.ompTurnBoundary).toBe(true);
+		expect(logs[4]?.metadata?.ompTurnBoundary).toBe(true);
+		expect(logs[7]?.metadata?.ompTurnBoundary).toBe(true);
 	});
 
 	it('ignores feature events for sessions this window does not own', () => {

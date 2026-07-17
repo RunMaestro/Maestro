@@ -94,12 +94,12 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		addHistoryEntryRef: deps.addHistoryEntryRef,
 		activeHiddenToolRef,
 	});
-	useAgentThinkingListener();
+	const flushThinkingForSession = useAgentThinkingListener();
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
-	useAgentToolExecutionListener(deps.batchedUpdater);
-	useRuntimeFeaturesListener(deps.batchedUpdater);
+	useAgentToolExecutionListener(deps.batchedUpdater, flushThinkingForSession);
+	useRuntimeFeaturesListener(deps.batchedUpdater, flushThinkingForSession);
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
 	// orphan tool entries are released for GC.
