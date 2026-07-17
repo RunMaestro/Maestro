@@ -144,6 +144,13 @@ beforeEach(() => {
 });
 
 describe('useRuntimeFeaturesListener', () => {
+	it('keeps the real OMP coordinator identity stable across a rerender', () => {
+		const { result, rerender } = renderHook(() => useOmpEventCoordinator());
+		const first = result.current;
+		rerender();
+		expect(result.current).toBe(first);
+	});
+
 	it('opens broadcast URLs only in the owning Maestro window', () => {
 		renderHook(() => useRuntimeFeaturesListener());
 
