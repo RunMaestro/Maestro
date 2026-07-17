@@ -4,7 +4,7 @@ import type {
 	AgentRuntimeFeatureState,
 } from '../../../../shared/agent-runtime-features';
 import { useSessionStore } from '../../../stores/sessionStore';
-import type { Session } from '../../../types';
+import type { LogEntry, Session } from '../../../types';
 import { parseSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { openInSystemBrowser } from '../../../utils/openUrl';
@@ -21,6 +21,19 @@ const NOOP_BATCHED_UPDATER: Pick<
 	'flushNow' | 'flushSessionNow' | 'flushTargetNow'
 > = { flushNow: () => undefined };
 const NOOP_THINKING_FLUSH = () => undefined;
+
+function findQueuedReceipt(
+	logs: readonly LogEntry[],
+	deliveryId: string,
+	deliveryIntent: NonNullable<LogEntry['deliveryIntent']>
+): LogEntry | undefined {
+	const matches = (log: LogEntry) =>
+		log.deliveryIntent === deliveryIntent && log.deliveryState === 'queued';
+	return (
+		logs.find((log) => log.deliveryId === deliveryId && matches(log)) ??
+		logs.find((log) => !log.deliveryId && log.id === deliveryId && matches(log))
+	);
+}
 
 export function useRuntimeFeaturesListener(
 	batchedUpdater: Pick<
@@ -136,11 +149,10 @@ export function useRuntimeFeaturesListener(
 							...session,
 							aiTabs: session.aiTabs.map((tab) => {
 								if (tab.id !== tabId) return tab;
-								const failedEntry = tab.logs.find(
-									(log) =>
-										(log.deliveryId === event.deliveryId || log.id === event.deliveryId) &&
-										log.deliveryIntent === event.deliveryIntent &&
-										log.deliveryState === 'queued'
+								const failedEntry = findQueuedReceipt(
+									tab.logs,
+									event.deliveryId ?? '',
+									event.deliveryIntent ?? 'follow_up'
 								);
 								return failedEntry
 									? {
@@ -203,13 +215,13 @@ export function useRuntimeFeaturesListener(
 			setSessions((sessions) =>
 				sessions.map((session) => {
 					if (session.id !== baseSessionId) return session;
-					const continuationEntry = session.aiTabs
-						.find((tab) => tab.id === tabId)
-						?.logs.find(
-							(log) =>
-								(log.deliveryId === event.deliveryId || log.id === event.deliveryId) &&
-								log.deliveryIntent === event.deliveryIntent &&
-								log.deliveryState === 'queued'
+					const continuationLogs = session.aiTabs.find((tab) => tab.id === tabId)?.logs;
+					const continuationEntry =
+						continuationLogs &&
+						findQueuedReceipt(
+							continuationLogs,
+							event.deliveryId ?? '',
+							event.deliveryIntent ?? 'follow_up'
 						);
 					if (!continuationEntry) return session;
 					completedOmpTurns.delete(sessionId);
