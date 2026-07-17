@@ -23,6 +23,8 @@ vi.mock('../../../../main/utils/logger', () => ({
 
 vi.mock('../../../../main/parsers/error-patterns', () => ({
 	matchSshErrorPattern: vi.fn(() => null),
+	getErrorPatterns: vi.fn(() => []),
+	matchErrorPattern: vi.fn(() => null),
 }));
 
 vi.mock('../../../../main/parsers/usage-aggregator', () => ({
@@ -61,12 +63,13 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
+import { CursorCliOutputParser } from '../../../../main/parsers/cursor-cli-output-parser';
 import { captureException } from '../../../../main/utils/sentry';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
-import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
+import type { AgentOutputParser } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -378,6 +381,64 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).not.toContain('Should not be emitted');
+		});
+	});
+
+	describe('stream-json error ordering', () => {
+		it('does not flush partial streamedText after an agent error was already emitted', async () => {
+			const proc = createMockProcess({
+				toolType: 'cursor-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				streamedText: 'Partial assistant output',
+				errorEmitted: true,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toEqual([]);
+		});
+
+		it('emits an unterminated Cursor error result on successful process exit without data recovery', async () => {
+			const proc = createMockProcess({
+				toolType: 'cursor-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: JSON.stringify({
+					type: 'result',
+					subtype: 'error',
+					is_error: true,
+					result: 'Cursor agent failed',
+					session_id: 'cursor-session',
+				}),
+				outputParser: new CursorCliOutputParser(),
+				streamedText: 'Partial assistant output',
+				sshRemoteId: 'remote-1',
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const errors: Array<[string, { sessionId?: string; sshRemoteId?: string; message: string }]> =
+				[];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('agent-error', (sid: string, error) => errors.push([sid, error]));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toEqual([
+				'test-session',
+				expect.objectContaining({
+					sessionId: 'test-session',
+					sshRemoteId: 'remote-1',
+					message: 'Cursor agent failed',
+				}),
+			]);
+			expect(dataEvents).toEqual([]);
 		});
 	});
 

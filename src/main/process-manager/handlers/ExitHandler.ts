@@ -113,7 +113,26 @@ export class ExitHandler {
 			});
 			try {
 				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+				const agentError = !managedProcess.errorEmitted
+					? event?.raw !== undefined
+						? outputParser.detectErrorFromParsed(event.raw)
+						: outputParser.detectErrorFromLine(remainingLine)
+					: null;
+
+				if (agentError) {
+					managedProcess.errorEmitted = true;
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					logger.debug('[ProcessManager] Error detected from exit remainder', 'ProcessManager', {
+						sessionId,
+						exitCode: code,
+						errorType: agentError.type,
+						errorMessage: agentError.message,
+					});
+					this.emitter.emit('agent-error', sessionId, agentError);
+				} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 					managedProcess.resultEmitted = true;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
@@ -121,24 +140,11 @@ export class ExitHandler {
 					}
 				}
 			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine);
-			}
-		}
-
-		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
-		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
-		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
-			managedProcess.resultEmitted = true;
-			logger.debug(
-				'[ProcessManager] Emitting streamed text at exit (no result event)',
-				'ProcessManager',
-				{
-					sessionId,
-					streamedTextLength: managedProcess.streamedText.length,
+				// If parsing fails, emit the raw line as data unless the stream already failed.
+				if (!managedProcess.errorEmitted) {
+					this.bufferManager.emitDataBuffered(sessionId, remainingLine);
 				}
-			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			}
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -162,6 +168,27 @@ export class ExitHandler {
 				});
 				this.emitter.emit('agent-error', sessionId, agentError);
 			}
+		}
+
+		// Some stream-json agents don't send explicit result events. Preserve their
+		// accumulated response only after exit processing confirms a clean completion.
+		if (
+			isStreamJsonMode &&
+			code === 0 &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.resultEmitted &&
+			managedProcess.streamedText
+		) {
+			managedProcess.resultEmitted = true;
+			logger.debug(
+				'[ProcessManager] Emitting streamed text at exit (no result event)',
+				'ProcessManager',
+				{
+					sessionId,
+					streamedTextLength: managedProcess.streamedText.length,
+				}
+			);
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
 		}
 
 		// Check for SSH-specific errors at exit (only when running via SSH remote)
