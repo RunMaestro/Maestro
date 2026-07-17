@@ -1764,7 +1764,7 @@ describe('OmpNativeSessionAdapter', () => {
 		).toBe(200_000);
 	});
 
-	it('uses refreshed active-model metadata after model switches and session resumes', () => {
+	it('uses refreshed active-model metadata after model switches and selected-model recovery', () => {
 		const models = [
 			{ provider: 'anthropic', id: 'claude-sonnet', contextWindow: 200_000 },
 			{ provider: 'anthropic', id: 'claude-opus', contextWindow: 1_000_000 },
@@ -1791,6 +1791,67 @@ describe('OmpNativeSessionAdapter', () => {
 				selectedModel: 'anthropic:claude-opus',
 			})
 		).toBe(1_000_000);
+	});
+
+	it('projects resumed-session model metadata after switch_session', async () => {
+		const child = new FakeChild();
+		const frames: Array<Record<string, unknown>> = [];
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			frames.push(command);
+			if (command.id) {
+				const data =
+					command.type === 'get_available_models'
+						? {
+								models: [
+									{
+										provider: 'openai-codex',
+										id: 'gpt-5.6',
+										contextWindow: 400_000,
+									},
+								],
+							}
+						: command.type === 'get_state'
+							? { model: { provider: 'openai-codex', id: 'gpt-5.6' }, todoPhases: [] }
+							: {};
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data,
+					})
+				);
+			}
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-resume-metadata',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			agentSessionId: 'C:/work/.omp/sessions/resumed.jsonl',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(frames).toContainEqual(
+			expect.objectContaining({
+				type: 'switch_session',
+				sessionPath: 'C:/work/.omp/sessions/resumed.jsonl',
+			})
+		);
+		expect(send).toHaveBeenCalledWith(
+			'process:runtime-features',
+			'tab-resume-metadata',
+			expect.objectContaining({ stats: expect.objectContaining({ contextWindow: 400_000 }) })
+		);
+		adapter.dispose();
 	});
 
 	function extensionResponses(child: FakeChild): Array<Record<string, unknown>> {
