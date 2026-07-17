@@ -451,6 +451,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// and terminal surfaces degrade to monospace instead of the browser's serif
 	// default when the stored font (a bare name from the picker) isn't installed.
 	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+	// The command terminal can use its own font (issue #1228). An empty setting
+	// means "inherit the UI font", so fall back to fontFamily before applying the
+	// monospace safety net.
+	const terminalFontFamily = useSettingsStore((s) =>
+		withMonoFallback(s.terminalFontFamily?.trim() || s.fontFamily)
+	);
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
@@ -1029,7 +1035,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							}}
 							session={session}
 							theme={theme}
-							fontFamily={fontFamily}
+							fontFamily={terminalFontFamily}
 							fontSize={Math.round(fontSize * 0.85)}
 							defaultShell={defaultShell}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}

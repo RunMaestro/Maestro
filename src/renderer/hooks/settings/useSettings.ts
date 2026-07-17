@@ -84,8 +84,10 @@ export interface UseSettingsReturn {
 
 	// Font settings
 	fontFamily: string;
+	terminalFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
+	setTerminalFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 
 	// UI settings

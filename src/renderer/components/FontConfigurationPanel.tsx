@@ -41,6 +41,15 @@ export interface FontConfigurationPanelProps {
 	onFontInteraction: () => void;
 	/** Current theme for styling */
 	theme: Theme;
+	/** Section heading. Defaults to "Interface Font". */
+	heading?: string;
+	/** Optional helper text rendered under the heading. */
+	description?: string;
+	/**
+	 * Extra option rendered at the top of the dropdown, e.g. an "inherit" entry.
+	 * Its `value` should be the empty string so it maps to the stored default.
+	 */
+	inheritOption?: { value: string; label: string };
 }
 
 /**
@@ -64,6 +73,9 @@ export function FontConfigurationPanel({
 	onRemoveCustomFont,
 	onFontInteraction,
 	theme,
+	heading = 'Interface Font',
+	description,
+	inheritOption,
 }: FontConfigurationPanelProps) {
 	const [customFontInput, setCustomFontInput] = useState('');
 
@@ -99,6 +111,16 @@ export function FontConfigurationPanel({
 		[normalizedFontsSet]
 	);
 
+	// All detected system fonts, excluding ones already surfaced in the common
+	// and custom groups so the "All Installed Fonts" group has no duplicates.
+	const installedFonts = useMemo(() => {
+		const normalize = (str: string) => str.toLowerCase().replace(/[\s-]/g, '');
+		const shown = new Set([...COMMON_MONOSPACE_FONTS, ...customFonts].map((f) => normalize(f)));
+		return [...systemFonts]
+			.filter((font) => !shown.has(normalize(font)))
+			.sort((a, b) => a.localeCompare(b));
+	}, [systemFonts, customFonts]);
+
 	const handleAddCustomFont = () => {
 		const trimmedFont = customFontInput.trim();
 		if (trimmedFont && !customFonts.includes(trimmedFont)) {
@@ -115,89 +137,104 @@ export function FontConfigurationPanel({
 
 	return (
 		<div>
-			<SettingsSectionHeading icon={Type}>Interface Font</SettingsSectionHeading>
-			{fontLoading ? (
-				<div className="text-sm opacity-50 p-2">Loading fonts...</div>
-			) : (
-				<>
-					<select
-						value={fontFamily}
-						onChange={(e) => setFontFamily(e.target.value)}
-						onFocus={onFontInteraction}
-						onClick={onFontInteraction}
-						className="w-full p-2 rounded border bg-transparent outline-none mb-3"
-						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-					>
-						<optgroup label="Common Monospace Fonts">
-							{COMMON_MONOSPACE_FONTS.map((font) => {
-								const available = fontsLoaded ? isFontAvailable(font) : true;
-								return (
-									<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
-										{font} {fontsLoaded && !available && '(Not Found)'}
-									</option>
-								);
-							})}
-						</optgroup>
-						{customFonts.length > 0 && (
-							<optgroup label="Custom Fonts">
-								{customFonts.map((font) => (
-									<option key={font} value={font}>
-										{font}
-									</option>
-								))}
-							</optgroup>
-						)}
-					</select>
+			<SettingsSectionHeading icon={Type}>{heading}</SettingsSectionHeading>
+			{description && <p className="text-xs opacity-60 mb-2 -mt-1">{description}</p>}
+			{/*
+			 * Keep the <select> mounted while fonts lazy-load. Swapping it for a
+			 * "Loading fonts..." placeholder mid-click unmounts the element that
+			 * was opening its dropdown, so the first click just blinked and did
+			 * nothing (issue #1228). The select works without the availability
+			 * annotations, which fill in once loading finishes.
+			 */}
+			<select
+				value={fontFamily}
+				onChange={(e) => setFontFamily(e.target.value)}
+				onFocus={onFontInteraction}
+				onClick={onFontInteraction}
+				className="w-full p-2 rounded border bg-transparent outline-none mb-1"
+				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+			>
+				{inheritOption && <option value={inheritOption.value}>{inheritOption.label}</option>}
+				<optgroup label="Common Monospace Fonts">
+					{COMMON_MONOSPACE_FONTS.map((font) => {
+						const available = fontsLoaded ? isFontAvailable(font) : true;
+						return (
+							<option key={font} value={font} style={{ opacity: available ? 1 : 0.4 }}>
+								{font} {fontsLoaded && !available && '(Not Found)'}
+							</option>
+						);
+					})}
+				</optgroup>
+				{customFonts.length > 0 && (
+					<optgroup label="Custom Fonts">
+						{customFonts.map((font) => (
+							<option key={font} value={font}>
+								{font}
+							</option>
+						))}
+					</optgroup>
+				)}
+				{installedFonts.length > 0 && (
+					<optgroup label="All Installed Fonts">
+						{installedFonts.map((font) => (
+							<option key={font} value={font}>
+								{font}
+							</option>
+						))}
+					</optgroup>
+				)}
+			</select>
+			<div className="h-4 mb-2 text-xs opacity-50">
+				{fontLoading ? 'Loading installed fonts...' : ''}
+			</div>
 
-					<div className="space-y-2">
-						<div className="flex gap-2">
-							<input
-								type="text"
-								value={customFontInput}
-								onChange={(e) => setCustomFontInput(e.target.value)}
-								onKeyDown={handleKeyDown}
-								placeholder="Add custom font name..."
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							/>
-							<button
-								onClick={handleAddCustomFont}
-								className="px-3 py-2 rounded text-xs font-bold"
+			<div className="space-y-2">
+				<div className="flex gap-2">
+					<input
+						type="text"
+						value={customFontInput}
+						onChange={(e) => setCustomFontInput(e.target.value)}
+						onKeyDown={handleKeyDown}
+						placeholder="Add custom font name..."
+						className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					/>
+					<button
+						onClick={handleAddCustomFont}
+						className="px-3 py-2 rounded text-xs font-bold"
+						style={{
+							backgroundColor: theme.colors.accent,
+							color: theme.colors.accentForeground,
+						}}
+					>
+						Add
+					</button>
+				</div>
+
+				{customFonts.length > 0 && (
+					<div className="flex flex-wrap gap-2">
+						{customFonts.map((font) => (
+							<div
+								key={font}
+								className="flex items-center gap-2 px-2 py-1 rounded text-xs"
 								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
 								}}
 							>
-								Add
-							</button>
-						</div>
-
-						{customFonts.length > 0 && (
-							<div className="flex flex-wrap gap-2">
-								{customFonts.map((font) => (
-									<div
-										key={font}
-										className="flex items-center gap-2 px-2 py-1 rounded text-xs"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											borderColor: theme.colors.border,
-										}}
-									>
-										<span style={{ color: theme.colors.textMain }}>{font}</span>
-										<button
-											onClick={() => onRemoveCustomFont(font)}
-											className="hover:opacity-70"
-											style={{ color: theme.colors.error }}
-										>
-											×
-										</button>
-									</div>
-								))}
+								<span style={{ color: theme.colors.textMain }}>{font}</span>
+								<button
+									onClick={() => onRemoveCustomFont(font)}
+									className="hover:opacity-70"
+									style={{ color: theme.colors.error }}
+								>
+									×
+								</button>
 							</div>
-						)}
+						))}
 					</div>
-				</>
-			)}
+				)}
+			</div>
 		</div>
 	);
 }
