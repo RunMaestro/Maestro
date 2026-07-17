@@ -2011,6 +2011,83 @@ describe('OmpNativeSessionAdapter', () => {
 		expect(child.kill).not.toHaveBeenCalled();
 	});
 
+	it('reserves a follow-up before its deferred RPC response crosses turn_end', async () => {
+		const child = new FakeChild();
+		let holdPrompt = false;
+		let deferredPrompt: { id: string; type: string } | undefined;
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (!command.id) return true;
+			if (holdPrompt && command.type === 'prompt') {
+				deferredPrompt = { id: command.id, type: command.type };
+				return true;
+			}
+			queueMicrotask(() =>
+				emit(child, {
+					type: 'response',
+					id: command.id,
+					command: command.type,
+					success: true,
+					data: command.type === 'get_state' ? { todoPhases: [] } : {},
+				})
+			);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = await OmpNativeSessionAdapter.acquire({
+			sessionId: 'tab-deferred-follow-up',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await adapter.prompt('base');
+
+		holdPrompt = true;
+		const delivery = adapter.deliver(
+			'follow_up',
+			'deferred',
+			undefined,
+			'00000000-0000-4000-8000-000000000012'
+		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		emit(child, { type: 'turn_end' });
+		expect(deferredPrompt).toBeDefined();
+		emit(child, {
+			type: 'response',
+			id: deferredPrompt!.id,
+			command: deferredPrompt!.type,
+			success: true,
+			data: {},
+		});
+		await delivery;
+		emit(child, {
+			type: 'message_update',
+			assistantMessageEvent: { type: 'text_delta', delta: 'continuation' },
+		});
+
+		const lifecycleIndex = send.mock.calls.findIndex(
+			([channel, sessionId, event]) =>
+				channel === 'process:omp-turn-lifecycle' &&
+				sessionId === 'tab-deferred-follow-up' &&
+				event &&
+				typeof event === 'object' &&
+				'deliveryId' in event &&
+				event.deliveryId === '00000000-0000-4000-8000-000000000012'
+		);
+		const outputIndex = send.mock.calls.findIndex(
+			([channel, sessionId, text]) =>
+				channel === 'process:data' &&
+				sessionId === 'tab-deferred-follow-up' &&
+				text === 'continuation'
+		);
+		expect(lifecycleIndex).toBeGreaterThanOrEqual(0);
+		expect(outputIndex).toBeGreaterThan(lifecycleIndex);
+	});
+
 	it('consumes an atomic replacement without waiting for an intermediate turn boundary', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
