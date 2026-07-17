@@ -84,6 +84,29 @@ describe('OmpTurnFabric', () => {
 		expect(screen.queryByText(/Queued follow-up/)).not.toBeInTheDocument();
 	});
 
+	it('keeps a failed queued continuation in flow with an explicit failure receipt', () => {
+		render(
+			<OmpTurnFabric
+				logs={[
+					{ id: 'first', timestamp: 1_000, source: 'user', text: 'First request' },
+					{
+						id: 'failed-follow-up',
+						timestamp: 2_000,
+						source: 'user',
+						text: 'Follow-up request',
+						deliveryIntent: 'follow_up',
+						deliveryState: 'failed',
+					},
+				]}
+				theme={THEMES.dracula}
+				isLive={false}
+				renderLog={(log) => <span>{log.text}</span>}
+			/>
+		);
+
+		expect(screen.getByText('Queued follow-up failed · Follow-up request')).toBeInTheDocument();
+	});
+
 	it('places the superseded seam between aborted output and a consumed replacement turn', () => {
 		render(
 			<OmpTurnFabric

@@ -96,6 +96,24 @@ export function OmpTurnFabric({ logs, theme, isLive, subagents, renderLog }: Omp
 										</div>
 									);
 								}
+								if (
+									(log.deliveryIntent === 'follow_up' ||
+										log.deliveryIntent === 'abort_and_prompt') &&
+									log.deliveryState === 'failed'
+								) {
+									return (
+										<div
+											key={log.id}
+											className="my-1 rounded border border-dashed px-2 py-1 text-xs"
+											style={{ borderColor: theme.colors.error, color: theme.colors.error }}
+										>
+											{log.deliveryIntent === 'follow_up'
+												? 'Queued follow-up failed'
+												: 'Interrupt & replace failed'}{' '}
+											· {log.text}
+										</div>
+									);
+								}
 								if (log.deliveryIntent === 'follow_up' && log.deliveryState === 'queued') {
 									return (
 										<div
