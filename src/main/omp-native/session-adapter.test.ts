@@ -1714,14 +1714,24 @@ describe('OmpNativeSessionAdapter', () => {
 		);
 		expect(
 			frames
-				.filter((frame) =>
-					['steer', 'follow_up', 'abort_and_prompt'].includes(frame.type as string)
+				.filter(
+					(frame) =>
+						frame.type === 'prompt' &&
+						['steer', 'follow_up', 'abort_and_prompt'].includes(frame.streamingBehavior as string)
 				)
-				.map((frame) => ({ type: frame.type, message: frame.message }))
+				.map((frame) => ({
+					type: frame.type,
+					message: frame.message,
+					streamingBehavior: frame.streamingBehavior,
+				}))
 		).toEqual([
-			{ type: 'steer', message: 'keep the existing process' },
-			{ type: 'follow_up', message: 'do this after the turn' },
-			{ type: 'abort_and_prompt', message: 'replace the current turn' },
+			{ type: 'prompt', message: 'keep the existing process', streamingBehavior: 'steer' },
+			{ type: 'prompt', message: 'do this after the turn', streamingBehavior: 'follow_up' },
+			{
+				type: 'prompt',
+				message: 'replace the current turn',
+				streamingBehavior: 'abort_and_prompt',
+			},
 		]);
 
 		for (const control of [
@@ -1762,9 +1772,13 @@ describe('OmpNativeSessionAdapter', () => {
 
 	it('spends delivery IDs per adapter across pending, consumed, and rejected continuations', async () => {
 		const firstChild = new FakeChild();
-		const firstFrames: Array<{ type: string }> = [];
+		const firstFrames: Array<{ type: string; streamingBehavior?: string }> = [];
 		firstChild.stdin.write.mockImplementation((frame: string) => {
-			const command = JSON.parse(frame) as { id?: string; type: string };
+			const command = JSON.parse(frame) as {
+				id?: string;
+				type: string;
+				streamingBehavior?: string;
+			};
 			firstFrames.push(command);
 			if (command.id)
 				queueMicrotask(() =>
@@ -1808,12 +1822,20 @@ describe('OmpNativeSessionAdapter', () => {
 		await expect(first.deliver('follow_up', 'duplicate failed', undefined, failedId)).resolves.toBe(
 			false
 		);
-		expect(firstFrames.filter((frame) => frame.type === 'follow_up')).toHaveLength(2);
+		expect(
+			firstFrames.filter(
+				(frame) => frame.type === 'prompt' && frame.streamingBehavior === 'follow_up'
+			)
+		).toHaveLength(2);
 
 		const rejectedChild = new FakeChild();
-		const rejectedFrames: Array<{ type: string }> = [];
+		const rejectedFrames: Array<{ type: string; streamingBehavior?: string }> = [];
 		rejectedChild.stdin.write.mockImplementation((frame: string) => {
-			const command = JSON.parse(frame) as { id?: string; type: string };
+			const command = JSON.parse(frame) as {
+				id?: string;
+				type: string;
+				streamingBehavior?: string;
+			};
 			rejectedFrames.push(command);
 			if (command.id)
 				queueMicrotask(() =>
@@ -1821,8 +1843,8 @@ describe('OmpNativeSessionAdapter', () => {
 						type: 'response',
 						id: command.id,
 						command: command.type,
-						success: command.type !== 'follow_up',
-						error: command.type === 'follow_up' ? 'rejected continuation' : undefined,
+						success: command.streamingBehavior !== 'follow_up',
+						error: command.streamingBehavior === 'follow_up' ? 'rejected continuation' : undefined,
 						data: command.type === 'get_state' ? { todoPhases: [] } : {},
 					})
 				);
@@ -1846,7 +1868,11 @@ describe('OmpNativeSessionAdapter', () => {
 		await expect(
 			rejected.deliver('follow_up', 'duplicate rejected', undefined, rejectedId)
 		).resolves.toBe(false);
-		expect(rejectedFrames.filter((frame) => frame.type === 'follow_up')).toHaveLength(1);
+		expect(
+			rejectedFrames.filter(
+				(frame) => frame.type === 'prompt' && frame.streamingBehavior === 'follow_up'
+			)
+		).toHaveLength(1);
 
 		const secondChild = new FakeChild();
 		secondChild.stdin.write.mockImplementation((frame: string) => {
@@ -1879,7 +1905,7 @@ describe('OmpNativeSessionAdapter', () => {
 		).resolves.toBe(true);
 	});
 
-	it('continues a queued follow-up on the same RPC child after the preceding turn seals', async () => {
+	it('continues a queued follow-up on the same RPC child at the next turn_start boundary', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
 			const command = JSON.parse(frame) as { id?: string; type: string };
@@ -1930,7 +1956,7 @@ describe('OmpNativeSessionAdapter', () => {
 					channel === 'process:command-exit' && sessionId === 'tab-follow-up-chain'
 			)
 		).toHaveLength(0);
-		emit(child, { type: 'agent_start' });
+		emit(child, { type: 'turn_start' });
 		emit(child, {
 			type: 'message_update',
 			assistantMessageEvent: { type: 'text_delta', delta: 'output C' },
@@ -1960,6 +1986,58 @@ describe('OmpNativeSessionAdapter', () => {
 			)
 		).toHaveLength(1);
 		expect(child.kill).not.toHaveBeenCalled();
+	});
+
+	it('consumes an atomic replacement without waiting for an intermediate turn boundary', async () => {
+		const child = new FakeChild();
+		child.stdin.write.mockImplementation((frame: string) => {
+			const command = JSON.parse(frame) as { id?: string; type: string };
+			if (command.id)
+				queueMicrotask(() =>
+					emit(child, {
+						type: 'response',
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: command.type === 'get_state' ? { todoPhases: [] } : {},
+					})
+				);
+			return true;
+		});
+		const send = vi.fn();
+		const adapter = OmpNativeSessionAdapter.create({
+			sessionId: 'tab-atomic-replacement',
+			cwd: 'C:/work/project',
+			command: 'omp',
+			send,
+			spawn: vi.fn(() => child as never),
+		});
+		emit(child, { type: 'ready', version: '16.4.8' });
+		await adapter.ready;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		await adapter.prompt('original turn');
+		await adapter.deliver(
+			'abort_and_prompt',
+			'replace the current turn',
+			undefined,
+			'00000000-0000-4000-8000-000000000010'
+		);
+
+		expect(send).toHaveBeenCalledWith('process:omp-turn-lifecycle', 'tab-atomic-replacement', {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: 'abort_and_prompt',
+			deliveryId: '00000000-0000-4000-8000-000000000010',
+		});
+		emit(child, { type: 'turn_end' });
+		emit(child, { type: 'agent_end' });
+		expect(
+			send.mock.calls.filter(
+				([channel, sessionId]) =>
+					channel === 'process:command-exit' && sessionId === 'tab-atomic-replacement'
+			)
+		).toEqual([['process:command-exit', 'tab-atomic-replacement', 0, OMP_NATIVE_TURN_COMPLETION]]);
 	});
 
 	it('finalizes a queued continuation once when OMP reports an extension error before restart', async () => {
@@ -2075,15 +2153,19 @@ describe('OmpNativeSessionAdapter', () => {
 	it('reports a rejected continuation while the original turn remains busy until its real end', async () => {
 		const child = new FakeChild();
 		child.stdin.write.mockImplementation((frame: string) => {
-			const command = JSON.parse(frame) as { id?: string; type: string };
+			const command = JSON.parse(frame) as {
+				id?: string;
+				type: string;
+				streamingBehavior?: string;
+			};
 			if (command.id)
 				queueMicrotask(() =>
 					emit(child, {
 						type: 'response',
 						id: command.id,
 						command: command.type,
-						success: command.type !== 'follow_up',
-						error: command.type === 'follow_up' ? 'rejected continuation' : undefined,
+						success: command.streamingBehavior !== 'follow_up',
+						error: command.streamingBehavior === 'follow_up' ? 'rejected continuation' : undefined,
 						data: command.type === 'get_state' ? { todoPhases: [] } : {},
 					})
 				);

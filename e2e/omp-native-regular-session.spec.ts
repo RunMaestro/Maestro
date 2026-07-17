@@ -73,9 +73,9 @@ test.describe('first-party OMP regular session', () => {
 
 			await expect
 				.poll(() => fs.readFileSync(frameLogPath, 'utf8'), { timeout: 30_000 })
-				.toContain('"type":"follow_up"');
+				.toContain('"streamingBehavior":"follow_up"');
 			const frames = fs.readFileSync(frameLogPath, 'utf8');
-			expect((frames.match(/"type":"agent_start"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+			expect((frames.match(/"type":"agent_start"/g) ?? []).length).toBeGreaterThanOrEqual(1);
 			expect(frames).not.toMatch(/"type":"(?:login|open_url|open_external_url)"/);
 			expect(launched.output()).not.toMatch(/legacy.*fallback|fallback.*legacy/i);
 			fs.writeFileSync(testInfo.outputPath('omp-native-frames.jsonl'), frames, 'utf8');

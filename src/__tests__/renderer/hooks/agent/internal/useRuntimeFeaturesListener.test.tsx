@@ -324,7 +324,7 @@ describe('useRuntimeFeaturesListener', () => {
 		).toEqual(['queued', 'consumed', 'queued']);
 	});
 
-	it('moves each queued replacement exactly once into its own continuation boundary', () => {
+	it('moves each queued atomic replacement immediately into its continuation boundary', () => {
 		useSessionStore.setState((state) => ({
 			sessions: state.sessions.map((session) => ({
 				...session,
@@ -352,7 +352,6 @@ describe('useRuntimeFeaturesListener', () => {
 		}));
 		renderHook(() => useRuntimeFeaturesListener());
 
-		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
 		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
 			phase: 'agent_start',
 			continuation: true,
@@ -394,7 +393,6 @@ describe('useRuntimeFeaturesListener', () => {
 				),
 			})),
 		}));
-		onOmpTurnLifecycle!('owned-session-ai-tab-a', { phase: 'turn_end' });
 		onOmpTurnLifecycle!('owned-session-ai-tab-a', {
 			phase: 'agent_start',
 			continuation: true,

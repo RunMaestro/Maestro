@@ -140,11 +140,12 @@ export function useRuntimeFeaturesListener(): void {
 				completedOmpTurns.add(sessionId);
 				return;
 			}
+			const isAtomicReplacement = event.deliveryIntent === 'abort_and_prompt';
 			if (
 				event.phase !== 'agent_start' ||
 				event.continuation !== true ||
 				!event.deliveryId ||
-				!completedOmpTurns.has(sessionId)
+				(!completedOmpTurns.has(sessionId) && !isAtomicReplacement)
 			)
 				return;
 			const { baseSessionId, tabId } = parseSessionId(sessionId);

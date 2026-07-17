@@ -94,6 +94,7 @@ export class OmpNativeSessionAdapter {
 	}> = [];
 	private readonly usedDeliveryIds = new Set<string>();
 	private completionEmitted = false;
+	private awaitingContinuationBoundary = false;
 	private refreshInFlight?: Promise<void>;
 	private turnEmittedAssistantText = false;
 	private autoRetryEnabled = true;
@@ -204,14 +205,24 @@ export class OmpNativeSessionAdapter {
 		this.turnInFlight = true;
 		try {
 			const response = await this.client.command({
-				type: intent,
+				type: 'prompt',
 				message,
+				streamingBehavior: intent,
 				...(images?.length ? { images: toOmpImages(images) } : {}),
 			});
 			if (agentWasNotInvoked(response.data)) {
 				this.completeTurn();
-			} else if (intent === 'follow_up' || intent === 'abort_and_prompt') {
+			} else if (intent === 'follow_up') {
 				this.pendingContinuationIntents.push({ intent, deliveryId });
+			} else if (intent === 'abort_and_prompt') {
+				// OMP atomically aborts and replaces within the current agent turn:
+				// it emits no intermediate turn_end/turn_start pair to consume later.
+				this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+					phase: 'agent_start',
+					continuation: true,
+					deliveryIntent: intent,
+					deliveryId,
+				});
 			}
 			return true;
 		} catch (error) {
@@ -579,24 +590,24 @@ export class OmpNativeSessionAdapter {
 			this.refreshFeaturesInBackground();
 		}
 		if (event.type === 'agent_start') {
-			const continuation = this.pendingContinuationIntents.shift();
-			if (continuation) {
-				this.turnInFlight = true;
-				this.turnEmittedAssistantText = false;
-			}
-			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
-				phase: 'agent_start',
-				continuation: continuation !== undefined,
-				...(continuation && {
-					deliveryIntent: continuation.intent,
-					deliveryId: continuation.deliveryId,
-				}),
-			});
+			if (!this.startContinuationAtBoundary())
+				this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+					phase: 'agent_start',
+					continuation: false,
+				});
 		}
-		if (event.type === 'turn_end')
+		if (event.type === 'turn_start') {
+			// A real queued OMP follow-up starts its next turn without a second
+			// agent_start. Synthetic runtimes may send agent_start instead, so the
+			// boundary guard keeps this idempotent across both valid sequences.
+			this.startContinuationAtBoundary();
+		}
+		if (event.type === 'turn_end') {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 				phase: 'turn_end',
 			});
+			if (this.pendingContinuationIntents.length > 0) this.awaitingContinuationBoundary = true;
+		}
 		if (event.type === 'turn_end' || event.type === 'agent_end') {
 			this.completeTurn();
 			this.refreshFeaturesInBackground();
@@ -841,10 +852,31 @@ export class OmpNativeSessionAdapter {
 			});
 	}
 
+	private startContinuationAtBoundary(): boolean {
+		const continuation = this.awaitingContinuationBoundary
+			? this.pendingContinuationIntents.shift()
+			: undefined;
+		if (!continuation) {
+			if (this.pendingContinuationIntents.length === 0) this.awaitingContinuationBoundary = false;
+			return false;
+		}
+		this.awaitingContinuationBoundary = false;
+		this.turnInFlight = true;
+		this.turnEmittedAssistantText = false;
+		this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
+			phase: 'agent_start',
+			continuation: true,
+			deliveryIntent: continuation.intent,
+			deliveryId: continuation.deliveryId,
+		});
+		return true;
+	}
+
 	private completeTurn(): void {
 		if (!this.turnInFlight || this.pendingContinuationIntents.length > 0 || this.completionEmitted)
 			return;
 		this.turnInFlight = false;
+		this.awaitingContinuationBoundary = false;
 		this.completionEmitted = true;
 		// A native OMP agent_end completes one turn, not the long-lived RPC child.
 		// The process session id identifies the owning Maestro AI tab; the provider
@@ -861,6 +893,7 @@ export class OmpNativeSessionAdapter {
 		const continuations = this.pendingContinuationIntents.splice(0);
 		if (continuations.length === 0 || this.completionEmitted) return;
 		this.turnInFlight = false;
+		this.awaitingContinuationBoundary = false;
 		this.completionEmitted = true;
 		for (const continuation of continuations) {
 			this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {

@@ -35,6 +35,7 @@ let model = { provider: 'fixture', id: 'expanded-16.4.8', label: 'Expanded 16.4.
 let thinkingLevel = 'high';
 let streaming = false;
 let pendingApproval = null;
+let pendingFollowUp = null;
 const frameLog = process.env.OMP_NATIVE_FIXTURE_LOG;
 const emit = (frame) => {
   const json = JSON.stringify(frame);
@@ -56,9 +57,25 @@ const finish = (cancelled = false) => {
   event('tool_execution_end', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', result: cancelled ? 'cancelled' : 'complete', isError: cancelled });
   event('message_end', { role: 'assistant', content: cancelled ? 'native turn cancelled' : 'native expanded complete' });
   event('turn_end', { sessionId, cancelled });
-  event('agent_end', { sessionId });
   streaming = false;
   pendingApproval = null;
+  const followUp = pendingFollowUp;
+  pendingFollowUp = null;
+  if (!followUp) {
+    event('agent_end', { sessionId });
+    return;
+  }
+  turn += 1;
+  streaming = true;
+  event('turn_start', { sessionId });
+  event('message_start', { role: 'assistant' });
+  event('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'native text: ' + String(followUp.message ?? '') } });
+  event('tool_execution_start', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', args: {} });
+  event('tool_execution_end', { toolCallId: 'tool-' + turn, toolName: 'maestro.session.status', result: 'complete' });
+  event('message_end', { role: 'assistant', content: 'native expanded follow-up complete' });
+  event('turn_end', { sessionId, cancelled: false });
+  event('agent_end', { sessionId });
+  streaming = false;
 };
 const approval = (method, id, message) => {
   pendingApproval = id;
@@ -67,6 +84,10 @@ const approval = (method, id, message) => {
     placeholder: method === 'editor' ? 'Write the native editor response' : 'Write the native response', prefill: 'fixture value' });
 };
 const prompt = (request) => {
+  if (request.streamingBehavior === 'follow_up' && streaming) {
+    pendingFollowUp = request;
+    return response(request, { accepted: true, queued: true });
+  }
   const text = String(request.message ?? '');
   turn += 1;
   streaming = true;
