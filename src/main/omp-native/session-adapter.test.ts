@@ -729,7 +729,7 @@ describe('OmpNativeSessionAdapter', () => {
 			sessionId: 'tab-model-reconcile',
 			cwd: 'C:/work/project',
 			command: 'omp',
-			model: 'fixture:fixture-initial',
+			model: 'fixture/fixture-initial',
 			send,
 			spawn: vi.fn(() => child as never),
 		};
@@ -746,7 +746,7 @@ describe('OmpNativeSessionAdapter', () => {
 			send.mockClear();
 			const reconfigured = await OmpNativeSessionAdapter.acquire({
 				...options,
-				model: 'fixture:fixture-reconciled',
+				model: 'fixture/fixture-reconciled',
 			});
 			await reconfigured.prompt('prompt after model change');
 

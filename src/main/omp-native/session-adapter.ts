@@ -377,15 +377,17 @@ export class OmpNativeSessionAdapter {
 
 	private async reconcileModel(model?: string): Promise<void> {
 		if (!model) return;
+		const normalizedModel = normalizeOmpModelSelector(model);
 		await this.initialized;
-		if (model === this.appliedModel) return;
-		await this.applyModel(model);
+		if (normalizedModel === this.appliedModel) return;
+		await this.applyModel(normalizedModel);
 		await this.refreshFeatures();
 	}
 
 	private async applyModel(model: string): Promise<void> {
-		await this.client.command(modelCommand(model));
-		this.appliedModel = model;
+		const normalizedModel = normalizeOmpModelSelector(model);
+		await this.client.command(modelCommand(normalizedModel));
+		this.appliedModel = normalizedModel;
 	}
 
 	private async emitCommands(): Promise<void> {
