@@ -16,13 +16,17 @@ import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEv
 // patch can be spread into both Session and AITab (a Partial<Session> spread
 // into AITab is a type error: e.g. their `state` unions differ).
 type RuntimePatch = Partial<Pick<Session, 'name' | 'runtimeFeatures' | 'pendingApprovals'>>;
-const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = {
-	flushNow: () => undefined,
-};
+const NOOP_BATCHED_UPDATER: Pick<
+	BatchedUpdater,
+	'flushNow' | 'flushSessionNow' | 'flushTargetNow'
+> = { flushNow: () => undefined };
 const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useRuntimeFeaturesListener(
-	batchedUpdater: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = NOOP_BATCHED_UPDATER,
+	batchedUpdater: Pick<
+		BatchedUpdater,
+		'flushNow' | 'flushSessionNow' | 'flushTargetNow'
+	> = NOOP_BATCHED_UPDATER,
 	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH,
 	ompEventCoordinator: OmpEventCoordinator = NOOP_OMP_EVENT_COORDINATOR
 ): void {
@@ -116,7 +120,8 @@ export function useRuntimeFeaturesListener(
 			const flushed = ompEventCoordinator.flush(sessionId);
 			if (!flushed) {
 				const { baseSessionId } = parseSessionId(sessionId);
-				if (batchedUpdater.flushSessionNow) batchedUpdater.flushSessionNow(baseSessionId);
+				if (batchedUpdater.flushTargetNow) batchedUpdater.flushTargetNow(sessionId);
+				else if (batchedUpdater.flushSessionNow) batchedUpdater.flushSessionNow(baseSessionId);
 				else batchedUpdater.flushNow();
 			}
 			flushThinkingForSession(sessionId);

@@ -24,13 +24,17 @@ import type { LogEntry } from '../../../types';
 import type { BatchedUpdater } from './types';
 import { NOOP_OMP_EVENT_COORDINATOR, type OmpEventCoordinator } from './useOmpEventCoordinator';
 
-const NOOP_BATCHED_UPDATER: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = {
-	flushNow: () => undefined,
-};
+const NOOP_BATCHED_UPDATER: Pick<
+	BatchedUpdater,
+	'flushNow' | 'flushSessionNow' | 'flushTargetNow'
+> = { flushNow: () => undefined };
 const NOOP_THINKING_FLUSH = () => undefined;
 
 export function useAgentToolExecutionListener(
-	batchedUpdater: Pick<BatchedUpdater, 'flushNow' | 'flushSessionNow'> = NOOP_BATCHED_UPDATER,
+	batchedUpdater: Pick<
+		BatchedUpdater,
+		'flushNow' | 'flushSessionNow' | 'flushTargetNow'
+	> = NOOP_BATCHED_UPDATER,
 	flushThinkingForSession: (sessionId: string) => void = NOOP_THINKING_FLUSH,
 	ompEventCoordinator: OmpEventCoordinator = NOOP_OMP_EVENT_COORDINATOR
 ): void {
@@ -64,7 +68,9 @@ export function useAgentToolExecutionListener(
 				if (owningSession.toolType === 'omp') {
 					const flushed = ompEventCoordinator.flush(sessionId);
 					if (!flushed) {
-						if (batchedUpdater.flushSessionNow) batchedUpdater.flushSessionNow(actualSessionId);
+						if (batchedUpdater.flushTargetNow) batchedUpdater.flushTargetNow(sessionId);
+						else if (batchedUpdater.flushSessionNow)
+							batchedUpdater.flushSessionNow(actualSessionId);
 						else batchedUpdater.flushNow();
 					}
 					flushThinkingForSession(sessionId);
