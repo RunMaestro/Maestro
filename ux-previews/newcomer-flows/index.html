@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maestro — Newcomer Flows Prototype (issues 1225 · 1227 · 1228 · 1230 · 1231)</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="proto-header">
+  <div class="proto-title">
+    <span class="wand">🪄</span> <strong>MAESTRO</strong> <span class="proto-sub">Newcomer flow prototype — proposed UX for #1231 · #1230 · #1228 · #1227 · #1225</span>
+  </div>
+  <div class="proto-meta">Dracula theme · 1440×900 frames · review artifact only</div>
+</header>
+
+<div class="proto-layout">
+  <nav class="flow-nav" aria-label="Flow navigator">
+    <div class="nav-group">
+      <div class="nav-group-title">#1231 — Agent activity</div>
+      <button class="nav-item" data-scene="activity-pill">Pill &amp; popover</button>
+      <button class="nav-item" data-scene="activity-inspector">Activity Inspector</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">#1230 — New Agent</div>
+      <button class="nav-item" data-scene="sidebar-new-agent">Sidebar placement</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">#1228 — Typography</div>
+      <button class="nav-item" data-scene="fonts">Interface + Terminal Font</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">#1227 — Discovery</div>
+      <button class="nav-item" data-scene="menus-cmdk">macOS menus + Cmd+K</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">#1225 — First run</div>
+      <button class="nav-item" data-scene="onboarding-agent">1 · Agent</button>
+      <button class="nav-item" data-scene="onboarding-scan">3 · Scan</button>
+      <button class="nav-item" data-scene="onboarding-path">4 · Path &amp; consent</button>
+      <button class="nav-item" data-scene="onboarding-generate">5 · Generate &amp; review</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Review</div>
+      <button class="nav-item" data-jump="gallery">Screenshot gallery</button>
+      <button class="nav-item" data-jump="verification">Verification &amp; decisions</button>
+    </div>
+  </nav>
+
+  <main class="proto-main">
+    <div class="frame-toolbar">
+      <span id="scene-title" class="scene-title"></span>
+      <span class="frame-hint" id="scene-hint"></span>
+    </div>
+    <div class="frame-viewport">
+      <div class="app-frame" id="app-frame" data-scene="">
+        <!-- scene rendered by app.js -->
+      </div>
+    </div>
+
+    <section id="gallery" class="gallery-section" aria-label="Screenshot gallery">
+      <h2>Screenshot gallery — rendered captures of the proposed scenes</h2>
+      <p class="gallery-lede">Browser-rendered PNGs of every frame above. Click to view full size. Captions name the validated issue claim each scene resolves.</p>
+      <div class="gallery-grid" id="gallery-grid"></div>
+    </section>
+
+    <section id="verification" class="verify-section" aria-label="Verification and open decisions">
+      <h2>Verification &amp; open decisions</h2>
+      <div class="verify-cols">
+        <div class="verify-card">
+          <h3>Runtime-validated problems (current main, 85788c96)</h3>
+          <ul>
+            <li>Busy pill shows elapsed/tokens only; no click-through on primary label; background command counts absent from primary UI.</li>
+            <li>Collapsed sidebar has no creation affordance; New Agent lives in the footer, not with the list / New Group.</li>
+            <li>Interface Font select unmounts to “Loading fonts...” on first interaction, closing the native dropdown; single font drives UI <em>and</em> terminal.</li>
+            <li>Cmd+K “term” returns New Terminal with no shortcut hint; “Switch AI/Shell Mode” doesn't match “term”; ⌘J semantics differ per surface.</li>
+            <li>Wizard requires a blank agent name with no explanation, then auto-advances into token-spending playbook generation without model/scope disclosure.</li>
+          </ul>
+        </div>
+        <div class="verify-card">
+          <h3>Caveats &amp; open product decisions</h3>
+          <ul>
+            <li><strong>macOS-only caveat:</strong> native NSMenu rendering, accelerator display behavior, and font enumeration are unverified on this Windows host; menu visuals here are a faithful mock, gated on on-device QA.</li>
+            <li><strong>O8 — ⌘J ownership:</strong> Switch AI/Shell Mode vs New Terminal is a backward-compatibility product decision; this prototype shows Option A (toggle = ⌘J, new terminal = ⌘⇧J). Invariants hold under either option.</li>
+            <li><strong>O2 — Inspector placement:</strong> bottom drawer (shown) vs right panel.</li>
+            <li><strong>O1/O5 — shortcut collisions:</strong> ⌘N (New Agent) and ⌘⇧J (New Terminal) need a collision audit against DEFAULT_SHORTCUTS before binding.</li>
+            <li>No fabricated data anywhere: no percent/ETA, no provider health, no glyph-coverage counts; quiet state is neutral measured silence; Agent-only is always the preselected path; scan is local until an explicitly disclosed send.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightbox-close" aria-label="Close full-size image">✕</button>
+  <figure>
+    <img id="lightbox-img" src="" alt="">
+    <figcaption id="lightbox-cap"></figcaption>
+  </figure>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
