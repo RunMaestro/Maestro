@@ -57,13 +57,22 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	removeEmptyMaestroDir: vi.fn(() => false),
 }));
 
-const mockDeleteCueConfig = vi.fn<(root: string) => Promise<boolean>>();
-const mockReplaceCueConfig =
-	vi.fn<(root: string, content: string) => Promise<{ changed: boolean }>>();
+const mockDeleteAndPrunePrompts = vi.fn<(root: string) => Promise<boolean>>();
+const mockReplaceWithPromptFiles = vi.fn<
+	(
+		root: string,
+		content: string,
+		promptFiles?: Record<string, string>
+	) => Promise<{
+		changed: boolean;
+		filePath: string;
+	}>
+>();
 vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
 	createCueConfigMutationService: () => ({
-		delete: (root: string) => mockDeleteCueConfig(root),
-		replace: (root: string, content: string) => mockReplaceCueConfig(root, content),
+		deleteAndPrunePrompts: (root: string) => mockDeleteAndPrunePrompts(root),
+		replaceWithPromptFiles: (root: string, content: string, promptFiles?: Record<string, string>) =>
+			mockReplaceWithPromptFiles(root, content, promptFiles),
 	}),
 }));
 
@@ -78,14 +87,7 @@ vi.mock('../../../main/cue/cue-types', () => ({
 
 import { registerCueHandlers } from '../../../main/ipc/handlers/cue';
 import { validateCueConfig } from '../../../main/cue/cue-yaml-loader';
-import {
-	readCueConfigFile,
-	readCuePromptFile,
-	writeCuePromptFile,
-	pruneOrphanedPromptFiles,
-	removeEmptyPromptsDir,
-	removeEmptyMaestroDir,
-} from '../../../main/cue/config/cue-config-repository';
+import { readCueConfigFile } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import * as yaml from 'js-yaml';
 
@@ -121,15 +123,11 @@ describe('Cue IPC Handlers', () => {
 	beforeEach(() => {
 		registeredHandlers.clear();
 		vi.clearAllMocks();
-		// clearAllMocks wipes call history but NOT return values, so the
-		// change-detection reads in cue:writeYaml could otherwise inherit a
-		// mockReturnValue from a prior test and silently skip a write. Reset the
-		// read mocks to their "nothing on disk" default each test.
-		vi.mocked(readCueConfigFile).mockReturnValue(null);
-		vi.mocked(readCuePromptFile).mockReturnValue(null);
-		vi.mocked(validateCueConfig).mockReturnValue({ valid: true, errors: [] });
-		mockReplaceCueConfig.mockResolvedValue({ changed: true });
-		mockDeleteCueConfig.mockResolvedValue(false);
+		mockReplaceWithPromptFiles.mockResolvedValue({
+			changed: true,
+			filePath: '/projects/test/.maestro/cue.yaml',
+		});
+		mockDeleteAndPrunePrompts.mockResolvedValue(false);
 		mockEngine = createMockEngine();
 	});
 
@@ -324,311 +322,46 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:writeYaml', () => {
-		it('delegates replacement to the Cue mutation service', async () => {
+		it('delegates one serialized YAML and prompt-file transaction', async () => {
 			const content = 'subscriptions:\n  - name: test\n    event: time.heartbeat';
+			const promptFiles = { '.maestro/prompts/test.md': 'prompt body' };
 
 			const handler = registerAndGetHandler('cue:writeYaml');
-			await handler(null, { projectRoot: '/projects/test', content });
-			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
-		});
+			const result = await handler(null, { projectRoot: '/projects/test', content, promptFiles });
 
-		it('returns changed=true and writes when YAML differs from disk', async () => {
-			vi.mocked(readCueConfigFile).mockReturnValue({
-				filePath: '/projects/test/.maestro/cue.yaml',
-				raw: 'subscriptions: []',
-			});
-			const content = 'subscriptions:\n  - name: new';
-
-			const handler = registerAndGetHandler('cue:writeYaml');
-			const result = await handler(null, { projectRoot: '/projects/test', content });
-
-			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
+			expect(mockReplaceWithPromptFiles).toHaveBeenCalledWith(
+				'/projects/test',
+				content,
+				promptFiles
+			);
 			expect(result).toEqual({ changed: true });
 		});
 
-		it('skips the write and returns changed=false when YAML is byte-identical (layout-only save)', async () => {
-			const content = 'subscriptions:\n  - name: same';
-			vi.mocked(readCueConfigFile).mockReturnValue({
+		it('preserves the mutation transaction changed result for layout-only saves', async () => {
+			mockReplaceWithPromptFiles.mockResolvedValue({
+				changed: false,
 				filePath: '/projects/test/.maestro/cue.yaml',
-				raw: content,
 			});
-
 			const handler = registerAndGetHandler('cue:writeYaml');
-			const result = await handler(null, { projectRoot: '/projects/test', content });
 
-			// Identical content must NOT touch cue.yaml: no mtime bump → the config
-			// watcher stays quiet → the session never re-arms → no re-execution.
-			expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			expect(result).toEqual({ changed: false });
-		});
-
-		it('skips an identical prompt file but still reports changed when YAML differs', async () => {
-			vi.mocked(readCueConfigFile).mockReturnValue({
-				filePath: '/projects/test/.maestro/cue.yaml',
-				raw: 'old yaml',
-			});
-			vi.mocked(readCuePromptFile).mockReturnValue('identical body');
-
-			const handler = registerAndGetHandler('cue:writeYaml');
 			const result = await handler(null, {
 				projectRoot: '/projects/test',
 				content: 'subscriptions: []',
-				promptFiles: { '.maestro/prompts/sub-1.md': 'identical body' },
 			});
 
-			expect(writeCuePromptFile).not.toHaveBeenCalled();
-			expect(result).toEqual({ changed: true });
-		});
-
-		it('returns changed=true when only a prompt file changed (YAML identical)', async () => {
-			const content = 'subscriptions: []';
-			vi.mocked(readCueConfigFile).mockReturnValue({
-				filePath: '/projects/test/.maestro/cue.yaml',
-				raw: content,
-			});
-			vi.mocked(readCuePromptFile).mockReturnValue('old body');
-
-			const handler = registerAndGetHandler('cue:writeYaml');
-			const result = await handler(null, {
-				projectRoot: '/projects/test',
-				content,
-				promptFiles: { '.maestro/prompts/sub-1.md': 'new body' },
-			});
-
-			expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			expect(writeCuePromptFile).toHaveBeenCalledWith(
-				'/projects/test',
-				'.maestro/prompts/sub-1.md',
-				'new body'
-			);
-			expect(result).toEqual({ changed: true });
-		});
-
-		it('adds fan_out_prompt_files entries to the prune keep-set', async () => {
-			// Regression guard: without this, per-agent fan-out prompt files
-			// would be deleted by pruneOrphanedPromptFiles on every save -
-			// only `prompt_file` and `output_prompt_file` were kept.
-			vi.mocked(yaml.load).mockReturnValue({
-				subscriptions: [
-					{
-						name: 'fan-out',
-						event: 'app.startup',
-						fan_out: ['A', 'B', 'C'],
-						fan_out_prompt_files: [
-							'.maestro/prompts/a-pipe.md',
-							'.maestro/prompts/b-pipe.md',
-							'.maestro/prompts/c-pipe.md',
-						],
-					},
-				],
-			});
-
-			const handler = registerAndGetHandler('cue:writeYaml');
-			await handler(null, { projectRoot: '/projects/test', content: 'ignored-by-mock' });
-
-			expect(pruneOrphanedPromptFiles).toHaveBeenCalledTimes(1);
-			const [, keepSet] = vi.mocked(pruneOrphanedPromptFiles).mock.calls[0];
-			const kept = [...(keepSet as Iterable<string>)];
-			expect(kept).toEqual(
-				expect.arrayContaining([
-					'.maestro/prompts/a-pipe.md',
-					'.maestro/prompts/b-pipe.md',
-					'.maestro/prompts/c-pipe.md',
-				])
-			);
-		});
-
-		it('should also write external prompt files when provided', async () => {
-			const content = 'subscriptions: []';
-			const promptFiles = {
-				'.maestro/prompts/sub-1.md': 'prompt body 1',
-				'.maestro/prompts/sub-2.md': 'prompt body 2',
-			};
-
-			const handler = registerAndGetHandler('cue:writeYaml');
-			await handler(null, { projectRoot: '/projects/test', content, promptFiles });
-
-			expect(mockReplaceCueConfig).toHaveBeenCalledWith('/projects/test', content);
-			expect(writeCuePromptFile).toHaveBeenCalledWith(
-				'/projects/test',
-				'.maestro/prompts/sub-1.md',
-				'prompt body 1'
-			);
-			expect(writeCuePromptFile).toHaveBeenCalledWith(
-				'/projects/test',
-				'.maestro/prompts/sub-2.md',
-				'prompt body 2'
-			);
-		});
-
-		// Security-hardening tests: reject malformed prompt-file keys that
-		// could write outside the .maestro/prompts/ directory. The handler
-		// validates and throws synchronously from inside the async callback -
-		// vi.mock's `withIpcErrorLogging` preserves the rejection.
-		//
-		// Every negative case must also assert that writeCueConfigFile was
-		// NOT called - rejecting the promptFile loop must abort the whole
-		// save, otherwise the YAML would land on disk while referencing a
-		// prompt file that was never written.
-		describe('prompt-file path hardening', () => {
-			it('rejects empty string keys', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '': 'x' },
-					})
-				).rejects.toThrow(/must be a non-empty string/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects absolute paths', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '/etc/passwd.md': 'x' },
-					})
-				).rejects.toThrow(/must be a relative path/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects paths with parent-directory segments', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '../../escape.md': 'x' },
-					})
-				).rejects.toThrow(/"\." or "\.\." segment/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects paths with single-dot segments', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '.maestro/prompts/./sub.md': 'x' },
-					})
-				).rejects.toThrow(/"\." or "\.\." segment/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects paths that resolve outside .maestro/prompts/', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { 'not-prompts/file.md': 'x' },
-					})
-				).rejects.toThrow(/resolves outside the .maestro\/prompts directory/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects paths with mixed-in parent segments that pre-normalize to a valid location', async () => {
-				// 'prompts/../../escape.md' - .split('/') catches the '..'
-				// segment before path.resolve normalizes it away.
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '.maestro/prompts/../../escape.md': 'x' },
-					})
-				).rejects.toThrow(/"\." or "\.\." segment/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('rejects non-.md extensions', async () => {
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await expect(
-					handler(null, {
-						projectRoot: '/projects/test',
-						content: 'subscriptions: []',
-						promptFiles: { '.maestro/prompts/payload.sh': 'x' },
-					})
-				).rejects.toThrow(/must end with .md/);
-				expect(writeCuePromptFile).not.toHaveBeenCalled();
-				expect(mockReplaceCueConfig).not.toHaveBeenCalled();
-			});
-
-			it('normalizes Windows backslash paths to forward-slash before writing', async () => {
-				// Only meaningful on non-Windows, where path.sep is '/'. Windows
-				// already accepts both separators via path.resolve.
-				if (process.platform === 'win32') return;
-				const handler = registerAndGetHandler('cue:writeYaml');
-				await handler(null, {
-					projectRoot: '/projects/test',
-					content: 'subscriptions: []',
-					promptFiles: { '.maestro\\prompts\\sub.md': 'body' },
-				});
-				// Normalized separator is stored as the written-file key.
-				expect(writeCuePromptFile).toHaveBeenCalledWith(
-					'/projects/test',
-					'.maestro/prompts/sub.md',
-					'body'
-				);
-			});
+			expect(result).toEqual({ changed: false });
 		});
 	});
 
 	describe('cue:deleteYaml', () => {
-		it('delegates deletion to the Cue mutation service', async () => {
-			mockDeleteCueConfig.mockResolvedValue(true);
-
+		it('delegates deletion and prompt cleanup to one mutation transaction', async () => {
+			mockDeleteAndPrunePrompts.mockResolvedValue(true);
 			const handler = registerAndGetHandler('cue:deleteYaml');
+
 			const result = await handler(null, { projectRoot: '/projects/test' });
+
 			expect(result).toBe(true);
-			expect(mockDeleteCueConfig).toHaveBeenCalledWith('/projects/test');
-		});
-
-		it('returns false when there is nothing to delete', async () => {
-			mockDeleteCueConfig.mockResolvedValue(false);
-
-			const handler = registerAndGetHandler('cue:deleteYaml');
-			const result = await handler(null, { projectRoot: '/projects/test' });
-			expect(result).toBe(false);
-		});
-
-		it('prunes all .md prompt files and removes the empty prompts dir', async () => {
-			// The "Remove Cue configuration" button must collapse the project's
-			// `.maestro` footprint - deleting the yaml alone used to leave
-			// orphaned prompt files behind forever.
-			mockDeleteCueConfig.mockResolvedValue(true);
-
-			const handler = registerAndGetHandler('cue:deleteYaml');
-			await handler(null, { projectRoot: '/projects/test' });
-
-			// Keep-set is empty - everything in .maestro/prompts/ is orphaned.
-			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
-			// Then collapse the now-empty prompts directory, then .maestro/ itself.
-			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
-			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
-		});
-
-		it('prunes prompts even when the yaml file was already absent', async () => {
-			// Users sometimes delete cue.yaml by hand, then click the Remove
-			// button. Cleanup must still run so orphaned prompts don't linger.
-			mockDeleteCueConfig.mockResolvedValue(false);
-
-			const handler = registerAndGetHandler('cue:deleteYaml');
-			await handler(null, { projectRoot: '/projects/test' });
-
-			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
-			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
-			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
+			expect(mockDeleteAndPrunePrompts).toHaveBeenCalledWith('/projects/test');
 		});
 	});
 

@@ -2,18 +2,26 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { CueSettings } from '../../../shared/cue';
-import { CUE_CONFIG_PATH } from '../../../shared/maestro-paths';
 import { pipelineKeyForSubscription } from '../../../shared/cue/subscription-id';
-import {
-	atomicWriteFile,
-	createKeyedWriteQueue,
-	type KeyedWriteQueue,
-} from '../../utils/atomic-json-store';
+import { CUE_CONFIG_PATH, CUE_PROMPTS_DIR } from '../../../shared/maestro-paths';
+import { atomicWriteFile, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { validateCueConfigDocument } from './cue-config-validator';
-import { resolveCueConfigPath } from './cue-config-repository';
+import {
+	pruneOrphanedPromptFiles,
+	readCuePromptFile,
+	removeEmptyMaestroDir,
+	removeEmptyPromptsDir,
+	resolveCueConfigPath,
+	writeCuePromptFile,
+} from './cue-config-repository';
 
 export interface CueConfigMutationService {
 	replace(projectRoot: string, content: string): Promise<{ changed: boolean; filePath: string }>;
+	replaceWithPromptFiles(
+		projectRoot: string,
+		content: string,
+		promptFiles?: Record<string, string>
+	): Promise<{ changed: boolean; filePath: string }>;
 	setSubscriptionEnabled(
 		projectRoot: string,
 		pipelineName: string,
@@ -29,11 +37,11 @@ export interface CueConfigMutationService {
 		>
 	): Promise<boolean>;
 	delete(projectRoot: string): Promise<boolean>;
+	deleteAndPrunePrompts(projectRoot: string): Promise<boolean>;
 }
 
 export interface CueConfigMutationServiceOptions {
 	atomicWrite?: (filePath: string, contents: string) => Promise<void>;
-	queue?: KeyedWriteQueue;
 }
 
 interface LoadedCueDocument {
@@ -51,6 +59,11 @@ const SETTINGS_KEYS = [
 
 type GlobalSettingsKey = (typeof SETTINGS_KEYS)[number];
 
+// All services in this process share this queue. The project root key preserves
+// independent progress for different projects while one project serializes its
+// YAML and prompt-file transactions.
+const projectMutationQueue = createKeyedWriteQueue();
+
 /**
  * Serialized, comment-preserving Cue YAML mutations.
  *
@@ -58,13 +71,12 @@ type GlobalSettingsKey = (typeof SETTINGS_KEYS)[number];
  * Targeted mutations patch only the owned scalar/list range in the original
  * document; js-yaml is used solely for validation and target selection, never
  * to re-emit a document that may contain user comments or supported unknown
- * keys. Every replacement is queued per resolved config path, backed up once,
+ * keys. Every replacement is queued per resolved project root, backed up once,
  * then atomically renamed into place.
  */
 export function createCueConfigMutationService(
 	options: CueConfigMutationServiceOptions = {}
 ): CueConfigMutationService {
-	const queue = options.queue ?? createKeyedWriteQueue();
 	const writeAtomic = options.atomicWrite ?? atomicWriteFile;
 
 	async function withProjectMutation<T>(
@@ -72,7 +84,7 @@ export function createCueConfigMutationService(
 		work: (root: string) => Promise<T>
 	): Promise<T> {
 		const root = assertProjectRoot(projectRoot);
-		return queue.enqueue(root, () => work(root));
+		return projectMutationQueue.enqueue(root, () => work(root));
 	}
 
 	async function loadValidated(root: string): Promise<LoadedCueDocument | null> {
@@ -99,87 +111,167 @@ export function createCueConfigMutationService(
 		await writeAtomic(filePath, next);
 	}
 
-	return {
-		async replace(projectRoot, content) {
-			return withProjectMutation(projectRoot, async (root) => {
-				parseAndValidate(content, path.join(root, CUE_CONFIG_PATH));
-				const existing = await loadValidated(root);
-				if (existing?.raw === content) {
-					return { changed: false, filePath: existing.filePath };
-				}
+	async function replace(
+		projectRoot: string,
+		content: string
+	): Promise<{ changed: boolean; filePath: string }> {
+		return withProjectMutation(projectRoot, async (root) => {
+			parseAndValidate(content, path.join(root, CUE_CONFIG_PATH));
+			const existing = await loadValidated(root);
+			if (existing?.raw === content) {
+				return { changed: false, filePath: existing.filePath };
+			}
 
-				const filePath = existing?.filePath ?? safeCanonicalConfigPath(root);
+			const filePath = existing?.filePath ?? safeCanonicalConfigPath(root);
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
+			await persist(filePath, existing?.raw ?? null, content);
+			return { changed: true, filePath };
+		});
+	}
+
+	async function replaceWithPromptFiles(
+		projectRoot: string,
+		content: string,
+		promptFiles?: Record<string, string>
+	): Promise<{ changed: boolean; filePath: string }> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const existing = await loadValidated(root);
+			const filePath = existing?.filePath ?? safeCanonicalConfigPath(root);
+			const parsed = parseAndValidate(content, filePath);
+			const yamlChanged = existing?.raw !== content;
+			const keepPaths = collectPromptReferences(parsed);
+			let promptsChanged = false;
+
+			// Prompt files are staged before the atomic YAML replacement. A failure
+			// before replacement can leave only unreferenced prompt files, which a
+			// later successful transaction prunes; it cannot publish YAML pointing
+			// at a missing prompt. Cross-file atomic rollback is not available with
+			// filesystem rename primitives, so the queue makes this recoverable
+			// ordering the transaction invariant.
+			for (const [relativePath, prompt] of Object.entries(promptFiles ?? {})) {
+				const normalizedPath = normalizePromptPath(root, relativePath);
+				if (readCuePromptFile(root, normalizedPath) !== prompt) {
+					writeCuePromptFile(root, normalizedPath, prompt);
+					promptsChanged = true;
+				}
+				keepPaths.add(normalizedPath);
+			}
+
+			if (yamlChanged) {
 				await fs.mkdir(path.dirname(filePath), { recursive: true });
 				await persist(filePath, existing?.raw ?? null, content);
-				return { changed: true, filePath };
-			});
-		},
+			}
 
-		async setSubscriptionEnabled(projectRoot, pipelineName, subscriptionName, enabled) {
-			return withProjectMutation(projectRoot, async (root) => {
-				const document = await loadValidated(root);
-				if (!document) return false;
-				const subscriptions = document.root.subscriptions;
-				if (!Array.isArray(subscriptions)) return false;
-				const index = subscriptions.findIndex((entry) => {
-					if (!entry || typeof entry !== 'object') return false;
-					const sub = entry as Record<string, unknown>;
-					const pipeline = pipelineKeyForSubscription({
-						name: sub.name as string,
-						pipeline_name: typeof sub.pipeline_name === 'string' ? sub.pipeline_name : undefined,
-					});
-					return sub.name === subscriptionName && pipeline === pipelineName;
+			const prunedCount = pruneOrphanedPromptFiles(root, keepPaths).length;
+			if (keepPaths.size === 0) {
+				removeEmptyPromptsDir(root);
+			}
+			return {
+				changed: yamlChanged || promptsChanged || prunedCount > 0,
+				filePath,
+			};
+		});
+	}
+
+	async function setSubscriptionEnabled(
+		projectRoot: string,
+		pipelineName: string,
+		subscriptionName: string,
+		enabled: boolean
+	): Promise<boolean> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const document = await loadValidated(root);
+			if (!document) return false;
+			const subscriptions = document.root.subscriptions;
+			if (!Array.isArray(subscriptions)) return false;
+			const index = subscriptions.findIndex((entry) => {
+				if (!entry || typeof entry !== 'object') return false;
+				const sub = entry as Record<string, unknown>;
+				const pipeline = pipelineKeyForSubscription({
+					name: sub.name as string,
+					pipeline_name: typeof sub.pipeline_name === 'string' ? sub.pipeline_name : undefined,
 				});
-				if (index < 0) return false;
-
-				const next = patchSubscriptionEnabled(document.raw, index, enabled);
-				parseAndValidate(next, document.filePath);
-				await persist(document.filePath, document.raw, next);
-				return true;
+				return sub.name === subscriptionName && pipeline === pipelineName;
 			});
-		},
+			if (index < 0) return false;
 
-		async removeSubscription(projectRoot, subscriptionName) {
-			return withProjectMutation(projectRoot, async (root) => {
-				const document = await loadValidated(root);
-				if (!document) return false;
-				const subscriptions = document.root.subscriptions;
-				if (!Array.isArray(subscriptions)) return false;
-				const index = subscriptions.findIndex(
-					(entry) =>
-						Boolean(entry) &&
-						typeof entry === 'object' &&
-						(entry as Record<string, unknown>).name === subscriptionName
-				);
-				if (index < 0) return false;
+			const next = patchSubscriptionEnabled(document.raw, index, enabled);
+			parseAndValidate(next, document.filePath);
+			await persist(document.filePath, document.raw, next);
+			return true;
+		});
+	}
 
-				const next = removeSubscriptionRange(document.raw, index, subscriptions.length === 1);
-				parseAndValidate(next, document.filePath);
-				await persist(document.filePath, document.raw, next);
-				return true;
-			});
-		},
+	async function removeSubscription(
+		projectRoot: string,
+		subscriptionName: string
+	): Promise<boolean> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const document = await loadValidated(root);
+			if (!document) return false;
+			const subscriptions = document.root.subscriptions;
+			if (!Array.isArray(subscriptions)) return false;
+			const index = subscriptions.findIndex(
+				(entry) =>
+					Boolean(entry) &&
+					typeof entry === 'object' &&
+					(entry as Record<string, unknown>).name === subscriptionName
+			);
+			if (index < 0) return false;
 
-		async updateGlobalSettings(projectRoot, settings) {
-			return withProjectMutation(projectRoot, async (root) => {
-				const document = await loadValidated(root);
-				if (!document) return false;
-				const next = patchSettings(document.raw, settings);
-				parseAndValidate(next, document.filePath);
-				await persist(document.filePath, document.raw, next);
-				return next !== document.raw;
-			});
-		},
+			const next = removeSubscriptionRange(document.raw, index, subscriptions.length === 1);
+			parseAndValidate(next, document.filePath);
+			await persist(document.filePath, document.raw, next);
+			return true;
+		});
+	}
 
-		async delete(projectRoot) {
-			return withProjectMutation(projectRoot, async (root) => {
-				const document = await loadValidated(root);
-				if (!document) return false;
+	async function updateGlobalSettings(
+		projectRoot: string,
+		settings: Pick<CueSettings, GlobalSettingsKey>
+	): Promise<boolean> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const document = await loadValidated(root);
+			if (!document) return false;
+			const next = patchSettings(document.raw, settings);
+			parseAndValidate(next, document.filePath);
+			await persist(document.filePath, document.raw, next);
+			return next !== document.raw;
+		});
+	}
+
+	async function deleteConfig(projectRoot: string): Promise<boolean> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const document = await loadValidated(root);
+			if (!document) return false;
+			await backupOriginal(document.filePath, document.raw);
+			await fs.unlink(document.filePath);
+			return true;
+		});
+	}
+
+	async function deleteAndPrunePrompts(projectRoot: string): Promise<boolean> {
+		return withProjectMutation(projectRoot, async (root) => {
+			const document = await loadValidated(root);
+			if (document) {
 				await backupOriginal(document.filePath, document.raw);
 				await fs.unlink(document.filePath);
-				return true;
-			});
-		},
+			}
+			pruneOrphanedPromptFiles(root, []);
+			removeEmptyPromptsDir(root);
+			removeEmptyMaestroDir(root);
+			return document !== null;
+		});
+	}
+
+	return {
+		replace,
+		replaceWithPromptFiles,
+		setSubscriptionEnabled,
+		removeSubscription,
+		updateGlobalSettings,
+		delete: deleteConfig,
+		deleteAndPrunePrompts,
 	};
 }
 
@@ -234,6 +326,59 @@ function parseAndValidate(raw: string, filePath: string): Record<string, unknown
 		throw new Error(`Cue YAML root must be a mapping for ${filePath}`);
 	}
 	return parsed as Record<string, unknown>;
+}
+
+function collectPromptReferences(document: Record<string, unknown>): Set<string> {
+	const keepPaths = new Set<string>();
+	const subscriptions = document.subscriptions;
+	if (!Array.isArray(subscriptions)) return keepPaths;
+
+	for (const subscription of subscriptions) {
+		if (!subscription || typeof subscription !== 'object') continue;
+		const record = subscription as Record<string, unknown>;
+		for (const key of ['prompt_file', 'output_prompt_file']) {
+			const value = record[key];
+			if (typeof value === 'string' && value.length > 0 && !path.isAbsolute(value)) {
+				keepPaths.add(value);
+			}
+		}
+		if (Array.isArray(record.fan_out_prompt_files)) {
+			for (const value of record.fan_out_prompt_files) {
+				if (typeof value === 'string' && value.length > 0 && !path.isAbsolute(value)) {
+					keepPaths.add(value);
+				}
+			}
+		}
+	}
+	return keepPaths;
+}
+
+function normalizePromptPath(root: string, relativePath: string): string {
+	if (typeof relativePath !== 'string' || relativePath.length === 0) {
+		throw new Error('cue:writeYaml: promptFiles key must be a non-empty string');
+	}
+	if (path.isAbsolute(relativePath)) {
+		throw new Error(
+			`cue:writeYaml: promptFiles key must be a relative path, got "${relativePath}"`
+		);
+	}
+	const normalizedPath = path.sep === '/' ? relativePath.replace(/\\/g, '/') : relativePath;
+	if (normalizedPath.split(/[/\\]/).some((segment) => segment === '..' || segment === '.')) {
+		throw new Error(
+			`cue:writeYaml: promptFiles key "${relativePath}" contains "." or ".." segment`
+		);
+	}
+	const promptsBase = path.resolve(root, CUE_PROMPTS_DIR);
+	const target = path.resolve(root, normalizedPath);
+	if (!target.startsWith(promptsBase + path.sep)) {
+		throw new Error(
+			`cue:writeYaml: promptFiles key "${relativePath}" resolves outside the .maestro/prompts directory`
+		);
+	}
+	if (path.extname(target).toLowerCase() !== '.md') {
+		throw new Error(`cue:writeYaml: promptFiles key "${relativePath}" must end with .md`);
+	}
+	return normalizedPath;
 }
 
 interface SubscriptionRange {
@@ -335,11 +480,15 @@ function patchSettings(raw: string, settings: Pick<CueSettings, GlobalSettingsKe
 	let end = settingsLine + 1;
 	while (end < lines.length && !/^\S[^:]*:/.test(lines[end])) end++;
 	const block = lines.slice(settingsLine + 1, end);
+	const childIndent =
+		block
+			.map((line) => /^([ \t]+)(?!#|\r?$)\S/.exec(line)?.[1])
+			.find((indent): indent is string => indent !== undefined) ?? '  ';
 	for (const key of SETTINGS_KEYS) {
 		const keyLine = block.findIndex((line) =>
-			new RegExp(`^  ${escapeRegExp(key)}\\s*:`).test(line)
+			new RegExp(`^${escapeRegExp(childIndent)}${escapeRegExp(key)}\\s*:`).test(line)
 		);
-		const replacement = `  ${key}: ${values[key]}\n`;
+		const replacement = `${childIndent}${key}: ${values[key]}\n`;
 		if (keyLine >= 0) block[keyLine] = replacement;
 		else block.push(replacement);
 	}

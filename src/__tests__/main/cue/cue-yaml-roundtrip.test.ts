@@ -319,4 +319,121 @@ unknown_supported_key:
 		).rejects.toThrow('injected write failure');
 		expect(fs.readFileSync(filePath, 'utf8')).toBe(saved);
 	});
+
+	it.each([
+		{
+			label: 'one-space',
+			indent: ' ',
+		},
+		{
+			label: 'four-space',
+			indent: '    ',
+		},
+	])(
+		'updates $label settings without duplicate keys or unrelated reformatting',
+		async ({ indent }) => {
+			const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+			const original = [
+				'# keep this comment',
+				'subscriptions: []',
+				'settings:',
+				`${indent}# keep this child comment`,
+				`${indent}timeout_minutes: 30`,
+				`${indent}custom_setting: retain`,
+				'other: unchanged',
+				'',
+			].join('\n');
+			fs.mkdirSync(path.dirname(filePath), { recursive: true });
+			fs.writeFileSync(filePath, original, 'utf8');
+
+			const service = createCueConfigMutationService();
+			await service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 45,
+				timeout_on_fail: 'continue',
+				max_concurrent: 2,
+				queue_size: 100,
+			});
+
+			const saved = fs.readFileSync(filePath, 'utf8');
+			expect(saved).toContain(`${indent}timeout_minutes: 45`);
+			expect(saved.match(/timeout_minutes:/g)).toHaveLength(1);
+			expect(saved).toContain(`${indent}# keep this child comment`);
+			expect(saved).toContain(`${indent}custom_setting: retain`);
+			expect(saved).toContain('other: unchanged\n');
+		}
+	);
+
+	it('shares a project queue across independent services and keeps prompt references publishable', async () => {
+		const first = createCueConfigMutationService();
+		let releaseFirstWrite: (() => void) | undefined;
+		const second = createCueConfigMutationService({
+			atomicWrite: async (filePath, contents) => {
+				await new Promise<void>((resolve) => {
+					releaseFirstWrite = resolve;
+				});
+				await fs.promises.writeFile(filePath, contents, 'utf8');
+			},
+		});
+		const firstYaml = [
+			'subscriptions:',
+			'  - name: first',
+			'    event: time.heartbeat',
+			'    prompt_file: .maestro/prompts/first.md',
+			'    interval_minutes: 5',
+			'',
+		].join('\n');
+		const secondYaml = [
+			'subscriptions:',
+			'  - name: second',
+			'    event: time.heartbeat',
+			'    prompt_file: .maestro/prompts/second.md',
+			'    interval_minutes: 5',
+			'',
+		].join('\n');
+
+		const firstSave = second.replaceWithPromptFiles(projectRoot, firstYaml, {
+			'.maestro/prompts/first.md': 'first prompt',
+		});
+		await vi.waitFor(() => expect(releaseFirstWrite).toBeTypeOf('function'));
+		const secondSave = first.replaceWithPromptFiles(projectRoot, secondYaml, {
+			'.maestro/prompts/second.md': 'second prompt',
+		});
+		releaseFirstWrite!();
+		await Promise.all([firstSave, secondSave]);
+
+		expect(readCueConfigFile(projectRoot)!.raw).toBe(secondYaml);
+		expect(fs.readFileSync(path.join(projectRoot, '.maestro/prompts/second.md'), 'utf8')).toBe(
+			'second prompt'
+		);
+		expect(fs.existsSync(path.join(projectRoot, '.maestro/prompts/first.md'))).toBe(false);
+	});
+
+	it('applies a targeted runtime mutation after an overlapping editor save', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		let waitForFirstWrite = true;
+		let releaseEditorWrite: (() => void) | undefined;
+		const editor = createCueConfigMutationService({
+			atomicWrite: async (target, contents) => {
+				if (waitForFirstWrite) {
+					waitForFirstWrite = false;
+					await new Promise<void>((resolve) => {
+						releaseEditorWrite = resolve;
+					});
+				}
+				await fs.promises.writeFile(target, contents, 'utf8');
+			},
+		});
+		const runtime = createCueConfigMutationService();
+		const editorYaml = golden.replace('enabled: true # inline comment', 'enabled: true # saved');
+
+		const editorSave = editor.replaceWithPromptFiles(projectRoot, editorYaml, {});
+		await vi.waitFor(() => expect(releaseEditorWrite).toBeTypeOf('function'));
+		const runtimeMutation = runtime.setSubscriptionEnabled(projectRoot, 'Daily', 'morning', false);
+		releaseEditorWrite!();
+		await Promise.all([editorSave, runtimeMutation]);
+
+		expect(fs.readFileSync(filePath, 'utf8')).toContain('enabled: false');
+	});
 });
