@@ -224,6 +224,7 @@ export class OmpNativeSessionAdapter {
 				return false;
 			}
 			if (intent === 'abort_and_prompt') {
+				this.turnEmittedAssistantText = false;
 				this.options.send('process:omp-turn-lifecycle', this.options.sessionId, {
 					phase: 'agent_start',
 					continuation: true,
