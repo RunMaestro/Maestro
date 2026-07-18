@@ -80,6 +80,50 @@ describe('movement inspect command', () => {
 		});
 	});
 
+	it('prints a JSON error for malformed screenshot base64', async () => {
+		mockInspection({
+			success: true,
+			inspection: {
+				imageDataUrl: 'data:image/png;base64,%%%%',
+				ready: true,
+				viewport: { width: 800, height: 600 },
+				image: { width: 800, height: 600, scaleFactor: 1 },
+				logs: [],
+			},
+		});
+
+		await expect(movementInspect('mockup', { output: 'mockup.png', json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(JSON.parse(consoleLogSpy.mock.calls[0][0])).toEqual({
+			success: false,
+			error: 'Maestro returned an invalid designer screenshot',
+		});
+		expect(mockWriteFileSync).not.toHaveBeenCalled();
+	});
+
+	it('prints a JSON error for non-PNG screenshot data', async () => {
+		mockInspection({
+			success: true,
+			inspection: {
+				imageDataUrl: `data:image/png;base64,${Buffer.from('not a PNG').toString('base64')}`,
+				ready: true,
+				viewport: { width: 800, height: 600 },
+				image: { width: 800, height: 600, scaleFactor: 1 },
+				logs: [],
+			},
+		});
+
+		await expect(movementInspect('mockup', { output: 'mockup.png', json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(JSON.parse(consoleLogSpy.mock.calls[0][0])).toEqual({
+			success: false,
+			error: 'Maestro returned an invalid designer screenshot',
+		});
+		expect(mockWriteFileSync).not.toHaveBeenCalled();
+	});
+
 	it('prints a JSON error when the screenshot cannot be written', async () => {
 		mockWriteFileSync.mockImplementation(() => {
 			throw new Error('disk full');
@@ -87,7 +131,9 @@ describe('movement inspect command', () => {
 		mockInspection({
 			success: true,
 			inspection: {
-				imageDataUrl: 'data:image/png;base64,cG5n',
+				imageDataUrl: `data:image/png;base64,${Buffer.from([
+					0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+				]).toString('base64')}`,
 				ready: true,
 				viewport: { width: 800, height: 600 },
 				image: { width: 800, height: 600, scaleFactor: 1 },

@@ -46,7 +46,8 @@ export function usePointerDrag() {
 			// where pointer capture is unavailable or the pointer was already released.
 			try {
 				dragTarget.setPointerCapture(pointerId);
-			} catch {
+			} catch (error) {
+				if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
 				// The window listeners below still preserve the existing drag behavior.
 			}
 
@@ -60,7 +61,8 @@ export function usePointerDrag() {
 				window.removeEventListener('pointercancel', onEnd);
 				try {
 					dragTarget.releasePointerCapture(pointerId);
-				} catch {
+				} catch (error) {
+					if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error;
 					// Pointer-up and pointercancel may release capture before cleanup runs.
 				}
 				if (cleanupRef.current === cleanup) cleanupRef.current = null;

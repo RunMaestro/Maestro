@@ -45,6 +45,7 @@ export const ConcertoHtmlPreview = memo(function ConcertoHtmlPreview({
 
 	return (
 		<iframe
+			key={revision}
 			ref={frameRef}
 			title={title}
 			src={buildConcertoHtmlUrl(surface, id, revision)}

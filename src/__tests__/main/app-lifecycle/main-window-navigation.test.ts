@@ -9,6 +9,12 @@ describe('blocksMainWindowSubframeNavigation', () => {
 		).toBe(false);
 	});
 
+	it('blocks a valid local Concerto document in the main frame', () => {
+		expect(
+			blocksMainWindowSubframeNavigation(true, buildConcertoHtmlUrl('movement', 'checkout', 1))
+		).toBe(true);
+	});
+
 	it('continues blocking external and malformed subframe targets', () => {
 		expect(blocksMainWindowSubframeNavigation(false, 'https://evil.example/leak')).toBe(true);
 		expect(

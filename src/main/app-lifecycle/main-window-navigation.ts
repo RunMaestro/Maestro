@@ -18,7 +18,9 @@ export function blocksMainWindowSubframeNavigation(
 	isMainFrame: boolean,
 	targetUrl: string
 ): boolean {
-	if (parseConcertoHtmlUrl(targetUrl)) return false;
+	const isConcertoHtmlDocument = parseConcertoHtmlUrl(targetUrl);
+	if (!isMainFrame && isConcertoHtmlDocument) return false;
+	if (isMainFrame && isConcertoHtmlDocument) return true;
 	return blocksSubframeNavigation(isMainFrame, targetUrl);
 }
 

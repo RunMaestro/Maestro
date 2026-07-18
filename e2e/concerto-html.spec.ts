@@ -8,6 +8,7 @@ function runCli(testDataDir: string, ...args: string[]): string {
 	return execFileSync(process.execPath, [cliPath, ...args], {
 		cwd: path.join(__dirname, '..'),
 		encoding: 'utf8',
+		timeout: 30_000,
 		env: {
 			...process.env,
 			MAESTRO_DATA_DIR: testDataDir,
@@ -91,4 +92,48 @@ test('renders an interactive HTML Movement inside the main window', async ({
 	// Movements belong inside the existing Maestro window. Only Cadenza is
 	// allowed to create a separate HUD window.
 	expect(electronApp.windows()).toHaveLength(1);
+});
+
+test('confirms clearing a non-empty sandboxed chess game without a native dialog', async ({
+	window,
+	testDataDir,
+}) => {
+	const chessPath = path.join(__dirname, '../mockups/chess.html');
+	runCli(testDataDir, 'settings', 'set', 'encoreFeatures.concerto', 'true');
+	runCli(
+		testDataDir,
+		'movement',
+		'add',
+		'chess-e2e',
+		'--title',
+		'Chess E2E',
+		'--html-file',
+		chessPath,
+		'--width',
+		'960',
+		'--height',
+		'720'
+	);
+
+	const mockup = window.frameLocator('[data-testid="concerto-html-iframe"]');
+	await expect(mockup.locator('#board')).toBeVisible();
+	await mockup.locator('[data-row="6"][data-column="4"]').click();
+	await mockup.locator('[data-row="4"][data-column="4"]').click();
+	await expect(mockup.locator('#move-count')).toHaveText('2 moves');
+
+	runCli(testDataDir, 'movement', 'interact', 'chess-e2e', '--click', '#new-game', '--json');
+	await expect(mockup.locator('#new-game-confirmation')).toBeVisible();
+	await expect(mockup.locator('#move-count')).toHaveText('2 moves');
+
+	runCli(
+		testDataDir,
+		'movement',
+		'interact',
+		'chess-e2e',
+		'--click',
+		'#new-game-confirm',
+		'--json'
+	);
+	await expect(mockup.locator('#new-game-confirmation')).toBeHidden();
+	await expect(mockup.locator('#move-count')).toHaveText('0 moves');
 });

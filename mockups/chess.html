@@ -568,6 +568,43 @@
 				opacity: 0.42;
 			}
 
+			.new-game-confirmation {
+				display: grid;
+				gap: 10px;
+				padding: 0 18px 17px;
+				border-top: 1px solid var(--line);
+				background: #fffaf2;
+			}
+
+			.new-game-confirmation[hidden] {
+				display: none;
+			}
+
+			.new-game-confirmation p {
+				margin: 12px 0 0;
+				color: #4c574f;
+				font-size: 11px;
+				line-height: 1.45;
+			}
+
+			.new-game-confirmation-actions {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 8px;
+			}
+
+			.new-game-confirm {
+				border-color: var(--orange);
+				background: var(--orange);
+				color: white;
+			}
+
+			.new-game-confirm:hover:not(:disabled) {
+				border-color: #c95d2a;
+				background: #c95d2a;
+				color: white;
+			}
+
 			@media (max-width: 850px) {
 				body {
 					overflow: auto;
@@ -701,6 +738,23 @@
 							<span aria-hidden="true">⇅</span> Flip board
 						</button>
 					</div>
+					<div
+						class="new-game-confirmation"
+						id="new-game-confirmation"
+						role="alertdialog"
+						aria-labelledby="new-game-confirmation-message"
+						hidden
+					>
+						<p id="new-game-confirmation-message">
+							Start a new game? The current position will be cleared.
+						</p>
+						<div class="new-game-confirmation-actions">
+							<button class="control" id="new-game-cancel" type="button">Keep playing</button>
+							<button class="control new-game-confirm" id="new-game-confirm" type="button">
+								Start new game
+							</button>
+						</div>
+					</div>
 				</aside>
 			</div>
 		</main>
@@ -756,6 +810,7 @@
 			const boardEl = document.getElementById('board');
 			const moveListEl = document.getElementById('moves');
 			const thinkingEl = document.getElementById('thinking-overlay');
+			const newGameConfirmationEl = document.getElementById('new-game-confirmation');
 			let aiTimer = null;
 
 			function cloneBoard(board) {
@@ -1315,12 +1370,11 @@
 			}
 
 			function newGame(force = false) {
-				if (
-					!force &&
-					state.history.length &&
-					!confirm('Start a new game? The current position will be cleared.')
-				)
+				if (!force && state.history.length) {
+					newGameConfirmationEl.hidden = false;
 					return;
+				}
+				newGameConfirmationEl.hidden = true;
 				clearTimeout(aiTimer);
 				state.board = initialBoard();
 				state.turn = 'w';
@@ -1346,6 +1400,10 @@
 			});
 
 			document.getElementById('new-game').addEventListener('click', () => newGame());
+			document.getElementById('new-game-cancel').addEventListener('click', () => {
+				newGameConfirmationEl.hidden = true;
+			});
+			document.getElementById('new-game-confirm').addEventListener('click', () => newGame(true));
 			document.getElementById('flip').addEventListener('click', () => {
 				state.flipped = !state.flipped;
 				render();

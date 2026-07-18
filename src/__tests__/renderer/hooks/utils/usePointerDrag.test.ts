@@ -60,6 +60,53 @@ describe('usePointerDrag', () => {
 		expect(onDrag).toHaveBeenCalledWith(35, 40);
 	});
 
+	it('continues dragging when pointer capture is no longer available', () => {
+		setPointerCapture.mockImplementation(() => {
+			throw new DOMException('Pointer is no longer active', 'NotFoundError');
+		});
+		const onDrag = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag));
+		act(() => window.dispatchEvent(pointer('pointermove', 55, 70, 7)));
+
+		expect(onDrag).toHaveBeenCalledWith(35, 40);
+	});
+
+	it('continues when pointer capture was released before cleanup', () => {
+		releasePointerCapture.mockImplementation(() => {
+			throw new DOMException('Pointer is no longer active', 'NotFoundError');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		expect(() => act(() => result.current(dragEvent(8), vi.fn()))).not.toThrow();
+		expect(setPointerCapture).toHaveBeenLastCalledWith(8);
+	});
+
+	it('rethrows unexpected pointer capture errors', () => {
+		setPointerCapture.mockImplementation(() => {
+			throw new Error('Unexpected capture failure');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		expect(() => act(() => result.current(dragEvent(), vi.fn()))).toThrow(
+			'Unexpected capture failure'
+		);
+	});
+
+	it('rethrows unexpected pointer release errors', () => {
+		releasePointerCapture.mockImplementationOnce(() => {
+			throw new Error('Unexpected release failure');
+		});
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn()));
+		expect(() => act(() => result.current(dragEvent(8), vi.fn()))).toThrow(
+			'Unexpected release failure'
+		);
+	});
+
 	it('ignores unrelated pointers and tears down only for the active pointer', () => {
 		const onDrag = vi.fn();
 		const { result } = renderHook(() => usePointerDrag());

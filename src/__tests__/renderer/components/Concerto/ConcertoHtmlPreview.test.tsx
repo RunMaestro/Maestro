@@ -24,4 +24,32 @@ describe('ConcertoHtmlPreview', () => {
 		expect(iframe).toHaveAttribute('data-concerto-surface', 'movement');
 		expect(iframe).toHaveAttribute('data-concerto-id', 'checkout/mockup');
 	});
+
+	it('replaces the iframe when its revision changes', () => {
+		const { rerender } = render(
+			<ConcertoHtmlPreview
+				surface="movement"
+				id="checkout/mockup"
+				revision={1}
+				title="Checkout mockup"
+			/>
+		);
+		const firstFrame = screen.getByTitle('Checkout mockup');
+
+		rerender(
+			<ConcertoHtmlPreview
+				surface="movement"
+				id="checkout/mockup"
+				revision={2}
+				title="Checkout mockup"
+			/>
+		);
+
+		const secondFrame = screen.getByTitle('Checkout mockup');
+		expect(secondFrame).not.toBe(firstFrame);
+		expect(secondFrame).toHaveAttribute(
+			'src',
+			'maestro-concerto://render/?surface=movement&id=checkout%2Fmockup&revision=2'
+		);
+	});
 });

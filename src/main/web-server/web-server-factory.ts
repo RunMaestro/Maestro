@@ -221,6 +221,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		}
 
 		const server = new WebServer(port, securityToken);
+		// Movement updates and designer inspections both depend on the renderer's
+		// current HTML revision. Serialize them so an update cannot replace the
+		// document between an inspection request and its compositor capture.
+		let pendingMovementRendererOperation: Promise<void> | undefined;
+		const enqueueMovementRendererOperation = <T>(operation: () => Promise<T>): Promise<T> => {
+			const previousOperation = pendingMovementRendererOperation;
+			const operationPromise = previousOperation ? previousOperation.then(operation) : operation();
+			const completion = operationPromise.then(
+				() => undefined,
+				() => undefined
+			);
+			pendingMovementRendererOperation = completion;
+			void completion.finally(() => {
+				if (pendingMovementRendererOperation === completion) {
+					pendingMovementRendererOperation = undefined;
+				}
+			});
+			return operationPromise;
+		};
 
 		// Set up callback for web server to fetch sessions list
 		server.setGetSessionsCallback(() => {
@@ -970,35 +989,37 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// floating movement overlay. Gated by the Concerto Encore feature: when
 		// off, drop the payload so the opt-in feature stays fully inert.
 		server.setMovementViewCallback(async (params) => {
-			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
-				return false;
-			if (
-				params.id &&
-				params.viewType === 'html' &&
-				params.body === undefined &&
-				getConcertoHtmlDocumentRevision('movement', params.id) === null
-			) {
-				logger.warn(
-					`HTML movement '${params.id}' requires a body when changing view type`,
-					'WebServer'
-				);
-				return false;
-			}
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for movementView', 'WebServer');
-				return false;
-			}
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for movementView', 'WebServer');
-				return false;
-			}
-			const routedParams = applyMovementHtmlPayload(params);
-			return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
-				fallback: false,
-				parse: (raw) => raw === true,
-				timeoutMs: 4000,
-				args: [routedParams],
+			return enqueueMovementRendererOperation(async () => {
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return false;
+				if (
+					params.id &&
+					params.viewType === 'html' &&
+					params.body === undefined &&
+					getConcertoHtmlDocumentRevision('movement', params.id) === null
+				) {
+					logger.warn(
+						`HTML movement '${params.id}' requires a body when changing view type`,
+						'WebServer'
+					);
+					return false;
+				}
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for movementView', 'WebServer');
+					return false;
+				}
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for movementView', 'WebServer');
+					return false;
+				}
+				const routedParams = applyMovementHtmlPayload(params);
+				return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
+					fallback: false,
+					parse: (raw) => raw === true,
+					timeoutMs: 4000,
+					args: [routedParams],
+				});
 			});
 		});
 
@@ -1021,46 +1042,48 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// memory here and is returned to the CLI, which writes it using the agent's
 		// own filesystem permissions.
 		server.setGetMovementDesignerInspectionCallback(async (id) => {
-			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
-				return null;
-			const mainWindow = getMainWindow();
-			if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
-			const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
-			if (expectedRevision === null) return null;
-			const frame = await requestFromRenderer<ConcertoDesignerFrameSnapshot | null>(
-				mainWindow,
-				'remote:getMovementDesignerInspection',
-				{
-					fallback: null,
-					parse: (raw) => (raw as ConcertoDesignerFrameSnapshot) ?? null,
-					timeoutMs: 4000,
-					args: [id, expectedRevision],
-				}
-			);
-			if (!frame) return null;
-			const image = await mainWindow.webContents.capturePage({
-				x: Math.max(0, Math.floor(frame.rect.x)),
-				y: Math.max(0, Math.floor(frame.rect.y)),
-				width: Math.max(1, Math.floor(frame.rect.width)),
-				height: Math.max(1, Math.floor(frame.rect.height)),
+			return enqueueMovementRendererOperation(async () => {
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return null;
+				const mainWindow = getMainWindow();
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
+				const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
+				if (expectedRevision === null) return null;
+				const frame = await requestFromRenderer<ConcertoDesignerFrameSnapshot | null>(
+					mainWindow,
+					'remote:getMovementDesignerInspection',
+					{
+						fallback: null,
+						parse: (raw) => (raw as ConcertoDesignerFrameSnapshot) ?? null,
+						timeoutMs: 4000,
+						args: [id, expectedRevision],
+					}
+				);
+				if (!frame) return null;
+				const image = await mainWindow.webContents.capturePage({
+					x: Math.max(0, Math.floor(frame.rect.x)),
+					y: Math.max(0, Math.floor(frame.rect.y)),
+					width: Math.max(1, Math.floor(frame.rect.width)),
+					height: Math.max(1, Math.floor(frame.rect.height)),
+				});
+				const imageSize = image.getSize();
+				const inspection: MovementDesignerInspection = {
+					id,
+					ready: frame.ready,
+					viewport: frame.viewport,
+					image: {
+						width: imageSize.width,
+						height: imageSize.height,
+						scaleFactor:
+							frame.viewport.width > 0
+								? Number((imageSize.width / frame.viewport.width).toFixed(3))
+								: 1,
+					},
+					logs: frame.logs,
+					imageDataUrl: image.toDataURL(),
+				};
+				return inspection;
 			});
-			const imageSize = image.getSize();
-			const inspection: MovementDesignerInspection = {
-				id,
-				ready: frame.ready,
-				viewport: frame.viewport,
-				image: {
-					width: imageSize.width,
-					height: imageSize.height,
-					scaleFactor:
-						frame.viewport.width > 0
-							? Number((imageSize.width / frame.viewport.width).toFixed(3))
-							: 1,
-				},
-				logs: frame.logs,
-				imageDataUrl: image.toDataURL(),
-			};
-			return inspection;
 		});
 
 		server.setInteractMovementDesignerCallback(

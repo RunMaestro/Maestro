@@ -288,10 +288,18 @@ export async function movementInspect(id: string, options: MovementInspectOption
 	if (!match) {
 		failMovementCommand('Maestro returned an invalid designer screenshot', options.json);
 	}
+	const screenshot = Buffer.from(match[1], 'base64');
+	const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+	if (
+		screenshot.length < pngSignature.length ||
+		!screenshot.subarray(0, pngSignature.length).equals(pngSignature)
+	) {
+		failMovementCommand('Maestro returned an invalid designer screenshot', options.json);
+	}
 	const output = path.resolve(options.output);
 	try {
 		mkdirSync(path.dirname(output), { recursive: true });
-		writeFileSync(output, Buffer.from(match[1], 'base64'));
+		writeFileSync(output, screenshot);
 	} catch (error) {
 		failMovementCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
