@@ -772,7 +772,7 @@ Some text with [x] in it that's not a checkbox
 			] as any);
 			vi.mocked(fs.promises.stat).mockImplementation(async (filePath) => {
 				if (filePath === currentPath) {
-					return { isFile: () => true, mtimeMs: 200 } as fs.Stats;
+					return { isFile: () => true, birthtimeMs: 200 } as fs.Stats;
 				}
 				throw new Error('ENOENT');
 			});
@@ -788,7 +788,11 @@ Some text with [x] in it that's not a checkbox
 					source: 'settings',
 				});
 			} finally {
-				process.env.LOCALAPPDATA = originalLocalAppData;
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
 				Object.defineProperty(process, 'platform', {
 					value: originalPlatform,
 					configurable: true,

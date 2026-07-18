@@ -49,6 +49,11 @@ function isCodexDesktopBinaryPath(binaryPath: string): boolean {
 	);
 }
 
+function isMissingPathError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 async function findLatestCodexDesktopBinary(): Promise<string | null> {
 	const binRoot = getCodexDesktopBinRoot();
 
@@ -61,9 +66,10 @@ async function findLatestCodexDesktopBinary(): Promise<string | null> {
 					const candidatePath = path.win32.join(binRoot, entry.name, 'codex.exe');
 					try {
 						const stats = await fs.promises.stat(candidatePath);
-						return stats.isFile() ? { path: candidatePath, modifiedAt: stats.mtimeMs } : null;
-					} catch {
-						return null;
+						return stats.isFile() ? { path: candidatePath, installedAt: stats.birthtimeMs } : null;
+					} catch (error) {
+						if (isMissingPathError(error)) return null;
+						throw error;
 					}
 				})
 		);
@@ -71,13 +77,14 @@ async function findLatestCodexDesktopBinary(): Promise<string | null> {
 		return (
 			candidates
 				.filter(
-					(candidate): candidate is { path: string; modifiedAt: number } => candidate !== null
+					(candidate): candidate is { path: string; installedAt: number } => candidate !== null
 				)
-				.sort((a, b) => b.modifiedAt - a.modifiedAt || b.path.localeCompare(a.path))[0]?.path ||
+				.sort((a, b) => b.installedAt - a.installedAt || b.path.localeCompare(a.path))[0]?.path ||
 			null
 		);
-	} catch {
-		return null;
+	} catch (error) {
+		if (isMissingPathError(error)) return null;
+		throw error;
 	}
 }
 

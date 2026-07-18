@@ -27,6 +27,10 @@ vi.mock('../../../shared/pathUtils', () => ({
 	detectNodeVersionManagerBinPaths: vi.fn(() => []),
 }));
 
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Import after mocking
 import {
 	getExpandedEnv,
@@ -38,6 +42,7 @@ import {
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 
 describe('path-prober', () => {
 	beforeEach(() => {
@@ -258,10 +263,10 @@ describe('path-prober', () => {
 				statMock.mockImplementation(async (filePath) => {
 					if (filePath === stalePath) throw new Error('ENOENT');
 					if (filePath === olderPath) {
-						return { isFile: () => true, mtimeMs: 100 } as fs.Stats;
+						return { isFile: () => true, birthtimeMs: 100, mtimeMs: 300 } as fs.Stats;
 					}
 					if (filePath === currentPath) {
-						return { isFile: () => true, mtimeMs: 200 } as fs.Stats;
+						return { isFile: () => true, birthtimeMs: 200, mtimeMs: 100 } as fs.Stats;
 					}
 					throw new Error('ENOENT');
 				});
@@ -275,7 +280,50 @@ describe('path-prober', () => {
 				);
 			} finally {
 				readdirMock.mockRestore();
-				process.env.LOCALAPPDATA = originalLocalAppData;
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should report unexpected errors while discovering Codex Desktop executables', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			const permissionError = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockRejectedValue(permissionError);
+
+				expect(await checkCustomPath(stalePath)).toEqual({ exists: false });
+				expect(captureException).toHaveBeenCalledWith(permissionError);
+			} finally {
+				readdirMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
 				Object.defineProperty(process, 'platform', {
 					value: originalPlatform,
 					configurable: true,
@@ -359,7 +407,7 @@ describe('path-prober', () => {
 				readdirMock.mockResolvedValue([
 					{ name: 'current-version', isDirectory: () => true },
 				] as any);
-				statMock.mockResolvedValue({ isFile: () => true, mtimeMs: 200 } as fs.Stats);
+				statMock.mockResolvedValue({ isFile: () => true, birthtimeMs: 200 } as fs.Stats);
 				accessMock.mockImplementation(async (filePath) => {
 					if (filePath !== currentPath) throw new Error('ENOENT');
 				});
@@ -368,7 +416,11 @@ describe('path-prober', () => {
 			} finally {
 				readdirMock.mockRestore();
 				statMock.mockRestore();
-				process.env.LOCALAPPDATA = originalLocalAppData;
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
 			}
 		});
 	});
