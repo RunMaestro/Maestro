@@ -216,16 +216,20 @@ src/__tests__/
 
 ### Pre-commit Hooks
 
-This project uses [Husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/lint-staged/lint-staged) to automatically format and lint staged files before each commit.
+This repository uses Git's native `core.hooksPath` with the direct hook scripts in `.husky/`, plus [lint-staged](https://github.com/lint-staged/lint-staged). No hook manager installs or runs these scripts.
 
 **How it works:**
 
-1. When you run `git commit`, Husky triggers the pre-commit hook
-2. lint-staged runs Prettier and ESLint only on your staged files
-3. If there are unfixable errors, the commit is blocked
-4. Fixed files are automatically re-staged
+1. `bun install` runs the `prepare` script, which invokes `scripts/setup-git-hooks.mjs` to set `core.hooksPath=.husky`
+2. `git commit` runs `.husky/pre-commit`, which formats and lints staged files through lint-staged
+3. A merge commit runs `.husky/pre-merge-commit`, which also runs lint-staged
+4. `git push` runs `.husky/pre-push`, which runs the repository-wide `validate:push` checks
 
-**Setup is automatic** - hooks are installed when you run `npm install` (via the `prepare` script).
+**Set up hooks manually:**
+
+```bash
+bun run scripts/setup-git-hooks.mjs
+```
 
 **Bypassing hooks (emergency only):**
 
@@ -236,23 +240,23 @@ git commit --no-verify -m "emergency fix"
 **Running lint-staged manually:**
 
 ```bash
-npx lint-staged
+bunx lint-staged
 ```
 
 **Troubleshooting:**
 
-- **Hooks not running** - Check if `.husky/pre-commit` has executable permissions: `chmod +x .husky/pre-commit`
-- **Wrong tool version** - Ensure `npx` is using local `node_modules`: delete `node_modules` and run `npm install`
-- **Hook fails in CI/Docker** - The `prepare` script uses `husky || true` to gracefully skip in environments without `.git`
+- **Hooks not running** - Run `bun run scripts/setup-git-hooks.mjs`, then confirm `git config --get core.hooksPath` prints `.husky`
+- **Wrong tool version** - Reinstall dependencies with `bun install`
+- **Hook fails in CI/Docker** - The setup script skips configuration when `.git` or Git is unavailable
 
 ### Manual Linting
 
 Run TypeScript type checking and ESLint to catch errors before building:
 
 ```bash
-npm run lint           # TypeScript type checking (all configs: renderer, main, cli)
-npm run lint:eslint    # ESLint code quality checks (React hooks, unused vars, etc.)
-npm run lint:eslint -- --fix  # Auto-fix ESLint issues where possible
+bun run lint           # TypeScript type checking (all configs: renderer, main, cli)
+bun run lint:eslint    # ESLint code quality checks (React hooks, unused vars, etc.)
+bun run lint:eslint -- --fix  # Auto-fix ESLint issues where possible
 ```
 
 ### TypeScript Linting
@@ -274,8 +278,8 @@ ESLint is configured with TypeScript and React plugins (`eslint.config.mjs`):
 
 **When to run manual linting:**
 
-- Pre-commit hooks handle staged files automatically
-- Run full lint after significant refactors: `npm run lint && npm run lint:eslint`
+- Pre-commit and pre-merge-commit hooks handle staged files automatically
+- Run full lint after significant refactors: `bun run lint && bun run lint:eslint`
 - When CI fails with type errors
 
 **Common lint issues:**

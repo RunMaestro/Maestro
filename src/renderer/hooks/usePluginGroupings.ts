@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { usePluginContributions } from './usePluginContributions';
+import type { GroupingContribution } from '../../shared/plugins/contributions';
 import type { VirtualGrouping } from '../utils/pluginGroupings';
 
 /** Merges declarative manifest groupings with live, presentation-only snapshots. */
-export function usePluginGroupings(): VirtualGrouping[] {
-	const { groupings } = usePluginContributions();
+export function usePluginGroupings(groupings: readonly GroupingContribution[]): VirtualGrouping[] {
 	const [published, setPublished] = useState<VirtualGrouping[]>([]);
 
 	useEffect(() => {

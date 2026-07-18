@@ -2,9 +2,7 @@
  * Generalized contribution-registry substrate (pure, bundle-safe).
  *
  * ONE merge contract for every plugin-extensible surface (themes, prompts,
- * commands, docked panels, sidebar items, ...), generalizing the two seams that
- * already work end-to-end: the ThemeContribution merge and createAgentRegistry's
- * collision rule. The contract:
+ * commands, docked panels, sidebar items, ...), applying one collision rule:
  *  - ids are namespaced `<pluginId>/<localId>` for plugin entries, bare for built-ins;
  *  - BUILT-IN ALWAYS WINS a collision (a plugin can never shadow or impersonate a
  *    first-party surface), and an earlier plugin wins over a later duplicate;

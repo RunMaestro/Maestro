@@ -26,7 +26,7 @@ import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
-import type { AgentId } from '../shared/agentIds';
+import type { AgentId } from '../shared/agentRegistry';
 import {
 	initGlobalHotkey,
 	setGlobalShowHotkey,

@@ -100,7 +100,7 @@ import {
 	parseNotificationTimeout,
 	resolveNotificationColor,
 } from '../../../shared/notification';
-import { AGENT_IDS } from '../../../shared/agentIds';
+import { AGENT_IDS } from '../../../shared/agentRegistry';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,

@@ -9,7 +9,7 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 ## Agent Registration Pipeline
 
 ```text
-1. Agent IDs         src/shared/agentIds.ts           Single source of truth for all agent IDs
+1. Agent registry    src/shared/agentRegistry.ts      Canonical built-in IDs and capabilities
 2. Definitions       src/main/agents/definitions.ts   CLI args, config options, argument builders
 3. Capabilities      src/main/agents/capabilities.ts  Feature flags per agent
 4. Detection         src/main/agents/detector.ts      Runtime binary detection + PATH resolution
@@ -20,27 +20,20 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 
 ---
 
-## 1. Agent IDs (`src/shared/agentIds.ts`)
+## 1. Agent Registry (`src/shared/agentRegistry.ts`)
 
-The canonical list of all agent IDs:
+The canonical registry owns every built-in agent ID and its capabilities. `AGENT_IDS` is derived from that registry:
 
 ```typescript
-export const AGENT_IDS = [
-	'terminal',
-	'claude-code',
-	'codex',
-	'gemini-cli',
-	'qwen3-coder',
-	'opencode',
-	'factory-droid',
-	'copilot-cli',
-	'grok',
-] as const;
+export const AGENT_REGISTRY = {
+	// Built-in agent capability definitions
+} satisfies Record<string, AgentCapabilities>;
 
-export type AgentId = (typeof AGENT_IDS)[number];
+export type AgentId = keyof typeof AGENT_REGISTRY;
+export const AGENT_IDS = Object.freeze(Object.keys(AGENT_REGISTRY)) as readonly AgentId[];
 ```
 
-**Adding a new agent:** Add the ID string to `AGENT_IDS`. TypeScript enforces updates everywhere via the `AgentId` type.
+**Adding a new agent:** Add the registry entry to `AGENT_REGISTRY`. TypeScript derives `AGENT_IDS` and updates the `AgentId` union automatically.
 
 ### Related Metadata (`src/shared/agentMetadata.ts`)
 
@@ -581,7 +574,7 @@ interface AgentSessionInfo {
 
 ## Adding a New Agent (Checklist)
 
-1. **Add ID** to `AGENT_IDS` in `src/shared/agentIds.ts`
+1. **Add registry entry** to `AGENT_REGISTRY` in `src/shared/agentRegistry.ts`
 2. **Add display name** to `AGENT_DISPLAY_NAMES` in `src/shared/agentMetadata.ts`
 3. **Add definition** to `AGENT_DEFINITIONS` in `src/main/agents/definitions.ts`
 4. **Add capabilities** to `AGENT_CAPABILITIES` in `src/main/agents/capabilities.ts`

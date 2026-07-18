@@ -108,6 +108,10 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
+	PluginUiItemsSlot: () => null,
+}));
+
 // Mock InlineWizardContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
 	useInlineWizardContext: () => ({
@@ -1069,6 +1073,30 @@ describe('SessionList', () => {
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
+		});
+
+		it('loads declarative contributions once while retaining the live grouping subscription', async () => {
+			let notifyGroupingChange: (() => void) | undefined;
+			vi.mocked(window.maestro.plugins.onGroupingsChanged).mockImplementation((callback) => {
+				notifyGroupingChange = callback;
+				return () => {};
+			});
+			const sessions = [createMockSession({ id: 'session-1', name: 'Session One' })];
+			useSessionStore.setState({ sessions });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			await waitFor(() => {
+				expect(window.maestro.plugins.contributions).toHaveBeenCalledTimes(1);
+				expect(window.maestro.plugins.onChanged).toHaveBeenCalledTimes(1);
+				expect(window.maestro.plugins.getGroupings).toHaveBeenCalledTimes(1);
+				expect(window.maestro.plugins.onGroupingsChanged).toHaveBeenCalledTimes(1);
+			});
+
+			act(() => notifyGroupingChange?.());
+			await waitFor(() => {
+				expect(window.maestro.plugins.getGroupings).toHaveBeenCalledTimes(2);
+			});
 		});
 
 		it('renders plugin virtual groups without persisted group controls and falls back to Manual', async () => {

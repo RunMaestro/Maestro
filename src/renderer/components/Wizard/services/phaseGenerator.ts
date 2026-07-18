@@ -169,6 +169,11 @@ import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
 import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
 import { sanitizeFilename } from '../../../utils/sanitizeFilename';
+import {
+	countMarkdownTasks as countTasks,
+	extractStreamJsonResult,
+	splitMarkdownIntoPhases as splitIntoPhases,
+} from '../../../utils/wizardOutputParsing';
 
 /**
  * Generation timeout in milliseconds (20 minutes - large codebases need time for exploration)
@@ -401,15 +406,6 @@ export function parseGeneratedDocuments(output: string): ParsedDocument[] {
 }
 
 /**
- * Count tasks in a document
- */
-export function countTasks(content: string): number {
-	const taskPattern = /^-\s*\[\s*[xX ]?\s*\]/gm;
-	const matches = content.match(taskPattern);
-	return matches ? matches.length : 0;
-}
-
-/**
  * Validate that generated documents have proper structure
  */
 export function validateDocuments(documents: ParsedDocument[]): {
@@ -451,84 +447,6 @@ export function validateDocuments(documents: ParsedDocument[]): {
 		valid: errors.length === 0,
 		errors,
 	};
-}
-
-/**
- * Intelligent splitting of a single large document into phases
- *
- * If the agent generates one large document instead of multiple phases,
- * this function attempts to split it intelligently.
- */
-export function splitIntoPhases(content: string): ParsedDocument[] {
-	const documents: ParsedDocument[] = [];
-
-	// Try to find phase-like sections within the content
-	const phaseSectionPattern =
-		/(?:^|\n)(#{1,2}\s*Phase\s*\d+[^\n]*)\n([\s\S]*?)(?=\n#{1,2}\s*Phase\s*\d+|$)/gi;
-
-	let match;
-	let phaseNumber = 1;
-
-	while ((match = phaseSectionPattern.exec(content)) !== null) {
-		const header = match[1].trim();
-		const sectionContent = match[2].trim();
-
-		// Create a proper document from this section
-		const fullContent = `${header}\n\n${sectionContent}`;
-
-		// Try to extract a description from the header
-		const descMatch = header.match(/Phase\s*\d+[:\s-]*(.*)/i);
-		const description =
-			descMatch && descMatch[1].trim()
-				? descMatch[1]
-						.trim()
-						.replace(/[^a-zA-Z0-9\s-]/g, '')
-						.trim()
-						.replace(/\s+/g, '-')
-				: 'Tasks';
-
-		documents.push({
-			filename: `Phase-${String(phaseNumber).padStart(2, '0')}-${description}.md`,
-			content: fullContent,
-			phase: phaseNumber,
-		});
-
-		phaseNumber++;
-	}
-
-	// If no phase sections found, treat the whole content as Phase 1
-	if (documents.length === 0 && content.trim()) {
-		documents.push({
-			filename: 'Phase-01-Initial-Setup.md',
-			content: content.trim(),
-			phase: 1,
-		});
-	}
-
-	return documents;
-}
-
-/**
- * Extract the result from Claude's stream-json format
- */
-function extractResultFromStreamJson(output: string): string | null {
-	try {
-		const lines = output.split('\n');
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			try {
-				const msg = JSON.parse(line);
-				if (msg.type === 'result' && msg.result) {
-					return msg.result;
-				}
-			} catch {
-				// Ignore non-JSON lines
-			}
-		}
-	} catch {
-		// Fallback to raw output
-	}
-	return null;
 }
 
 /**
@@ -950,7 +868,7 @@ class PhaseGenerator {
 
 					if (code === 0) {
 						// Try to extract result from stream-json format
-						const extracted = extractResultFromStreamJson(this.outputBuffer);
+						const extracted = extractStreamJsonResult(this.outputBuffer, 'claude-code');
 						const output = extracted || this.outputBuffer;
 
 						logger.info('[PhaseGenerator] Extraction result:', undefined, {
@@ -1353,6 +1271,8 @@ class PhaseGenerator {
 export const phaseGenerator = new PhaseGenerator();
 
 // Export utility functions for use elsewhere
+export { countTasks, splitIntoPhases };
+
 export const phaseGeneratorUtils = {
 	generateDocumentGenerationPrompt,
 	parseGeneratedDocuments,

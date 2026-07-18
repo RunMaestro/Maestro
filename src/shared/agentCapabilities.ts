@@ -6,7 +6,7 @@
  * UI renders meaningful state before the next probe round-trip completes.
  */
 
-import type { AgentId } from './agentIds';
+import type { AgentId } from './agentRegistry';
 
 /**
  * High-level readiness status for an agent in a particular environment.

@@ -12,13 +12,8 @@
  *
  * SCOPE: this validates ONLY the built-in (compile-time) agents - the AGENT_IDS
  * tuple and its statically-typed AGENT_DEFINITIONS / AGENT_CAPABILITIES / parser
- * / storage tables. Runtime agents registered by plugins (the AgentRegistry,
- * shared/plugins/agent-registry.ts) deliberately live OUTSIDE these static
- * structures: they are not part of the AgentId union and must not be required to
- * appear in AGENT_DEFINITIONS. A plugin agent's completeness is guaranteed by
- * construction in its contribution validator + the registry, and covered by
- * agent-registry.test.ts. Do NOT make AGENT_IDS dynamic to include plugin agents
- * - that would break the exhaustiveness this test protects.
+ * / storage tables. Plugin agent contributions remain declarative metadata and
+ * must not be added to the static AgentId union or built-in tables.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -26,8 +21,7 @@ import { AGENT_DEFINITIONS, AGENT_CAPABILITIES, getAgentCapabilities } from '../
 import { initializeOutputParsers, getOutputParser, getErrorPatterns } from '../../../main/parsers';
 import { getSessionStorage, clearStorageRegistry } from '../../../main/agents/session-storage';
 import { initializeSessionStorages } from '../../../main/storage';
-import { AGENT_IDS } from '../../../shared/agentIds';
-import { createAgentRegistry } from '../../../shared/plugins/agent-registry';
+import { AGENT_IDS } from '../../../shared/agentRegistry';
 
 beforeAll(() => {
 	initializeOutputParsers();
@@ -41,7 +35,7 @@ describe('Agent Completeness', () => {
 			for (const def of AGENT_DEFINITIONS) {
 				expect(
 					AGENT_IDS.includes(def.id as (typeof AGENT_IDS)[number]),
-					`Agent "${def.id}" is in AGENT_DEFINITIONS but not in AGENT_IDS (shared/agentIds.ts)`
+					`Agent "${def.id}" is in AGENT_DEFINITIONS but not in AGENT_IDS (shared/agentRegistry.ts)`
 				).toBe(true);
 			}
 		});
@@ -171,38 +165,6 @@ describe('Agent Completeness', () => {
 					definedIds.includes(agentId),
 					`Agent "${agentId}" is in AGENT_CAPABILITIES but not in AGENT_DEFINITIONS`
 				).toBe(true);
-			}
-		});
-	});
-
-	// Runtime (plugin) agents are intentionally NOT subject to the static
-	// completeness checks above. They are known to the registry but absent from
-	// the compile-time tables, and that separation is the relaxation that lets
-	// plugins add agents without touching first-party type exhaustiveness.
-	describe('runtime agents live outside the static core', () => {
-		it('a registered runtime agent is known but is not a built-in', () => {
-			const reg = createAgentRegistry([
-				{
-					id: 'com.acme/bot',
-					localId: 'bot',
-					pluginId: 'com.acme',
-					displayName: 'Bot',
-					binaryName: 'bot',
-					baseArgs: [],
-					capabilities: {},
-				},
-			]);
-			expect(reg.isKnown('com.acme/bot')).toBe(true);
-			expect(reg.isBuiltIn('com.acme/bot')).toBe(false);
-			// It must NOT leak into the static built-in structures.
-			expect(AGENT_IDS.includes('com.acme/bot' as (typeof AGENT_IDS)[number])).toBe(false);
-			expect(AGENT_DEFINITIONS.map((d) => d.id).includes('com.acme/bot')).toBe(false);
-		});
-
-		it('every built-in id is reported as built-in by the registry', () => {
-			const reg = createAgentRegistry([]);
-			for (const id of AGENT_IDS) {
-				expect(reg.isBuiltIn(id), `registry should treat "${id}" as built-in`).toBe(true);
 			}
 		});
 	});

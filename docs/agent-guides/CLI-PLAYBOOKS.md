@@ -697,6 +697,6 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 | Shared types        | `src/shared/types.ts`                                                                  |
 | Template variables  | `src/shared/templateVariables.ts`                                                      |
 | Agent definitions   | `src/main/agents/definitions.ts`                                                       |
-| Agent IDs           | `src/shared/agentIds.ts`                                                               |
+| Agent registry      | `src/shared/agentRegistry.ts`                                                          |
 | CLI activity        | `src/shared/cli-activity.ts`                                                           |
 | Prompt templates    | `src/prompts/`                                                                         |

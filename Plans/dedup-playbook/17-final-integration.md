@@ -10,7 +10,7 @@ Stages 00-16 complete. No priority may remain silently pending.
 
 ## 1. Ledger reconciliation
 
-- Verify priorities P1-P134 appear exactly once with `implemented`, `retained`, `rejected`, `deferred with owner`, or `already resolved`. P1-P120 are the original audit scope; P121-P134 are Wave 14 additions accepted after saturation review.
+- Verify priorities P1-P147 appear exactly once with `implemented`, `retained`, `rejected`, `deferred with owner`, or `already resolved`. P1-P120 are the original audit scope; P121-P134 are Wave 14 additions; P135-P147 are Wave 15 dispositions.
 - For retained/rejected findings, include current source evidence and why abstraction/deletion is unsafe or not net-positive.
 - For deferred work, name the external prerequisite and tracking issue; do not call the program complete if the prerequisite is internal work merely postponed.
 - Compare implementation against `dedup-report.md` and update status without erasing original audit evidence.
@@ -27,6 +27,16 @@ Run the repository's canonical commands for:
 - Conflict-marker and generated-source synchronization checks.
 
 Classify failures against Stage 00 baseline. No new failure is acceptable.
+
+### Wave 15 verified integration evidence
+
+- Root focused run: 15 files, 538 tests passed.
+- Root TypeScript checks for main, CLI, and renderer passed.
+- Plugin SDK build passed; 2 files and 28 tests passed with no type errors.
+- `bun install --frozen-lockfile --ignore-scripts` passed with no changes.
+- Main and renderer production builds passed. Renderer emitted existing non-failing legacy-script, CSS syntax, and chunk-size warnings.
+- Adversarial review found the capability-major issue; `ui:render-unsafe` was restored unchanged, stale removed-path documentation was corrected, and the final recheck was non-blocking.
+- The plugin E2E run timed out on unrelated existing broker/scheduler failures. It is not a passing gate and must not be represented as one.
 
 ## 3. Test verification
 
@@ -128,7 +138,7 @@ Only after all verification passes:
 
 Run from the integration worktree, in this order, after every stage ledger row is non-pending:
 
-1. `bun install --frozen-lockfile`
+1. `bun install --frozen-lockfile --ignore-scripts`
 2. `bun run format:check:all`
 3. `bun run lint`
 4. `bun run lint:eslint`
@@ -139,18 +149,18 @@ Run from the integration worktree, in this order, after every stage ledger row i
 9. `bunx tsc -b tsconfig.main.json --force`
 10. Verify the loaded `dist/main/index.js` contains a unique string introduced by the final main-process change, then launch with `bun run start`.
 11. Run `bun run build:web-desktop`, then launch `bunx vite preview --config vite.config.web-desktop.mts --host 127.0.0.1 --port 4173` with the process supervisor. Open `http://127.0.0.1:4173` in Chromium and verify: app shell load without console/network errors; desktop WebSocket connect, forced disconnect, and reconnect; session list/search/open; Auto Run state updates; Cue state/actions; Git status refresh; feedback attachment/upload error handling; deep-link routing; and reload with persisted settings.
-12. `bun run test:e2e` after skipped-case triage; run each restored formerly skipped spec three times.
+12. Run `bun run test:e2e` only after skipped-case triage and classify its result independently. The Wave 15 plugin E2E run timed out on unrelated existing broker/scheduler failures and is not passing evidence; run each restored formerly skipped spec three times only after the unrelated blocker is resolved.
 13. `bun run package:win` on Windows plus the supported CI/platform packaging matrix.
 
 The repository CI currently runs format/lint/type checks and the unit suite on Ubuntu and Windows. Local Bun gates do not replace that matrix. A command may be skipped only when the stage is provably unaffected and the ledger records why; none may be skipped at final integration. Any new failure blocks release. An unchanged Stage 00 failure requires exact before/after output and explicit owner approval.
 
 ## Ledger closure fields
 
-For every P1-P134 row record: final title, stage/commit/PR, disposition, refreshed source anchors, LSP reference result where relevant, characterization or replacement tests, smoke scenario, security/persistence evidence class, net line delta, reviewer, rollback unit, and `dedup-report.md` update anchor. `already resolved`, `retained`, `rejected`, and `deferred` rows require the same evidence rigor as implementation rows. The program is not complete while any row is absent, pending, or justified only by the 2026-07-14 static audit.
+For every P1-P147 row record: final title, stage/commit/PR, disposition, refreshed source anchors, LSP reference result where relevant, characterization or replacement tests, smoke scenario, security/persistence evidence class, net line delta, reviewer, rollback unit, and `dedup-report.md` update anchor. `already resolved`, `retained`, `rejected`, and `deferred` rows require the same evidence rigor as implementation rows. The program is not complete while any row is absent, pending, or justified only by the 2026-07-14 static audit.
 
 ## Final exit criteria
 
-- Every priority P1-P134 has a reviewed disposition and evidence.
+- Every priority P1-P147 has a reviewed disposition and evidence.
 - All canonical static checks and supported tests pass or only unchanged Stage 00 baseline failures remain with explicit approval.
 - Electron, web, CLI, plugin, remote, and packaging smoke matrices pass.
 - Security negative tests pass.

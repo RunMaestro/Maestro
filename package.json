@@ -350,7 +350,6 @@
 		"eslint-plugin-react": "^7.37.5",
 		"eslint-plugin-react-hooks": "^7.0.1",
 		"globals": "^16.5.0",
-		"husky": "^9.1.7",
 		"jsdom": "^27.2.0",
 		"lucide-react": "^0.303.0",
 		"patch-package": "^8.0.1",

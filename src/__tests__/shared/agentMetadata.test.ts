@@ -16,7 +16,7 @@ import {
 	AGENT_LOGIN_COMMANDS,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
-import { AGENT_IDS } from '../../shared/agentIds';
+import { AGENT_IDS } from '../../shared/agentRegistry';
 
 describe('agentMetadata', () => {
 	describe('getAgentDisplayName', () => {

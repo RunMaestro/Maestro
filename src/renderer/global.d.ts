@@ -4,12 +4,6 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
-// Vite raw imports for .md files
-declare module '*.md?raw' {
-	const content: string;
-	export default content;
-}
-
 interface HTMLWebViewElement extends HTMLElement {
 	src: string;
 	partition: string;

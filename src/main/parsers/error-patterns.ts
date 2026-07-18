@@ -17,7 +17,7 @@
  */
 
 import type { AgentErrorType, ToolType } from '../../shared/types';
-import { isValidAgentId } from '../../shared/agentIds';
+import { isValidAgentId } from '../../shared/agentRegistry';
 import { logger } from '../utils/logger';
 
 /**

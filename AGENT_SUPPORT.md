@@ -24,7 +24,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 
 #### Required Steps
 
-1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
+1. **Add registry entry** to `src/shared/agentRegistry.ts` → `AGENT_REGISTRY` (which derives `AGENT_IDS`)
 2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
 3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
@@ -42,7 +42,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 
 The `agent-completeness.test.ts` test validates:
 
-- Every ID in `AGENT_IDS` has a definition in `AGENT_DEFINITIONS` (and vice versa)
+- Every built-in ID derived in `AGENT_IDS` from `AGENT_REGISTRY` has a definition in `AGENT_DEFINITIONS` (and vice versa)
 - Every definition has capabilities in `AGENT_CAPABILITIES` with all required fields
 - Every agent with `supportsJsonOutput` has a registered output parser
 - Every agent with `supportsSessionStorage` has a registered session storage

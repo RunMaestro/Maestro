@@ -25,7 +25,8 @@ import {
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
-import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import { GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import { extractStreamJsonResult } from '../../../utils/wizardOutputParsing';
 
 /**
  * Configuration for starting a conversation
@@ -809,96 +810,9 @@ class ConversationManager {
 	 * - Codex: JSONL with { type: 'message', content: '...' } or similar
 	 */
 	private extractResultFromStreamJson(output: string): string | null {
-		const agentType = this.session?.agentType;
-
-		try {
-			const lines = output.split('\n');
-
-			// For OpenCode: concatenate all text parts
-			if (agentType === 'opencode') {
-				const textParts: string[] = [];
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					try {
-						const msg = JSON.parse(line);
-						// OpenCode text messages have type: 'text' and part.text
-						if (msg.type === 'text' && msg.part?.text) {
-							textParts.push(msg.part.text);
-						}
-					} catch {
-						// Ignore non-JSON lines
-					}
-				}
-				if (textParts.length > 0) {
-					return textParts.join('');
-				}
-			}
-
-			// For Codex: look for message content
-			if (agentType === 'codex') {
-				const textParts: string[] = [];
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					try {
-						const msg = JSON.parse(line);
-						// Codex uses agent_message type with content array
-						if (msg.type === 'agent_message' && msg.content) {
-							for (const block of msg.content) {
-								if (block.type === 'text' && block.text) {
-									textParts.push(block.text);
-								}
-							}
-						}
-						// Also check for message type with text field (older format)
-						if (msg.type === 'message' && msg.text) {
-							textParts.push(msg.text);
-						}
-					} catch {
-						// Ignore non-JSON lines
-					}
-				}
-				if (textParts.length > 0) {
-					return textParts.join('');
-				}
-			}
-
-			// For Grok: join text deltas only (skip thought); end has no body
-			if (agentType === 'grok') {
-				const grokText = extractGrokTextFromJsonl(lines);
-				if (grokText) return grokText;
-			}
-
-			// For Copilot: look for the final assistant message
-			if (agentType === 'copilot-cli') {
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					try {
-						const msg = JSON.parse(line);
-						if (msg.type === 'assistant.message' && msg.data?.phase === 'final_answer') {
-							return typeof msg.data?.content === 'string' ? msg.data.content : null;
-						}
-					} catch {
-						// Ignore non-JSON lines
-					}
-				}
-			}
-
-			// For Claude Code: look for result message
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'result' && msg.result) {
-						return msg.result;
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-		} catch {
-			// Fallback to raw output
-		}
-		return null;
+		return extractStreamJsonResult(output, this.session?.agentType ?? '', {
+			allowCopilotFinalAnswer: true,
+		});
 	}
 
 	/**

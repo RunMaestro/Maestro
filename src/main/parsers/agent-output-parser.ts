@@ -27,14 +27,14 @@
  */
 
 import type { ToolType, AgentError } from '../../shared/types';
-import { isValidAgentId } from '../../shared/agentIds';
+import { isValidAgentId } from '../../shared/agentRegistry';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../shared/types';
 
 /**
  * Type guard to validate if a string is a valid ToolType.
- * Delegates to the single source of truth in shared/agentIds.ts.
+ * Delegates to the single source of truth in shared/agentRegistry.ts.
  * @param id - The string to check
  * @returns True if the string is a valid ToolType
  */

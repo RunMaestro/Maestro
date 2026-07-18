@@ -8,7 +8,7 @@ Maestro's prompt system consists of disk-backed Markdown templates, a template v
 
 ### Runtime Ownership
 
-Prompt templates are stored as `.md` files in `src/prompts/`. At runtime, `src/main/prompt-manager.ts` loads the core prompt catalog from disk through `src/shared/promptDefinitions.ts`; packaged applications read from `Resources/prompts/core/`. `src/prompts/index.ts` re-exports the shared prompt definitions for callers that need the catalog.
+Prompt templates are stored as `.md` files in `src/prompts/`. At runtime, `src/main/prompt-manager.ts` loads the core prompt catalog from disk through `src/shared/promptDefinitions.ts`; packaged applications read from `Resources/prompts/core/`. Callers import the catalog directly from `src/shared/promptDefinitions.ts`.
 
 ```text
 src/shared/promptDefinitions.ts

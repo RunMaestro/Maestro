@@ -5,7 +5,7 @@
  * Centralizes agent-specific metadata to avoid duplication.
  */
 
-import type { AgentId } from './agentIds';
+import type { AgentId } from './agentRegistry';
 import type { AgentCapabilitiesSnapshot } from './agentCapabilities';
 
 /**

@@ -1,3 +1,5 @@
+import { serializedJsonByteLength } from '../../shared/plugins/contributions';
+
 export interface PluginPublishedGrouping {
 	id: string;
 	pluginId: string;
@@ -43,7 +45,7 @@ export class PluginGroupingRegistry {
 
 const MAX_GROUPS = 200;
 const MAX_LABEL_LENGTH = 120;
-const MAX_PAYLOAD_BYTES = 256 * 1024;
+export const MAX_GROUPING_PAYLOAD_BYTES = 256 * 1024;
 const LOCAL_GROUP_ID = /^[a-zA-Z][a-zA-Z0-9._-]{0,63}$/;
 const MAX_ASSIGNMENTS = 10_000;
 
@@ -73,13 +75,9 @@ export function validatePublishedGrouping(
 	}
 	const assignmentEntries = Object.entries(payload.assignments);
 	if (assignmentEntries.length > MAX_ASSIGNMENTS) throw new Error('too many assignments');
-	let encodedPayload: string;
-	try {
-		encodedPayload = JSON.stringify(payload);
-	} catch {
-		throw new Error('grouping payload must be JSON serializable');
-	}
-	if (Buffer.byteLength(encodedPayload, 'utf8') > MAX_PAYLOAD_BYTES) {
+	const payloadBytes = serializedJsonByteLength(payload);
+	if (payloadBytes === null) throw new Error('grouping payload must be JSON serializable');
+	if (payloadBytes > MAX_GROUPING_PAYLOAD_BYTES) {
 		throw new Error('grouping payload exceeds size cap');
 	}
 	const groups = payload.groups.map((value) => {

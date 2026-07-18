@@ -2471,7 +2471,7 @@ Implementation is tracked in `Plans/dedup-playbook/IMPLEMENTATION-LEDGER.md`. St
 |       75 | Already resolved on fresh `origin/rc` baseline | `window-manager.ts` delegates to `attachGuestWebviewSecurity`; `guest-webview-security.ts` imports the canonical shared partition matcher.                                                                |
 |       94 | Already resolved on fresh `origin/rc` baseline | Zero source conflict markers; process, BrowserTab persistence/helpers, and settings suites passed 290 tests; forced main TypeScript build passed; Electron launched and rendered the Maestro application. |
 
-The implementation ledger now records a reviewed, non-pending disposition for every priority. This closure summary is intentionally a status index; the historical investigation evidence above remains unchanged and the ledger owns per-priority verification and rollback detail.
+At the Wave 14 closure, the implementation ledger recorded a reviewed, non-pending disposition for every then-current priority. The following is the historical Wave 14 status snapshot; the current 147-priority status is recorded in section 45.3. Historical investigation evidence above remains unchanged, and the ledger owns per-priority verification and rollback detail.
 
 | Disposition                  | Count | Priorities                                                               |
 | ---------------------------- | ----: | ------------------------------------------------------------------------ |
@@ -2491,3 +2491,43 @@ Implementation Wave 14 added P121-P134 after the original 120-priority audit had
 - P126 removes test-only plugin convenience exports and corrects the canonical plugin plan (`d3d59e818`, `932d608f6`).
 - P127-P130 remove dead prompt artifacts/orphan modules and unused package dependencies (`4476ca236`); P131 removes unsupported Rolldown debugger configuration (`f0d0f7b98`).
 - P132-P134 canonicalize tab-handler resets and renderer test fixtures for `IntersectionObserver` and coarse-pointer `matchMedia` (`f8ef24338`).
+
+### 45.3 Implementation Wave 15 — verified cleanup and retained compatibility policy
+
+Wave 15 added P135-P147 after the historical Wave 14 closure. It implemented twelve verified cleanup tracks and retained P142 as an explicit compatibility policy decision. These current dispositions do not revise the historical Wave 14 counts above:
+
+Wave 15 disposition count: **12 implemented, 1 retained**.
+
+- **P135 implemented:** Removed the unused Husky package and generated `.husky/_` shims while retaining native root hooks.
+- **P136 implemented:** Deleted the orphaned completed Wave 1 integration status note.
+- **P137 implemented:** Migrated `shared/agentIds` callers to canonical `shared/agentRegistry` and deleted the shim/test duplication.
+- **P138 implemented:** Deleted the zero-consumer `src/shared/index.ts` barrel.
+- **P139 implemented:** Deleted the zero-consumer `src/prompts/index.ts` barrel.
+- **P140 implemented:** Removed the duplicate renderer `*.md?raw` ambient declaration while retaining `src/types/vite-raw.d.ts`.
+- **P141 implemented:** Removed the unused shared `LogLevel` compatibility alias.
+- **P142 retained:** `ui:render-unsafe` is inert, but removing it requires a host major change and exact-major compatibility would invalidate all existing v1-targeted plugins. It was restored unchanged after review. This is an explicit retained policy decision, not an implementation.
+- **P143 implemented:** Removed the zero-production-consumer plugin runtime-agent registry facade/module/tests while retaining manifest `contributes.agents` parsing and display.
+- **P144 implemented:** Reused `serializedJsonByteLength` for plugin grouping payload enforcement while preserving local limits and errors.
+- **P145 implemented:** Eliminated SessionList's duplicate contribution fetch/listener while retaining the live grouping subscription.
+- **P146 implemented:** Centralized Wizard stream result/display parsing with provider precedence, opt-in Copilot behavior, and malformed nested-record safety.
+- **P147 implemented:** Shared Wizard phase fallback splitting and permissive task counting while retaining different UPDATE/UI-stat contracts.
+
+#### Wave 15 verification
+
+- Integrated root focused run: 15 files, 538 tests passed.
+- Root TypeScript checks for main, CLI, and renderer passed.
+- Plugin SDK build passed; 2 files and 28 tests passed with no type errors.
+- `bun install --frozen-lockfile --ignore-scripts` passed with no changes.
+- Main and renderer production builds passed. The renderer emitted existing non-failing legacy-script, CSS syntax, and chunk-size warnings.
+- Adversarial review found the capability-major issue; `ui:render-unsafe` was restored unchanged, stale removed-path documentation was corrected, and final recheck was non-blocking.
+- The plugin E2E run is not a passing gate: it timed out on unrelated existing broker/scheduler failures.
+
+#### Current disposition summary
+
+| Disposition                  | Count | Priorities                                                                                               |
+| ---------------------------- | ----: | -------------------------------------------------------------------------------------------------------- |
+| Implemented                  |   134 | P1-P15, P17-P18, P20-P21, P23-P37, P40-P47, P49-P63, P65-P69, P72-P74, P76-P93, P95, P97-P141, P143-P147 |
+| Retained                     |    11 | P16, P19, P22, P38, P39, P48, P64, P70, P71, P96, P142                                                   |
+| Already resolved on baseline |     2 | P75, P94                                                                                                 |
+
+Current invariant: **147 = 134 implemented + 11 retained + 2 already resolved**.

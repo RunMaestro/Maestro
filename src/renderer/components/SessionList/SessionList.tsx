@@ -761,7 +761,7 @@ function SessionListInner(props: SessionListProps) {
 		stuckOutageSignature
 	);
 
-	const pluginGroupings = usePluginGroupings();
+	const pluginGroupings = usePluginGroupings(pluginContributions.groupings);
 	const [groupingMode, setGroupingMode] = useState('manual');
 	const [virtualCollapsed, setVirtualCollapsed] = useState<Record<string, boolean>>({});
 	useEffect(() => {

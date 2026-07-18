@@ -9,7 +9,7 @@ import {
 	parseEnvironmentBoolean,
 	parsePositiveInteger,
 } from '../utils/environment';
-import { AGENT_IDS } from '../../shared/agentIds';
+import { AGENT_IDS } from '../../shared/agentRegistry';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 

@@ -18,8 +18,14 @@ import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
-import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
 import { sanitizeFilename } from '../utils/sanitizeFilename';
+import {
+	countMarkdownTasks as countTasks,
+	extractStreamJsonDisplayText as extractDisplayTextFromChunk,
+	extractStreamJsonResult,
+	splitMarkdownIntoPhases,
+} from '../utils/wizardOutputParsing';
+export { countTasks, extractDisplayTextFromChunk };
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -65,74 +71,6 @@ import { deriveSshRemoteId } from '../components/Wizard/services/phaseGenerator'
  * Generation timeout in milliseconds (20 minutes).
  */
 const GENERATION_TIMEOUT = 1200000;
-
-/**
- * Extract displayable text from streaming JSON chunks.
- * Parses Claude's stream-json format and extracts text from content_block_delta
- * events and assistant messages.
- *
- * @param chunk - Raw JSON chunk from the streaming output
- * @param agentType - Type of agent to determine parsing strategy
- * @returns Extracted text to display, or empty string if no text found
- */
-export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType): string {
-	// Split into lines in case multiple JSON objects are in one chunk
-	const lines = chunk.split('\n').filter((line) => line.trim());
-	const textParts: string[] = [];
-
-	for (const line of lines) {
-		try {
-			const msg = JSON.parse(line);
-
-			// Claude Code stream-json format
-			if (agentType === 'claude-code') {
-				// content_block_delta contains streaming text
-				if (msg.type === 'content_block_delta' && msg.delta?.text) {
-					textParts.push(msg.delta.text);
-				}
-				// assistant message chunks
-				else if (msg.type === 'assistant' && msg.message?.content) {
-					for (const block of msg.message.content) {
-						if (block.type === 'text' && block.text) {
-							textParts.push(block.text);
-						}
-					}
-				}
-			}
-
-			// OpenCode format
-			else if (agentType === 'opencode') {
-				if (msg.type === 'text' && msg.part?.text) {
-					textParts.push(msg.part.text);
-				}
-			}
-
-			// Codex format
-			else if (agentType === 'codex') {
-				if (msg.type === 'agent_message' && msg.content) {
-					for (const block of msg.content) {
-						if (block.type === 'text' && block.text) {
-							textParts.push(block.text);
-						}
-					}
-				}
-				if (msg.type === 'message' && msg.text) {
-					textParts.push(msg.text);
-				}
-			}
-
-			// Grok streaming-json: text deltas only (skip thought/reasoning)
-			else if (agentType === 'grok') {
-				const data = getGrokTextDelta(msg);
-				if (data) textParts.push(data);
-			}
-		} catch {
-			// Ignore non-JSON lines or parse errors
-		}
-	}
-
-	return textParts.join('');
-}
 
 /**
  * Callbacks for document generation progress.
@@ -315,15 +253,6 @@ async function generateUniqueSubfolderName(
 	}
 
 	return candidateName;
-}
-
-/**
- * Count tasks (checkbox items) in document content.
- */
-export function countTasks(content: string): number {
-	const taskPattern = /^-\s*\[\s*[xX ]?\s*\]/gm;
-	const matches = content.match(taskPattern);
-	return matches ? matches.length : 0;
 }
 
 /**
@@ -626,130 +555,10 @@ export function parseGeneratedDocuments(output: string): ParsedDocument[] {
  * since we can't determine intent from raw content.
  */
 export function splitIntoPhases(content: string): ParsedDocument[] {
-	const documents: ParsedDocument[] = [];
-
-	// Try to find phase-like sections within the content
-	const phaseSectionPattern =
-		/(?:^|\n)(#{1,2}\s*Phase\s*\d+[^\n]*)\n([\s\S]*?)(?=\n#{1,2}\s*Phase\s*\d+|$)/gi;
-
-	let match;
-	let phaseNumber = 1;
-
-	while ((match = phaseSectionPattern.exec(content)) !== null) {
-		const header = match[1].trim();
-		const sectionContent = match[2].trim();
-
-		// Create a proper document from this section
-		const fullContent = `${header}\n\n${sectionContent}`;
-
-		// Try to extract a description from the header
-		const descMatch = header.match(/Phase\s*\d+[:\s-]*(.*)/i);
-		const description =
-			descMatch && descMatch[1].trim()
-				? descMatch[1]
-						.trim()
-						.replace(/[^a-zA-Z0-9\s-]/g, '')
-						.trim()
-						.replace(/\s+/g, '-')
-				: 'Tasks';
-
-		documents.push({
-			filename: `Phase-${String(phaseNumber).padStart(2, '0')}-${description}.md`,
-			content: fullContent,
-			phase: phaseNumber,
-			isUpdate: false,
-		});
-
-		phaseNumber++;
-	}
-
-	// If no phase sections found, treat the whole content as Phase 1
-	if (documents.length === 0 && content.trim()) {
-		documents.push({
-			filename: 'Phase-01-Initial-Setup.md',
-			content: content.trim(),
-			phase: 1,
-			isUpdate: false,
-		});
-	}
-
-	return documents;
-}
-
-/**
- * Extract the result from Claude's stream-json format.
- */
-function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
-	try {
-		const lines = output.split('\n');
-
-		// For OpenCode: concatenate all text parts
-		if (agentType === 'opencode') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'text' && msg.part?.text) {
-						textParts.push(msg.part.text);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
-		}
-
-		// For Codex: look for message content
-		if (agentType === 'codex') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'agent_message' && msg.content) {
-						for (const block of msg.content) {
-							if (block.type === 'text' && block.text) {
-								textParts.push(block.text);
-							}
-						}
-					}
-					if (msg.type === 'message' && msg.text) {
-						textParts.push(msg.text);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
-		}
-
-		// For Grok: join text deltas (end event has no body)
-		if (agentType === 'grok') {
-			const grokText = extractGrokTextFromJsonl(lines);
-			if (grokText) return grokText;
-		}
-
-		// For Claude Code: look for result message
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			try {
-				const msg = JSON.parse(line);
-				if (msg.type === 'result' && msg.result) {
-					return msg.result;
-				}
-			} catch {
-				// Ignore non-JSON lines
-			}
-		}
-	} catch {
-		// Fallback to raw output
-	}
-	return null;
+	return splitMarkdownIntoPhases(content).map((document) => ({
+		...document,
+		isUpdate: false,
+	}));
 }
 
 /**
@@ -1240,7 +1049,7 @@ export async function generateInlineDocuments(
 		callbacks?.onProgress?.('Parsing generated documents...');
 
 		// Try to extract result from stream-json format
-		const extractedResult = extractResultFromStreamJson(rawOutput, agentType);
+		const extractedResult = extractStreamJsonResult(rawOutput, agentType);
 		const textToParse = extractedResult || rawOutput;
 
 		let documents = parseGeneratedDocuments(textToParse);
