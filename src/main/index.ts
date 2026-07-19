@@ -3251,9 +3251,17 @@ function setupIpcHandlers() {
 					),
 			});
 		} catch (err) {
-			void captureException(err instanceof Error ? err : new Error(String(err)), {
-				operation: 'startup:coworkingBridge',
-			});
+			// EADDRINUSE means another Maestro process already owns the bridge
+			// socket/pipe for this userData slug. Bridge startup is deliberately
+			// non-fatal (the feature degrades to "not available" until the next
+			// launch), so a second instance losing the race is an expected
+			// outcome rather than a defect worth reporting (MAESTRO-WH).
+			const code = (err as NodeJS.ErrnoException | null)?.code;
+			if (code !== 'EADDRINUSE') {
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					operation: 'startup:coworkingBridge',
+				});
+			}
 			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
 		}
 	})();
