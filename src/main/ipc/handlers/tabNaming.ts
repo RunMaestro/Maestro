@@ -382,6 +382,13 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						});
 					}
 
+					// A TUI (maestro-p) naming spawn emits a plain terminal transcript,
+					// not stream-json, so the raw-output fallback in extraction would
+					// scrape live thinking/response prose onto the tab. Require
+					// structured output on that path. Covers both the local wrap above
+					// and the remote maestro-p case, which share the same decision mode.
+					const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
 						let output = '';
@@ -427,7 +434,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// without waiting for the full process to exit.
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
-							const earlyResult = extractTabNameFromOutput(config.agentType, output);
+							const earlyResult = extractTabNameFromOutput(
+								config.agentType,
+								output,
+								requireStructuredOutput
+							);
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
 							}
@@ -467,7 +478,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								return;
 							}
 
-							const extraction = extractTabNameFromOutput(config.agentType, output);
+							const extraction = extractTabNameFromOutput(
+								config.agentType,
+								output,
+								requireStructuredOutput
+							);
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 									sessionId,
@@ -621,9 +636,27 @@ function extractAgentResponseText(agentType: string, output: string): string | n
  * Extract a tab name from raw agent process output, normalizing structured
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
+ *
+ * `structuredOnly` disables that raw-output fallback. Pass it when the naming
+ * spawn drives the maestro-p TUI (Claude token mode = TUI/dynamic): maestro-p
+ * strips the headless-only flags, including the `--tools ""` guard, so the
+ * model runs a real agentic turn and `output` is a live terminal transcript of
+ * thinking and response prose rather than stream-json. Scraping that buffer
+ * lifts an arbitrary sentence fragment onto the tab, which is what users see as
+ * "the response is streaming into the tab name" (issue #1110). Prose has no
+ * angle brackets, so STRUCTURAL_NOISE_RE can't catch it - the only safe answer
+ * is to decline. Returning null costs nothing: the send-side trigger retries
+ * naming on the next message, so the tab keeps its placeholder and self-heals.
  */
-function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
+function extractTabNameFromOutput(
+	agentType: string,
+	output: string,
+	structuredOnly = false
+): TabNameExtractionResult {
 	const responseText = extractAgentResponseText(agentType, output);
+	if (responseText === null && structuredOnly) {
+		return { name: null, reason: 'structured_only_no_json' };
+	}
 	return extractTabName(responseText ?? output);
 }
 
