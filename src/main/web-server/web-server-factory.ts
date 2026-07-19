@@ -612,7 +612,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -630,7 +631,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				// proprietary code, or PII; the full prompt goes to debug, which is
 				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Focus: ${background ? 'no' : 'yes'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
 					'WebServer'
 				);
 				logger.debug(
@@ -648,7 +649,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					inputMode,
 					tabId,
 					force,
-					images
+					images,
+					background
 				);
 				return true;
 			}
@@ -1065,61 +1067,64 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
-		server.setNewAITabWithPromptCallback(async (sessionId: string, prompt: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false };
-			}
-
-			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					// Renderer was updated to ack with `{ success, tabId? }`. Older
-					// renderers that still send a bare boolean stay supported via
-					// the `result === true` fallback.
-					if (typeof result === 'object' && result !== null) {
-						const r = result as { success?: unknown; tabId?: unknown };
-						resolve({
-							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
-						});
-					} else {
-						resolve({ success: result === true });
-					}
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false });
-					return;
+		server.setNewAITabWithPromptCallback(
+			async (sessionId: string, prompt: string, background?: boolean) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
+					return { success: false };
 				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel
-				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
+				return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+					const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						// Renderer was updated to ack with `{ success, tabId? }`. Older
+						// renderers that still send a bare boolean stay supported via
+						// the `result === true` fallback.
+						if (typeof result === 'object' && result !== null) {
+							const r = result as { success?: unknown; tabId?: unknown };
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							});
+						} else {
+							resolve({ success: result === true });
+						}
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:newAITabWithPrompt',
+						sessionId,
+						prompt,
+						responseChannel,
+						background
 					);
-					resolve({ success: false });
-				}, 5000);
-			});
-		});
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`newAITabWithPrompt callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false });
+					}, 5000);
+				});
+			}
+		);
 
 		server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();

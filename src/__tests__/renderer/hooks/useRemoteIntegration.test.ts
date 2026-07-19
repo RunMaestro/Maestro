@@ -30,7 +30,15 @@ describe('useRemoteIntegration', () => {
 	const originalMaestro = { ...window.maestro };
 
 	let onRemoteCommandHandler:
-		| ((sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void)
+		| ((
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean,
+				images?: string[],
+				background?: boolean
+		  ) => void)
 		| undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
 	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
@@ -39,17 +47,14 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
-		| undefined;
+		((sessionId: string, tabId: string, newName: string) => void) | undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
-		| undefined;
+		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
 	let onRemoteReorderTabHandler:
-		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
-		| undefined;
+		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
-		| ((sessionId: string, prompt: string, responseChannel: string) => void)
+		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
 	let onRemoteNotifyToastHandler:
 		| ((params: {
@@ -414,6 +419,38 @@ describe('useRemoteIntegration', () => {
 				expect.objectContaining({
 					type: 'maestro:remoteCommand',
 					detail: expect.objectContaining({ force: true }),
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('does NOT switch the active session when background=true (background dispatch)', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// (sessionId, command, inputMode, tabId, force, images, background)
+				onRemoteCommandHandler?.(
+					'session-1',
+					'quietly',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			});
+
+			// Focus side effect suppressed, but the command still runs.
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ sessionId: 'session-1', command: 'quietly' }),
 				})
 			);
 
@@ -789,6 +826,44 @@ describe('useRemoteIntegration', () => {
 				'chan-busy',
 				false
 			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('creates the tab in the background without focusing when background=true (background new-tab dispatch)', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const originalActiveTabId = session.activeTabId;
+			const originalTabCount = session.aiTabs.length;
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-bg', true);
+			});
+
+			// Tab was created and the prompt still dispatched...
+			expect(deps.setSessions).toHaveBeenCalled();
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						sessionId: 'session-1',
+						command: 'Hello',
+						tabId: expect.any(String),
+					}),
+				})
+			);
+			// ...but the agent is NOT brought to the foreground.
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+
+			// The new tab is appended but NOT made active: the previously-active
+			// tab is preserved so the user's visible view never changes.
+			const updater = deps.setSessions.mock.calls[0][0];
+			const [updated] = updater([session]);
+			expect(updated.aiTabs).toHaveLength(originalTabCount + 1);
+			expect(updated.activeTabId).toBe(originalActiveTabId);
 
 			dispatchEventSpy.mockRestore();
 		});

@@ -287,7 +287,8 @@ export type ExecuteCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	force?: boolean,
-	images?: string[]
+	images?: string[],
+	background?: boolean
 ) => Promise<boolean>;
 
 /**
@@ -350,7 +351,8 @@ export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
-	prompt: string
+	prompt: string,
+	background?: boolean
 ) => Promise<NewAITabWithPromptResult>;
 export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {

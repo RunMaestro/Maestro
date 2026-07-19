@@ -11,6 +11,11 @@ export interface DispatchOptions {
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
+	/** Commander sets this to `true` when `--focus` is passed. Unset/false is the
+	 *  default and dispatches in the background: the desktop delivers the prompt
+	 *  without switching to or focusing the target agent/tab. Only `focus === true`
+	 *  brings the target to the foreground. */
+	focus?: boolean;
 }
 
 export interface DispatchResponse {
@@ -82,11 +87,21 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
+	// Dispatch runs in the background by default (no focus stealing); only an
+	// explicit `--focus` (Commander: focus === true) tells the desktop to switch
+	// to and focus the target agent/tab. The `background` bit is threaded to both
+	// the new-tab and existing-tab command paths.
+	const background = options.focus !== true;
 	try {
 		const tabId = await withMaestroClient(async (client) => {
 			if (options.newTab) {
 				const result = await client.sendCommand<{ tabId?: string }>(
-					{ type: 'new_ai_tab_with_prompt', sessionId: agentId, prompt: message },
+					{
+						type: 'new_ai_tab_with_prompt',
+						sessionId: agentId,
+						prompt: message,
+						...(background ? { background: true } : {}),
+					},
 					'new_ai_tab_with_prompt_result'
 				);
 				// `--new-tab`'s sole purpose is to surface a fresh tab id for
@@ -108,6 +123,7 @@ export async function runDispatch(
 					inputMode: 'ai',
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(options.force ? { force: true } : {}),
+					...(background ? { background: true } : {}),
 				},
 				'command_result'
 			);

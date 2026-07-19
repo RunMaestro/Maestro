@@ -382,7 +382,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
@@ -482,7 +483,12 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,

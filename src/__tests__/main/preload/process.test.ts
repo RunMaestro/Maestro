@@ -307,7 +307,7 @@ describe('Process Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId, force, and images', () => {
+		it('should register listener and invoke callback with all parameters including tabId, force, images, and background', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
@@ -316,7 +316,8 @@ describe('Process Preload API', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -327,7 +328,7 @@ describe('Process Preload API', () => {
 
 			api.onRemoteCommand(callback);
 			const images = ['data:image/png;base64,abc'];
-			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images);
+			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images, true);
 
 			expect(callback).toHaveBeenCalledWith(
 				'session-123',
@@ -335,11 +336,12 @@ describe('Process Preload API', () => {
 				'ai',
 				'tab-7',
 				true,
-				images
+				images,
+				true
 			);
 		});
 
-		it('forwards undefined tabId/force/images when the IPC sender omits them (legacy callers)', () => {
+		it('forwards undefined tabId/force/images/background when the IPC sender omits them (legacy callers)', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
@@ -348,7 +350,8 @@ describe('Process Preload API', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -364,6 +367,7 @@ describe('Process Preload API', () => {
 				'session-123',
 				'test command',
 				'ai',
+				undefined,
 				undefined,
 				undefined,
 				undefined

@@ -810,6 +810,10 @@ export interface CreateTabOptions {
 	usageStats?: UsageStats; // Token usage stats
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	/** When false, append the tab without making it active (background create).
+	 *  The current active tab/file/browser/terminal/group and inputMode are all
+	 *  preserved so the user's visible view never changes. Default true. */
+	activate?: boolean;
 }
 
 /**
@@ -857,6 +861,7 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
+		activate = true,
 	} = options;
 
 	// Create the new tab with default values
@@ -875,24 +880,29 @@ export function createTab(
 		showThinking,
 	};
 
-	// Update the session with the new tab added and set as active.
-	// Clear activeFileTabId and activeTerminalTabId so the new AI tab is shown in the
-	// main panel, and set inputMode to 'ai' so callers don't need to patch it manually.
-	// activeGroupId is cleared too: a new tab is a fresh standalone view, so it must
-	// leave any active tiled group - otherwise the group keeps taking over the panel
-	// and the new tab opens in the background (never gets focus). Insert the new tab
-	// into unifiedTabOrder directly to the right of the currently active tab so "new
-	// tab" actions feel positional regardless of which tab type is currently focused.
+	// Update the session with the new tab added. When `activate` is true (the
+	// default), make the new AI tab active: clear activeFileTabId/activeTerminalTabId
+	// so it's shown in the main panel, set inputMode to 'ai', and clear activeGroupId
+	// (a new tab is a fresh standalone view; leaving an active tiled group would keep
+	// the group taking over the panel so the new tab never gets focus). When `activate`
+	// is false (background create, e.g. the default `dispatch --new-tab`), leave every
+	// active-tab id, activeGroupId, and inputMode untouched so the user's visible view
+	// never changes. Either way, insert the new tab into unifiedTabOrder directly to
+	// the right of the currently active tab so "new tab" actions feel positional.
 	const newTabRef = { type: 'ai' as const, id: newTab.id };
 	const updatedSession: Session = {
 		...session,
 		aiTabs: [...(session.aiTabs || []), newTab],
-		activeTabId: newTab.id,
-		activeFileTabId: null,
-		activeBrowserTabId: null,
-		activeTerminalTabId: null,
-		activeGroupId: null,
-		inputMode: 'ai' as const,
+		...(activate
+			? {
+					activeTabId: newTab.id,
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					activeGroupId: null,
+					inputMode: 'ai' as const,
+				}
+			: {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 	};
 

@@ -400,7 +400,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -411,7 +412,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -420,9 +422,10 @@ export function createProcessApi() {
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images);
+					callback(sessionId, command, inputMode, tabId, force, images, background);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -806,11 +809,22 @@ export function createProcessApi() {
 		 * doesn't wait for the 5s response timeout.
 		 */
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, prompt: string, responseChannel: string) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => {
 				try {
-					callback(sessionId, prompt, responseChannel);
+					callback(sessionId, prompt, responseChannel, background);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

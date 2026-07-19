@@ -348,6 +348,10 @@ program
 		'-f, --force',
 		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)'
 	)
+	.option(
+		'--focus',
+		'Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)'
+	)
 	.action(dispatch);
 
 // Session inspection commands - read-only access to desktop conversation state.
