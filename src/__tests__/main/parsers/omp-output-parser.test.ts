@@ -148,6 +148,7 @@ describe('OmpOutputParser', () => {
 		expect(event!.type).toBe('system');
 		expect(parser.isResultMessage(event!)).toBe(false);
 	});
+
 	it('does not surface a retrying agent_end as a user-facing error', () => {
 		const retrying = {
 			type: 'agent_end',
