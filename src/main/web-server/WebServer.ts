@@ -363,7 +363,8 @@ export class WebServer {
 
 	private writeToTerminalCallback: ((sessionId: string, data: string) => boolean) | null = null;
 	private resizeTerminalCallback:
-		((sessionId: string, cols: number, rows: number) => boolean) | null = null;
+		| ((sessionId: string, cols: number, rows: number) => boolean)
+		| null = null;
 	private spawnTerminalForWebCallback:
 		| ((
 				sessionId: string,

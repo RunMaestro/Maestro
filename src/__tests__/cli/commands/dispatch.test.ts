@@ -204,6 +204,34 @@ describe('dispatch command', () => {
 				'new_ai_tab_with_prompt_result'
 			);
 		});
+
+		it('forwards tabId but omits background when --tab is combined with --focus', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-xyz',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			// The options.tab spread runs alongside the background omission; this
+			// covers that distinct payload-building path (tabId present, no background).
+			await dispatch('agent-abc', 'Follow up', { tab: 'tab-xyz', focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Follow up',
+					inputMode: 'ai',
+					tabId: 'tab-xyz',
+				},
+				'command_result'
+			);
+		});
 	});
 
 	describe('--tab <tabId> flow', () => {
