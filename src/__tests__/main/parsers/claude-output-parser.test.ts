@@ -410,6 +410,102 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('tool_result extraction', () => {
+		// Fresh parser per test: tool_use id -> name correlation is instance state.
+		const toolUseLine = (id: string, name: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id, name, input: { file: 'x.ts' } }] },
+			});
+		const toolResultLine = (toolUseId: string, content: unknown, isError?: boolean) =>
+			JSON.stringify({
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: toolUseId,
+							content,
+							...(isError === undefined ? {} : { is_error: isError }),
+						},
+					],
+				},
+			});
+
+		it('should emit a completed tool_use event correlated to the earlier tool_use', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_abc', 'Read'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_abc', 'file contents here'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_abc');
+			expect(event?.toolName).toBe('Read');
+			expect(event?.toolState).toEqual({
+				status: 'completed',
+				output: 'file contents here',
+			});
+		});
+
+		it('should emit status failed when is_error is true', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_err', 'Bash'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_err', 'command not found', true));
+			expect(event?.toolName).toBe('Bash');
+			expect((event?.toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should fall back to a generic tool name for unknown tool_use_id', () => {
+			const p = new ClaudeOutputParser();
+
+			const event = p.parseJsonLine(toolResultLine('toolu_unseen', 'output'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_unseen');
+			expect(event?.toolName).toBe('Tool');
+		});
+
+		it('should flatten array content into a single output string', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_arr', 'Grep'));
+
+			const event = p.parseJsonLine(
+				toolResultLine('toolu_arr', [
+					{ type: 'text', text: 'line one\n' },
+					{ type: 'image', source: {} },
+					{ type: 'text', text: 'line two' },
+				])
+			);
+			expect((event?.toolState as { output: string }).output).toBe('line one\nline two');
+		});
+
+		it('should not reuse a tool name once its result has been emitted', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_once', 'Edit'));
+
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Edit');
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Tool');
+		});
+
+		it('should not emit tool_result text as assistant prose', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(toolResultLine('toolu_x', 'raw tool output'));
+			expect(event?.type).not.toBe('text');
+			expect(event?.text).toBeUndefined();
+		});
+
+		it('should leave ordinary user messages as system events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'hello there' },
+				})
+			);
+			expect(event?.type).toBe('system');
+		});
+	});
+
 	describe('thinking blocks extraction', () => {
 		it('should extract thinking content from assistant messages', () => {
 			const line = JSON.stringify({
