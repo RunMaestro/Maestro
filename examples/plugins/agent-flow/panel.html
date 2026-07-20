@@ -1,1 +1,866 @@
-<!doctype html><html><body>Agent Flow panel: implemented in Phase 5</body></html>
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Agent Flow</title>
+		<style>
+			:root {
+				--bg: #0d1117;
+				--panel: #161b22;
+				--panel2: #1c2128;
+				--border: #30363d;
+				--text: #c9d1d9;
+				--muted: #8b949e;
+				--accent: #58a6ff;
+				--edge: #444c56;
+				--green: #3fb950;
+				--yellow: #d29922;
+				--red: #f85149;
+				--gray: #6e7681;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: var(--bg);
+				color: var(--text);
+				font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+				overflow: hidden;
+			}
+			#app {
+				display: flex;
+				flex-direction: column;
+				height: 100%;
+			}
+			#hdr {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				padding: 6px 10px;
+				background: var(--panel);
+				border-bottom: 1px solid var(--border);
+				flex: 0 0 auto;
+			}
+			#title {
+				font-weight: 600;
+				letter-spacing: 0.2px;
+				white-space: nowrap;
+			}
+			#tabs {
+				display: flex;
+				gap: 4px;
+				overflow-x: auto;
+				flex: 1 1 auto;
+				scrollbar-width: thin;
+			}
+			.tab {
+				border: 1px solid var(--border);
+				background: var(--panel2);
+				color: var(--muted);
+				padding: 2px 9px;
+				border-radius: 12px;
+				font-size: 12px;
+				white-space: nowrap;
+				cursor: pointer;
+			}
+			.tab:hover {
+				color: var(--text);
+			}
+			.tab.active {
+				color: var(--bg);
+				background: var(--accent);
+				border-color: var(--accent);
+			}
+			#clear {
+				border: 1px solid var(--border);
+				background: var(--panel2);
+				color: var(--text);
+				padding: 3px 10px;
+				border-radius: 6px;
+				cursor: pointer;
+				flex: 0 0 auto;
+			}
+			#clear:hover {
+				border-color: var(--red);
+				color: var(--red);
+			}
+			#body {
+				display: flex;
+				flex: 1 1 auto;
+				min-height: 0;
+			}
+			#graphWrap {
+				position: relative;
+				flex: 1 1 auto;
+				min-width: 0;
+			}
+			#canvas {
+				width: 100%;
+				height: 100%;
+				display: block;
+				cursor: grab;
+				touch-action: none;
+			}
+			#canvas.dragging {
+				cursor: grabbing;
+			}
+			#empty {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				color: var(--muted);
+				font-size: 14px;
+				pointer-events: none;
+			}
+			#empty.hidden {
+				display: none;
+			}
+			#inspector {
+				flex: 0 0 260px;
+				background: var(--panel);
+				border-left: 1px solid var(--border);
+				padding: 12px;
+				overflow-y: auto;
+			}
+			#inspector.hidden {
+				display: none;
+			}
+			#inspector h2 {
+				margin: 0 0 10px;
+				font-size: 13px;
+				font-weight: 600;
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+			.kv {
+				display: flex;
+				flex-direction: column;
+				gap: 2px;
+				margin-bottom: 9px;
+			}
+			.kv .k {
+				color: var(--muted);
+				font-size: 11px;
+				text-transform: uppercase;
+				letter-spacing: 0.4px;
+			}
+			.kv .v {
+				color: var(--text);
+				word-break: break-all;
+				font-variant-numeric: tabular-nums;
+			}
+			#timeline {
+				flex: 0 0 auto;
+				background: var(--panel);
+				border-top: 1px solid var(--border);
+				height: 0;
+				overflow: hidden;
+			}
+			#timeline.show {
+				height: auto;
+				padding: 6px 8px;
+			}
+			#tlHead {
+				font-size: 11px;
+				color: var(--muted);
+				margin-bottom: 4px;
+				text-transform: uppercase;
+				letter-spacing: 0.4px;
+			}
+			#tl {
+				width: 100%;
+				display: block;
+			}
+			.dot {
+				width: 9px;
+				height: 9px;
+				border-radius: 50%;
+				flex: 0 0 auto;
+				display: inline-block;
+			}
+			text {
+				fill: var(--text);
+				user-select: none;
+			}
+			.node rect {
+				cursor: pointer;
+			}
+			.node.sel rect,
+			.laneLabel.sel rect {
+				stroke: var(--accent);
+				stroke-width: 2px;
+			}
+			.tlbar {
+				cursor: pointer;
+			}
+			.p-running {
+				fill: var(--yellow);
+				animation: pulse 1.1s ease-in-out infinite;
+			}
+			.p-completed {
+				fill: var(--green);
+			}
+			.p-failed {
+				fill: var(--red);
+			}
+			.p-unknown {
+				fill: var(--gray);
+			}
+			.s-running {
+				fill: var(--yellow);
+			}
+			.s-completed {
+				fill: var(--green);
+			}
+			.s-failed {
+				fill: var(--red);
+			}
+			.s-unknown {
+				fill: var(--gray);
+			}
+			@keyframes pulse {
+				0%,
+				100% {
+					opacity: 1;
+				}
+				50% {
+					opacity: 0.45;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div id="app">
+			<header id="hdr">
+				<div id="title">Agent Flow</div>
+				<div id="tabs"></div>
+				<button id="clear" title="Clear the graph">Clear</button>
+			</header>
+			<div id="body">
+				<div id="graphWrap">
+					<svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+						<g id="viewport"></g>
+					</svg>
+					<div id="empty">Waiting for agent activity...</div>
+				</div>
+				<aside id="inspector" class="hidden"></aside>
+			</div>
+			<div id="timeline">
+				<div id="tlHead">Timeline</div>
+				<svg id="tl" xmlns="http://www.w3.org/2000/svg"></svg>
+			</div>
+		</div>
+		<script>
+			'use strict';
+			var SVGNS = 'http://www.w3.org/2000/svg';
+
+			// ---- layout constants ------------------------------------------------
+			var PAD_X = 16;
+			var TOP = 18;
+			var LABEL_W = 170;
+			var NODE_W = 116;
+			var NODE_H = 38;
+			var GAP_X = 22;
+			var ROW_H = 66;
+
+			// ---- state -----------------------------------------------------------
+			var latest = null; // most recent snapshot { v, at, lanes }
+			var view = { tx: 0, ty: 0, scale: 1 }; // pan/zoom, preserved across renders
+			var selection = null; // { kind:'node', sessionId, nodeKey } | { kind:'lane', sessionId }
+			var activeTab = 'all'; // 'all' | sessionId
+
+			// ---- element refs ----------------------------------------------------
+			var canvas = document.getElementById('canvas');
+			var viewport = document.getElementById('viewport');
+			var emptyEl = document.getElementById('empty');
+			var tabsEl = document.getElementById('tabs');
+			var inspectorEl = document.getElementById('inspector');
+			var timelineEl = document.getElementById('timeline');
+			var tlSvg = document.getElementById('tl');
+
+			// ---- helpers ---------------------------------------------------------
+			function el(tag, attrs, text) {
+				var n = document.createElementNS(SVGNS, tag);
+				if (attrs) for (var k in attrs) n.setAttribute(k, attrs[k]);
+				if (text != null) n.textContent = text;
+				return n;
+			}
+			function clamp(v, lo, hi) {
+				return v < lo ? lo : v > hi ? hi : v;
+			}
+			function clear(node) {
+				while (node.firstChild) node.removeChild(node.firstChild);
+			}
+			function truncate(s, max) {
+				s = String(s == null ? '' : s);
+				return s.length > max ? s.slice(0, max - 1) + '…' : s;
+			}
+			// Format ms as "1.2s" style.
+			function fmtDur(ms) {
+				if (ms == null || isNaN(ms)) return '–';
+				if (ms < 1000) return Math.round(ms) + 'ms';
+				var s = ms / 1000;
+				if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
+				var m = Math.floor(s / 60);
+				var rem = Math.round(s % 60);
+				return m + 'm ' + rem + 's';
+			}
+			function fmtTime(ts) {
+				if (typeof ts !== 'number' || !isFinite(ts)) return '–';
+				try {
+					return new Date(ts).toLocaleTimeString();
+				} catch (e) {
+					return String(ts);
+				}
+			}
+			function fmtNum(n) {
+				if (typeof n !== 'number' || !isFinite(n)) return null;
+				return n.toLocaleString();
+			}
+			function fmtCost(n) {
+				if (typeof n !== 'number' || !isFinite(n) || n <= 0) return null;
+				return '$' + n.toFixed(n < 1 ? 4 : 2);
+			}
+
+			// Classify a tool-call node into a phase color bucket.
+			function nodePhase(node) {
+				if (node.endedAt == null) return 'running';
+				var p = String(node.phase || '').toLowerCase();
+				if (p.indexOf('fail') >= 0 || p.indexOf('error') >= 0 || p.indexOf('abort') >= 0)
+					return 'failed';
+				if (
+					p.indexOf('complet') >= 0 ||
+					p.indexOf('success') >= 0 ||
+					p.indexOf('finish') >= 0 ||
+					p === 'done' ||
+					p === 'ok' ||
+					p === 'end' ||
+					p === 'ended'
+				)
+					return 'completed';
+				if (p === 'running' || p === 'started' || p === 'start' || p === 'in_progress')
+					return 'running';
+				return 'unknown';
+			}
+
+			// Classify a lane status string into the green/yellow/red dot language.
+			function statusPhase(status) {
+				var s = String(status || '').toLowerCase();
+				if (!s) return 'unknown';
+				if (s.indexOf('error') >= 0 || s.indexOf('fail') >= 0) return 'failed';
+				if (
+					s.indexOf('think') >= 0 ||
+					s.indexOf('busy') >= 0 ||
+					s.indexOf('run') >= 0 ||
+					s.indexOf('work') >= 0 ||
+					s.indexOf('connect') >= 0
+				)
+					return 'running';
+				if (
+					s.indexOf('idle') >= 0 ||
+					s.indexOf('ready') >= 0 ||
+					s.indexOf('complet') >= 0 ||
+					s.indexOf('done') >= 0 ||
+					s.indexOf('exit') >= 0
+				)
+					return 'completed';
+				return 'unknown';
+			}
+
+			// Stable per-node key so selection survives re-renders.
+			function nodeKey(node, index) {
+				return node.toolCallId ? 't:' + node.toolCallId : '#' + index;
+			}
+
+			function visibleLanes() {
+				if (!latest || !Array.isArray(latest.lanes)) return [];
+				if (activeTab === 'all') return latest.lanes;
+				return latest.lanes.filter(function (l) {
+					return l.sessionId === activeTab;
+				});
+			}
+
+			// ---- transform -------------------------------------------------------
+			function applyTransform() {
+				viewport.setAttribute(
+					'transform',
+					'translate(' + view.tx + ',' + view.ty + ') scale(' + view.scale + ')'
+				);
+			}
+
+			// ---- header tabs -----------------------------------------------------
+			function renderTabs() {
+				clear(tabsEl);
+				var lanes = latest && Array.isArray(latest.lanes) ? latest.lanes : [];
+				var defs = [{ id: 'all', label: 'All' }];
+				for (var i = 0; i < lanes.length; i++) {
+					defs.push({
+						id: lanes[i].sessionId,
+						label: lanes[i].title || lanes[i].agentId || lanes[i].sessionId,
+					});
+				}
+				// If the active session vanished, fall back to All.
+				var found = false;
+				for (var d = 0; d < defs.length; d++) if (defs[d].id === activeTab) found = true;
+				if (!found) activeTab = 'all';
+				for (var j = 0; j < defs.length; j++) {
+					(function (def) {
+						var b = document.createElement('button');
+						b.className = 'tab' + (def.id === activeTab ? ' active' : '');
+						b.textContent = truncate(def.label, 22);
+						b.title = def.label;
+						b.addEventListener('click', function () {
+							activeTab = def.id;
+							render();
+						});
+						tabsEl.appendChild(b);
+					})(defs[j]);
+				}
+			}
+
+			// ---- graph -----------------------------------------------------------
+			function renderGraph() {
+				clear(viewport);
+				var lanes = visibleLanes();
+				emptyEl.classList.toggle('hidden', lanes.length > 0);
+
+				for (var li = 0; li < lanes.length; li++) {
+					var lane = lanes[li];
+					var y0 = TOP + li * ROW_H;
+					var midY = y0 + ROW_H / 2;
+
+					// Lane separator.
+					if (li > 0) {
+						viewport.appendChild(
+							el('line', {
+								x1: 0,
+								y1: y0 - 2,
+								x2: 4000,
+								y2: y0 - 2,
+								stroke: 'var(--border)',
+								'stroke-width': 1,
+								opacity: 0.5,
+							})
+						);
+					}
+
+					// Lane label group (clickable for session info).
+					var labelG = document.createElementNS(SVGNS, 'g');
+					labelG.setAttribute('class', 'laneLabel hit');
+					var labelSel =
+						selection && selection.kind === 'lane' && selection.sessionId === lane.sessionId;
+					labelG.appendChild(
+						el('rect', {
+							x: PAD_X - 8,
+							y: y0 + 6,
+							width: LABEL_W - 12,
+							height: ROW_H - 14,
+							rx: 6,
+							fill: 'var(--panel2)',
+							stroke: 'var(--border)',
+						})
+					);
+					if (labelSel) labelG.setAttribute('class', 'laneLabel hit sel');
+					labelG.appendChild(
+						el('circle', {
+							cx: PAD_X + 4,
+							cy: midY - 6,
+							r: 4.5,
+							class: 's-' + statusPhase(lane.status),
+						})
+					);
+					labelG.appendChild(
+						el(
+							'text',
+							{ x: PAD_X + 16, y: midY - 2, 'font-size': 12, 'font-weight': 600 },
+							truncate(lane.title || lane.sessionId, 18)
+						)
+					);
+					labelG.appendChild(
+						el(
+							'text',
+							{ x: PAD_X + 16, y: midY + 13, 'font-size': 10.5, fill: 'var(--muted)' },
+							truncate((lane.agentId || '') + (lane.status ? ' · ' + lane.status : ''), 22)
+						)
+					);
+					(function (sid) {
+						labelG.addEventListener('click', function () {
+							selectLane(sid);
+						});
+					})(lane.sessionId);
+					viewport.appendChild(labelG);
+
+					// Nodes: left-to-right sequence with connecting edges.
+					var nodes = Array.isArray(lane.nodes) ? lane.nodes : [];
+					var nodeY = y0 + (ROW_H - NODE_H) / 2;
+					var prevRight = null;
+					for (var ni = 0; ni < nodes.length; ni++) {
+						var node = nodes[ni];
+						var x = PAD_X + LABEL_W + ni * (NODE_W + GAP_X);
+						// Edge from previous node.
+						if (prevRight != null) {
+							viewport.appendChild(
+								el('line', {
+									x1: prevRight,
+									y1: nodeY + NODE_H / 2,
+									x2: x,
+									y2: nodeY + NODE_H / 2,
+									stroke: 'var(--edge)',
+									'stroke-width': 1.5,
+								})
+							);
+						}
+						var g = document.createElementNS(SVGNS, 'g');
+						var key = nodeKey(node, ni);
+						var isSel =
+							selection &&
+							selection.kind === 'node' &&
+							selection.sessionId === lane.sessionId &&
+							selection.nodeKey === key;
+						g.setAttribute('class', 'node hit' + (isSel ? ' sel' : ''));
+						g.appendChild(
+							el('rect', {
+								x: x,
+								y: nodeY,
+								width: NODE_W,
+								height: NODE_H,
+								rx: 7,
+								class: 'p-' + nodePhase(node),
+								opacity: 0.92,
+							})
+						);
+						g.appendChild(
+							el(
+								'text',
+								{
+									x: x + NODE_W / 2,
+									y: nodeY + NODE_H / 2 + 4,
+									'text-anchor': 'middle',
+									'font-size': 12,
+									fill: '#0d1117',
+									'font-weight': 600,
+								},
+								truncate(node.toolName || 'tool', 15)
+							)
+						);
+						(function (sid, k) {
+							g.addEventListener('click', function () {
+								selectNode(sid, k);
+							});
+						})(lane.sessionId, key);
+						viewport.appendChild(g);
+						prevRight = x + NODE_W;
+					}
+				}
+				applyTransform();
+			}
+
+			// ---- timeline --------------------------------------------------------
+			function renderTimeline() {
+				var lanes = visibleLanes();
+				var now = Date.now();
+				var t0 = Infinity;
+				var t1 = -Infinity;
+				var count = 0;
+				for (var i = 0; i < lanes.length; i++) {
+					var ns = lanes[i].nodes || [];
+					for (var j = 0; j < ns.length; j++) {
+						var s = ns[j].startedAt;
+						if (typeof s !== 'number') continue;
+						var e = ns[j].endedAt == null ? now : ns[j].endedAt;
+						if (s < t0) t0 = s;
+						if (e > t1) t1 = e;
+						count++;
+					}
+				}
+				if (count === 0 || !isFinite(t0) || t1 <= t0) {
+					timelineEl.classList.remove('show');
+					clear(tlSvg);
+					return;
+				}
+				timelineEl.classList.add('show');
+				clear(tlSvg);
+
+				var LEFT = 96;
+				var RIGHT = 12;
+				var width = timelineEl.clientWidth - 16 || 600;
+				var rowH = 14;
+				var barH = 8;
+				var height = lanes.length * rowH + 6;
+				tlSvg.setAttribute('width', width);
+				tlSvg.setAttribute('height', height);
+				tlSvg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+				var span = t1 - t0;
+				var innerW = width - LEFT - RIGHT;
+				function xAt(t) {
+					return LEFT + ((t - t0) / span) * innerW;
+				}
+
+				for (var li = 0; li < lanes.length; li++) {
+					var lane = lanes[li];
+					var ry = li * rowH + 3;
+					tlSvg.appendChild(
+						el(
+							'text',
+							{ x: 4, y: ry + barH, 'font-size': 10, fill: 'var(--muted)' },
+							truncate(lane.title || lane.sessionId, 13)
+						)
+					);
+					tlSvg.appendChild(
+						el('line', {
+							x1: LEFT,
+							y1: ry + barH / 2,
+							x2: width - RIGHT,
+							y2: ry + barH / 2,
+							stroke: 'var(--border)',
+							'stroke-width': 1,
+							opacity: 0.4,
+						})
+					);
+					var ns2 = lane.nodes || [];
+					for (var ji = 0; ji < ns2.length; ji++) {
+						var node = ns2[ji];
+						if (typeof node.startedAt !== 'number') continue;
+						var endT = node.endedAt == null ? now : node.endedAt;
+						var bx = xAt(node.startedAt);
+						var bw = Math.max(2, xAt(endT) - bx);
+						var key = nodeKey(node, ji);
+						var isSel =
+							selection &&
+							selection.kind === 'node' &&
+							selection.sessionId === lane.sessionId &&
+							selection.nodeKey === key;
+						var bar = el('rect', {
+							x: bx,
+							y: ry,
+							width: bw,
+							height: barH,
+							rx: 2,
+							class: 'tlbar p-' + nodePhase(node),
+							stroke: isSel ? 'var(--accent)' : 'none',
+							'stroke-width': isSel ? 1.5 : 0,
+						});
+						var t = el('title', null, (node.toolName || 'tool') + ' · ' + fmtDur(node.durationMs));
+						bar.appendChild(t);
+						(function (sid, k) {
+							bar.addEventListener('click', function () {
+								selectNode(sid, k);
+							});
+						})(lane.sessionId, key);
+						tlSvg.appendChild(bar);
+					}
+				}
+			}
+
+			// ---- inspector -------------------------------------------------------
+			function kv(parent, k, v) {
+				if (v == null || v === '') return;
+				var wrap = document.createElement('div');
+				wrap.className = 'kv';
+				var kk = document.createElement('div');
+				kk.className = 'k';
+				kk.textContent = k;
+				var vv = document.createElement('div');
+				vv.className = 'v';
+				vv.textContent = v;
+				wrap.appendChild(kk);
+				wrap.appendChild(vv);
+				parent.appendChild(wrap);
+			}
+			function findLane(sessionId) {
+				var lanes = latest && latest.lanes ? latest.lanes : [];
+				for (var i = 0; i < lanes.length; i++) if (lanes[i].sessionId === sessionId) return lanes[i];
+				return null;
+			}
+			function findNode(lane, key) {
+				var ns = lane && lane.nodes ? lane.nodes : [];
+				for (var i = 0; i < ns.length; i++) if (nodeKey(ns[i], i) === key) return ns[i];
+				return null;
+			}
+			function renderInspector() {
+				if (!selection) {
+					inspectorEl.classList.add('hidden');
+					clear(inspectorEl);
+					return;
+				}
+				var lane = findLane(selection.sessionId);
+				if (!lane) {
+					inspectorEl.classList.add('hidden');
+					return;
+				}
+				clear(inspectorEl);
+				inspectorEl.classList.remove('hidden');
+				var h = document.createElement('h2');
+
+				if (selection.kind === 'node') {
+					var node = findNode(lane, selection.nodeKey);
+					if (!node) {
+						inspectorEl.classList.add('hidden');
+						return;
+					}
+					var dot = document.createElement('span');
+					dot.className = 'dot';
+					dot.style.background =
+						'var(--' +
+						({ running: 'yellow', completed: 'green', failed: 'red', unknown: 'gray' }[
+							nodePhase(node)
+						]) +
+						')';
+					h.appendChild(dot);
+					h.appendChild(document.createTextNode(node.toolName || 'tool'));
+					inspectorEl.appendChild(h);
+					kv(inspectorEl, 'Phase', nodePhase(node) + (node.phase ? ' (' + node.phase + ')' : ''));
+					kv(inspectorEl, 'Tool Call Id', node.toolCallId || '–');
+					kv(inspectorEl, 'Started', fmtTime(node.startedAt));
+					kv(inspectorEl, 'Ended', node.endedAt == null ? 'running…' : fmtTime(node.endedAt));
+					kv(
+						inspectorEl,
+						'Duration',
+						node.durationMs != null
+							? fmtDur(node.durationMs)
+							: node.endedAt == null
+								? fmtDur(Date.now() - node.startedAt)
+								: '–'
+					);
+					kv(inspectorEl, 'Session', lane.title || lane.sessionId);
+				} else {
+					h.textContent = lane.title || lane.sessionId;
+					inspectorEl.appendChild(h);
+					kv(inspectorEl, 'Session Id', lane.sessionId);
+					kv(inspectorEl, 'Agent', lane.agentId || '–');
+					kv(inspectorEl, 'Status', lane.status || '–');
+					kv(inspectorEl, 'Tool Calls', String((lane.nodes || []).length));
+					var u = lane.usage;
+					if (u) {
+						kv(inspectorEl, 'Input Tokens', fmtNum(u.inputTokens));
+						kv(inspectorEl, 'Output Tokens', fmtNum(u.outputTokens));
+						kv(inspectorEl, 'Reasoning Tokens', fmtNum(u.reasoningTokens));
+						kv(inspectorEl, 'Context Window', fmtNum(u.contextWindow));
+						kv(inspectorEl, 'Cost', fmtCost(u.totalCostUsd));
+					}
+				}
+			}
+
+			// ---- selection -------------------------------------------------------
+			function selectNode(sessionId, key) {
+				selection = { kind: 'node', sessionId: sessionId, nodeKey: key };
+				renderGraph();
+				renderTimeline();
+				renderInspector();
+			}
+			function selectLane(sessionId) {
+				selection = { kind: 'lane', sessionId: sessionId };
+				renderGraph();
+				renderInspector();
+			}
+			function clearSelection() {
+				if (!selection) return;
+				selection = null;
+				renderGraph();
+				renderTimeline();
+				renderInspector();
+			}
+
+			// ---- master render ---------------------------------------------------
+			function render() {
+				renderTabs();
+				renderGraph();
+				renderTimeline();
+				renderInspector();
+			}
+
+			// ---- pan / zoom ------------------------------------------------------
+			var dragging = false;
+			var dragMoved = false;
+			var startX = 0;
+			var startY = 0;
+			var startTx = 0;
+			var startTy = 0;
+
+			canvas.addEventListener('pointerdown', function (e) {
+				// Only pan when the press lands on empty canvas, not a node/label.
+				if (e.target.closest && e.target.closest('.hit')) return;
+				dragging = true;
+				dragMoved = false;
+				startX = e.clientX;
+				startY = e.clientY;
+				startTx = view.tx;
+				startTy = view.ty;
+				canvas.classList.add('dragging');
+				canvas.setPointerCapture(e.pointerId);
+			});
+			canvas.addEventListener('pointermove', function (e) {
+				if (!dragging) return;
+				var dx = e.clientX - startX;
+				var dy = e.clientY - startY;
+				if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+				view.tx = startTx + dx;
+				view.ty = startTy + dy;
+				applyTransform();
+			});
+			canvas.addEventListener('pointerup', function (e) {
+				if (!dragging) return;
+				dragging = false;
+				canvas.classList.remove('dragging');
+				try {
+					canvas.releasePointerCapture(e.pointerId);
+				} catch (err) {}
+			});
+			// Background click (no drag, no node) closes the inspector.
+			canvas.addEventListener('click', function (e) {
+				if (dragMoved) return;
+				if (e.target.closest && e.target.closest('.hit')) return;
+				clearSelection();
+			});
+			canvas.addEventListener(
+				'wheel',
+				function (e) {
+					e.preventDefault();
+					var rect = canvas.getBoundingClientRect();
+					var cx = e.clientX - rect.left;
+					var cy = e.clientY - rect.top;
+					var factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+					var ns = clamp(view.scale * factor, 0.25, 3);
+					var k = ns / view.scale;
+					view.tx = cx - (cx - view.tx) * k;
+					view.ty = cy - (cy - view.ty) * k;
+					view.scale = ns;
+					applyTransform();
+				},
+				{ passive: false }
+			);
+			canvas.addEventListener('dblclick', function () {
+				view = { tx: 0, ty: 0, scale: 1 };
+				applyTransform();
+			});
+
+			// ---- header wiring ---------------------------------------------------
+			document.getElementById('clear').addEventListener('click', function () {
+				// One-way command bridge back to the sandbox.
+				parent.postMessage({ type: 'maestro:invokeCommand', commandId: 'clear' }, '*');
+			});
+
+			// ---- inbound snapshots ----------------------------------------------
+			window.addEventListener('message', function (e) {
+				var d = e.data;
+				if (!d || d.type !== 'maestro:panelData') return;
+				latest = d.data || null;
+				render();
+			});
+
+			window.addEventListener('resize', function () {
+				renderTimeline();
+			});
+
+			// Initial paint (empty state until first snapshot).
+			render();
+		</script>
+	</body>
+</html>
