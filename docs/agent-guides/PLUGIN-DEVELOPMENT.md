@@ -449,6 +449,7 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.ui.runCommand(commandId, args?)`                                       | `ui:command`                 |
 | `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                | `ui:hostView`                |
 | `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                        | `ui:hostView`                |
+| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON) | `ui:panel`                 |
 | `maestro.events.on(topic, handler(payload, meta))`                              | - (delivery needs subscribe) |
 | `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
@@ -556,6 +557,26 @@ The host's guest preload accepts the message only from the panel document's own 
 
 Flow: panel button posts the command -> host forwards over the broker -> the plugin's `say-hello` handler runs in the sandbox -> it calls `maestro.notifications.toast(...)` (a brokered effect).
 
+### Pushing live data to your panel
+
+The `invokeCommand` bridge above is panel -> host. To push data the OTHER way (host -> panel) - e.g. stream a live snapshot into an open panel as events arrive - use `maestro.ui.panelPost(panelId, data)` from the sandbox. It requires `ui:panel`, targets ONLY one of your own declared panels (`panelId` is the LOCAL id from your `panels` contribution), and the payload must be JSON-serializable and under 64 KB. It is a one-way push: there is no reply channel back to the sandbox. Declare `minHostApi: '1.13.0'`.
+
+The data is delivered to the panel page as a `maestro:panelData` window message:
+
+```js
+// Sandbox side (in activate / a command handler):
+await maestro.ui.panelPost('my-panel', { nodes });
+```
+
+```html
+<!-- Panel side (in panel.html): -->
+<script>
+	window.addEventListener('message', (e) => {
+		if (e.data?.type === 'maestro:panelData') render(e.data.data);
+	});
+</script>
+```
+
 ---
 
 ## 8. Events
@@ -570,6 +591,9 @@ A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/s
 | `agent.awaiting`      | `{ agentId, tabId?, kind?, risk? }`             |
 | `agent.statusChanged` | `{ agentId, tabId?, status }`                   |
 | `cue.fired`           | `{ cueType, projectPath? }`                     |
+| `tool.executed`       | `{ sessionId, tabId?, toolName, toolCallId?, phase?, timestamp, durationMs? }` |
+
+`tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.13.0'`.
 
 Register handlers with `maestro.events.on(topic, fn)` first, then start delivery with `maestro.events.subscribe([...])`. Stop with `maestro.events.unsubscribe([...])` (or no argument for all). The handler receives `(payload, meta)` where `meta` is `{ topic, at }`. Unknown topics are ignored.
 

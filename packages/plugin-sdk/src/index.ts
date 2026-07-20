@@ -27,6 +27,14 @@ function isNonEmptyString(value: unknown): value is string {
  */
 export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 
+/**
+ * Maximum UTF-8 size of ONE host-to-panel push (`ui.panelPost`). Panel data is
+ * a live update stream, not a bulk transfer, so the per-message cap is small
+ * and deliberate: it bounds what a plugin can force through the sandbox RPC,
+ * the main-to-renderer IPC, and the webview bridge in a single call.
+ */
+export const MAX_PANEL_POST_BYTES = 64 * 1024;
+
 /** Size of JSON data as it crosses a UTF-8 message boundary. */
 export function serializedJsonByteLength(value: unknown): number | null {
 	let serialized: string | undefined;
@@ -402,11 +410,14 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.12.0 for the
- * backward-compatible additive `net:connect` capability plus its `net.connect`
- * / `net.send` / `net.close` host methods (hold an outbound persistent
- * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
- * 1.11.0 added virtual `groupings` contributions and the presentation-only
+ * The host API version this Maestro build implements. Bumped to 1.13.0 for the
+ * backward-compatible additive `tool.executed` event topic (metadata-only tool
+ * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
+ * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
+ * cap). 1.12.0 added the backward-compatible additive `net:connect` capability
+ * plus its `net.connect` / `net.send` / `net.close` host methods (hold an
+ * outbound persistent websocket to a host scope, e.g. a Discord/Slack gateway;
+ * egress-classified). 1.11.0 added virtual `groupings` contributions and the presentation-only
  * `ui:grouping` publish/clear methods; 1.10.0 added the backward-compatible,
  * data-only `iconPacks` contribution; 1.9.0 added host-rendered `hostViews`,
  * their `ui:hostView` capability, and the `ui.hostViewUpdate` /
@@ -420,7 +431,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.12.0';
+export const HOST_API_VERSION = '1.13.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1196,6 +1207,7 @@ export const HOST_API = {
 	'ui.runCommand': { capability: 'ui:command' },
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
+	'ui.panelPost': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1428,6 +1440,10 @@ export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
 	readonly hostView: MaestroHostViewApi;
 	readonly grouping: MaestroGroupingApi;
+	/** Push a live JSON snapshot to one of this plugin's own declared panels
+	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
+	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
+	panelPost(panelId: string, data: unknown): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */
