@@ -76,7 +76,8 @@ vi.mock('../../../renderer/components/ConfirmModal', () => ({
 }));
 
 // Mock lucide-react
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	PanelRightClose: () => <span data-testid="panel-right-close">Close</span>,
 	PanelRightOpen: () => <span data-testid="panel-right-open">Open</span>,
 	Loader2: ({ className }: { className?: string }) => (

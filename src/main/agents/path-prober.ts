@@ -33,6 +33,61 @@ export interface BinaryDetectionResult {
 	path?: string;
 }
 
+function getCodexDesktopBinRoot(): string {
+	const home = os.homedir();
+	const localAppData = process.env.LOCALAPPDATA || path.win32.join(home, 'AppData', 'Local');
+	return path.win32.join(localAppData, 'OpenAI', 'Codex', 'bin');
+}
+
+function isCodexDesktopBinaryPath(binaryPath: string): boolean {
+	const normalizedPath = path.win32.normalize(binaryPath);
+	const binRoot = path.win32.normalize(getCodexDesktopBinRoot());
+
+	return (
+		path.win32.basename(normalizedPath).toLowerCase() === 'codex.exe' &&
+		path.win32.dirname(path.win32.dirname(normalizedPath)).toLowerCase() === binRoot.toLowerCase()
+	);
+}
+
+function isMissingPathError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+async function findLatestCodexDesktopBinary(): Promise<string | null> {
+	const binRoot = getCodexDesktopBinRoot();
+
+	try {
+		const entries = await fs.promises.readdir(binRoot, { withFileTypes: true });
+		const candidates = await Promise.all(
+			entries
+				.filter((entry) => entry.isDirectory())
+				.map(async (entry) => {
+					const candidatePath = path.win32.join(binRoot, entry.name, 'codex.exe');
+					try {
+						const stats = await fs.promises.stat(candidatePath);
+						return stats.isFile() ? { path: candidatePath, installedAt: stats.birthtimeMs } : null;
+					} catch (error) {
+						if (isMissingPathError(error)) return null;
+						throw error;
+					}
+				})
+		);
+
+		return (
+			candidates
+				.filter(
+					(candidate): candidate is { path: string; installedAt: number } => candidate !== null
+				)
+				.sort((a, b) => b.installedAt - a.installedAt || b.path.localeCompare(a.path))[0]?.path ||
+			null
+		);
+	} catch (error) {
+		if (isMissingPathError(error)) return null;
+		throw error;
+	}
+}
+
 // ============ Environment Expansion ============
 
 /**
@@ -245,6 +300,20 @@ export async function checkCustomPath(customPath: string): Promise<BinaryDetecti
 					return { exists: true, path: cmdPath };
 				}
 			}
+
+			// Codex Desktop rotates the version directory containing codex.exe on update.
+			// Recover only this known path shape so arbitrary missing overrides are not
+			// silently redirected to a different executable.
+			if (isCodexDesktopBinaryPath(expandedPath)) {
+				const currentCodexPath = await findLatestCodexDesktopBinary();
+				if (currentCodexPath) {
+					logger.info(`Recovered rotated Codex Desktop path`, LOG_CONTEXT, {
+						original: customPath,
+						resolved: currentCodexPath,
+					});
+					return { exists: true, path: currentCodexPath };
+				}
+			}
 		}
 
 		return { exists: false };
@@ -383,6 +452,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
  */
 export async function probeWindowsPaths(binaryName: string): Promise<string | null> {
 	const pathsToCheck = getWindowsKnownPaths(binaryName);
+	if (binaryName === 'codex') {
+		const codexDesktopPath = await findLatestCodexDesktopBinary();
+		if (codexDesktopPath) {
+			pathsToCheck.push(codexDesktopPath);
+		}
+	}
 
 	if (pathsToCheck.length === 0) {
 		return null;

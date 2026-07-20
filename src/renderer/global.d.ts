@@ -431,7 +431,15 @@ interface MaestroAPI {
 			callback: (params: {
 				op: 'open' | 'update' | 'close';
 				id: string;
-				viewType?: 'tracker' | 'file' | 'markdown' | 'image' | 'code' | 'view' | 'decision';
+				viewType?:
+					| 'tracker'
+					| 'file'
+					| 'markdown'
+					| 'image'
+					| 'code'
+					| 'view'
+					| 'decision'
+					| 'html';
 				title?: string;
 				body?: string;
 				path?: string;
@@ -443,19 +451,42 @@ interface MaestroAPI {
 		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
 		flashCadenza: (id: string) => void;
 		onRemoteMovement: (
-			callback: (params: {
-				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
-				id?: string;
-				x?: number;
-				y?: number;
-				width?: number;
-				height?: number;
-				title?: string;
-				body?: string;
-			}) => void
+			callback: (
+				params: {
+					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					id?: string;
+					viewType?: 'view' | 'html';
+					x?: number;
+					y?: number;
+					width?: number;
+					height?: number;
+					title?: string;
+					body?: string;
+					sourcePlugin?: string;
+					revision?: number;
+				},
+				responseChannel?: string
+			) => void
 		) => () => void;
+		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
+		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInspection: (
+			callback: (id: string, expectedRevision: number, responseChannel: string) => void
+		) => () => void;
+		sendMovementDesignerInspectionResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInteraction: (
+			callback: (
+				id: string,
+				action:
+					| { kind: 'click'; selector: string }
+					| { kind: 'type'; selector: string; value: string },
+				expectedRevision: number,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendMovementDesignerInteractionResponse: (responseChannel: string, result: unknown) => void;
 		notifyCadenzaHudReady: () => void;
 		setCadenzaHudCardRects: (
 			rects: Array<{ x: number; y: number; width: number; height: number }>

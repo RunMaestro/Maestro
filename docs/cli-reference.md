@@ -1162,18 +1162,18 @@ Open small cadenza views to display or track work in the Maestro desktop app
 
 Open (or replace by id) a cadenza view
 
-| Option                   | Description                                                                                                       | Default |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------- |
-| `--type <type>`          | tracker \| file \| markdown \| image \| code \| view \| decision (default: tracker)                               | -       |
-| `--title <text>`         | Header label for the panel                                                                                        | -       |
-| `--body <text>`          | Body content - tracker line, markdown/code source, JSON block spec (--type view), or the prompt (--type decision) | -       |
-| `--body-file <path>`     | Read body content from a file (large markdown or a view JSON spec)                                                | -       |
-| `--path <path>`          | File/image path (required for file and image; for --type code, shows that file as a snippet)                      | -       |
-| `--lang <lang>`          | Language for --type code highlighting (inferred from --path if omitted)                                           | -       |
-| `--option <label:value>` | A decision button (repeatable); clicking replies value to --agent. Requires --type decision                       | `[]`    |
-| `-c, --color <color>`    | green \| yellow \| orange \| red \| theme (default: theme)                                                        | -       |
-| `-a, --agent <id>`       | Owning agent - lets a file cadenza expand into its tab, and the reply target for --type decision                  | -       |
-| `--json`                 | Output as JSON (for scripting)                                                                                    | -       |
+| Option                   | Description                                                                                                         | Default |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--type <type>`          | tracker \| file \| markdown \| image \| code \| view \| html \| decision (default: tracker)                         | -       |
+| `--title <text>`         | Header label for the panel                                                                                          | -       |
+| `--body <text>`          | Body content - tracker line, markdown/code source, JSON block spec (--type view), HTML document, or decision prompt | -       |
+| `--body-file <path>`     | Read body content from a file (markdown, view JSON, code, or HTML)                                                  | -       |
+| `--path <path>`          | File/image path (required for file and image; for --type code, shows that file as a snippet)                        | -       |
+| `--lang <lang>`          | Language for --type code highlighting (inferred from --path if omitted)                                             | -       |
+| `--option <label:value>` | A decision button (repeatable); clicking replies value to --agent. Requires --type decision                         | `[]`    |
+| `-c, --color <color>`    | green \| yellow \| orange \| red \| theme (default: theme)                                                          | -       |
+| `-a, --agent <id>`       | Owning agent - lets a file cadenza expand into its tab, and the reply target for --type decision                    | -       |
+| `--json`                 | Output as JSON (for scripting)                                                                                      | -       |
 
 ## `maestro-cli cadenza update <id>`
 
@@ -1202,33 +1202,37 @@ Compose the agent-driven movement (free-placed data views) in the Maestro main w
 
 ## `maestro-cli movement add <id>`
 
-Add (or replace by id) a movement item rendering a JSON block spec
+Add (or replace by id) a native data view or interactive HTML mockup
 
-| Option               | Description                                                                  | Default |
-| -------------------- | ---------------------------------------------------------------------------- | ------- |
-| `--x <px>`           | X position (px from movement left)                                           | -       |
-| `--y <px>`           | Y position (px from movement top)                                            | -       |
-| `--width <px>`       | Item width in px (default 320)                                               | -       |
-| `--height <px>`      | Optional fixed item height in px (default: fit content)                      | -       |
-| `--title <text>`     | Item header title                                                            | -       |
-| `--body <json>`      | Block spec JSON, e.g. {"blocks":[{"kind":"stat","label":"Tests","value":8}]} | -       |
-| `--body-file <path>` | Read the block spec JSON from a file                                         | -       |
-| `--json`             | Output as JSON (for scripting)                                               | -       |
+| Option               | Description                                                             | Default |
+| -------------------- | ----------------------------------------------------------------------- | ------- |
+| `--type <type>`      | view \| html (default: view)                                            | -       |
+| `--x <px>`           | X position (px from movement left)                                      | -       |
+| `--y <px>`           | Y position (px from movement top)                                       | -       |
+| `--width <px>`       | Item width in px (default: 500 view, 880 html)                          | -       |
+| `--height <px>`      | Optional fixed item height in px (default: fit content)                 | -       |
+| `--title <text>`     | Item header title                                                       | -       |
+| `--body <content>`   | Block spec JSON for --type view, or a complete document for --type html | -       |
+| `--body-file <path>` | Read the view JSON or HTML document from a file                         | -       |
+| `--html-file <path>` | Read an HTML document from a file (implies --type html)                 | -       |
+| `--json`             | Output as JSON (for scripting)                                          | -       |
 
 ## `maestro-cli movement update <id>`
 
 Update fields of an existing movement item in place
 
-| Option               | Description                              | Default |
-| -------------------- | ---------------------------------------- | ------- |
-| `--x <px>`           | New X position                           | -       |
-| `--y <px>`           | New Y position                           | -       |
-| `--width <px>`       | New width                                | -       |
-| `--height <px>`      | New fixed height                         | -       |
-| `--title <text>`     | New title                                | -       |
-| `--body <json>`      | New block spec JSON                      | -       |
-| `--body-file <path>` | Read the new block spec JSON from a file | -       |
-| `--json`             | Output as JSON (for scripting)           | -       |
+| Option               | Description                                                | Default |
+| -------------------- | ---------------------------------------------------------- | ------- |
+| `--type <type>`      | Switch or confirm the item type: view \| html              | -       |
+| `--x <px>`           | New X position                                             | -       |
+| `--y <px>`           | New Y position                                             | -       |
+| `--width <px>`       | New width                                                  | -       |
+| `--height <px>`      | New fixed height                                           | -       |
+| `--title <text>`     | New title                                                  | -       |
+| `--body <content>`   | New block spec JSON or HTML document                       | -       |
+| `--body-file <path>` | Read the new view JSON or HTML document from a file        | -       |
+| `--html-file <path>` | Read a new HTML document from a file (implies --type html) | -       |
+| `--json`             | Output as JSON (for scripting)                             | -       |
 
 ## `maestro-cli movement move <id>`
 
@@ -1263,6 +1267,26 @@ Read the current movement layout (items + size) to compose around it
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli movement inspect <id>`
+
+Capture a live HTML Movement preview and report its runtime diagnostics
+
+| Option           | Description                                       | Default |
+| ---------------- | ------------------------------------------------- | ------- |
+| `--output <png>` | Write the live mockup screenshot to this PNG path | -       |
+| `--json`         | Output as JSON (for scripting)                    | -       |
+
+## `maestro-cli movement interact <id>`
+
+Interact with a live HTML Movement by CSS selector
+
+| Option               | Description                                            | Default |
+| -------------------- | ------------------------------------------------------ | ------- |
+| `--click <selector>` | Click the matching element                             | -       |
+| `--type <selector>`  | Enter text into the matching input or editable element | -       |
+| `--value <text>`     | Text used with --type                                  | -       |
+| `--json`             | Output as JSON (for scripting)                         | -       |
 
 ## `maestro-cli stats`
 

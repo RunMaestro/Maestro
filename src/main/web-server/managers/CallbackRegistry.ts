@@ -100,6 +100,8 @@ import type {
 	CadenzaViewCallback,
 	MovementViewCallback,
 	GetMovementStateCallback,
+	GetMovementDesignerInspectionCallback,
+	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
@@ -200,6 +202,8 @@ export interface WebServerCallbacks {
 	cadenzaView: CadenzaViewCallback | null;
 	movementView: MovementViewCallback | null;
 	getMovementState: GetMovementStateCallback | null;
+	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
+	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
@@ -287,6 +291,8 @@ export class CallbackRegistry {
 		cadenzaView: null,
 		movementView: null,
 		getMovementState: null,
+		getMovementDesignerInspection: null,
+		interactMovementDesigner: null,
 		notifyCenterFlash: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
@@ -802,6 +808,26 @@ export class CallbackRegistry {
 		return this.callbacks.getMovementState();
 	}
 
+	async getMovementDesignerInspection(id: string) {
+		if (!this.callbacks.getMovementDesignerInspection) return null;
+		return this.callbacks.getMovementDesignerInspection(id);
+	}
+
+	async interactMovementDesigner(
+		id: string,
+		action: Parameters<InteractMovementDesignerCallback>[1]
+	) {
+		if (!this.callbacks.interactMovementDesigner) {
+			return {
+				ok: false,
+				action: action.kind,
+				selector: action.selector,
+				message: 'Movement designer interaction is not configured',
+			};
+		}
+		return this.callbacks.interactMovementDesigner(id, action);
+	}
+
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
@@ -1159,6 +1185,14 @@ export class CallbackRegistry {
 
 	setGetMovementStateCallback(callback: GetMovementStateCallback): void {
 		this.callbacks.getMovementState = callback;
+	}
+
+	setGetMovementDesignerInspectionCallback(callback: GetMovementDesignerInspectionCallback): void {
+		this.callbacks.getMovementDesignerInspection = callback;
+	}
+
+	setInteractMovementDesignerCallback(callback: InteractMovementDesignerCallback): void {
+		this.callbacks.interactMovementDesigner = callback;
 	}
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {

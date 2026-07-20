@@ -8,6 +8,11 @@ import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -471,6 +476,15 @@ export type MovementViewCallback = (params: MovementPayload) => Promise<boolean>
 
 /** Read the current movement snapshot (items + size) for agent awareness. */
 export type GetMovementStateCallback = () => Promise<MovementStateSnapshot | null>;
+/** Capture the live HTML Movement viewport plus its runtime diagnostics. */
+export type GetMovementDesignerInspectionCallback = (
+	id: string
+) => Promise<MovementDesignerInspection | null>;
+/** Perform one selector-scoped action inside a sandboxed HTML Movement. */
+export type InteractMovementDesignerCallback = (
+	id: string,
+	action: ConcertoDesignerAction
+) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,

@@ -287,7 +287,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`).
+`{ id, title, entry, placement }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
 
 ```json
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
@@ -323,6 +323,35 @@ The manifest author writes the local `id`; Maestro namespaces it to
 granted tier-1 plugin may change only the blocks of one of its own declared views with
 `maestro.ui.hostView.update('run-status', blocks)`, or remove it with
 `maestro.ui.hostView.remove('run-status')`; it cannot change the title or surface.
+
+### uiItems (tier 1)
+
+`{ id, surface, label, command, icon?, tooltip?, group?, priority? }` adds a small host-rendered
+control. `surface` must be one of `'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar' |
+'tabBar' | 'sessionRowBadge' | 'groupHeaderBadge' | 'settingsSection' | 'rightPanelTab' |
+'contextMenuItem' | 'emptyState'`. `command` must be one of your plugin-local command ids; the
+host controls the frame, icon mapping, tooltip, and non-suppressible plugin provenance.
+
+```json
+{
+	"uiItems": [
+		{
+			"id": "open-dashboard",
+			"surface": "tabBar",
+			"label": "Open dashboard",
+			"icon": "panel",
+			"tooltip": "Open the plugin dashboard",
+			"command": "open-dashboard"
+		},
+		{
+			"id": "welcome-action",
+			"surface": "emptyState",
+			"label": "Get started",
+			"command": "open-dashboard"
+		}
+	]
+}
+```
 
 ### agents (tier 1)
 
@@ -370,20 +399,20 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 | `ui:command`          | low    | none  | invoke a registered palette command                                                    | `{ "capability": "ui:command" }`                                 |
 | `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                                                 | `{ "capability": "events:subscribe" }`                           |
 | `process:spawn`       | high   | none  | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                 | `{ "capability": "process:spawn" }`                              |
-| `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar)                   | `{ "capability": "ui:contribute" }`                              |
-| `ui:panel`            | medium | none  | render its own sandboxed interactive panels                                            | `{ "capability": "ui:panel" }`                                   |
+| `ui:contribute`       | medium | none  | add declarative controls in approved host-owned surfaces                               | `{ "capability": "ui:contribute" }`                              |
+| `ui:panel`            | medium | none  | render sandboxed panels in approved Maestro regions                                    | `{ "capability": "ui:panel" }`                                   |
 | `ui:hostView`         | medium | none  | render/update declared host BlockView data                                             | `{ "capability": "ui:hostView" }`                                |
-| `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)                             | `{ "capability": "ui:render-unsafe" }`                           |
+| `ui:render-unsafe`    | high   | none  | render custom UI only in host-approved, non-protected regions                          | `{ "capability": "ui:render-unsafe" }`                           |
 
 `agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch`, `net:connect`, or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
-The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits
-declarative `uiItems`, `ui:panel` admits sandboxed `panels`, and `ui:hostView` admits
-brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0
-plugins because they are host-rendered data, not a plugin UI. `ui:render-unsafe` is the
-high-trust escape hatch for full custom UI, not a substitute for any of those grants.
+The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits declarative `uiItems` into approved host-owned surfaces, `ui:panel` admits sandboxed `panels` into approved Maestro regions, and `ui:hostView` admits brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0 plugins because they are host-rendered data, not plugin UI. `ui:render-unsafe` is a high-trust policy for host-approved custom UI only; it neither grants another UI capability nor bypasses trusted chrome. An enabled plugin without the matching grant contributes none of that surface.
+
+### Trusted chrome (never plugin-accessible)
+
+The host permanently excludes plugin-management and enable/disable controls, permission or consent dialogs, uninstall or grant/revoke flows, and security indicators (SSH status, permission mode, and agent identity). These zones are not `uiItems` surfaces. The shared registry guard drops declarative and `ui:render-unsafe` attempts before rendering, and the renderer repeats the positive allowlist check. The current SDK exposes no generic `ui:render-unsafe` mount method.
 
 ---
 
@@ -559,7 +588,7 @@ Flow: panel button posts the command -> host forwards over the broker -> the plu
 
 ### Pushing live data to your panel
 
-The `invokeCommand` bridge above is panel -> host. To push data the OTHER way (host -> panel) - e.g. stream a live snapshot into an open panel as events arrive - use `maestro.ui.panelPost(panelId, data)` from the sandbox. It requires `ui:panel`, targets ONLY one of your own declared panels (`panelId` is the LOCAL id from your `panels` contribution), and the payload must be JSON-serializable and under 64 KB. It is a one-way push: there is no reply channel back to the sandbox. Declare `minHostApi: '1.13.0'`.
+The `invokeCommand` bridge above is panel -> host. To push data the OTHER way (host -> panel) - e.g. stream a live snapshot into an open panel as events arrive - use `maestro.ui.panelPost(panelId, data)` from the sandbox. It requires `ui:panel`, targets ONLY one of your own declared panels (`panelId` is the LOCAL id from your `panels` contribution), and the payload must be JSON-serializable and under 64 KB. It is a one-way push: there is no reply channel back to the sandbox. Declare `minHostApi: '1.14.0'`.
 
 The data is delivered to the panel page as a `maestro:panelData` window message:
 
@@ -593,7 +622,7 @@ A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/s
 | `cue.fired`           | `{ cueType, projectPath? }`                                                    |
 | `tool.executed`       | `{ sessionId, tabId?, toolName, toolCallId?, phase?, timestamp, durationMs? }` |
 
-`tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.13.0'`.
+`tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.14.0'`.
 
 Register handlers with `maestro.events.on(topic, fn)` first, then start delivery with `maestro.events.subscribe([...])`. Stop with `maestro.events.unsubscribe([...])` (or no argument for all). The handler receives `(payload, meta)` where `meta` is `{ topic, at }`. Unknown topics are ignored.
 
@@ -645,6 +674,7 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - **Setting-key rules are enforced twice** (declarative contributions and runtime `settings.set`): no prototype segments, no `encoreFeatures`, no secret-looking names, no path separators.
 - **`entry` rules:** required for tier >= 1, forbidden for tier 0, must stay inside the plugin folder.
 - **Inert capabilities:** `agents:dispatch` and `process:spawn` are declared but have no production handler; do not build on them yet.
+- **Trusted chrome cannot be extended.** Declarative `uiItems`, sandboxed panels, and any high-trust `ui:render-unsafe` UI must never target or cover plugin management/enable-disable controls, consent dialogs, uninstall/grant-revoke flows, or SSH/permission-mode/agent-identity indicators.
 
 ## 14. Tooling: the SDK package and the `maestro plugin` CLI
 

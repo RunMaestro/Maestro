@@ -43,7 +43,12 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import fsSync from 'fs';
-import { getCliPrompt, _resetCliPromptCacheForTests } from '../../../cli/services/prompt-loader';
+import path from 'path';
+import {
+	_getBundledPromptCandidatesForTests,
+	getCliPrompt,
+	_resetCliPromptCacheForTests,
+} from '../../../cli/services/prompt-loader';
 
 describe('CLI prompt-loader', () => {
 	beforeEach(() => {
@@ -88,6 +93,14 @@ describe('CLI prompt-loader', () => {
 		expect(content).toBe('bundled content');
 		// Customizations + first bundled candidate were tried
 		expect(mockReadFile).toHaveBeenCalled();
+	});
+
+	it('finds checkout prompts from the standalone dist/cli bundle layout', () => {
+		const filename = '_interface-primitives.md';
+		const moduleDirectory = path.join(process.cwd(), 'dist', 'cli');
+		const expected = path.join(process.cwd(), 'src', 'prompts', filename);
+
+		expect(_getBundledPromptCandidatesForTests(filename, moduleDirectory)).toContain(expected);
 	});
 
 	it('caches a loaded prompt so subsequent calls do not re-read the filesystem', async () => {

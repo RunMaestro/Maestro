@@ -9,12 +9,14 @@
 
 import '@testing-library/jest-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 
 // Isolate PluginsPanel from children that also hit the plugin bridge on mount.
 vi.mock('../PluginActivityView', () => ({ PluginActivityView: () => null }));
 vi.mock('../PluginPanelHost', () => ({ PluginPanelHost: () => null }));
-vi.mock('../../plugins/PluginPanelSlot', () => ({ PluginPanelSlot: () => null }));
+vi.mock('../../plugins/PluginPanelSlot', () => ({
+	PluginPanelSlot: () => <div data-testid="plugin-settings-panel-slot" />,
+}));
 vi.mock('../../../stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 import { PluginsPanel } from '../PluginsPanel';
@@ -62,6 +64,13 @@ describe('PluginsPanel - plugins:changed subscription', () => {
 
 		// The panel must re-fetch so the toggle reflects the new enabled state.
 		await waitFor(() => expect(bridge.list).toHaveBeenCalledTimes(2));
+	});
+
+	it('never mounts a plugin panel inside plugin-management controls', async () => {
+		render(<PluginsPanel theme={theme} />);
+
+		await waitFor(() => expect(bridge.list).toHaveBeenCalledTimes(1));
+		expect(screen.queryByTestId('plugin-settings-panel-slot')).not.toBeInTheDocument();
 	});
 
 	it('unsubscribes on unmount (no leaked listener)', async () => {

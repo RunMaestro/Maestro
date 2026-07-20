@@ -95,6 +95,11 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	),
 }));
 
+vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
+	PluginUiItemsSlot: ({ surface }: { surface: string }) =>
+		surface === 'groupHeaderBadge' ? <button type="button">Plugin group action</button> : null,
+}));
+
 // Mock gitService
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -932,6 +937,19 @@ describe('SessionList', () => {
 			// Click on group header
 			fireEvent.click(screen.getByText('My Group'));
 			expect(toggleGroup).toHaveBeenCalledWith('g1');
+		});
+
+		it.each(['Enter', ' '])('does not toggle a group for %s on a contributed action', (key) => {
+			const toggleGroup = vi.fn();
+			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions, toggleGroup })} />);
+
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Plugin group action' }), { key });
+			expect(toggleGroup).not.toHaveBeenCalled();
 		});
 
 		it('shows delete button for empty groups on hover', () => {

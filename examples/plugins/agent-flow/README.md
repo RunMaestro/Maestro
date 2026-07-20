@@ -95,7 +95,7 @@ once the plugin is installed and add `panel.png` here.)_
 
 ## Requirements
 
-- A Maestro host implementing host API `1.13.0` or newer (for the
+- A Maestro host implementing host API `1.14.0` or newer (for the
   `maestro.ui.panelPost` host-to-panel channel).
 - The `plugins` Encore flag enabled.
 
@@ -164,7 +164,7 @@ Each item below was confirmed by reading the final host and plugin code
 
 Agent Flow ships as a tier-2, in-repo example plugin
 (`examples/plugins/agent-flow/`) plus the two additive host-API surfaces it
-needed, both landed at **host API `1.13.0`**:
+needed, both landed at **host API `1.14.0`**:
 
 - **`tool.executed` plugin event topic** (`src/shared/plugins/events.ts`) -
   metadata-only tool-call lifecycle events (name + timing, never arguments or

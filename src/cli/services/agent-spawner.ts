@@ -15,6 +15,7 @@ import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
+import { checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
@@ -290,25 +291,11 @@ function getExpandedPath(): string {
 }
 
 /**
- * Check if a file exists and is executable
+ * Resolve a configured executable path, including known rotating install locations.
  */
-async function isExecutable(filePath: string): Promise<boolean> {
-	try {
-		const stats = await fs.promises.stat(filePath);
-		if (!stats.isFile()) return false;
-
-		// On Unix, check executable permission
-		if (!isWindows()) {
-			try {
-				await fs.promises.access(filePath, fs.constants.X_OK);
-			} catch {
-				return false;
-			}
-		}
-		return true;
-	} catch {
-		return false;
-	}
+async function resolveExecutablePath(filePath: string): Promise<string | undefined> {
+	const detection = await checkCustomPath(filePath);
+	return detection.exists ? detection.path : undefined;
 }
 
 /**
@@ -356,9 +343,10 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedPaths.set(toolType, customPath);
-			return { available: true, path: customPath, source: 'settings' };
+		const resolvedCustomPath = await resolveExecutablePath(customPath);
+		if (resolvedCustomPath) {
+			cachedPaths.set(toolType, resolvedCustomPath);
+			return { available: true, path: resolvedCustomPath, source: 'settings' };
 		}
 		console.error(
 			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`

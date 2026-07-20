@@ -59,7 +59,7 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
-	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
+	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -529,15 +529,15 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'transcripts:write':
 			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
-			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+			return "Add declarative items to Maestro's approved host surfaces";
 		case 'ui:panel':
-			return 'Show its own panels inside Maestro';
+			return 'Show its own panels inside approved Maestro regions';
 		case 'ui:hostView':
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
-			return "Render its own custom UI with full access to Maestro's interface (advanced - only enable for authors you fully trust)";
+			return 'Render high-trust custom UI only in host-approved, non-protected regions (advanced - only enable authors you fully trust)';
 	}
 }
 
