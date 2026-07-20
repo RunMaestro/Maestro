@@ -55,15 +55,14 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
-		| undefined;
+		((sessionId: string, tabId: string, newName: string) => void) | undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
-		| undefined;
+		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
 	let onRemoteReorderTabHandler:
-		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
-		| undefined;
+		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRequestMovementDesignerInspectionHandler:
+		((id: string, expectedRevision: number, responseChannel: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
@@ -85,8 +84,7 @@ describe('useRemoteIntegration', () => {
 		  }) => void)
 		| undefined;
 	let onRemoteMovementHandler:
-		| ((params: MovementPayload, responseChannel?: string) => void)
-		| undefined;
+		((params: MovementPayload, responseChannel?: string) => void) | undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -274,6 +272,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendMovementAppliedResponse: vi.fn(),
+		onRequestMovementDesignerInspection: vi.fn().mockImplementation((handler) => {
+			onRequestMovementDesignerInspectionHandler = handler;
+			return () => {};
+		}),
+		sendMovementDesignerInspectionResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -324,6 +327,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
+		onRequestMovementDesignerInspectionHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
@@ -1172,6 +1176,63 @@ describe('useRemoteIntegration', () => {
 				true
 			);
 			frame.remove();
+		});
+
+		it('waits for the surfaced movement to cross a paint boundary before inspection', async () => {
+			const animationFrames: FrameRequestCallback[] = [];
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				animationFrames.push(callback);
+				return animationFrames.length;
+			});
+			const frame = document.createElement('iframe');
+			document.body.appendChild(frame);
+			vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+				x: 8,
+				y: 12,
+				width: 640,
+				height: 480,
+				top: 12,
+				right: 648,
+				bottom: 492,
+				left: 8,
+				toJSON: () => ({}),
+			});
+			registerConcertoDesignerFrame('movement', 'mockup', 21, frame);
+			handleConcertoDesignerMessage('movement', 'mockup', {
+				source: frame.contentWindow,
+				data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+			} as MessageEvent);
+
+			try {
+				renderHook(() => useRemoteIntegration(createDeps()));
+				act(() => {
+					onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+				});
+
+				expect(animationFrames).toHaveLength(1);
+				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
+
+				await act(async () => {
+					animationFrames.shift()?.(0);
+					await Promise.resolve();
+				});
+				expect(animationFrames).toHaveLength(1);
+				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
+
+				await act(async () => {
+					animationFrames.shift()?.(16);
+					await Promise.resolve();
+					await Promise.resolve();
+				});
+
+				expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+					'inspection-response',
+					expect.objectContaining({ id: 'mockup', ready: true, revision: 21 })
+				);
+			} finally {
+				rafSpy.mockRestore();
+				frame.remove();
+			}
 		});
 	});
 

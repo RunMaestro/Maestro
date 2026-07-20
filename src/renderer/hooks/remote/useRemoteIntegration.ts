@@ -52,6 +52,30 @@ export interface UseRemoteIntegrationReturn {
 	// No return values - all functionality is via side effects
 }
 
+const MOVEMENT_INSPECTION_PAINT_FALLBACK_MS = 250;
+
+/**
+ * Wait until Chromium has had a full rendering opportunity after a synchronous
+ * surface update. The second animation frame runs after the first frame's paint.
+ * A bounded fallback keeps inspection responsive when background throttling
+ * suppresses animation frames.
+ */
+function waitForMovementInspectionPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(fallbackTimeout);
+			resolve();
+		};
+		const fallbackTimeout = window.setTimeout(finish, MOVEMENT_INSPECTION_PAINT_FALLBACK_MS);
+		window.requestAnimationFrame(() => {
+			window.requestAnimationFrame(finish);
+		});
+	});
+}
+
 /**
  * Hook for handling web interface communication.
  *
@@ -748,7 +772,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// Inspection is read-only for the iframe, but the requested panel must be
 				// visible above overlapping peers for Chromium's compositor crop to show it.
 				flushSync(() => useMovementStore.getState().surfaceItem(id));
-				void new Promise<void>((resolve) => window.setTimeout(resolve, 50))
+				void waitForMovementInspectionPaint()
 					.then(() => getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision))
 					.then((snapshot) =>
 						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
