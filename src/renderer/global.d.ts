@@ -342,6 +342,13 @@ interface MaestroAPI {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		) => () => void;
 		respondPermission: (

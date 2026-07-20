@@ -15,7 +15,7 @@
 
 import { memo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ShieldQuestion, Check, X } from 'lucide-react';
+import { ShieldQuestion, Check, X, MessagesSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
@@ -24,6 +24,7 @@ import {
 	selectActivePermissionRequest,
 	type PermissionRequestUI,
 } from '../../stores/permissionRequestStore';
+import { QuestionPrompt } from './QuestionPrompt';
 
 interface PermissionPromptProps {
 	theme: Theme;
@@ -66,6 +67,7 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 	}, [enqueue, clearSession]);
 
 	const isOpen = !!request;
+	const isQuestion = !!request && request.kind === 'question' && !!request.questions?.length;
 
 	const onDeny = () => {
 		if (request) {
@@ -77,14 +79,66 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 			respond(request.requestId, { behavior: 'allow' });
 		}
 	};
+	// Dismissing a question (Escape) still delivers a message the model reads:
+	// answers travel back over the deny channel, so an unanswered question is a
+	// deny with a "dismissed" note rather than a hang.
+	const onDismissQuestion = () => {
+		if (request) {
+			respond(request.requestId, {
+				behavior: 'deny',
+				message: 'User dismissed the question without answering.',
+			});
+		}
+	};
+	const onAnswerQuestion = (message: string) => {
+		if (request) {
+			respond(request.requestId, { behavior: 'deny', message });
+		}
+	};
 
-	// Escape denies (fail-safe). Registered only while a request is shown.
-	useModalLayer(MODAL_PRIORITIES.PERMISSION_PROMPT, 'Permission request', onDeny, {
-		enabled: isOpen,
-	});
+	// Escape denies/dismisses (fail-safe). Registered only while a request is shown.
+	useModalLayer(
+		MODAL_PRIORITIES.PERMISSION_PROMPT,
+		'Permission request',
+		isQuestion ? onDismissQuestion : onDeny,
+		{
+			enabled: isOpen,
+		}
+	);
 
 	if (!request) {
 		return null;
+	}
+
+	if (isQuestion && request.questions) {
+		return createPortal(
+			<div
+				className="fixed inset-0 z-[1008] flex items-center justify-center select-none"
+				style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+			>
+				<div
+					role="dialog"
+					aria-label="Question from Claude Code"
+					className="w-[560px] max-w-[90vw] rounded-xl shadow-2xl border p-5"
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+					}}
+				>
+					<div className="flex items-center gap-2 mb-3">
+						<MessagesSquare className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h2 className="text-sm font-semibold">Claude Code has a question</h2>
+					</div>
+					<QuestionPrompt
+						theme={theme}
+						questions={request.questions}
+						onSubmit={onAnswerQuestion}
+					/>
+				</div>
+			</div>,
+			document.body
+		);
 	}
 
 	const action = describeAction(request);

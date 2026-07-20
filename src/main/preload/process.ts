@@ -282,6 +282,15 @@ export function createProcessApi() {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				// AskUserQuestion requests carry a parsed question payload; ordinary
+				// permission requests omit both fields (unchanged shape).
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);

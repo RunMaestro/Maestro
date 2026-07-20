@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as net from 'net';
 import {
 	registerSpawn,
 	lookupBinding,
@@ -10,10 +11,13 @@ import {
 	relayRegistryStats,
 } from '../../../main/permission-relay/registry';
 import { buildRelayArgs } from '../../../main/permission-relay/spawn-args';
+import { parseQuestionRequest } from '../../../main/permission-relay/question-request';
+import { PermissionRelayServer } from '../../../main/permission-relay/PermissionRelayServer';
 import {
 	RELAY_PERMISSION_PROMPT_TOOL,
 	RELAY_MCP_SERVER_NAME,
 } from '../../../main/permission-relay/types';
+import type { PermissionRequest } from '../../../main/permission-relay/types';
 
 describe('permission-relay registry', () => {
 	it('registers a spawn and looks up its binding', () => {
@@ -134,5 +138,190 @@ describe('permission-relay spawn-args', () => {
 
 	it('uses the mcp__server__tool naming for the prompt tool', () => {
 		expect(RELAY_PERMISSION_PROMPT_TOOL).toBe(`mcp__${RELAY_MCP_SERVER_NAME}__approve`);
+	});
+});
+
+describe('permission-relay parseQuestionRequest', () => {
+	it('returns null for ordinary (non-AskUserQuestion) tools', () => {
+		expect(parseQuestionRequest('Bash', { command: 'ls' })).toBeNull();
+		expect(parseQuestionRequest('Edit', { file_path: '/tmp/x' })).toBeNull();
+	});
+
+	it('parses a single-select question into the typed shape', () => {
+		const parsed = parseQuestionRequest('AskUserQuestion', {
+			questions: [
+				{
+					question: 'Which color do you prefer?',
+					header: 'Color',
+					options: [
+						{ label: 'Red', description: 'The red one' },
+						{ label: 'Blue' },
+					],
+					multiSelect: false,
+				},
+			],
+		});
+		expect(parsed).toEqual({
+			kind: 'question',
+			questions: [
+				{
+					question: 'Which color do you prefer?',
+					header: 'Color',
+					options: [{ label: 'Red', description: 'The red one' }, { label: 'Blue' }],
+					multiSelect: false,
+				},
+			],
+		});
+	});
+
+	it('preserves multiSelect and parses multiple questions', () => {
+		const parsed = parseQuestionRequest('AskUserQuestion', {
+			questions: [
+				{ question: 'Pick colors', options: [{ label: 'Red' }], multiSelect: true },
+				{ question: 'Pick a size', options: [{ label: 'S' }], multiSelect: false },
+			],
+		});
+		expect(parsed?.questions).toHaveLength(2);
+		expect(parsed?.questions[0].multiSelect).toBe(true);
+		expect(parsed?.questions[1].multiSelect).toBe(false);
+		// Absent header stays undefined, not the empty string.
+		expect(parsed?.questions[0].header).toBeUndefined();
+	});
+
+	it('tolerates bare-string options', () => {
+		const parsed = parseQuestionRequest('AskUserQuestion', {
+			questions: [{ question: 'Q?', options: ['A', 'B'], multiSelect: false }],
+		});
+		expect(parsed?.questions[0].options).toEqual([{ label: 'A' }, { label: 'B' }]);
+	});
+
+	it('drops malformed questions and returns null when none survive', () => {
+		expect(parseQuestionRequest('AskUserQuestion', { questions: [{}, { header: 'x' }] })).toBeNull();
+		expect(parseQuestionRequest('AskUserQuestion', {})).toBeNull();
+		expect(parseQuestionRequest('AskUserQuestion', { questions: 'nope' })).toBeNull();
+	});
+});
+
+describe('permission-relay server AskUserQuestion round-trip', () => {
+	/** Collect newline-delimited JSON messages arriving on a client socket. */
+	function collectMessages(
+		client: net.Socket,
+		onMessage: (msg: Record<string, unknown>) => void
+	): void {
+		let buffer = '';
+		client.setEncoding('utf8');
+		client.on('data', (chunk: string) => {
+			buffer += chunk;
+			let idx: number;
+			while ((idx = buffer.indexOf('\n')) !== -1) {
+				const line = buffer.slice(0, idx).trim();
+				buffer = buffer.slice(idx + 1);
+				if (line.length > 0) {
+					onMessage(JSON.parse(line));
+				}
+			}
+		});
+	}
+
+	it('surfaces a kind=question request and round-trips a deny+message answer', async () => {
+		const server = new PermissionRelayServer();
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-srv-'));
+		const { token, cleanup } = registerSpawn({ sessionId: 'sQ', tabId: 'tQ' });
+		let captured: PermissionRequest | undefined;
+
+		// Stand in for the renderer: answer via deny+message (the proven shape).
+		server.setOnRequest((req) => {
+			captured = req;
+			resolvePending(req.requestId, { behavior: 'deny', message: 'Color: Blue' });
+		});
+
+		const socketPath = await server.ensureStarted(dir);
+		const client = net.createConnection(socketPath);
+
+		const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+			collectMessages(client, (msg) => {
+				if (msg.type === 'permission-response') {
+					resolve(msg);
+				}
+			});
+			client.on('error', reject);
+			client.on('connect', () => {
+				client.write(JSON.stringify({ type: 'hello', token }) + '\n');
+				client.write(
+					JSON.stringify({
+						type: 'permission-request',
+						token,
+						requestId: 'b1',
+						toolName: 'AskUserQuestion',
+						input: {
+							questions: [
+								{
+									question: 'Which color do you prefer?',
+									header: 'Color',
+									options: [{ label: 'Red' }, { label: 'Blue' }],
+									multiSelect: false,
+								},
+							],
+						},
+					}) + '\n'
+				);
+			});
+		});
+
+		expect(captured?.kind).toBe('question');
+		expect(captured?.questions?.[0].question).toBe('Which color do you prefer?');
+		expect(captured?.questions?.[0].options.map((o) => o.label)).toEqual(['Red', 'Blue']);
+		expect(response.requestId).toBe('b1');
+		expect(response.decision).toEqual({ behavior: 'deny', message: 'Color: Blue' });
+
+		client.destroy();
+		server.stop();
+		cleanup();
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('leaves an ordinary tool request unchanged (no kind/questions)', async () => {
+		const server = new PermissionRelayServer();
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-srv-'));
+		const { token, cleanup } = registerSpawn({ sessionId: 'sB', tabId: 'tB' });
+		let captured: PermissionRequest | undefined;
+
+		server.setOnRequest((req) => {
+			captured = req;
+			resolvePending(req.requestId, { behavior: 'allow' });
+		});
+
+		const socketPath = await server.ensureStarted(dir);
+		const client = net.createConnection(socketPath);
+
+		await new Promise<void>((resolve, reject) => {
+			collectMessages(client, (msg) => {
+				if (msg.type === 'permission-response') {
+					resolve();
+				}
+			});
+			client.on('error', reject);
+			client.on('connect', () => {
+				client.write(JSON.stringify({ type: 'hello', token }) + '\n');
+				client.write(
+					JSON.stringify({
+						type: 'permission-request',
+						token,
+						requestId: 'b2',
+						toolName: 'Bash',
+						input: { command: 'ls' },
+					}) + '\n'
+				);
+			});
+		});
+
+		expect(captured?.toolName).toBe('Bash');
+		expect(captured?.kind).toBeUndefined();
+		expect(captured?.questions).toBeUndefined();
+
+		client.destroy();
+		server.stop();
+		cleanup();
+		fs.rmSync(dir, { recursive: true, force: true });
 	});
 });
