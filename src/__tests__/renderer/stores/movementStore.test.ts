@@ -11,6 +11,8 @@ import {
 	applyMovementPayload,
 	getMovementSnapshot,
 	MOVEMENT_ITEM_DEFAULT_WIDTH,
+	MOVEMENT_HTML_DEFAULT_WIDTH,
+	MOVEMENT_HTML_DEFAULT_HEIGHT,
 } from '../../../renderer/stores/movementStore';
 
 function reset() {
@@ -46,6 +48,52 @@ describe('applyMovementPayload', () => {
 		const item = useMovementStore.getState().items[0];
 		expect(item.width).toBe(MOVEMENT_ITEM_DEFAULT_WIDTH);
 		expect(item.spec).toEqual({ blocks: [] });
+	});
+
+	it('opens HTML as an artifact-sized document and updates it in place', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<button>First</button>',
+			revision: 7,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			viewType: 'html',
+			html: '<button>First</button>',
+			width: MOVEMENT_HTML_DEFAULT_WIDTH,
+			height: MOVEMENT_HTML_DEFAULT_HEIGHT,
+			timestamp: 7,
+		});
+
+		applyMovementPayload({
+			op: 'update',
+			id: 'mockup',
+			body: '<button>Second</button>',
+			revision: 8,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			viewType: 'html',
+			html: '<button>Second</button>',
+			timestamp: 8,
+		});
+	});
+
+	it('preserves the prior type when an update switches to HTML without a body', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'view',
+			body: '{"blocks":[]}',
+		});
+		const timestamp = useMovementStore.getState().items[0].timestamp;
+
+		applyMovementPayload({ op: 'update', id: 'mockup', viewType: 'html' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			viewType: 'view',
+			timestamp,
+		});
 	});
 
 	it('renders invalid JSON as a visible error callout instead of throwing', () => {

@@ -4,12 +4,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BrowserWindow, WebContents } from 'electron';
+import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
 
 // Mock electron
 vi.mock('electron', () => ({
 	ipcMain: {
 		once: vi.fn(),
+		removeListener: vi.fn(),
 	},
 	app: {
 		getPath: vi.fn().mockReturnValue('/tmp/userData'),
@@ -121,6 +122,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCadenzaViewCallback = vi.fn();
 			setMovementViewCallback = vi.fn();
 			setGetMovementStateCallback = vi.fn();
+			setGetMovementDesignerInspectionCallback = vi.fn();
+			setInteractMovementDesignerCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -180,6 +183,11 @@ import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
 import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
+import {
+	applyMovementHtmlPayload,
+	clearConcertoHtmlDocumentsForTests,
+	getConcertoHtmlDocumentRevision,
+} from '../../../main/concerto-html';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -192,6 +200,7 @@ describe('web-server/web-server-factory', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		clearConcertoHtmlDocumentsForTests();
 
 		mockSettingsStore = {
 			get: vi.fn((key: string, defaultValue?: any) => {
@@ -460,6 +469,141 @@ describe('web-server/web-server-factory', () => {
 			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
 			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
 			expect(server.setConfigureAutoRunCallback).toHaveBeenCalled();
+		});
+	});
+
+	describe('Concerto movement callback behavior', () => {
+		beforeEach(() => {
+			mockSettingsStore.get = vi.fn((key: string, defaultValue?: unknown) => {
+				if (key === 'encoreFeatures') return { concerto: true };
+				return defaultValue;
+			}) as WebServerFactoryDependencies['settingsStore']['get'];
+		});
+
+		it('routes the main-process HTML revision to the renderer', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setMovementViewCallback.mock.calls[0][0];
+
+			const resultPromise = callback({
+				op: 'add',
+				id: 'mockup',
+				viewType: 'html',
+				body: '<button>Continue</button>',
+			});
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:movement'
+			);
+			expect(request).toEqual([
+				'remote:movement',
+				expect.objectContaining({ id: 'mockup', revision: 1 }),
+				expect.any(String),
+			]);
+			const responseChannel = request?.[2] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, true);
+
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		it('rejects a bodyless transition to HTML when no document exists', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setMovementViewCallback.mock.calls[0][0];
+
+			await expect(callback({ op: 'update', id: 'native-panel', viewType: 'html' })).resolves.toBe(
+				false
+			);
+
+			expect(
+				(mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.some(
+					([channel]) => channel === 'remote:movement'
+				)
+			).toBe(false);
+		});
+
+		it('passes the current HTML revision into inspection requests', async () => {
+			applyMovementHtmlPayload({
+				op: 'add',
+				id: 'mockup',
+				viewType: 'html',
+				body: '<button>Continue</button>',
+			});
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setGetMovementDesignerInspectionCallback.mock.calls[0][0];
+
+			const resultPromise = callback('mockup');
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:getMovementDesignerInspection'
+			);
+			expect(request).toEqual([
+				'remote:getMovementDesignerInspection',
+				'mockup',
+				1,
+				expect.any(String),
+			]);
+			const responseChannel = request?.[3] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, null);
+
+			await expect(resultPromise).resolves.toBeNull();
+		});
+
+		it('defers concurrent HTML updates until the active inspection completes', async () => {
+			applyMovementHtmlPayload({
+				op: 'add',
+				id: 'mockup',
+				viewType: 'html',
+				body: '<button>Original</button>',
+			});
+			const server = createWebServerFactory(deps)() as any;
+			const inspectionCallback = server.setGetMovementDesignerInspectionCallback.mock.calls[0][0];
+			const movementCallback = server.setMovementViewCallback.mock.calls[0][0];
+
+			const inspectionPromise = inspectionCallback('mockup');
+			const inspectionRequest = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:getMovementDesignerInspection'
+			);
+			expect(inspectionRequest).toEqual([
+				'remote:getMovementDesignerInspection',
+				'mockup',
+				1,
+				expect.any(String),
+			]);
+
+			const updatePromise = movementCallback({
+				op: 'update',
+				id: 'mockup',
+				viewType: 'html',
+				body: '<button>Updated</button>',
+			});
+			expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBe(1);
+			expect(
+				(mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.some(
+					([channel]) => channel === 'remote:movement'
+				)
+			).toBe(false);
+
+			(mockWebContents.send as ReturnType<typeof vi.fn>).mockImplementation(
+				(channel: string, ...args: unknown[]) => {
+					if (channel !== 'remote:movement') return;
+					const responseChannel = args[1] as string;
+					const responseListener = vi
+						.mocked(ipcMain.once)
+						.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+					queueMicrotask(() => responseListener?.({} as never, true));
+				}
+			);
+			const inspectionResponseChannel = inspectionRequest?.[3] as string;
+			const inspectionResponseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === inspectionResponseChannel)?.[1];
+			inspectionResponseListener?.({} as never, null);
+
+			await expect(Promise.all([inspectionPromise, updatePromise])).resolves.toEqual([null, true]);
+			expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBe(2);
 		});
 	});
 

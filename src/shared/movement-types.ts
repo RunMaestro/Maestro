@@ -22,6 +22,11 @@ export const MOVEMENT_OPS: readonly MovementOp[] = [
 	'clear',
 ] as const;
 
+/** Native BlockView data, or an isolated single-page HTML mockup. */
+export type MovementViewType = 'view' | 'html';
+
+export const MOVEMENT_VIEW_TYPES: readonly MovementViewType[] = ['view', 'html'] as const;
+
 /**
  * A single movement operation sent across the bridge. `id` identifies the item for
  * update/move/remove; `body` is the item's BlockView spec as a JSON string.
@@ -30,6 +35,8 @@ export interface MovementPayload {
 	op: MovementOp;
 	/** Stable item id (required for every op except `clear`). */
 	id?: string;
+	/** Defaults to `view`; `html` treats body as a complete HTML document. */
+	viewType?: MovementViewType;
 	/** Free-placement position, px from the movement top-left. */
 	x?: number;
 	y?: number;
@@ -38,10 +45,12 @@ export interface MovementPayload {
 	height?: number;
 	/** Optional item title shown in its frame header. */
 	title?: string;
-	/** The item's BlockView spec, as a JSON string (parsed by the renderer). */
+	/** BlockView JSON for `view`, or a single-page document for `html`. */
 	body?: string;
 	/** Host-stamped plugin display name for a plugin-contributed view. */
 	sourcePlugin?: string;
+	/** Main-process document revision for an HTML frame. */
+	revision?: number;
 }
 
 /** One item's geometry as returned by the `state` read (for agent awareness). */
