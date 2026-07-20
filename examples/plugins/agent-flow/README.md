@@ -13,9 +13,9 @@ output - those never cross the plugin event boundary.
 
 ## What it does
 
-- Subscribes to `tool.executed`, `agent.statusChanged`, `agent.completed`,
-  `agent.error`, `agent.exited`, `run.completed`, `usage.updated`,
-  `session.created`, `session.updated`, and `session.removed`.
+- Subscribes to `tool.executed`, `agent.statusChanged`, `agent.awaiting`,
+  `agent.completed`, `agent.error`, `agent.exited`, `run.completed`,
+  `usage.updated`, `session.created`, `session.updated`, and `session.removed`.
 - Maintains an in-memory model: a lane per session
   (`{ sessionId, title, agentId, status, nodes, usage }`) where each node is a
   tool call (`{ toolCallId, toolName, phase, startedAt, endedAt, durationMs }`).
@@ -52,6 +52,43 @@ receives as a `maestro:panelData` window message:
 - **Session tabs** - the header strip offers "All" plus one tab per lane;
   selecting a tab filters both the graph and the timeline to that session. A
   **Clear** button posts the `clear` command back to the sandbox.
+
+## Activity and health (issue #1231)
+
+On top of the graph, the panel answers the "what is my long-running agent
+actually doing right now" question with an activity summary and per-lane health
+badges. This addresses
+[issue #1231](https://github.com/RunMaestro/Maestro/issues/1231) ("Provide more
+insight to long running thinking tasks"): how many background tool calls and
+agents are running, whether a thread is working / waiting / stuck, and whether a
+run has broken on an error.
+
+- **Activity summary strip** - a bar under the header reads `snapshot.summary`
+  and shows fleet-wide counts: "N working, N tools running, N waiting, N error".
+  Each segment is hidden when its count is 0 and colored with Maestro's status
+  language (yellow for working and running tools, blue for waiting on input, red
+  for errors). This is the count of background shell commands and agents running.
+- **Per-lane health badges** - each lane label carries a coarse status badge
+  ("Working", "Waiting for input", "Idle", or the terminal "Completed" /
+  "Failed" state), a running-tool count ("3 tools") when tools are in flight,
+  and, while the lane is working, a live elapsed timer ("12s") measuring the time
+  since its last activity.
+- **Stall warning** - when a working lane sees no activity for more than 30
+  seconds an amber "No activity for Ns" badge appears, flagging a run that may be
+  broken or never resolving.
+- **Error badge** - when the lane's last `agent.error` is set, a red badge shows
+  the error type plus a recoverability hint ("retrying" when recoverable, "needs
+  attention" when not), so an API or network fault is visible at a glance.
+- **Live clock** - a 1-second interval re-renders only the summary strip and the
+  health badges (never the SVG graph) against the wall clock, so the elapsed
+  timer and stall warning keep advancing even when a stalled or errored lane
+  produces no further events and therefore no new snapshot.
+
+This overlay shows **metadata only**: aggregate counts, coarse per-lane status
+(`idle` / `busy` / `waiting_input` / `connecting` / `error`), timing since last
+activity, and an error type with a recoverable flag. It never surfaces thinking
+prose, prompt text, tool arguments, or tool output - those never cross the
+plugin event boundary (`src/shared/plugins/events.ts`).
 
 Screenshot: _(placeholder - capture the panel with a couple of active sessions
 once the plugin is installed and add `panel.png` here.)_

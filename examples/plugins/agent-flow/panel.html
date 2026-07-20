@@ -18,6 +18,7 @@
 				--yellow: #d29922;
 				--red: #f85149;
 				--gray: #6e7681;
+				--amber: #f0883e;
 			}
 			* {
 				box-sizing: border-box;
@@ -28,7 +29,12 @@
 				height: 100%;
 				background: var(--bg);
 				color: var(--text);
-				font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+				font:
+					13px/1.4 -apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					Roboto,
+					sans-serif;
 				overflow: hidden;
 			}
 			#app {
@@ -87,6 +93,41 @@
 			#clear:hover {
 				border-color: var(--red);
 				color: var(--red);
+			}
+			/* Activity summary strip (issue #1231): fleet-wide health rollup. */
+			#summaryBar {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 4px 10px;
+				background: var(--panel2);
+				border-bottom: 1px solid var(--border);
+				flex: 0 0 auto;
+				font-size: 11px;
+			}
+			#summaryBar.hidden {
+				display: none;
+			}
+			#summaryBar .seg {
+				padding: 1px 8px;
+				border-radius: 10px;
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.seg-working {
+				background: rgba(210, 153, 34, 0.18);
+				color: var(--yellow);
+				border: 1px solid rgba(210, 153, 34, 0.45);
+			}
+			.seg-waiting {
+				background: rgba(88, 166, 255, 0.15);
+				color: var(--accent);
+				border: 1px solid rgba(88, 166, 255, 0.45);
+			}
+			.seg-error {
+				background: rgba(248, 81, 73, 0.15);
+				color: var(--red);
+				border: 1px solid rgba(248, 81, 73, 0.5);
 			}
 			#body {
 				display: flex;
@@ -243,6 +284,7 @@
 				<div id="tabs"></div>
 				<button id="clear" title="Clear the graph">Clear</button>
 			</header>
+			<div id="summaryBar" class="hidden"></div>
 			<div id="body">
 				<div id="graphWrap">
 					<svg id="canvas" xmlns="http://www.w3.org/2000/svg">
@@ -268,19 +310,27 @@
 			var NODE_W = 116;
 			var NODE_H = 38;
 			var GAP_X = 22;
-			var ROW_H = 66;
+			// Taller than the node so the lane label can stack title, agent id, and
+			// two rows of health badges (issue #1231) beneath one another.
+			var ROW_H = 88;
+			var STALL_MS = 30000; // amber "no activity" threshold while working
 
 			// ---- state -----------------------------------------------------------
-			var latest = null; // most recent snapshot { v, at, lanes }
+			var latest = null; // most recent snapshot { v, at, lanes, summary }
 			var view = { tx: 0, ty: 0, scale: 1 }; // pan/zoom, preserved across renders
 			var selection = null; // { kind:'node', sessionId, nodeKey } | { kind:'lane', sessionId }
 			var activeTab = 'all'; // 'all' | sessionId
+			// sessionId -> { g, x, y1, y2 }: the SVG badge sub-group per lane label and
+			// its anchor coords, so the 1s clock tick can repaint ONLY the badges
+			// (elapsed timer + stall warning) without re-rendering the graph.
+			var healthGroups = Object.create(null);
 
 			// ---- element refs ----------------------------------------------------
 			var canvas = document.getElementById('canvas');
 			var viewport = document.getElementById('viewport');
 			var emptyEl = document.getElementById('empty');
 			var tabsEl = document.getElementById('tabs');
+			var summaryEl = document.getElementById('summaryBar');
 			var inspectorEl = document.getElementById('inspector');
 			var timelineEl = document.getElementById('timeline');
 			var tlSvg = document.getElementById('tl');
@@ -374,6 +424,183 @@
 				return 'unknown';
 			}
 
+			// ---- health (issue #1231) -------------------------------------------
+			// All derived from METADATA ONLY: coarse status, counts, and timing.
+			// Never thinking prose, tool arguments, or tool output.
+
+			function isTerminalStatus(s) {
+				return (
+					s === 'completed' ||
+					s === 'failed' ||
+					s === 'cancelled' ||
+					s === 'interrupted' ||
+					s === 'error' ||
+					s === 'exited'
+				);
+			}
+
+			// A lane is "working" when the agent is actively running: a coarse
+			// busy/connecting status, or a tool still in flight (status can lag).
+			// Awaiting-input and terminal states are not working.
+			function isWorking(lane) {
+				if (lane.awaiting) return false;
+				var s = String(lane.status || '').toLowerCase();
+				if (s === 'waiting_input') return false;
+				if (isTerminalStatus(s)) return false;
+				if (s === 'busy' || s === 'connecting') return true;
+				return (lane.runningToolCount || 0) > 0;
+			}
+
+			// Human status label from the coarse status / awaiting flag.
+			function statusLabel(lane) {
+				if (lane.awaiting) return 'Waiting for input';
+				var s = String(lane.status || '').toLowerCase();
+				if (s === 'waiting_input') return 'Waiting for input';
+				if (s === 'busy' || s === 'connecting') return 'Working';
+				if (s === 'idle') return 'Idle';
+				if (s === 'completed') return 'Completed';
+				if (s === 'failed') return 'Failed';
+				if (s === 'error') return 'Error';
+				if (s === 'exited') return 'Exited';
+				if (s === 'cancelled') return 'Cancelled';
+				if (s === 'interrupted') return 'Interrupted';
+				if (isWorking(lane)) return 'Working';
+				return lane.status ? lane.status : 'Idle';
+			}
+
+			// Color bucket for the status badge.
+			function statusKind(lane) {
+				if (lane.awaiting) return 'waiting';
+				var s = String(lane.status || '').toLowerCase();
+				if (s === 'waiting_input') return 'waiting';
+				if (s === 'error' || s === 'failed') return 'error';
+				if (s === 'completed' || s === 'exited') return 'done';
+				if (isWorking(lane)) return 'working';
+				return 'idle';
+			}
+
+			function badgeColor(kind) {
+				switch (kind) {
+					case 'working':
+					case 'tools':
+						return 'var(--yellow)';
+					case 'waiting':
+						return 'var(--accent)';
+					case 'done':
+						return 'var(--green)';
+					case 'error':
+						return 'var(--red)';
+					case 'stall':
+						return 'var(--amber)';
+					case 'elapsed':
+					case 'idle':
+					default:
+						return 'var(--gray)';
+				}
+			}
+
+			// Draw one rounded pill badge at (x, topY) and return its width.
+			function svgBadge(parent, x, topY, text, kind) {
+				var w = Math.max(18, Math.round(String(text).length * 5.6 + 12));
+				parent.appendChild(
+					el('rect', {
+						x: x,
+						y: topY,
+						width: w,
+						height: 14,
+						rx: 7,
+						fill: badgeColor(kind),
+						opacity: 0.92,
+					})
+				);
+				parent.appendChild(
+					el(
+						'text',
+						{
+							x: x + w / 2,
+							y: topY + 10,
+							'text-anchor': 'middle',
+							'font-size': 9.5,
+							'font-weight': 600,
+							fill: '#0d1117',
+						},
+						text
+					)
+				);
+				return w;
+			}
+
+			// Repaint the badge sub-group for one lane against the live clock. Called
+			// both during a full graph render and on the 1s tick (badges only).
+			function paintLaneHealth(entry, lane) {
+				var g = entry.g;
+				clear(g);
+				var working = isWorking(lane);
+				var hasClock = typeof lane.lastActivityAt === 'number' && isFinite(lane.lastActivityAt);
+				var idleMs = hasClock ? Math.max(0, Date.now() - lane.lastActivityAt) : 0;
+
+				// Row 1: status, running-tool count, and (while working) an elapsed timer.
+				var x = entry.x;
+				x += svgBadge(g, x, entry.y1, truncate(statusLabel(lane), 16), statusKind(lane)) + 5;
+				var rtc = lane.runningToolCount || 0;
+				if (rtc > 0)
+					x += svgBadge(g, x, entry.y1, rtc + (rtc === 1 ? ' tool' : ' tools'), 'tools') + 5;
+				if (working && hasClock)
+					svgBadge(g, x, entry.y1, Math.round(idleMs / 1000) + 's', 'elapsed');
+
+				// Row 2: stall warning and/or error badge.
+				var x2 = entry.x;
+				if (working && hasClock && idleMs > STALL_MS) {
+					x2 +=
+						svgBadge(
+							g,
+							x2,
+							entry.y2,
+							'No activity for ' + Math.round(idleMs / 1000) + 's',
+							'stall'
+						) + 5;
+				}
+				if (lane.lastError) {
+					var et = truncate(String(lane.lastError.errorType || 'error'), 14);
+					var hint = lane.lastError.recoverable ? 'retrying' : 'needs attention';
+					svgBadge(g, x2, entry.y2, et + ' · ' + hint, 'error');
+				}
+			}
+
+			// The header activity strip: fleet-wide counts from snapshot.summary.
+			function renderSummary() {
+				clear(summaryEl);
+				var s = latest && latest.summary ? latest.summary : null;
+				if (!s) {
+					summaryEl.classList.add('hidden');
+					return;
+				}
+				var segs = [];
+				if (s.busyLanes > 0) segs.push({ t: s.busyLanes + ' working', c: 'working' });
+				if (s.runningTools > 0)
+					segs.push({
+						t: s.runningTools + (s.runningTools === 1 ? ' tool running' : ' tools running'),
+						c: 'working',
+					});
+				if (s.awaitingLanes > 0) segs.push({ t: s.awaitingLanes + ' waiting', c: 'waiting' });
+				if (s.erroredLanes > 0)
+					segs.push({
+						t: s.erroredLanes + (s.erroredLanes === 1 ? ' error' : ' errors'),
+						c: 'error',
+					});
+				if (!segs.length) {
+					summaryEl.classList.add('hidden');
+					return;
+				}
+				summaryEl.classList.remove('hidden');
+				for (var i = 0; i < segs.length; i++) {
+					var span = document.createElement('span');
+					span.className = 'seg seg-' + segs[i].c;
+					span.textContent = segs[i].t;
+					summaryEl.appendChild(span);
+				}
+			}
+
 			// Stable per-node key so selection survives re-renders.
 			function nodeKey(node, index) {
 				return node.toolCallId ? 't:' + node.toolCallId : '#' + index;
@@ -428,6 +655,7 @@
 			// ---- graph -----------------------------------------------------------
 			function renderGraph() {
 				clear(viewport);
+				healthGroups = Object.create(null);
 				var lanes = visibleLanes();
 				emptyEl.classList.toggle('hidden', lanes.length > 0);
 
@@ -435,6 +663,7 @@
 					var lane = lanes[li];
 					var y0 = TOP + li * ROW_H;
 					var midY = y0 + ROW_H / 2;
+					var boxTop = y0 + 6;
 
 					// Lane separator.
 					if (li > 0) {
@@ -459,7 +688,7 @@
 					labelG.appendChild(
 						el('rect', {
 							x: PAD_X - 8,
-							y: y0 + 6,
+							y: boxTop,
 							width: LABEL_W - 12,
 							height: ROW_H - 14,
 							rx: 6,
@@ -471,7 +700,7 @@
 					labelG.appendChild(
 						el('circle', {
 							cx: PAD_X + 4,
-							cy: midY - 6,
+							cy: boxTop + 12,
 							r: 4.5,
 							class: 's-' + statusPhase(lane.status),
 						})
@@ -479,17 +708,24 @@
 					labelG.appendChild(
 						el(
 							'text',
-							{ x: PAD_X + 16, y: midY - 2, 'font-size': 12, 'font-weight': 600 },
+							{ x: PAD_X + 16, y: boxTop + 16, 'font-size': 12, 'font-weight': 600 },
 							truncate(lane.title || lane.sessionId, 18)
 						)
 					);
 					labelG.appendChild(
 						el(
 							'text',
-							{ x: PAD_X + 16, y: midY + 13, 'font-size': 10.5, fill: 'var(--muted)' },
+							{ x: PAD_X + 16, y: boxTop + 31, 'font-size': 10.5, fill: 'var(--muted)' },
 							truncate((lane.agentId || '') + (lane.status ? ' · ' + lane.status : ''), 22)
 						)
 					);
+					// Health badge sub-group (issue #1231): repainted on the 1s tick.
+					var hg = document.createElementNS(SVGNS, 'g');
+					hg.setAttribute('class', 'health');
+					labelG.appendChild(hg);
+					var entry = { g: hg, x: PAD_X - 4, y1: boxTop + 40, y2: boxTop + 57 };
+					healthGroups[lane.sessionId] = entry;
+					paintLaneHealth(entry, lane);
 					(function (sid) {
 						labelG.addEventListener('click', function () {
 							selectLane(sid);
@@ -676,7 +912,8 @@
 			}
 			function findLane(sessionId) {
 				var lanes = latest && latest.lanes ? latest.lanes : [];
-				for (var i = 0; i < lanes.length; i++) if (lanes[i].sessionId === sessionId) return lanes[i];
+				for (var i = 0; i < lanes.length; i++)
+					if (lanes[i].sessionId === sessionId) return lanes[i];
 				return null;
 			}
 			function findNode(lane, key) {
@@ -709,9 +946,9 @@
 					dot.className = 'dot';
 					dot.style.background =
 						'var(--' +
-						({ running: 'yellow', completed: 'green', failed: 'red', unknown: 'gray' }[
+						{ running: 'yellow', completed: 'green', failed: 'red', unknown: 'gray' }[
 							nodePhase(node)
-						]) +
+						] +
 						')';
 					h.appendChild(dot);
 					h.appendChild(document.createTextNode(node.toolName || 'tool'));
@@ -771,10 +1008,26 @@
 			// ---- master render ---------------------------------------------------
 			function render() {
 				renderTabs();
+				renderSummary();
 				renderGraph();
 				renderTimeline();
 				renderInspector();
 			}
+
+			// A genuinely stalled or errored lane emits NO further host events, so no
+			// new snapshot arrives. Tick the live clock every second and repaint ONLY
+			// the summary strip and per-lane health badges (never the SVG graph) so the
+			// elapsed timer and stall warning keep advancing between snapshots.
+			function refreshHealth() {
+				renderSummary();
+				if (!latest) return;
+				var lanes = visibleLanes();
+				for (var i = 0; i < lanes.length; i++) {
+					var entry = healthGroups[lanes[i].sessionId];
+					if (entry) paintLaneHealth(entry, lanes[i]);
+				}
+			}
+			setInterval(refreshHealth, 1000);
 
 			// ---- pan / zoom ------------------------------------------------------
 			var dragging = false;

@@ -20,6 +20,7 @@
 var TOPICS = [
 	'tool.executed',
 	'agent.statusChanged',
+	'agent.awaiting',
 	'agent.completed',
 	'agent.error',
 	'agent.exited',
@@ -61,6 +62,16 @@ function getLane(sessionId) {
 			nodes: [],
 			lastActivity: 0,
 			open: Object.create(null),
+			// Health metadata (issue #1231). `lastActivityAt` is a wall-clock ms
+			// epoch (Date.now) refreshed on real activity so the panel can compute
+			// an elapsed timer / stall warning against its own live clock;
+			// `runningToolCount` tracks in-flight tool nodes independently of the
+			// capped `nodes` array; `awaiting` marks a lane blocked on input;
+			// `lastError` holds the last agent.error metadata until cleared.
+			lastActivityAt: Date.now(),
+			runningToolCount: 0,
+			awaiting: false,
+			lastError: null,
 		};
 		lanes.set(sessionId, lane);
 	}
@@ -79,7 +90,12 @@ function trimLane(lane) {
 	var dropped = lane.nodes.splice(0, overflow);
 	for (var i = 0; i < dropped.length; i++) {
 		var d = dropped[i];
-		if (d.toolCallId && lane.open[d.toolCallId] === d) delete lane.open[d.toolCallId];
+		if (d.toolCallId && lane.open[d.toolCallId] === d) {
+			delete lane.open[d.toolCallId];
+			// The node we can no longer track was still in flight; drop it from the
+			// running count so a later close (which will not match) cannot inflate it.
+			if (lane.runningToolCount > 0) lane.runningToolCount--;
+		}
 	}
 }
 
@@ -121,6 +137,7 @@ function applyTool(payload, at) {
 			openNode.toolName = toolName || openNode.toolName;
 			openNode.durationMs = durMs !== undefined ? durMs : Math.max(0, at - openNode.startedAt);
 			delete lane.open[toolCallId];
+			if (lane.runningToolCount > 0) lane.runningToolCount--;
 		} else if (isOpenPhase(phase)) {
 			// Open a new in-flight node.
 			var node = {
@@ -133,6 +150,9 @@ function applyTool(payload, at) {
 			};
 			lane.open[toolCallId] = node;
 			pushNode(lane, node);
+			lane.runningToolCount++;
+			// Fresh tool work opening means any prior error thread has moved on.
+			lane.lastError = null;
 		} else {
 			// Terminal (or phase-less) event with no prior open node: a single
 			// closed node.
@@ -156,6 +176,10 @@ function applyTool(payload, at) {
 			durationMs: durMs !== undefined ? durMs : 0,
 		});
 	}
+	// Any tool activity means the session is doing something now: it is no longer
+	// blocked on input, and this counts as fresh activity for the stall clock.
+	lane.awaiting = false;
+	lane.lastActivityAt = Date.now();
 	touch(lane, at);
 }
 
@@ -174,20 +198,38 @@ function eventTime(payload, meta) {
 	return lastEventAt || Date.now();
 }
 
+// agent.statusChanged / agent.awaiting carry an agentId, not a sessionId. Prefer
+// an existing lane whose agentId matches; else key a lane by the agentId itself.
+function resolveByAgentId(agentId) {
+	var target = null;
+	lanes.forEach(function (lane) {
+		if (!target && lane.agentId === agentId) target = lane;
+	});
+	if (!target) target = getLane(agentId);
+	return target;
+}
+
 var HANDLERS = {
 	'tool.executed': function (payload, at) {
 		applyTool(payload, at);
 	},
 	'agent.statusChanged': function (payload, at) {
 		if (!payload || typeof payload.agentId !== 'string') return;
-		// agent.statusChanged carries an agentId, not a sessionId. Prefer an
-		// existing lane whose agentId matches; else key by the agentId itself.
-		var target = null;
-		lanes.forEach(function (lane) {
-			if (!target && lane.agentId === payload.agentId) target = lane;
-		});
-		if (!target) target = getLane(payload.agentId);
-		if (typeof payload.status === 'string') target.status = payload.status;
+		var target = resolveByAgentId(payload.agentId);
+		if (typeof payload.status === 'string') {
+			target.status = payload.status;
+			// A coarse waiting_input status is the same signal as agent.awaiting.
+			if (payload.status === 'waiting_input') target.awaiting = true;
+		}
+		target.lastActivityAt = Date.now();
+		touch(target, at);
+	},
+	'agent.awaiting': function (payload, at) {
+		if (!payload || typeof payload.agentId !== 'string') return;
+		var target = resolveByAgentId(payload.agentId);
+		// Blocked on input: not a stall, and not fresh tool activity, so leave
+		// lastActivityAt untouched (the panel renders "Waiting for input").
+		target.awaiting = true;
 		touch(target, at);
 	},
 	'agent.completed': function (payload, at) {
@@ -195,12 +237,21 @@ var HANDLERS = {
 		var lane = getLane(payload.sessionId);
 		if (typeof payload.status === 'string') lane.status = payload.status;
 		if (typeof payload.agentId === 'string' && !lane.agentId) lane.agentId = payload.agentId;
+		// The run reached a terminal state: it is no longer waiting, and a clean
+		// completion clears any lingering error thread.
+		lane.awaiting = false;
+		if (payload.status === 'completed') lane.lastError = null;
 		touch(lane, at);
 	},
 	'agent.error': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		var lane = getLane(payload.sessionId);
 		lane.status = 'error';
+		lane.lastError = {
+			errorType: typeof payload.errorType === 'string' ? payload.errorType : 'error',
+			recoverable: !!payload.recoverable,
+			at: Date.now(),
+		};
 		touch(lane, at);
 	},
 	'agent.exited': function (payload, at) {
@@ -225,6 +276,10 @@ var HANDLERS = {
 			contextWindow: num(payload.contextWindow),
 			reasoningTokens: num(payload.reasoningTokens),
 		};
+		// Token accounting means the model produced output: fresh activity, and
+		// proof it is no longer blocked on input.
+		lane.awaiting = false;
+		lane.lastActivityAt = Date.now();
 		touch(lane, at);
 	},
 	'session.created': function (payload, at) {
@@ -239,6 +294,7 @@ var HANDLERS = {
 		var lane = getLane(payload.sessionId);
 		if (typeof payload.title === 'string') lane.title = payload.title;
 		if (typeof payload.status === 'string') lane.status = payload.status;
+		lane.lastActivityAt = Date.now();
 		touch(lane, at);
 	},
 	'session.removed': function (payload) {
@@ -299,6 +355,32 @@ function laneSnapshot(lane, cap) {
 		status: lane.status,
 		usage: lane.usage,
 		nodes: out,
+		lastActivityAt: lane.lastActivityAt,
+		runningToolCount: lane.runningToolCount,
+		awaiting: lane.awaiting,
+		lastError: lane.lastError,
+	};
+}
+
+// Fleet-wide health rollup (issue #1231) for the panel's activity strip.
+function buildSummary(ordered) {
+	var busyLanes = 0;
+	var runningTools = 0;
+	var awaitingLanes = 0;
+	var erroredLanes = 0;
+	for (var i = 0; i < ordered.length; i++) {
+		var lane = ordered[i];
+		var s = String(lane.status || '').toLowerCase();
+		if (s === 'busy' || s === 'connecting') busyLanes++;
+		runningTools += lane.runningToolCount || 0;
+		if (lane.awaiting) awaitingLanes++;
+		if (lane.lastError) erroredLanes++;
+	}
+	return {
+		busyLanes: busyLanes,
+		runningTools: runningTools,
+		awaitingLanes: awaitingLanes,
+		erroredLanes: erroredLanes,
 	};
 }
 
@@ -318,7 +400,7 @@ function buildSnapshot(cap) {
 	var ordered = sortedLanes();
 	var out = new Array(ordered.length);
 	for (var i = 0; i < ordered.length; i++) out[i] = laneSnapshot(ordered[i], cap);
-	return { v: 1, at: lastEventAt, lanes: out };
+	return { v: 1, at: lastEventAt, lanes: out, summary: buildSummary(ordered) };
 }
 
 function pushSnapshot() {
