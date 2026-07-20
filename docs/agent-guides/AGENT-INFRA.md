@@ -328,6 +328,8 @@ interface ParsedEvent {
 	sessionId?: string;
 	text?: string;
 	toolName?: string;
+	toolCallId?: string; // Stable id used to merge running -> completed for the same call
+	parentToolUseId?: string; // Set on activity spawned by a parent tool (e.g. Task subagents)
 	toolState?: unknown;
 	usage?: {
 		inputTokens: number;
@@ -385,6 +387,69 @@ listener.
 on exit by spot-checking that thinking cells disappear when
 `showThinking === 'on'` and persist when `showThinking === 'sticky'` -
 covered by `src/__tests__/renderer/hooks/useAgentListeners.test.ts`.
+
+### Tool-Execution Pipeline (end to end)
+
+Tool badges (the "Read", "Bash", "Task" cells with a running/completed/failed
+state) flow through a single pipeline shared by every provider. A parser only
+has to emit the right `ParsedEvent`; the main process dedups and forwards, and
+the renderer merges and draws.
+
+1. **Parse** (`src/main/parsers/agent-output-parser.ts` + each parser). A parser
+   emits `ParsedEvent { type: 'tool_use', toolName, toolCallId?, toolState, parentToolUseId? }`.
+   `toolState` carries `{ status: 'running' | 'completed' | 'failed' | 'error', input?, output? }`.
+   `toolCallId` is the stable id that ties a later `completed`/`failed` event
+   back to the earlier `running` one. `parentToolUseId` is set when the activity
+   was spawned by a parent tool call (claude-code's `Task` subagents; see Phase 2)
+   so the renderer can nest it.
+2. **Dedup + emit** (`src/main/process-manager/handlers/StdoutHandler.ts`). On a
+   `tool_use` event the handler emits a `tool-execution` event on the process
+   manager. It keeps a per-process `emittedToolCallIds` Set so a `running` event
+   is emitted once per `toolCallId`; the id is removed once the call reaches a
+   terminal state, so a reused id is not suppressed. Events without a
+   `toolCallId` (some providers) always emit and are attributed downstream by
+   tool name.
+3. **Forward over IPC** (`src/main/process-listeners/forwarding-listeners.ts`).
+   The `tool-execution` event is sent to the renderer on the
+   `process:tool-execution` channel and, for web-desktop parity, broadcast to
+   connected web clients.
+4. **Merge into tab logs** (`src/renderer/hooks/agent/internal/useAgentToolExecutionListener.ts`).
+   The listener builds a deterministic log id `tool-${toolCallId}` and merges by
+   id, so a `running` cell transitions in place to `completed`/`failed`. Without
+   a `toolCallId` it attributes a finalizing event to the most recent still
+   `running` entry of the same `toolName`, else appends a fresh entry. Recording
+   is gated by `toolLogsRecorded(tab.showTools, tab.showThinking)` (Phase 4):
+   tool visibility is its own per-tab toggle and only falls back to `showThinking`
+   when `showTools` is absent.
+5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
+   `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
+   draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`
+   into the short human summary (e.g. the path a `Read` opened). Child entries
+   carrying `parentToolUseId` are grouped under their parent by
+   `utils/groupSubagentToolLogs.ts` and collapse behind an expandable
+   "N tool call(s)" toggle.
+
+**Per-provider support matrix** (does the parser emit `tool_use` on the live
+stream?):
+
+| Provider                 | Live tool badges | Notes                                                                                  |
+| ------------------------ | ---------------- | -------------------------------------------------------------------------------------- |
+| `claude-code`            | Yes              | Includes `tool_result` -> terminal state (Phase 1) and `Task` subagent nesting via `parentToolUseId` (Phase 2) |
+| `codex`                  | Yes              | Emits `tool_use` from its JSONL stream                                                  |
+| `opencode`               | Yes              | `step_start` -> `tool_use` -> `step_finish` per step                                    |
+| `copilot-cli`            | Yes              | Emits `tool_use` from `--output-format json`                                            |
+| `pi`                     | Yes              | Emits `tool_use`                                                                        |
+| `omp`                    | Yes              | Emits `tool_use`                                                                        |
+| `grok`                   | No               | Tool activity is only in on-disk session files, not on stdout                          |
+| `factory-droid`          | No               | `-o stream-json` carries only system/message/completion/error; tool activity is folded into assistant text. See the Phase 4 findings in `.maestro/2026-07-20-Tool-Display/TOOL-DISPLAY-04.md` |
+
+**AskUserQuestion (Phase 3).** claude-code's `AskUserQuestion` tool is not
+answered through this display pipeline but through the permission relay
+(`src/main/permission-relay/`): when running interactively in standard
+permission mode, the relay recognizes `AskUserQuestion`, surfaces the question
+options in the permission prompt UI, and returns the user's selection as the
+tool answer. See that directory and the Phase 3 doc for the answer-delivery
+contract.
 
 ### Parser Implementations
 

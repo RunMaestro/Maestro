@@ -1388,6 +1388,7 @@ export const MainPanel = React.memo(
 									onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
 									onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 									onToggleTabShowThinking={props.onToggleTabShowThinking}
+									onToggleTabShowTools={props.onToggleTabShowTools}
 									onToggleTabEnterToSend={props.onToggleTabEnterToSend}
 									onWizardComplete={props.onWizardComplete}
 									onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}

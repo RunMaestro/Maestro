@@ -96,6 +96,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		showFlashNotification,
 		tabShowThinking = 'off',
 		onToggleTabShowThinking,
+		tabShowTools = true,
+		onToggleTabShowTools,
 		supportsThinking = false,
 		// Context warning sash props (Phase 6)
 		contextUsage = 0,
@@ -531,6 +533,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
+							tabShowTools={tabShowTools}
+							onToggleTabShowTools={onToggleTabShowTools}
 							supportsThinking={supportsThinking}
 							currentModel={currentModel}
 							currentEffort={currentEffort}

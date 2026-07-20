@@ -533,6 +533,7 @@ export interface AITab {
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	showTools?: boolean; // Controls tool-badge display, independent of showThinking. Absent falls back to showThinking's on/off state (see toolLogsRecorded); new tabs default to true.
 	enterToSend?: boolean; // Per-tab send-key override; undefined inherits `enterToSendAI` setting. Toggling the chip or palette action stores an override here so new tabs continue using the global default.
 	customModel?: string; // Per-tab model override; falls back to session.customModel, then agent default
 	customEffort?: string; // Per-tab effort/reasoning override; falls back to session.customEffort, then agent default

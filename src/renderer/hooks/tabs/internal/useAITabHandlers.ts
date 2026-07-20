@@ -5,6 +5,7 @@ import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
+import { toolLogsRecorded } from '../../agent/internal/helpers/thinkingLogs';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
@@ -359,6 +360,30 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		});
 	}, []);
 
+	const handleToggleTabShowTools = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+
+		updateAiTab(session.id, currentActiveTab.id, (tab) => {
+			// Flip the effective value: when showTools is absent it inherits the
+			// tab's thinking on/off state, so the first click toggles that.
+			const effective = toolLogsRecorded(tab.showTools, tab.showThinking);
+			const next = !effective;
+			if (!next) {
+				// Turning tools off drops the recorded tool logs, mirroring how
+				// turning thinking off clears thinking/tool logs.
+				return {
+					...tab,
+					showTools: false,
+					logs: tab.logs.filter((l) => l.source !== 'tool'),
+				};
+			}
+			return { ...tab, showTools: true };
+		});
+	}, []);
+
 	const handleToggleTabEnterToSend = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
@@ -386,6 +411,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabShowTools,
 		handleToggleTabEnterToSend,
 	};
 }

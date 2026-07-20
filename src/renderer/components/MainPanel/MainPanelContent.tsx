@@ -24,6 +24,7 @@ import {
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
+import { toolLogsRecorded } from '../../hooks/agent/internal/helpers/thinkingLogs';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { withMonoFallback } from '../../../shared/fontStack';
@@ -264,6 +265,7 @@ export interface MainPanelContentProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabShowTools?: () => void;
 	onToggleTabEnterToSend?: () => void;
 
 	// Wizard callbacks
@@ -428,6 +430,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onToggleTabReadOnlyMode,
 		onToggleTabSaveToHistory,
 		onToggleTabShowThinking,
+		onToggleTabShowTools,
 		onToggleTabEnterToSend,
 		onWizardComplete,
 		onWizardCompleteAndStartAutoRun,
@@ -946,6 +949,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 						tabShowThinking={activeTab?.showThinking ?? 'off'}
 						onToggleTabShowThinking={onToggleTabShowThinking}
+						tabShowTools={
+							activeTab ? toolLogsRecorded(activeTab.showTools, activeTab.showThinking) : true
+						}
+						onToggleTabShowTools={onToggleTabShowTools}
 						supportsThinking={hasCapability('supportsThinkingDisplay')}
 						onOpenPromptComposer={onOpenPromptComposer}
 						shortcuts={shortcuts}

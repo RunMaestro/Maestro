@@ -253,6 +253,18 @@ describe('tabHelpers', () => {
 			expect(stickyResult.tab.showThinking).toBe('sticky');
 		});
 
+		it('defaults showTools to true and honors the explicit option', () => {
+			const session = createMockSession({ aiTabs: [] });
+
+			// New tabs default to showing tool badges.
+			const defaultResult = createTab(session)!;
+			expect(defaultResult.tab.showTools).toBe(true);
+
+			// Explicit false is preserved.
+			const offResult = createTab(session, { showTools: false })!;
+			expect(offResult.tab.showTools).toBe(false);
+		});
+
 		it('appends tab to existing tabs', () => {
 			const existingTab = createMockTab({ id: 'existing-tab' });
 			const session = createMockSession({
