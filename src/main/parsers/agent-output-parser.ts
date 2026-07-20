@@ -86,6 +86,15 @@ export interface ParsedEvent {
 	toolState?: unknown;
 
 	/**
+	 * Id of the parent tool call that spawned the subagent producing this event.
+	 * Set on every event a subagent emits (tool_use, text, thinking), and
+	 * references the spawning tool_use id (claude-code's Task tool). Absent for
+	 * main-transcript events. Only claude-code populates this today; other
+	 * parsers leave it undefined.
+	 */
+	parentToolUseId?: string;
+
+	/**
 	 * Token usage statistics (for 'usage' type)
 	 */
 	usage?: {

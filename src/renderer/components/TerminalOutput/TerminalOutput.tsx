@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
+import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
 import { ScrollToBottomButton } from './components/ScrollToBottomButton';
@@ -125,7 +126,12 @@ export const TerminalOutput = memo(
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
 		const collapsedLogs = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
-		const filteredLogs = collapsedLogs;
+		// Nest subagent tool badges (claude-code Task) under the tool entry that
+		// spawned them; orphans and non-claude agents pass through untouched.
+		const { logs: filteredLogs, childrenByParentId } = useMemo(
+			() => groupSubagentToolLogs(collapsedLogs),
+			[collapsedLogs]
+		);
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
 		const {
@@ -356,6 +362,7 @@ export const TerminalOutput = memo(
 							}
 							isExpanded={expandedLogs.has(log.id)}
 							onToggleExpanded={toggleExpanded}
+							subagentLogs={childrenByParentId.get(log.id)}
 							localFilterQuery={localFilters.get(log.id) || ''}
 							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
 							activeLocalFilter={activeLocalFilter}

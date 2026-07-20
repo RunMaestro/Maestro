@@ -557,6 +557,7 @@ export class StdoutHandler {
 				state: event.toolState,
 				timestamp: Date.now(),
 				toolCallId: event.toolCallId,
+				parentToolUseId: event.parentToolUseId,
 			});
 		}
 
@@ -576,6 +577,7 @@ export class StdoutHandler {
 					state: { status: 'running', input: tool.input },
 					timestamp: Date.now(),
 					toolCallId: tool.id,
+					parentToolUseId: event.parentToolUseId,
 				});
 			}
 		}

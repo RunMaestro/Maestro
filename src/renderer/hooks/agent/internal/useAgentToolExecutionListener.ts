@@ -36,6 +36,7 @@ export function useAgentToolExecutionListener(): void {
 					state?: unknown;
 					timestamp: number;
 					toolCallId?: string;
+					parentToolUseId?: string;
 				}
 			) => {
 				// Window scoping: ignore agents this window doesn't own (broadcast events).
@@ -99,9 +100,17 @@ export function useAgentToolExecutionListener(): void {
 								...newState,
 								input: newState?.input ?? existingState?.input,
 							};
+							// The parent id can arrive on either the running or the
+							// finalizing event; keep whichever we have seen.
+							const mergedParentToolUseId =
+								toolEvent.parentToolUseId ?? existing.metadata?.parentToolUseId;
 							const mergedLog: LogEntry = {
 								...existing,
-								metadata: { ...existing.metadata, toolState: mergedState },
+								metadata: {
+									...existing.metadata,
+									toolState: mergedState,
+									...(mergedParentToolUseId ? { parentToolUseId: mergedParentToolUseId } : {}),
+								},
 								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [
@@ -115,7 +124,12 @@ export function useAgentToolExecutionListener(): void {
 								timestamp: toolEvent.timestamp,
 								source: 'tool',
 								text: toolEvent.toolName,
-								metadata: { toolState: newState },
+								metadata: {
+									toolState: newState,
+									...(toolEvent.parentToolUseId
+										? { parentToolUseId: toolEvent.parentToolUseId }
+										: {}),
+								},
 								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [...targetTab.logs, toolLog];

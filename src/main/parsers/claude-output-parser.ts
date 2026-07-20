@@ -48,6 +48,12 @@ interface ClaudeRawMessage {
 	type: string;
 	subtype?: string;
 	session_id?: string;
+	/**
+	 * Set on assistant/user messages produced by a Task subagent; references the
+	 * tool_use id of the Task call that spawned it. Absent on main-transcript
+	 * messages.
+	 */
+	parent_tool_use_id?: string;
 	result?: string;
 	message?: {
 		id?: string;
@@ -97,6 +103,16 @@ function flattenToolResultContent(content: ClaudeContentBlock['content']): strin
 	}
 
 	return text.length > MAX_TOOL_OUTPUT_CHARS ? `${text.slice(0, MAX_TOOL_OUTPUT_CHARS)}...` : text;
+}
+
+/**
+ * Read the top-level `parent_tool_use_id` off a message, normalizing the
+ * non-subagent cases (absent, null, empty string) to undefined so downstream
+ * consumers only ever see a real id.
+ */
+function normalizeParentToolUseId(msg: ClaudeRawMessage): string | undefined {
+	const id = msg.parent_tool_use_id;
+	return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
 /**
@@ -214,6 +230,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				isPartial: true,
 				isReasoning: thinkingText.length > 0 || undefined,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+				parentToolUseId: normalizeParentToolUseId(msg),
 				raw: msg,
 			};
 		}
@@ -335,6 +352,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				output: flattenToolResultContent(block.content),
 			},
 			sessionId: msg.session_id,
+			parentToolUseId: normalizeParentToolUseId(msg),
 			raw: msg,
 		};
 	}

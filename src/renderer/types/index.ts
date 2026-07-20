@@ -233,6 +233,13 @@ export interface LogEntry {
 			input?: unknown;
 			output?: unknown;
 		};
+		/**
+		 * For tool entries produced inside a subagent: the `toolCallId` of the
+		 * parent tool call that spawned it (claude-code's Task tool). The
+		 * transcript nests these badges under the matching parent entry; entries
+		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 */
+		parentToolUseId?: string;
 		hiddenProgress?: {
 			kind: 'thinking' | 'tool';
 			toolName?: string;

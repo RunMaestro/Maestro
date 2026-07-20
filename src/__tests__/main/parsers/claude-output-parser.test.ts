@@ -506,6 +506,92 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('parent_tool_use_id (Task subagents)', () => {
+		it('should carry parentToolUseId on subagent tool_use blocks', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } }],
+					},
+				})
+			);
+
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+			expect(event?.toolUseBlocks?.[0]?.name).toBe('Grep');
+		});
+
+		it('should carry parentToolUseId on subagent text events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'searching...' }] },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should carry parentToolUseId on subagent tool_result events', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: {} }],
+					},
+				})
+			);
+
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'toolu_child', content: 'no matches' }],
+					},
+				})
+			);
+
+			expect(event?.type).toBe('tool_use');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should leave parentToolUseId undefined for main-transcript messages', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+
+		it('should normalize a null parent_tool_use_id to undefined', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: null,
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+	});
+
 	describe('thinking blocks extraction', () => {
 		it('should extract thinking content from assistant messages', () => {
 			const line = JSON.stringify({
