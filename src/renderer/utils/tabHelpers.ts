@@ -558,6 +558,21 @@ export function hasWizardInteraction(tab: AITab): boolean {
 }
 
 /**
+ * Collect the ids of AI tabs that have at least one queued execution item waiting
+ * in `session.executionQueue` (a message or command targeting that tab). A tab with
+ * pending queued work needs attention, so it must survive the unread filter and stay
+ * reachable by keyboard navigation. Paused items still count - they remain queued,
+ * awaiting the user. Centralized so every unread-filter surface agrees.
+ */
+export function computeQueuedTabIds(session: Session): Set<string> {
+	const ids = new Set<string>();
+	for (const item of session.executionQueue ?? []) {
+		ids.add(item.tabId);
+	}
+	return ids;
+}
+
+/**
  * Filter a unified tab order down to the refs that TabBar actually displays when the
  * "unread only" tab filter is active. Matches TabBar.tsx's displayedUnifiedTabs logic so
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.
@@ -581,12 +596,13 @@ export function filterUnifiedTabOrderForUnread(
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
 	const activeFileTabId = session.activeFileTabId ?? null;
+	const queuedTabIds = computeQueuedTabIds(session);
 
 	return order.filter((ref) => {
 		if (ref.type === 'ai') {
 			const tab = session.aiTabs.find((t) => t.id === ref.id);
 			if (!tab) return false;
-			return aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred);
+			return aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred, queuedTabIds);
 		}
 		// Active file tab is always visible so the user never loses sight of what
 		// they're looking at, even when the file-preview filter is off.
@@ -605,21 +621,24 @@ export function filterUnifiedTabOrderForUnread(
 /**
  * Shared predicate: does this AI tab pass the "unread" filter? An AI tab is kept
  * when it has unread messages, is busy (thinking), is the active tab in AI mode,
- * holds an unsent draft, or (when the setting is on) is starred. Centralized so the
- * TabBar display filter, navigation filter, and group-unread rollup can never drift.
+ * holds an unsent draft, has pending queued work, or (when the setting is on) is
+ * starred. Centralized so the TabBar display filter, navigation filter, and
+ * group-unread rollup can never drift.
  */
 export function aiTabPassesUnreadFilter(
 	tab: AITab,
 	inputMode: 'ai' | 'terminal' | undefined,
 	activeTabId: string | null,
-	showStarred: boolean
+	showStarred: boolean,
+	queuedTabIds?: Set<string>
 ): boolean {
 	return (
 		tab.hasUnread ||
 		tab.state === 'busy' ||
 		(inputMode === 'ai' && tab.id === activeTabId) ||
 		hasDraft(tab) ||
-		(showStarred && !!tab.starred)
+		(showStarred && !!tab.starred) ||
+		(queuedTabIds?.has(tab.id) ?? false)
 	);
 }
 
@@ -635,10 +654,12 @@ export function groupHasUnreadTabs(session: Session, group: TabGroup): boolean {
 	const showStarred = settings.showStarredInUnreadFilter;
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
+	const queuedTabIds = computeQueuedTabIds(session);
 	for (const ref of collectGroupLeafRefs(group)) {
 		if (ref.type !== 'ai') continue;
 		const tab = session.aiTabs.find((t) => t.id === ref.id);
-		if (tab && aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred)) return true;
+		if (tab && aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred, queuedTabIds))
+			return true;
 	}
 	return false;
 }
@@ -703,9 +724,14 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
+		const queuedTabIds = computeQueuedTabIds(session);
 		return visible.filter(
 			(tab) =>
-				tab.hasUnread || tab.state === 'busy' || hasDraft(tab) || (showStarred && tab.starred)
+				tab.hasUnread ||
+				tab.state === 'busy' ||
+				hasDraft(tab) ||
+				(showStarred && tab.starred) ||
+				queuedTabIds.has(tab.id)
 		);
 	}
 

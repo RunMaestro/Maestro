@@ -34,7 +34,11 @@ import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingB
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	computeQueuedTabIds,
+	computeUnreadGroupIds,
+} from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
@@ -859,6 +863,13 @@ export const MainPanel = React.memo(
 			[showUnreadOnly, activeSession]
 		);
 
+		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
+		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		const queuedTabIds = useMemo(
+			() => (showUnreadOnly && activeSession ? computeQueuedTabIds(activeSession) : undefined),
+			[showUnreadOnly, activeSession]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
@@ -1088,6 +1099,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1167,6 +1179,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
