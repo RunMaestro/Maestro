@@ -118,3 +118,85 @@ fills in as agents run; the "Agent Flow: Clear Graph" command resets it.
 - `main.js` - the sandbox entry: event handling, graph model, snapshot pushing.
 - `panel.html` - the panel UI: node graph, pan/zoom, inspector, timeline, and
   session tabs (single self-contained file, no external references).
+
+## Security notes
+
+Each item below was confirmed by reading the final host and plugin code
+(Phase 7 audit) against the invariants in `CLAUDE-PLUGINS.md`:
+
+- **PASS - `tool.executed` carries no content.** The emit site in
+  `src/main/process-listeners/forwarding-listeners.ts` builds the payload from
+  `sessionId`, `toolName`, `timestamp`, and optional `toolCallId` and `phase`
+  only. `phase` is lifted by `extractToolPhase`, which returns a plain string
+  (`status`/`phase` field) or `undefined`; the tool `state` object (arguments
+  and results) is never referenced in the payload.
+- **PASS - `ui.panelPost` is gated and fails closed.** The handler in
+  `src/main/plugins/plugin-host-handlers.ts` is registered only when its
+  `panelPost` sink is wired (no sink means the method is absent and denied,
+  mirroring `agents.dispatch`). It requires the `ui:panel` grant
+  (`assertBrokerAllowed`), resolves `panelId` as the caller's own declared
+  local panel via `getPanel` (a foreign or already-namespaced id never
+  resolves), requires JSON-serializable `data`, and enforces
+  `MAX_PANEL_POST_BYTES` (64 KB).
+- **PASS - the guest preload is a dumb one-way relay.** `src/main/preload/plugin-panel.ts`
+  exposes nothing on `window` (no `contextBridge`, no `ipcRenderer`), forwards
+  only the `maestro:invokeCommand` shape out (source-window gated) and re-posts
+  only the `maestro:panelData` shape in. No value is evaluated and there is no
+  reply channel.
+- **PASS - the panel has no external references.** `panel.html` is one
+  self-contained file: a single `<script>` and `<style>` block, no `fetch`, no
+  `src=`/`href=` to any URL. The only `http` strings are the SVG `xmlns`
+  namespace declaration, which is inert.
+- **PASS - no read path calls `PluginManager.refresh()`.** None of the files
+  this plugin adds or touches call `refresh()`; `getPanel` reads the already
+  cached `pluginManager.getContributions()`.
+- **PASS - the activity/health overlay is metadata only.** The snapshot lane and
+  summary fields are counts (`busyLanes`, `runningTools`, `awaitingLanes`,
+  `erroredLanes`, `runningToolCount`), a coarse status string, timing
+  (`lastActivityAt`, `durationMs`), and `lastError` as
+  `{ errorType, recoverable, at }`. No thinking prose, prompt text, tool
+  arguments, or tool results are ever stored or rendered.
+
+## Result
+
+Agent Flow ships as a tier-2, in-repo example plugin
+(`examples/plugins/agent-flow/`) plus the two additive host-API surfaces it
+needed, both landed at **host API `1.13.0`**:
+
+- **`tool.executed` plugin event topic** (`src/shared/plugins/events.ts`) -
+  metadata-only tool-call lifecycle events (name + timing, never arguments or
+  results).
+- **`maestro.ui.panelPost(panelId, data)` host-to-panel push**
+  (`src/shared/plugins/rpc-protocol.ts`, cap `MAX_PANEL_POST_BYTES`) - own
+  panels only, JSON only, 64 KB cap, one-way, delivered to the panel page as a
+  `maestro:panelData` window message.
+
+The plugin's `main.js` subscribes to those events (plus agent/session/usage
+topics), maintains a per-session tool-call graph, and pushes coalesced
+snapshots to its `flow` panel; `panel.html` renders the live node graph,
+timeline, inspector, session tabs, and the issue #1231 activity/health overlay.
+
+### How to try it
+
+1. Enable the `plugins` Encore feature in Settings.
+2. Install this folder: `maestro plugin install ./examples/plugins/agent-flow`
+   (or install from a local folder in the Settings Extensions view). Validate
+   first with `maestro plugin validate ./examples/plugins/agent-flow`.
+3. Enable the plugin and grant its requested capabilities (`events:subscribe`,
+   `ui:panel`, `sessions:read`, `storage:read`, `storage:write`).
+4. Open the Agent Flow panel from the right bar and run any agent. Tool nodes
+   appear live, running nodes pulse and then close, and the overlay tracks
+   working/waiting/stalled/errored lanes.
+
+### Known limitations
+
+- **Metadata only, by design.** No tool arguments or results ever reach the
+  plugin, because plugin event payloads are metadata only
+  (`src/shared/plugins/events.ts`).
+- **Coarse health, not thinking text.** The activity overlay shows a coarse
+  status string plus derived stall/error health, not the provider's free-form
+  thinking prose, for the same metadata-only reason.
+- **No subagent nesting yet.** `parent_tool_use_id` is not parsed by the claude
+  output parser, so nested subagent lanes are not rendered.
+- **Snapshots capped at 64 KB.** Under heavy load the per-lane node history is
+  trimmed (oldest first) to stay under the panel-post cap.

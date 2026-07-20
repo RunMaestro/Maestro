@@ -354,7 +354,7 @@
 			}
 			// Format ms as "1.2s" style.
 			function fmtDur(ms) {
-				if (ms == null || isNaN(ms)) return '–';
+				if (ms == null || isNaN(ms)) return '-';
 				if (ms < 1000) return Math.round(ms) + 'ms';
 				var s = ms / 1000;
 				if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
@@ -363,7 +363,7 @@
 				return m + 'm ' + rem + 's';
 			}
 			function fmtTime(ts) {
-				if (typeof ts !== 'number' || !isFinite(ts)) return '–';
+				if (typeof ts !== 'number' || !isFinite(ts)) return '-';
 				try {
 					return new Date(ts).toLocaleTimeString();
 				} catch (e) {
@@ -954,7 +954,7 @@
 					h.appendChild(document.createTextNode(node.toolName || 'tool'));
 					inspectorEl.appendChild(h);
 					kv(inspectorEl, 'Phase', nodePhase(node) + (node.phase ? ' (' + node.phase + ')' : ''));
-					kv(inspectorEl, 'Tool Call Id', node.toolCallId || '–');
+					kv(inspectorEl, 'Tool Call Id', node.toolCallId || '-');
 					kv(inspectorEl, 'Started', fmtTime(node.startedAt));
 					kv(inspectorEl, 'Ended', node.endedAt == null ? 'running…' : fmtTime(node.endedAt));
 					kv(
@@ -964,15 +964,15 @@
 							? fmtDur(node.durationMs)
 							: node.endedAt == null
 								? fmtDur(Date.now() - node.startedAt)
-								: '–'
+								: '-'
 					);
 					kv(inspectorEl, 'Session', lane.title || lane.sessionId);
 				} else {
 					h.textContent = lane.title || lane.sessionId;
 					inspectorEl.appendChild(h);
 					kv(inspectorEl, 'Session Id', lane.sessionId);
-					kv(inspectorEl, 'Agent', lane.agentId || '–');
-					kv(inspectorEl, 'Status', lane.status || '–');
+					kv(inspectorEl, 'Agent', lane.agentId || '-');
+					kv(inspectorEl, 'Status', lane.status || '-');
 					kv(inspectorEl, 'Tool Calls', String((lane.nodes || []).length));
 					var u = lane.usage;
 					if (u) {
