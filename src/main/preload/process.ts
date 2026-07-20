@@ -13,6 +13,7 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { ParsedQuestion } from '../permission-relay/types';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -285,12 +286,7 @@ export function createProcessApi() {
 				// AskUserQuestion requests carry a parsed question payload; ordinary
 				// permission requests omit both fields (unchanged shape).
 				kind?: 'question';
-				questions?: Array<{
-					question: string;
-					header?: string;
-					options: Array<{ label: string; description?: string }>;
-					multiSelect: boolean;
-				}>;
+				questions?: ParsedQuestion[];
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);

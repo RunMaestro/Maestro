@@ -487,6 +487,45 @@ describe('ClaudeOutputParser', () => {
 			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Tool');
 		});
 
+		it('should carry extra parallel tool_results in toolResultBlocks', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_a', 'Read'));
+			p.parseJsonLine(toolUseLine('toolu_b', 'Grep'));
+
+			// One user message bundling two parallel tool_result blocks.
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'a-out' },
+							{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'b-out', is_error: true },
+						],
+					},
+				})
+			);
+
+			// Primary result stays in the top-level fields (existing behavior).
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_a');
+			expect(event?.toolName).toBe('Read');
+			expect((event?.toolState as { status: string }).status).toBe('completed');
+
+			// The second parallel result rides along so it is not left running.
+			expect(event?.toolResultBlocks).toHaveLength(1);
+			expect(event?.toolResultBlocks?.[0].toolCallId).toBe('toolu_b');
+			expect(event?.toolResultBlocks?.[0].toolName).toBe('Grep');
+			expect((event?.toolResultBlocks?.[0].toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should omit toolResultBlocks for a single tool_result', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_solo', 'Read'));
+			const event = p.parseJsonLine(toolResultLine('toolu_solo', 'ok'));
+			expect(event?.toolResultBlocks).toBeUndefined();
+		});
+
 		it('should not emit tool_result text as assistant prose', () => {
 			const p = new ClaudeOutputParser();
 			const event = p.parseJsonLine(toolResultLine('toolu_x', 'raw tool output'));
@@ -515,7 +554,9 @@ describe('ClaudeOutputParser', () => {
 					parent_tool_use_id: 'toolu_task_1',
 					message: {
 						role: 'assistant',
-						content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } }],
+						content: [
+							{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } },
+						],
 					},
 				})
 			);

@@ -136,4 +136,22 @@ describe('groupSubagentToolLogs', () => {
 	it('derives the parent log id from the tool call id', () => {
 		expect(parentLogIdFor('toolu_123')).toBe('tool-toolu_123');
 	});
+
+	it('keeps a grandchild flat rather than adopting it under an adopted child', () => {
+		// LogItem renders adopted children flat (no recursion), so a grandchild
+		// must not be pulled out of the flat list under an already-adopted child -
+		// it would then never render. It stays top-level (visible) instead.
+		const logs = [
+			toolLog('task_1', 'Task'),
+			toolLog('child_1', 'Task', { parentToolUseId: 'task_1' }),
+			toolLog('grand_1', 'Read', { parentToolUseId: 'child_1' }),
+		];
+
+		const { logs: flat, childrenByParentId } = groupSubagentToolLogs(logs);
+
+		// child_1 is adopted under task_1; grand_1 stays in the flat list.
+		expect(flat.map((l) => l.id)).toEqual(['tool-task_1', 'tool-grand_1']);
+		expect(childrenByParentId.get('tool-task_1')?.map((l) => l.id)).toEqual(['tool-child_1']);
+		expect(childrenByParentId.has('tool-child_1')).toBe(false);
+	});
 });

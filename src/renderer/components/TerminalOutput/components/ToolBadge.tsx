@@ -46,7 +46,7 @@ export const ToolBadge = React.memo(({ log, theme }: { log: LogEntry; theme: The
 						✓
 					</span>
 				)}
-				{toolStatus === 'failed' && (
+				{(toolStatus === 'failed' || toolStatus === 'error') && (
 					<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
 						!
 					</span>

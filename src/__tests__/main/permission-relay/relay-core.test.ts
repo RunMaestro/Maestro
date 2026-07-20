@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -153,10 +153,7 @@ describe('permission-relay parseQuestionRequest', () => {
 				{
 					question: 'Which color do you prefer?',
 					header: 'Color',
-					options: [
-						{ label: 'Red', description: 'The red one' },
-						{ label: 'Blue' },
-					],
+					options: [{ label: 'Red', description: 'The red one' }, { label: 'Blue' }],
 					multiSelect: false,
 				},
 			],
@@ -196,7 +193,9 @@ describe('permission-relay parseQuestionRequest', () => {
 	});
 
 	it('drops malformed questions and returns null when none survive', () => {
-		expect(parseQuestionRequest('AskUserQuestion', { questions: [{}, { header: 'x' }] })).toBeNull();
+		expect(
+			parseQuestionRequest('AskUserQuestion', { questions: [{}, { header: 'x' }] })
+		).toBeNull();
 		expect(parseQuestionRequest('AskUserQuestion', {})).toBeNull();
 		expect(parseQuestionRequest('AskUserQuestion', { questions: 'nope' })).toBeNull();
 	});
@@ -223,9 +222,28 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 		});
 	}
 
+	// Production runs exactly one relay server per process; its socket path (a
+	// pid-derived named pipe on Windows) is process-global. Each `it` spinning up
+	// its own server and calling stop() collided on Windows: server.close() is
+	// async and does not release the named pipe synchronously, so the next
+	// listen() on the same pipe threw EADDRINUSE. Share one server across the
+	// block and set the per-test onRequest handler instead.
+	let server: PermissionRelayServer;
+	let socketPath: string;
+	let serverDir: string;
+
+	beforeAll(async () => {
+		server = new PermissionRelayServer();
+		serverDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-srv-'));
+		socketPath = await server.ensureStarted(serverDir);
+	});
+
+	afterAll(() => {
+		server.stop();
+		fs.rmSync(serverDir, { recursive: true, force: true });
+	});
+
 	it('surfaces a kind=question request and round-trips a deny+message answer', async () => {
-		const server = new PermissionRelayServer();
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-srv-'));
 		const { token, cleanup } = registerSpawn({ sessionId: 'sQ', tabId: 'tQ' });
 		let captured: PermissionRequest | undefined;
 
@@ -235,54 +253,51 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 			resolvePending(req.requestId, { behavior: 'deny', message: 'Color: Blue' });
 		});
 
-		const socketPath = await server.ensureStarted(dir);
 		const client = net.createConnection(socketPath);
 
-		const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
-			collectMessages(client, (msg) => {
-				if (msg.type === 'permission-response') {
-					resolve(msg);
-				}
+		try {
+			const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+				collectMessages(client, (msg) => {
+					if (msg.type === 'permission-response') {
+						resolve(msg);
+					}
+				});
+				client.on('error', reject);
+				client.on('connect', () => {
+					client.write(JSON.stringify({ type: 'hello', token }) + '\n');
+					client.write(
+						JSON.stringify({
+							type: 'permission-request',
+							token,
+							requestId: 'b1',
+							toolName: 'AskUserQuestion',
+							input: {
+								questions: [
+									{
+										question: 'Which color do you prefer?',
+										header: 'Color',
+										options: [{ label: 'Red' }, { label: 'Blue' }],
+										multiSelect: false,
+									},
+								],
+							},
+						}) + '\n'
+					);
+				});
 			});
-			client.on('error', reject);
-			client.on('connect', () => {
-				client.write(JSON.stringify({ type: 'hello', token }) + '\n');
-				client.write(
-					JSON.stringify({
-						type: 'permission-request',
-						token,
-						requestId: 'b1',
-						toolName: 'AskUserQuestion',
-						input: {
-							questions: [
-								{
-									question: 'Which color do you prefer?',
-									header: 'Color',
-									options: [{ label: 'Red' }, { label: 'Blue' }],
-									multiSelect: false,
-								},
-							],
-						},
-					}) + '\n'
-				);
-			});
-		});
 
-		expect(captured?.kind).toBe('question');
-		expect(captured?.questions?.[0].question).toBe('Which color do you prefer?');
-		expect(captured?.questions?.[0].options.map((o) => o.label)).toEqual(['Red', 'Blue']);
-		expect(response.requestId).toBe('b1');
-		expect(response.decision).toEqual({ behavior: 'deny', message: 'Color: Blue' });
-
-		client.destroy();
-		server.stop();
-		cleanup();
-		fs.rmSync(dir, { recursive: true, force: true });
+			expect(captured?.kind).toBe('question');
+			expect(captured?.questions?.[0].question).toBe('Which color do you prefer?');
+			expect(captured?.questions?.[0].options.map((o) => o.label)).toEqual(['Red', 'Blue']);
+			expect(response.requestId).toBe('b1');
+			expect(response.decision).toEqual({ behavior: 'deny', message: 'Color: Blue' });
+		} finally {
+			client.destroy();
+			cleanup();
+		}
 	});
 
 	it('leaves an ordinary tool request unchanged (no kind/questions)', async () => {
-		const server = new PermissionRelayServer();
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-srv-'));
 		const { token, cleanup } = registerSpawn({ sessionId: 'sB', tabId: 'tB' });
 		let captured: PermissionRequest | undefined;
 
@@ -291,37 +306,36 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 			resolvePending(req.requestId, { behavior: 'allow' });
 		});
 
-		const socketPath = await server.ensureStarted(dir);
 		const client = net.createConnection(socketPath);
 
-		await new Promise<void>((resolve, reject) => {
-			collectMessages(client, (msg) => {
-				if (msg.type === 'permission-response') {
-					resolve();
-				}
+		try {
+			await new Promise<void>((resolve, reject) => {
+				collectMessages(client, (msg) => {
+					if (msg.type === 'permission-response') {
+						resolve();
+					}
+				});
+				client.on('error', reject);
+				client.on('connect', () => {
+					client.write(JSON.stringify({ type: 'hello', token }) + '\n');
+					client.write(
+						JSON.stringify({
+							type: 'permission-request',
+							token,
+							requestId: 'b2',
+							toolName: 'Bash',
+							input: { command: 'ls' },
+						}) + '\n'
+					);
+				});
 			});
-			client.on('error', reject);
-			client.on('connect', () => {
-				client.write(JSON.stringify({ type: 'hello', token }) + '\n');
-				client.write(
-					JSON.stringify({
-						type: 'permission-request',
-						token,
-						requestId: 'b2',
-						toolName: 'Bash',
-						input: { command: 'ls' },
-					}) + '\n'
-				);
-			});
-		});
 
-		expect(captured?.toolName).toBe('Bash');
-		expect(captured?.kind).toBeUndefined();
-		expect(captured?.questions).toBeUndefined();
-
-		client.destroy();
-		server.stop();
-		cleanup();
-		fs.rmSync(dir, { recursive: true, force: true });
+			expect(captured?.toolName).toBe('Bash');
+			expect(captured?.kind).toBeUndefined();
+			expect(captured?.questions).toBeUndefined();
+		} finally {
+			client.destroy();
+			cleanup();
+		}
 	});
 });

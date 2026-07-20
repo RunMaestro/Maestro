@@ -14,11 +14,7 @@ import { useMemo, useState } from 'react';
 import { Check, Send } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { ParsedQuestionUI } from '../../stores/permissionRequestStore';
-import {
-	encodeQuestionAnswer,
-	hasAnswer,
-	type QuestionSelection,
-} from './questionAnswer';
+import { encodeQuestionAnswer, hasAnswer, type QuestionSelection } from './questionAnswer';
 
 interface QuestionPromptProps {
 	theme: Theme;
@@ -34,9 +30,7 @@ export function QuestionPrompt({ theme, questions, onSubmit }: QuestionPromptPro
 	);
 
 	const updateSelection = (index: number, next: Partial<QuestionSelection>) => {
-		setSelections((prev) =>
-			prev.map((sel, i) => (i === index ? { ...sel, ...next } : sel))
-		);
+		setSelections((prev) => prev.map((sel, i) => (i === index ? { ...sel, ...next } : sel)));
 	};
 
 	const toggleLabel = (index: number, label: string, multiSelect: boolean) => {
@@ -101,14 +95,14 @@ export function QuestionPrompt({ theme, questions, onSubmit }: QuestionPromptPro
 										<button
 											key={opt.label}
 											onClick={() => toggleLabel(qi, opt.label, q.multiSelect)}
+											role={q.multiSelect ? 'checkbox' : 'radio'}
+											aria-checked={selected}
 											className="flex items-start gap-2 text-left text-xs px-3 py-2 rounded-md cursor-pointer transition-colors"
 											style={{
 												backgroundColor: selected
 													? `${theme.colors.accent}22`
 													: theme.colors.bgMain,
-												border: `1px solid ${
-													selected ? theme.colors.accent : theme.colors.border
-												}`,
+												border: `1px solid ${selected ? theme.colors.accent : theme.colors.border}`,
 												color: theme.colors.textMain,
 											}}
 										>
@@ -133,9 +127,7 @@ export function QuestionPrompt({ theme, questions, onSubmit }: QuestionPromptPro
 											<span className="flex flex-col select-text">
 												<span className="font-medium">{opt.label}</span>
 												{opt.description && opt.description !== opt.label && (
-													<span style={{ color: theme.colors.textDim }}>
-														{opt.description}
-													</span>
+													<span style={{ color: theme.colors.textDim }}>{opt.description}</span>
 												)}
 											</span>
 										</button>

@@ -131,6 +131,7 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 						<h2 className="text-sm font-semibold">Claude Code has a question</h2>
 					</div>
 					<QuestionPrompt
+						key={request.requestId}
 						theme={theme}
 						questions={request.questions}
 						onSubmit={onAnswerQuestion}

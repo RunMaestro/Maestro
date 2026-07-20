@@ -151,6 +151,21 @@ export interface ParsedEvent {
 	}>;
 
 	/**
+	 * Additional terminal-state tool results carried alongside a primary
+	 * 'tool_use' event when one message bundles several parallel tool_result
+	 * blocks (Claude Code returns parallel tool calls this way). The primary
+	 * result stays in the top-level toolName/toolCallId/toolState fields; the
+	 * remaining results live here so no parallel call is left stuck 'running'.
+	 * Process-manager emits a tool-execution for each.
+	 */
+	toolResultBlocks?: Array<{
+		toolName: string;
+		toolCallId: string;
+		toolState: unknown;
+		parentToolUseId?: string;
+	}>;
+
+	/**
 	 * Original event data for debugging
 	 * Preserved unchanged from agent output
 	 * Optional - primarily used for debugging and not read in production

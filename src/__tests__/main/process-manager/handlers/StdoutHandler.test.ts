@@ -617,6 +617,49 @@ describe('StdoutHandler', () => {
 			});
 		});
 
+		it('should emit a terminal event for every parallel tool_result in one message', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			// Two parallel tool_use starts.
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [
+						{ type: 'tool_use', id: 'toolu_a', name: 'Read', input: {} },
+						{ type: 'tool_use', id: 'toolu_b', name: 'Grep', input: { pattern: 'x' } },
+					],
+				},
+			});
+
+			// Both results bundled into a single user message.
+			sendJsonLine(handler, sessionId, {
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'a-out' },
+						{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'b-out' },
+					],
+				},
+			});
+
+			// 2 running + 2 completed = 4 emissions; neither parallel call is left running.
+			const completed = toolSpy.mock.calls
+				.map((c) => c[1])
+				.filter((e) => e.state?.status === 'completed')
+				.map((e) => e.toolCallId)
+				.sort();
+			expect(completed).toEqual(['toolu_a', 'toolu_b']);
+		});
+
 		it('should omit parentToolUseId for main-transcript claude tool events', () => {
 			const parser = new ClaudeOutputParser();
 			const { handler, emitter, sessionId } = createTestContext({

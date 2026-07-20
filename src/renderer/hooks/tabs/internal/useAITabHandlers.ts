@@ -350,10 +350,16 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		updateAiTab(session.id, currentActiveTab.id, (tab) => {
 			const newMode = cycleThinkingMode(tab.showThinking);
 			if (newMode === 'off') {
+				// Tool visibility is controlled independently via `showTools`; only
+				// strip tool logs here when the tab does not explicitly want them
+				// shown. Thinking logs always go when thinking is turned off.
+				const keepTools = tab.showTools === true;
 				return {
 					...tab,
 					showThinking: 'off',
-					logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+					logs: tab.logs.filter(
+						(l) => l.source !== 'thinking' && (keepTools || l.source !== 'tool')
+					),
 				};
 			}
 			return { ...tab, showThinking: newMode };

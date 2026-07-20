@@ -31,6 +31,14 @@ export const parentLogIdFor = (parentToolUseId: string): string => `tool-${paren
  * Entries without `parentToolUseId` - every non-claude agent and every log
  * written before this field existed - are untouched.
  *
+ * Nesting is one level deep: `LogItem` renders adopted children as flat badges
+ * and does not recurse into their own children. claude-code subagents are not
+ * given the Task tool, so a grandchild does not arise in practice; if one ever
+ * did we must not adopt it under an already-adopted child, or it would be pulled
+ * out of the flat list and never rendered. So adoption targets only top-level
+ * tool entries: any deeper descendant keeps its own top-level slot (visible)
+ * rather than vanishing.
+ *
  * Pure + exported so the grouping is unit-testable independent of the component.
  */
 export function groupSubagentToolLogs(logs: LogEntry[]): SubagentToolGrouping {
@@ -49,15 +57,25 @@ export function groupSubagentToolLogs(logs: LogEntry[]): SubagentToolGrouping {
 	}
 
 	const childrenByParentId = new Map<string, LogEntry[]>();
+	const adoptedIds = new Set<string>();
 	const result: LogEntry[] = [];
 
 	for (const log of logs) {
 		const parentToolUseId = log.metadata?.parentToolUseId;
 		const parentLogId = parentToolUseId ? parentLogIdFor(parentToolUseId) : undefined;
 
-		// Adopt only when the parent is a real tool entry in this log AND is not
-		// the entry itself (a self-referential id would otherwise vanish).
-		if (parentLogId && parentLogId !== log.id && toolLogIds.has(parentLogId)) {
+		// Adopt only when the parent is a real, top-level tool entry in this log
+		// AND is not the entry itself (a self-referential id would otherwise
+		// vanish). Refusing to adopt under an already-adopted child keeps deeper
+		// descendants in the flat list instead of dropping them (see note above);
+		// logs are chronological, so a child is always seen before its own child.
+		if (
+			parentLogId &&
+			parentLogId !== log.id &&
+			toolLogIds.has(parentLogId) &&
+			!adoptedIds.has(parentLogId)
+		) {
+			adoptedIds.add(log.id);
 			const siblings = childrenByParentId.get(parentLogId);
 			if (siblings) {
 				siblings.push(log);

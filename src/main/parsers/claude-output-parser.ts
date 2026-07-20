@@ -317,42 +317,57 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Build a terminal-state tool_use event from the first tool_result block in a
-	 * user message. Returns null when the message carries no tool_result blocks
+	 * Build a terminal-state tool_use event from the tool_result blocks in a user
+	 * message. Returns null when the message carries no tool_result blocks
 	 * (ordinary user prompts fall through to the default system event).
 	 *
-	 * Claude Code emits one tool_result per user message in practice; if several
-	 * were bundled, only the first can be represented since ParsedEvent models a
-	 * single event.
+	 * Claude Code returns parallel tool calls as several tool_result blocks in a
+	 * single user message. The first result populates the top-level tool_use
+	 * fields; any remaining results ride along in `toolResultBlocks` so
+	 * StdoutHandler can emit a terminal event for every one - otherwise the
+	 * second and later parallel calls would stay stuck in the 'running' state.
 	 */
 	private extractToolResultEvent(msg: ClaudeRawMessage): ParsedEvent | null {
 		if (!msg.message?.content || typeof msg.message.content === 'string') {
 			return null;
 		}
 
-		const block = msg.message.content.find(
+		const blocks = msg.message.content.filter(
 			(candidate) => candidate.type === 'tool_result' && candidate.tool_use_id
 		);
-		if (!block) {
+		if (blocks.length === 0) {
 			return null;
 		}
 
-		const toolCallId = block.tool_use_id!;
-		// StdoutHandler drops tool_use events without a toolName, so an unknown id
-		// (parser started mid-stream, or the map was evicted) still needs a label.
-		const toolName = this.toolNamesById.get(toolCallId) || 'Tool';
-		this.toolNamesById.delete(toolCallId);
+		const parentToolUseId = normalizeParentToolUseId(msg);
+		const toResult = (block: (typeof blocks)[number]) => {
+			const toolCallId = block.tool_use_id!;
+			// StdoutHandler drops tool_use events without a toolName, so an unknown
+			// id (parser started mid-stream, or the map was evicted) still needs a
+			// label.
+			const toolName = this.toolNamesById.get(toolCallId) || 'Tool';
+			this.toolNamesById.delete(toolCallId);
+			return {
+				toolName,
+				toolCallId,
+				toolState: {
+					status: block.is_error ? ('failed' as const) : ('completed' as const),
+					output: flattenToolResultContent(block.content),
+				},
+			};
+		};
+
+		const [primary, ...rest] = blocks.map(toResult);
 
 		return {
 			type: 'tool_use',
-			toolName,
-			toolCallId,
-			toolState: {
-				status: block.is_error ? 'failed' : 'completed',
-				output: flattenToolResultContent(block.content),
-			},
+			toolName: primary.toolName,
+			toolCallId: primary.toolCallId,
+			toolState: primary.toolState,
+			// Extra parallel results (empty for the common single-result case).
+			toolResultBlocks: rest.length ? rest.map((r) => ({ ...r, parentToolUseId })) : undefined,
 			sessionId: msg.session_id,
-			parentToolUseId: normalizeParentToolUseId(msg),
+			parentToolUseId,
 			raw: msg,
 		};
 	}
