@@ -110,6 +110,48 @@ describe('OmpOutputParser', () => {
 		expect(event!.type).toBe('system');
 		expect(parser.isResultMessage(event!)).toBe(false);
 	});
+
+	it('does not emit a result when agent_end final assistant message has empty text', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+				{ role: 'assistant', content: [{ type: 'text', text: '' }] },
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit a result when agent_end final assistant message is whitespace-only', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [{ role: 'assistant', content: [{ type: 'text', text: '   \n\t' }] }],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit a result when agent_end final assistant message carries no text block', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{
+					role: 'assistant',
+					content: [{ type: 'toolCall', toolName: 'edit', args: {} }],
+				},
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
 	it('does not surface a retrying agent_end as a user-facing error', () => {
 		const retrying = {
 			type: 'agent_end',

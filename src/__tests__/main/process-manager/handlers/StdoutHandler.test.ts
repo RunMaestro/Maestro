@@ -52,6 +52,7 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
+import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
 import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
@@ -700,6 +701,49 @@ describe('StdoutHandler', () => {
 			);
 			expect(resultCalls).toHaveLength(1);
 			expect(resultCalls[0][1]).toBe('First answer.');
+		});
+
+		it('does not mark resultEmitted for an omp agent_end whose final message has empty text', () => {
+			// Regression: an omp turn that reaches agent_end but whose final assistant
+			// message carries no text must NOT be recorded as a real result. Emitting an
+			// empty result would flip resultEmitted with nothing shown, silently
+			// defeating the ExitHandler omp silent-exit guard (which keys off
+			// !resultEmitted) - the reported "done after a second, nothing happened" turn.
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				outputParser: new OmpOutputParser(),
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'agent_end',
+				messages: [
+					{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+					{ role: 'assistant', content: [{ type: 'text', text: '' }] },
+				],
+			});
+
+			expect(proc.resultEmitted).toBe(false);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('marks resultEmitted and emits text for an omp agent_end with a real final answer', () => {
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				outputParser: new OmpOutputParser(),
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'agent_end',
+				messages: [
+					{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+					{ role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+				],
+			});
+
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer');
 		});
 
 		it('should extract session_id and emit session-id event', () => {
