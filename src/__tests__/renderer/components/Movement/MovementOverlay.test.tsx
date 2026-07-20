@@ -64,12 +64,18 @@ describe('MovementOverlay', () => {
 			body: '<button>Move</button>',
 		});
 		render(<MovementOverlay theme={mockTheme} />);
+		const frame = screen.getByTestId('concerto-html-iframe');
 
 		act(() => useMovementStore.getState().setHidden(true));
 
-		expect(screen.getByTestId('concerto-html-iframe')).toBeInTheDocument();
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
 		expect(screen.getByTestId('movement-panels')).toHaveStyle({ visibility: 'hidden' });
 		expect(screen.getByTitle('Show Concerto windows')).toBeInTheDocument();
+
+		act(() => useMovementStore.getState().setHidden(false));
+
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
+		expect(screen.getByTestId('movement-panels')).toHaveStyle({ visibility: 'visible' });
 	});
 
 	it('minimizes a Concerto without unmounting it and restores it from the taskbar', () => {
@@ -82,13 +88,14 @@ describe('MovementOverlay', () => {
 		});
 		applyMovementPayload({ op: 'add', id: 'notes', title: 'Notes' });
 		render(<MovementOverlay theme={mockTheme} />);
+		const frame = screen.getByTestId('concerto-html-iframe');
 
 		fireEvent.click(screen.getByRole('button', { name: 'Minimize Chess' }));
 
 		expect(useMovementStore.getState().items.find((item) => item.id === 'chess')?.minimized).toBe(
 			true
 		);
-		expect(screen.getByTestId('concerto-html-iframe')).toBeInTheDocument();
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
 		expect(document.querySelector('[data-movement-id="chess"]')).toHaveStyle({
 			visibility: 'hidden',
 		});
@@ -104,5 +111,6 @@ describe('MovementOverlay', () => {
 		expect(document.querySelector('[data-movement-id="chess"]')).toHaveStyle({
 			visibility: 'visible',
 		});
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
 	});
 });
