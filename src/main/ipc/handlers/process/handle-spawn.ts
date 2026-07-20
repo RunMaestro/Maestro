@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
+import { checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
 	getActivePluginManager,
@@ -80,6 +81,27 @@ export async function handleProcessSpawn(
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
+	let invalidLocalCustomPath = false;
+	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
+		const requestedCustomPath = config.sessionCustomPath;
+		const detection = await checkCustomPath(requestedCustomPath);
+		if (detection.exists && detection.path) {
+			config = { ...config, sessionCustomPath: detection.path };
+			if (detection.path !== requestedCustomPath) {
+				logger.info(`Resolved updated local custom path for ${config.toolType}`, LOG_CONTEXT, {
+					requestedCustomPath,
+					resolvedCustomPath: detection.path,
+				});
+			}
+		} else {
+			invalidLocalCustomPath = true;
+			config = { ...config, sessionCustomPath: undefined };
+			logger.warn(`Ignoring invalid local custom path for ${config.toolType}`, LOG_CONTEXT, {
+				requestedCustomPath,
+				fallbackPath: agent?.path || config.command,
+			});
+		}
+	}
 	// Use INFO level on Windows for better visibility in logs
 
 	const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
@@ -599,7 +621,10 @@ export async function handleProcessSpawn(
 	// so PATH and other environment variables are available. This ensures cross-platform
 	// compatibility and correct agent behavior.
 	// ========================================================================
-	let commandToSpawn = config.sessionCustomPath || config.command;
+	let commandToSpawn =
+		config.sessionCustomPath ||
+		(invalidLocalCustomPath ? agent?.path : undefined) ||
+		config.command;
 	let argsToSpawn = finalArgs;
 	let useShell = false;
 	let sshRemoteUsed: SshRemoteConfig | null = null;

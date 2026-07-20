@@ -228,6 +228,7 @@ const mockMaestro = {
 	},
 	process: {
 		spawn: vi.fn().mockResolvedValue({ pid: 12345 }),
+		releaseConcertoHtmlDocument: vi.fn(),
 		write: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),

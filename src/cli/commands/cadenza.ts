@@ -175,7 +175,7 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 	}
 
 	let body = resolveBody(options.body, options.bodyFile);
-	if ((viewType === 'markdown' || viewType === 'view') && !body) {
+	if ((viewType === 'markdown' || viewType === 'view' || viewType === 'html') && !body) {
 		console.error(`Error: --body or --body-file is required for --type ${viewType}`);
 		process.exit(1);
 	}

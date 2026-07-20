@@ -655,6 +655,7 @@ describe('agent-detector', () => {
 			const claude = agents.find((a) => a.id === 'claude-code');
 			expect(claude?.available).toBe(true);
 			expect(claude?.path).toBe('/usr/bin/claude');
+			expect(claude?.customPath).toBeUndefined();
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('custom path not valid'),
@@ -679,7 +680,9 @@ describe('agent-detector', () => {
 		});
 
 		it('should log when falling back to PATH after invalid custom path', async () => {
-			vi.spyOn(fs.promises, 'stat').mockRejectedValue(new Error('ENOENT'));
+			vi.spyOn(fs.promises, 'stat').mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				if (args[0] === 'claude') {
 					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };

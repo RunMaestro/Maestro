@@ -208,6 +208,8 @@ import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
+import { createConcertoHtmlResponse } from './concerto-html';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -303,6 +305,10 @@ const IMAGE_SCHEME = 'maestro-image';
 		{
 			scheme: IMAGE_SCHEME,
 			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+		{
+			scheme: CONCERTO_HTML_SCHEME,
+			privileges: { standard: true, secure: true },
 		},
 	];
 	if (!isDevelopment) {
@@ -888,6 +894,11 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		// Serve agent-authored Concerto mockups as real documents with their own
+		// CSP. A srcdoc frame would inherit Maestro's renderer CSP and block the
+		// inline scripts that make mockups interactive.
+		protocol.handle(CONCERTO_HTML_SCHEME, (request) => createConcertoHtmlResponse(request.url));
+
 		// Serve pasted conversation images relocated out of the sessions JSON by
 		// the session image store. `<img src="maestro-image://store/<sha>.<ext>">`
 		// resolves here to a file on disk - the bytes never live in the JSON blob

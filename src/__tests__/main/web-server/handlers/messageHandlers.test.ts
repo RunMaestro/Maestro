@@ -1807,6 +1807,87 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Movement ID validation', () => {
+		it.each(['add', 'update', 'move', 'remove'] as const)(
+			'rejects surrounding whitespace for movement %s',
+			(op) => {
+				callbacks.movementView = vi.fn().mockResolvedValue(true);
+				handler.handleMessage(client, {
+					type: 'movement',
+					op,
+					id: ' item-1 ',
+					body: op === 'add' ? '{}' : undefined,
+					x: op === 'move' ? 10 : undefined,
+					y: op === 'move' ? 20 : undefined,
+				});
+
+				expect(callbacks.movementView).not.toHaveBeenCalled();
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response).toMatchObject({
+					type: 'movement_result',
+					success: false,
+					error: 'Movement item id must not contain surrounding whitespace',
+				});
+			}
+		);
+
+		it('rejects surrounding whitespace before designer inspection', () => {
+			callbacks.getMovementDesignerInspection = vi.fn();
+			handler.handleMessage(client, {
+				type: 'get_movement_designer_inspection',
+				id: ' item-1 ',
+			});
+
+			expect(callbacks.getMovementDesignerInspection).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_designer_inspection_result',
+				success: false,
+				error: 'Movement item id must not contain surrounding whitespace',
+			});
+		});
+
+		it('rejects surrounding whitespace before designer interaction', () => {
+			callbacks.interactMovementDesigner = vi.fn();
+			handler.handleMessage(client, {
+				type: 'interact_movement_designer',
+				id: ' item-1 ',
+				action: { kind: 'click', selector: '#save' },
+			});
+
+			expect(callbacks.interactMovementDesigner).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_designer_interaction_result',
+				success: false,
+				error: 'Movement item id must not contain surrounding whitespace',
+			});
+		});
+	});
+
+	describe('Movement HTML validation', () => {
+		it.each(['add', 'update'] as const)(
+			'requires HTML content for a movement %s that explicitly selects html',
+			(op) => {
+				callbacks.movementView = vi.fn().mockResolvedValue(true);
+				handler.handleMessage(client, {
+					type: 'movement',
+					op,
+					id: 'mockup',
+					viewType: 'html',
+				});
+
+				expect(callbacks.movementView).not.toHaveBeenCalled();
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response).toMatchObject({
+					type: 'movement_result',
+					success: false,
+					error: `Movement ${op} requires HTML content when viewType is 'html'`,
+				});
+			}
+		);
+	});
+
 	describe('Cue Pipeline Mutations (Web/CLI → Desktop)', () => {
 		it('cue_pipeline_list returns the daemon-supplied list verbatim', async () => {
 			const pipelines = [

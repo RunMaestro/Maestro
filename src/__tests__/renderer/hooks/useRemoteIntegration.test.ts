@@ -6,6 +6,14 @@ import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
+import { useMovementStore } from '../../../renderer/stores/movementStore';
+import type { MovementPayload } from '../../../shared/movement-types';
+import { CONCERTO_DESIGNER_CHANNEL } from '../../../shared/concerto-html';
+import {
+	clearConcertoDesignerFramesForTests,
+	handleConcertoDesignerMessage,
+	registerConcertoDesignerFrame,
+} from '../../../renderer/components/Concerto/concertoDesignerBridge';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -75,6 +83,9 @@ describe('useRemoteIntegration', () => {
 					| { kind: 'open-file'; sessionId: string; path: string }
 					| { kind: 'open-url'; url: string };
 		  }) => void)
+		| undefined;
+	let onRemoteMovementHandler:
+		| ((params: MovementPayload, responseChannel?: string) => void)
 		| undefined;
 
 	const mockProcess = {
@@ -258,6 +269,11 @@ describe('useRemoteIntegration', () => {
 		onRemoteNotifyCenterFlash: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteMovement: vi.fn().mockImplementation((handler) => {
+			onRemoteMovementHandler = handler;
+			return () => {};
+		}),
+		sendMovementAppliedResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -307,10 +323,13 @@ describe('useRemoteIntegration', () => {
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
+		onRemoteMovementHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
 		useNotificationStore.setState({ toasts: [] });
+		useMovementStore.setState({ items: [], hidden: false });
+		clearConcertoDesignerFramesForTests();
 
 		window.maestro = {
 			...originalMaestro,
@@ -325,6 +344,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	afterEach(() => {
+		clearConcertoDesignerFramesForTests();
 		window.maestro = originalMaestro;
 	});
 
@@ -1086,6 +1106,72 @@ describe('useRemoteIntegration', () => {
 			// Label wins for display; sessionId still rides along for click-to-jump.
 			expect(toasts[0]?.project).toBe('Twitter Post');
 			expect(toasts[0]?.sessionId).toBe('session-1');
+		});
+	});
+
+	describe('movement commit acknowledgements', () => {
+		it('still applies plugin movements that do not carry a response channel', () => {
+			const deps = createDeps();
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'add',
+					id: 'com.acme.metrics/summary',
+					body: '{"blocks":[]}',
+				});
+			});
+
+			expect(useMovementStore.getState().items).toHaveLength(1);
+			expect(mockProcess.sendMovementAppliedResponse).not.toHaveBeenCalled();
+		});
+
+		it('waits for the routed HTML revision to register and become ready', async () => {
+			const deps = createDeps();
+			renderHook(() => useRemoteIntegration(deps));
+			const frame = document.createElement('iframe');
+			document.body.appendChild(frame);
+			vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+				x: 0,
+				y: 0,
+				width: 640,
+				height: 480,
+				top: 0,
+				right: 640,
+				bottom: 480,
+				left: 0,
+				toJSON: () => ({}),
+			});
+			registerConcertoDesignerFrame('movement', 'mockup', 21, frame);
+
+			act(() => {
+				onRemoteMovementHandler?.(
+					{
+						op: 'add',
+						id: 'mockup',
+						viewType: 'html',
+						body: '<button>Continue</button>',
+						revision: 21,
+					},
+					'movement-response'
+				);
+			});
+			expect(mockProcess.sendMovementAppliedResponse).not.toHaveBeenCalled();
+
+			await act(async () => {
+				handleConcertoDesignerMessage('movement', 'mockup', {
+					source: frame.contentWindow,
+					data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+				} as MessageEvent);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(mockProcess.sendMovementAppliedResponse).toHaveBeenCalledWith(
+				'movement-response',
+				true
+			);
+			frame.remove();
 		});
 	});
 

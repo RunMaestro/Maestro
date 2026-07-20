@@ -183,6 +183,10 @@ vi.mock('../../../main/auto-updater', () => ({
 	initAutoUpdater: (...args: unknown[]) => mockInitAutoUpdater(...args),
 }));
 
+vi.mock('../../../main/maestro-cli-manager', () => ({
+	resolveBundledCliPathSync: vi.fn(() => '/resolved/maestro-cli.js'),
+}));
+
 // Mock electron-devtools-installer (for development mode)
 vi.mock('electron-devtools-installer', () => ({
 	default: vi.fn().mockResolvedValue('React DevTools'),
@@ -307,6 +311,7 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createWindow();
 
 			expect(lastBrowserWindowOptions?.webPreferences).toMatchObject({
+				additionalArguments: ['--maestro-cli-path=/resolved/maestro-cli.js'],
 				contextIsolation: true,
 				nodeIntegration: false,
 				sandbox: true,

@@ -14,6 +14,12 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 - **GitHub:** https://github.com/RunMaestro/Maestro
 - **Documentation:** https://docs.runmaestro.ai/llms.txt
 
+## Visual-first Concerto routing
+
+When the value of a request depends on seeing or directly manipulating the result, use Concerto proactively on the first turn. This includes board and card games, simulators, calculators, interactive demos, interface and website mockups, spatial diagrams, maps, and visual comparisons. Do not ask whether the user wants Concerto when the request is already inherently visual or interactive. For example, "let's play chess" should open a playable board and start the game, not respond with algebraic-notation instructions alone.
+
+Use an HTML Movement for a custom interactive experience, a native Movement for structured data, and a Cadenza for a compact status or supporting artifact. Stay text-only when the user explicitly asks for text or when a visual surface would not materially improve the task. Read `_interface-primitives` before acting for the complete routing and designer workflow.
+
 ## Reference Index (progressive disclosure)
 
 The reference material is split into focused, on-demand includes. Each `Path` below is the absolute path of a bundled `.md` - read it with your file tools when the topic is relevant. To honor user customizations from Settings → Maestro Prompts, fetch via `maestro-cli prompts get <name>` instead.
