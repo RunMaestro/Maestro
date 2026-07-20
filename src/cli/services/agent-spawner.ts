@@ -809,6 +809,18 @@ async function spawnJsonLineAgent(
 	// Build args from agent definition (without the prompt or model/customArgs —
 	// those come from applyAgentConfigOverrides via configOptions).
 	const preOverrideArgs: string[] = [];
+
+	// Codex requires `-C <dir>` as a ROOT-level global flag that MUST precede the
+	// `exec` subcommand (and therefore everything after it, including
+	// `resume <id>`). Placed later, Codex silently ignores it on fresh runs (#959)
+	// and HARD-FAILS on resume with "unexpected argument '-C' found", which broke
+	// Maestro Relay follow-up messages to Codex agents. Mirror the desktop path
+	// (`src/main/utils/agent-args.ts`), which prepends workingDirArgs before the
+	// batchModePrefix. See #960.
+	if (toolType === 'codex' && def?.workingDirArgs) {
+		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
+
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
 	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
@@ -829,11 +841,6 @@ async function spawnJsonLineAgent(
 
 	if (agentSessionId && def?.resumeArgs) {
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
-	// Codex requires explicit working directory arg (other agents use process cwd)
-	if (toolType === 'codex' && def?.workingDirArgs) {
-		preOverrideArgs.push(...def.workingDirArgs(cwd));
 	}
 
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact

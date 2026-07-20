@@ -2275,6 +2275,16 @@ Some text with [x] in it that's not a checkbox
 			// resume args are ['resume', '<id>']
 			expect(args).toContain('resume');
 			expect(args).toContain('codex-thread-123');
+
+			// Ordering is load-bearing: `-C` is a ROOT-level global flag that MUST
+			// precede the `exec` subcommand, which in turn precedes `resume <id>`.
+			// Placing `-C` after `resume` makes Codex hard-fail with
+			// "unexpected argument '-C' found", breaking Relay follow-up messages
+			// to Codex agents (regression of #960). Enforce -C < exec < resume.
+			const execIdx = args.indexOf('exec');
+			const resumeIdx = args.indexOf('resume');
+			expect(c).toBeLessThan(execIdx);
+			expect(execIdx).toBeLessThan(resumeIdx);
 		});
 
 		it('unsupported agent type returns a failure result', async () => {
