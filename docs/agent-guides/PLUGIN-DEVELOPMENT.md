@@ -424,38 +424,38 @@ module.exports = { activate, deactivate };
 
 Every method below is broker-gated and needs the matching capability granted. Signatures are copied from `buildSdk` (`src/main/plugins/plugin-sandbox-entry.ts`).
 
-| SDK method                                                                      | Capability                   |
-| ------------------------------------------------------------------------------- | ---------------------------- |
-| `maestro.pluginId` (string)                                                     | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                    | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                           | `fs:write`                   |
-| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                           | `net:fetch`                  |
-| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)    | `net:connect`                |
-| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                   | `net:connect`                |
-| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                 | `net:connect`                |
-| `maestro.agents.list()`                                                         | `agents:read`                |
-| `maestro.agents.get(agentId)`                                                   | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)    | `agents:dispatch`            |
-| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                | `notifications:toast`        |
-| `maestro.settings.get(key)`                                                     | `settings:read`              |
-| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)               | `settings:write`             |
-| `maestro.sessions.list()` (metadata only)                                       | `sessions:read`              |
-| `maestro.sessions.get(sessionId)` (metadata only)                               | `sessions:read`              |
-| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })` | `transcripts:read`           |
-| `maestro.storage.get(key)`                                                      | `storage:read`               |
-| `maestro.storage.keys()`                                                        | `storage:read`               |
-| `maestro.storage.set(key, value)` (value is a string)                           | `storage:write`              |
-| `maestro.storage.delete(key)`                                                   | `storage:write`              |
-| `maestro.ui.runCommand(commandId, args?)`                                       | `ui:command`                 |
-| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                | `ui:hostView`                |
-| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                        | `ui:hostView`                |
-| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON) | `ui:panel`                 |
-| `maestro.events.on(topic, handler(payload, meta))`                              | - (delivery needs subscribe) |
-| `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
-| `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
-| `maestro.commands.register(commandId, handler(args))`                           | - (invoked by host)          |
-| `maestro.tools.register(toolId, handler(args))` (result returned to host)       | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (trusted + gated)                       | `process:spawn`              |
+| SDK method                                                                        | Capability                   |
+| --------------------------------------------------------------------------------- | ---------------------------- |
+| `maestro.pluginId` (string)                                                       | -                            |
+| `maestro.fs.read(path)` -> `Promise<string>`                                      | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>`                             | `fs:write`                   |
+| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                             | `net:fetch`                  |
+| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)      | `net:connect`                |
+| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                     | `net:connect`                |
+| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                   | `net:connect`                |
+| `maestro.agents.list()`                                                           | `agents:read`                |
+| `maestro.agents.get(agentId)`                                                     | `agents:read`                |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)      | `agents:dispatch`            |
+| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                  | `notifications:toast`        |
+| `maestro.settings.get(key)`                                                       | `settings:read`              |
+| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                 | `settings:write`             |
+| `maestro.sessions.list()` (metadata only)                                         | `sessions:read`              |
+| `maestro.sessions.get(sessionId)` (metadata only)                                 | `sessions:read`              |
+| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`   | `transcripts:read`           |
+| `maestro.storage.get(key)`                                                        | `storage:read`               |
+| `maestro.storage.keys()`                                                          | `storage:read`               |
+| `maestro.storage.set(key, value)` (value is a string)                             | `storage:write`              |
+| `maestro.storage.delete(key)`                                                     | `storage:write`              |
+| `maestro.ui.runCommand(commandId, args?)`                                         | `ui:command`                 |
+| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                  | `ui:hostView`                |
+| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                          | `ui:hostView`                |
+| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON) | `ui:panel`                   |
+| `maestro.events.on(topic, handler(payload, meta))`                                | - (delivery needs subscribe) |
+| `maestro.events.subscribe(topics[])`                                              | `events:subscribe`           |
+| `maestro.events.unsubscribe(topics?)`                                             | `events:subscribe`           |
+| `maestro.commands.register(commandId, handler(args))`                             | - (invoked by host)          |
+| `maestro.tools.register(toolId, handler(args))` (result returned to host)         | - (invoked by host)          |
+| `maestro.process.spawn(command, opts?)` (trusted + gated)                         | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
@@ -583,14 +583,14 @@ await maestro.ui.panelPost('my-panel', { nodes });
 
 A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/shared/plugins/events.ts`). Payloads are METADATA ONLY - never transcript or prompt text.
 
-| Topic                 | Payload                                         |
-| --------------------- | ----------------------------------------------- |
-| `session.created`     | `{ sessionId, title?, agentId?, projectPath? }` |
-| `session.updated`     | `{ sessionId, title?, status? }`                |
-| `session.removed`     | `{ sessionId }`                                 |
-| `agent.awaiting`      | `{ agentId, tabId?, kind?, risk? }`             |
-| `agent.statusChanged` | `{ agentId, tabId?, status }`                   |
-| `cue.fired`           | `{ cueType, projectPath? }`                     |
+| Topic                 | Payload                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `session.created`     | `{ sessionId, title?, agentId?, projectPath? }`                                |
+| `session.updated`     | `{ sessionId, title?, status? }`                                               |
+| `session.removed`     | `{ sessionId }`                                                                |
+| `agent.awaiting`      | `{ agentId, tabId?, kind?, risk? }`                                            |
+| `agent.statusChanged` | `{ agentId, tabId?, status }`                                                  |
+| `cue.fired`           | `{ cueType, projectPath? }`                                                    |
 | `tool.executed`       | `{ sessionId, tabId?, toolName, toolCallId?, phase?, timestamp, durationMs? }` |
 
 `tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.13.0'`.

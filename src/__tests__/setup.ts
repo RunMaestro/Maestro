@@ -506,6 +506,7 @@ const mockMaestro = {
 		getActivity: vi.fn().mockResolvedValue({}),
 		getGroupings: vi.fn().mockResolvedValue([]),
 		onChanged: vi.fn().mockReturnValue(() => {}),
+		onPanelData: vi.fn().mockReturnValue(() => {}),
 		onGroupingsChanged: vi.fn().mockReturnValue(() => {}),
 		onRunUiCommand: vi.fn().mockReturnValue(() => {}),
 	},

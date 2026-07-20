@@ -324,9 +324,7 @@ describe('ui.panelPost', () => {
 
 	it('denies when ui:panel is not granted', async () => {
 		const panelPost = vi.fn();
-		const h = buildHostCallHandlers(
-			makeDeps({ panelPost, getPanel, broker: brokerFor(() => []) })
-		);
+		const h = buildHostCallHandlers(makeDeps({ panelPost, getPanel, broker: brokerFor(() => []) }));
 		await expect(h['ui.panelPost']!('p', { panelId: 'flow', data: { n: 1 } })).rejects.toThrow(
 			/permission denied/
 		);
@@ -338,26 +336,26 @@ describe('ui.panelPost', () => {
 		const h = buildHostCallHandlers(
 			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
 		);
-		await expect(
-			h['ui.panelPost']!('p', { panelId: 'flow', data: { n: 1 } })
-		).resolves.toEqual({ ok: true });
+		await expect(h['ui.panelPost']!('p', { panelId: 'flow', data: { n: 1 } })).resolves.toEqual({
+			ok: true,
+		});
 		expect(panelPost).toHaveBeenCalledWith('p', 'p/flow', { n: 1 });
 	});
 
-	it('denies posting to an undeclared or another plugin\'s panel id', async () => {
+	it("denies posting to an undeclared or another plugin's panel id", async () => {
 		const panelPost = vi.fn();
 		const h = buildHostCallHandlers(
 			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
 		);
 		// Undeclared local id.
-		await expect(
-			h['ui.panelPost']!('p', { panelId: 'nope', data: {} })
-		).rejects.toThrow(/not declared/);
+		await expect(h['ui.panelPost']!('p', { panelId: 'nope', data: {} })).rejects.toThrow(
+			/not declared/
+		);
 		// An already-namespaced or foreign id is treated as a local id and never
 		// resolves against this plugin's declarations.
-		await expect(
-			h['ui.panelPost']!('p', { panelId: 'other/flow', data: {} })
-		).rejects.toThrow(/not declared/);
+		await expect(h['ui.panelPost']!('p', { panelId: 'other/flow', data: {} })).rejects.toThrow(
+			/not declared/
+		);
 		expect(panelPost).not.toHaveBeenCalled();
 	});
 
@@ -368,9 +366,9 @@ describe('ui.panelPost', () => {
 		);
 		const circular: Record<string, unknown> = {};
 		circular.self = circular;
-		await expect(
-			h['ui.panelPost']!('p', { panelId: 'flow', data: circular })
-		).rejects.toThrow(/JSON-serializable/);
+		await expect(h['ui.panelPost']!('p', { panelId: 'flow', data: circular })).rejects.toThrow(
+			/JSON-serializable/
+		);
 		expect(panelPost).not.toHaveBeenCalled();
 	});
 
@@ -390,9 +388,9 @@ describe('ui.panelPost', () => {
 		const h = buildHostCallHandlers(
 			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
 		);
-		await expect(
-			h['ui.panelPost']!('p', { panelId: 'flow', data: {}, extra: 1 })
-		).rejects.toThrow(/closed schema/);
+		await expect(h['ui.panelPost']!('p', { panelId: 'flow', data: {}, extra: 1 })).rejects.toThrow(
+			/closed schema/
+		);
 		expect(panelPost).not.toHaveBeenCalled();
 	});
 });
