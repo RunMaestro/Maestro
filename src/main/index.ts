@@ -1633,6 +1633,11 @@ app
 				// #1250 bug - 7 of 9 bound agents silently dead). Raise a throttled
 				// toast pointing at the host-managed fix.
 				if (method !== 'agents.dispatch') return;
+				// Only a stale ALLOW LIST is actionable in Settings. If the plugin holds
+				// no agents:dispatch grant at all (never consented, revoked, or invalid),
+				// the editor is hidden and an "add the agent" toast would point at a fix
+				// the user cannot perform - that denial is a consent problem, logged above.
+				if (!grantsOf(pluginId).some((g) => g.capability === 'agents:dispatch')) return;
 				const now = Date.now();
 				if (now - (dispatchDenyToastAt.get(pluginId) ?? 0) < DISPATCH_DENY_TOAST_THROTTLE_MS) {
 					return;

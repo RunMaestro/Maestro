@@ -33,7 +33,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import { isAllowlistScoped } from '../../shared/plugins/permissions';
+import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
 
@@ -372,9 +372,10 @@ export class AuthorizationStore {
 	 *
 	 * `members` are exact tokens (agent ids / host-blessed binary names); an empty
 	 * set clears the scope to deny-all, a valid lockdown short of a full revoke.
-	 * Returns false when the capability is not allowlist-scoped, or when the plugin
+	 * Returns false when the capability is not allowlist-scoped, when the plugin
 	 * holds no grant for it (nothing to widen: the user must first consent to the
-	 * capability through the host-owned consent window).
+	 * capability through the host-owned consent window), or when any member is not
+	 * a valid allowlist token.
 	 */
 	setAllowlistScope(
 		pluginId: string,
@@ -387,6 +388,11 @@ export class AuthorizationStore {
 		if (!entry || !entry.enabled) return false;
 		const idx = entry.caps.findIndex((c) => c.capability === capability);
 		if (idx === -1) return false;
+		// Defense-in-depth: this is the authoritative sealed-ledger mutation, so it
+		// self-guards rather than trusting the caller. Refuse the whole edit if any
+		// member is invalid (empty, or a character that could split or smuggle
+		// through the comma-joined scope) - fail loud, never silently narrow.
+		if (!members.every(isValidAllowlistMember)) return false;
 		const scope = members.length > 0 ? [...members].join(',') : undefined;
 		this.bump();
 		entry.caps = entry.caps.map((c, i) => (i === idx ? { ...c, scope } : { ...c }));

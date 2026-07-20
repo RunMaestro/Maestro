@@ -258,6 +258,21 @@ describe('AuthorizationStore - setAllowlistScope (host-managed allow list, #1250
 		expect(result.authorized).toBe(true);
 		expect(parseAllowlistScope(result.caps[0].scope)).toEqual(['agent-1', 'agent-2']);
 	});
+
+	it('refuses the whole edit if any member is invalid, leaving the scope unchanged', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		// A comma would split the scope into two members; a '*' could smuggle
+		// pattern semantics - both must be refused outright, never silently dropped.
+		expect(
+			store.setAllowlistScope('relay', 'agents:dispatch', ['agent-2', 'agent-1,agent-3'])
+		).toBe(false);
+		expect(store.setAllowlistScope('relay', 'agents:dispatch', ['agent-*'])).toBe(false);
+		// The original scope is untouched.
+		expect(parseAllowlistScope(store.readGrants('relay')[0].scope)).toEqual(['agent-1']);
+	});
 });
 
 describe('AuthorizationStore - persistence', () => {

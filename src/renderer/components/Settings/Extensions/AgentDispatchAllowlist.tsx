@@ -18,6 +18,7 @@ import { parseAllowlistScope, type PermissionGrant } from '../../../../shared/pl
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { notifyToast } from '../../../stores/notificationStore';
+import { captureException } from '../../../utils/sentry';
 
 interface AgentDispatchAllowlistProps {
 	theme: Theme;
@@ -47,12 +48,14 @@ export function AgentDispatchAllowlist({
 	const [checked, setChecked] = useState<Set<string>>(new Set());
 	const [saving, setSaving] = useState(false);
 
-	// Seed the editable set from the persisted scope. Depends ONLY on the scope,
-	// so a live agent status change (a fresh sessions array) never wipes an
-	// in-progress edit.
+	// Seed the editable set from the persisted scope. Reset on pluginId too, so a
+	// switch between plugins whose grants happen to share the same scope string
+	// still re-seeds (belt-and-suspenders with the parent's per-plugin key). Does
+	// NOT depend on the sessions list, so a live agent status change (a fresh
+	// sessions array) never wipes an in-progress edit.
 	useEffect(() => {
 		setChecked(new Set(currentMembers));
-	}, [currentMembers]);
+	}, [currentMembers, pluginId]);
 
 	// Allowed ids that no longer match a live agent (a deleted agent, or a stale
 	// manifest id): unenforceable, and dropped when the user saves.
@@ -87,6 +90,11 @@ export function AgentDispatchAllowlist({
 			onSaved(snapshot);
 			notifyToast({ color: 'green', title: 'Plugins', message: 'Updated dispatch allow list' });
 		} catch (err) {
+			// The IPC only rejects on host-side validation (InvalidAgentIds /
+			// DispatchNotGranted / ...), which the editor's own gating makes
+			// unreachable in normal use - so a failure here is unexpected. Report it
+			// AND surface a toast (this is a user-initiated action, not a silent path).
+			captureException(err, { tags: { pluginId }, extra: { operation: 'setAgentAllowlist' } });
 			notifyToast({
 				color: 'red',
 				title: 'Plugins',

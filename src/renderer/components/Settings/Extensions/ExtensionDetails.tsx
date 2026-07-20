@@ -96,6 +96,10 @@ export function ExtensionDetails({
 			return;
 		}
 		let cancelled = false;
+		// Clear the previous plugin's snapshot synchronously so the async load
+		// below can never pair plugin A's grant with plugin B's id (a stale-grant
+		// window in the dispatch allow-list editor).
+		setGrants(null);
 		void getGrants(ext.id)
 			.then((snap) => {
 				if (!cancelled) setGrants(snap);
@@ -455,6 +459,7 @@ export function ExtensionDetails({
 							const dispatchGrant = grants?.granted.find((g) => g.capability === 'agents:dispatch');
 							return dispatchGrant ? (
 								<AgentDispatchAllowlist
+									key={ext.id}
 									theme={theme}
 									pluginId={ext.id}
 									grant={dispatchGrant}
