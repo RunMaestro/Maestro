@@ -1,0 +1,29 @@
+{
+	"id": "agent-flow",
+	"name": "Agent Flow",
+	"version": "0.1.0",
+	"tier": 2,
+	"maestro": { "minHostApi": "1.13.0" },
+	"description": "Live per-session execution-graph visualization built from host tool + agent lifecycle events.",
+	"category": "insights",
+	"entry": "main.js",
+	"permissions": [
+		{
+			"capability": "events:subscribe",
+			"reason": "Follow tool and agent lifecycle events to build the flow graph."
+		},
+		{ "capability": "ui:panel", "reason": "Render the Agent Flow graph in its own panel." },
+		{
+			"capability": "sessions:read",
+			"reason": "Seed lane titles and agent ids for open sessions at startup."
+		},
+		{ "capability": "storage:read", "reason": "Restore saved panel display preferences." },
+		{ "capability": "storage:write", "reason": "Persist panel display preferences." }
+	],
+	"contributes": {
+		"panels": [
+			{ "id": "flow", "title": "Agent Flow", "entry": "panel.html", "placement": "right" }
+		],
+		"commands": [{ "id": "clear", "title": "Agent Flow: Clear Graph" }]
+	}
+}
