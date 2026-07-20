@@ -1052,6 +1052,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
+	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -1135,6 +1136,19 @@ export interface PluginEventPayloads {
 		pipelineId?: string;
 		pipelineName?: string;
 		lineageDepth?: number;
+	};
+	/** A tool call transitioned. Name + timing ONLY: the tool's `state` object,
+	 * arguments and results are content-bearing and must never appear here. */
+	'tool.executed': {
+		sessionId: string;
+		tabId?: string;
+		toolName: string;
+		toolCallId?: string;
+		/** Best-effort lifecycle string (e.g. running / completed / failed) when
+		 * the provider reports one; omitted otherwise. */
+		phase?: string;
+		timestamp: number;
+		durationMs?: number;
 	};
 }
 

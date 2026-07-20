@@ -111,6 +111,36 @@ describe('PluginEventBusImpl', () => {
 		});
 	});
 
+	it('delivers tool.executed metadata and strips a smuggled state object', () => {
+		let received: PluginEvent | undefined;
+		const push = vi.fn((_id: string, e: PluginEvent) => {
+			received = e;
+			return true;
+		});
+		const bus = new PluginEventBusImpl({ isPermitted: () => true, push });
+		bus.subscribe('a', ['tool.executed']);
+		bus.emit(
+			ev('tool.executed', {
+				sessionId: 's1',
+				toolName: 'Read',
+				toolCallId: 'call-1',
+				phase: 'completed',
+				timestamp: 1700000000000,
+				// A buggy emit site smuggling the tool's state blob: must not survive.
+				state: { input: { path: '/etc/passwd' }, output: 'file contents' },
+			})
+		);
+		expect(push).toHaveBeenCalledTimes(1);
+		expect(received?.payload).toEqual({
+			sessionId: 's1',
+			toolName: 'Read',
+			toolCallId: 'call-1',
+			phase: 'completed',
+			timestamp: 1700000000000,
+		});
+		expect(received?.payload).not.toHaveProperty('state');
+	});
+
 	it('drops the entire payload when it exceeds the serialized size cap', () => {
 		let received: PluginEvent | undefined;
 		const push = vi.fn((_id: string, e: PluginEvent) => {
