@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovementOverlay } from '../../../../renderer/components/Movement/MovementOverlay';
 import { applyMovementPayload, useMovementStore } from '../../../../renderer/stores/movementStore';
@@ -53,5 +53,56 @@ describe('MovementOverlay', () => {
 			'mockup'
 		);
 		expect(useMovementStore.getState().items).toEqual([]);
+	});
+
+	it('keeps HTML frames mounted while the overlay is stashed', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'live-game',
+			viewType: 'html',
+			title: 'Live game',
+			body: '<button>Move</button>',
+		});
+		render(<MovementOverlay theme={mockTheme} />);
+
+		act(() => useMovementStore.getState().setHidden(true));
+
+		expect(screen.getByTestId('concerto-html-iframe')).toBeInTheDocument();
+		expect(screen.getByTestId('movement-panels')).toHaveStyle({ visibility: 'hidden' });
+		expect(screen.getByTitle('Show Concerto windows')).toBeInTheDocument();
+	});
+
+	it('minimizes a Concerto without unmounting it and restores it from the taskbar', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'chess',
+			viewType: 'html',
+			title: 'Chess',
+			body: '<button>Move</button>',
+		});
+		applyMovementPayload({ op: 'add', id: 'notes', title: 'Notes' });
+		render(<MovementOverlay theme={mockTheme} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Minimize Chess' }));
+
+		expect(useMovementStore.getState().items.find((item) => item.id === 'chess')?.minimized).toBe(
+			true
+		);
+		expect(screen.getByTestId('concerto-html-iframe')).toBeInTheDocument();
+		expect(document.querySelector('[data-movement-id="chess"]')).toHaveStyle({
+			visibility: 'hidden',
+		});
+
+		fireEvent.mouseEnter(screen.getByTestId('movement-taskbar'));
+		expect(screen.getByLabelText('Concerto taskbar')).toHaveAttribute('aria-hidden', 'false');
+		fireEvent.click(screen.getByRole('button', { name: 'Restore Chess' }));
+
+		expect(useMovementStore.getState().items.at(-1)).toMatchObject({
+			id: 'chess',
+			minimized: false,
+		});
+		expect(document.querySelector('[data-movement-id="chess"]')).toHaveStyle({
+			visibility: 'visible',
+		});
 	});
 });

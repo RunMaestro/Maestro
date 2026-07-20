@@ -9,7 +9,11 @@ import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
-import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
+import {
+	applyMovementPayload,
+	getMovementSnapshot,
+	useMovementStore,
+} from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
@@ -741,7 +745,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
-				void getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision)
+				// Inspection is read-only for the iframe, but the requested panel must be
+				// visible above overlapping peers for Chromium's compositor crop to show it.
+				flushSync(() => useMovementStore.getState().surfaceItem(id));
+				void new Promise<void>((resolve) => window.setTimeout(resolve, 50))
+					.then(() => getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision))
 					.then((snapshot) =>
 						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
 					)

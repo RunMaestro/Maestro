@@ -217,6 +217,32 @@ describe('movementStore actions', () => {
 		useMovementStore.getState().resizeItem('a', 50, 40);
 		expect(useMovementStore.getState().items[0]).toMatchObject({ width: 200, height: 120 });
 	});
+
+	it('surfaceItem un-stashes a panel and moves it above overlapping peers', () => {
+		applyMovementPayload({ op: 'add', id: 'a' });
+		applyMovementPayload({ op: 'add', id: 'b' });
+		useMovementStore.getState().setItemMinimized('a', true);
+		useMovementStore.getState().setHidden(true);
+
+		useMovementStore.getState().surfaceItem('a');
+
+		expect(useMovementStore.getState().hidden).toBe(false);
+		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['b', 'a']);
+		expect(useMovementStore.getState().items[1].minimized).toBe(false);
+	});
+
+	it('minimizes only the requested panel and preserves that choice across updates', () => {
+		applyMovementPayload({ op: 'add', id: 'a' });
+		applyMovementPayload({ op: 'add', id: 'b' });
+
+		useMovementStore.getState().setItemMinimized('a', true);
+		applyMovementPayload({ op: 'update', id: 'a', title: 'Updated' });
+
+		expect(useMovementStore.getState().items).toMatchObject([
+			{ id: 'a', minimized: true, title: 'Updated' },
+			{ id: 'b', minimized: false },
+		]);
+	});
 });
 
 describe('getMovementSnapshot', () => {
@@ -243,9 +269,12 @@ describe('flashItem', () => {
 	});
 
 	it('un-stashes the overlay, pulses the id, then clears after the timeout', () => {
+		applyMovementPayload({ op: 'add', id: 'deploy' });
+		applyMovementPayload({ op: 'add', id: 'other' });
 		useMovementStore.setState({ hidden: true });
-		useMovementStore.getState().flashItem('a');
-		expect(useMovementStore.getState()).toMatchObject({ hidden: false, flashedId: 'a' });
+		useMovementStore.getState().flashItem('deploy');
+		expect(useMovementStore.getState()).toMatchObject({ hidden: false, flashedId: 'deploy' });
+		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['other', 'deploy']);
 		vi.advanceTimersByTime(2200);
 		expect(useMovementStore.getState().flashedId).toBeNull();
 	});

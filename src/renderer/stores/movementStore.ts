@@ -25,6 +25,8 @@ export const MOVEMENT_HTML_DEFAULT_HEIGHT = 560;
 export interface MovementItem {
 	id: string;
 	viewType: MovementViewType;
+	/** User-minimized panels stay mounted so interactive HTML state is preserved. */
+	minimized: boolean;
 	x: number;
 	y: number;
 	/** Fixed width; defaults to MOVEMENT_ITEM_DEFAULT_WIDTH. */
@@ -75,6 +77,9 @@ export interface MovementStoreActions {
 	clearItems: () => void;
 	setViewport: (width: number, height: number) => void;
 	setHidden: (hidden: boolean) => void;
+	setItemMinimized: (id: string, minimized: boolean) => void;
+	/** Restore, un-stash, and move a panel above its peers without remounting it. */
+	surfaceItem: (id: string) => void;
 	/** Un-stash the overlay and pulse the panel with this id (chat-chip "point"). */
 	flashItem: (id: string) => void;
 }
@@ -159,9 +164,37 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 
 	setHidden: (hidden) => set({ hidden }),
 
+	setItemMinimized: (id, minimized) =>
+		set((s) => {
+			let changed = false;
+			const items = s.items.map((item) => {
+				if (item.id !== id || item.minimized === minimized) return item;
+				changed = true;
+				return { ...item, minimized };
+			});
+			return changed ? { items } : s;
+		}),
+
+	surfaceItem: (id) =>
+		set((s) => {
+			const index = s.items.findIndex((item) => item.id === id);
+			if (index < 0) return s;
+			const target = s.items[index];
+			const surfaced = target.minimized ? { ...target, minimized: false } : target;
+			if (index === s.items.length - 1) {
+				if (!s.hidden && surfaced === target) return s;
+				return { hidden: false, items: [...s.items.slice(0, index), surfaced] };
+			}
+			return {
+				hidden: false,
+				items: [...s.items.slice(0, index), ...s.items.slice(index + 1), surfaced],
+			};
+		}),
+
 	// Chat-chip "point": surface the overlay and pulse the target panel for a moment.
 	flashItem: (id) => {
-		set({ hidden: false, flashedId: id });
+		get().surfaceItem(id);
+		set({ flashedId: id });
 		scheduleFlashClear(
 			() => get().flashedId,
 			() => set({ flashedId: null }),
@@ -239,6 +272,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 	store.upsertItem({
 		id: p.id,
 		viewType,
+		minimized: existing?.minimized ?? false,
 		...clampPosition(
 			p.x ?? existing?.x ?? 24 + step,
 			p.y ?? existing?.y ?? 24 + step,
