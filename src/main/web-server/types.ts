@@ -359,6 +359,71 @@ export type NewAITabWithPromptCallback = (
 	prompt: string,
 	background?: boolean
 ) => Promise<NewAITabWithPromptResult>;
+/**
+ * Result of enqueuing (or immediately dispatching) a CLI prompt into the
+ * renderer's authoritative execution queue. When the target session is busy the
+ * prompt joins `session.executionQueue` (FIFO by timestamp); when idle it is
+ * dispatched immediately through the same path as a plain `dispatch`. Surfaced
+ * so `maestro-cli dispatch --queue` can report the queue position to callers.
+ */
+export type EnqueueCommandResult = {
+	success: boolean;
+	tabId?: string;
+	/** True when the prompt was queued (session busy); false when dispatched now. */
+	queued?: boolean;
+	/** 1-based position in the queue when queued (1 = next to run). */
+	queuePosition?: number;
+	/** Total number of items in the queue after enqueuing. */
+	queueLength?: number;
+	/** Id of the queued item, for later tracking or removal. */
+	itemId?: string;
+	error?: string;
+};
+export type EnqueueCommandCallback = (
+	sessionId: string,
+	command: string,
+	inputMode?: 'ai' | 'terminal',
+	tabId?: string,
+	images?: string[],
+	background?: boolean
+) => Promise<EnqueueCommandResult>;
+/**
+ * A single queued item, mirrored from the renderer's executionQueue for CLI
+ * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
+ */
+export interface QueuedItemSnapshot {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: 'message' | 'command';
+	text?: string;
+	command?: string;
+	commandArgs?: string;
+	tabName?: string;
+	paused?: boolean;
+}
+/**
+ * Per-session queue snapshot returned by the list_queue round-trip. Carries the
+ * session state alongside the queued items so `maestro-cli queue list` can show
+ * whether the agent is currently busy.
+ */
+export interface QueueSessionSnapshot {
+	sessionId: string;
+	name: string;
+	state: string;
+	items: QueuedItemSnapshot[];
+}
+export type ListQueueResult = {
+	success: boolean;
+	queues: QueueSessionSnapshot[];
+	error?: string;
+};
+export type ListQueueCallback = (sessionId?: string) => Promise<ListQueueResult>;
+export type RemoveQueueItemResult = { success: boolean; removed: boolean; error?: string };
+export type RemoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<RemoveQueueItemResult>;
 export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
