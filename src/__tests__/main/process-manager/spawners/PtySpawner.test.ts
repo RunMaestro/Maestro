@@ -245,7 +245,7 @@ describe('PtySpawner', () => {
 			expect(processes.get('my-session')?.pid).toBe(99999);
 		});
 
-		it('sets isTerminal=true for all PTY processes', () => {
+		it('records terminal identity independently of the PTY transport', () => {
 			const { spawner, processes } = createTestContext();
 
 			// Shell terminal
@@ -262,6 +262,18 @@ describe('PtySpawner', () => {
 				})
 			);
 			expect(processes.get('ssh-session')?.isTerminal).toBe(true);
+
+			// AI agent that requires a PTY
+			spawner.spawn(
+				createBaseConfig({
+					sessionId: 'agent-pty-session',
+					toolType: 'claude-code',
+					command: 'claude',
+					args: [],
+					shell: undefined,
+				})
+			);
+			expect(processes.get('agent-pty-session')?.isTerminal).toBe(false);
 		});
 	});
 });

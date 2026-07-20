@@ -775,6 +775,39 @@ describe('process-manager.ts', () => {
 				expect(liveChildProcess.kill).not.toHaveBeenCalled();
 				expect(processManager.get('dup-agent-session')).toBe(liveProcess);
 			});
+
+			it('should retain an exited agent until close cleanup drains its output', () => {
+				const processes = (processManager as any).processes as Map<string, any>;
+				const exitingChildProcess = {
+					pid: 32829,
+					exitCode: 0,
+					signalCode: null,
+					kill: vi.fn(),
+				};
+				const exitingProcess = {
+					sessionId: 'draining-agent-session',
+					toolType: 'codex',
+					isTerminal: false,
+					pid: 32829,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					childProcess: exitingChildProcess,
+				};
+				processes.set('draining-agent-session', exitingProcess);
+
+				expect(() =>
+					processManager.spawn({
+						sessionId: 'draining-agent-session',
+						toolType: 'codex',
+						cwd: '/tmp',
+						command: 'codex',
+						args: ['exec', '--json'],
+						prompt: 'replayed turn',
+					})
+				).toThrow('Agent process already running for session draining-agent-session');
+				expect(exitingChildProcess.kill).not.toHaveBeenCalled();
+				expect(processManager.get('draining-agent-session')).toBe(exitingProcess);
+			});
 		});
 
 		describe('killAll() map safety', () => {

@@ -133,7 +133,7 @@ export class PtySpawner {
 				ptyProcess,
 				cwd,
 				pid: ptyProcess.pid,
-				isTerminal: true,
+				isTerminal,
 				startTime: Date.now(),
 				command: ptyCommand,
 				args: ptyArgs,
@@ -163,7 +163,7 @@ export class PtySpawner {
 							pid: ptyProcess.pid,
 							dataLength: data.length,
 						});
-						this.bufferManager.emitDataBuffered(sessionId, data);
+						this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
 					}
 				} else {
 					const managedProc = this.processes.get(sessionId);
@@ -175,14 +175,14 @@ export class PtySpawner {
 					});
 					// Only emit if there's actual content after filtering
 					if (cleanedData.trim()) {
-						this.bufferManager.emitDataBuffered(sessionId, cleanedData);
+						this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
 					}
 				}
 			});
 
 			ptyProcess.onExit(({ exitCode, signal }) => {
 				// Flush any remaining buffered data before exit
-				this.bufferManager.flushDataBuffer(sessionId);
+				this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 				logger.debug('[ProcessManager] PTY onExit', 'ProcessManager', {
 					sessionId,

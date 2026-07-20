@@ -99,9 +99,11 @@ export class ProcessManager extends EventEmitter {
 			}
 		}
 
-		// Never replace a live AI process. Renderer state can briefly lag process
-		// state, and destructive replacement loses the first turn's final output.
-		// Exited entries may be replaced for flows such as Claude limit replay.
+		// Never replace an AI process while it still owns the session entry. Node's
+		// `exit` event can set exitCode before `close` drains stdout, so exitCode is
+		// not enough to prove that the final response has been reconciled. The exit
+		// handler removes the entry before emitting `exit`, which lets replay flows
+		// start the next process without racing the old process's trailing output.
 		// Terminals intentionally keep their existing restart behavior.
 		const existing = this.processes.get(config.sessionId);
 		if (existing) {
@@ -115,8 +117,8 @@ export class ProcessManager extends EventEmitter {
 				existing.ptyProcess !== undefined ||
 				existing.sdkController !== undefined;
 
-			if (!existing.isTerminal && existingProcessRunning) {
-				logger.warn('[ProcessManager] Refusing to replace live agent process', 'ProcessManager', {
+			if (!existing.isTerminal) {
+				logger.warn('[ProcessManager] Refusing to replace owned agent process', 'ProcessManager', {
 					sessionId: config.sessionId,
 					existingPid: existing.pid,
 					existingToolType: existing.toolType,

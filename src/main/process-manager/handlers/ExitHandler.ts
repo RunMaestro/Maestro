@@ -61,7 +61,7 @@ export class ExitHandler {
 		const { isBatchMode, isStreamJsonMode, outputParser, toolType } = managedProcess;
 
 		// Flush any remaining buffered data before exit
-		this.bufferManager.flushDataBuffer(sessionId);
+		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 		logger.debug('[ProcessManager] Child process exit event', 'ProcessManager', {
 			sessionId,
@@ -121,12 +121,12 @@ export class ExitHandler {
 					managedProcess.resultEmitted = true;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
+						this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 					}
 				}
 			} catch {
 				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine);
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
 			}
 		}
 
@@ -142,7 +142,7 @@ export class ExitHandler {
 					streamedTextLength: managedProcess.streamedText.length,
 				}
 			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -301,12 +301,25 @@ export class ExitHandler {
 		// Final flush: ensure any data buffered during exit processing
 		// (e.g., from jsonBuffer remainder or streamedText fallback) is emitted
 		// before the exit event, so listeners see all data before exit fires.
-		this.bufferManager.flushDataBuffer(sessionId);
+		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
-		this.emitter.emit('exit', sessionId, code);
-		if (this.processes.get(sessionId) === managedProcess) {
+		const currentProcess = this.processes.get(sessionId);
+		if (currentProcess && currentProcess !== managedProcess) {
+			logger.warn('[ProcessManager] Ignoring stale process exit', 'ProcessManager', {
+				sessionId,
+				exitingPid: managedProcess.pid,
+				currentPid: currentProcess.pid,
+			});
+			return;
+		}
+
+		// Release ownership before notifying listeners. Replay handlers can spawn
+		// the next process synchronously from `exit` without replacing this one
+		// before its final buffered data has been emitted.
+		if (currentProcess === managedProcess) {
 			this.processes.delete(sessionId);
 		}
+		this.emitter.emit('exit', sessionId, code);
 	}
 
 	/**

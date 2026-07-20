@@ -391,6 +391,20 @@ describe('ExitHandler', () => {
 			expect(processes.has('test-session')).toBe(false);
 		});
 
+		it('should release the session before exit listeners run', async () => {
+			const proc = createMockProcess();
+			processes.set('test-session', proc);
+
+			let processAtExit: ManagedProcess | undefined;
+			emitter.on('exit', () => {
+				processAtExit = processes.get('test-session');
+			});
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(processAtExit).toBeUndefined();
+		});
+
 		it('should emit exit event for unknown sessions', async () => {
 			const exitEvents: Array<{ sessionId: string; code: number }> = [];
 			emitter.on('exit', (sid: string, code: number) => exitEvents.push({ sessionId: sid, code }));
@@ -401,13 +415,20 @@ describe('ExitHandler', () => {
 		});
 
 		it('should not delete a newer process registered under the same sessionId', async () => {
-			const exitingProcess = createMockProcess({ pid: 11111 });
-			const replacementProcess = createMockProcess({ pid: 22222 });
+			const exitingProcess = createMockProcess({ pid: 11111, dataBuffer: 'old tail' });
+			const replacementProcess = createMockProcess({ pid: 22222, dataBuffer: 'new output' });
 			processes.set('test-session', replacementProcess);
+			const dataEvents: string[] = [];
+			const exitEvents: number[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
 
 			await exitHandler.handleExit('test-session', 0, exitingProcess);
 
 			expect(processes.get('test-session')).toBe(replacementProcess);
+			expect(replacementProcess.dataBuffer).toBe('new output');
+			expect(dataEvents).toEqual(['old tail']);
+			expect(exitEvents).toEqual([]);
 		});
 	});
 
