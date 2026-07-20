@@ -21,7 +21,6 @@ import { seedSidebarNav, resetSidebarNavStore } from '../helpers/seedSidebarNav'
 import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { useUIStore } from '../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
-import { useEffect } from 'react';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
@@ -383,8 +382,10 @@ const IntegrationTestWrapper = ({
 	// SessionList reads Zustand; keep local harness state mirrored into stores.
 	useEffect(() => {
 		useSessionStore.setState({ sessions, groups, activeSessionId });
-		seedSidebarNav({ sessions, groups, activeSessionId });
-	}, [sessions, groups, activeSessionId]);
+		// Pass bookmarksCollapsed explicitly: this effect can run before the UI
+		// store mirror below, and seedSidebarNav must not read a stale value.
+		seedSidebarNav({ sessions, groups, activeSessionId, bookmarksCollapsed });
+	}, [sessions, groups, activeSessionId, bookmarksCollapsed]);
 
 	useEffect(() => {
 		useUIStore.setState({

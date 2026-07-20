@@ -6,7 +6,7 @@
  * body; only its own store subscriptions wake it.
  */
 
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -15,6 +15,7 @@ import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { computeSortedSessions } from './computeSortedSessions';
 import { useStarredItems } from './useStarredItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { scopeSessionsToOwningWindow } from '../../utils/windowTargets';
 
 function SidebarNavSyncInner() {
 	const windowCtx = useWindowContextOptional();
@@ -33,10 +34,20 @@ function SidebarNavSyncInner() {
 	const setSortedProjection = useSidebarNavStore((s) => s.setSortedProjection);
 	const setStarredItems = useSidebarNavStore((s) => s.setStarredItems);
 
-	useEffect(() => {
+	// Same window scope SessionList applies so keyboard / unread / cycle read the
+	// agents this window actually shows (primary catch-all / secondary claimed).
+	const sessionsForWindow = useMemo(
+		() => scopeSessionsToOwningWindow(sessions, ownsSession),
+		[sessions, ownsSession]
+	);
+
+	// useLayoutEffect (not useEffect): publish before paint and before parent
+	// passive effects so the first committed frame and same-tick nav commands
+	// see the current projection instead of the store's empty/previous one.
+	useLayoutEffect(() => {
 		setSortedProjection(
 			computeSortedSessions({
-				sessions,
+				sessions: sessionsForWindow,
 				groups,
 				bookmarksCollapsed,
 				showUnreadAgentsOnly,
@@ -44,7 +55,7 @@ function SidebarNavSyncInner() {
 			})
 		);
 	}, [
-		sessions,
+		sessionsForWindow,
 		groups,
 		bookmarksCollapsed,
 		showUnreadAgentsOnly,
@@ -81,7 +92,7 @@ function SidebarNavSyncInner() {
 		ownsSession,
 	});
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		setStarredItems(starredItems);
 	}, [starredItems, setStarredItems]);
 

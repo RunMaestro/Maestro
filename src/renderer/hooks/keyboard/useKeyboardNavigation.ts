@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
@@ -203,7 +203,8 @@ export function useKeyboardNavigation(
 	showUnreadAgentsOnlyRef.current = showUnreadAgentsOnly;
 
 	// When App omits nav/starred props, keep refs fresh without re-rendering App.
-	useEffect(() => {
+	// useLayoutEffect: run after SidebarNavSync's layout publish, sync refs before paint.
+	useLayoutEffect(() => {
 		if (
 			sortedSessionsProp !== undefined &&
 			navSessionsProp !== undefined &&
@@ -213,7 +214,8 @@ export function useKeyboardNavigation(
 		) {
 			return;
 		}
-		return useSidebarNavStore.subscribe((state) => {
+
+		const syncFromStore = (state: ReturnType<typeof useSidebarNavStore.getState>) => {
 			if (sortedSessionsProp === undefined) {
 				sortedSessionsRef.current = state.sortedSessions;
 			}
@@ -229,7 +231,12 @@ export function useKeyboardNavigation(
 			if (activateStarredItemProp === undefined) {
 				activateStarredItemRef.current = state.activateStarredItem;
 			}
-		});
+		};
+
+		// Subscribe alone misses the projection SidebarNavSync already published
+		// in layout (subscribe only fires on later writes). Sync once immediately.
+		syncFromStore(useSidebarNavStore.getState());
+		return useSidebarNavStore.subscribe(syncFromStore);
 	}, [
 		sortedSessionsProp,
 		navSessionsProp,
