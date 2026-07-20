@@ -880,9 +880,18 @@ export class WebServer {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force, images),
+				this.callbackRegistry.executeCommand(
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					force,
+					images,
+					background
+				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
@@ -909,8 +918,8 @@ export class WebServer {
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null }
 			) => this.callbackRegistry.openTerminalTab(sessionId, config),
-			newAITabWithPrompt: async (sessionId: string, prompt: string) =>
-				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt),
+			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
+				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			refreshAutoRunDocs: async (sessionId: string) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId),
 			configureAutoRun: async (

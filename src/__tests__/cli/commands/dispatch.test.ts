@@ -33,7 +33,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('default (active tab) flow', () => {
-		it('sends send_command with no tabId and surfaces the desktop-supplied tabId', async () => {
+		it('sends send_command in the background by default (no tabId) and surfaces the desktop-supplied tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'command_result',
@@ -53,6 +53,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
+					background: true,
 				},
 				'command_result'
 			);
@@ -87,7 +88,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('--new-tab flow', () => {
-		it('sends new_ai_tab_with_prompt and returns the freshly-created tabId', async () => {
+		it('sends new_ai_tab_with_prompt in the background by default and returns the freshly-created tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',
@@ -106,6 +107,7 @@ describe('dispatch command', () => {
 					type: 'new_ai_tab_with_prompt',
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
+					background: true,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -152,6 +154,86 @@ describe('dispatch command', () => {
 		});
 	});
 
+	describe('--focus (foreground opt-in)', () => {
+		it('omits background from send_command when --focus is passed', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-active-99',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			// Commander sets `focus: true` when `--focus` is passed.
+			await dispatch('agent-abc', 'Hello world', { focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Hello world',
+					inputMode: 'ai',
+				},
+				'command_result'
+			);
+		});
+
+		it('omits background from new_ai_tab_with_prompt when --focus is combined with --new-tab', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'new_ai_tab_with_prompt_result',
+				success: true,
+				tabId: 'tab-fresh-42',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Open a new conversation', { newTab: true, focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'agent-abc-123',
+					prompt: 'Open a new conversation',
+				},
+				'new_ai_tab_with_prompt_result'
+			);
+		});
+
+		it('forwards tabId but omits background when --tab is combined with --focus', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-xyz',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			// The options.tab spread runs alongside the background omission; this
+			// covers that distinct payload-building path (tabId present, no background).
+			await dispatch('agent-abc', 'Follow up', { tab: 'tab-xyz', focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Follow up',
+					inputMode: 'ai',
+					tabId: 'tab-xyz',
+				},
+				'command_result'
+			);
+		});
+	});
+
 	describe('--tab <tabId> flow', () => {
 		it('forwards the requested tabId in send_command so the desktop targets that tab', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -174,6 +256,7 @@ describe('dispatch command', () => {
 					command: 'Follow up',
 					inputMode: 'ai',
 					tabId: 'tab-xyz',
+					background: true,
 				},
 				'command_result'
 			);
@@ -238,6 +321,7 @@ describe('dispatch command', () => {
 					command: 'Concurrent message',
 					inputMode: 'ai',
 					force: true,
+					background: true,
 				},
 				'command_result'
 			);

@@ -91,7 +91,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
@@ -156,9 +157,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					);
 				}
 
-				// Switch to the target session (for visual feedback)
-				setActiveSessionId(sessionId);
-				logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
+				// Switch to the target session (for visual feedback) unless this is a
+				// background dispatch. Background is the default for `dispatch`; passing
+				// `--focus` re-enables switching to the target agent/tab.
+				if (!background) {
+					setActiveSessionId(sessionId);
+					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
+				}
 
 				// Dispatch event directly - handleRemoteCommand handles all the logic
 				// Don't set inputValue - we don't want command text to appear in the input bar
@@ -353,17 +358,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote "new AI tab with prompt" from CLI (send --live --new-tab).
-		// Atomically creates a fresh AI tab, makes it active, and dispatches the
-		// prompt through the same maestro:remoteCommand event path that --live
-		// uses - so downstream spawn/history/state flows are identical.
-		// flushSync forces React to commit the new tab as active before we fire
-		// the event; without it the downstream handler reads stale activeTabId
-		// and writes the prompt into the previously-active tab.
+		// Handle remote "new AI tab with prompt" from CLI (dispatch --new-tab).
+		// Atomically creates a fresh AI tab and dispatches the prompt through the
+		// same maestro:remoteCommand event path that a plain dispatch uses, so
+		// downstream spawn/history/state flows are identical. A background dispatch
+		// (the default) creates the new tab without focus so the user's current view
+		// is preserved; `dispatch --focus` makes the new tab active instead. flushSync
+		// forces React to commit the new tab into session state before we fire the event,
+		// so the downstream handler can resolve the freshly-created tabId (which we
+		// always pass explicitly) instead of racing on a stale snapshot.
 		// Ack the renderer result on responseChannel so the CLI only reports
 		// success when a tab was actually created.
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(sessionId: string, prompt: string, responseChannel: string) => {
+			(sessionId: string, prompt: string, responseChannel: string, background?: boolean) => {
 				// Guard: the downstream maestro:remoteCommand handler drops commands
 				// for missing or busy sessions. Check here so we don't create an
 				// orphan tab and falsely ack success.
@@ -390,13 +397,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							const result = createTab(s, {
 								saveToHistory: defaultSaveToHistory,
 								showThinking: defaultShowThinking,
+								// Background dispatch is the default (`--focus` opts into the
+								// foreground): create the tab without making it active so the
+								// user's current view is preserved.
+								activate: !background,
 							});
 							if (!result) return s;
 							createdTabId = result.tab.id;
 							return result.session;
 						})
 					);
-					if (createdTabId) {
+					if (createdTabId && !background) {
 						setActiveSessionId(sessionId);
 					}
 				});

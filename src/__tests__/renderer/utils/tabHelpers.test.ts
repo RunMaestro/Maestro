@@ -279,6 +279,35 @@ describe('tabHelpers', () => {
 			expect(result.session.activeTabId).toBe(result.tab.id);
 		});
 
+		it('does NOT change the active tab or view when activate is false (background create)', () => {
+			const existingTab = createMockTab({ id: 'existing-tab' });
+			const session = createMockSession({
+				aiTabs: [existingTab],
+				activeTabId: 'existing-tab',
+				activeBrowserTabId: 'browser-1',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				inputMode: 'terminal',
+				activeGroupId: 'group-1',
+			});
+
+			const result = createTab(session, { activate: false })!;
+
+			// The new tab is appended and ordered, but every focus-related field
+			// is preserved so the user's visible view never changes.
+			expect(result.session.aiTabs).toHaveLength(2);
+			expect(result.session.aiTabs[1]).toBe(result.tab);
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: result.tab.id });
+			expect(result.session.activeTabId).toBe('existing-tab');
+			expect(result.session.activeBrowserTabId).toBe('browser-1');
+			expect(result.session.activeFileTabId).toBe('file-1');
+			expect(result.session.activeTerminalTabId).toBe('term-1');
+			expect(result.session.inputMode).toBe('terminal');
+			// activeGroupId is preserved too: a background create must not leave the
+			// active tiled group (doing so would let the group steal the panel).
+			expect(result.session.activeGroupId).toBe('group-1');
+		});
+
 		it('clears activeBrowserTabId when creating a new AI tab', () => {
 			const existingTab = createMockTab({ id: 'existing-tab' });
 			const session = createMockSession({

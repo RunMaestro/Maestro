@@ -292,7 +292,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -316,7 +317,8 @@ describe('WebSocketMessageHandler', () => {
 					'terminal',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 		});
@@ -381,7 +383,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					'tab-explicit',
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -411,7 +414,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 
@@ -449,7 +453,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 		});
@@ -472,13 +477,36 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					true,
-					undefined
+					undefined,
+					false
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('forwards background=true to executeCommand (dispatch backgrounds by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'quietly',
+				inputMode: 'ai',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'quietly',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					true
+				);
+			});
 		});
 
 		it('should reject command when session not found', () => {
@@ -1269,7 +1297,8 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
-					'Summarize the repo'
+					'Summarize the repo',
+					false
 				);
 			});
 
@@ -1280,6 +1309,23 @@ describe('WebSocketMessageHandler', () => {
 			// PR1: surface the freshly-created tabId so `dispatch --new-tab`
 			// can return an addressable id without owning a persistent channel.
 			expect(response.tabId).toBe('tab-mock-123');
+		});
+
+		it('forwards background=true to newAITabWithPrompt (dispatch --new-tab backgrounds by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					true
+				);
+			});
 		});
 
 		it('should reject missing sessionId', () => {

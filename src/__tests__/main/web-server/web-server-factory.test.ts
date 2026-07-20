@@ -694,6 +694,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -714,6 +715,7 @@ describe('web-server/web-server-factory', () => {
 				'follow up',
 				'ai',
 				'tab-7',
+				undefined,
 				undefined,
 				undefined
 			);
@@ -736,6 +738,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined
 			);
 		});
@@ -765,7 +768,8 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				undefined,
-				images
+				images,
+				undefined
 			);
 		});
 

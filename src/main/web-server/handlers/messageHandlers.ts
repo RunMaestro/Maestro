@@ -161,6 +161,7 @@ export interface WebClientMessage {
 	filePath?: string;
 	focus?: boolean;
 	force?: boolean;
+	background?: boolean;
 	[key: string]: unknown;
 }
 
@@ -207,7 +208,8 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		force?: boolean,
-		images?: string[]
+		images?: string[],
+		background?: boolean
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -227,7 +229,8 @@ export interface MessageHandlerCallbacks {
 	) => Promise<boolean>;
 	newAITabWithPrompt: (
 		sessionId: string,
-		prompt: string
+		prompt: string,
+		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
@@ -909,6 +912,10 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// background=true suppresses the desktop's focus side effect (switching
+		// to the target agent/tab). `maestro-cli dispatch` sets this by default;
+		// passing `--focus` clears it to bring the target to the foreground.
+		const background = message.background === true;
 		// Optional base64 data URLs pasted from the web client. Threaded through
 		// to the renderer so AI tabs can include them in the agent prompt.
 		const images = Array.isArray(message.images)
@@ -987,7 +994,15 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
+				.executeCommand(
+					sessionId,
+					effectiveCommand,
+					clientInputMode,
+					requestedTabId,
+					force,
+					images,
+					background
+				)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
@@ -2124,6 +2139,9 @@ export class WebSocketMessageHandler {
 	private handleNewAITabWithPrompt(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+		// background=true creates the tab without switching to/focusing it.
+		// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
+		const background = message.background === true;
 		// Prompts can contain user-authored content with secrets or PII -
 		// log length only rather than a raw preview.
 		logger.info(
@@ -2158,7 +2176,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.newAITabWithPrompt(sessionId, prompt)
+			.newAITabWithPrompt(sessionId, prompt, background)
 			.then((result) => {
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
