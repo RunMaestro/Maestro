@@ -113,6 +113,15 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		expect(keys).toContain('forwardHostView');
 	});
 
+	it('wires the panel-post sink together with the own-panel lookup', () => {
+		// The sink without `getPanel` would leave the own-panels-only check with no
+		// resolver, so every post would deny (or, if the check were dropped, let a
+		// plugin push into another plugin's panel). Pin them as a pair.
+		if (keys.includes('panelPost')) {
+			expect(keys).toContain('getPanel');
+		}
+	});
+
 	it('production blesses NO spawn binaries - the only register() site is the env-gated DEMO blessing', () => {
 		// Exactly one register call may exist, and it must sit behind both the
 		// DEMO_MODE flag and the harness env var. Adding a second call site (or

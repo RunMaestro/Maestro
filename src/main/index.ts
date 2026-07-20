@@ -2287,6 +2287,17 @@ app
 					if (operation === 'remove') return pluginHostViews.remove(pluginId, localId);
 					return blocks === undefined ? false : pluginHostViews.update(pluginId, localId, blocks);
 				},
+				// ui.panelPost: resolve the caller's LOCAL panel id against its own
+				// declarations (a foreign or already-namespaced id never matches), then
+				// broadcast the validated, size-capped JSON to every renderer. The
+				// renderer hands it to the matching panel webview; nothing evaluates it.
+				getPanel: (pluginId, localId) =>
+					pluginManager
+						?.getContributions()
+						.panels.find((p) => p.pluginId === pluginId && p.localId === localId) ?? null,
+				panelPost: (pluginId, panelId, data) => {
+					safeSend('plugins:panel-data', { pluginId, panelId, data });
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;

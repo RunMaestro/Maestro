@@ -126,6 +126,25 @@ export function createPluginsApi() {
 			};
 		},
 
+		/**
+		 * Subscribe to host-to-panel data pushes (`ui.panelPost`). The main process
+		 * broadcasts `plugins:panel-data` with the already-namespaced panel id and
+		 * validated, size-capped JSON data; the panel frame forwards it into the
+		 * matching webview guest. Read-only signal - there is no reply channel.
+		 */
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				payload: { pluginId: string; panelId: string; data: unknown }
+			): void => callback(payload);
+			ipcRenderer.on('plugins:panel-data', handler);
+			return () => {
+				ipcRenderer.removeListener('plugins:panel-data', handler);
+			};
+		},
+
 		onGroupingsChanged: (callback: () => void): (() => void) => {
 			const handler = (): void => callback();
 			ipcRenderer.on('plugins:groupings-changed', handler);

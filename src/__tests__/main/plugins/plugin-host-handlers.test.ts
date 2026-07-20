@@ -301,6 +301,102 @@ describe('ui.hostViewUpdate / ui.hostViewRemove', () => {
 	});
 });
 
+describe('ui.panelPost', () => {
+	// The plugin 'p' declares one panel with local id 'flow'.
+	const getPanel = (pluginId: string, localId: string) =>
+		pluginId === 'p' && localId === 'flow'
+			? {
+					id: 'p/flow',
+					localId: 'flow',
+					pluginId: 'p',
+					title: 'Agent Flow',
+					entry: 'panel.html',
+					placement: 'modal' as const,
+				}
+			: null;
+
+	it('is not registered at all when the sink dependency is absent (fail closed)', () => {
+		// makeDeps() supplies no panelPost, mirroring how agents.dispatch is
+		// unregistered without deps.dispatch.
+		const h = buildHostCallHandlers(makeDeps());
+		expect(h['ui.panelPost']).toBeUndefined();
+	});
+
+	it('denies when ui:panel is not granted', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => []) })
+		);
+		await expect(h['ui.panelPost']!('p', { panelId: 'flow', data: { n: 1 } })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(panelPost).not.toHaveBeenCalled();
+	});
+
+	it('posts to an own declared panel and forwards the namespaced id', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'flow', data: { n: 1 } })
+		).resolves.toEqual({ ok: true });
+		expect(panelPost).toHaveBeenCalledWith('p', 'p/flow', { n: 1 });
+	});
+
+	it('denies posting to an undeclared or another plugin\'s panel id', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		// Undeclared local id.
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'nope', data: {} })
+		).rejects.toThrow(/not declared/);
+		// An already-namespaced or foreign id is treated as a local id and never
+		// resolves against this plugin's declarations.
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'other/flow', data: {} })
+		).rejects.toThrow(/not declared/);
+		expect(panelPost).not.toHaveBeenCalled();
+	});
+
+	it('denies non-JSON-serializable data', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		const circular: Record<string, unknown> = {};
+		circular.self = circular;
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'flow', data: circular })
+		).rejects.toThrow(/JSON-serializable/);
+		expect(panelPost).not.toHaveBeenCalled();
+	});
+
+	it('denies data over MAX_PANEL_POST_BYTES', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'flow', data: 'x'.repeat(64 * 1024 + 1) })
+		).rejects.toThrow(/size limit/);
+		expect(panelPost).not.toHaveBeenCalled();
+	});
+
+	it('rejects a caller-supplied extra field (closed schema)', async () => {
+		const panelPost = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelPost, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await expect(
+			h['ui.panelPost']!('p', { panelId: 'flow', data: {}, extra: 1 })
+		).rejects.toThrow(/closed schema/);
+		expect(panelPost).not.toHaveBeenCalled();
+	});
+});
+
 describe('events.subscribe / events.unsubscribe', () => {
 	it('delegate to the bus and filter to catalog topics', async () => {
 		const bus = new PluginEventBusImpl({ isPermitted: () => true, push: () => true });

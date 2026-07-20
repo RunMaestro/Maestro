@@ -37,6 +37,7 @@ import {
 	pluginPanelPartition,
 	pluginPanelUrl,
 	PANEL_BRIDGE_CHANNEL,
+	PANEL_DATA_CHANNEL,
 } from '../../../shared/plugins/panel-host';
 import { notifyToast } from '../../stores/notificationStore';
 
@@ -52,6 +53,8 @@ interface PluginPanelFrameProps {
 interface PanelWebviewElement extends HTMLElement {
 	addEventListener(type: string, listener: (event: Event) => void): void;
 	removeEventListener(type: string, listener: (event: Event) => void): void;
+	/** Structured-clone push into the guest (host-to-panel data, one-way). */
+	send(channel: string, ...args: unknown[]): void;
 }
 
 /** Shape of the `ipc-message` event the guest preload emits via sendToHost. */
@@ -101,6 +104,24 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			webview.removeEventListener('did-fail-load', onFailLoad);
 		};
 	}, [panel.pluginId, failed]);
+
+	// Host-to-panel push (`ui.panelPost`). Main validated ownership, JSON-ness and
+	// size before broadcasting; here we only route the event to the ONE frame
+	// whose panel it names and hand the value to the guest as structured-clone
+	// data. The renderer never inspects or evaluates the payload.
+	useEffect(() => {
+		return window.maestro.plugins.onPanelData(({ panelId, data }) => {
+			if (panelId !== panel.id) return;
+			const webview = webviewRef.current;
+			if (!webview) return;
+			try {
+				webview.send(PANEL_DATA_CHANNEL, data);
+			} catch {
+				// The guest may not be attached yet (or is tearing down); drop the
+				// message rather than surfacing a plugin-triggered error to the user.
+			}
+		});
+	}, [panel.id, failed]);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
