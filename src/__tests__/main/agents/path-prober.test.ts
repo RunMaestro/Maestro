@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as path from 'path';
 
 // Mock dependencies before importing the module
 vi.mock('../../../main/utils/execFile', () => ({
@@ -26,6 +27,10 @@ vi.mock('../../../shared/pathUtils', () => ({
 	detectNodeVersionManagerBinPaths: vi.fn(() => []),
 }));
 
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Import after mocking
 import {
 	getExpandedEnv,
@@ -37,6 +42,7 @@ import {
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 
 describe('path-prober', () => {
 	beforeEach(() => {
@@ -216,6 +222,135 @@ describe('path-prober', () => {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}
 		});
+
+		it('should recover a rotated Codex Desktop executable path', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+			const olderPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'older-version',
+				'codex.exe'
+			);
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'older-version', isDirectory: () => true },
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockImplementation(async (filePath) => {
+					if (filePath === stalePath) throw new Error('ENOENT');
+					if (filePath === olderPath) {
+						return { isFile: () => true, birthtimeMs: 100, mtimeMs: 300 } as fs.Stats;
+					}
+					if (filePath === currentPath) {
+						return { isFile: () => true, birthtimeMs: 200, mtimeMs: 100 } as fs.Stats;
+					}
+					throw new Error('ENOENT');
+				});
+
+				const result = await checkCustomPath(stalePath);
+				expect(result).toEqual({ exists: true, path: currentPath });
+				expect(logger.info).toHaveBeenCalledWith(
+					'Recovered rotated Codex Desktop path',
+					'PathProber',
+					expect.objectContaining({ original: stalePath, resolved: currentPath })
+				);
+			} finally {
+				readdirMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should report unexpected errors while discovering Codex Desktop executables', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			const permissionError = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockRejectedValue(permissionError);
+
+				expect(await checkCustomPath(stalePath)).toEqual({ exists: false });
+				expect(captureException).toHaveBeenCalledWith(permissionError);
+			} finally {
+				readdirMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('should not redirect an arbitrary missing custom path', async () => {
+			const originalPlatform = process.platform;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+			try {
+				statMock.mockRejectedValue(new Error('ENOENT'));
+
+				expect(await checkCustomPath('C:\\custom\\missing-codex.exe')).toEqual({
+					exists: false,
+				});
+				expect(readdirMock).not.toHaveBeenCalled();
+			} finally {
+				readdirMock.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
 	});
 
 	describe('probeWindowsPaths', () => {
@@ -252,6 +387,41 @@ describe('path-prober', () => {
 
 			expect(await probeWindowsPaths(binaryName)).toBeNull();
 			expect(accessMock).toHaveBeenCalled();
+		});
+
+		it('should probe the current Codex Desktop executable', async () => {
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			const readdirMock = vi.spyOn(fs.promises, 'readdir');
+			const statMock = vi.spyOn(fs.promises, 'stat');
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+
+			try {
+				readdirMock.mockResolvedValue([
+					{ name: 'current-version', isDirectory: () => true },
+				] as any);
+				statMock.mockResolvedValue({ isFile: () => true, birthtimeMs: 200 } as fs.Stats);
+				accessMock.mockImplementation(async (filePath) => {
+					if (filePath !== currentPath) throw new Error('ENOENT');
+				});
+
+				expect(await probeWindowsPaths('codex')).toBe(currentPath);
+			} finally {
+				readdirMock.mockRestore();
+				statMock.mockRestore();
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+			}
 		});
 	});
 

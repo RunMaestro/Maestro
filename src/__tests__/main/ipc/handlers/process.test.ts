@@ -20,6 +20,7 @@ import {
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
+import { checkCustomPath } from '../../../../main/agents/path-prober';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -38,6 +39,10 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/agents/path-prober', () => ({
+	checkCustomPath: vi.fn(async (customPath: string) => ({ exists: true, path: customPath })),
 }));
 
 // Mock the agent-args utilities
@@ -282,6 +287,10 @@ describe('process IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(checkCustomPath).mockImplementation(async (customPath) => ({
+			exists: true,
+			path: customPath,
+		}));
 
 		// Create mock process manager
 		mockProcessManager = {
@@ -595,6 +604,71 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					command: '/home/user/my-claude-wrapper',
+				})
+			);
+		});
+
+		it('should resolve a rotated local custom path before spawning', async () => {
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({
+				exists: true,
+				path: '/current/codex',
+			});
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-rotated-path',
+				toolType: 'codex',
+				cwd: '/test/project',
+				command: '/detected/codex',
+				args: ['exec'],
+				sessionCustomPath: '/stale/codex',
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/current/codex',
+					extraPathDirs: ['/current'],
+					sessionCustomPath: '/current/codex',
+				})
+			);
+		});
+
+		it('should fall back to the detected path when a local custom path is invalid', async () => {
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			vi.mocked(checkCustomPath).mockResolvedValueOnce({ exists: false });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-invalid-path',
+				toolType: 'codex',
+				cwd: '/test/project',
+				command: 'codex',
+				args: ['exec'],
+				sessionCustomPath: '/missing/codex',
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/detected/codex',
+					extraPathDirs: ['/detected'],
+					sessionCustomPath: undefined,
 				})
 			);
 		});
@@ -2454,6 +2528,7 @@ describe('process IPC handlers', () => {
 			// Should use the custom path in the stdin script, not binaryName or local path
 			expect(spawnCall.sshStdinScript).toContain('/usr/local/bin/codex');
 			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
+			expect(checkCustomPath).not.toHaveBeenCalled();
 		});
 
 		it('should pass images via stream-json stdin for SSH with stream-json agents (regression: images dropped over SSH)', async () => {

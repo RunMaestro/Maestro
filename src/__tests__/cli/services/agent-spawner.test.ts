@@ -73,6 +73,7 @@ vi.mock('fs', async () => {
 			...actual.promises,
 			stat: vi.fn(),
 			access: vi.fn(),
+			readdir: vi.fn(),
 		},
 		constants: {
 			X_OK: 1,
@@ -742,6 +743,61 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/custom/path/to/codex');
 			expect(result.source).toBe('settings');
+		});
+
+		it('should resolve a rotated Codex Desktop path from settings', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+			mockGetAgentCustomPath.mockReturnValue(stalePath);
+			vi.mocked(fs.promises.readdir).mockResolvedValue([
+				{ name: 'current-version', isDirectory: () => true },
+			] as any);
+			vi.mocked(fs.promises.stat).mockImplementation(async (filePath) => {
+				if (filePath === currentPath) {
+					return { isFile: () => true, birthtimeMs: 200 } as fs.Stats;
+				}
+				throw new Error('ENOENT');
+			});
+
+			try {
+				const { detectAgent: freshDetectAgent } =
+					await import('../../../cli/services/agent-spawner');
+				const result = await freshDetectAgent('codex');
+
+				expect(result).toEqual({
+					available: true,
+					path: currentPath,
+					source: 'settings',
+				});
+			} finally {
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
 		});
 
 		it('should fall back to PATH detection when custom path is invalid', async () => {
