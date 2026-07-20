@@ -16,14 +16,15 @@
 		{
 			"capability": "sessions:read",
 			"reason": "Seed lane titles and agent ids for open sessions at startup."
-		},
-		{ "capability": "storage:read", "reason": "Restore saved panel display preferences." },
-		{ "capability": "storage:write", "reason": "Persist panel display preferences." }
+		}
 	],
 	"contributes": {
 		"panels": [
 			{ "id": "flow", "title": "Agent Flow", "entry": "panel.html", "placement": "right" }
 		],
-		"commands": [{ "id": "clear", "title": "Agent Flow: Clear Graph" }]
+		"commands": [
+			{ "id": "clear", "title": "Agent Flow: Clear Graph" },
+			{ "id": "sync", "title": "Agent Flow: Refresh Panel" }
+		]
 	}
 }

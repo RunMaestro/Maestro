@@ -151,8 +151,6 @@ function applyTool(payload, at) {
 			lane.open[toolCallId] = node;
 			pushNode(lane, node);
 			lane.runningToolCount++;
-			// Fresh tool work opening means any prior error thread has moved on.
-			lane.lastError = null;
 		} else {
 			// Terminal (or phase-less) event with no prior open node: a single
 			// closed node.
@@ -177,8 +175,12 @@ function applyTool(payload, at) {
 		});
 	}
 	// Any tool activity means the session is doing something now: it is no longer
-	// blocked on input, and this counts as fresh activity for the stall clock.
+	// blocked on input, this counts as fresh activity for the stall clock, and a
+	// prior error thread has moved on (recovery), so clear the error badge. This
+	// covers every branch above (open, terminal, and phase-less / no-toolCallId
+	// events), not just the opening of a new running node.
 	lane.awaiting = false;
+	lane.lastError = null;
 	lane.lastActivityAt = Date.now();
 	touch(lane, at);
 }
@@ -198,15 +200,38 @@ function eventTime(payload, meta) {
 	return lastEventAt || Date.now();
 }
 
-// agent.statusChanged / agent.awaiting carry an agentId, not a sessionId. Prefer
-// an existing lane whose agentId matches; else key a lane by the agentId itself.
-function resolveByAgentId(agentId) {
-	var target = null;
+// agent.statusChanged / agent.awaiting carry an agentId (plus an optional tabId),
+// never a sessionId. Apply the coarse agent-level signal to every EXISTING lane
+// whose agentId matches - an agent with several AI tabs has one lane per session.
+// We deliberately do NOT synthesize an agentId-keyed lane here: that produced a
+// nodeless ghost lane that then won an insertion-order lookup. If no lane exists
+// yet (status arrived before any session/tool event) the signal is dropped; the
+// lane's status is set later from session.updated or its first tool node. tabId
+// is not used for precise per-tab routing because the sessionId-to-tab mapping is
+// host-internal and not reconstructable from event metadata.
+function eachLaneForAgent(agentId, fn) {
 	lanes.forEach(function (lane) {
-		if (!target && lane.agentId === agentId) target = lane;
+		if (lane.agentId === agentId) fn(lane);
 	});
-	if (!target) target = getLane(agentId);
-	return target;
+}
+
+// Close any still-open tool nodes on a lane. A terminal agent/run event means no
+// tool can still be running, so without this a producer that emits a "running"
+// tool event but never a matching terminal one would leave the node open and the
+// lane reading "working" forever.
+function closeOpenNodes(lane, at) {
+	var ids = Object.keys(lane.open);
+	for (var i = 0; i < ids.length; i++) {
+		var node = lane.open[ids[i]];
+		if (node && node.endedAt === undefined) {
+			node.endedAt = at;
+			if (node.durationMs === undefined) node.durationMs = Math.max(0, at - node.startedAt);
+			// No terminal phase ever arrived; mark it unknown rather than running.
+			if (isOpenPhase(node.phase)) node.phase = 'unknown';
+		}
+	}
+	lane.open = Object.create(null);
+	lane.runningToolCount = 0;
 }
 
 var HANDLERS = {
@@ -215,32 +240,35 @@ var HANDLERS = {
 	},
 	'agent.statusChanged': function (payload, at) {
 		if (!payload || typeof payload.agentId !== 'string') return;
-		var target = resolveByAgentId(payload.agentId);
-		if (typeof payload.status === 'string') {
-			target.status = payload.status;
-			// A coarse waiting_input status is the same signal as agent.awaiting.
-			if (payload.status === 'waiting_input') target.awaiting = true;
-		}
-		target.lastActivityAt = Date.now();
-		touch(target, at);
+		eachLaneForAgent(payload.agentId, function (lane) {
+			if (typeof payload.status === 'string') {
+				lane.status = payload.status;
+				// A coarse waiting_input status is the same signal as agent.awaiting.
+				if (payload.status === 'waiting_input') lane.awaiting = true;
+			}
+			lane.lastActivityAt = Date.now();
+			touch(lane, at);
+		});
 	},
 	'agent.awaiting': function (payload, at) {
 		if (!payload || typeof payload.agentId !== 'string') return;
-		var target = resolveByAgentId(payload.agentId);
-		// Blocked on input: not a stall, and not fresh tool activity, so leave
-		// lastActivityAt untouched (the panel renders "Waiting for input").
-		target.awaiting = true;
-		touch(target, at);
+		eachLaneForAgent(payload.agentId, function (lane) {
+			// Blocked on input: not a stall, and not fresh tool activity, so leave
+			// lastActivityAt untouched (the panel renders "Waiting for input").
+			lane.awaiting = true;
+			touch(lane, at);
+		});
 	},
 	'agent.completed': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		var lane = getLane(payload.sessionId);
 		if (typeof payload.status === 'string') lane.status = payload.status;
 		if (typeof payload.agentId === 'string' && !lane.agentId) lane.agentId = payload.agentId;
-		// The run reached a terminal state: it is no longer waiting, and a clean
-		// completion clears any lingering error thread.
+		// The run reached a terminal state: it is no longer waiting, no tool can
+		// still be running, and a clean completion clears any lingering error.
 		lane.awaiting = false;
 		if (payload.status === 'completed') lane.lastError = null;
+		closeOpenNodes(lane, at);
 		touch(lane, at);
 	},
 	'agent.error': function (payload, at) {
@@ -258,24 +286,38 @@ var HANDLERS = {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		var lane = getLane(payload.sessionId);
 		lane.status = payload.exitCode === 0 ? 'exited' : 'error';
+		closeOpenNodes(lane, at);
 		touch(lane, at);
 	},
 	'run.completed': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
-		touch(getLane(payload.sessionId), at);
+		var lane = getLane(payload.sessionId);
+		closeOpenNodes(lane, at);
+		touch(lane, at);
 	},
 	'usage.updated': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		var lane = getLane(payload.sessionId);
-		lane.usage = {
-			inputTokens: num(payload.inputTokens),
-			outputTokens: num(payload.outputTokens),
-			cacheReadInputTokens: num(payload.cacheReadInputTokens),
-			cacheCreationInputTokens: num(payload.cacheCreationInputTokens),
-			totalCostUsd: num(payload.totalCostUsd),
-			contextWindow: num(payload.contextWindow),
-			reasoningTokens: num(payload.reasoningTokens),
+		// usage.updated carries the CURRENT TURN's counts, not session totals, so
+		// accumulate tokens and cost across turns to show a running session total.
+		// contextWindow is a capacity (not additive): take the latest reported.
+		var u = lane.usage || {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0,
+			contextWindow: 0,
+			reasoningTokens: 0,
 		};
+		u.inputTokens += num(payload.inputTokens);
+		u.outputTokens += num(payload.outputTokens);
+		u.cacheReadInputTokens += num(payload.cacheReadInputTokens);
+		u.cacheCreationInputTokens += num(payload.cacheCreationInputTokens);
+		u.totalCostUsd += num(payload.totalCostUsd);
+		u.reasoningTokens += num(payload.reasoningTokens);
+		if (num(payload.contextWindow) > 0) u.contextWindow = num(payload.contextWindow);
+		lane.usage = u;
 		// Token accounting means the model produced output: fresh activity, and
 		// proof it is no longer blocked on input.
 		lane.awaiting = false;
@@ -415,6 +457,15 @@ function pushSnapshot() {
 		snap = buildSnapshot(cap);
 		json = JSON.stringify(snap);
 	}
+	// Even at one node per lane the snapshot can still exceed the cap when there
+	// are very many lanes. Drop the least-recently-active lanes (they sort last)
+	// until it fits, so the host accepts a reduced snapshot instead of rejecting
+	// the whole post and leaving the panel stale. The fleet `summary` counts are
+	// left intact (they legitimately reflect every lane, shown or not).
+	while (utf8Len(json) > SNAPSHOT_MAX_BYTES && snap.lanes.length > 1) {
+		snap.lanes.pop();
+		json = JSON.stringify(snap);
+	}
 	try {
 		var p = sdk.ui.panelPost('flow', snap);
 		// panelPost is a brokered async call; swallow denial (ui:panel not yet
@@ -488,6 +539,14 @@ function activate(maestro) {
 	maestro.commands.register('clear', function () {
 		resetModel();
 		scheduleSnapshot();
+	});
+
+	// The panel invokes "sync" on load (and when it becomes visible again) to
+	// pull the current snapshot: panelPost only reaches a mounted panel, and the
+	// plugin otherwise pushes only on a model mutation, so a panel opened after
+	// activity has ended would sit empty until the next event without this.
+	maestro.commands.register('sync', function () {
+		pushSnapshot();
 	});
 
 	seedFromSessions();

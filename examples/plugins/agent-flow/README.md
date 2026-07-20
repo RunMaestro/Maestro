@@ -108,9 +108,12 @@ Enable the `plugins` Encore flag first (Settings), then either:
 - **Settings:** open the Extensions view and install from a local folder,
   pointing at `examples/plugins/agent-flow`.
 
-At install you will be asked to grant the five requested capabilities. The panel
-appears in the right bar once `ui:panel` is granted. The graph starts empty and
-fills in as agents run; the "Agent Flow: Clear Graph" command resets it.
+At install you will be asked to grant the three requested capabilities
+(`events:subscribe`, `ui:panel`, `sessions:read`). The panel appears in the right
+bar once `ui:panel` is granted. The graph starts empty and fills in as agents
+run; the "Agent Flow: Clear Graph" command resets it, and "Agent Flow: Refresh
+Panel" re-pulls the current snapshot (the panel also does this automatically on
+open).
 
 ## Files
 
@@ -183,7 +186,7 @@ timeline, inspector, session tabs, and the issue #1231 activity/health overlay.
    (or install from a local folder in the Settings Extensions view). Validate
    first with `maestro plugin validate ./examples/plugins/agent-flow`.
 3. Enable the plugin and grant its requested capabilities (`events:subscribe`,
-   `ui:panel`, `sessions:read`, `storage:read`, `storage:write`).
+   `ui:panel`, `sessions:read`).
 4. Open the Agent Flow panel from the right bar and run any agent. Tool nodes
    appear live, running nodes pulse and then close, and the overlay tracks
    working/waiting/stalled/errored lanes.
@@ -199,4 +202,10 @@ timeline, inspector, session tabs, and the issue #1231 activity/health overlay.
 - **No subagent nesting yet.** `parent_tool_use_id` is not parsed by the claude
   output parser, so nested subagent lanes are not rendered.
 - **Snapshots capped at 64 KB.** Under heavy load the per-lane node history is
-  trimmed (oldest first) to stay under the panel-post cap.
+  trimmed (oldest first), and if a fleet is large enough that even one node per
+  lane exceeds the cap the least-recently-active lanes are dropped from the
+  pushed snapshot (the fleet health counts still reflect every lane).
+- **Coarse agent status is agent-level, not per-tab.** `agent.statusChanged` /
+  `agent.awaiting` carry an agent id (not a session id), so their coarse status
+  is applied to every lane of that agent; when one agent has several AI tabs the
+  status is not routed to a single tab's lane.

@@ -1095,9 +1095,21 @@
 			});
 
 			// ---- header wiring ---------------------------------------------------
-			document.getElementById('clear').addEventListener('click', function () {
+			function invoke(commandId) {
 				// One-way command bridge back to the sandbox.
-				parent.postMessage({ type: 'maestro:invokeCommand', commandId: 'clear' }, '*');
+				parent.postMessage({ type: 'maestro:invokeCommand', commandId: commandId }, '*');
+			}
+			document.getElementById('clear').addEventListener('click', function () {
+				invoke('clear');
+			});
+
+			// The sandbox pushes snapshots only on activity, and a push reaches only a
+			// mounted panel. Ask for the current snapshot on load (and whenever this
+			// panel becomes visible again) so a panel opened after activity ended
+			// fills in immediately instead of showing the empty state forever.
+			invoke('sync');
+			document.addEventListener('visibilitychange', function () {
+				if (!document.hidden) invoke('sync');
 			});
 
 			// ---- inbound snapshots ----------------------------------------------

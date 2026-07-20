@@ -40,6 +40,15 @@ import {
 	PANEL_DATA_CHANNEL,
 } from '../../../shared/plugins/panel-host';
 import { notifyToast } from '../../stores/notificationStore';
+import { captureException } from '../../utils/sentry';
+
+// webview.send throws when the guest webContents is not attached yet (a push can
+// land before the panel finishes loading) or is tearing down - both are expected
+// races for a best-effort UI data frame. Anything else is unexpected.
+function isDetachedWebviewError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /destroyed|disposed|detached|not attached|must be attached/i.test(message);
+}
 
 interface PluginPanelFrameProps {
 	theme: Theme;
@@ -116,12 +125,23 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			if (!webview) return;
 			try {
 				webview.send(PANEL_DATA_CHANNEL, data);
-			} catch {
+			} catch (error) {
 				// The guest may not be attached yet (or is tearing down); drop the
 				// message rather than surfacing a plugin-triggered error to the user.
+				// Report anything that is NOT that expected race so real regressions
+				// still reach Sentry instead of being silently swallowed.
+				if (!isDetachedWebviewError(error)) {
+					captureException(error, {
+						extra: {
+							where: 'PluginPanelFrame.onPanelData',
+							pluginId: panel.pluginId,
+							panelId: panel.id,
+						},
+					});
+				}
 			}
 		});
-	}, [panel.id, failed]);
+	}, [panel.id, panel.pluginId, failed]);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
