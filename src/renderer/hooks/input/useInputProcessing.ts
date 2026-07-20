@@ -586,6 +586,48 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (currentMode === 'ai') {
 				const activeTab = resolveTargetTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
+				const targetProcessSessionId = `${activeSession.id}-ai-${activeTab?.id || 'default'}`;
+				const sessionProcessPrefix = `${activeSession.id}-ai-`;
+				let sameTabProcessActive = false;
+				let anySessionAiProcessActive = false;
+				let activeProcessStartTime: number | undefined;
+
+				// The renderer can briefly say "idle" before the process exit event has
+				// reconciled into session state. Main-process ownership is authoritative:
+				// spawning another turn with the same id would otherwise replace the live
+				// process and discard its eventual response.
+				try {
+					const activeProcesses = await window.maestro.process.getActiveProcesses({
+						includeChildProcesses: false,
+					});
+					const sessionAiProcesses = activeProcesses.filter(
+						(process) =>
+							!process.isTerminal &&
+							!process.isCueRun &&
+							process.sessionId.startsWith(sessionProcessPrefix)
+					);
+					anySessionAiProcessActive = sessionAiProcesses.length > 0;
+					sameTabProcessActive = sessionAiProcesses.some(
+						(process) =>
+							process.sessionId === targetProcessSessionId ||
+							process.sessionId.startsWith(`${targetProcessSessionId}-fp-`)
+					);
+					activeProcessStartTime = sessionAiProcesses.reduce<number | undefined>(
+						(earliest, process) => {
+							if (process.startTime === undefined) return earliest;
+							return earliest === undefined
+								? process.startTime
+								: Math.min(earliest, process.startTime);
+						},
+						undefined
+					);
+				} catch (error) {
+					logger.warn(
+						'[processInput] Failed to reconcile active processes before queue decision:',
+						undefined,
+						error
+					);
+				}
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -626,11 +668,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// ALSO: Always queue write commands when AutoRun is active (to prevent file conflicts)
 				// FORCE PARALLEL: queues only when THIS tab is busy (skips cross-tab and AutoRun wait).
 				// When the tab finishes, the queued item dispatches immediately without waiting for other tabs.
-				const shouldQueue = forceParallel
-					? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
-					: isReadOnlyMode
-						? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-						: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
+				const processStateRequiresQueue =
+					sameTabProcessActive ||
+					(!forceParallel &&
+						!isReadOnlyMode &&
+						activeSession.state !== 'busy' &&
+						anySessionAiProcessActive);
+				const shouldQueue =
+					processStateRequiresQueue ||
+					(forceParallel
+						? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
+						: isReadOnlyMode
+							? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+							: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				logger.info('[processInput] Queue decision:', undefined, {
@@ -640,6 +690,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					isReadOnlyMode,
 					isAutoRunActive,
 					forceParallel,
+					sameTabProcessActive,
+					anySessionAiProcessActive,
+					processStateRequiresQueue,
 					shouldQueue,
 					queueLength: activeSession.executionQueue.length,
 				});
@@ -670,8 +723,26 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== resolvedSessionId) return s;
+							const reconciledAiTabs = sameTabProcessActive
+								? s.aiTabs.map((tab) =>
+										tab.id === queuedItem.tabId
+											? {
+													...tab,
+													state: 'busy' as const,
+													thinkingStartTime:
+														tab.thinkingStartTime || activeProcessStartTime || Date.now(),
+												}
+											: tab
+									)
+								: s.aiTabs;
 							return {
 								...s,
+								...(processStateRequiresQueue && {
+									state: 'busy' as SessionState,
+									busySource: 'ai' as const,
+									thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
+									aiTabs: reconciledAiTabs,
+								}),
 								executionQueue: [...s.executionQueue, queuedItem],
 							};
 						})

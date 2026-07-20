@@ -47,8 +47,12 @@ export class ExitHandler {
 	 * done (currently: Copilot CLI - see `awaitCopilotShutdown`).
 	 * Callers fire-and-forget, so errors are caught internally.
 	 */
-	async handleExit(sessionId: string, code: number): Promise<void> {
-		const managedProcess = this.processes.get(sessionId);
+	async handleExit(
+		sessionId: string,
+		code: number,
+		exitingProcess?: ManagedProcess
+	): Promise<void> {
+		const managedProcess = exitingProcess ?? this.processes.get(sessionId);
 		if (!managedProcess) {
 			this.emitter.emit('exit', sessionId, code);
 			return;
@@ -300,7 +304,9 @@ export class ExitHandler {
 		this.bufferManager.flushDataBuffer(sessionId);
 
 		this.emitter.emit('exit', sessionId, code);
-		this.processes.delete(sessionId);
+		if (this.processes.get(sessionId) === managedProcess) {
+			this.processes.delete(sessionId);
+		}
 	}
 
 	/**

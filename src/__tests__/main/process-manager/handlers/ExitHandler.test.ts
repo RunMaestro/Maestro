@@ -399,6 +399,16 @@ describe('ExitHandler', () => {
 
 			expect(exitEvents).toEqual([{ sessionId: 'unknown-session', code: 1 }]);
 		});
+
+		it('should not delete a newer process registered under the same sessionId', async () => {
+			const exitingProcess = createMockProcess({ pid: 11111 });
+			const replacementProcess = createMockProcess({ pid: 22222 });
+			processes.set('test-session', replacementProcess);
+
+			await exitHandler.handleExit('test-session', 0, exitingProcess);
+
+			expect(processes.get('test-session')).toBe(replacementProcess);
+		});
 	});
 
 	describe('SSH error pattern false-positive prevention', () => {

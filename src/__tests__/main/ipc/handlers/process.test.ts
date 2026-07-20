@@ -21,6 +21,7 @@ import {
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
+import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -1391,6 +1392,28 @@ describe('process IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual([]);
+		});
+
+		it('should skip terminal child-process inspection when requested', async () => {
+			mockProcessManager.getAll.mockReturnValue([
+				{
+					sessionId: 'session-2-terminal',
+					toolType: 'terminal',
+					pid: 5678,
+					cwd: '/project2',
+					isTerminal: true,
+					isBatchMode: false,
+					startTime: 1700000001000,
+					command: '/bin/zsh',
+					args: [],
+				},
+			]);
+
+			const handler = handlers.get('process:getActiveProcesses');
+			const result = await handler!({} as any, { includeChildProcesses: false });
+
+			expect(result).toHaveLength(1);
+			expect(getChildProcesses).not.toHaveBeenCalled();
 		});
 
 		it('should strip non-serializable properties from process objects', async () => {

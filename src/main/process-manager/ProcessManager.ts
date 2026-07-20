@@ -79,8 +79,8 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session.
 	 *
-	 * If a process already exists for the given sessionId, it is killed first
-	 * to prevent orphaned PTY/child processes that are no longer tracked.
+	 * Live AI processes own their sessionId until they exit. Terminal processes
+	 * retain replacement semantics so shell restarts continue to work.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
 		// Expand a leading `~` in the working directory before spawning. node-pty
@@ -99,16 +99,41 @@ export class ProcessManager extends EventEmitter {
 			}
 		}
 
-		// Kill any existing process for this sessionId to prevent orphans.
-		// This guards against double-spawn race conditions where a second spawn
-		// overwrites the map entry and the first process becomes untracked.
+		// Never replace a live AI process. Renderer state can briefly lag process
+		// state, and destructive replacement loses the first turn's final output.
+		// Exited entries may be replaced for flows such as Claude limit replay.
+		// Terminals intentionally keep their existing restart behavior.
 		const existing = this.processes.get(config.sessionId);
 		if (existing) {
-			logger.warn('[ProcessManager] Killing existing process before re-spawn', 'ProcessManager', {
-				sessionId: config.sessionId,
-				existingPid: existing.pid,
-			});
-			this.kill(config.sessionId);
+			const childProcessRunning =
+				existing.childProcess !== undefined &&
+				existing.childProcess.exitCode === null &&
+				(existing.childProcess.signalCode === null ||
+					existing.childProcess.signalCode === undefined);
+			const existingProcessRunning =
+				childProcessRunning ||
+				existing.ptyProcess !== undefined ||
+				existing.sdkController !== undefined;
+
+			if (!existing.isTerminal && existingProcessRunning) {
+				logger.warn('[ProcessManager] Refusing to replace live agent process', 'ProcessManager', {
+					sessionId: config.sessionId,
+					existingPid: existing.pid,
+					existingToolType: existing.toolType,
+					requestedToolType: config.toolType,
+				});
+				throw new Error(`Agent process already running for session ${config.sessionId}`);
+			}
+
+			if (existingProcessRunning) {
+				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
+					sessionId: config.sessionId,
+					existingPid: existing.pid,
+				});
+				this.kill(config.sessionId);
+			} else {
+				this.processes.delete(config.sessionId);
+			}
 		}
 
 		// Decide the OpenCode SDK-serve path on the RAW config, before any coworking

@@ -94,6 +94,7 @@ describe('useInputProcessing', () => {
 				spawn: vi.fn().mockResolvedValue(undefined),
 				write: vi.fn().mockResolvedValue(undefined),
 				runCommand: vi.fn().mockResolvedValue(undefined),
+				getActiveProcesses: vi.fn().mockResolvedValue([]),
 				broadcastUserInput: vi.fn().mockResolvedValue(undefined),
 				onUserInput: vi.fn().mockReturnValue(() => {}),
 			},
@@ -902,6 +903,44 @@ describe('useInputProcessing', () => {
 			// Should match the override value, not the inputValue
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			vi.useRealTimers();
+		});
+	});
+
+	describe('active process reconciliation', () => {
+		it('queues instead of replacing a live process when renderer state is stale idle', async () => {
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+				{
+					sessionId: `${session.id}-ai-${session.activeTabId}`,
+					toolType: session.toolType,
+					pid: 32828,
+					cwd: session.cwd,
+					isTerminal: false,
+					isBatchMode: true,
+					startTime: 1700000000000,
+				},
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'where is my answer',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.getActiveProcesses).toHaveBeenCalledWith({
+				includeChildProcesses: false,
+			});
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.state).toBe('busy');
+			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.executionQueue[0].text).toBe('where is my answer');
 		});
 	});
 

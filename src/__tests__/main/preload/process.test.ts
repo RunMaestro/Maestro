@@ -188,6 +188,16 @@ describe('Process Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('process:getActiveProcesses');
 			expect(result).toEqual(mockProcesses);
 		});
+
+		it('should pass active-process query options', async () => {
+			mockInvoke.mockResolvedValue([]);
+
+			await api.getActiveProcesses({ includeChildProcesses: false });
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:getActiveProcesses', {
+				includeChildProcesses: false,
+			});
+		});
 	});
 
 	describe('isTerminalBusy', () => {

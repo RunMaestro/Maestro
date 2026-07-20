@@ -66,6 +66,10 @@ export interface CueProcessEntry {
 	sshRemoteCommand?: string;
 }
 
+interface ProcessQuery {
+	includeChildProcesses?: boolean;
+}
+
 export interface ProcessHandlerDependencies {
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
@@ -232,7 +236,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Get all active processes managed by the ProcessManager (and Cue runs if available)
 	ipcMain.handle(
 		'process:getActiveProcesses',
-		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async () => {
+		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async (options?: ProcessQuery) => {
 			const processManager = requireProcessManager(getProcessManager);
 			const processes = processManager.getAll();
 			// Return serializable process info (exclude non-serializable PTY/child process objects)
@@ -252,7 +256,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						maestroEnvVars: p.maestroEnvVars,
 						sshRemoteCommand: p.sshRemoteCommand,
 					};
-					if (p.isTerminal && p.pid) {
+					if (options?.includeChildProcesses !== false && p.isTerminal && p.pid) {
 						const children = await getChildProcesses(p.pid);
 						if (children.length > 0) {
 							entry.childProcesses = children;

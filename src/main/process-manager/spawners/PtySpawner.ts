@@ -192,7 +192,9 @@ export class PtySpawner {
 				// Forward `signal` so consumers can tell a shell the user exited from
 				// one that was killed out from under them (OOM killer, SIGHUP, crash).
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-				this.processes.delete(sessionId);
+				if (this.processes.get(sessionId) === managedProcess) {
+					this.processes.delete(sessionId);
+				}
 			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {
