@@ -191,10 +191,10 @@ export class PtySpawner {
 				});
 				// Forward `signal` so consumers can tell a shell the user exited from
 				// one that was killed out from under them (OOM killer, SIGHUP, crash).
+				const currentProcess = this.processes.get(sessionId);
+				if (currentProcess && currentProcess !== managedProcess) return;
+				if (currentProcess === managedProcess) this.processes.delete(sessionId);
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-				if (this.processes.get(sessionId) === managedProcess) {
-					this.processes.delete(sessionId);
-				}
 			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {

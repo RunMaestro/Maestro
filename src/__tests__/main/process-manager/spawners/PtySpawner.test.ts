@@ -276,4 +276,56 @@ describe('PtySpawner', () => {
 			expect(processes.get('agent-pty-session')?.isTerminal).toBe(false);
 		});
 	});
+
+	describe('exit ownership', () => {
+		it('releases an AI process before notifying synchronous replay listeners', () => {
+			const { spawner, processes, emitter } = createTestContext();
+			const config = createBaseConfig({
+				sessionId: 'agent-pty-session',
+				toolType: 'claude-code',
+				command: 'claude',
+				shell: undefined,
+			});
+
+			spawner.spawn(config);
+			const exitingProcess = processes.get(config.sessionId);
+			const onExit = mockPtyProcess.onExit.mock.calls[0][0];
+			emitter.on('exit', () => spawner.spawn(config));
+
+			expect(() => onExit({ exitCode: 0, signal: 0 })).not.toThrow();
+			expect(processes.get(config.sessionId)).not.toBe(exitingProcess);
+		});
+
+		it('ignores an exit from a stale terminal generation', () => {
+			const { spawner, processes, emitter } = createTestContext();
+			const config = createBaseConfig({ sessionId: 'restarted-terminal' });
+			const exitListener = vi.fn();
+			emitter.on('exit', exitListener);
+
+			spawner.spawn(config);
+			const staleOnExit = mockPtyProcess.onExit.mock.calls[0][0];
+			spawner.spawn(config);
+			const replacement = processes.get(config.sessionId);
+
+			staleOnExit({ exitCode: 0, signal: 0 });
+
+			expect(processes.get(config.sessionId)).toBe(replacement);
+			expect(exitListener).not.toHaveBeenCalled();
+		});
+
+		it('emits exit when an explicit kill already removed the process entry', () => {
+			const { spawner, processes, emitter } = createTestContext();
+			const config = createBaseConfig({ sessionId: 'killed-terminal' });
+			const exitListener = vi.fn();
+			emitter.on('exit', exitListener);
+
+			spawner.spawn(config);
+			const onExit = mockPtyProcess.onExit.mock.calls[0][0];
+			processes.delete(config.sessionId);
+
+			onExit({ exitCode: 143, signal: 15 });
+
+			expect(exitListener).toHaveBeenCalledWith(config.sessionId, 143, 15);
+		});
+	});
 });

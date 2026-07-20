@@ -226,12 +226,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							? sessionsRef.current.find((s) => s.id === resolvedSessionId)
 							: undefined) ?? selectActiveSession(useSessionStore.getState()));
 
-			const resolveTargetTab = (session: Session) => {
-				if (options?.tabId) {
-					return session.aiTabs.find((t) => t.id === options.tabId) ?? getActiveTab(session);
-				}
-				return getActiveTab(session);
-			};
+			// Pin the target tab before any async work. The user can switch tabs while
+			// process reconciliation or agent configuration is in flight, but this send
+			// must keep using the tab that owned the submitted input.
+			const targetTabId = activeSession
+				? options?.tabId && activeSession.aiTabs.some((tab) => tab.id === options.tabId)
+					? options.tabId
+					: getActiveTab(activeSession)?.id
+				: undefined;
+			const resolveTargetTab = (session: Session) =>
+				targetTabId ? session.aiTabs.find((tab) => tab.id === targetTabId) : getActiveTab(session);
 
 			const syncTarget = activeSession
 				? {
@@ -627,6 +631,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						undefined,
 						error
 					);
+					// Preserve the input when process ownership is unknown. Treating an IPC
+					// failure as idle can retry the same process id and lose the live response.
+					sameTabProcessActive = true;
+					anySessionAiProcessActive = true;
 				}
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
@@ -1206,12 +1214,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const targetPid = currentMode === 'ai' ? activeSession.aiPid : activeSession.terminalPid;
 			// For batch mode (Claude), include tab ID in session ID to prevent process collision
 			// This ensures each tab's process has a unique identifier
-			const activeTabForSpawn = resolveTargetTab(activeSession);
 			const isForceParallel =
 				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
 			const targetSessionId =
 				currentMode === 'ai'
-					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
+					? `${activeSession.id}-ai-${targetTabId || 'default'}`
 					: `${activeSession.id}-terminal`;
 
 			// Check if this is an AI agent in batch mode
@@ -1235,13 +1242,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						const agent = await window.maestro.agents.get(activeSession.toolType);
 						if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
 
-						// IMPORTANT: Get fresh session state from ref to avoid stale closure bug
-						// If user switches tabs quickly, activeSession from closure may have wrong activeTabId
+						// Read mutable session fields from the ref, but keep the submitted tab pinned.
 						const freshSession = sessionsRef.current.find((s) => s.id === resolvedSessionId);
 						if (!freshSession) throw new Error('Session not found');
 
-						// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
 						const freshActiveTab = resolveTargetTab(freshSession);
+						if (!freshActiveTab) throw new Error('Target tab not found');
+
+						// Use the target tab's agentSessionId (not the deprecated session-level one)
 						const tabAgentSessionId = freshActiveTab?.agentSessionId;
 
 						if (!tabAgentSessionId && freshActiveTab?.logs && freshActiveTab.logs.length > 0) {
@@ -1339,7 +1347,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						//    turn; on resume the prompt is already in the transcript.
 						const appendSystemPrompt = await prepareMaestroSystemPrompt({
 							session: freshSession,
-							activeTabId: freshSession.activeTabId,
+							activeTabId: targetTabId,
 						});
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
@@ -1391,7 +1399,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						setSessions((prev) =>
 							prev.map((s) => {
 								if (s.id !== resolvedSessionId) return s;
-								const errorTabId = options?.tabId ?? s.activeTabId;
+								const errorTabId = targetTabId ?? s.activeTabId;
 								// Reset target tab's state to 'idle' and add error log
 								const updatedAiTabs =
 									s.aiTabs?.length > 0

@@ -942,6 +942,82 @@ describe('useInputProcessing', () => {
 			expect(updatedSession.executionQueue).toHaveLength(1);
 			expect(updatedSession.executionQueue[0].text).toBe('where is my answer');
 		});
+
+		it('queues when active process reconciliation fails', async () => {
+			const readOnlyTab = createMockTab({ readOnlyMode: true });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [readOnlyTab],
+				activeTabId: readOnlyTab.id,
+			});
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('process IPC unavailable')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'preserve this message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.state).toBe('busy');
+			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.executionQueue[0].text).toBe('preserve this message');
+		});
+
+		it('keeps the submitted tab pinned when the active tab changes during reconciliation', async () => {
+			const submittedTab = createMockTab({
+				id: 'submitted-tab',
+				agentSessionId: 'provider-session-submitted',
+			});
+			const switchedTab = createMockTab({
+				id: 'switched-tab',
+				agentSessionId: 'provider-session-switched',
+			});
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [submittedTab, switchedTab],
+				activeTabId: submittedTab.id,
+			});
+			const sessionsRef = { current: [session] };
+			vi.mocked(window.maestro.process.getActiveProcesses).mockImplementation(async () => {
+				sessionsRef.current = [{ ...session, activeTabId: switchedTab.id }];
+				return [];
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef,
+				inputValue: 'send this to the submitted tab',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: `${session.id}-ai-${submittedTab.id}`,
+					agentSessionId: submittedTab.agentSessionId,
+				})
+			);
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [loggedSession] = updateSessions(sessionsRef.current);
+			expect(
+				loggedSession.aiTabs.find((tab: AITab) => tab.id === submittedTab.id)?.logs.at(-1)?.text
+			).toBe('send this to the submitted tab');
+			expect(
+				loggedSession.aiTabs.find((tab: AITab) => tab.id === switchedTab.id)?.logs
+			).toHaveLength(0);
+		});
 	});
 
 	describe('Auto Run blocking', () => {
