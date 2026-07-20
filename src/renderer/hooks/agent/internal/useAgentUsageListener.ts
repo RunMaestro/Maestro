@@ -85,21 +85,30 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				sessionForUsage.customContextWindow > 0
 					? sessionForUsage.customContextWindow
 					: getModelContextWindowOverride(sessionForUsage.customModel) || 0;
-			const configuredWindow =
+			const cachedConfiguredWindow = getCachedConfiguredContextWindow(sessionForUsage);
+			// A genuinely provider/model-resolved window (currently Oh My Pi's per-turn
+			// model catalog, flagged via `contextWindowResolved`) is the ACTUAL window
+			// and must beat the agent-level configured FALLBACK - but never an explicit
+			// per-session override or a `[1m]` model marker, both of which rank above it.
+			const resolvedReportedWindow =
+				usageStats.contextWindowResolved && usageStats.contextWindow > 0
+					? usageStats.contextWindow
+					: 0;
+			const resolvedWindow =
 				syncConfiguredWindow > 0
 					? syncConfiguredWindow
-					: getCachedConfiguredContextWindow(sessionForUsage);
-			const resolvedWindow =
-				configuredWindow > 0
-					? configuredWindow
-					: usageStats.contextWindow > 0
-						? usageStats.contextWindow
-						: agentToolType && agentToolType !== 'terminal'
-							? getContextWindowForAgent(
-									agentToolType,
-									useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-								)
-							: 0;
+					: resolvedReportedWindow > 0
+						? resolvedReportedWindow
+						: cachedConfiguredWindow > 0
+							? cachedConfiguredWindow
+							: usageStats.contextWindow > 0
+								? usageStats.contextWindow
+								: agentToolType && agentToolType !== 'terminal'
+									? getContextWindowForAgent(
+											agentToolType,
+											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+										)
+									: 0;
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);

@@ -42,6 +42,13 @@ export interface ProcessConfig {
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
+	/**
+	 * Identity key for the omp model->context-window catalog (see
+	 * `computeOmpCatalogKey`). Set only for local omp spawns; carried onto the
+	 * managed process so StdoutHandler resolves against the catalog primed for
+	 * this exact binary + env, never another configuration's.
+	 */
+	ompModelCatalogKey?: string;
 	/** If true, always spawn in a shell (for PATH resolution on Windows) */
 	runInShell?: boolean;
 	/** If true, send the prompt via stdin as JSON instead of command line */
@@ -117,6 +124,7 @@ export interface ManagedProcess {
 	stdoutBuffer?: string;
 	streamedText?: string;
 	contextWindow?: number;
+	ompModelCatalogKey?: string;
 	tempImageFiles?: string[];
 	command?: string;
 	args?: string[];

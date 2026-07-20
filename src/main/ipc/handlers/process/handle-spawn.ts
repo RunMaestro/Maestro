@@ -41,6 +41,7 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -710,6 +711,33 @@ export async function handleProcessSpawn(
 			? path.dirname(localSpawnBinaryPath)
 			: undefined;
 
+	// Warm the omp model -> context-window catalog for local runs so the first
+	// turn's usage can resolve the model's real window (e.g. opus 1M) rather than
+	// the static fallback. Keyed to this binary + env overrides so one config's
+	// catalog is never served to another (see computeOmpCatalogKey). SSH remotes
+	// are skipped (their catalog may differ) and fall back to the configured window.
+	let ompModelCatalogKey: string | undefined;
+	if (config.toolType === 'omp' && localAgentBinDir && localSpawnBinaryPath) {
+		// Identity uses the session's stable custom env overrides (not the
+		// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
+		// env) so the same logical config maps to one catalog across platforms and
+		// matches the detector's default-identity warm-up.
+		ompModelCatalogKey = computeOmpCatalogKey(localSpawnBinaryPath, effectiveCustomEnvVars);
+		// Bounded await: block the spawn only briefly so the first turn resolves
+		// correctly on a warm/fast catalog, and proceed (letting the prime finish
+		// in the background for later turns) when it is slow or fails.
+		const OMP_PRIME_SPAWN_CAP_MS = 2000;
+		const prime = primeOmpModelCatalog(
+			localSpawnBinaryPath,
+			{ ...process.env, ...customEnvVarsToPass },
+			ompModelCatalogKey
+		);
+		await Promise.race([
+			prime,
+			new Promise<void>((resolve) => setTimeout(resolve, OMP_PRIME_SPAWN_CAP_MS)),
+		]);
+	}
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -728,6 +756,7 @@ export async function handleProcessSpawn(
 		shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
 		shellEnvVars: globalShellEnvVars, // Global shell env vars (for both terminals and agents)
 		contextWindow, // Pass configured context window to process manager
+		ompModelCatalogKey, // Identity for the omp model catalog (local omp only)
 		// When using SSH, env vars are passed in the stdin script, not locally
 		customEnvVars: customEnvVarsToPass,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)

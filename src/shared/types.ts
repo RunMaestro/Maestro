@@ -275,6 +275,15 @@ export interface UsageStats {
 	totalCostUsd: number;
 	contextWindow: number;
 	/**
+	 * True when `contextWindow` is an authoritative, runtime-resolved value (the
+	 * model's real window discovered from the provider's own catalog) rather than
+	 * a static per-agent default/fallback. Consumers use this to let the real
+	 * window win over the agent-level configured fallback while still honoring an
+	 * explicit per-session override. Set by providers whose window is model-
+	 * dependent and reported per turn (currently Oh My Pi); undefined otherwise.
+	 */
+	contextWindowResolved?: boolean;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.

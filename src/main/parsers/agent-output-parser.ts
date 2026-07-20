@@ -94,6 +94,13 @@ export interface ParsedEvent {
 		cacheReadTokens?: number;
 		cacheCreationTokens?: number;
 		contextWindow?: number;
+		/**
+		 * Model identifier the provider reported for this turn (e.g.
+		 * `claude-opus-4-8`). Enables downstream resolution of the model's real
+		 * context window from the provider catalog. Set by providers whose window
+		 * is model-dependent (Oh My Pi); omitted otherwise.
+		 */
+		model?: string;
 		costUsd?: number;
 		/**
 		 * Reasoning/thinking tokens (separate from outputTokens)
