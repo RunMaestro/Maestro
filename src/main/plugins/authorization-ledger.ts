@@ -33,6 +33,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
+import { isAllowlistScoped } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
 
@@ -357,6 +358,41 @@ export class AuthorizationStore {
 		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
 		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
 		this.persist();
+	}
+
+	/**
+	 * Host-managed allowlist edit: replace the member scope of an ALREADY-CONSENTED
+	 * allowlist-scoped grant (agents:dispatch / process:spawn) with a new set the
+	 * USER chose in Settings. The user is a DIFFERENT principal from the plugin;
+	 * the plugin can never reach this. It mutates ONLY the scope of a capability
+	 * the user already granted: it never adds a capability, never touches the
+	 * unattended flag, and never changes identity (the plugin's files are
+	 * unchanged, so a later verify() still matches). Authoritative like any mint:
+	 * bumps the epoch and persists (sealed + anchored, or the session-only fallback).
+	 *
+	 * `members` are exact tokens (agent ids / host-blessed binary names); an empty
+	 * set clears the scope to deny-all, a valid lockdown short of a full revoke.
+	 * Returns false when the capability is not allowlist-scoped, or when the plugin
+	 * holds no grant for it (nothing to widen: the user must first consent to the
+	 * capability through the host-owned consent window).
+	 */
+	setAllowlistScope(
+		pluginId: string,
+		capability: PluginCapability,
+		members: readonly string[]
+	): boolean {
+		this.ensureLoaded();
+		if (!isAllowlistScoped(capability)) return false;
+		const entry = this.ledger.entries[pluginId];
+		if (!entry || !entry.enabled) return false;
+		const idx = entry.caps.findIndex((c) => c.capability === capability);
+		if (idx === -1) return false;
+		const scope = members.length > 0 ? [...members].join(',') : undefined;
+		this.bump();
+		entry.caps = entry.caps.map((c, i) => (i === idx ? { ...c, scope } : { ...c }));
+		entry.mintedAt = this.now();
+		this.persist();
+		return true;
 	}
 
 	/** The granted capabilities for a plugin - the broker's live source of truth.

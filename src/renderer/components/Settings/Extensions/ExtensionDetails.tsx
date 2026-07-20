@@ -14,6 +14,7 @@ import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from '
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { PermissionList, RISK_COLOR } from './PermissionList';
+import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
 	AggregatedContributions,
@@ -445,6 +446,22 @@ export function ExtensionDetails({
 							</div>
 						</div>
 					)}
+
+					{/* Host-managed dispatch allow list (issue #1250): editable only once
+					    the plugin holds a consented agents:dispatch grant. Widening it
+					    re-mints the grant scope host-side - no plugin re-pack/re-sign. */}
+					{isPlugin &&
+						(() => {
+							const dispatchGrant = grants?.granted.find((g) => g.capability === 'agents:dispatch');
+							return dispatchGrant ? (
+								<AgentDispatchAllowlist
+									theme={theme}
+									pluginId={ext.id}
+									grant={dispatchGrant}
+									onSaved={setGrants}
+								/>
+							) : null;
+						})()}
 
 					{/* First-party permission disclosure: the capabilities the feature's
 			    definition declares. Grants are minted host-side by the lifecycle

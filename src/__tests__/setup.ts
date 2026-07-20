@@ -501,6 +501,7 @@ const mockMaestro = {
 		getGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		requestConsent: vi.fn().mockResolvedValue({ opened: true }),
 		revokeGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		setAgentAllowlist: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 		invokeTool: vi.fn().mockResolvedValue({ result: null }),
 		getActivity: vi.fn().mockResolvedValue({}),
