@@ -15,7 +15,8 @@ vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isElectronDesktop: vi.fn(() => true),
 }));
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="x-icon" className={className} style={style}>
 			X

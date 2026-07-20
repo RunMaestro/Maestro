@@ -19,10 +19,17 @@ import type {
 	HostViewBlocks,
 	PluginContributions,
 	AggregatedContributions,
-	PluginEventPayloads,
-	PluginCategory,
-	PluginManifest,
 	ManifestValidationResult,
+	PluginCategory,
+	PluginContributions,
+	PluginEventPayloads,
+	PluginManifest,
+	PluginUiMountAttempt,
+	PluginUiMountValidation,
+	PluginUiSurface,
+	ProtectedUiSurface,
+	UiItemContribution,
+	UiSurface,
 } from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
@@ -30,6 +37,13 @@ import type {
 	HostViewBlocks as SrcHostViewBlocks,
 	PluginContributions as SrcPluginContributions,
 	AggregatedContributions as SrcAggregatedContributions,
+	PluginContributions as SrcPluginContributions,
+	PluginUiMountAttempt as SrcPluginUiMountAttempt,
+	PluginUiMountValidation as SrcPluginUiMountValidation,
+	PluginUiSurface as SrcPluginUiSurface,
+	ProtectedUiSurface as SrcProtectedUiSurface,
+	UiItemContribution as SrcUiItemContribution,
+	UiSurface as SrcUiSurface,
 } from '../../../../src/shared/plugins/contributions';
 import type { PluginEventPayloads as SrcPluginEventPayloads } from '../../../../src/shared/plugins/events';
 import type {
@@ -42,6 +56,11 @@ expectTypeOf<HostViewContribution>().toEqualTypeOf<SrcHostViewContribution>();
 expectTypeOf<HostViewBlocks>().toEqualTypeOf<SrcHostViewBlocks>();
 expectTypeOf<PluginContributions>().toEqualTypeOf<SrcPluginContributions>();
 expectTypeOf<AggregatedContributions>().toEqualTypeOf<SrcAggregatedContributions>();
+expectTypeOf<PluginUiSurface>().toEqualTypeOf<SrcPluginUiSurface>();
+expectTypeOf<ProtectedUiSurface>().toEqualTypeOf<SrcProtectedUiSurface>();
+expectTypeOf<UiSurface>().toEqualTypeOf<SrcUiSurface>();
+expectTypeOf<PluginUiMountAttempt>().toEqualTypeOf<SrcPluginUiMountAttempt>();
+expectTypeOf<PluginUiMountValidation>().toEqualTypeOf<SrcPluginUiMountValidation>();
 expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();
 expectTypeOf<PluginCategory>().toEqualTypeOf<SrcPluginCategory>();
 expectTypeOf<PluginManifest>().toEqualTypeOf<SrcPluginManifest>();

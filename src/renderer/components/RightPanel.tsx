@@ -39,6 +39,7 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -488,6 +489,8 @@ export const RightPanel = memo(
 							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
+
+					<PluginUiItemsSlot surface="rightPanelTab" className="px-1 shrink-0" />
 
 					<button
 						onClick={() => setRightPanelOpen(!rightPanelOpen)}

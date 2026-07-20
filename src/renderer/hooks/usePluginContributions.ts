@@ -40,14 +40,16 @@ export function usePluginContributions(): AggregatedContributions {
 		if (!plugins) return;
 
 		let cancelled = false;
+		let requestGeneration = 0;
 
 		const load = async (): Promise<void> => {
+			const generation = ++requestGeneration;
 			try {
 				const next = await plugins.contributions();
-				if (!cancelled) setContributions(next);
+				if (!cancelled && generation === requestGeneration) setContributions(next);
 			} catch {
 				// 'PluginsDisabled' or any read failure -> behave as feature-off.
-				if (!cancelled) setContributions(EMPTY);
+				if (!cancelled && generation === requestGeneration) setContributions(EMPTY);
 			}
 		};
 
@@ -58,6 +60,7 @@ export function usePluginContributions(): AggregatedContributions {
 
 		return () => {
 			cancelled = true;
+			requestGeneration++;
 			unsubscribe();
 		};
 	}, []);
