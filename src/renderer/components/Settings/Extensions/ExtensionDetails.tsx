@@ -78,7 +78,16 @@ export function ExtensionDetails({
 	getGrants,
 	settingsBody,
 }: ExtensionDetailsProps) {
-	const [grants, setGrants] = useState<PluginGrantsSnapshot | null>(null);
+	// Grants are tagged with the plugin they belong to, so switching plugins never
+	// reads the previous plugin's snapshot before the new plugin's async load
+	// resolves. `grants` is derived and stays null until THIS plugin's snapshot has
+	// loaded - a synchronous render guard that closes the stale-grant window (a
+	// plugin id could otherwise pair with the wrong grant for one render).
+	const [grantsState, setGrantsState] = useState<{
+		pluginId: string;
+		snapshot: PluginGrantsSnapshot;
+	} | null>(null);
+	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
@@ -92,20 +101,16 @@ export function ExtensionDetails({
 	// (grants are minted host-side on enable), so no ledger round-trip.
 	useEffect(() => {
 		if (!isPlugin) {
-			setGrants(null);
+			setGrantsState(null);
 			return;
 		}
 		let cancelled = false;
-		// Clear the previous plugin's snapshot synchronously so the async load
-		// below can never pair plugin A's grant with plugin B's id (a stale-grant
-		// window in the dispatch allow-list editor).
-		setGrants(null);
 		void getGrants(ext.id)
 			.then((snap) => {
-				if (!cancelled) setGrants(snap);
+				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
 			})
 			.catch(() => {
-				if (!cancelled) setGrants(null);
+				if (!cancelled) setGrantsState(null);
 			});
 		return () => {
 			cancelled = true;
@@ -463,7 +468,7 @@ export function ExtensionDetails({
 									theme={theme}
 									pluginId={ext.id}
 									grant={dispatchGrant}
-									onSaved={setGrants}
+									onSaved={(snap) => setGrantsState({ pluginId: ext.id, snapshot: snap })}
 								/>
 							) : null;
 						})()}
