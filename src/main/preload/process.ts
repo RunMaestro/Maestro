@@ -645,9 +645,9 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to remote movement operations (add/update/move/remove/clear) from
-		 * the CLI/web interface. The renderer applies them to the movement store and
-		 * opens the movement view.
+		 * Subscribe to remote movement operations and Concerto progress reports from
+		 * the CLI/web interface. The renderer applies window mutations to the movement
+		 * store and routes progress reports to the creation pipeline.
 		 */
 		onRemoteMovement: (
 			callback: (params: MovementPayload, responseChannel?: string) => void
@@ -667,6 +667,13 @@ export function createProcessApi() {
 		releaseConcertoHtmlDocument: (surface: ConcertoHtmlSurface, id: string): void => {
 			ipcRenderer.send('concerto-html:release', surface, id);
 		},
+
+		/** Restore a recently closed isolated document before recreating its view. */
+		restoreConcertoHtmlDocument: (
+			surface: ConcertoHtmlSurface,
+			id: string,
+			html: string
+		): Promise<number> => ipcRenderer.invoke('concerto-html:restore', surface, id, html),
 
 		/**
 		 * Subscribe to `movement state` reads: the main process sends a request with a

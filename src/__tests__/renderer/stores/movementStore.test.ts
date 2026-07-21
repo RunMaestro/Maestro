@@ -10,6 +10,7 @@ import {
 	useMovementStore,
 	applyMovementPayload,
 	getMovementSnapshot,
+	selectHasVisibleMovement,
 	MOVEMENT_ITEM_DEFAULT_WIDTH,
 	MOVEMENT_HTML_DEFAULT_WIDTH,
 	MOVEMENT_HTML_DEFAULT_HEIGHT,
@@ -18,6 +19,7 @@ import {
 function reset() {
 	useMovementStore.setState({
 		items: [],
+		dismissedItems: [],
 		viewportWidth: 0,
 		viewportHeight: 0,
 		hidden: false,
@@ -77,6 +79,80 @@ describe('applyMovementPayload', () => {
 			html: '<button>Second</button>',
 			timestamp: 8,
 		});
+	});
+
+	it('reserves a preset HTML frame and replaces it in place on first authored paint', () => {
+		applyMovementPayload({
+			op: 'begin',
+			id: 'mockup',
+			title: 'Checkout flow',
+			x: 80,
+			y: 40,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			viewType: 'html',
+			preparing: true,
+			minimized: false,
+			x: 80,
+			y: 40,
+			width: MOVEMENT_HTML_DEFAULT_WIDTH,
+			height: MOVEMENT_HTML_DEFAULT_HEIGHT,
+			html: undefined,
+		});
+
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Checkout</main>',
+			revision: 3,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			preparing: false,
+			x: 80,
+			y: 40,
+			html: '<main>Checkout</main>',
+			timestamp: 3,
+		});
+	});
+
+	it('keeps a prior prototype visible while a new revision is preparing', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Existing</main>',
+			revision: 4,
+		});
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Revised checkout' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			preparing: true,
+			html: '<main>Existing</main>',
+			timestamp: 4,
+			title: 'Revised checkout',
+		});
+	});
+
+	it('uses a fresh shell when beginning an id whose prior document was closed', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Closed revision</main>',
+		});
+		useMovementStore.getState().dismissItem('mockup');
+
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Fresh revision' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			preparing: true,
+			html: undefined,
+		});
+		expect(useMovementStore.getState().dismissedItems).toEqual([]);
 	});
 
 	it('preserves the prior type when an update switches to HTML without a body', () => {
@@ -213,9 +289,87 @@ describe('movementStore actions', () => {
 	beforeEach(reset);
 
 	it('resizeItem clamps below the minimum panel size', () => {
-		applyMovementPayload({ op: 'add', id: 'a', width: 400 });
-		useMovementStore.getState().resizeItem('a', 50, 40);
-		expect(useMovementStore.getState().items[0]).toMatchObject({ width: 200, height: 120 });
+		applyMovementPayload({ op: 'add', id: 'a', x: 40, y: 50, width: 400 });
+		useMovementStore.getState().resizeItem('a', {
+			x: 80,
+			y: 90,
+			width: 50,
+			height: 40,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			x: 80,
+			y: 90,
+			width: 200,
+			height: 120,
+		});
+	});
+
+	it('surfaceItem un-stashes a panel and moves it above overlapping peers', () => {
+		applyMovementPayload({ op: 'add', id: 'a' });
+		applyMovementPayload({ op: 'add', id: 'b' });
+		useMovementStore.getState().setItemMinimized('a', true);
+		useMovementStore.getState().setHidden(true);
+
+		useMovementStore.getState().surfaceItem('a');
+
+		expect(useMovementStore.getState().hidden).toBe(false);
+		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['b', 'a']);
+		expect(useMovementStore.getState().items[1].minimized).toBe(false);
+		expect(
+			[...useMovementStore.getState().items]
+				.sort((left, right) => left.taskbarOrder - right.taskbarOrder)
+				.map((item) => item.id)
+		).toEqual(['a', 'b']);
+	});
+
+	it('minimizes only the requested panel and preserves that choice across updates', () => {
+		applyMovementPayload({ op: 'add', id: 'a' });
+		applyMovementPayload({ op: 'add', id: 'b' });
+
+		useMovementStore.getState().setItemMinimized('a', true);
+		applyMovementPayload({ op: 'update', id: 'a', title: 'Updated' });
+
+		expect(useMovementStore.getState().items).toMatchObject([
+			{ id: 'a', minimized: true, title: 'Updated' },
+			{ id: 'b', minimized: false },
+		]);
+	});
+
+	it('dismisses a panel for chat-chip restoration and removes it permanently on remote remove', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<button>Open</button>',
+			revision: 4,
+		});
+
+		useMovementStore.getState().dismissItem('mockup');
+		expect(useMovementStore.getState().items).toEqual([]);
+		expect(useMovementStore.getState().dismissedItems).toMatchObject([
+			{ id: 'mockup', html: '<button>Open</button>' },
+		]);
+
+		expect(useMovementStore.getState().restoreDismissedItem('mockup', 9)).toBe(true);
+		expect(useMovementStore.getState().items).toMatchObject([
+			{ id: 'mockup', minimized: false, timestamp: 9 },
+		]);
+
+		useMovementStore.getState().dismissItem('mockup');
+		applyMovementPayload({ op: 'remove', id: 'mockup' });
+		expect(useMovementStore.getState().dismissedItems).toEqual([]);
+		expect(useMovementStore.getState().restoreDismissedItem('mockup')).toBe(false);
+	});
+
+	it('updates retained source while a user-dismissed panel is closed', () => {
+		applyMovementPayload({ op: 'add', id: 'report', title: 'Initial' });
+		useMovementStore.getState().dismissItem('report');
+
+		applyMovementPayload({ op: 'update', id: 'report', title: 'Updated' });
+
+		expect(useMovementStore.getState().dismissedItems).toMatchObject([
+			{ id: 'report', title: 'Updated' },
+		]);
 	});
 });
 
@@ -227,8 +381,49 @@ describe('getMovementSnapshot', () => {
 		applyMovementPayload({ op: 'add', id: 'a', x: 10.6, y: 20.4, width: 300.9, height: 200 });
 		useMovementStore.getState().setMeasuredHeight('a', 260);
 		const snap = getMovementSnapshot();
-		expect(snap).toMatchObject({ width: 1920, height: 1080 });
-		expect(snap.items[0]).toMatchObject({ id: 'a', x: 11, y: 20, width: 301, height: 260 });
+		expect(snap).toMatchObject({ width: 1920, height: 1080, hidden: false });
+		expect(snap.items[0]).toMatchObject({
+			id: 'a',
+			x: 11,
+			y: 20,
+			width: 301,
+			height: 260,
+			z: 1,
+		});
+	});
+
+	it('returns only non-minimized items with their real back-to-front layers', () => {
+		applyMovementPayload({ op: 'add', id: 'back' });
+		applyMovementPayload({ op: 'add', id: 'minimized' });
+		applyMovementPayload({ op: 'add', id: 'front' });
+		useMovementStore.getState().setItemMinimized('minimized', true);
+		useMovementStore.getState().setHidden(true);
+		useMovementStore.getState().surfaceItem('back');
+		useMovementStore.getState().setHidden(true);
+
+		expect(getMovementSnapshot()).toMatchObject({
+			hidden: true,
+			items: [
+				{ id: 'front', z: 2 },
+				{ id: 'back', z: 3 },
+			],
+		});
+	});
+});
+
+describe('selectHasVisibleMovement', () => {
+	beforeEach(reset);
+
+	it('requires a non-minimized item on a non-hidden layer', () => {
+		applyMovementPayload({ op: 'begin', id: 'design', title: 'Design' });
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(true);
+
+		useMovementStore.getState().setItemMinimized('design', true);
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
+
+		useMovementStore.getState().setItemMinimized('design', false);
+		useMovementStore.getState().setHidden(true);
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
 	});
 });
 
@@ -243,9 +438,12 @@ describe('flashItem', () => {
 	});
 
 	it('un-stashes the overlay, pulses the id, then clears after the timeout', () => {
+		applyMovementPayload({ op: 'add', id: 'deploy' });
+		applyMovementPayload({ op: 'add', id: 'other' });
 		useMovementStore.setState({ hidden: true });
-		useMovementStore.getState().flashItem('a');
-		expect(useMovementStore.getState()).toMatchObject({ hidden: false, flashedId: 'a' });
+		useMovementStore.getState().flashItem('deploy');
+		expect(useMovementStore.getState()).toMatchObject({ hidden: false, flashedId: 'deploy' });
+		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['other', 'deploy']);
 		vi.advanceTimersByTime(2200);
 		expect(useMovementStore.getState().flashedId).toBeNull();
 	});

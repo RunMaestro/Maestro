@@ -50,10 +50,15 @@ maestro-cli movement update <id> --body '<json-block-spec>'   # live update in p
 maestro-cli movement move <id> --x 80 --y 60
 maestro-cli movement remove <id>
 maestro-cli movement clear                                    # remove all panels
-maestro-cli movement state                                    # read current layout to compose around it
+maestro-cli movement state                                    # read visible layout, layers, and Maestro size
+maestro-cli movement progress <id> --title "Mockup" --phase composing
 ```
 
-`add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns the current panels and the viewport size, so an agent can place a new Movement without overlapping the others.
+`add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns Maestro's current viewport plus every non-minimized panel's geometry and stacking layer, so an agent can place a new Movement without overlapping the others.
+
+HTML Concerto requests run as independent design tracks in a compact conductor score above every Movement window. The score defaults above the bottom-right taskbar and can be dragged elsewhere. It uses one shared staff with compact measures for `composing`, `refining`, `arranging`, `reviewing`, and `testing`; each active Concerto is a numbered note that moves between measures as its work advances. When several mockups are requested, the parent agent assigns one track to each available subagent, and each subagent advances its own note with `movement progress`. The command updates only the progress pipeline; it does not create, move, or replace a Movement window.
+
+The parent registers each note in `composing`, then stops driving progress. Each assigned subagent advances only its own Movement id and emits the next phase when entering that work, not after completing it. `composing` covers design direction and the content outline; `refining` begins before the first complete implementation; `arranging` begins before the responsive, interaction, polish, and window-placement pass. This keeps early implementation time visible without artificially delaying `reviewing` or `testing`.
 
 For an interactive interface mockup, write a self-contained HTML file and open it directly:
 

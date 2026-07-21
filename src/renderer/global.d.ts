@@ -453,7 +453,7 @@ interface MaestroAPI {
 		onRemoteMovement: (
 			callback: (
 				params: {
-					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					op: 'begin' | 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 					id?: string;
 					viewType?: 'view' | 'html';
 					x?: number;
@@ -464,12 +464,26 @@ interface MaestroAPI {
 					body?: string;
 					sourcePlugin?: string;
 					revision?: number;
+					phase?: 'composing' | 'refining' | 'arranging' | 'reviewing' | 'testing';
+					step?: number;
+					steps?: number;
+					notes?: Array<{
+						value: 'quarter' | 'eighth' | 'sixteenth';
+						dotted?: boolean;
+						triad?: boolean;
+						tie?: boolean;
+					}>;
 				},
 				responseChannel?: string
 			) => void
 		) => () => void;
 		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
 		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
+		restoreConcertoHtmlDocument: (
+			surface: 'movement' | 'cadenza',
+			id: string,
+			html: string
+		) => Promise<number>;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
 		onRequestMovementDesignerInspection: (

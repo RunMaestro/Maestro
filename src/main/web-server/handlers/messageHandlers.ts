@@ -137,8 +137,14 @@ import {
 	type CadenzaColor,
 } from '../../../shared/cadenza-types';
 import {
+	CONCERTO_CREATION_PHASES,
+	CONCERTO_PROGRESS_MAX_STEPS,
+	CONCERTO_PROGRESS_NOTE_VALUES,
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
+	type ConcertoCreationPhase,
+	type ConcertoProgressNote,
+	type ConcertoProgressNoteValue,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
@@ -4756,7 +4762,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle movement - add/update/move/remove/clear an item on the agent-driven
+	 * Handle movement - begin/add/update/move/remove/clear an item on the agent-driven
 	 * movement. Validates op + id, then hands a typed payload to the renderer via
 	 * the movementView callback (the `remote:movement` channel).
 	 */
@@ -4799,6 +4805,89 @@ export class WebSocketMessageHandler {
 			sendResult(false, `Movement ${op} requires HTML content when viewType is 'html'`);
 			return;
 		}
+		const title = typeof message.title === 'string' ? message.title.trim() : '';
+		if (op === 'begin') {
+			if (!title) {
+				sendResult(false, 'Movement begin requires a non-empty title');
+				return;
+			}
+			if (body !== undefined) {
+				sendResult(false, 'Movement begin uses a host-rendered shell and does not accept content');
+				return;
+			}
+			viewType = 'html';
+		}
+		let phase: ConcertoCreationPhase | undefined;
+		let step: number | undefined;
+		let steps: number | undefined;
+		let notes: ConcertoProgressNote[] | undefined;
+		if (op === 'progress') {
+			const rawPhase = typeof message.phase === 'string' ? message.phase : '';
+			if (!CONCERTO_CREATION_PHASES.includes(rawPhase as ConcertoCreationPhase)) {
+				sendResult(
+					false,
+					`Invalid or missing phase. Must be one of: ${CONCERTO_CREATION_PHASES.join(', ')}`
+				);
+				return;
+			}
+			if (!title) {
+				sendResult(false, 'Movement progress requires a non-empty title');
+				return;
+			}
+			phase = rawPhase as ConcertoCreationPhase;
+			if (message.notes !== undefined) {
+				if (!Array.isArray(message.notes) || message.notes.length === 0) {
+					sendResult(false, 'Invalid notes: expected a non-empty array');
+					return;
+				}
+				notes = [];
+				for (const [index, rawNote] of message.notes.entries()) {
+					if (!rawNote || typeof rawNote !== 'object') {
+						sendResult(false, `Invalid note ${index + 1}: expected an object`);
+						return;
+					}
+					const note = rawNote as Record<string, unknown>;
+					if (!CONCERTO_PROGRESS_NOTE_VALUES.includes(note.value as ConcertoProgressNoteValue)) {
+						sendResult(false, `Invalid note ${index + 1}: unsupported value`);
+						return;
+					}
+					const invalidModifier = (['dotted', 'triad', 'tie'] as const).find(
+						(modifier) => note[modifier] !== undefined && typeof note[modifier] !== 'boolean'
+					);
+					if (invalidModifier) {
+						sendResult(false, `Invalid note ${index + 1}: ${invalidModifier} must be boolean`);
+						return;
+					}
+					notes.push({
+						value: note.value as ConcertoProgressNoteValue,
+						...(note.dotted === true && { dotted: true }),
+						...(note.triad === true && { triad: true }),
+						...(note.tie === true && { tie: true }),
+					});
+				}
+				if (notes.at(-1)?.tie) {
+					sendResult(false, 'Invalid notes: the final note cannot tie forward');
+					return;
+				}
+			}
+			steps = message.steps === undefined ? (notes?.length ?? 1) : Number(message.steps);
+			step = message.step === undefined ? 1 : Number(message.step);
+			if (!Number.isInteger(steps) || steps < 1 || steps > CONCERTO_PROGRESS_MAX_STEPS) {
+				sendResult(
+					false,
+					`Invalid steps: must be an integer from 1 through ${CONCERTO_PROGRESS_MAX_STEPS}`
+				);
+				return;
+			}
+			if (!Number.isInteger(step) || step < 1 || step > steps) {
+				sendResult(false, `Invalid step: must be an integer from 1 through steps (${steps})`);
+				return;
+			}
+			if (notes && notes.length !== steps) {
+				sendResult(false, `Invalid notes: expected exactly ${steps} entries`);
+				return;
+			}
+		}
 
 		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
 		// v === 'number'`, which would become invalid CSS geometry downstream.
@@ -4819,8 +4908,12 @@ export class WebSocketMessageHandler {
 			y: num(message.y),
 			width: num(message.width),
 			height: num(message.height),
-			title: typeof message.title === 'string' ? message.title : undefined,
+			title: title || undefined,
 			body,
+			phase,
+			step,
+			steps,
+			notes,
 		};
 
 		if (!this.callbacks.movementView) {

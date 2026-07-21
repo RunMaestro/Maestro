@@ -29,7 +29,7 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
-import { releaseConcertoHtmlDocument } from '../../concerto-html';
+import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -121,6 +121,24 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		}
 		releaseConcertoHtmlDocument(surface, id);
 	});
+
+	ipcMain.handle(
+		'concerto-html:restore',
+		withIpcErrorLogging(
+			handlerOpts('restoreConcertoHtmlDocument'),
+			async (surface: unknown, id: unknown, html: unknown) => {
+				if (
+					(surface !== 'movement' && surface !== 'cadenza') ||
+					typeof id !== 'string' ||
+					!id ||
+					typeof html !== 'string'
+				) {
+					throw new Error('Invalid Concerto HTML restore request');
+				}
+				return restoreConcertoHtmlDocument(surface, id, html);
+			}
+		)
+	);
 
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(

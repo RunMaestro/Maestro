@@ -10,9 +10,16 @@ import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
-import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
+import {
+	applyMovementPayload,
+	getMovementSnapshot,
+	useMovementStore,
+} from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
+import { buildThinkingItems } from '../../utils/thinkingItems';
+import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../shared/movement-types';
 import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
@@ -47,6 +54,80 @@ export interface UseRemoteIntegrationDeps {
  */
 export interface UseRemoteIntegrationReturn {
 	// No return values - all functionality is via side effects
+}
+
+const MOVEMENT_INSPECTION_PAINT_FALLBACK_MS = 250;
+
+/**
+ * Attribute a Concerto bridge event only when one AI tab is unambiguously busy.
+ * The bridge does not yet carry its originating session, so guessing in a
+ * concurrent run could put another agent's design status on the focused pill.
+ */
+function recordConcertoCreationActivity(
+	movementId: string,
+	phase: ConcertoCreationPhase,
+	revision?: number,
+	reportedTitle?: string,
+	step?: number,
+	steps?: number,
+	notes?: ConcertoProgressNote[]
+): void {
+	const thinkingItems = buildThinkingItems(useSessionStore.getState().sessions);
+	if (thinkingItems.length !== 1) return;
+
+	const [{ session, tab }] = thinkingItems;
+	const thinkingStartTime = tab?.thinkingStartTime ?? session.thinkingStartTime;
+	if (thinkingStartTime === undefined) return;
+
+	const movement = useMovementStore
+		.getState()
+		.items.find((candidate) => candidate.id === movementId);
+	// A progress event may arrive before the subagent has mounted its HTML. Other
+	// Movement events must resolve to an authored HTML mockup so native/plugin
+	// panels never create a Concerto pipeline track.
+	if (!reportedTitle && (!movement || movement.viewType !== 'html')) return;
+
+	useConcertoCreationActivityStore.getState().upsertTrack({
+		sessionId: session.id,
+		tabId: tab?.id ?? null,
+		thinkingStartTime,
+		movementId,
+		title: reportedTitle?.trim() || movement?.title?.trim() || movementId,
+		phase,
+		step,
+		steps,
+		notes,
+		width: movement ? Math.round(movement.width) : undefined,
+		height:
+			movement?.measuredHeight !== undefined
+				? Math.round(movement.measuredHeight)
+				: movement?.height !== undefined
+					? Math.round(movement.height)
+					: undefined,
+		revision,
+	});
+}
+
+/**
+ * Wait until Chromium has had a full rendering opportunity after a synchronous
+ * surface update. The second animation frame runs after the first frame's paint.
+ * A bounded fallback keeps inspection responsive when background throttling
+ * suppresses animation frames.
+ */
+function waitForMovementInspectionPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(fallbackTimeout);
+			resolve();
+		};
+		const fallbackTimeout = window.setTimeout(finish, MOVEMENT_INSPECTION_PAINT_FALLBACK_MS);
+		window.requestAnimationFrame(() => {
+			window.requestAnimationFrame(finish);
+		});
+	});
 }
 
 /**
@@ -889,7 +970,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle remote movement operations (add/update/move/remove/clear) from CLI/web.
+	// Handle remote movement operations and Concerto progress reports from CLI/web.
 	useEffect(() => {
 		// Guard: on a dev hot-restart the renderer can mount before the rebuilt
 		// preload exposes newer bridge methods. Degrade gracefully instead of
@@ -900,11 +981,47 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			const reply = (applied: boolean) => {
 				if (responseChannel) proc.sendMovementAppliedResponse?.(responseChannel, applied);
 			};
+			if (params.op === 'progress') {
+				if (!params.id || !params.phase || !params.title) {
+					reply(false);
+					return;
+				}
+				recordConcertoCreationActivity(
+					params.id,
+					params.phase,
+					params.revision,
+					params.title,
+					params.step,
+					params.steps,
+					params.notes
+				);
+				reply(true);
+				return;
+			}
 			try {
 				flushSync(() => applyMovementPayload(params));
 			} catch {
 				reply(false);
 				return;
+			}
+			if (params.op === 'clear') {
+				useConcertoCreationActivityStore.getState().clear();
+			} else if (params.op === 'remove' && params.id) {
+				useConcertoCreationActivityStore.getState().clearMovement(params.id);
+			} else if (params.id) {
+				let phase: ConcertoCreationPhase = 'refining';
+				if (params.op === 'begin' || params.op === 'add') phase = 'composing';
+				else if (
+					useMovementStore.getState().items.find((movement) => movement.id === params.id)?.preparing
+				) {
+					phase = 'composing';
+				} else if (
+					params.op === 'move' ||
+					(params.body === undefined && params.title === undefined && params.viewType === undefined)
+				) {
+					phase = 'arranging';
+				}
+				recordConcertoCreationActivity(params.id, phase, params.revision);
 			}
 			if (params.id && params.revision !== undefined) {
 				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
@@ -937,7 +1054,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
-				void getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision)
+				// Inspection is read-only for the iframe, but the requested panel must be
+				// visible above overlapping peers for Chromium's compositor crop to show it.
+				flushSync(() => useMovementStore.getState().surfaceItem(id));
+				recordConcertoCreationActivity(id, 'reviewing', expectedRevision);
+				void waitForMovementInspectionPaint()
+					.then(() => getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision))
 					.then((snapshot) =>
 						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
 					)
@@ -954,6 +1076,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInteraction !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInteraction(
 			(id, action, expectedRevision, responseChannel) => {
+				recordConcertoCreationActivity(id, 'testing', expectedRevision);
 				void interactWithConcertoDesignerFrame('movement', id, action, undefined, expectedRevision)
 					.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
 					.catch((error) =>

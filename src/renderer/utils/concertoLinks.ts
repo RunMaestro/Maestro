@@ -40,15 +40,33 @@ export function parseConcertoHref(href: string | undefined | null): ConcertoTarg
 	return { surface: match[1].toLowerCase() as ConcertoTarget['surface'], id };
 }
 
-/** Flash/focus the Movement or Cadenza a `concerto:` link points at. No-op for a
- *  non-concerto href. Movements live in this (main) window, so flash the store
- *  directly; cadenzas live in the separate HUD renderer, so route the flash
- *  through main, which forwards it to whichever renderer holds the card. */
-export function flashConcertoTarget(href: string | undefined | null): boolean {
+/** Open/focus the Movement or Cadenza a `concerto:` link points at. Recently
+ *  dismissed Movements are recreated from their retained source document;
+ *  older unavailable links return false instead of silently targeting nothing. */
+export async function flashConcertoTarget(href: string | undefined | null): Promise<boolean> {
 	const target = parseConcertoHref(href);
 	if (!target) return false;
 	if (target.surface === 'movement') {
-		useMovementStore.getState().flashItem(target.id);
+		const store = useMovementStore.getState();
+		if (store.flashItem(target.id)) return true;
+		const dismissed = store.dismissedItems.find((item) => item.id === target.id);
+		if (!dismissed) return false;
+
+		let revision: number | undefined;
+		if (dismissed.viewType === 'html') {
+			if (!dismissed.html || !window.maestro?.process?.restoreConcertoHtmlDocument) return false;
+			try {
+				revision = await window.maestro.process.restoreConcertoHtmlDocument(
+					'movement',
+					target.id,
+					dismissed.html
+				);
+			} catch {
+				return false;
+			}
+		}
+		if (!useMovementStore.getState().restoreDismissedItem(target.id, revision)) return false;
+		return useMovementStore.getState().flashItem(target.id);
 	} else {
 		window.maestro?.process?.flashCadenza?.(target.id);
 	}

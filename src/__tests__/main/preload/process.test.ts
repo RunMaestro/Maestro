@@ -426,6 +426,20 @@ describe('Process Preload API', () => {
 			expect(mockSend).toHaveBeenCalledWith('concerto-html:release', 'cadenza', 'mini-mockup');
 		});
 
+		it('restores a recently closed Concerto HTML document', async () => {
+			mockInvoke.mockResolvedValueOnce(23);
+
+			await expect(
+				api.restoreConcertoHtmlDocument('movement', 'mockup', '<button>Fresh</button>')
+			).resolves.toBe(23);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'concerto-html:restore',
+				'movement',
+				'mockup',
+				'<button>Fresh</button>'
+			);
+		});
+
 		it('forwards the expected revision with inspection requests', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
