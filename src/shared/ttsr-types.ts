@@ -110,6 +110,32 @@ export const DEFAULT_TTSR_PROJECT_SETTINGS: TtsrProjectSettings = {
 	contextMode: 'keep',
 };
 
+// ── Match reporting (IPC-safe) ───────────────────────────────────────────────
+
+/** Minimal rule identity carried in IPC payloads and the activity log. */
+export interface TtsrRuleRef {
+	name: string;
+	/** Project-relative rule file path, e.g. `.maestro/rules/no-console-log.md`. */
+	path: string;
+}
+
+/**
+ * Payload of the `ttsr:matched` push event (observability only - the abort and
+ * reinject land in Phase 3 via `ttsr:triggered`).
+ */
+export interface TtsrMatchedPayload {
+	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+	sessionId: string;
+	agentId: AgentId;
+	/** Stream the match came from. */
+	source: TtsrScope;
+	rules: TtsrRuleRef[];
+	/** True when at least one fired rule's `interruptMode` permits aborting. */
+	willInterrupt: boolean;
+	/** Edited file path, for tool-source matches. */
+	filePath?: string;
+}
+
 // ── Gate A: per-agent capability matrix ──────────────────────────────────────
 
 /**
