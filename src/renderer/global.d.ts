@@ -3912,6 +3912,7 @@ interface MaestroAPI {
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setAgentAllowlist: (id: string, agentIds: string[]) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;

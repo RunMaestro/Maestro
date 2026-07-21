@@ -24,6 +24,7 @@ import {
 } from '../../../main/plugins/authorization-ledger';
 import type { SignatureStatus } from '../../../shared/plugins/signing';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { isPermitted, parseAllowlistScope } from '../../../shared/plugins/permissions';
 
 let tmpDir: string;
 let ledgerPath: string;
@@ -158,6 +159,119 @@ describe('AuthorizationStore - mint / revoke', () => {
 		expect(store.isEnabled('a')).toBe(false);
 		expect(store.readGrants('a')).toEqual([]);
 		expect(store.isTombstoned('a')).toBe(true);
+	});
+});
+
+describe('AuthorizationStore - setAllowlistScope (host-managed allow list, #1250)', () => {
+	const dispatchGrant = (scope: string, unattended = false): PermissionGrant[] => [
+		{
+			capability: 'agents:dispatch',
+			scope,
+			grantedAt: 1,
+			...(unattended ? { unattended: true } : {}),
+		},
+	];
+
+	it('widens the allow list of an already-consented dispatch grant', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		expect(
+			store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2', 'agent-3'])
+		).toBe(true);
+		const grants = store.readGrants('relay');
+		expect(grants).toHaveLength(1);
+		expect(parseAllowlistScope(grants[0].scope)).toEqual(['agent-1', 'agent-2', 'agent-3']);
+		expect(isPermitted(grants, 'agents:dispatch', 'agent-3')).toBe(true);
+	});
+
+	it('an empty set clears the scope to deny-all (never a wildcard)', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		expect(store.setAllowlistScope('relay', 'agents:dispatch', [])).toBe(true);
+		const grants = store.readGrants('relay');
+		expect(grants[0].scope).toBeUndefined();
+		expect(isPermitted(grants, 'agents:dispatch', 'agent-1')).toBe(false);
+	});
+
+	it('preserves the unattended flag and any other grants', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint(
+			'relay',
+			[
+				{ capability: 'agents:dispatch', scope: 'agent-1', grantedAt: 1, unattended: true },
+				{ capability: 'net:connect', scope: 'gateway.discord.gg', grantedAt: 1 },
+			],
+			ident('hash')
+		);
+
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+		const grants = store.readGrants('relay');
+		const dispatch = grants.find((g) => g.capability === 'agents:dispatch');
+		const net = grants.find((g) => g.capability === 'net:connect');
+		expect(dispatch?.unattended).toBe(true);
+		expect(parseAllowlistScope(dispatch?.scope)).toEqual(['agent-1', 'agent-2']);
+		expect(net?.scope).toBe('gateway.discord.gg');
+	});
+
+	it('returns false when the plugin holds no grant for the capability', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('data', caps('fs:read', '/data'), ident('hash'));
+		expect(store.setAllowlistScope('data', 'agents:dispatch', ['agent-1'])).toBe(false);
+		expect(store.setAllowlistScope('missing', 'agents:dispatch', ['agent-1'])).toBe(false);
+	});
+
+	it('refuses a non-allowlist capability and leaves its scope untouched', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('data', caps('fs:read', '/data'), ident('hash'));
+		expect(store.setAllowlistScope('data', 'fs:read', ['/other'])).toBe(false);
+		expect(store.readGrants('data')[0].scope).toBe('/data');
+	});
+
+	it('persists the widened scope across restarts (sealed + anchored)', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+
+		const reopened = makeStore(fakeSeal(), fakeAnchor(holder));
+		expect(parseAllowlistScope(reopened.readGrants('relay')[0].scope)).toEqual([
+			'agent-1',
+			'agent-2',
+		]);
+		expect(reopened.trustState()).toBe('persistent');
+	});
+
+	it('the widened scope survives verify() with an unchanged identity', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+
+		const result = store.verify('relay', ident('hash'), ['agents:dispatch']);
+		expect(result.authorized).toBe(true);
+		expect(parseAllowlistScope(result.caps[0].scope)).toEqual(['agent-1', 'agent-2']);
+	});
+
+	it('refuses the whole edit if any member is invalid, leaving the scope unchanged', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		// A comma would split the scope into two members; a '*' could smuggle
+		// pattern semantics - both must be refused outright, never silently dropped.
+		expect(
+			store.setAllowlistScope('relay', 'agents:dispatch', ['agent-2', 'agent-1,agent-3'])
+		).toBe(false);
+		expect(store.setAllowlistScope('relay', 'agents:dispatch', ['agent-*'])).toBe(false);
+		// The original scope is untouched.
+		expect(parseAllowlistScope(store.readGrants('relay')[0].scope)).toEqual(['agent-1']);
 	});
 });
 
