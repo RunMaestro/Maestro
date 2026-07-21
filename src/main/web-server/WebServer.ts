@@ -71,6 +71,9 @@ import type {
 	OpenBrowserTabCallback,
 	OpenTerminalTabCallback,
 	NewAITabWithPromptCallback,
+	EnqueueCommandCallback,
+	ListQueueCallback,
+	RemoveQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	SetSessionAutoRunFolderCallback,
@@ -460,6 +463,18 @@ export class WebServer {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
+	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
+		this.callbackRegistry.setEnqueueCommandCallback(callback);
+	}
+
+	setListQueueCallback(callback: ListQueueCallback): void {
+		this.callbackRegistry.setListQueueCallback(callback);
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbackRegistry.setRemoveQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -930,6 +945,25 @@ export class WebServer {
 			) => this.callbackRegistry.openTerminalTab(sessionId, config),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			enqueueCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) =>
+				this.callbackRegistry.enqueueCommand(
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					images,
+					background
+				),
+			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
+			removeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.removeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId),
 			configureAutoRun: async (

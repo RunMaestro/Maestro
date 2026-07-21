@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode } from '../../types';
+import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { generateId } from '../../utils/ids';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
@@ -547,6 +548,198 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "enqueue command" from the CLI (`dispatch --queue`). The
+		// renderer owns the authoritative execution queue, so the queue-vs-dispatch
+		// decision lives here: a busy target joins `session.executionQueue` (FIFO);
+		// an idle target dispatches immediately through the same maestro:remoteCommand
+		// path as a plain dispatch. The ack carries the queue outcome so the CLI can
+		// report position. Enqueued items are byte-identical to UI-queued items, so
+		// they render in the ExecutionQueueBrowser/Indicator, are editable/reorderable/
+		// removable, and the closed-tab resolver (resolveQueuedItemTarget) applies at
+		// drain time.
+		const unsubscribeEnqueueCommand = window.maestro.process.onRemoteEnqueueCommand(
+			(
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				_inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => {
+				const reply = (result: {
+					success: boolean;
+					tabId?: string;
+					queued?: boolean;
+					queuePosition?: number;
+					queueLength?: number;
+					itemId?: string;
+					error?: string;
+				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
+
+				try {
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					if (!session) {
+						reply({ success: false, error: 'Session not found' });
+						return;
+					}
+
+					// Resolve the target tab. An explicit --tab that no longer exists is
+					// an error - never silently reroute to the active tab, which would
+					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
+					if (tabId && !requestedTab) {
+						reply({ success: false, error: `Tab not found: ${tabId}` });
+						return;
+					}
+					const targetTab = requestedTab ?? getActiveTab(session);
+					if (!targetTab) {
+						reply({ success: false, error: 'Session has no AI tabs' });
+						return;
+					}
+					const resolvedTabId = targetTab.id;
+
+					// Idle target: no line to wait in, dispatch now through the shared
+					// remote-command path (identical to a plain `dispatch`). Respect the
+					// dispatch --focus opt-in via `background`.
+					if (session.state !== 'busy') {
+						if (!background) {
+							setActiveSessionId(sessionId);
+						}
+						window.dispatchEvent(
+							new CustomEvent('maestro:remoteCommand', {
+								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+							})
+						);
+						reply({ success: true, tabId: resolvedTabId, queued: false });
+						return;
+					}
+
+					// Busy target: get in line. Append a message item to the authoritative
+					// execution queue (FIFO by insertion/timestamp), matching the shape the
+					// UI creates in useInputProcessing so it is a first-class queue citizen.
+					const isReadOnly =
+						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
+					const queuedItem: QueuedItem = {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: resolvedTabId,
+						type: 'message',
+						text: command,
+						...(images && images.length > 0 ? { images: [...images] } : {}),
+						tabName:
+							targetTab.name ||
+							(targetTab.agentSessionId
+								? targetTab.agentSessionId.split('-')[0].toUpperCase()
+								: 'New'),
+						readOnlyMode: isReadOnly,
+					};
+
+					// Position is deterministic from the snapshot we already read: the item
+					// is appended to the tail, so it lands at length+1 (1-based). Computing
+					// it here (not inside the state updater) keeps the returned position
+					// independent of when the store applies the update.
+					const queueLength = (session.executionQueue?.length ?? 0) + 1;
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId ? { ...s, executionQueue: [...s.executionQueue, queuedItem] } : s
+						)
+					);
+
+					reply({
+						success: true,
+						tabId: resolvedTabId,
+						queued: true,
+						// 1-based position from the front; the item sits at the tail.
+						queuePosition: queueLength,
+						queueLength,
+						itemId: queuedItem.id,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteEnqueueCommand failed:', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "list queue" from the CLI (`queue list`). Read-only snapshot
+		// of the authoritative executionQueue(s) so scripts can inspect what is
+		// pending. Reads the store directly (useSessionStore.getState) so the snapshot
+		// is always current, per the store's outside-React contract.
+		const unsubscribeListQueue = window.maestro.process.onRemoteListQueue(
+			(sessionId: string | undefined, responseChannel: string) => {
+				try {
+					const sessions = useSessionStore.getState().sessions;
+					const relevant = sessionId
+						? sessions.filter((s) => s.id === sessionId)
+						: sessions.filter((s) => (s.executionQueue?.length ?? 0) > 0);
+					const queues = relevant.map((s) => ({
+						sessionId: s.id,
+						name: s.name,
+						state: s.state,
+						items: (s.executionQueue ?? []).map((item) => ({
+							id: item.id,
+							timestamp: item.timestamp,
+							tabId: item.tabId,
+							type: item.type,
+							...(item.text !== undefined ? { text: item.text } : {}),
+							...(item.command !== undefined ? { command: item.command } : {}),
+							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
+							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
+							...(item.paused !== undefined ? { paused: item.paused } : {}),
+						})),
+					}));
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: true,
+						queues,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteListQueue failed:', undefined, error);
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: false,
+						queues: [],
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "remove queue item" from the CLI (`queue remove`). Drops the
+		// item by id from the authoritative queue, exactly like the UI trash action.
+		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					// Determine the outcome from the current store snapshot, then mutate.
+					// Keeps the returned `removed` independent of update timing.
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
+					if (removed) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
+									: s
+							)
+						);
+					}
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: true,
+						removed,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteRemoveQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: false,
+						removed: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -557,6 +750,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
+			unsubscribeEnqueueCommand();
+			unsubscribeListQueue();
+			unsubscribeRemoveQueueItem();
 		};
 	}, [
 		sessionsRef,
