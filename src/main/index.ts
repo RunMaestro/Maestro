@@ -42,6 +42,8 @@ import type { DecisionPair } from '../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, execFile, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
+import { seedBundledPlugins } from './plugins/bundled-plugins';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
@@ -1571,7 +1573,12 @@ app
 		pluginAuthStore = authStore;
 		const trustedKeysFor = (): string[] => {
 			const keys = store.get('pluginTrustedKeys', []) as unknown;
-			return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
+			const userKeys = Array.isArray(keys)
+				? keys.filter((k): k is string => typeof k === 'string')
+				: [];
+			// Merge the built-in publisher anchor so a signed, bundled first-party
+			// plugin is trusted without the user adding a key (publisher-keys.ts).
+			return resolveTrustedKeys(userKeys);
 		};
 		// The live grant source every enforcement seam now reads (sealed, identity-
 		// bound, anti-rollback) instead of the forgeable on-disk store.
@@ -2444,10 +2451,7 @@ app
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
 			},
-			trustedKeys: () => {
-				const keys = store.get('pluginTrustedKeys', []) as unknown;
-				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
-			},
+			trustedKeys: trustedKeysFor,
 			sandbox: sandboxHost,
 			// Gate capability-scoped contributions by the SAME live grant source the
 			// broker uses: the sealed authorization ledger.
@@ -2863,6 +2867,13 @@ app
 		// so this is safe to call unconditionally.
 		if (pluginManager) {
 			try {
+				// Copy trusted bundled first-party plugins into the plugins dir before
+				// discovery. Trust-gated + idempotent, so it is safe to run every boot.
+				seedBundledPlugins({
+					trustedKeys: trustedKeysFor,
+					onLog: (message) => logger.info(message, 'Startup'),
+					onError: (error) => void captureException(error),
+				});
 				pluginManager.refresh();
 				pluginManager.startWatching();
 			} catch (err) {
