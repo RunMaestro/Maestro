@@ -14,6 +14,7 @@ import type {
 } from '../../shared/ttsr-types';
 import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrRuntime } from './ttsr-runtime';
+import { createTtsrStatePersistence, type TtsrStatePersistence } from './ttsr-state-persistence';
 import type { TtsrProcessEventSource } from './ttsr-spawn-registry';
 
 export { TtsrRuntime } from './ttsr-runtime';
@@ -21,6 +22,11 @@ export { TtsrManager } from './ttsr-manager';
 export { TtsrInterruptDriver } from './ttsr-interrupt-driver';
 export { TtsrSpawnRegistry } from './ttsr-spawn-registry';
 export { TtsrStateStore } from './ttsr-state-store';
+export {
+	createTtsrStatePersistence,
+	type TtsrStatePersistence,
+	type TtsrStateBackend,
+} from './ttsr-state-persistence';
 export * from './config/ttsr-config-loader';
 
 /** The process-manager surface TTSR needs. */
@@ -39,6 +45,12 @@ export interface InstallTtsrOptions {
 	getDisabledRules?(): string[];
 	/** Renderer push channel, used for the `ttsr:matched` observability event. */
 	safeSend?: (channel: string, ...args: unknown[]) => void;
+	/**
+	 * Override the repeat-state persistence layer. Defaults to the electron-store
+	 * backed one; pass `null` for an in-memory runtime (tests, headless CLI) where
+	 * `once`/`after-gap` resetting with the process is acceptable.
+	 */
+	persistence?: TtsrStatePersistence | null;
 }
 
 /**
@@ -53,6 +65,10 @@ export function installTtsrRuntime(
 	const runtime = new TtsrRuntime({
 		isGloballyEnabled: options.isGloballyEnabled,
 		getDisabledRules: options.getDisabledRules,
+		persistence:
+			options.persistence === null
+				? undefined
+				: (options.persistence ?? createTtsrStatePersistence()),
 		onMatched: safeSend
 			? (payload: TtsrMatchedPayload) => safeSend('ttsr:matched', payload)
 			: undefined,

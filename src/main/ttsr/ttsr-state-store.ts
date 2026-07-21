@@ -35,17 +35,33 @@ export interface TtsrConversationState {
 	/** Completed turns in this conversation. Drives `after-gap` eligibility. */
 	messageCount: number;
 	rules: Record<string, TtsrRuleState>;
+	/** Epoch ms of the last mutation. Drives the persistence layer's TTL prune. */
+	updatedAt: number;
 }
 
-/** Serializable snapshot, for the Phase 3 main-side persistence layer. */
+/** Serializable snapshot, handed to the main-side persistence layer. */
 export type TtsrStateSnapshot = Record<string, TtsrConversationState>;
 
+export interface TtsrStateStoreOptions {
+	/**
+	 * Fired after every mutation so the persistence layer can schedule a write.
+	 * Deliberately a plain callback rather than an EventEmitter: the store is
+	 * touched mid-stream and must not pay for listener dispatch.
+	 */
+	onChange?(): void;
+}
+
 function emptyConversation(): TtsrConversationState {
-	return { messageCount: 0, rules: {} };
+	return { messageCount: 0, rules: {}, updatedAt: Date.now() };
 }
 
 export class TtsrStateStore {
 	private readonly conversations = new Map<string, TtsrConversationState>();
+	private readonly onChange?: () => void;
+
+	constructor(options: TtsrStateStoreOptions = {}) {
+		this.onChange = options.onChange;
+	}
 
 	private ensure(key: string): TtsrConversationState {
 		let state = this.conversations.get(key);
@@ -54,6 +70,12 @@ export class TtsrStateStore {
 			this.conversations.set(key, state);
 		}
 		return state;
+	}
+
+	/** Stamp the conversation as freshly touched and notify the persistence layer. */
+	private touch(state: TtsrConversationState): void {
+		state.updatedAt = Date.now();
+		this.onChange?.();
 	}
 
 	/** Completed turns seen for this conversation. */
@@ -68,7 +90,9 @@ export class TtsrStateStore {
 
 	/** Advance the turn counter. Called once per completed turn. */
 	noteTurnEnd(key: string): void {
-		this.ensure(key).messageCount += 1;
+		const state = this.ensure(key);
+		state.messageCount += 1;
+		this.touch(state);
 	}
 
 	/** Record that a rule fired, which starts its repeat cooldown. */
@@ -79,6 +103,7 @@ export class TtsrStateStore {
 			lastInjectedAt: state.messageCount,
 			injectionCount: (existing?.injectionCount ?? 0) + 1,
 		};
+		this.touch(state);
 	}
 
 	/**
@@ -115,6 +140,7 @@ export class TtsrStateStore {
 		const target = this.conversations.get(targetKey);
 		if (!target) {
 			this.conversations.set(targetKey, pending);
+			this.touch(pending);
 			return;
 		}
 
@@ -128,25 +154,39 @@ export class TtsrStateStore {
 					}
 				: pendingRule;
 		}
+		this.touch(target);
 	}
 
 	/** Forget one conversation (session deleted, rules reloaded from scratch). */
 	clearConversation(key: string): void {
-		this.conversations.delete(key);
+		if (this.conversations.delete(key)) this.onChange?.();
 	}
 
 	/** Deep copy of all state, for persistence. */
 	snapshot(): TtsrStateSnapshot {
 		const out: TtsrStateSnapshot = {};
 		for (const [key, state] of this.conversations) {
-			out[key] = { messageCount: state.messageCount, rules: { ...state.rules } };
+			out[key] = {
+				messageCount: state.messageCount,
+				rules: { ...state.rules },
+				updatedAt: state.updatedAt,
+			};
 		}
 		return out;
 	}
 
-	/** Replace all state from a persisted snapshot (app restart, session reload). */
+	/**
+	 * Replace all state from a persisted snapshot (app restart, session reload).
+	 * Every field is re-validated: the snapshot comes off disk and a corrupted
+	 * record must degrade to "this rule never fired" rather than throw on the
+	 * stream's hot path.
+	 *
+	 * Does not fire `onChange` - hydration is the persistence layer's own write
+	 * being read back, so re-scheduling a save would be a pointless round trip.
+	 */
 	hydrate(snapshot: TtsrStateSnapshot): void {
 		this.conversations.clear();
+		const now = Date.now();
 		for (const [key, state] of Object.entries(snapshot ?? {})) {
 			if (!state || typeof state !== 'object') continue;
 			const messageCount = Number.isFinite(state.messageCount) ? state.messageCount : 0;
@@ -159,7 +199,10 @@ export class TtsrStateStore {
 					injectionCount: Number.isFinite(ruleState.injectionCount) ? ruleState.injectionCount : 0,
 				};
 			}
-			this.conversations.set(key, { messageCount, rules });
+			// A record written before `updatedAt` existed reads as touched now, so a
+			// schema upgrade never silently expires a live conversation's history.
+			const updatedAt = Number.isFinite(state.updatedAt) ? state.updatedAt : now;
+			this.conversations.set(key, { messageCount, rules, updatedAt });
 		}
 	}
 }

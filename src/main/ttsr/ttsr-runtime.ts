@@ -27,6 +27,8 @@ import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr
 import { renderTtsrReminder } from './ttsr-injection';
 import { TtsrInterruptDriver, type TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrManager, type TtsrMatch } from './ttsr-manager';
+import type { TtsrStatePersistence } from './ttsr-state-persistence';
+import { TtsrStateStore } from './ttsr-state-store';
 import {
 	TtsrSpawnRegistry,
 	type TtsrProcessEventSource,
@@ -74,6 +76,12 @@ export interface TtsrRuntimeDeps {
 	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
 	loadConfig?(projectRoot: string): LoadTtsrConfigResult;
+	/**
+	 * Disk persistence for repeat/injection bookkeeping. Omit it and the runtime
+	 * keeps that state in memory only, so `once` and `after-gap` reset with the
+	 * process (fine for tests, wrong for production).
+	 */
+	persistence?: TtsrStatePersistence;
 }
 
 interface RuleCacheEntry {
@@ -85,6 +93,8 @@ interface RuleCacheEntry {
 export class TtsrRuntime {
 	readonly registry = new TtsrSpawnRegistry();
 	readonly manager: TtsrManager;
+	/** Main-authoritative repeat/injection state (Gate B), persisted when wired. */
+	readonly stateStore: TtsrStateStore;
 	/** Null while no abort surface was injected (detection-only runtime). */
 	readonly driver: TtsrInterruptDriver | null;
 
@@ -110,7 +120,16 @@ export class TtsrRuntime {
 						exitTimeoutMs: deps.exitTimeoutMs,
 					})
 				: null;
+		// Repeat bookkeeping is loaded from disk before the first event is observed,
+		// so a rule that already fired in a previous run stays fired (plan 3d).
+		const persistence = deps.persistence;
+		const stateStore = new TtsrStateStore({
+			onChange: persistence ? () => persistence.scheduleSave(stateStore) : undefined,
+		});
+		persistence?.hydrate(stateStore);
+		this.stateStore = stateStore;
 		this.manager = new TtsrManager({
+			store: stateStore,
 			getRules: (projectRoot) => this.entry(projectRoot).rules,
 			isEnabled: (projectRoot) =>
 				this.deps.isGloballyEnabled() && this.entry(projectRoot).settings.enabled,
@@ -261,6 +280,21 @@ export class TtsrRuntime {
 			rules: matches.map((match) => match.rule.name),
 		});
 		return renderTtsrReminder(matches);
+	}
+
+	/**
+	 * Write any debounced state change to disk immediately. Called on app quit so
+	 * a rule that fired in the last second before shutdown is not forgotten.
+	 */
+	flushState(): void {
+		this.deps.persistence?.flush();
+	}
+
+	/** Detach from the process manager and persist whatever is still pending. */
+	dispose(): void {
+		this.detach?.();
+		this.deps.persistence?.flush();
+		this.deps.persistence?.dispose();
 	}
 
 	/** Drop cached rules so the next event re-reads them (rule file edited). */

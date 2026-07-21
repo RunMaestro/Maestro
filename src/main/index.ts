@@ -2904,6 +2904,9 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// TTSR repeat bookkeeping is written debounced; force the last write out so
+		// a rule that fired seconds before quit is still remembered next launch.
+		app.on('will-quit', () => ttsrRuntime?.flushState());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
