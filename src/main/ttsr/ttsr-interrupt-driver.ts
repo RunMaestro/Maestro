@@ -45,8 +45,13 @@ export interface TtsrInterruptTarget {
 
 export interface TtsrInterruptDriverDeps {
 	target: TtsrInterruptTarget;
-	/** Sink for `ttsr:triggered`. Wired to `safeSend` by the main entry point. */
-	onTriggered(payload: TtsrTriggeredPayload): void;
+	/**
+	 * Sink for `ttsr:triggered`. Wired to `safeSend` by the main entry point.
+	 * The matches are handed along with the payload - including any folded in
+	 * after the signal - so the caller can recover the guidance if the corrective
+	 * turn it announces never actually spawns.
+	 */
+	onTriggered(payload: TtsrTriggeredPayload, matches: TtsrMatch[]): void;
 	/**
 	 * Sink for `ttsr:abortPending`, fired before the process is signalled so the
 	 * renderer can suppress its normal exit handling for the abort that follows.
@@ -58,6 +63,13 @@ export interface TtsrInterruptDriverDeps {
 	 * handling for a turn that is still running rather than staying wedged.
 	 */
 	onAbortCleared?(payload: TtsrAbortClearedPayload): void;
+	/**
+	 * Called with the matches drained for an abort that was announced and then
+	 * withdrawn. Their guidance never reached the agent, so the runtime refunds
+	 * the budget charge, re-arms the rules, and re-queues them as deferred
+	 * reminders. Kept as a callback so the driver owns no repeat bookkeeping.
+	 */
+	onWithdrawn?(sessionId: string, matches: TtsrMatch[]): void;
 	/** Override for tests. */
 	exitTimeoutMs?: number;
 }
@@ -188,7 +200,7 @@ export class TtsrInterruptDriver {
 		this.pending.delete(input.sessionId);
 
 		const payload = this.buildPayload(input.meta, pending);
-		this.deps.onTriggered(payload);
+		this.deps.onTriggered(payload, pending.matches);
 		return payload;
 	}
 
@@ -224,6 +236,12 @@ export class TtsrInterruptDriver {
 		if (pending?.timer) clearTimeout(pending.timer);
 		pending?.resolveExit();
 		this.pending.delete(sessionId);
+		// The matches drained for this abort would otherwise be dropped on the
+		// floor: nothing re-queues them and their firing is already recorded, so
+		// the rules would sit on cooldown having said nothing.
+		if (pending && pending.matches.length > 0) {
+			this.deps.onWithdrawn?.(sessionId, pending.matches);
+		}
 		this.deps.onAbortCleared?.({
 			sessionId: meta.sessionId,
 			tabId: meta.tabId,

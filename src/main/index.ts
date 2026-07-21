@@ -3186,8 +3186,11 @@ function setupIpcHandlers() {
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		// TTSR folds any queued `<system-reminder>` into this conversation's next
-		// prompt. Returns '' while the feature is off, so the spawn path is unchanged.
-		takeTtsrReminders: (sessionId: string) => ttsrRuntime?.takeDeferredReminders(sessionId) ?? '',
+		// prompt, and clears the queue only once that prompt has really been
+		// spawned. Returns '' while the feature is off, so the spawn path is
+		// unchanged.
+		peekTtsrReminders: (sessionId: string) =>
+			ttsrRuntime?.peekDeferredReminders(sessionId) ?? { text: '', commit: () => {} },
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete

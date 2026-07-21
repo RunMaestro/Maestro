@@ -17,6 +17,7 @@
  */
 
 import type { AgentId } from '../../shared/agentIds';
+import { parseAiTabSpawnId } from '../coworking/coworking-session-id';
 import type { LoadedTtsrRule, TtsrMatchedPayload, TtsrRuleRef } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { createTtsrAstMatcher, type TtsrAstMatcher } from './ttsr-ast';
@@ -140,6 +141,26 @@ function toRuleRef(rule: LoadedTtsrRule): TtsrRuleRef {
 	return { name: rule.name, path: rule.path };
 }
 
+/**
+ * The conversation a spawn id belongs to: `{maestroSessionId}-ai-{tabId}`.
+ *
+ * Spawn ids are not stable across turns - a forced-parallel turn spawns as
+ * `{maestroSessionId}-ai-{tabId}-fp-{timestamp}` - while everything this manager
+ * tracks (repeat policy, interrupt budget, queued reminders) belongs to the
+ * conversation, which is the tab. Keying on the raw id would mint a fresh
+ * conversation per such turn: a `once` rule would re-fire every turn, the store
+ * would accrete a dead record per turn, and a reminder queued under one id would
+ * never be drained under the next.
+ *
+ * Canonical `{sessionId}-ai-{tabId}` ids normalize to themselves, so persisted
+ * state written before this keyed the same way. Any other spawn flavor (batch,
+ * synopsis, group chat) is passed through unchanged.
+ */
+function conversationIdFor(spawnSessionId: string): string {
+	const parsed = parseAiTabSpawnId(spawnSessionId);
+	return parsed ? `${parsed.maestroSessionId}-ai-${parsed.tabId}` : spawnSessionId;
+}
+
 export class TtsrManager {
 	private readonly sessions = new Map<string, SessionState>();
 	readonly store: TtsrStateStore;
@@ -150,7 +171,14 @@ export class TtsrManager {
 		this.astMatcher = deps.astMatcher ?? createTtsrAstMatcher();
 	}
 
-	private session(sessionId: string): SessionState {
+	/**
+	 * Live state for the conversation this spawn id belongs to, created on first
+	 * use. Every entry point normalizes through {@link conversationIdFor} here and
+	 * in {@link TtsrManager.stateOf} / {@link TtsrManager.keyFor}, so no caller has
+	 * to know that spawn ids are per-turn.
+	 */
+	private session(spawnSessionId: string): SessionState {
+		const sessionId = conversationIdFor(spawnSessionId);
 		let state = this.sessions.get(sessionId);
 		if (!state) {
 			state = { buffers: new Map(), interrupts: [], deferred: [], astSeen: new Map() };
@@ -158,6 +186,11 @@ export class TtsrManager {
 			this.evictOldestSessions(sessionId);
 		}
 		return state;
+	}
+
+	/** Read-only counterpart to {@link TtsrManager.session}: no entry is created. */
+	private stateOf(spawnSessionId: string): SessionState | undefined {
+		return this.sessions.get(conversationIdFor(spawnSessionId));
 	}
 
 	/** Keep the tracked-conversation map bounded, never evicting the live one. */
@@ -186,12 +219,15 @@ export class TtsrManager {
 		const state = this.session(sessionId);
 		if (state.providerSessionId === providerSessionId) return;
 		state.providerSessionId = providerSessionId;
-		this.store.adoptProviderSessionId(sessionId, providerSessionId);
+		this.store.adoptProviderSessionId(conversationIdFor(sessionId), providerSessionId);
 	}
 
 	/** Conversation key used for this session's repeat bookkeeping. */
 	private keyFor(sessionId: string): string {
-		return ttsrConversationKey(sessionId, this.sessions.get(sessionId)?.providerSessionId);
+		return ttsrConversationKey(
+			conversationIdFor(sessionId),
+			this.stateOf(sessionId)?.providerSessionId
+		);
 	}
 
 	/**
@@ -334,6 +370,20 @@ export class TtsrManager {
 		this.store.noteInterrupt(this.keyFor(sessionId));
 	}
 
+	/** Give the charge back when an announced abort is withdrawn. */
+	refundInterrupt(sessionId: string): void {
+		this.store.refundInterrupt(this.keyFor(sessionId));
+	}
+
+	/**
+	 * Re-arm rules whose guidance never reached the agent, so the cooldown their
+	 * (undelivered) firing started does not silence them.
+	 */
+	clearInjections(sessionId: string, ruleNames: string[]): void {
+		const key = this.keyFor(sessionId);
+		for (const ruleName of ruleNames) this.store.clearInjection(key, ruleName);
+	}
+
 	/**
 	 * Re-file matches that would have interrupted as deferred reminders, used
 	 * when the conversation's interrupt budget is spent. The guidance still
@@ -347,7 +397,7 @@ export class TtsrManager {
 
 	/** Interrupting matches captured this turn, cleared by the read (Phase 3). */
 	takeInterrupts(sessionId: string): TtsrMatch[] {
-		const state = this.sessions.get(sessionId);
+		const state = this.stateOf(sessionId);
 		if (!state) return [];
 		const out = state.interrupts;
 		state.interrupts = [];
@@ -359,21 +409,42 @@ export class TtsrManager {
 	 * survive turn boundaries until the next prompt consumes them (Phase 3c).
 	 */
 	takeDeferred(sessionId: string): TtsrMatch[] {
-		const state = this.sessions.get(sessionId);
+		const state = this.stateOf(sessionId);
 		if (!state) return [];
 		const out = state.deferred;
 		state.deferred = [];
 		return out;
 	}
 
+	/**
+	 * Queued reminders WITHOUT clearing them, for the transactional spawn path:
+	 * the prompt is built from this read, and {@link TtsrManager.commitDeferred}
+	 * clears the queue only once the spawn has actually happened. A destructive
+	 * read there would destroy the guidance whenever the spawn threw.
+	 */
+	peekDeferred(sessionId: string): TtsrMatch[] {
+		return this.stateOf(sessionId)?.deferred.slice() ?? [];
+	}
+
+	/**
+	 * Drop the oldest `count` reminders: exactly the ones the matching
+	 * {@link TtsrManager.peekDeferred} returned. Anything queued between the peek
+	 * and the commit is at the tail and survives to the following prompt.
+	 */
+	commitDeferred(sessionId: string, count: number): void {
+		const state = this.stateOf(sessionId);
+		if (!state || count <= 0) return;
+		state.deferred = state.deferred.slice(count);
+	}
+
 	/** True while this conversation still owes its next prompt a reminder. */
 	hasDeferred(sessionId: string): boolean {
-		return (this.sessions.get(sessionId)?.deferred.length ?? 0) > 0;
+		return (this.stateOf(sessionId)?.deferred.length ?? 0) > 0;
 	}
 
 	/** Drop all per-session state (session closed). */
 	dispose(sessionId: string): void {
-		this.sessions.delete(sessionId);
+		this.sessions.delete(conversationIdFor(sessionId));
 	}
 
 	// ── internals ──

@@ -134,6 +134,44 @@ describe('TTSR config files are never matched', () => {
 		expect(extractToolSnapshots(event)).toEqual([]);
 	});
 
+	// A `tool:bash` snapshot carries no `filePath`, so the path guard above cannot
+	// see it: an agent authoring a rule through the shell would otherwise trip
+	// every shell-scoped rule whose condition appears in the rule body.
+	it.each([
+		[
+			'heredoc into the rules dir',
+			"cat > .maestro/rules/no-force-push.md <<'EOF'\ncondition: git push --force\nEOF",
+		],
+		['append into the settings file', "echo 'enabled: true' >> .maestro/ttsr.yaml"],
+		['tee into a rule file', "echo 'git push --force' | tee -a .maestro/rules/no-force-push.md"],
+		['copy over a rule file', 'cp /tmp/no-force-push.md .maestro/rules/no-force-push.md'],
+		['in-place edit of a rule file', "sed -i 's/foo/git push --force/' .maestro/rules/x.md"],
+		['windows separators', 'cat > .maestro\\rules\\no-force-push.md'],
+	])('drops a shell command that writes TTSR config (%s)', (_label, command) => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', id: 't1', input: { command } }],
+		};
+
+		expect(extractToolSnapshots(event)).toEqual([]);
+	});
+
+	it.each([
+		['an unrelated command', 'git push --force origin main'],
+		['a read of the rules dir', "grep -rn 'git push --force' .maestro/rules"],
+		['a listing of the rules dir', 'ls -la .maestro/rules/'],
+		['an unrelated write elsewhere', 'echo "git push --force" > notes.txt'],
+	])('still matches %s', (_label, command) => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', id: 't1', input: { command } }],
+		};
+
+		// Reading rules is not authoring them; suppressing it would open a hole an
+		// agent could hide real work behind.
+		expect(extractToolSnapshots(event)).toHaveLength(1);
+	});
+
 	it('still matches an ordinary file inside .maestro', () => {
 		const event: ParsedEvent = {
 			type: 'tool_use',

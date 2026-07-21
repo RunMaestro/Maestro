@@ -15,6 +15,7 @@
 
 import { isValidAgentId, type AgentId } from '../../shared/agentIds';
 import { parseAiTabSpawnId } from '../coworking/coworking-session-id';
+import type { TtsrMatch } from './ttsr-manager';
 
 /** Everything TTSR knows about one in-flight turn. */
 export interface TtsrSpawnMeta {
@@ -33,6 +34,14 @@ export interface TtsrSpawnMeta {
 	/** Known from spawn time on a resume, otherwise once `session-id` fires. */
 	providerSessionId?: string;
 	startedAt: number;
+	/**
+	 * Guidance from a corrective turn that was announced but never spawned: this
+	 * spawn is a different turn, so the `<system-interrupt>` block is gone for
+	 * good. Set only on that spawn, so the caller can re-file the matches as
+	 * deferred reminders rather than drop them (the renderer may have been closed,
+	 * refused the respawn, or errored between the payload and the respawn).
+	 */
+	lostCorrective?: TtsrMatch[];
 }
 
 /**
@@ -49,6 +58,11 @@ interface PendingCorrectiveTurn {
 	originalPrompt: string;
 	/** Exact prompt handed to the renderer, used to recognise the respawn. */
 	injectionPrompt: string;
+	/**
+	 * The matches whose guidance rides that injection. Handed back on the spawn
+	 * that proves the corrective turn never came, so it can be recovered.
+	 */
+	matches: TtsrMatch[];
 }
 
 /** The subset of a spawn config the registry reads. */
@@ -98,6 +112,7 @@ export class TtsrSpawnRegistry {
 			return null;
 		}
 
+		const corrective = this.resolveCorrective(config);
 		const meta: TtsrSpawnMeta = {
 			sessionId: config.sessionId,
 			agentId: config.toolType,
@@ -105,7 +120,8 @@ export class TtsrSpawnRegistry {
 			// is not the project. `projectPath` carries the real workspace root and
 			// is what `.maestro/rules` must be resolved against.
 			projectRoot: config.projectPath || config.cwd,
-			originalPrompt: this.resolveOriginalPrompt(config),
+			originalPrompt: corrective.originalPrompt,
+			lostCorrective: corrective.lostCorrective,
 			// Parsed from the spawn id rather than read from `config.tabId`, which
 			// no spawn caller currently sets.
 			tabId: parsedId.tabId,
@@ -134,15 +150,26 @@ export class TtsrSpawnRegistry {
 	 *
 	 * The match is `endsWith` rather than equality because the spawn path may
 	 * prepend deferred `<system-reminder>` blocks to the prompt on its way out.
+	 *
+	 * The next spawn of a session is also the deadline for the corrective turn:
+	 * once a different turn starts, the injection will never be delivered, so its
+	 * matches come back out here for the caller to recover.
 	 */
-	private resolveOriginalPrompt(config: TtsrSpawnConfigLike): string {
+	private resolveCorrective(config: TtsrSpawnConfigLike): {
+		originalPrompt: string;
+		lostCorrective?: TtsrMatch[];
+	} {
 		const prompt = config.prompt ?? '';
 		const pending = this.pendingCorrective.get(config.sessionId);
 		// Consumed either way: a spawn that is not the corrective turn means it
 		// never arrived, and a later unrelated turn must not inherit the goal.
 		this.pendingCorrective.delete(config.sessionId);
-		if (pending && prompt.endsWith(pending.injectionPrompt)) return pending.originalPrompt;
-		return prompt;
+		if (!pending) return { originalPrompt: prompt };
+		if (prompt.endsWith(pending.injectionPrompt)) return { originalPrompt: pending.originalPrompt };
+		return {
+			originalPrompt: prompt,
+			lostCorrective: pending.matches.length > 0 ? pending.matches : undefined,
+		};
 	}
 
 	/** Record the provider conversation id once the agent announces it. */

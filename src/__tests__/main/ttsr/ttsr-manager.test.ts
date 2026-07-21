@@ -401,3 +401,107 @@ describe('TtsrManager buckets and provider session id', () => {
 		expect(manager.takeInterrupts('s1')).toEqual([]);
 	});
 });
+
+// A forced-parallel turn spawns as `{sessionId}-ai-{tabId}-fp-{timestamp}`, so
+// every one of them carries a different process id for the same conversation.
+// Everything the manager tracks belongs to the tab, not to the turn.
+describe('TtsrManager forced-parallel spawn ids', () => {
+	const FP_ONE = 'sess-ai-tab-1-fp-1730000000000';
+	const FP_TWO = 'sess-ai-tab-1-fp-1730000009999';
+	const agent = ctx('claude-code');
+
+	it('treats every fp turn of a tab as one conversation for repeat policy', () => {
+		const { manager } = setup([makeRule({ repeatMode: 'once' })]);
+
+		expect(manager.observe(FP_ONE, { type: 'text', text: 'console.log(a)' }, agent)).toHaveLength(
+			1
+		);
+		// Without normalization this mints a fresh conversation, and `once` fires
+		// again on every forced-parallel turn forever.
+		expect(manager.observe(FP_TWO, { type: 'text', text: 'console.log(b)' }, agent)).toEqual([]);
+		// The canonical id is the same conversation too.
+		expect(
+			manager.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(c)' }, agent)
+		).toEqual([]);
+	});
+
+	it('drains a reminder queued under one fp id on the next fp turn', () => {
+		const { manager } = setup([makeRule({ interruptMode: 'never' })]);
+
+		manager.observe(FP_ONE, { type: 'text', text: 'console.log(a)' }, agent);
+
+		expect(manager.hasDeferred(FP_TWO)).toBe(true);
+		expect(manager.takeDeferred(FP_TWO).map((match) => match.rule.name)).toEqual([
+			'no-console-log',
+		]);
+	});
+
+	it('records one conversation in the store, not one per fp turn', () => {
+		const store = new TtsrStateStore();
+		const { manager } = setup([makeRule()], { store });
+
+		manager.observe(FP_ONE, { type: 'text', text: 'console.log(a)' }, agent);
+		manager.endTurn(FP_ONE);
+		manager.observe(FP_TWO, { type: 'text', text: 'console.log(b)' }, agent);
+		manager.endTurn(FP_TWO);
+
+		expect(Object.keys(store.snapshot())).toEqual(['sess-ai-tab-1|-']);
+		expect(store.getMessageCount('sess-ai-tab-1|-')).toBe(2);
+	});
+
+	it('still keeps separate tabs of one agent apart', () => {
+		const { manager } = setup([makeRule({ repeatMode: 'once' })]);
+
+		expect(manager.observe(FP_ONE, { type: 'text', text: 'console.log(a)' }, agent)).toHaveLength(
+			1
+		);
+		expect(
+			manager.observe(
+				'sess-ai-tab-2-fp-1730000000000',
+				{ type: 'text', text: 'console.log(b)' },
+				agent
+			)
+		).toHaveLength(1);
+	});
+});
+
+describe('TtsrManager refunds', () => {
+	// An announced abort that never happened cost the user no turn, so holding
+	// the charge would spend the budget on nothing and degrade the rest of the
+	// conversation to deferred-only.
+	it('gives back an interrupt charge, never below zero', () => {
+		const store = new TtsrStateStore();
+		const { manager } = setup([makeRule()], { store });
+
+		manager.noteInterrupt('s1');
+		manager.noteInterrupt('s1');
+		manager.refundInterrupt('s1');
+		expect(store.getInterruptCount('s1|-')).toBe(1);
+
+		manager.refundInterrupt('s1');
+		manager.refundInterrupt('s1');
+		expect(store.getInterruptCount('s1|-')).toBe(0);
+	});
+
+	// The firing is recorded at match time, so a `once` rule whose guidance was
+	// never delivered would be silenced for the rest of the conversation.
+	it('re-arms rules whose guidance never reached the agent', () => {
+		const rule = makeRule({ repeatMode: 'once' });
+		const { manager } = setup([rule]);
+		const agent = ctx('claude-code');
+
+		expect(manager.observe('s1', { type: 'text', text: 'console.log(a)' }, agent)).toHaveLength(1);
+		expect(manager.observe('s1', { type: 'text', text: 'console.log(b)' }, agent)).toEqual([]);
+
+		manager.clearInjections('s1', ['no-console-log']);
+		expect(manager.observe('s1', { type: 'text', text: 'console.log(c)' }, agent)).toHaveLength(1);
+	});
+
+	it('ignores refunds for rules and conversations it has never seen', () => {
+		const { manager } = setup([makeRule()]);
+		expect(() => {
+			manager.refundInterrupt('unknown');
+			manager.clearInjections('unknown', ['no-such-rule']);
+		}).not.toThrow();
+	});
+});

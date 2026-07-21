@@ -39,7 +39,7 @@ import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
-import { applyTtsrReminders } from './apply-ttsr-reminders';
+import { applyTtsrReminders, type TtsrReminderPeek } from './apply-ttsr-reminders';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
@@ -59,11 +59,12 @@ export interface SpawnHandlerDependencies {
 	sessionsStore: Store<{ sessions: unknown[] }>;
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
 	/**
-	 * Drain of the TTSR deferred-reminder queue for this conversation, injected
-	 * so the spawn path never imports TTSR. Returns a rendered
-	 * `<system-reminder>` block (or `''`) that is prepended to the next prompt.
+	 * Non-destructive read of the TTSR deferred-reminder queue for this
+	 * conversation, injected so the spawn path never imports TTSR. Returns the
+	 * rendered `<system-reminder>` block (or `''`) prepended to the next prompt,
+	 * plus the commit that clears it - called only once the spawn has succeeded.
 	 */
-	takeTtsrReminders?: (sessionId: string) => string;
+	peekTtsrReminders?: (sessionId: string) => TtsrReminderPeek;
 }
 
 /**
@@ -113,8 +114,11 @@ export async function handleProcessSpawn(
 	// TTSR (plan Phase 3c): rules that matched without interrupting ride along
 	// with this conversation's next prompt. Applied before anything else reads
 	// `config.prompt`, so arg building, stdin delivery and the replay controller
-	// all see the same prompt.
-	config = applyTtsrReminders(config, deps.takeTtsrReminders);
+	// all see the same prompt. The queue is not cleared until the spawn below
+	// actually happens - every early return and throw between here and there
+	// would otherwise destroy the guidance.
+	const ttsrReminders = applyTtsrReminders(config, deps.peekTtsrReminders);
+	config = ttsrReminders.config;
 
 	// Use INFO level on Windows for better visibility in logs
 
@@ -814,6 +818,10 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+
+	// The prompt carrying the reminders is now in the agent's hands, so the queue
+	// can be cleared. Anything that threw above left it intact for the retry.
+	ttsrReminders.commit();
 
 	logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 		sessionId: config.sessionId,

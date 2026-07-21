@@ -37,6 +37,49 @@ export function isTtsrConfigPath(filePath: string | undefined): boolean {
 	return normalized.includes(`${TTSR_RULES_DIR}/`) || normalized.endsWith(TTSR_CONFIG_PATH);
 }
 
+/** Either TTSR config location, as an alternation safe to embed in a regex. */
+const TTSR_PATH_PATTERN = `(?:${TTSR_RULES_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/|${TTSR_CONFIG_PATH.replace(
+	/[.*+?^${}()|[\]\\]/g,
+	'\\$&'
+)})`;
+
+/** `> path`, `>> path`, `2> path`, quoted or not - the heredoc case included. */
+const TTSR_CONFIG_REDIRECT = new RegExp(`>>?\\s*['"]?[^\\s'"|;&]*${TTSR_PATH_PATTERN}`);
+
+/**
+ * A write verb naming the path in the same command segment. Bounded by `|;&` so
+ * `grep foo .maestro/rules/*.md | tee out.txt` is not read as a write to the
+ * rules dir.
+ */
+const TTSR_CONFIG_WRITE_VERB = new RegExp(
+	`\\b(?:tee|cp|mv|touch|mkdir|rsync|install|dd|truncate|ln|sed\\s+-i\\S*|perl\\s+-i\\S*)\\b[^|;&]*${TTSR_PATH_PATTERN}`
+);
+
+/**
+ * Whether a shell command clearly writes to TTSR's own configuration.
+ *
+ * The `filePath` guard above cannot see this case: a `tool:bash` snapshot has no
+ * target file, only the command line, so an agent authoring a rule through the
+ * shell (`cat > .maestro/rules/no-force-push.md <<EOF ... git push --force ...
+ * EOF`) would trip every `tool:bash` rule whose condition appears in the rule
+ * body it is writing. Agent-driven authoring is the primary flow (see
+ * `src/prompts/ttsr-rule-authoring.md`), so that is the common case, not a
+ * corner one.
+ *
+ * Deliberately conservative: only a redirection or a write verb targeting the
+ * path suppresses. A command that merely reads the rules dir (`grep -r
+ * '--force' .maestro/rules`) still matches, because reading is not authoring and
+ * suppressing it would open a hole an agent could hide real work behind.
+ */
+export function isTtsrConfigWriteCommand(command: string): boolean {
+	const normalized = command.replace(/\\/g, '/');
+	// Cheap prefilter: the overwhelming majority of commands mention neither path.
+	if (!normalized.includes(`${TTSR_RULES_DIR}/`) && !normalized.includes(TTSR_CONFIG_PATH)) {
+		return false;
+	}
+	return TTSR_CONFIG_REDIRECT.test(normalized) || TTSR_CONFIG_WRITE_VERB.test(normalized);
+}
+
 /** One in-flight tool action observed on the stream. */
 export interface TtsrToolSnapshot {
 	/** Matches the TTSR scope vocabulary. */
@@ -231,13 +274,25 @@ function snapshotFromInput(toolName: string, rawInput: unknown): TtsrToolSnapsho
  * `toolState.input` (opencode, codex).
  *
  * Writes to TTSR's own config are dropped here, at the single choke point, so
- * neither regex nor ast-grep ever sees a rule file (see {@link isTtsrConfigPath}).
+ * neither regex nor ast-grep ever sees a rule file - by target path for
+ * edit/write snapshots ({@link isTtsrConfigPath}) and by command text for shell
+ * ones ({@link isTtsrConfigWriteCommand}), which carry no path at all.
+ *
+ * Residual limitation: this guards the act of writing the rule, not talk about
+ * it. An agent that quotes a rule's condition in prose ("I will add a rule
+ * banning `git push --force`") still trips a `text`-scoped rule matching that
+ * phrase, and no choke point can fix it - the prose stream carries no signal
+ * distinguishing a violation from a description of one. Rules meant for the
+ * authoring flow should be scoped to tool sources rather than to prose.
  */
 export function extractToolSnapshots(event: ParsedEvent): TtsrToolSnapshot[] {
 	const snapshots: TtsrToolSnapshot[] = [];
 
 	const add = (snapshot: TtsrToolSnapshot | null): void => {
-		if (snapshot && !isTtsrConfigPath(snapshot.filePath)) snapshots.push(snapshot);
+		if (!snapshot) return;
+		if (isTtsrConfigPath(snapshot.filePath)) return;
+		if (snapshot.source === 'tool:bash' && isTtsrConfigWriteCommand(snapshot.content)) return;
+		snapshots.push(snapshot);
 	};
 
 	for (const block of event.toolUseBlocks ?? []) {

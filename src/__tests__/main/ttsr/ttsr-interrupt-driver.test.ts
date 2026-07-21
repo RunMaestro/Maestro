@@ -77,6 +77,7 @@ function makeDriver(overrides: Partial<TtsrInterruptTarget> = {}) {
 	const triggered: TtsrTriggeredPayload[] = [];
 	const abortPending: TtsrAbortPendingPayload[] = [];
 	const abortCleared: TtsrAbortClearedPayload[] = [];
+	const withdrawn: Array<{ sessionId: string; matches: TtsrMatch[] }> = [];
 	const target = {
 		interrupt: vi.fn(() => true),
 		kill: vi.fn(() => true),
@@ -87,9 +88,10 @@ function makeDriver(overrides: Partial<TtsrInterruptTarget> = {}) {
 		onTriggered: (payload) => triggered.push(payload),
 		onAbortPending: (payload) => abortPending.push(payload),
 		onAbortCleared: (payload) => abortCleared.push(payload),
+		onWithdrawn: (sessionId, matches) => withdrawn.push({ sessionId, matches }),
 		exitTimeoutMs: 50,
 	});
-	return { driver, target, triggered, abortPending, abortCleared };
+	return { driver, target, triggered, abortPending, abortCleared, withdrawn };
 }
 
 describe('TTSR injection templates', () => {
@@ -311,7 +313,7 @@ describe('TtsrInterruptDriver', () => {
 	});
 
 	it('withdraws the abort when the process cannot be signalled', async () => {
-		const { driver, triggered, abortPending, abortCleared } = makeDriver({
+		const { driver, triggered, abortPending, abortCleared, withdrawn } = makeDriver({
 			interrupt: vi.fn(() => {
 				throw new Error('EPERM');
 			}),
@@ -334,6 +336,102 @@ describe('TtsrInterruptDriver', () => {
 			expect.objectContaining({ sessionId: 'sess-ai-tab-1', tabId: 'tab-1' }),
 		]);
 		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(false);
+		// The drained matches come back out so the caller can refund their budget
+		// charge and re-file the guidance; dropping them here would silence the
+		// rules on a cooldown they started without ever saying anything.
+		expect(withdrawn).toHaveLength(1);
+		expect(withdrawn[0].sessionId).toBe('sess-ai-tab-1');
+		expect(withdrawn[0].matches.map((match) => match.rule.name)).toEqual(['no-console-log']);
+	});
+
+	it('hands back every match drained for a withdrawn abort', async () => {
+		const { driver, withdrawn } = makeDriver({
+			interrupt: vi.fn(() => {
+				throw new Error('EPERM');
+			}),
+		});
+
+		await driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch(), makeMatch(makeRule({ name: 'late-rule', content: 'Late guidance.' }))],
+			contextMode: 'keep',
+		});
+
+		expect(withdrawn[0].matches.map((match) => match.rule.name)).toEqual([
+			'no-console-log',
+			'late-rule',
+		]);
+	});
+
+	// The discard route signals through `kill` instead of `interrupt`, and a
+	// stranded pending entry there would wedge the session's abort protocol for
+	// good: every later match would fold into an abort that never resolves.
+	it('emits and clears the pending entry when kill reports the process is gone', async () => {
+		const { driver, triggered, abortCleared, withdrawn } = makeDriver({ kill: vi.fn(() => false) });
+
+		await driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'discard',
+		});
+
+		// Same reading as `interrupt` returning false: the turn ended between the
+		// match and the signal, so there is nothing to wait for and the corrective
+		// turn is still the right answer.
+		expect(triggered).toHaveLength(1);
+		expect(abortCleared).toEqual([]);
+		expect(withdrawn).toEqual([]);
+		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(false);
+	});
+
+	it('withdraws and refunds when kill throws, and can abort again after', async () => {
+		let throwOnKill = true;
+		const { driver, triggered, abortCleared, withdrawn } = makeDriver({
+			kill: vi.fn(() => {
+				if (throwOnKill) throw new Error('EPERM');
+				return true;
+			}),
+		});
+
+		const payload = await driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'discard',
+		});
+
+		expect(payload).toBeNull();
+		expect(triggered).toEqual([]);
+		expect(abortCleared).toHaveLength(1);
+		expect(withdrawn[0].matches.map((match) => match.rule.name)).toEqual(['no-console-log']);
+		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(false);
+
+		// The failed signal must not leave the session unable to abort later.
+		throwOnKill = false;
+		const done = driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'discard',
+		});
+		driver.noteExit('sess-ai-tab-1');
+		await done;
+		expect(triggered).toHaveLength(1);
+	});
+
+	it('reports no withdrawal for an abort that succeeds', async () => {
+		const { driver, withdrawn } = makeDriver();
+		const done = driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'keep',
+		});
+		driver.noteExit('sess-ai-tab-1');
+		await done;
+		expect(withdrawn).toEqual([]);
 	});
 });
 
@@ -345,11 +443,16 @@ describe('TtsrRuntime interrupt loop', () => {
 			contextMode?: TtsrContextMode;
 			/** The global `ttsrContextMode` setting. */
 			globalContextMode?: TtsrContextMode;
+			/** Stand-in for a process that cannot be signalled. */
+			interrupt?: () => boolean;
 		} = {}
 	) {
 		const triggered: TtsrTriggeredPayload[] = [];
 		const abortCleared: TtsrAbortClearedPayload[] = [];
-		const target = { interrupt: vi.fn(() => true), kill: vi.fn(() => true) };
+		const target = {
+			interrupt: vi.fn(options.interrupt ?? (() => true)),
+			kill: vi.fn(() => true),
+		};
 		const loadConfig = vi.fn(
 			(): LoadTtsrConfigResult => ({
 				ok: true,
@@ -500,6 +603,64 @@ describe('TtsrRuntime interrupt loop', () => {
 		expect(triggered).toEqual([]);
 		// The match is still queued as a reminder for the next prompt (Phase 3c).
 		expect(runtime.manager.takeDeferred('sess-ai-tab-1')).toHaveLength(1);
+	});
+
+	// A withdrawn abort cost no turn and delivered no guidance, so holding the
+	// budget charge and the rules' cooldown would silently degrade the rest of
+	// the conversation for an abort that never happened.
+	it('refunds the budget, re-arms the rules and re-defers when the signal fails', async () => {
+		const { runtime, source, triggered, abortCleared } = setup({
+			rules: [makeRule({ repeatMode: 'once' })],
+			interrupt: () => {
+				throw new Error('EPERM');
+			},
+		});
+		source.emit('spawn', spawnConfig);
+
+		expect(runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(x)' })).toHaveLength(
+			1
+		);
+		await runtime.flushInterrupts();
+
+		expect(triggered).toEqual([]);
+		expect(abortCleared).toHaveLength(1);
+		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-1|-')).toBe(0);
+		// `once` fired without ever reaching the agent, so it is eligible again.
+		expect(runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(y)' })).toHaveLength(
+			1
+		);
+		// Both attempts' guidance survives as a reminder on the next prompt.
+		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toContain('Use the project logger.');
+	});
+
+	it('recovers the guidance when the corrective turn never spawns', async () => {
+		const { runtime, source, triggered } = setup();
+		source.emit('spawn', spawnConfig);
+		source.emit('session-id', 'sess-ai-tab-1', 'prov-7');
+		runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(x)' });
+		source.emit('exit', 'sess-ai-tab-1', 0);
+		await runtime.flushInterrupts();
+		expect(triggered).toHaveLength(1);
+
+		// The renderer never respawned the corrective turn (tab closed, queue
+		// dropped it, spawn threw); the user's next prompt arrives instead.
+		source.emit('spawn', { ...spawnConfig, prompt: 'Now write the tests' });
+
+		// The `<system-interrupt>` block is gone, but its guidance is not: it rides
+		// the following prompt as a reminder rather than disappearing with the rule
+		// left on cooldown.
+		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toContain('Use the project logger.');
+	});
+
+	it('does not re-defer when the corrective turn does spawn', async () => {
+		const { runtime, source, triggered } = setup();
+		source.emit('spawn', spawnConfig);
+		runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(x)' });
+		source.emit('exit', 'sess-ai-tab-1', 0);
+		await runtime.flushInterrupts();
+
+		source.emit('spawn', { ...spawnConfig, prompt: triggered[0].injectionPrompt });
+		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toBe('');
 	});
 
 	it('aborts on a structural match that settles after the delta', async () => {

@@ -112,6 +112,20 @@ interface RuleCacheEntry {
 	disabled: readonly string[];
 }
 
+/**
+ * A non-destructive read of a conversation's deferred reminders: the rendered
+ * block, and the commit that clears exactly what was rendered.
+ */
+export interface TtsrReminderDrain {
+	/** Rendered `<system-reminder>` block, or `''` when nothing is queued. */
+	text: string;
+	/** Clear the queue. Safe to call more than once; a no-op when `text` is `''`. */
+	commit(): void;
+}
+
+/** Shared empty drain, so the common "nothing queued" path allocates nothing. */
+const NO_REMINDERS: TtsrReminderDrain = { text: '', commit: () => {} };
+
 /** Cheap equality for the disabled-rule list: same reference, else same names. */
 function sameDisabledList(a: readonly string[], b: readonly string[]): boolean {
 	if (a === b) return true;
@@ -147,13 +161,24 @@ export class TtsrRuntime {
 			deps.interruptTarget && onTriggered
 				? new TtsrInterruptDriver({
 						target: deps.interruptTarget,
-						onTriggered: (payload) => onTriggered(payload),
+						onTriggered: (payload, matches) => {
+							// Registered before the renderer is told to respawn, so the
+							// corrective turn is recognised however fast it comes back, and
+							// so a spawn that is NOT it can hand the guidance back.
+							this.registry.noteCorrectiveTurn(payload.sessionId, {
+								originalPrompt: payload.originalGoal,
+								injectionPrompt: payload.injectionPrompt,
+								matches,
+							});
+							onTriggered(payload);
+						},
 						onAbortPending: deps.onAbortPending
 							? (payload) => deps.onAbortPending?.(payload)
 							: undefined,
 						onAbortCleared: deps.onAbortCleared
 							? (payload) => deps.onAbortCleared?.(payload)
 							: undefined,
+						onWithdrawn: (sessionId, matches) => this.refundWithdrawn(sessionId, matches),
 						exitTimeoutMs: deps.exitTimeoutMs,
 					})
 				: null;
@@ -246,6 +271,17 @@ export class TtsrRuntime {
 			const meta = this.registry.noteSpawn(config);
 			if (!meta) return;
 			this.manager.beginTurn(meta.sessionId, meta.providerSessionId);
+			// This spawn is not the corrective turn TTSR announced, so that turn is
+			// never coming and its `<system-interrupt>` block is lost. Re-file the
+			// guidance as deferred reminders: it then rides the conversation's next
+			// prompt instead of vanishing with the rules left on cooldown.
+			if (meta.lostCorrective?.length) {
+				logger.warn('TTSR corrective turn never spawned, deferring its guidance', LOG_CONTEXT, {
+					sessionId: meta.sessionId,
+					rules: meta.lostCorrective.map((match) => match.rule.name),
+				});
+				this.manager.deferMatches(meta.sessionId, meta.lostCorrective);
+			}
 			// Warm the rule cache here, off the stdout hot path: loading is
 			// synchronous disk I/O (readdir + read + YAML parse + regex compile per
 			// rule file), and doing it lazily would put that first read inside
@@ -333,17 +369,48 @@ export class TtsrRuntime {
 	 *
 	 * Returns `''` when nothing is queued (the overwhelmingly common case) so
 	 * callers can skip the prepend without a null check.
+	 *
+	 * One-shot: use it only where nothing can fail after the read. The spawn path
+	 * cannot (context resolution, SSH wrapping and the spawn itself all throw), so
+	 * it uses {@link TtsrRuntime.peekDeferredReminders} instead.
 	 */
 	takeDeferredReminders(sessionId: string): string {
-		if (!this.deps.isGloballyEnabled()) return '';
-		const matches = this.manager.takeDeferred(sessionId);
-		if (matches.length === 0) return '';
+		const { text, commit } = this.peekDeferredReminders(sessionId);
+		commit();
+		return text;
+	}
 
-		logger.info('TTSR reminders folded into next prompt', LOG_CONTEXT, {
-			sessionId,
-			rules: matches.map((match) => match.rule.name),
-		});
-		return renderTtsrReminder(matches);
+	/**
+	 * Transactional counterpart to {@link TtsrRuntime.takeDeferredReminders}: the
+	 * rendered block plus the commit that clears exactly what it rendered.
+	 *
+	 * The spawn path builds its prompt from `text`, then calls `commit` only once
+	 * the process has actually been spawned. Anything that throws in between -
+	 * Claude context resolution, the fail-loud SSH resolver, the spawn itself -
+	 * leaves the queue intact, so guidance from an `interruptMode: never` rule
+	 * rides the next attempt instead of being silently destroyed.
+	 *
+	 * `commit` is idempotent: a spawn path that retries internally may call it
+	 * more than once without eating a second batch of reminders.
+	 */
+	peekDeferredReminders(sessionId: string): TtsrReminderDrain {
+		if (!this.deps.isGloballyEnabled()) return NO_REMINDERS;
+		const matches = this.manager.peekDeferred(sessionId);
+		if (matches.length === 0) return NO_REMINDERS;
+
+		let committed = false;
+		return {
+			text: renderTtsrReminder(matches),
+			commit: () => {
+				if (committed) return;
+				committed = true;
+				this.manager.commitDeferred(sessionId, matches.length);
+				logger.info('TTSR reminders folded into next prompt', LOG_CONTEXT, {
+					sessionId,
+					rules: matches.map((match) => match.rule.name),
+				});
+			},
+		};
 	}
 
 	/**
@@ -382,18 +449,25 @@ export class TtsrRuntime {
 		const matches = this.manager.takeInterrupts(sessionId);
 		if (matches.length === 0) return;
 
-		// Every abort costs a whole turn, and the agent may simply keep tripping
-		// the rule. Past the budget the guidance still lands - as a reminder on the
-		// next prompt - but the conversation is left to run to completion.
-		if (!this.manager.canInterrupt(sessionId)) {
-			logger.warn('TTSR interrupt budget spent, deferring instead', LOG_CONTEXT, {
-				sessionId,
-				rules: matches.map((match) => match.rule.name),
-			});
-			this.manager.deferMatches(sessionId, matches);
-			return;
+		// A SIGINT'd process keeps streaming for up to 2s, so late matches drain
+		// through here while the abort is still in flight. The driver folds them
+		// into the same corrective turn rather than starting a second abort, so
+		// they must not be gated or charged either: the budget counts aborts, and
+		// charging per folded match would spend it on aborts that never happen.
+		if (!this.driver.isAbortPending(sessionId)) {
+			// Every abort costs a whole turn, and the agent may simply keep tripping
+			// the rule. Past the budget the guidance still lands - as a reminder on the
+			// next prompt - but the conversation is left to run to completion.
+			if (!this.manager.canInterrupt(sessionId)) {
+				logger.warn('TTSR interrupt budget spent, deferring instead', LOG_CONTEXT, {
+					sessionId,
+					rules: matches.map((match) => match.rule.name),
+				});
+				this.manager.deferMatches(sessionId, matches);
+				return;
+			}
+			this.manager.noteInterrupt(sessionId);
 		}
-		this.manager.noteInterrupt(sessionId);
 
 		const pending = this.driver
 			.trigger({
@@ -402,17 +476,9 @@ export class TtsrRuntime {
 				matches,
 				contextMode: this.contextModeFor(meta.projectRoot),
 			})
-			.then((payload) => {
-				// The corrective turn respawns through the normal spawn path, so tell
-				// the registry which prompt to expect and what goal it really serves.
-				if (payload) {
-					this.registry.noteCorrectiveTurn(sessionId, {
-						originalPrompt: payload.originalGoal,
-						injectionPrompt: payload.injectionPrompt,
-					});
-				}
-				return payload;
-			})
+			// The corrective turn respawns through the normal spawn path; the registry
+			// is told which prompt to expect from the driver's `onTriggered`, which
+			// runs before the renderer ever sees the payload.
 			.catch((err: unknown) => {
 				logger.error('TTSR interrupt failed', LOG_CONTEXT, {
 					sessionId,
@@ -422,6 +488,28 @@ export class TtsrRuntime {
 			})
 			.finally(() => this.pendingInterrupts.delete(pending));
 		this.pendingInterrupts.add(pending);
+	}
+
+	/**
+	 * Undo an abort that was announced and then withdrawn (the signal threw, so
+	 * the turn is still running and no corrective respawn is coming).
+	 *
+	 * Three things have to be given back or the guidance is lost twice over: the
+	 * budget charge, the rules' eligibility (their firing was recorded at match
+	 * time, starting a cooldown for advice never delivered), and the matches
+	 * themselves, which ride the conversation's next prompt as reminders instead.
+	 */
+	private refundWithdrawn(sessionId: string, matches: TtsrMatch[]): void {
+		this.manager.refundInterrupt(sessionId);
+		this.manager.clearInjections(
+			sessionId,
+			matches.map((match) => match.rule.name)
+		);
+		this.manager.deferMatches(sessionId, matches);
+		logger.info('TTSR abort withdrawn, guidance re-deferred', LOG_CONTEXT, {
+			sessionId,
+			rules: matches.map((match) => match.rule.name),
+		});
 	}
 
 	/**

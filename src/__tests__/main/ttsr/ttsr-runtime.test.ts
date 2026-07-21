@@ -17,6 +17,7 @@ import {
 	DEFAULT_TTSR_PROJECT_SETTINGS,
 	type LoadedTtsrRule,
 	type TtsrMatchedPayload,
+	type TtsrTriggeredPayload,
 } from '../../../shared/ttsr-types';
 
 const ROOT = '/repo';
@@ -167,6 +168,7 @@ describe('TtsrSpawnRegistry', () => {
 		registry.noteCorrectiveTurn('sess-ai-tab-1', {
 			originalPrompt: 'Refactor the auth module',
 			injectionPrompt: '<system-interrupt rule="no-console-log">Use the logger.</system-interrupt>',
+			matches: [],
 		});
 
 		// The corrective turn respawns with the injection as its prompt; without the
@@ -184,6 +186,7 @@ describe('TtsrSpawnRegistry', () => {
 		registry.noteCorrectiveTurn('sess-ai-tab-1', {
 			originalPrompt: 'Refactor the auth module',
 			injectionPrompt: '<system-interrupt>x</system-interrupt>',
+			matches: [],
 		});
 
 		const corrective = registry.noteSpawn({
@@ -198,6 +201,7 @@ describe('TtsrSpawnRegistry', () => {
 		registry.noteCorrectiveTurn('sess-ai-tab-1', {
 			originalPrompt: 'Refactor the auth module',
 			injectionPrompt: '<system-interrupt>x</system-interrupt>',
+			matches: [],
 		});
 
 		// The corrective turn never arrived (tab closed); the user's next prompt
@@ -615,5 +619,49 @@ describe('TtsrRuntime lifecycle wiring', () => {
 		detach();
 		source.emit('spawn', spawnConfig());
 		expect(runtime.registry.size).toBe(0);
+	});
+});
+
+describe('TtsrRuntime interrupt budget accounting', () => {
+	// A SIGINT'd process keeps streaming for up to 2s. Every late match that
+	// drains through `drive` in that window is folded into the abort already in
+	// flight, so it must not be charged: the budget counts aborts, not matches.
+	it('charges the budget once for an abort that folds a later match', async () => {
+		const ruleA = makeRule();
+		const ruleB = makeRule({
+			name: 'no-any',
+			condition: ['\\bany\\b'],
+			compiledCondition: [/\bany\b/],
+			content: 'Do not use `any`.',
+			path: '.maestro/rules/no-any.md',
+		});
+		const target = { interrupt: vi.fn(() => true), kill: vi.fn(() => true) };
+		const triggered: TtsrTriggeredPayload[] = [];
+		const runtime = new TtsrRuntime({
+			isGloballyEnabled: () => true,
+			loadConfig: () => result([ruleA, ruleB]),
+			interruptTarget: target,
+			onTriggered: (payload) => triggered.push(payload),
+			exitTimeoutMs: 50,
+		});
+		const source = new EventEmitter();
+		runtime.attach(source as unknown as TtsrProcessEventSource);
+
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-tab-1', textEvent('adding console.log(x)'));
+		expect(runtime.isAbortPending('sess-ai-tab-1')).toBe(true);
+
+		// The tail of the aborted turn's stream trips a second, uncooled rule.
+		runtime.observe('sess-ai-tab-1', textEvent('and an any type too'));
+
+		expect(target.interrupt).toHaveBeenCalledTimes(1);
+		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-1|-')).toBe(1);
+
+		source.emit('exit', 'sess-ai-tab-1', 0);
+		await runtime.flushInterrupts();
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0].rules.map((rule) => rule.name)).toEqual(['no-console-log', 'no-any']);
+		expect(triggered[0].injectionPrompt).toContain('Do not use `any`.');
 	});
 });

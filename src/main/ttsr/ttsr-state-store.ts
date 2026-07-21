@@ -18,7 +18,14 @@ import type { LoadedTtsrRule } from '../../shared/ttsr-types';
 /** Placeholder provider id used before the agent's `session-id` event lands. */
 export const TTSR_PENDING_PROVIDER_ID = '-';
 
-/** Build the conversation key used by every store method. */
+/**
+ * Build the conversation key used by every store method.
+ *
+ * `maestroSessionId` must be the STABLE conversation id (`{sessionId}-ai-{tabId}`),
+ * not a raw spawn id: a forced-parallel turn spawns as `…-fp-{timestamp}`, so
+ * keying on the raw id would mint one dead conversation record per turn. The
+ * manager normalizes before it ever reaches here.
+ */
 export function ttsrConversationKey(maestroSessionId: string, providerSessionId?: string): string {
 	return `${maestroSessionId}|${providerSessionId || TTSR_PENDING_PROVIDER_ID}`;
 }
@@ -123,6 +130,33 @@ export class TtsrStateStore {
 	noteInterrupt(key: string): void {
 		const state = this.ensure(key);
 		state.interruptCount += 1;
+		this.touch(state);
+	}
+
+	/**
+	 * Give back one abort charge for an announced abort that never happened (the
+	 * signal threw, so the turn is still running). The budget counts turns TTSR
+	 * really cost the user; a withdrawn abort cost none.
+	 */
+	refundInterrupt(key: string): void {
+		const state = this.conversations.get(key);
+		if (!state || state.interruptCount <= 0) return;
+		state.interruptCount -= 1;
+		this.touch(state);
+	}
+
+	/**
+	 * Forget that a rule fired in this conversation, re-arming it immediately.
+	 *
+	 * Used when the guidance never reached the agent, so the cooldown it started
+	 * would silence a rule that was never actually stated. The whole record is
+	 * dropped rather than decremented: the previous `lastInjectedAt` is not
+	 * retained, and leaving a stale one would keep an `after-gap` rule muted.
+	 */
+	clearInjection(key: string, ruleName: string): void {
+		const state = this.conversations.get(key);
+		if (!state?.rules[ruleName]) return;
+		delete state.rules[ruleName];
 		this.touch(state);
 	}
 
