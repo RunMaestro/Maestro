@@ -657,6 +657,7 @@ board
 	)
 	.option('-b, --body <body>', 'Card body / instructions for the assignee')
 	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
+	.option('--priority <level>', 'Dispatch priority: high|normal|low (default normal)')
 	.option('--worktree', 'Record an isolated-worktree intent for this card')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardAddCard);

@@ -28,7 +28,13 @@
  * double-dispatches them.
  */
 
-import type { Board, BoardCard, CardRun, CardRunOutcome } from '../../shared/board/types';
+import {
+	cardPriorityRank,
+	type Board,
+	type BoardCard,
+	type CardRun,
+	type CardRunOutcome,
+} from '../../shared/board/types';
 import { getEligibleCards } from '../../shared/board/graph';
 import { parseCardMarkers } from '../../shared/board/cardMarkers';
 import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
@@ -80,6 +86,21 @@ export type CardAssignment =
 	| { kind: 'no-free-worker' }
 	| { kind: 'unresolvable'; reason?: string };
 
+/**
+ * A terminal card transition worth telling the user about. Deliberately
+ * presentation-free (no colors, no toast options): the host decides how to
+ * surface it, the dispatcher only says what happened.
+ */
+export interface CardNotification {
+	/** `done` = the card completed; `blocked` = it needs a human. */
+	kind: 'done' | 'blocked';
+	cardId: string;
+	/** Card title, for the notification heading. */
+	cardTitle: string;
+	/** Run summary (`done`) or block reason (`blocked`), when there is one. */
+	detail?: string;
+}
+
 /** Injected side effects. Fakes for these are all a test needs. */
 export interface BoardDispatcherDeps {
 	/** Load the current board snapshot (fresh each time). `null` => board gone. */
@@ -104,6 +125,19 @@ export interface BoardDispatcherDeps {
 	assign?: (card: BoardCard, busyAgentIds: ReadonlySet<string>) => CardAssignment;
 	/** Run the card's assignee to completion. Rejects on spawn failure. */
 	spawn: (request: CardSpawnRequest) => Promise<CardSpawnResult>;
+	/**
+	 * Abort the in-flight run for a card (kill the agent process). Returns `true`
+	 * when a live run was found and stopped. Optional: without it,
+	 * {@link BoardDispatcher.cancelCard} still finalizes the card as `canceled`,
+	 * it just cannot kill anything - so wire it wherever a real process exists.
+	 */
+	cancelSpawn?: (cardId: string) => boolean;
+	/**
+	 * Announce a terminal card transition (`done` / `blocked`, including a
+	 * circuit-breaker or unresolvable-assignee force-block). Optional: the CLI's
+	 * headless tick wires nothing, the desktop host turns it into a toast.
+	 */
+	notify?: (event: CardNotification) => void;
 	/** ISO clock, injectable so tests get stable timestamps. */
 	now?: () => string;
 	/** Epoch-ms clock for stale detection, injectable for tests. */
@@ -138,21 +172,34 @@ export function promoteEligibleCards(board: Board, nowIso: string): BoardCard[] 
 }
 
 /**
- * Claim the oldest `ready` cards up to the WIP cap, marking each `running` and
- * opening a fresh {@link CardRun}. Mutates the board in place and returns the
- * claimed cards. The cap is enforced across the whole board (already-`running`
- * cards count against it), so a board at capacity claims nothing.
- *
- * "Oldest" is by `createdAt` ascending, tie-broken by board order, so dispatch
- * is deterministic and stable across ticks.
+ * Order `ready` cards for dispatch: priority descending, then oldest `createdAt`
+ * first, then board order. Priority outranks age deliberately - a `high` card
+ * added today should jump a `normal` backlog - while the age tie-break keeps
+ * dispatch deterministic and stable across ticks within one priority.
+ */
+function readyCardsInDispatchOrder(board: Board): BoardCard[] {
+	return board.cards
+		.map((card, index) => ({ card, index }))
+		.filter((entry) => entry.card.status === 'ready')
+		.sort(
+			(a, b) =>
+				cardPriorityRank(b.card) - cardPriorityRank(a.card) ||
+				a.card.createdAt.localeCompare(b.card.createdAt) ||
+				a.index - b.index
+		)
+		.map((entry) => entry.card);
+}
+
+/**
+ * Claim the highest-priority, oldest `ready` cards up to the WIP cap, marking
+ * each `running` and opening a fresh {@link CardRun}. Mutates the board in place
+ * and returns the claimed cards. The cap is enforced across the whole board
+ * (already-`running` cards count against it), so a board at capacity claims
+ * nothing. Order comes from {@link readyCardsInDispatchOrder}.
  */
 export function claimReadyCards(board: Board, maxInProgress: number, nowIso: string): BoardCard[] {
 	const cap = maxInProgress > 0 ? maxInProgress : DEFAULT_MAX_IN_PROGRESS;
-	const ready = board.cards
-		.map((card, index) => ({ card, index }))
-		.filter((entry) => entry.card.status === 'ready')
-		.sort((a, b) => a.card.createdAt.localeCompare(b.card.createdAt) || a.index - b.index)
-		.map((entry) => entry.card);
+	const ready = readyCardsInDispatchOrder(board);
 
 	const claimed: BoardCard[] = [];
 	for (const card of ready) {
@@ -200,8 +247,9 @@ export interface PooledClaimResult {
 }
 
 /**
- * Worker-pool claim (Board Phase 6). Walks the oldest `ready` cards up to the WIP
- * cap and asks `assign` to bind each to a FREE worker. A card assigned a worker
+ * Worker-pool claim (Board Phase 6). Walks the `ready` cards in dispatch order
+ * (priority descending, then oldest first) up to the WIP cap and asks `assign`
+ * to bind each to a FREE worker. A card assigned a worker
  * is marked `running` with an open {@link CardRun} stamped with `workerAgentId`,
  * and that worker is taken out of circulation for the rest of this pass (one card
  * per worker). Cards whose workers are all busy (or whose pool is empty) are left
@@ -216,11 +264,7 @@ export function claimReadyCardsPooled(
 	assign: (card: BoardCard, busyAgentIds: ReadonlySet<string>) => CardAssignment
 ): PooledClaimResult {
 	const cap = maxInProgress > 0 ? maxInProgress : DEFAULT_MAX_IN_PROGRESS;
-	const ready = board.cards
-		.map((card, index) => ({ card, index }))
-		.filter((entry) => entry.card.status === 'ready')
-		.sort((a, b) => a.card.createdAt.localeCompare(b.card.createdAt) || a.index - b.index)
-		.map((entry) => entry.card);
+	const ready = readyCardsInDispatchOrder(board);
 
 	const busy = computeBusyAgentIds(board);
 	const claimed: PooledClaim[] = [];
@@ -289,20 +333,46 @@ export function reclaimStaleRunning(
 
 /**
  * Count trailing (most-recent-first) runs that the card is accountable for
- * failing. A `done` run resets the count. `reclaimed` runs are skipped entirely
- * rather than counted or treated as a reset: the host abandoned those attempts
- * (engine restart), so they say nothing about whether the card can succeed, but
- * they also must not paper over genuine failures on either side of them.
+ * failing. A `done` run resets the count. `reclaimed` and `canceled` runs are
+ * skipped entirely rather than counted or treated as a reset: nobody ran the
+ * work to a conclusion (the host restarted, or a user hit stop), so those
+ * attempts say nothing about whether the card can succeed - but they also must
+ * not paper over genuine failures on either side of them.
  */
 function trailingFailureCount(card: BoardCard): number {
 	const runs = card.runs ?? [];
 	let count = 0;
 	for (let i = runs.length - 1; i >= 0; i--) {
-		if (runs[i].outcome === 'reclaimed') continue;
+		if (runs[i].outcome === 'reclaimed' || runs[i].outcome === 'canceled') continue;
 		if (runs[i].outcome === 'done') break;
 		count++;
 	}
 	return count;
+}
+
+/**
+ * Finalize a `running` card as user-canceled: close its open run with the
+ * `canceled` outcome and send the card back to `todo` (from where the promote
+ * pass re-derives `ready` once its parents are still done, so a cancel is a
+ * pause, not a demotion). Mutates in place; returns `false` when the card is
+ * missing or is not actually running.
+ *
+ * The `canceled` run is deliberately NOT a failure - see
+ * {@link trailingFailureCount} - so stopping a card three times never trips the
+ * circuit breaker.
+ */
+export function applyCardCancel(board: Board, cardId: string, nowIso: string): boolean {
+	const card = board.cards.find((c) => c.id === cardId);
+	if (!card || card.status !== 'running') return false;
+	const run = card.runs?.[card.runs.length - 1];
+	if (run && !run.endedAt) {
+		run.endedAt = nowIso;
+		run.outcome = 'canceled';
+		run.summary = 'Canceled by user.';
+	}
+	card.status = 'todo';
+	card.updatedAt = nowIso;
+	return true;
 }
 
 /**
@@ -370,6 +440,11 @@ export class BoardDispatcher {
 	/** Card ids this dispatcher has an in-flight spawn for. Guards the stale
 	 * reclaim from clobbering a genuinely live run. */
 	private readonly inFlight = new Set<string>();
+	/** Cards canceled while in flight. Killing the process makes the spawn promise
+	 * resolve with a non-zero/`null` exit moments later; without this tombstone
+	 * that resolution would re-finalize the card as a FAILED run and undo the
+	 * cancel. Consumed by the first `finalize` that follows. */
+	private readonly canceled = new Set<string>();
 	private readonly now: () => string;
 	private readonly nowMs: () => number;
 	private readonly maxFailures: number;
@@ -478,6 +553,17 @@ export class BoardDispatcher {
 		// Persist BEFORE spawning so a crash / next tick sees `running`.
 		if (dirty) this.deps.saveBoard(board);
 
+		// Announce the force-blocks only once they are on disk, so a user acting on
+		// the toast never sees a board that disagrees with it.
+		for (const { card, reason } of unresolvable) {
+			this.emitNotification({
+				kind: 'blocked',
+				cardId: card.id,
+				cardTitle: card.title,
+				detail: reason ?? `Assignee for card "${card.id}" could not be resolved.`,
+			});
+		}
+
 		for (const { card, agentId, overrides } of claimed) {
 			this.inFlight.add(card.id);
 			this.deps
@@ -518,18 +604,67 @@ export class BoardDispatcher {
 	}
 
 	/**
+	 * Cancel a `running` card: kill its agent process (when a `cancelSpawn` dep is
+	 * wired) and finalize the card as `canceled`, back in `todo`.
+	 *
+	 * Order matters. The card is tombstoned BEFORE the kill so the spawn promise -
+	 * which resolves within milliseconds of the process dying, with a `null` exit
+	 * code that otherwise reads as a failed run - is discarded by `finalize`
+	 * instead of overwriting the cancel and counting against the circuit breaker.
+	 *
+	 * Returns `false` (and writes nothing) when the card is missing, is not
+	 * running, or the board cannot be read.
+	 */
+	cancelCard(cardId: string): boolean {
+		const board = this.loadBoardOrSkip('cancelCard');
+		if (!board) return false;
+		const nowIso = this.now();
+		if (!applyCardCancel(board, cardId, nowIso)) return false;
+
+		this.canceled.add(cardId);
+		this.inFlight.delete(cardId);
+		try {
+			this.deps.cancelSpawn?.(cardId);
+		} catch (err) {
+			// A kill that throws must not leave the card wedged `running` - the board
+			// mutation below still lands and the stale-reclaim pass is the backstop.
+			this.log('warn', `card "${cardId}" cancel: kill failed - ${(err as Error).message}`);
+		}
+		this.deps.saveBoard(board);
+		this.log('info', `card "${cardId}" -> canceled`);
+		return true;
+	}
+
+	/**
 	 * Resolve a completed (or failed) card run: reload the board fresh, apply the
 	 * result, and persist. Reloading avoids clobbering concurrent card mutations
 	 * that landed between the claim and this completion.
 	 */
 	private finalize(cardId: string, result: CardSpawnResult): void {
 		this.inFlight.delete(cardId);
+		// A canceled card was already finalized by `cancelCard`; this resolution is
+		// just the killed process reporting in. Drop it (once).
+		if (this.canceled.delete(cardId)) {
+			this.log('info', `card "${cardId}" run resolved after cancel - ignoring result`);
+			return;
+		}
 		const board = this.loadBoardOrSkip('finalize');
 		if (!board) return;
 		const status = applyCardResult(board, cardId, result, this.now(), this.maxFailures);
 		if (status === null) return;
 		this.deps.saveBoard(board);
 		this.log('info', `card "${cardId}" -> ${status}`);
+		if (status === 'done' || status === 'blocked') {
+			// The run summary the marker/exit path just recorded is the useful half of
+			// the message: what got done, or why the card is stuck.
+			const card = board.cards.find((c) => c.id === cardId);
+			this.emitNotification({
+				kind: status,
+				cardId,
+				cardTitle: card?.title ?? cardId,
+				detail: card?.runs?.[card.runs.length - 1]?.summary,
+			});
+		}
 	}
 
 	/**
@@ -553,6 +688,19 @@ export class BoardDispatcher {
 		card.updatedAt = this.now();
 		this.deps.saveBoard(board);
 		this.log('info', `card "${cardId}" -> blocked (${reason})`);
+		this.emitNotification({ kind: 'blocked', cardId, cardTitle: card.title, detail: reason });
+	}
+
+	/**
+	 * Hand a terminal transition to the host. Advisory: a notifier that throws
+	 * must never break the dispatch pass that already persisted the change.
+	 */
+	private emitNotification(event: CardNotification): void {
+		try {
+			this.deps.notify?.(event);
+		} catch (err) {
+			this.log('warn', `notify failed for card "${event.cardId}": ${(err as Error).message}`);
+		}
 	}
 
 	/**

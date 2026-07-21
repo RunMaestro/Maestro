@@ -23,7 +23,7 @@ import {
 	saveBoard,
 } from '../../main/board/board-storage';
 import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
-import { CARD_STATUSES } from '../../shared/board/types';
+import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers } from '../../shared/board/graph';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
 import {
@@ -67,6 +67,8 @@ interface BoardAddCardOptions extends BoardCommonOptions {
 	/** Pinned agent id (`--assignee-agent`). Optional if `assignee` is set. */
 	assigneeAgent?: string;
 	parents?: string;
+	/** Dispatch priority (`--priority high|normal|low`). Defaults to normal. */
+	priority?: string;
 	worktree?: boolean;
 }
 
@@ -191,6 +193,13 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 			.map((p) => p.trim())
 			.filter((p) => p.length > 0);
 
+		// Priority is optional and validated up front: a typo must not silently
+		// become a normal-priority card the user thinks is high.
+		const priority = (options.priority ?? '').trim().toLowerCase();
+		if (priority && !(CARD_PRIORITIES as readonly string[]).includes(priority)) {
+			throw new Error(`Invalid --priority "${options.priority}". Use one of: high, normal, low.`);
+		}
+
 		const now = new Date().toISOString();
 		const cardId = generateUUID();
 		const card: BoardCard = {
@@ -204,6 +213,8 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 		};
 		if (assignee) card.assigneeProfileId = assignee;
 		if (assigneeAgent) card.assigneeAgentId = assigneeAgent;
+		// `normal` is the default and is never serialized.
+		if (priority === 'high' || priority === 'low') card.priority = priority;
 		if (options.worktree) {
 			// Advisory worktree intent: a conventional isolated checkout path for this
 			// card. The dispatcher currently runs cards in the project root; this ref

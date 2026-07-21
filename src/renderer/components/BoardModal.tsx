@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft } from 'lucide-react';
+import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft, Square } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AgentProfile } from '../../shared/profiles/types';
-import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
-import { CARD_STATUSES } from '../../shared/board/types';
+import type { Board, BoardCard, CardPriority, CardStatus } from '../../shared/board/types';
+import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers, hasCycle } from '../../shared/board/graph';
 import { isPathWithin } from '../../shared/board/pool';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -21,10 +22,8 @@ export interface BoardModalProps {
 	onClose: () => void;
 }
 
-/** How often (ms) the board re-polls so cards move columns as the dispatcher
- * runs. There is no board:changed push event yet, so a light poll keeps the
- * kanban live without a new IPC surface. */
-const POLL_INTERVAL_MS = 2500;
+/** How long (ms) a tile's delete button stays armed before it disarms itself. */
+const DELETE_DISARM_MS = 4000;
 
 /** Column presentation: label + which theme color keys the status. The columns
  * are a *view* of `card.status`; the DAG + dispatcher are the engine. */
@@ -37,6 +36,17 @@ const STATUS_META: Record<CardStatus, { label: string; colorKey: keyof Theme['co
 	done: { label: 'Done', colorKey: 'success' },
 };
 
+/** Priority presentation. `normal` carries no badge - only the exceptions are
+ * worth pixels on a tile. */
+const PRIORITY_META: Record<
+	CardPriority,
+	{ label: string; badge: string | null; hint: string; colorKey: keyof Theme['colors'] }
+> = {
+	high: { label: 'High', badge: 'high', hint: 'claimed before normal cards', colorKey: 'error' },
+	normal: { label: 'Normal', badge: null, hint: 'default dispatch order', colorKey: 'textDim' },
+	low: { label: 'Low', badge: 'low', hint: 'claimed after normal cards', colorKey: 'textDim' },
+};
+
 /** Draft shape for the card editor (before it becomes a persisted BoardCard). */
 interface CardDraft {
 	id: string | null; // null = new card
@@ -45,6 +55,7 @@ interface CardDraft {
 	assigneeProfileId: string; // '' = no role (float to pool, or pin an agent below)
 	assigneeAgentId: string; // '' = not pinned; else a specific agent runs this card
 	parents: string[];
+	priority: CardPriority;
 	worktreePath: string;
 	worktreeBranch: string;
 	status: CardStatus;
@@ -61,8 +72,6 @@ interface CardDraft {
  * back into text selection with `select-text` (per the CLAUDE.md modal rule).
  */
 export function BoardModal({ theme, onClose }: BoardModalProps) {
-	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', onClose);
-
 	const activeSession = useSessionStore(selectActiveSession);
 	const projectRoot = activeSession?.projectRoot ?? '';
 	const allSessions = useSessionStore((s) => s.sessions);
@@ -93,6 +102,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const [draft, setDraft] = useState<CardDraft | null>(null);
 	const [cycleError, setCycleError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
+	/** The draft exactly as the editor opened it, for the unsaved-changes check. */
+	const draftBaselineRef = useRef<CardDraft | null>(null);
+	/** Which close the user asked for while the editor was dirty, pending confirm. */
+	const [pendingDiscard, setPendingDiscard] = useState<null | 'editor' | 'modal'>(null);
+
+	// Cheap structural compare: the draft is a flat object of primitives plus a
+	// string array, so serializing both sides is simpler (and less bug-prone) than
+	// a hand-written field-by-field diff.
+	const isDraftDirty = useMemo(
+		() => !!draft && JSON.stringify(draft) !== JSON.stringify(draftBaselineRef.current),
+		[draft]
+	);
 
 	const boardIdRef = useRef<string | null>(null);
 	boardIdRef.current = board?.id ?? null;
@@ -129,8 +150,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					// A corrupt board.yaml / profiles.yaml now fails closed in the main
 					// process instead of loading as empty, so surface the real reason -
 					// the user has to repair the file by hand. Only reported on an
-					// explicit load: the background poll would otherwise re-report the
-					// same user-data problem every few seconds.
+					// explicit load: a push-driven refresh would otherwise re-report the
+					// same user-data problem on every write.
 					captureException(err, { tags: { operation: 'board:list' } });
 					notifyToast({
 						color: 'red',
@@ -150,14 +171,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		void load(true);
 	}, [load]);
 
-	// Live poll: refresh the board (no spinner) so dispatcher-driven status
-	// changes surface without a manual reload. Paused while the editor is open so
-	// a poll can't clobber an in-progress edit.
+	// Live updates: the main process pushes `board:changed` after every
+	// `.maestro/board.yaml` write (dispatcher tick, IPC mutation, auto-decompose),
+	// so dispatcher-driven status changes surface without a timer. The refresh runs
+	// while the card editor is open too - the draft is separate state, so only the
+	// board behind the editor is reconciled and in-progress edits survive.
 	useEffect(() => {
-		if (!projectRoot || draft) return;
-		const timer = setInterval(() => void load(false), POLL_INTERVAL_MS);
-		return () => clearInterval(timer);
-	}, [projectRoot, draft, load]);
+		if (!projectRoot) return;
+		return window.maestro.board.onBoardChanged?.((payload) => {
+			if (payload?.projectRoot !== projectRoot) return;
+			void load(false);
+		});
+	}, [projectRoot, load]);
 
 	const handleCreateBoard = useCallback(async () => {
 		if (!projectRoot || creatingBoard) return;
@@ -179,39 +204,76 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	const openNewCard = useCallback(() => {
 		setCycleError(null);
-		setDraft({
+		const fresh: CardDraft = {
 			id: null,
 			title: '',
 			body: '',
 			assigneeProfileId: profiles[0]?.id ?? '',
 			assigneeAgentId: '',
 			parents: [],
+			priority: 'normal',
 			worktreePath: '',
 			worktreeBranch: '',
 			status: 'todo',
-		});
+		};
+		draftBaselineRef.current = fresh;
+		setDraft(fresh);
 	}, [profiles]);
 
 	const openEditCard = useCallback((card: BoardCard) => {
 		setCycleError(null);
-		setDraft({
+		const existing: CardDraft = {
 			id: card.id,
 			title: card.title,
 			body: card.body,
 			assigneeProfileId: card.assigneeProfileId ?? '',
 			assigneeAgentId: card.assigneeAgentId ?? '',
 			parents: [...card.parents],
+			priority: card.priority ?? 'normal',
 			worktreePath: card.worktree?.path ?? '',
 			worktreeBranch: card.worktree?.branch ?? '',
 			status: card.status,
 			createdAt: card.createdAt,
-		});
+		};
+		draftBaselineRef.current = existing;
+		setDraft(existing);
 	}, []);
 
 	const closeEditor = useCallback(() => {
 		setDraft(null);
 		setCycleError(null);
+		draftBaselineRef.current = null;
+		setPendingDiscard(null);
 	}, []);
+
+	/** "Back to board" / Cancel: keep unsaved edits until the user confirms. */
+	const requestCloseEditor = useCallback(() => {
+		if (isDraftDirty) {
+			setPendingDiscard('editor');
+			return;
+		}
+		closeEditor();
+	}, [isDraftDirty, closeEditor]);
+
+	/**
+	 * Escape. Unchanged when there is nothing to lose (it closes the whole modal,
+	 * editor or not); when the editor holds unsaved edits it asks first.
+	 */
+	const handleEscape = useCallback(() => {
+		if (isDraftDirty) {
+			setPendingDiscard('modal');
+			return;
+		}
+		onClose();
+	}, [isDraftDirty, onClose]);
+
+	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
+
+	const handleConfirmDiscard = useCallback(() => {
+		const target = pendingDiscard;
+		closeEditor();
+		if (target === 'modal') onClose();
+	}, [pendingDiscard, closeEditor, onClose]);
 
 	const toggleParent = useCallback((parentId: string) => {
 		setCycleError(null);
@@ -254,6 +316,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			// no stale profile id.
 			...(draft.assigneeProfileId ? { assigneeProfileId: draft.assigneeProfileId } : {}),
 			...(draft.assigneeAgentId ? { assigneeAgentId: draft.assigneeAgentId } : {}),
+			// `normal` is the default and is never serialized.
+			...(draft.priority !== 'normal' ? { priority: draft.priority } : {}),
 			...(draft.worktreePath.trim()
 				? {
 						worktree: {
@@ -321,6 +385,26 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[board, projectRoot, draft?.id, closeEditor]
 	);
 
+	const handleCancelCard = useCallback(
+		async (cardId: string) => {
+			if (!board || !projectRoot) return;
+			try {
+				const updated = await window.maestro.board.cancelCard(projectRoot, board.id, cardId);
+				setBoard(updated);
+				notifyToast({
+					color: 'orange',
+					title: 'Board',
+					message: 'Stopped the run. The card is back in To Do.',
+				});
+			} catch (err) {
+				logger.error(`Failed to cancel card: ${String(err)}`);
+				captureException(err, { tags: { operation: 'board:cancelCard' } });
+				notifyToast({ color: 'red', title: 'Board', message: 'Failed to stop the card.' });
+			}
+		},
+		[board, projectRoot]
+	);
+
 	// --- Drag-to-move (manual status override) -----------------------------
 
 	const handleDrop = useCallback(
@@ -332,6 +416,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			const card = board.cards.find((c) => c.id === cardId);
 			// No-op when dropped back on the same column.
 			if (!card || card.status === status) return;
+			// Dragging a running card out of its column used to rewrite the status in
+			// YAML while the agent process kept running - the card looked stopped and
+			// wasn't. Stopping a run is an explicit action now (the stop button), so
+			// refuse the move and say why.
+			if (card.status === 'running') {
+				notifyToast({
+					color: 'orange',
+					title: 'Board',
+					message:
+						'This card is running. Use the stop button on the card to end the run before moving it.',
+				});
+				return;
+			}
 			// `ready` and `running` are derived by the dispatcher, so the main
 			// process rejects them. Catch it here too, before the optimistic move,
 			// so the card doesn't visibly jump columns and snap back.
@@ -344,7 +441,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				return;
 			}
 			if (isCoarsePointer()) triggerHaptic(HAPTIC_PATTERNS.tap);
-			// Optimistic move so the card jumps immediately; the poll/reconcile
+			// Optimistic move so the card jumps immediately; the reload below
 			// corrects it if the write fails.
 			setBoard((prev) =>
 				prev
@@ -389,7 +486,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			className="fixed inset-0 flex items-center justify-center select-none"
 			style={{ zIndex: MODAL_PRIORITIES.BOARD_MODAL }}
 			onClick={(e) => {
-				if (e.target === e.currentTarget) onClose();
+				// Same guard as Escape: a backdrop click must not silently drop edits.
+				if (e.target === e.currentTarget) handleEscape();
 			}}
 		>
 			<div className="absolute inset-0 bg-black/50" />
@@ -441,7 +539,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							<RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
 						</button>
 						<button
-							onClick={onClose}
+							onClick={handleEscape}
 							className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
 							aria-label="Close"
@@ -490,7 +588,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							inputStyle={inputStyle}
 							onToggleParent={toggleParent}
 							onSave={() => void handleSaveCard()}
-							onCancel={closeEditor}
+							onCancel={requestCloseEditor}
 							profileName={profileName}
 							projectAgents={projectAgents}
 						/>
@@ -564,6 +662,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														}}
 														onClick={() => openEditCard(card)}
 														onDelete={() => void handleDeleteCard(card.id)}
+														onCancelRun={() => void handleCancelCard(card.id)}
 													/>
 												))}
 												{cards.length === 0 && (
@@ -583,6 +682,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					)}
 				</div>
 			</div>
+
+			{/* Unsaved-changes gate for Escape / backdrop / "Back to board". One
+			    confirm step, no draft persistence. */}
+			{pendingDiscard && (
+				<ConfirmModal
+					theme={theme}
+					title="Discard changes?"
+					message={`"${draft?.title.trim() || 'This card'}" has unsaved changes. Discard them?`}
+					confirmLabel="Discard"
+					onConfirm={handleConfirmDiscard}
+					onClose={() => setPendingDiscard(null)}
+				/>
+			)}
 		</div>,
 		document.body
 	);
@@ -601,6 +713,8 @@ interface BoardCardTileProps {
 	onDragEnd: () => void;
 	onClick: () => void;
 	onDelete: () => void;
+	/** Stop the in-flight run. Only rendered on `running` cards. */
+	onCancelRun: () => void;
 }
 
 /** A single draggable card. Shows its title, assignee, parent count, and a
@@ -616,8 +730,58 @@ function BoardCardTile({
 	onDragEnd,
 	onClick,
 	onDelete,
+	onCancelRun,
 }: BoardCardTileProps) {
+	// Delete is armed by the first click and fires on the second, mirroring the
+	// "click again to confirm" idiom the browser tab's clear-data button uses.
+	// It disarms itself so a stray click never leaves a live trigger sitting there.
+	const [deleteArmed, setDeleteArmed] = useState(false);
+	const disarmTimerRef = useRef<number | null>(null);
+	useEffect(
+		() => () => {
+			if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current);
+		},
+		[]
+	);
+	const handleDeleteClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current);
+			if (!deleteArmed) {
+				setDeleteArmed(true);
+				disarmTimerRef.current = window.setTimeout(
+					() => setDeleteArmed(false),
+					DELETE_DISARM_MS
+				) as unknown as number;
+				return;
+			}
+			disarmTimerRef.current = null;
+			setDeleteArmed(false);
+			onDelete();
+		},
+		[deleteArmed, onDelete]
+	);
+
+	const priorityMeta = PRIORITY_META[card.priority ?? 'normal'];
 	const blockers = getBlockers(card, board);
+	// Cards that list this one as a parent: deleting re-parents them onto this
+	// card's own parents, which the confirm copy has to say out loud.
+	const dependents = board.cards.filter((c) => c.parents.includes(card.id)).length;
+	const deleteTitle = deleteArmed
+		? dependents > 0
+			? `Click again to delete "${card.title}". Its ${dependents} dependent card${
+					dependents === 1 ? '' : 's'
+				} will be re-parented to this card's parents.`
+			: `Click again to delete "${card.title}".`
+		: 'Delete card';
+	// Hover-only affordances are invisible to keyboard and touch users: reveal on
+	// focus-within, and keep it permanently visible on a touch device (where there
+	// is no hover at all).
+	const coarsePointer = useMemo(() => isCoarsePointer(), []);
+	const deleteVisibility =
+		coarsePointer || deleteArmed
+			? 'opacity-100'
+			: 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100';
 	// The most recent run's handoff summary (from a `card-complete | summary`
 	// marker), surfaced as optional expandable metadata.
 	const latestSummary = card.runs?.[card.runs.length - 1]?.summary;
@@ -647,20 +811,46 @@ function BoardCardTile({
 				>
 					{card.title}
 				</div>
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						onDelete();
-					}}
-					className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-opacity shrink-0"
-					style={{ color: theme.colors.textDim }}
-					aria-label={`Delete ${card.title}`}
-					title="Delete card"
-				>
-					<Trash2 className="w-3.5 h-3.5" />
-				</button>
+				<div className="flex items-center gap-0.5 shrink-0">
+					{card.status === 'running' && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onCancelRun();
+							}}
+							className="p-0.5 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.warning }}
+							aria-label={`Stop ${card.title}`}
+							title="Stop this run"
+						>
+							<Square className="w-3.5 h-3.5" />
+						</button>
+					)}
+					<button
+						onClick={handleDeleteClick}
+						className={`p-0.5 rounded hover:bg-white/10 transition-opacity ${deleteVisibility}`}
+						style={{ color: deleteArmed ? theme.colors.error : theme.colors.textDim }}
+						aria-label={deleteArmed ? `Confirm delete ${card.title}` : `Delete ${card.title}`}
+						aria-pressed={deleteArmed}
+						title={deleteTitle}
+					>
+						<Trash2 className="w-3.5 h-3.5" />
+					</button>
+				</div>
 			</div>
 			<div className="mt-1 flex items-center gap-1.5 flex-wrap">
+				{priorityMeta.badge && (
+					<span
+						className="text-[10px] font-semibold rounded px-1.5 py-0.5 uppercase tracking-wide"
+						style={{
+							backgroundColor: theme.colors[priorityMeta.colorKey] + '22',
+							color: theme.colors[priorityMeta.colorKey],
+						}}
+						title={`${priorityMeta.label} priority - ${priorityMeta.hint}`}
+					>
+						{priorityMeta.badge}
+					</span>
+				)}
 				<span
 					className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -834,6 +1024,27 @@ function CardEditor({
 							<option key={a.id} value={a.id}>
 								{a.name}
 								{a.isWorker ? '' : ' (not a board worker)'}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className="block space-y-1 w-40">
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Priority
+					</span>
+					<select
+						value={draft.priority}
+						onChange={(e) =>
+							setDraft((p) => (p ? { ...p, priority: e.target.value as CardPriority } : p))
+						}
+						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+						style={inputStyle}
+					>
+						{/* Dispatch order: high before normal before low, oldest first within
+						    each. `normal` is the default and is not persisted. */}
+						{CARD_PRIORITIES.map((p) => (
+							<option key={p} value={p}>
+								{PRIORITY_META[p].label}
 							</option>
 						))}
 					</select>

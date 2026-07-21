@@ -118,6 +118,40 @@ describe('maestro-cli board', () => {
 		expect(created.worktree?.path).toContain(path.join('.maestro', 'worktrees'));
 	});
 
+	it('board add-card --priority stores high/low and drops the default', async () => {
+		const b = createBoard(projectRoot, 'B');
+		await boardAddCard(b.id, {
+			agent: 'Alpha',
+			title: 'Urgent',
+			assignee: 'p1',
+			priority: 'high',
+			json: true,
+		});
+		await boardAddCard(b.id, {
+			agent: 'Alpha',
+			title: 'Ordinary',
+			assignee: 'p1',
+			priority: 'normal',
+			json: true,
+		});
+		const cards = loadBoards(projectRoot)[0].cards;
+		expect(cards.find((c) => c.title === 'Urgent')?.priority).toBe('high');
+		expect(cards.find((c) => c.title === 'Ordinary')?.priority).toBeUndefined();
+	});
+
+	it('board add-card rejects an invalid --priority', async () => {
+		const b = createBoard(projectRoot, 'B');
+		await boardAddCard(b.id, {
+			agent: 'Alpha',
+			title: 'Typo',
+			assignee: 'p1',
+			priority: 'urgent',
+			json: true,
+		});
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(loadBoards(projectRoot)[0].cards).toHaveLength(0);
+	});
+
 	it('board add-card wires comma-separated parents', async () => {
 		const b = createBoard(projectRoot, 'B');
 		addCard(projectRoot, b.id, card('a'));

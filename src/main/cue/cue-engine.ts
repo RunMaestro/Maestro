@@ -80,6 +80,7 @@ import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
 import {
 	BoardDispatcher,
 	type CardAssignment,
+	type CardNotification,
 	type CardSpawnRequest,
 	type CardSpawnResult,
 } from '../board/board-dispatcher';
@@ -207,6 +208,17 @@ export interface CueEngineBoardDeps {
 	) => CardAssignment;
 	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
 	spawnCard: (projectRoot: string, request: CardSpawnRequest) => Promise<CardSpawnResult>;
+	/**
+	 * Kill the in-flight agent process for a card (user pressed stop). Returns
+	 * `true` when a live run was stopped. Optional: without it a cancel still
+	 * finalizes the card, it just cannot kill the process.
+	 */
+	cancelCardRun?: (projectRoot: string, cardId: string) => boolean;
+	/**
+	 * Announce a terminal card transition (`done` / `blocked`) to the user. The
+	 * host turns it into a toast; absent => silent (the CLI's headless path).
+	 */
+	notifyCard?: (projectRoot: string, event: CardNotification) => void;
 	/**
 	 * OPTIONAL auto-decompose (Board Phase 5), OFF by default. When wired AND the
 	 * board's own `autoDecompose` flag is `true`, run one decomposition pass for a
@@ -1621,10 +1633,33 @@ export class CueEngine {
 				: undefined,
 			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> =>
 				boardDeps.spawnCard(projectRoot, request),
+			cancelSpawn: boardDeps.cancelCardRun
+				? (cardId: string): boolean => boardDeps.cancelCardRun!(projectRoot, cardId)
+				: undefined,
+			notify: boardDeps.notifyCard
+				? (event: CardNotification): void => boardDeps.notifyCard!(projectRoot, event)
+				: undefined,
 			onLog: (level, message) => this.meteredOnLog(level, `[BOARD] ${message}`),
 		});
 		this.boardDispatchers.set(key, dispatcher);
 		return dispatcher;
+	}
+
+	/**
+	 * Cancel a running board card: kill its agent process and finalize the card as
+	 * `canceled`. Routed through the live {@link BoardDispatcher} for that board so
+	 * the in-flight bookkeeping (and the "ignore the killed run's result" tombstone)
+	 * stays in one place.
+	 *
+	 * Returns `false` when no dispatcher owns that board yet - the board has never
+	 * ticked in this process, so there is nothing running here to stop. The caller
+	 * (the `board:cancelCard` IPC handler) falls back to a storage-only finalize for
+	 * a card left `running` by a previous app run.
+	 */
+	cancelBoardCard(projectRoot: string, boardId: string, cardId: string): boolean {
+		const dispatcher = this.boardDispatchers.get(`${projectRoot}::${boardId}`);
+		if (!dispatcher) return false;
+		return dispatcher.cancelCard(cardId);
 	}
 }
 

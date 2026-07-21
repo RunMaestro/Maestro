@@ -46,9 +46,23 @@ let boardApi: {
 	updateCard: ReturnType<typeof vi.fn>;
 	setCardStatus: ReturnType<typeof vi.fn>;
 	deleteCard: ReturnType<typeof vi.fn>;
+	cancelCard: ReturnType<typeof vi.fn>;
+	onBoardChanged: ReturnType<typeof vi.fn>;
 };
 
+/** Captured `board:changed` subscribers, so a test can fire the push the main
+ * process would send after a board.yaml write. */
+let boardChangedListeners: Array<(payload: { projectRoot: string }) => void>;
+/** Unsubscribe spy returned by the mocked subscription. */
+let unsubscribeBoardChanged: ReturnType<typeof vi.fn>;
+
+function emitBoardChanged(projectRoot = PROJECT_ROOT): void {
+	for (const listener of boardChangedListeners) listener({ projectRoot });
+}
+
 function installApis(initialBoards: Board[]): void {
+	boardChangedListeners = [];
+	unsubscribeBoardChanged = vi.fn();
 	boardApi = {
 		list: vi.fn().mockResolvedValue(initialBoards),
 		create: vi.fn(),
@@ -56,6 +70,11 @@ function installApis(initialBoards: Board[]): void {
 		updateCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		setCardStatus: vi.fn().mockResolvedValue(initialBoards[0]),
 		deleteCard: vi.fn().mockResolvedValue(initialBoards[0]),
+		cancelCard: vi.fn().mockResolvedValue(initialBoards[0]),
+		onBoardChanged: vi.fn((cb: (payload: { projectRoot: string }) => void) => {
+			boardChangedListeners.push(cb);
+			return unsubscribeBoardChanged;
+		}),
 	};
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	(window.maestro as any).board = boardApi;
@@ -107,6 +126,144 @@ describe('BoardModal card creation', () => {
 			status: 'todo',
 			parents: [],
 		});
+	});
+});
+
+describe('BoardModal destructive actions', () => {
+	it('requires a second click on the tile trash before deleting', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const trash = await screen.findByRole('button', { name: /^Delete Card A$/i });
+		fireEvent.click(trash);
+		expect(boardApi.deleteCard).not.toHaveBeenCalled();
+
+		// Armed: the button relabels itself, and only now does a click delete.
+		const armed = screen.getByRole('button', { name: /Confirm delete Card A/i });
+		fireEvent.click(armed);
+		await waitFor(() =>
+			expect(boardApi.deleteCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA')
+		);
+	});
+
+	it('warns that dependents are re-parented when the card has children', async () => {
+		const parent = makeCard({ id: 'cardA', title: 'Card A' });
+		const child = makeCard({ id: 'cardB', title: 'Card B', parents: ['cardA'] });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [parent, child] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		fireEvent.click(await screen.findByRole('button', { name: /^Delete Card A$/i }));
+		expect(screen.getByRole('button', { name: /Confirm delete Card A/i })).toHaveAttribute(
+			'title',
+			expect.stringContaining('1 dependent card will be re-parented')
+		);
+	});
+
+	it('asks before discarding unsaved editor changes, and keeps them on cancel', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+
+		const titleInput = await screen.findByPlaceholderText('e.g. Design the schema');
+		fireEvent.change(titleInput, { target: { value: 'Card A edited' } });
+
+		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
+		// The editor is still up behind the confirm, edits intact.
+		expect(await screen.findByText(/unsaved changes/i)).toBeInTheDocument();
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A edited');
+
+		// The editor has a Cancel button too; the confirm dialog's is the later one.
+		const cancels = screen.getAllByRole('button', { name: /^Cancel$/i });
+		fireEvent.click(cancels[cancels.length - 1]);
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A edited');
+
+		// Confirming this time drops the edits and returns to the board.
+		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
+		fireEvent.click(await screen.findByRole('button', { name: /^Discard$/i }));
+		await waitFor(() =>
+			expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument()
+		);
+		expect(boardApi.updateCard).not.toHaveBeenCalled();
+	});
+
+	it('closes an untouched editor without asking', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+		await screen.findByPlaceholderText('e.g. Design the schema');
+
+		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
+		await waitFor(() =>
+			expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument()
+		);
+		expect(screen.queryByText(/unsaved changes/i)).toBeNull();
+	});
+});
+
+describe('BoardModal run cancellation', () => {
+	it('shows a stop button on running cards only, and cancels through the IPC', async () => {
+		const running = makeCard({ id: 'cardA', title: 'Card A', status: 'running' });
+		const idle = makeCard({ id: 'cardB', title: 'Card B' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [running, idle] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const stop = await screen.findByRole('button', { name: /Stop Card A/i });
+		expect(screen.queryByRole('button', { name: /Stop Card B/i })).toBeNull();
+
+		fireEvent.click(stop);
+		await waitFor(() => expect(boardApi.cancelCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.cancelCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA');
+	});
+});
+
+describe('BoardModal live updates', () => {
+	it('refreshes on a board:changed push instead of polling, and unsubscribes on unmount', async () => {
+		const board: Board = { id: 'b1', name: 'My Board', cards: [] };
+		installApis([board]);
+
+		const { unmount } = render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(1));
+		expect(boardApi.onBoardChanged).toHaveBeenCalled();
+
+		// A push for this project refetches; a push for another project is ignored.
+		emitBoardChanged();
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
+		emitBoardChanged('/some/other/project');
+		expect(boardApi.list).toHaveBeenCalledTimes(2);
+
+		unmount();
+		expect(unsubscribeBoardChanged).toHaveBeenCalled();
+	});
+
+	it('keeps the open card editor mounted when a push arrives', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+
+		const titleInput = await screen.findByPlaceholderText('e.g. Design the schema');
+		fireEvent.change(titleInput, { target: { value: 'Edited in flight' } });
+
+		emitBoardChanged();
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
+
+		// The draft is separate state, so the in-progress edit survives the refresh.
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Edited in flight');
 	});
 });
 

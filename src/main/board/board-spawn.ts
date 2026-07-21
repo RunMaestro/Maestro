@@ -22,13 +22,37 @@ import {
 import type { BoardCard } from '../../shared/board/types';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
 import type { CardAssignment, CardSpawnRequest, CardSpawnResult } from './board-dispatcher';
-import { executeCuePrompt } from '../cue/cue-executor';
+import { executeCuePrompt, stopCueRun } from '../cue/cue-executor';
 import { createCueEvent } from '../cue/cue-types';
 import type { TemplateContext } from '../../shared/templateVariables';
 import { logger } from '../utils/logger';
 
 /** Default per-card run budget (mirrors the Cue default `timeout_minutes: 30`). */
 const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Live card runs: cardId -> the Cue `runId` its process is registered under.
+ *
+ * `executeCuePrompt` exposes no cancellation handle of its own; the run is
+ * addressable by the `runId` we mint for it, and `stopCueRun(runId)` is exactly
+ * how Cue stops one of its own runs. Remembering that id per card is therefore
+ * the whole cancellation mechanism - see {@link cancelBoardCardRun}.
+ */
+const activeCardRunIds = new Map<string, string>();
+
+/**
+ * Kill the in-flight agent process for a card. Returns `true` when a live run
+ * was found and stopped, `false` when the card has no registered run (already
+ * finished, or running in another process such as the CLI). Wired into the
+ * dispatcher as `cancelSpawn`.
+ */
+export function cancelBoardCardRun(cardId: string): boolean {
+	const runId = activeCardRunIds.get(cardId);
+	if (!runId) return false;
+	// Leave the map entry to `runCardPrompt`'s finally block: the process exit is
+	// what actually clears it, and deleting here would race a second cancel.
+	return stopCueRun(runId);
+}
 
 /** The host context a board spawn needs, injected from index.ts where these
  * live. Kept structural so this module doesn't import the electron-store type. */
@@ -274,47 +298,55 @@ async function runCardPrompt(
 	};
 	const event = createCueEvent('cli.trigger', `board:${card.id}`, { board: true });
 
-	const result = await executeCuePrompt({
-		runId,
-		session: {
-			id: baseSession.id,
-			name: baseSession.name,
+	// Register the run id BEFORE awaiting so a cancel arriving mid-run can find it.
+	activeCardRunIds.set(card.id, runId);
+	try {
+		const result = await executeCuePrompt({
+			runId,
+			session: {
+				id: baseSession.id,
+				name: baseSession.name,
+				toolType,
+				cwd: projectRoot,
+				projectRoot,
+				autoRunFolderPath: baseSession.autoRunFolderPath,
+			},
+			subscription: {
+				name: `board:${card.title}`,
+				event: event.type,
+				enabled: true,
+				prompt: promptText,
+			},
+			event,
+			promptPath: promptText,
 			toolType,
-			cwd: projectRoot,
 			projectRoot,
-			autoRunFolderPath: baseSession.autoRunFolderPath,
-		},
-		subscription: {
-			name: `board:${card.title}`,
-			event: event.type,
-			enabled: true,
-			prompt: promptText,
-		},
-		event,
-		promptPath: promptText,
-		toolType,
-		projectRoot,
-		templateContext,
-		timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
-		// Honor the base agent's SSH + token-source config (never bypass the SSH path).
-		sshRemoteConfig: baseSession.sessionSshRemoteConfig,
-		customPath: resolvedAgentPath,
-		customArgs: overrides.customArgs,
-		customEnvVars: baseSession.customEnvVars,
-		customModel: overrides.customModel,
-		customEffort: overrides.customEffort,
-		enableMaestroP: baseSession.enableMaestroP,
-		maestroPMode: baseSession.maestroPMode,
-		maestroPPath: baseSession.maestroPPath,
-		onLog: (level, message) => {
-			if (level === 'error') logger.error(message, 'Board');
-			else if (level === 'warn') logger.warn(message, 'Board');
-			else if (level === 'debug') logger.debug(message, 'Board');
-			else logger.cue(message, 'Board');
-		},
-		sshStore: ctx.getSshStore(),
-		agentConfigValues,
-	});
+			templateContext,
+			timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
+			// Honor the base agent's SSH + token-source config (never bypass the SSH path).
+			sshRemoteConfig: baseSession.sessionSshRemoteConfig,
+			customPath: resolvedAgentPath,
+			customArgs: overrides.customArgs,
+			customEnvVars: baseSession.customEnvVars,
+			customModel: overrides.customModel,
+			customEffort: overrides.customEffort,
+			enableMaestroP: baseSession.enableMaestroP,
+			maestroPMode: baseSession.maestroPMode,
+			maestroPPath: baseSession.maestroPPath,
+			onLog: (level, message) => {
+				if (level === 'error') logger.error(message, 'Board');
+				else if (level === 'warn') logger.warn(message, 'Board');
+				else if (level === 'debug') logger.debug(message, 'Board');
+				else logger.cue(message, 'Board');
+			},
+			sshStore: ctx.getSshStore(),
+			agentConfigValues,
+		});
 
-	return { output: result.stdout, exitCode: result.exitCode };
+		return { output: result.stdout, exitCode: result.exitCode };
+	} finally {
+		// Only clear our own registration: a retry claimed after this run started
+		// would already have replaced the entry with its own run id.
+		if (activeCardRunIds.get(card.id) === runId) activeCardRunIds.delete(card.id);
+	}
 }

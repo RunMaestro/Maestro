@@ -20,9 +20,12 @@ import {
 	updateCard,
 	updateCardStatus,
 	deleteCard,
+	saveBoard,
 	enqueueBoardWrite,
 } from '../../board/board-storage';
+import { applyCardCancel } from '../../board/board-dispatcher';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
+import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[Board]';
 
@@ -31,12 +34,19 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	operation,
 });
 
+/** Dependencies required for Board handler registration. */
+export interface BoardHandlerDependencies {
+	/** The live Cue engine (Board rides its tick), or `null` before it is built. */
+	getCueEngine: () => CueEngine | null;
+}
+
 /**
- * Register all Board IPC handlers. No engine/service dependency - the storage
- * layer reads/writes `.maestro/board.yaml` under the passed project root on
- * demand.
+ * Register all Board IPC handlers. Storage handlers need no service dependency -
+ * the storage layer reads/writes `.maestro/board.yaml` under the passed project
+ * root on demand. `board:cancelCard` is the exception: it goes through the live
+ * dispatcher so the in-flight process is actually killed.
  */
-export function registerBoardHandlers(): void {
+export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	// List all boards for a project.
 	ipcMain.handle(
 		'board:list',
@@ -120,6 +130,40 @@ export function registerBoardHandlers(): void {
 				return enqueueBoardWrite(options.projectRoot, () =>
 					updateCardStatus(options.projectRoot, options.boardId, options.cardId, options.status)
 				);
+			}
+		)
+	);
+
+	// Cancel a running card: kill its agent process and send it back to `todo`
+	// with a `canceled` run (which does NOT count toward the circuit breaker).
+	// Returns the updated board.
+	ipcMain.handle(
+		'board:cancelCard',
+		withIpcErrorLogging(
+			handlerOpts('cancelCard'),
+			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
+				const { projectRoot, boardId, cardId } = options;
+				// Preferred path: the dispatcher that owns this board kills the process
+				// and persists the cancel itself.
+				const canceled =
+					deps.getCueEngine()?.cancelBoardCard(projectRoot, boardId, cardId) ?? false;
+				if (!canceled) {
+					// No dispatcher owns the board in this process (engine off, or the app
+					// restarted while the card was running), so there is nothing to kill -
+					// but the card is still stuck `running` in the file. Finalize it so the
+					// user can act on it now instead of waiting out the stale-reclaim
+					// window. Serialized like every other async read-modify-write.
+					await enqueueBoardWrite(projectRoot, () => {
+						const board = listBoards(projectRoot).find((b) => b.id === boardId);
+						if (!board) throw new Error(`Board "${boardId}" not found`);
+						if (applyCardCancel(board, cardId, new Date().toISOString())) {
+							saveBoard(projectRoot, board);
+						}
+					});
+				}
+				const updated = getBoard(projectRoot, boardId);
+				if (!updated) throw new Error(`Board "${boardId}" not found`);
+				return updated;
 			}
 		)
 	);

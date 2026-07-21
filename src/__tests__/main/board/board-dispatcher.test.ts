@@ -22,6 +22,7 @@ import {
 	applyCardResult,
 	type BoardDispatcherDeps,
 	type CardAssignment,
+	type CardNotification,
 	type CardSpawnResult,
 } from '../../../main/board/board-dispatcher';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
@@ -136,6 +137,44 @@ describe('claimReadyCards (WIP cap)', () => {
 			card({ id: 'a', status: 'ready', createdAt: '2026-07-10T00:00:01.000Z' }),
 		]);
 		expect(claimReadyCards(b, 1, NOW).map((c) => c.id)).toEqual(['a']);
+	});
+
+	it('claims by priority first, oldest-first within a priority', () => {
+		const b = board([
+			card({
+				id: 'oldLow',
+				status: 'ready',
+				priority: 'low',
+				createdAt: '2026-07-10T00:00:01.000Z',
+			}),
+			card({ id: 'oldNormal', status: 'ready', createdAt: '2026-07-10T00:00:02.000Z' }),
+			card({
+				id: 'newHigh',
+				status: 'ready',
+				priority: 'high',
+				createdAt: '2026-07-10T00:00:04.000Z',
+			}),
+			card({
+				id: 'oldHigh',
+				status: 'ready',
+				priority: 'high',
+				createdAt: '2026-07-10T00:00:03.000Z',
+			}),
+		]);
+		expect(claimReadyCards(b, 4, NOW).map((c) => c.id)).toEqual([
+			'oldHigh',
+			'newHigh',
+			'oldNormal',
+			'oldLow',
+		]);
+	});
+
+	it('treats an absent priority as normal', () => {
+		const b = board([
+			card({ id: 'low', status: 'ready', priority: 'low', createdAt: '2026-07-10T00:00:01.000Z' }),
+			card({ id: 'plain', status: 'ready', createdAt: '2026-07-10T00:00:09.000Z' }),
+		]);
+		expect(claimReadyCards(b, 1, NOW).map((c) => c.id)).toEqual(['plain']);
 	});
 });
 
@@ -330,6 +369,177 @@ describe('BoardDispatcher lifecycle', () => {
 	});
 });
 
+describe('BoardDispatcher notifications', () => {
+	/** Harness that records every notification the dispatcher emits. */
+	function notifyHarness(
+		initial: Board,
+		spawnScript: (cardId: string) => CardSpawnResult,
+		extra?: Partial<BoardDispatcherDeps>
+	) {
+		const events: CardNotification[] = [];
+		const h = harness(initial, spawnScript, { notify: (e) => events.push(e), ...extra });
+		return { ...h, events };
+	}
+
+	it('fires a done notification carrying the run summary', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () =>
+			completeMarker('shipped the thing')
+		);
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.events).toEqual([
+			{ kind: 'done', cardId: 'a', cardTitle: 'Card a', detail: 'shipped the thing' },
+		]);
+	});
+
+	it('fires a blocked notification carrying the block reason', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () => blockMarker('needs a schema'));
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.events).toEqual([
+			{ kind: 'blocked', cardId: 'a', cardTitle: 'Card a', detail: 'needs a schema' },
+		]);
+	});
+
+	it('fires blocked only when the circuit breaker actually trips, not on a retry', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () => failure());
+
+		h.dispatcher.tick(); // attempt 1 -> retried, nothing terminal to report
+		await flush();
+		expect(h.events).toEqual([]);
+
+		h.dispatcher.tick(); // attempt 2 -> breaker trips
+		await flush();
+		expect(h.events.map((e) => e.kind)).toEqual(['blocked']);
+		expect(h.events[0].cardId).toBe('a');
+	});
+
+	it('fires blocked when an assignee cannot be resolved', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () => completeMarker(), {
+			resolveOverrides: () => null,
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.events).toEqual([
+			{
+				kind: 'blocked',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'Assignee profile "p1" could not be resolved.',
+			},
+		]);
+	});
+
+	it('fires blocked for an unresolvable card on the pooled path', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () => completeMarker(), {
+			assign: () => ({ kind: 'unresolvable', reason: 'Profile "p1" not found.' }),
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.events).toEqual([
+			{ kind: 'blocked', cardId: 'a', cardTitle: 'Card a', detail: 'Profile "p1" not found.' },
+		]);
+		expect(h.status('a')).toBe('blocked');
+	});
+
+	it('survives a notifier that throws', async () => {
+		const h = harness(board([card({ id: 'a' })], 1), () => completeMarker(), {
+			notify: () => {
+				throw new Error('toast exploded');
+			},
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+	});
+});
+
+describe('BoardDispatcher cancelCard', () => {
+	/** Harness whose spawn never settles until the test resolves it, so a cancel
+	 * can land while the card is genuinely in flight. */
+	function pendingHarness(initial: Board, extra?: Partial<BoardDispatcherDeps>) {
+		let settle: ((result: CardSpawnResult) => void) | null = null;
+		const killed: string[] = [];
+		const h = harness(initial, () => failure(), {
+			spawn: () => new Promise<CardSpawnResult>((resolve) => (settle = resolve)),
+			cancelSpawn: (cardId) => {
+				killed.push(cardId);
+				return true;
+			},
+			...extra,
+		});
+		return { ...h, killed, settle: (r: CardSpawnResult) => settle?.(r) };
+	}
+
+	it('kills the run, returns the card to todo, and records a canceled run', async () => {
+		const h = pendingHarness(board([card({ id: 'a' })], 1));
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('running');
+		expect(h.dispatcher.isInFlight('a')).toBe(true);
+
+		expect(h.dispatcher.cancelCard('a')).toBe(true);
+		expect(h.killed).toEqual(['a']);
+		expect(h.status('a')).toBe('todo');
+		expect(h.dispatcher.isInFlight('a')).toBe(false);
+		const run = h.cardById('a').runs?.[0];
+		expect(run?.outcome).toBe('canceled');
+		expect(run?.endedAt).toBe(NOW);
+	});
+
+	it('ignores the killed run resolving afterwards instead of re-finalizing it', async () => {
+		const h = pendingHarness(board([card({ id: 'a' })], 1));
+
+		h.dispatcher.tick();
+		await flush();
+		h.dispatcher.cancelCard('a');
+
+		// The killed process reports in: no marker, null exit. Without the cancel
+		// tombstone this would overwrite the cancel with a failed run.
+		h.settle({ output: '', exitCode: null, error: 'killed' });
+		await flush();
+		expect(h.status('a')).toBe('todo');
+		expect(h.cardById('a').runs?.length).toBe(1);
+		expect(h.cardById('a').runs?.[0].outcome).toBe('canceled');
+	});
+
+	it('does not count canceled runs toward the failure circuit breaker', async () => {
+		// maxFailures is 2; two canceled runs plus one genuine failure must still
+		// retry (`ready`), because a user stopping a card is not the card failing.
+		const initial = board(
+			[
+				card({
+					id: 'a',
+					runs: [
+						{ attempt: 1, startedAt: NOW, endedAt: NOW, outcome: 'canceled' },
+						{ attempt: 2, startedAt: NOW, endedAt: NOW, outcome: 'canceled' },
+					],
+				}),
+			],
+			1
+		);
+		const h = harness(initial, () => failure());
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('ready');
+		expect(h.cardById('a').runs?.length).toBe(3);
+	});
+
+	it('is a no-op for a card that is not running', () => {
+		const h = pendingHarness(board([card({ id: 'a', status: 'todo' })], 1));
+		expect(h.dispatcher.cancelCard('a')).toBe(false);
+		expect(h.dispatcher.cancelCard('nope')).toBe(false);
+		expect(h.killed).toEqual([]);
+	});
+});
+
 // ─── Board Phase 6: worker pool ──────────────────────────────────────────────
 
 describe('computeBusyAgentIds', () => {
@@ -371,6 +581,20 @@ describe('claimReadyCardsPooled', () => {
 		expect(b.cards.find((c) => c.id === 'a')?.status).toBe('running');
 		// The second card is left ready (all workers busy) - not claimed, not blocked.
 		expect(b.cards.find((c) => c.id === 'b')?.status).toBe('ready');
+	});
+
+	it('honors card priority when picking which ready card gets the free worker', () => {
+		const b = board([
+			card({ id: 'old', status: 'ready', createdAt: '2026-07-10T00:00:01.000Z' }),
+			card({
+				id: 'urgent',
+				status: 'ready',
+				priority: 'high',
+				createdAt: '2026-07-10T00:00:09.000Z',
+			}),
+		]);
+		const { claimed } = claimReadyCardsPooled(b, 5, NOW, poolAssign(['w1']));
+		expect(claimed.map((c) => c.card.id)).toEqual(['urgent']);
 	});
 
 	it('spreads cards across free workers and stamps workerAgentId', () => {

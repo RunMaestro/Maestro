@@ -3933,6 +3933,17 @@ interface MaestroAPI {
 			boardId: string,
 			cardId: string
 		) => Promise<import('../shared/board/types').Board>;
+		// Cancel a running card: kills the agent process and returns the card to
+		// `todo` with a `canceled` run (excluded from the failure circuit breaker).
+		cancelCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Push notification that board.yaml was persisted (dispatcher tick, IPC
+		// mutation, auto-decompose). Payload carries the project root only - the
+		// listener refetches. Returns an unsubscribe function.
+		onBoardChanged: (callback: (payload: { projectRoot: string }) => void) => () => void;
 	};
 
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)

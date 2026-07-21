@@ -50,12 +50,12 @@ A single top-level `boards:` list; each board owns its `cards:`. See [board.md](
 
 ## Profiles (`.maestro/profiles.yaml`)
 
-An `AgentProfile` is a named override bundle (a *role*: model / effort / role-prompt / args). `resolveProfileSpawnOverrides(profile, baseValues)` merges each field as **profile -> running agent -> undefined** and returns `{ customModel, customEffort, appendSystemPrompt, customArgs }` - which map 1:1 onto the existing `SpawnAgentOptions` / `process:spawn` fields. Profiles invent **no** new spawn parameters.
+An `AgentProfile` is a named override bundle (a _role_: model / effort / role-prompt / args). `resolveProfileSpawnOverrides(profile, baseValues)` merges each field as **profile -> running agent -> undefined** and returns `{ customModel, customEffort, appendSystemPrompt, customArgs }` - which map 1:1 onto the existing `SpawnAgentOptions` / `process:spawn` fields. Profiles invent **no** new spawn parameters.
 
 `baseAgentId` is **optional** (Phase 6):
 
 - **Set** -> the profile pins its overrides to that specific agent (the classic "layer on a base agent"). The Board dispatches such a card to exactly that agent.
-- **Absent** -> a pure *pool role* the Board floats to any FREE opt-in worker in the project, layering the role's overrides on whichever agent picks it up.
+- **Absent** -> a pure _pool role_ the Board floats to any FREE opt-in worker in the project, layering the role's overrides on whichever agent picks it up.
 
 Create a pool role from the CLI with `profile create --base <agent> --pool` (`--base` only locates the project), or in the Profiles UI by choosing base agent "None (pool role)".
 
@@ -71,6 +71,12 @@ Per `tick()`:
 2. `promoteEligibleCards` - `todo` cards with all parents `done` -> `ready` (uses `getEligibleCards`, the single eligibility rule).
 3. `claimReadyCards` - claim the oldest `ready` cards up to `maxInProgress` (default `DEFAULT_MAX_IN_PROGRESS = 2`), mark `running`, open a run. **The board is persisted here, before any spawn resolves,** so re-entrant ticks see `running` and don't double-dispatch.
 4. For each claim, `resolveOverrides` then `spawn`; on completion, `applyCardResult` sets the terminal status.
+
+**Cancel.** `cancelCard(cardId)` kills a `running` card's process through the injected `cancelSpawn` dep (`cancelBoardCardRun` in `board-spawn.ts`, which remembers the Cue `runId` per card and calls `stopCueRun`) and finalizes the card back to `todo` with a `canceled` run. The card id is tombstoned BEFORE the kill so the spawn promise resolving moments later (with a `null` exit) is discarded instead of re-finalizing the card as a failure. `canceled` and `reclaimed` runs are both skipped by the breaker's `trailingFailureCount`. IPC entry point is `board:cancelCard` -> `CueEngine.cancelBoardCard`, with a storage-only finalize fallback when no dispatcher owns the board (app restarted mid-run).
+
+**Notify.** The optional `notify` dep announces terminal transitions (`done` / `blocked`, including force-blocks). `index.ts` maps it onto the existing `remote:notifyToast` relay (green auto-dismiss / red sticky, `sourceAgent: 'Board'`). The payload is presentation-free; the dispatcher never picks colors.
+
+**Dispatch order.** `readyCardsInDispatchOrder` is the single ordering rule for both claim paths: `priority` descending (`high` > `normal` > `low`, absent = `normal`), then `createdAt` ascending, then board order.
 
 `applyCardResult` precedence: **block marker -> `blocked`; complete marker or clean exit -> `done`; otherwise a failed run** that retries (`ready`) until the circuit breaker (`DEFAULT_MAX_FAILURES = 2` consecutive non-completing runs) forces `blocked`. A card whose profile can't be resolved is force-blocked immediately (bypassing the breaker - retrying a missing profile is pointless).
 
@@ -115,7 +121,8 @@ The prompt is registered in `src/shared/promptDefinitions.ts` (`PROMPT_IDS.BOARD
 ## Gotchas
 
 - **Board requires Cue.** The dual gate is read fresh each tick; the Extensions pane also disables the Board toggle while Cue is off (`BUILTIN_DEPENDENCIES` in `extensionModel.ts`).
-- **The pool never hijacks an interactive agent.** Only agents with `boardWorker: true` are auto-assigned role-only cards; the flag defaults OFF. A card can still *pin* any in-project agent by name regardless of the flag (explicit intent). Board card spawns are independent headless `executeCuePrompt` runs - they do **not** attach to the agent's live AI tab.
+- **The pool never hijacks an interactive agent.** Only agents with `boardWorker: true` are auto-assigned role-only cards; the flag defaults OFF. A card can still _pin_ any in-project agent by name regardless of the flag (explicit intent). Board card spawns are independent headless `executeCuePrompt` runs - they do **not** attach to the agent's live AI tab.
 - **Persist before spawn.** Never reorder `claimReadyCards` after the spawn - the pre-spawn save is what prevents double-dispatch.
 - **`ready` is derived.** Authors write `todo`; the dispatcher computes `ready`. Do not hand-persist `ready` cards expecting them to stay put.
+- **The kanban does not poll.** `saveBoards` fires the `setBoardSavedListener` hook, `index.ts` broadcasts `board:changed { projectRoot }` to every window (and the web-desktop bridge), and `BoardModal` refetches on it. The hook lives in the host, not storage, because the CLI imports the same storage module and has no `webContents`.
 - **Cross-platform paths.** All board/profile file paths go through `path.join` on `BOARD_CONFIG_PATH` / `PROFILES_CONFIG_PATH` (`src/shared/maestro-paths.ts`), and project roots come from stored sessions - no separator or home-dir assumptions, so the Windows CI leg stays green.

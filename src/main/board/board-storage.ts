@@ -81,6 +81,27 @@ function boardConfigPath(projectRoot: string): string {
 }
 
 /**
+ * Notified after every successful board.yaml write, with the boards that were
+ * just persisted.
+ */
+export type BoardSavedListener = (projectRoot: string, boards: Board[]) => void;
+
+let boardSavedListener: BoardSavedListener | null = null;
+
+/**
+ * Register (or clear, with `null`) the post-save hook.
+ *
+ * This module is imported by the CLI as well as the desktop app, and the CLI has
+ * no `webContents` to push to - so the broadcast itself lives in the host
+ * (`src/main/index.ts` wires a listener that sends `board:changed`) and storage
+ * only announces that a write happened. One listener, set once at startup; the
+ * setter is idempotent and last-write-wins.
+ */
+export function setBoardSavedListener(listener: BoardSavedListener | null): void {
+	boardSavedListener = listener;
+}
+
+/**
  * Thrown when board.yaml exists but cannot be read or parsed.
  *
  * This is deliberately NOT the same as "no board yet". A missing file returns
@@ -224,6 +245,19 @@ export function saveBoards(projectRoot: string, boards: Board[]): string {
 	// Atomic (temp file + rename): a crash mid-write leaves the previous
 	// board.yaml intact instead of a truncated file that would load as empty.
 	atomicWriteFileSync(filePath, content);
+	// Announce the write so the host can push `board:changed` to open windows.
+	// Advisory only: a listener that throws must never fail the write that
+	// already landed on disk.
+	if (boardSavedListener) {
+		try {
+			boardSavedListener(projectRoot, valid);
+		} catch (err) {
+			logger.warn(
+				`Board saved listener threw: ${err instanceof Error ? err.message : String(err)}`,
+				LOG_CONTEXT
+			);
+		}
+	}
 	return filePath;
 }
 

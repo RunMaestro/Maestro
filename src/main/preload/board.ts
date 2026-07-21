@@ -48,6 +48,23 @@ export function createBoardApi() {
 		// Delete a card by id. Returns the updated board.
 		deleteCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
 			ipcRenderer.invoke('board:deleteCard', { projectRoot, boardId, cardId }),
+
+		// Cancel a running card: kills the agent process and returns the card to
+		// `todo` with a `canceled` run. Returns the updated board.
+		cancelCard: (projectRoot: string, boardId: string, cardId: string): Promise<Board> =>
+			ipcRenderer.invoke('board:cancelCard', { projectRoot, boardId, cardId }),
+
+		// Subscribe to board persistence pushes. Fires whenever `.maestro/board.yaml`
+		// is written for any project (dispatcher tick, IPC mutation, auto-decompose);
+		// the payload carries only the project root, so the listener refetches. Mirrors
+		// `cue.onActivityUpdate`. Returns an unsubscribe function.
+		onBoardChanged: (callback: (payload: { projectRoot: string }) => void): (() => void) => {
+			const handler = (_e: unknown, payload: { projectRoot: string }) => callback(payload);
+			ipcRenderer.on('board:changed', handler);
+			return () => {
+				ipcRenderer.removeListener('board:changed', handler);
+			};
+		},
 	};
 }
 

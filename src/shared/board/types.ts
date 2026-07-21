@@ -50,8 +50,40 @@ export interface WorktreeRef {
  * not that the work failed. It is excluded from the retry circuit breaker's
  * trailing-failure count, because two app restarts during a long-running card
  * would otherwise force-block a perfectly healthy card.
+ *
+ * `canceled` is the same idea for a USER-initiated stop: the person hit the stop
+ * button, so the attempt says nothing about whether the card can succeed. It is
+ * likewise excluded from the breaker, and the card returns to `todo`.
  */
-export type CardRunOutcome = 'done' | 'blocked' | 'error' | 'reclaimed';
+export type CardRunOutcome = 'done' | 'blocked' | 'error' | 'reclaimed' | 'canceled';
+
+/** Every outcome a persisted run may carry (the runtime mirror of {@link CardRunOutcome}). */
+export const CARD_RUN_OUTCOMES: readonly CardRunOutcome[] = [
+	'done',
+	'blocked',
+	'error',
+	'reclaimed',
+	'canceled',
+];
+
+/**
+ * Dispatch priority of a card. `normal` is the default and is NEVER serialized
+ * (an absent `priority` and an explicit `normal` mean the same thing), so
+ * existing board.yaml files stay byte-identical until someone actually
+ * prioritizes something.
+ */
+export type CardPriority = 'high' | 'normal' | 'low';
+
+/** All priorities, highest first - also the dispatch order. */
+export const CARD_PRIORITIES: readonly CardPriority[] = ['high', 'normal', 'low'];
+
+/** Sort weight for {@link CardPriority}; higher dispatches first. */
+const PRIORITY_RANK: Record<CardPriority, number> = { high: 2, normal: 1, low: 0 };
+
+/** Dispatch rank of a card, defaulting an absent priority to `normal`. */
+export function cardPriorityRank(card: Pick<BoardCard, 'priority'>): number {
+	return PRIORITY_RANK[card.priority ?? 'normal'];
+}
 
 /**
  * Bookkeeping for a single dispatch attempt of a card. A card accumulates one
@@ -118,6 +150,11 @@ export interface BoardCard {
 	parents: string[];
 	/** Lifecycle status. */
 	status: CardStatus;
+	/**
+	 * Dispatch priority. Absent means `normal`; the dispatcher claims `ready`
+	 * cards by priority descending, then oldest-first within a priority.
+	 */
+	priority?: CardPriority;
 	/** Worktree the card runs in, once dispatched. */
 	worktree?: WorktreeRef;
 	/** Per-attempt run history, most-recent last. */
@@ -195,12 +232,10 @@ function validateCardRun(raw: unknown): CardRun | null {
 	const endedAt = optionalString(r.endedAt);
 	if (endedAt !== undefined) run.endedAt = endedAt;
 	if (
-		r.outcome === 'done' ||
-		r.outcome === 'blocked' ||
-		r.outcome === 'error' ||
-		r.outcome === 'reclaimed'
+		typeof r.outcome === 'string' &&
+		(CARD_RUN_OUTCOMES as readonly string[]).includes(r.outcome)
 	) {
-		run.outcome = r.outcome;
+		run.outcome = r.outcome as CardRunOutcome;
 	}
 	const summary = optionalString(r.summary);
 	if (summary !== undefined) run.summary = summary;
@@ -259,6 +294,10 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 	};
 	if (assigneeProfileId) card.assigneeProfileId = assigneeProfileId;
 	if (assigneeAgentId) card.assigneeAgentId = assigneeAgentId;
+
+	// `normal` is the default and is deliberately dropped rather than stored, so
+	// a card is only ever serialized with a priority when it is not the default.
+	if (r.priority === 'high' || r.priority === 'low') card.priority = r.priority;
 
 	const worktree = validateWorktreeRef(r.worktree);
 	if (worktree) card.worktree = worktree;

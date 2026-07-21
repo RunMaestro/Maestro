@@ -204,12 +204,13 @@ import {
 	clearModeratorResponseTimeout,
 } from './group-chat/group-chat-router';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
-import { listBoards, saveBoard } from './board/board-storage';
+import { listBoards, saveBoard, setBoardSavedListener } from './board/board-storage';
 import {
 	resolveCardOverrides,
 	resolveCardAssignment,
 	spawnBoardCard,
 	decomposeBoardCard,
+	cancelBoardCardRun,
 	type BoardSpawnContext,
 } from './board/board-spawn';
 import { selectPoolAgentIds } from '../shared/board/pool';
@@ -599,6 +600,13 @@ const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
 capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeSend));
+
+// Board: push `board:changed` whenever board.yaml is persisted (by the
+// dispatcher tick, an IPC mutation, or auto-decompose) so the kanban reconciles
+// on the event instead of polling. Storage itself stays host-agnostic - the CLI
+// imports the same module and never sets a listener. Payload is the project
+// root only; the renderer refetches, so no board data crosses the bridge here.
+setBoardSavedListener((projectRoot) => safeSend('board:changed', { projectRoot }));
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -1557,6 +1565,23 @@ app
 					resolveCardAssignment(projectRoot, card, busy, boardSpawnContext),
 				spawnCard: (projectRoot, request) =>
 					spawnBoardCard(projectRoot, request, boardSpawnContext),
+				// Stop button: kill the card's in-flight agent process. The run is
+				// addressed by the Cue run id `board-spawn.ts` minted for it, so the
+				// project root is not needed here.
+				cancelCardRun: (_projectRoot, cardId) => cancelBoardCardRun(cardId),
+				// Terminal card transitions surface as toasts through the SAME
+				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
+				// needs a human, so its toast is sticky; a done card auto-dismisses.
+				notifyCard: (_projectRoot, event) => {
+					const blocked = event.kind === 'blocked';
+					safeSend('remote:notifyToast', {
+						title: blocked ? `Card blocked: ${event.cardTitle}` : `Card done: ${event.cardTitle}`,
+						message: event.detail || (blocked ? 'No reason reported.' : 'Run completed.'),
+						color: blocked ? 'red' : 'green',
+						dismissible: blocked,
+						sourceAgent: 'Board',
+					});
+				},
 				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
 				// a board sets `autoDecompose: true`; loads the editable prompt template
 				// and fans triage cards into child cards via the same spawn plumbing.
@@ -3284,8 +3309,11 @@ function setupIpcHandlers() {
 	// Agent Profiles - named model/effort/role bundles layered on a base agent
 	registerProfileHandlers();
 
-	// Board - persistent task DAG stored in .maestro/board.yaml
-	registerBoardHandlers();
+	// Board - persistent task DAG stored in .maestro/board.yaml. The engine is
+	// needed for `board:cancelCard`, which routes through the live dispatcher.
+	registerBoardHandlers({
+		getCueEngine: () => cueEngine,
+	});
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
