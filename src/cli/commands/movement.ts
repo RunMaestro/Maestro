@@ -8,8 +8,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import {
+	CONCERTO_CREATION_PHASES,
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
+	type ConcertoCreationPhase,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
@@ -41,6 +43,12 @@ interface MovementMoveOptions {
 }
 
 interface MovementRemoveOptions {
+	json?: boolean;
+}
+
+interface MovementProgressOptions {
+	title?: string;
+	phase?: string;
 	json?: boolean;
 }
 
@@ -229,6 +237,28 @@ export async function movementClear(options: MovementRemoveOptions): Promise<voi
 	await sendMovement({ op: 'clear' }, options.json, 'Movement cleared');
 }
 
+/** Report one Concerto subagent's current design phase without mutating its window. */
+export async function movementProgress(
+	id: string,
+	options: MovementProgressOptions
+): Promise<void> {
+	requireId(id, 'progress', options.json);
+	const title = options.title?.trim();
+	if (!title) failMovementCommand('movement progress requires --title <text>', options.json);
+	if (!CONCERTO_CREATION_PHASES.includes(options.phase as ConcertoCreationPhase)) {
+		failMovementCommand(
+			`--phase must be one of: ${CONCERTO_CREATION_PHASES.join(', ')}`,
+			options.json
+		);
+	}
+	const phase = options.phase as ConcertoCreationPhase;
+	await sendMovement(
+		{ op: 'progress', id, title, phase },
+		options.json,
+		`Concerto '${title}' is ${phase}`
+	);
+}
+
 /** Read the current movement layout (items + size) so you can place around it. */
 export async function movementState(options: { json?: boolean }): Promise<void> {
 	try {
@@ -243,15 +273,17 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 			console.error(`Error: ${result.error || 'Failed to read movement state'}`);
 			process.exit(1);
 		}
-		const snapshot = result.snapshot ?? { items: [], width: 0, height: 0 };
+		const snapshot = result.snapshot ?? { items: [], width: 0, height: 0, hidden: false };
 		if (options.json) {
 			console.log(JSON.stringify(snapshot));
 			return;
 		}
-		console.log(`Movement ${snapshot.width}x${snapshot.height}, ${snapshot.items.length} item(s):`);
+		console.log(
+			`Movement ${snapshot.width}x${snapshot.height}, ${snapshot.items.length} active item(s)${snapshot.hidden ? ', layer hidden' : ''}:`
+		);
 		for (const it of snapshot.items) {
 			const title = it.title ? `  "${it.title}"` : '';
-			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height}${title}`);
+			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height} z${it.z}${title}`);
 		}
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

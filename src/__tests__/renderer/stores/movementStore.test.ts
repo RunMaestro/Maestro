@@ -214,9 +214,19 @@ describe('movementStore actions', () => {
 	beforeEach(reset);
 
 	it('resizeItem clamps below the minimum panel size', () => {
-		applyMovementPayload({ op: 'add', id: 'a', width: 400 });
-		useMovementStore.getState().resizeItem('a', 50, 40);
-		expect(useMovementStore.getState().items[0]).toMatchObject({ width: 200, height: 120 });
+		applyMovementPayload({ op: 'add', id: 'a', x: 40, y: 50, width: 400 });
+		useMovementStore.getState().resizeItem('a', {
+			x: 80,
+			y: 90,
+			width: 50,
+			height: 40,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			x: 80,
+			y: 90,
+			width: 200,
+			height: 120,
+		});
 	});
 
 	it('surfaceItem un-stashes a panel and moves it above overlapping peers', () => {
@@ -230,6 +240,11 @@ describe('movementStore actions', () => {
 		expect(useMovementStore.getState().hidden).toBe(false);
 		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['b', 'a']);
 		expect(useMovementStore.getState().items[1].minimized).toBe(false);
+		expect(
+			[...useMovementStore.getState().items]
+				.sort((left, right) => left.taskbarOrder - right.taskbarOrder)
+				.map((item) => item.id)
+		).toEqual(['a', 'b']);
 	});
 
 	it('minimizes only the requested panel and preserves that choice across updates', () => {
@@ -291,8 +306,33 @@ describe('getMovementSnapshot', () => {
 		applyMovementPayload({ op: 'add', id: 'a', x: 10.6, y: 20.4, width: 300.9, height: 200 });
 		useMovementStore.getState().setMeasuredHeight('a', 260);
 		const snap = getMovementSnapshot();
-		expect(snap).toMatchObject({ width: 1920, height: 1080 });
-		expect(snap.items[0]).toMatchObject({ id: 'a', x: 11, y: 20, width: 301, height: 260 });
+		expect(snap).toMatchObject({ width: 1920, height: 1080, hidden: false });
+		expect(snap.items[0]).toMatchObject({
+			id: 'a',
+			x: 11,
+			y: 20,
+			width: 301,
+			height: 260,
+			z: 1,
+		});
+	});
+
+	it('returns only non-minimized items with their real back-to-front layers', () => {
+		applyMovementPayload({ op: 'add', id: 'back' });
+		applyMovementPayload({ op: 'add', id: 'minimized' });
+		applyMovementPayload({ op: 'add', id: 'front' });
+		useMovementStore.getState().setItemMinimized('minimized', true);
+		useMovementStore.getState().setHidden(true);
+		useMovementStore.getState().surfaceItem('back');
+		useMovementStore.getState().setHidden(true);
+
+		expect(getMovementSnapshot()).toMatchObject({
+			hidden: true,
+			items: [
+				{ id: 'front', z: 2 },
+				{ id: 'back', z: 3 },
+			],
+		});
 	});
 });
 

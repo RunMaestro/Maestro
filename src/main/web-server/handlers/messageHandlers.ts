@@ -137,8 +137,10 @@ import {
 	type CadenzaColor,
 } from '../../../shared/cadenza-types';
 import {
+	CONCERTO_CREATION_PHASES,
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
+	type ConcertoCreationPhase,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
@@ -4595,6 +4597,23 @@ export class WebSocketMessageHandler {
 			sendResult(false, `Movement ${op} requires HTML content when viewType is 'html'`);
 			return;
 		}
+		const title = typeof message.title === 'string' ? message.title.trim() : '';
+		let phase: ConcertoCreationPhase | undefined;
+		if (op === 'progress') {
+			const rawPhase = typeof message.phase === 'string' ? message.phase : '';
+			if (!CONCERTO_CREATION_PHASES.includes(rawPhase as ConcertoCreationPhase)) {
+				sendResult(
+					false,
+					`Invalid or missing phase. Must be one of: ${CONCERTO_CREATION_PHASES.join(', ')}`
+				);
+				return;
+			}
+			if (!title) {
+				sendResult(false, 'Movement progress requires a non-empty title');
+				return;
+			}
+			phase = rawPhase as ConcertoCreationPhase;
+		}
 
 		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
 		// v === 'number'`, which would become invalid CSS geometry downstream.
@@ -4615,8 +4634,9 @@ export class WebSocketMessageHandler {
 			y: num(message.y),
 			width: num(message.width),
 			height: num(message.height),
-			title: typeof message.title === 'string' ? message.title : undefined,
+			title: title || undefined,
 			body,
+			phase,
 		};
 
 		if (!this.callbacks.movementView) {

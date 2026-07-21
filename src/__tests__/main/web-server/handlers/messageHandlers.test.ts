@@ -1808,7 +1808,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Movement ID validation', () => {
-		it.each(['add', 'update', 'move', 'remove'] as const)(
+		it.each(['add', 'update', 'move', 'remove', 'progress'] as const)(
 			'rejects surrounding whitespace for movement %s',
 			(op) => {
 				callbacks.movementView = vi.fn().mockResolvedValue(true);
@@ -1819,6 +1819,8 @@ describe('WebSocketMessageHandler', () => {
 					body: op === 'add' ? '{}' : undefined,
 					x: op === 'move' ? 10 : undefined,
 					y: op === 'move' ? 20 : undefined,
+					title: op === 'progress' ? 'Item 1' : undefined,
+					phase: op === 'progress' ? 'composing' : undefined,
 				});
 
 				expect(callbacks.movementView).not.toHaveBeenCalled();
@@ -1862,6 +1864,53 @@ describe('WebSocketMessageHandler', () => {
 				success: false,
 				error: 'Movement item id must not contain surrounding whitespace',
 			});
+		});
+	});
+
+	describe('Movement progress validation', () => {
+		it('forwards a valid Concerto phase without HTML content', async () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ movementView: callbacks.movementView });
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				title: 'Checkout flow',
+				phase: 'reviewing',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.movementView).toHaveBeenCalledWith({
+					op: 'progress',
+					id: 'checkout',
+					title: 'Checkout flow',
+					phase: 'reviewing',
+					viewType: undefined,
+					x: undefined,
+					y: undefined,
+					width: undefined,
+					height: undefined,
+					body: undefined,
+				});
+			});
+		});
+
+		it.each([
+			{ phase: 'sketching', title: 'Checkout flow' },
+			{ phase: 'composing', title: '   ' },
+		])('rejects invalid progress metadata: $phase / $title', ({ phase, title }) => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				title,
+				phase,
+			});
+
+			expect(callbacks.movementView).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({ type: 'movement_result', success: false });
 		});
 	});
 

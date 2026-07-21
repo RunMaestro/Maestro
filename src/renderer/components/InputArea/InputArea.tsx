@@ -6,6 +6,7 @@ import {
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
+import { ConcertoCreationPipeline } from '../ConcertoCreationPipeline';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -384,6 +385,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					sourceSessionId={session.id}
 					sourceTabId={getActiveTab(session)?.id}
+				/>
+			)}
+
+			{/* Concerto creation tracks stay separate from the ordinary agent status. */}
+			{session.inputMode === 'ai' && thinkingItems.length > 0 && (
+				<ConcertoCreationPipeline
+					thinkingItems={thinkingItems}
+					theme={theme}
+					activeSessionId={session.id}
+					activeTabId={session.activeTabId}
 				/>
 			)}
 

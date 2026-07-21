@@ -11,8 +11,9 @@
  */
 
 /** add = create/replace by id; update = merge fields; move = reposition; remove
- *  = delete by id; clear = remove all. */
-export type MovementOp = 'add' | 'update' | 'move' | 'remove' | 'clear';
+ *  = delete by id; clear = remove all; progress = report an HTML Concerto's
+ *  current design phase without mutating its window. */
+export type MovementOp = 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 
 export const MOVEMENT_OPS: readonly MovementOp[] = [
 	'add',
@@ -20,6 +21,22 @@ export const MOVEMENT_OPS: readonly MovementOp[] = [
 	'move',
 	'remove',
 	'clear',
+	'progress',
+] as const;
+
+export type ConcertoCreationPhase =
+	| 'composing'
+	| 'refining'
+	| 'arranging'
+	| 'reviewing'
+	| 'testing';
+
+export const CONCERTO_CREATION_PHASES: readonly ConcertoCreationPhase[] = [
+	'composing',
+	'refining',
+	'arranging',
+	'reviewing',
+	'testing',
 ] as const;
 
 /** Native BlockView data, or an isolated single-page HTML mockup. */
@@ -51,6 +68,8 @@ export interface MovementPayload {
 	sourcePlugin?: string;
 	/** Main-process document revision for an HTML frame. */
 	revision?: number;
+	/** Current design phase for `progress`; ignored by window mutation ops. */
+	phase?: ConcertoCreationPhase;
 }
 
 /** One item's geometry as returned by the `state` read (for agent awareness). */
@@ -60,13 +79,18 @@ export interface MovementItemState {
 	y: number;
 	width: number;
 	height: number;
+	/** One-based stacking layer. Higher values render in front of lower values. */
+	z: number;
 	title?: string;
 }
 
 /** Snapshot of the movement returned to `maestro-cli movement state`. */
 export interface MovementStateSnapshot {
+	/** Non-minimized items only, ordered from back to front. */
 	items: MovementItemState[];
-	/** Movement viewport size in px, so the agent can place within bounds. */
+	/** Maestro renderer viewport size in px, so the agent can place within bounds. */
 	width: number;
 	height: number;
+	/** Whether the user has temporarily hidden the whole Concerto layer. */
+	hidden: boolean;
 }

@@ -453,7 +453,7 @@ interface MaestroAPI {
 		onRemoteMovement: (
 			callback: (
 				params: {
-					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					op: 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 					id?: string;
 					viewType?: 'view' | 'html';
 					x?: number;
@@ -464,6 +464,7 @@ interface MaestroAPI {
 					body?: string;
 					sourcePlugin?: string;
 					revision?: number;
+					phase?: 'composing' | 'refining' | 'arranging' | 'reviewing' | 'testing';
 				},
 				responseChannel?: string
 			) => void

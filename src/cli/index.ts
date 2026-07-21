@@ -68,6 +68,7 @@ import {
 	movementMove,
 	movementRemove,
 	movementClear,
+	movementProgress,
 	movementState,
 	movementInspect,
 	movementInteract,
@@ -1416,6 +1417,14 @@ movement
 	.description('Remove all movement items')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementClear);
+
+movement
+	.command('progress <id>')
+	.description("Report one Concerto track's current design phase")
+	.requiredOption('--title <text>', 'Concerto title shown in the pipeline')
+	.requiredOption('--phase <phase>', 'composing | refining | arranging | reviewing | testing')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementProgress);
 
 movement
 	.command('state')

@@ -20,6 +20,16 @@ export const MOVEMENT_ITEM_DEFAULT_WIDTH = 500;
 /** HTML mockups open at an artifact-sized canvas unless geometry is explicit. */
 export const MOVEMENT_HTML_DEFAULT_WIDTH = 880;
 export const MOVEMENT_HTML_DEFAULT_HEIGHT = 560;
+/** Smallest size a user can drag a panel down to (px). */
+export const MOVEMENT_ITEM_MIN_WIDTH = 200;
+export const MOVEMENT_ITEM_MIN_HEIGHT = 120;
+
+export interface MovementItemBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
 
 /** A resolved movement item ready to render (spec parsed, defaults applied). */
 export interface MovementItem {
@@ -27,6 +37,8 @@ export interface MovementItem {
 	viewType: MovementViewType;
 	/** User-minimized panels stay mounted so interactive HTML state is preserved. */
 	minimized: boolean;
+	/** Stable launcher order, independent from the array's back-to-front layer order. */
+	taskbarOrder: number;
 	x: number;
 	y: number;
 	/** Fixed width; defaults to MOVEMENT_ITEM_DEFAULT_WIDTH. */
@@ -73,7 +85,8 @@ export interface MovementStoreActions {
 	upsertItem: (item: MovementItem) => void;
 	patchItem: (id: string, patch: Partial<Omit<MovementItem, 'id'>>) => void;
 	moveItem: (id: string, x: number, y: number) => void;
-	resizeItem: (id: string, width: number, height: number) => void;
+	/** Atomically resize and reposition an item, including north/west edge drags. */
+	resizeItem: (id: string, bounds: MovementItemBounds) => void;
 	setMeasuredHeight: (id: string, height: number) => void;
 	dismissItem: (id: string) => void;
 	removeItem: (id: string) => void;
@@ -90,10 +103,6 @@ export interface MovementStoreActions {
 }
 
 export type MovementStore = MovementStoreState & MovementStoreActions;
-
-/** Smallest a user can drag a panel down to (px). */
-const MIN_ITEM_WIDTH = 200;
-const MIN_ITEM_HEIGHT = 120;
 
 /** How much of a panel must stay inside the viewport so its header (the only
  *  drag handle + close button) remains reachable (px). */
@@ -144,14 +153,15 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 			),
 		})),
 
-	resizeItem: (id, width, height) =>
+	resizeItem: (id, bounds) =>
 		set((s) => ({
 			items: s.items.map((v) =>
 				v.id === id
 					? {
 							...v,
-							width: Math.max(MIN_ITEM_WIDTH, width),
-							height: Math.max(MIN_ITEM_HEIGHT, height),
+							...clampPosition(bounds.x, bounds.y, s.viewportWidth, s.viewportHeight),
+							width: Math.max(MOVEMENT_ITEM_MIN_WIDTH, bounds.width),
+							height: Math.max(MOVEMENT_ITEM_MIN_HEIGHT, bounds.height),
 						}
 					: v
 			),
@@ -260,6 +270,8 @@ let cascadeIndex = 0;
 export function applyMovementPayload(p: MovementPayload): void {
 	const store = useMovementStore.getState();
 
+	if (p.op === 'progress') return;
+
 	if (p.op === 'clear') {
 		store.clearItems();
 		return;
@@ -321,10 +333,18 @@ export function applyMovementPayload(p: MovementPayload): void {
 	// A newly-added panel should surface immediately. Updates intentionally do
 	// not change `hidden`, so a live tracker cannot override the user's stash.
 	store.setHidden(false);
+	const taskbarOrder =
+		existing?.taskbarOrder ??
+		Math.max(
+			-1,
+			...store.items.map((item) => item.taskbarOrder),
+			...store.dismissedItems.map((item) => item.taskbarOrder)
+		) + 1;
 	store.upsertItem({
 		id: p.id,
 		viewType,
 		minimized: existing?.minimized ?? false,
+		taskbarOrder,
 		...clampPosition(
 			p.x ?? existing?.x ?? 24 + step,
 			p.y ?? existing?.y ?? 24 + step,
@@ -352,18 +372,26 @@ export function applyMovementPayload(p: MovementPayload): void {
 
 /** Build the snapshot returned to `maestro-cli movement state` (agent awareness). */
 export function getMovementSnapshot(): MovementStateSnapshot {
-	const { items, viewportWidth, viewportHeight } = useMovementStore.getState();
+	const { items, viewportWidth, viewportHeight, hidden } = useMovementStore.getState();
 	return {
-		items: items.map((it) => ({
-			id: it.id,
-			x: Math.round(it.x),
-			y: Math.round(it.y),
-			width: Math.round(it.width),
-			// Prefer the real rendered height; fall back to an explicit height.
-			height: Math.round(it.measuredHeight ?? it.height ?? 0),
-			title: it.title,
-		})),
+		items: items.flatMap((it, index) =>
+			it.minimized
+				? []
+				: [
+						{
+							id: it.id,
+							x: Math.round(it.x),
+							y: Math.round(it.y),
+							width: Math.round(it.width),
+							// Prefer the real rendered height; fall back to an explicit height.
+							height: Math.round(it.measuredHeight ?? it.height ?? 0),
+							z: index + 1,
+							title: it.title,
+						},
+					]
+		),
 		width: viewportWidth,
 		height: viewportHeight,
+		hidden,
 	};
 }

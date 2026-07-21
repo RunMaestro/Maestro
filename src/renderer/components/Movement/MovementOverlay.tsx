@@ -8,7 +8,7 @@
  * layer so it never blocks the app except where a panel actually is.
  *
  * Panels are free-placed (agent sets x/y), draggable by the header, and
- * resizable by the corner. Each renders a BlockView tree. The agent drives them
+ * resizable from every edge and corner. Each renders a BlockView tree. The agent drives them
  * over the `movement` bridge; the user can drag, resize, close, or stash them all.
  */
 
@@ -16,10 +16,19 @@ import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEve
 import { createPortal } from 'react-dom';
 import { X, Eye, EyeOff, LayoutGrid, Minus } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useMovementStore, type MovementItem } from '../../stores/movementStore';
+import {
+	MOVEMENT_ITEM_MIN_HEIGHT,
+	MOVEMENT_ITEM_MIN_WIDTH,
+	useMovementStore,
+	type MovementItem,
+	type MovementItemBounds,
+} from '../../stores/movementStore';
 import { BlockView } from '../BlockView';
 import { ConcertoHtmlPreview } from '../Concerto/ConcertoHtmlPreview';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
+import { useDebouncedCallback } from '../../hooks/utils/useThrottle';
+import { ResizeHandles } from '../ui/ResizeHandles';
+import type { ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 
 interface MovementOverlayProps {
 	theme: Theme;
@@ -29,13 +38,51 @@ interface MovementOverlayProps {
 const MOVEMENT_Z = 90000;
 /** Auto-height panels scroll internally past this; resized panels use their height. */
 const AUTO_MAX_HEIGHT = 560;
+/** Keep a hover-open taskbar available through small pointer slips. */
+const TASKBAR_COLLAPSE_DELAY_MS = 1500;
+
+function resizedBounds(
+	direction: ModalResizeDirection,
+	start: MovementItemBounds,
+	deltaX: number,
+	deltaY: number
+): MovementItemBounds {
+	let { x, y, width, height } = start;
+
+	if (direction.includes('e')) width = Math.max(MOVEMENT_ITEM_MIN_WIDTH, width + deltaX);
+	if (direction.includes('s')) height = Math.max(MOVEMENT_ITEM_MIN_HEIGHT, height + deltaY);
+	if (direction.includes('w')) {
+		const right = x + width;
+		width = Math.max(MOVEMENT_ITEM_MIN_WIDTH, width - deltaX);
+		x = right - width;
+		if (x < 0) {
+			x = 0;
+			width = right;
+		}
+	}
+	if (direction.includes('n')) {
+		const bottom = y + height;
+		height = Math.max(MOVEMENT_ITEM_MIN_HEIGHT, height - deltaY);
+		y = bottom - height;
+		if (y < 0) {
+			y = 0;
+			height = bottom;
+		}
+	}
+
+	return { x, y, width, height };
+}
 
 const MovementPanel = memo(function MovementPanel({
 	item,
 	theme,
+	globallyHidden,
+	z,
 }: {
 	item: MovementItem;
 	theme: Theme;
+	globallyHidden: boolean;
+	z: number;
 }) {
 	const moveItem = useMovementStore((s) => s.moveItem);
 	const resizeItem = useMovementStore((s) => s.resizeItem);
@@ -54,12 +101,18 @@ const MovementPanel = memo(function MovementPanel({
 		startDrag(e, (dx, dy) => moveItem(item.id, ox + dx, oy + dy), { ignoreButtons: true });
 	};
 
-	const onResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+	const onResizeStart = (direction: ModalResizeDirection, e: ReactPointerEvent<HTMLDivElement>) => {
 		surfaceItem(item.id);
-		const ow = item.width;
 		// Measure current rendered height so an auto-sized panel resizes smoothly.
-		const oh = item.height ?? frameRef.current?.offsetHeight ?? 240;
-		startDrag(e, (dx, dy) => resizeItem(item.id, ow + dx, oh + dy), { stopPropagation: true });
+		const startBounds = {
+			x: item.x,
+			y: item.y,
+			width: item.width,
+			height: item.height ?? frameRef.current?.offsetHeight ?? 240,
+		};
+		startDrag(e, (dx, dy) => resizeItem(item.id, resizedBounds(direction, startBounds, dx, dy)), {
+			stopPropagation: true,
+		});
 	};
 
 	const frameRef = useRef<HTMLDivElement>(null);
@@ -85,10 +138,11 @@ const MovementPanel = memo(function MovementPanel({
 		<div
 			ref={frameRef}
 			data-movement-id={item.id}
-			aria-hidden={item.minimized || undefined}
+			aria-hidden={item.minimized || globallyHidden || undefined}
 			className="pointer-events-auto absolute rounded-xl overflow-hidden select-none"
 			style={{
-				visibility: item.minimized ? 'hidden' : 'visible',
+				visibility: item.minimized || globallyHidden ? 'hidden' : 'visible',
+				zIndex: z,
 				left: item.x,
 				top: item.y,
 				width: item.width,
@@ -166,15 +220,11 @@ const MovementPanel = memo(function MovementPanel({
 					<BlockView spec={item.spec} theme={theme} />
 				)}
 			</div>
-			{/* Resize handle (bottom-right corner). */}
-			<div
-				onPointerDown={onResizeStart}
-				className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize"
-				style={{
-					background: `linear-gradient(135deg, transparent 50%, ${theme.colors.textDim}66 50%)`,
-				}}
-				title="Resize"
-				aria-label="Resize panel"
+			<ResizeHandles
+				onPointerResizeStart={onResizeStart}
+				accentColor={theme.colors.accent}
+				contained
+				testIdPrefix="movement-resize-handle"
 			/>
 		</div>
 	);
@@ -185,10 +235,15 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 	const hidden = useMovementStore((s) => s.hidden);
 	const setHidden = useMovementStore((s) => s.setHidden);
 	const surfaceItem = useMovementStore((s) => s.surfaceItem);
+	const setItemMinimized = useMovementStore((s) => s.setItemMinimized);
 	const setViewport = useMovementStore((s) => s.setViewport);
 	const [taskbarHovered, setTaskbarHovered] = useState(false);
 	const [taskbarFocused, setTaskbarFocused] = useState(false);
-	const taskbarExpanded = taskbarHovered || taskbarFocused;
+	const [taskbarPinned, setTaskbarPinned] = useState(false);
+	const { debouncedCallback: finishTaskbarHover, cancel: cancelTaskbarCollapse } =
+		useDebouncedCallback(() => setTaskbarHovered(false), TASKBAR_COLLAPSE_DELAY_MS);
+	const taskbarExpanded = taskbarHovered || taskbarFocused || taskbarPinned;
+	const taskbarItems = [...items].sort((a, b) => a.taskbarOrder - b.taskbarOrder);
 
 	// Report the window size to the store (the overlay spans the window), so the
 	// agent's `movement state` read knows the space it's composing into.
@@ -208,14 +263,25 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 				aria-hidden={hidden || undefined}
 				style={{ visibility: hidden ? 'hidden' : 'visible' }}
 			>
-				{items.map((item) => (
-					<MovementPanel key={item.id} item={item} theme={theme} />
+				{items.map((item, index) => (
+					<MovementPanel
+						key={item.id}
+						item={item}
+						theme={theme}
+						globallyHidden={hidden}
+						z={index + 1}
+					/>
 				))}
 			</div>
 			<div
-				className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2"
-				onMouseEnter={() => setTaskbarHovered(true)}
-				onMouseLeave={() => setTaskbarHovered(false)}
+				data-testid="movement-taskbar-anchor"
+				className="pointer-events-auto absolute bottom-3 right-3"
+				style={{ zIndex: items.length + 1 }}
+				onMouseEnter={() => {
+					cancelTaskbarCollapse();
+					setTaskbarHovered(true);
+				}}
+				onMouseLeave={finishTaskbarHover}
 				onFocus={() => setTaskbarFocused(true)}
 				onBlur={(event) => {
 					if (!event.currentTarget.contains(event.relatedTarget)) setTaskbarFocused(false);
@@ -234,21 +300,18 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 				>
 					<button
 						type="button"
-						onClick={() => setHidden(!hidden)}
+						onClick={() => setTaskbarPinned((pinned) => !pinned)}
 						className="relative flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-colors"
 						style={{
-							color: hidden ? theme.colors.accent : theme.colors.textDim,
-							backgroundColor: hidden ? `${theme.colors.accent}1f` : 'transparent',
+							color: taskbarPinned ? theme.colors.accent : theme.colors.textDim,
+							backgroundColor: taskbarPinned ? `${theme.colors.accent}1f` : 'transparent',
 						}}
-						title={hidden ? 'Show Concerto windows' : 'Hide all Concerto windows'}
-						aria-label={hidden ? 'Show Concerto windows' : 'Hide all Concerto windows'}
+						title={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
+						aria-label={taskbarPinned ? 'Unpin Concerto taskbar' : 'Pin Concerto taskbar open'}
 						aria-expanded={taskbarExpanded}
+						aria-pressed={taskbarPinned}
 					>
-						{hidden ? (
-							<Eye className="w-3.5 h-3.5" strokeWidth={2.5} />
-						) : (
-							<LayoutGrid className="w-3.5 h-3.5" strokeWidth={2.5} />
-						)}
+						<LayoutGrid className="w-3.5 h-3.5" strokeWidth={2.5} />
 						<span
 							className="absolute -right-0.5 -top-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full text-[9px] leading-[14px] text-center font-semibold"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
@@ -275,24 +338,25 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 						>
 							Concertos
 						</span>
-						{items.map((item, index) => {
+						{taskbarItems.map((item) => {
 							const label = item.title ?? item.id;
-							const isFront = !hidden && !item.minimized && index === items.length - 1;
+							const isFront = !hidden && !item.minimized && item.id === items[items.length - 1]?.id;
 							return (
 								<button
 									key={item.id}
 									type="button"
-									onClick={() => surfaceItem(item.id)}
+									onClick={() => {
+										if (item.minimized || hidden) surfaceItem(item.id);
+										else setItemMinimized(item.id, true);
+									}}
 									tabIndex={taskbarExpanded ? 0 : -1}
 									className="min-w-0 max-w-36 flex-shrink flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-medium transition-colors"
 									style={{
 										backgroundColor: isFront ? `${theme.colors.accent}24` : theme.colors.bgActivity,
 										color: item.minimized || hidden ? theme.colors.textDim : theme.colors.textMain,
 									}}
-									title={item.minimized || hidden ? `Restore ${label}` : `Bring ${label} to front`}
-									aria-label={
-										item.minimized || hidden ? `Restore ${label}` : `Bring ${label} to front`
-									}
+									title={item.minimized || hidden ? `Restore ${label}` : `Minimize ${label}`}
+									aria-label={item.minimized || hidden ? `Restore ${label}` : `Minimize ${label}`}
 								>
 									<span
 										className="w-1.5 h-1.5 flex-shrink-0 rounded-full"

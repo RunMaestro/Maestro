@@ -233,6 +233,7 @@ export function restoreConcertoHtmlDocument(
 }
 
 export function applyMovementHtmlPayload(payload: MovementPayload): MovementPayload {
+	if (payload.op === 'progress') return payload;
 	if (payload.op === 'clear') {
 		clearSurface('movement');
 		return payload;

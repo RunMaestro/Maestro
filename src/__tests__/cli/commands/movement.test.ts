@@ -11,7 +11,7 @@ vi.mock('fs', () => ({
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 
-import { movementInspect } from '../../../cli/commands/movement';
+import { movementInspect, movementProgress } from '../../../cli/commands/movement';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 function mockInspection(result: Record<string, unknown>): void {
@@ -160,5 +160,63 @@ describe('movement inspect command', () => {
 			success: false,
 			error: 'Maestro is not running',
 		});
+	});
+});
+
+describe('movement progress command', () => {
+	let consoleLogSpy: MockInstance;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('reports a phase without creating a Movement window', async () => {
+		const sendCommand = vi.fn().mockResolvedValue({ success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+
+		await movementProgress('startup', {
+			title: 'Loopline startup',
+			phase: 'composing',
+			json: true,
+		});
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'movement',
+				op: 'progress',
+				id: 'startup',
+				title: 'Loopline startup',
+				phase: 'composing',
+			},
+			'movement_result'
+		);
+		expect(JSON.parse(consoleLogSpy.mock.calls[0][0])).toEqual({
+			success: true,
+			id: 'startup',
+			op: 'progress',
+		});
+	});
+
+	it('rejects a phase outside the Concerto pipeline', async () => {
+		await expect(
+			movementProgress('startup', {
+				title: 'Loopline startup',
+				phase: 'sketching',
+				json: true,
+			})
+		).rejects.toThrow('__exit__');
+
+		expect(JSON.parse(consoleLogSpy.mock.calls[0][0])).toEqual({
+			success: false,
+			error: '--phase must be one of: composing, refining, arranging, reviewing, testing',
+		});
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 });
