@@ -37,6 +37,7 @@ import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 import { useTabStore } from '../../renderer/stores/tabStore';
 import { useThoughtStreamStore } from '../../renderer/stores/thoughtStreamStore';
+import { useTtsrStore } from '../../renderer/stores/ttsrStore';
 import { useUIStore } from '../../renderer/stores/uiStore';
 
 /**
@@ -132,6 +133,7 @@ export const ALL_RENDERER_STORES: ResettableStore[] = [
 	useCoworkingBackgroundBrowserStore,
 	useCoworkingBrowserKeepAliveStore,
 	useImageAnnotatorStore,
+	useTtsrStore,
 ];
 
 /**

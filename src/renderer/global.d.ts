@@ -3854,6 +3854,19 @@ interface MaestroAPI {
 		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
+	// TTSR API (Time-Traveling Stream Rules - main-authoritative, push events only)
+	ttsr: {
+		onAbortPending: (
+			callback: (payload: import('../shared/ttsr-types').TtsrAbortPendingPayload) => void
+		) => () => void;
+		onTriggered: (
+			callback: (payload: import('../shared/ttsr-types').TtsrTriggeredPayload) => void
+		) => () => void;
+		onMatched: (
+			callback: (payload: import('../shared/ttsr-types').TtsrMatchedPayload) => void
+		) => () => void;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;

@@ -16,6 +16,7 @@
 import { logger } from '../utils/logger';
 import type {
 	LoadedTtsrRule,
+	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrTriggeredPayload,
@@ -63,6 +64,11 @@ export interface TtsrRuntimeDeps {
 	 * turn without telling the renderer to respawn it would strand the agent.
 	 */
 	onTriggered?(payload: TtsrTriggeredPayload): void;
+	/**
+	 * Sink for `ttsr:abortPending`, fired the moment a turn is signalled so the
+	 * renderer stops treating the imminent exit as a failed turn.
+	 */
+	onAbortPending?(payload: TtsrAbortPendingPayload): void;
 	/** Test override for how long an abort waits on the turn's `exit`. */
 	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
@@ -97,6 +103,9 @@ export class TtsrRuntime {
 				? new TtsrInterruptDriver({
 						target: deps.interruptTarget,
 						onTriggered: (payload) => onTriggered(payload),
+						onAbortPending: deps.onAbortPending
+							? (payload) => deps.onAbortPending?.(payload)
+							: undefined,
 						exitTimeoutMs: deps.exitTimeoutMs,
 					})
 				: null;

@@ -15,6 +15,7 @@
 import { logger } from '../utils/logger';
 import {
 	TTSR_AGENT_CAPABILITIES,
+	type TtsrAbortPendingPayload,
 	type TtsrContextMode,
 	type TtsrRuleRef,
 	type TtsrTriggeredPayload,
@@ -45,6 +46,11 @@ export interface TtsrInterruptDriverDeps {
 	target: TtsrInterruptTarget;
 	/** Sink for `ttsr:triggered`. Wired to `safeSend` by the main entry point. */
 	onTriggered(payload: TtsrTriggeredPayload): void;
+	/**
+	 * Sink for `ttsr:abortPending`, fired before the process is signalled so the
+	 * renderer can suppress its normal exit handling for the abort that follows.
+	 */
+	onAbortPending?(payload: TtsrAbortPendingPayload): void;
 	/** Override for tests. */
 	exitTimeoutMs?: number;
 }
@@ -116,6 +122,17 @@ export class TtsrInterruptDriver {
 			timer: null,
 		};
 		this.pending.set(input.sessionId, pending);
+
+		// Announced before the signal: the exit it produces would otherwise reach
+		// the renderer as a failed turn, and the corrective payload only follows
+		// once that exit lands.
+		this.deps.onAbortPending?.({
+			sessionId: input.meta.sessionId,
+			tabId: input.meta.tabId,
+			agentId: input.meta.agentId,
+			rules: toRuleRefs(pending.matches),
+			contextMode: input.contextMode,
+		});
 
 		// `discard` hard-kills so the provider gets no chance to commit the partial
 		// turn; `keep` interrupts and lets it flush. Both are best-effort - Maestro

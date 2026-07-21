@@ -7,7 +7,11 @@
  */
 
 import type { ParsedEventObserver } from '../process-manager/types';
-import type { TtsrMatchedPayload, TtsrTriggeredPayload } from '../../shared/ttsr-types';
+import type {
+	TtsrAbortPendingPayload,
+	TtsrMatchedPayload,
+	TtsrTriggeredPayload,
+} from '../../shared/ttsr-types';
 import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrRuntime } from './ttsr-runtime';
 import type { TtsrProcessEventSource } from './ttsr-spawn-registry';
@@ -57,6 +61,9 @@ export function installTtsrRuntime(
 		interruptTarget: safeSend ? processManager : undefined,
 		onTriggered: safeSend
 			? (payload: TtsrTriggeredPayload) => safeSend('ttsr:triggered', payload)
+			: undefined,
+		onAbortPending: safeSend
+			? (payload: TtsrAbortPendingPayload) => safeSend('ttsr:abortPending', payload)
 			: undefined,
 	});
 

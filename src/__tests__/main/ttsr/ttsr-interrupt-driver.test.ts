@@ -27,6 +27,7 @@ import type { AgentId } from '../../../shared/agentIds';
 import {
 	DEFAULT_TTSR_PROJECT_SETTINGS,
 	type LoadedTtsrRule,
+	type TtsrAbortPendingPayload,
 	type TtsrContextMode,
 	type TtsrTriggeredPayload,
 } from '../../../shared/ttsr-types';
@@ -72,6 +73,7 @@ function makeMeta(overrides: Partial<TtsrSpawnMeta> = {}): TtsrSpawnMeta {
 
 function makeDriver(overrides: Partial<TtsrInterruptTarget> = {}) {
 	const triggered: TtsrTriggeredPayload[] = [];
+	const abortPending: TtsrAbortPendingPayload[] = [];
 	const target = {
 		interrupt: vi.fn(() => true),
 		kill: vi.fn(() => true),
@@ -80,9 +82,10 @@ function makeDriver(overrides: Partial<TtsrInterruptTarget> = {}) {
 	const driver = new TtsrInterruptDriver({
 		target,
 		onTriggered: (payload) => triggered.push(payload),
+		onAbortPending: (payload) => abortPending.push(payload),
 		exitTimeoutMs: 50,
 	});
-	return { driver, target, triggered };
+	return { driver, target, triggered, abortPending };
 }
 
 describe('TTSR injection templates', () => {
@@ -184,6 +187,37 @@ describe('TtsrInterruptDriver', () => {
 			rules: [{ name: 'no-console-log', path: '.maestro/rules/no-console-log.md' }],
 		});
 		expect(triggered[0].injectionPrompt).toContain('<system-interrupt');
+	});
+
+	it('announces the abort before signalling, so exit handling can suppress the turn', async () => {
+		const { driver, target, triggered, abortPending } = makeDriver({
+			interrupt: vi.fn(() => {
+				// Announced first: by the time the signal lands, the renderer must
+				// already know the exit it produces is a TTSR abort, not a failure.
+				expect(abortPending).toHaveLength(1);
+				return true;
+			}),
+		});
+
+		const done = driver.trigger({
+			sessionId: 'sess-ai-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'keep',
+		});
+		expect(target.interrupt).toHaveBeenCalled();
+		expect(triggered).toEqual([]);
+		expect(abortPending[0]).toEqual({
+			sessionId: 'sess-ai-1',
+			tabId: 'tab-1',
+			agentId: 'claude-code',
+			rules: [{ name: 'no-console-log', path: '.maestro/rules/no-console-log.md' }],
+			contextMode: 'keep',
+		});
+
+		driver.noteExit('sess-ai-1');
+		await done;
+		expect(triggered).toHaveLength(1);
 	});
 
 	it('emits without waiting when the process is already gone', async () => {

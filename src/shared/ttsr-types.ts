@@ -137,6 +137,27 @@ export interface TtsrMatchedPayload {
 }
 
 /**
+ * Payload of the `ttsr:abortPending` push event, emitted the instant main
+ * signals the in-flight process and before it has exited.
+ *
+ * This is the renderer's `ttsrAbortPending` flag from the plan: the exit that
+ * follows is a TTSR abort, not a failed or completed turn, so exit handling
+ * must not fail the turn, dispatch the next queued item, or clear the tab's
+ * busy state. The corrective spawn arrives moments later on `ttsr:triggered`.
+ */
+export interface TtsrAbortPendingPayload {
+	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+	sessionId: string;
+	/** AI tab the aborted turn belonged to, when the spawn carried one. */
+	tabId?: string;
+	agentId: AgentId;
+	/** Rules that forced the abort. */
+	rules: TtsrRuleRef[];
+	/** `keep` interrupted (SIGINT); `discard` hard-killed. */
+	contextMode: TtsrContextMode;
+}
+
+/**
  * Payload of the `ttsr:triggered` push event: everything the renderer needs to
  * spawn the corrective turn without re-deriving main-process state (Gate B).
  *

@@ -719,6 +719,12 @@ const mockMaestro = {
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 	},
+	// TTSR API (Time-Traveling Stream Rules - push events only)
+	ttsr: {
+		onAbortPending: vi.fn().mockReturnValue(() => {}),
+		onTriggered: vi.fn().mockReturnValue(() => {}),
+		onMatched: vi.fn().mockReturnValue(() => {}),
+	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {
 		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),

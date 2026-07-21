@@ -143,6 +143,7 @@ import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useTtsr } from './hooks/useTtsr';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -945,6 +946,11 @@ function MaestroConsoleInner() {
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
 	// the pianola flag is on. Does not steal focus from the active agent.
 	usePianolaAgent(encoreFeatures);
+
+	// --- TTSR (Time-Traveling Stream Rules, gated by Encore Feature) ---
+	// Main matches rules against the live stream and aborts the turn on its own;
+	// this subscription performs the corrective respawn that continues it.
+	useTtsr(!!encoreFeatures.ttsr);
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
