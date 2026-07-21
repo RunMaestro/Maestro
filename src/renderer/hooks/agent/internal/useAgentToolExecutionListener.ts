@@ -18,7 +18,6 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { toolLogsRecorded } from './helpers/thinkingLogs';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
@@ -59,7 +58,12 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						if (!toolLogsRecorded(targetTab.showTools, targetTab.showThinking)) return s;
+						// Always record tool events regardless of the tab's `showTools`
+						// setting. Visibility is a pure render concern (TerminalOutput
+						// hides `source:'tool'` entries when tools are off), so recording
+						// unconditionally keeps running->completed correlation intact
+						// across a mid-run toggle and avoids the transcript churn that
+						// dropping events / deleting logs caused (the flicker bug).
 
 						const newState = toolEvent.state as
 							| NonNullable<LogEntry['metadata']>['toolState']
