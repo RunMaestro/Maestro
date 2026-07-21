@@ -27,6 +27,19 @@ export function createProfilesApi() {
 		// Delete a profile by id. Returns the updated list.
 		delete: (projectRoot: string, profileId: string): Promise<AgentProfile[]> =>
 			ipcRenderer.invoke('profiles:delete', { projectRoot, profileId }),
+
+		// Subscribe to profile persistence pushes. Fires whenever
+		// `.maestro/profiles.yaml` is written for any project (IPC mutation, CLI,
+		// another window); the payload carries only the project root, so the
+		// listener refetches. Mirrors `board.onBoardChanged`. Returns an
+		// unsubscribe function.
+		onProfilesChanged: (callback: (payload: { projectRoot: string }) => void): (() => void) => {
+			const handler = (_e: unknown, payload: { projectRoot: string }) => callback(payload);
+			ipcRenderer.on('profiles:changed', handler);
+			return () => {
+				ipcRenderer.removeListener('profiles:changed', handler);
+			};
+		},
 	};
 }
 

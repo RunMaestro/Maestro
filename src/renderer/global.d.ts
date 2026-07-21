@@ -3902,6 +3902,8 @@ interface MaestroAPI {
 			projectRoot: string,
 			profileId: string
 		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		/** Push after every profiles.yaml write. Returns an unsubscribe function. */
+		onProfilesChanged?: (callback: (payload: { projectRoot: string }) => void) => () => void;
 	};
 
 	// Board API (persistent task DAG stored in .maestro/board.yaml)

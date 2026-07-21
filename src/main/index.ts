@@ -205,6 +205,7 @@ import {
 } from './group-chat/group-chat-router';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { listBoards, saveBoard, setBoardSavedListener } from './board/board-storage';
+import { setProfilesSavedListener } from './profiles/profile-storage';
 import {
 	resolveCardOverrides,
 	resolveCardAssignment,
@@ -607,6 +608,11 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 // imports the same module and never sets a listener. Payload is the project
 // root only; the renderer refetches, so no board data crosses the bridge here.
 setBoardSavedListener((projectRoot) => safeSend('board:changed', { projectRoot }));
+
+// Agent Profiles: same deal for `.maestro/profiles.yaml`, so the Profiles modal
+// (and the Board's role picker behind it) reconcile after a CLI or second-window
+// write instead of showing a stale list until the user hits refresh.
+setProfilesSavedListener((projectRoot) => safeSend('profiles:changed', { projectRoot }));
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({

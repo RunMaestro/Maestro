@@ -74,6 +74,24 @@ export function enqueueProfileWrite<T>(
 }
 
 /**
+ * Notified after every successful profiles.yaml write, with the profiles that
+ * were just persisted.
+ */
+export type ProfilesSavedListener = (projectRoot: string, profiles: AgentProfile[]) => void;
+
+let profilesSavedListener: ProfilesSavedListener | null = null;
+
+/**
+ * Register (or clear, with `null`) the post-save hook. Same split as the board's
+ * listener: this module is imported by the CLI too, which has no `webContents`,
+ * so the broadcast itself lives in the host (`src/main/index.ts` sends
+ * `profiles:changed`) and storage only announces that a write happened.
+ */
+export function setProfilesSavedListener(listener: ProfilesSavedListener | null): void {
+	profilesSavedListener = listener;
+}
+
+/**
  * Load and validate all profiles for a project.
  *
  * Same three-way split as `loadBoards`: a missing file returns `[]`, a read or
@@ -162,6 +180,19 @@ export function saveProfiles(projectRoot: string, profiles: AgentProfile[]): str
 	// Atomic (temp file + rename): a crash mid-write leaves the previous
 	// profiles.yaml intact instead of a truncated file that would load as empty.
 	atomicWriteFileSync(filePath, content);
+	// Announce the write so the host can push `profiles:changed` to open windows.
+	// Advisory only: a listener that throws must never fail the write that already
+	// landed on disk.
+	if (profilesSavedListener) {
+		try {
+			profilesSavedListener(projectRoot, valid);
+		} catch (err) {
+			logger.warn(
+				`Profiles saved listener threw: ${err instanceof Error ? err.message : String(err)}`,
+				LOG_CONTEXT
+			);
+		}
+	}
 	return filePath;
 }
 

@@ -19,6 +19,9 @@ export interface ProfilesModalProps {
 /** Effort choices offered in the picker. Blank means "inherit the base agent". */
 const EFFORT_OPTIONS = ['', 'low', 'medium', 'high'] as const;
 
+/** Id of the modal title, referenced by `aria-labelledby` on the dialog. */
+const TITLE_ID = 'profiles-modal-title';
+
 /**
  * Minimal Agent Profiles manager. Lists the profiles stored in the active
  * project's `.maestro/profiles.yaml` and lets the user create one by picking a
@@ -51,27 +54,43 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 		[sessions]
 	);
 
-	const load = useCallback(async () => {
-		if (!projectRoot) {
-			setProfiles([]);
-			setLoading(false);
-			return;
-		}
-		setLoading(true);
-		try {
-			setProfiles(await window.maestro.profiles.list(projectRoot));
-		} catch (err) {
-			logger.error(`Failed to load profiles: ${String(err)}`);
-			captureException(err, { tags: { operation: 'profiles:list' } });
-			notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to load profiles.' });
-		} finally {
-			setLoading(false);
-		}
-	}, [projectRoot]);
+	const load = useCallback(
+		async (showSpinner = true) => {
+			if (!projectRoot) {
+				setProfiles([]);
+				setLoading(false);
+				return;
+			}
+			if (showSpinner) setLoading(true);
+			try {
+				setProfiles(await window.maestro.profiles.list(projectRoot));
+			} catch (err) {
+				logger.error(`Failed to load profiles: ${String(err)}`);
+				captureException(err, { tags: { operation: 'profiles:list' } });
+				notifyToast({ color: 'red', title: 'Profiles', message: 'Failed to load profiles.' });
+			} finally {
+				if (showSpinner) setLoading(false);
+			}
+		},
+		[projectRoot]
+	);
 
 	useEffect(() => {
-		void load();
+		void load(true);
 	}, [load]);
+
+	// Live updates: the main process pushes `profiles:changed` after every
+	// `.maestro/profiles.yaml` write (this window, another window, or maestro-cli),
+	// so the list stops going stale the moment it is opened. Mirrors the Board's
+	// `board:changed` subscription; the manual refresh button stays as the escape
+	// hatch when someone edits the YAML by hand.
+	useEffect(() => {
+		if (!projectRoot) return;
+		return window.maestro.profiles.onProfilesChanged?.((payload) => {
+			if (payload?.projectRoot !== projectRoot) return;
+			void load(false);
+		});
+	}, [projectRoot, load]);
 
 	// Default the base-agent picker to the active session ONCE, so a later choice
 	// of "None (pool role)" (baseAgentId = '') is not snapped back to an agent.
@@ -150,6 +169,9 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 			<div className="absolute inset-0 bg-black/50" />
 
 			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={TITLE_ID}
 				className="relative rounded-xl shadow-2xl flex flex-col"
 				style={{
 					width: '92vw',
@@ -167,7 +189,11 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 				>
 					<div className="flex items-center gap-2">
 						<Users className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="text-base font-bold" style={{ color: theme.colors.textMain }}>
+						<h2
+							id={TITLE_ID}
+							className="text-base font-bold"
+							style={{ color: theme.colors.textMain }}
+						>
 							Agent Profiles
 						</h2>
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -176,7 +202,7 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 					</div>
 					<div className="flex items-center gap-1">
 						<button
-							onClick={() => void load()}
+							onClick={() => void load(true)}
 							className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
 							aria-label="Refresh"

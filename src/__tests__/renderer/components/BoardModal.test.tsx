@@ -23,6 +23,12 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: vi.fn(),
 }));
 
+/** Spy for the Board's "no profiles yet" escape hatch into the Profiles modal. */
+const setProfilesModalOpen = vi.fn();
+vi.mock('../../../renderer/stores/modalStore', () => ({
+	getModalActions: () => ({ setProfilesModalOpen }),
+}));
+
 const PROJECT_ROOT = '/test/project';
 
 function makeCard(overrides: Partial<BoardCard> & { id: string; title: string }): BoardCard {
@@ -42,6 +48,8 @@ function makeCard(overrides: Partial<BoardCard> & { id: string; title: string })
 let boardApi: {
 	list: ReturnType<typeof vi.fn>;
 	create: ReturnType<typeof vi.fn>;
+	rename: ReturnType<typeof vi.fn>;
+	delete: ReturnType<typeof vi.fn>;
 	addCard: ReturnType<typeof vi.fn>;
 	updateCard: ReturnType<typeof vi.fn>;
 	setCardStatus: ReturnType<typeof vi.fn>;
@@ -60,12 +68,14 @@ function emitBoardChanged(projectRoot = PROJECT_ROOT): void {
 	for (const listener of boardChangedListeners) listener({ projectRoot });
 }
 
-function installApis(initialBoards: Board[]): void {
+function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 	boardChangedListeners = [];
 	unsubscribeBoardChanged = vi.fn();
 	boardApi = {
 		list: vi.fn().mockResolvedValue(initialBoards),
 		create: vi.fn(),
+		rename: vi.fn(),
+		delete: vi.fn().mockResolvedValue([]),
 		addCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		updateCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		setCardStatus: vi.fn().mockResolvedValue(initialBoards[0]),
@@ -80,13 +90,18 @@ function installApis(initialBoards: Board[]): void {
 	(window.maestro as any).board = boardApi;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	(window.maestro as any).profiles = {
-		list: vi.fn().mockResolvedValue([{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]),
+		list: vi
+			.fn()
+			.mockResolvedValue(profiles ?? [{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]),
 		upsert: vi.fn(),
 		delete: vi.fn(),
+		onProfilesChanged: vi.fn(() => vi.fn()),
 	};
 }
 
 beforeEach(() => {
+	// The Board remembers its last selected board per project in localStorage.
+	window.localStorage.clear();
 	useSessionStore.setState({
 		sessions: [createMockSession({ id: 's1', projectRoot: PROJECT_ROOT })],
 		activeSessionId: 's1',
@@ -361,5 +376,204 @@ describe('BoardModal worktree isolation (Phase 4)', () => {
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
 		expect(await screen.findByText(/🌳 board\/b1\/cardA/)).toBeInTheDocument();
+	});
+});
+
+describe('BoardModal keyboard operability (Phase 6)', () => {
+	it('exposes dialog semantics and labelled columns', async () => {
+		const board: Board = { id: 'b1', name: 'My Board', cards: [] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const dialog = await screen.findByRole('dialog');
+		expect(dialog).toHaveAttribute('aria-modal', 'true');
+		expect(dialog).toHaveAccessibleName('My Board');
+		// Every column is a labelled group carrying its card count.
+		expect(screen.getByRole('group', { name: /^To Do, 0 cards$/i })).toBeInTheDocument();
+	});
+
+	it('focuses a tile and opens its editor with Enter', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const tile = await screen.findByRole('button', { name: /^Card A, To Do$/i });
+		tile.focus();
+		expect(tile).toHaveFocus();
+
+		fireEvent.keyDown(tile, { key: 'Enter' });
+		expect(await screen.findByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A');
+	});
+
+	it('walks tiles with the arrow keys, down a column and across to the next', async () => {
+		const a = makeCard({ id: 'cardA', title: 'Card A' });
+		const b = makeCard({ id: 'cardB', title: 'Card B' });
+		const c = makeCard({ id: 'cardC', title: 'Card C', status: 'done' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [a, b, c] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const tileA = await screen.findByRole('button', { name: /^Card A, To Do$/i });
+		const tileB = screen.getByRole('button', { name: /^Card B, To Do$/i });
+		const tileC = screen.getByRole('button', { name: /^Card C, Done$/i });
+
+		tileA.focus();
+		fireEvent.keyDown(tileA, { key: 'ArrowDown' });
+		expect(tileB).toHaveFocus();
+
+		// Right skips the empty Ready/Running/Blocked columns to reach Done, and
+		// clamps the row (Done has one card, To Do had two).
+		fireEvent.keyDown(tileB, { key: 'ArrowRight' });
+		expect(tileC).toHaveFocus();
+
+		// Back left: Done had one card, so the row index is 0 and focus lands on
+		// the first To Do card rather than remembering where it came from.
+		fireEvent.keyDown(tileC, { key: 'ArrowLeft' });
+		expect(tileA).toHaveFocus();
+	});
+
+	it('deletes a focused tile with two Delete presses', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [cardA] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const tile = await screen.findByRole('button', { name: /^Card A, To Do$/i });
+		tile.focus();
+		fireEvent.keyDown(tile, { key: 'Delete' });
+		expect(boardApi.deleteCard).not.toHaveBeenCalled();
+		// Armed state is visible on the trash button, not just internal.
+		expect(screen.getByRole('button', { name: /Confirm delete Card A/i })).toBeInTheDocument();
+
+		fireEvent.keyDown(tile, { key: 'Delete' });
+		await waitFor(() =>
+			expect(boardApi.deleteCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA')
+		);
+	});
+
+	it('persists a column change through the editor Move to picker', async () => {
+		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
+		installApis([board]);
+		boardApi.setCardStatus.mockResolvedValue({
+			...board,
+			cards: [{ ...cardA, status: 'done' as const }],
+		});
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		// `m` on a focused tile opens the editor straight on the Move to picker.
+		const tile = await screen.findByRole('button', { name: /^Card A, To Do$/i });
+		tile.focus();
+		fireEvent.keyDown(tile, { key: 'm' });
+
+		const moveSelect = await screen.findByLabelText('Move to');
+		expect(moveSelect).toHaveFocus();
+
+		fireEvent.change(moveSelect, { target: { value: 'done' } });
+		await waitFor(() =>
+			expect(boardApi.setCardStatus).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA', 'done')
+		);
+		// The move is not an unsaved edit: leaving the editor asks nothing.
+		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
+		await waitFor(() =>
+			expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument()
+		);
+	});
+});
+
+describe('BoardModal running-card visibility (Phase 6)', () => {
+	it('shows attempt, elapsed time and the pooled worker on a running tile', async () => {
+		const running = makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			status: 'running',
+			runs: [
+				{
+					attempt: 2,
+					startedAt: new Date(Date.now() - 65_000).toISOString(),
+					workerAgentId: 's1',
+				},
+			],
+		});
+		installApis([{ id: 'b1', name: 'My Board', cards: [running] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		// Attempt + a formatted elapsed reading (formatElapsedTime: "1m 5s"). Shown
+		// on the tile badge and again inside the run-details disclosure.
+		expect((await screen.findAllByText(/attempt 2/i)).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(/1m \ds/).length).toBeGreaterThan(0);
+		// The worker is a Left Bar agent, resolved through the session store.
+		expect(screen.getAllByText(/Test Session/).length).toBeGreaterThan(0);
+		// The run details disclosure is available WHILE running, not only after.
+		expect(screen.getByText('Run details')).toBeInTheDocument();
+	});
+});
+
+describe('BoardModal multi-board management (Phase 6)', () => {
+	it('switches between boards and remembers the selection per project', async () => {
+		const b1: Board = {
+			id: 'b1',
+			name: 'First Board',
+			cards: [makeCard({ id: 'c1', title: 'A1' })],
+		};
+		const b2: Board = {
+			id: 'b2',
+			name: 'Second Board',
+			cards: [makeCard({ id: 'c2', title: 'B2' })],
+		};
+		installApis([b1, b2]);
+
+		const { unmount } = render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const switcher = await screen.findByLabelText('Select board');
+		expect(screen.getByRole('option', { name: 'Second Board' })).toBeInTheDocument();
+		expect(screen.getByText('A1')).toBeInTheDocument();
+
+		fireEvent.change(switcher, { target: { value: 'b2' } });
+		expect(await screen.findByText('B2')).toBeInTheDocument();
+		expect(screen.queryByText('A1')).toBeNull();
+
+		// Reopening the modal lands back on the remembered board.
+		unmount();
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByText('B2')).toBeInTheDocument();
+	});
+
+	it('confirms board deletion and warns about cards that are not done', async () => {
+		const board: Board = {
+			id: 'b1',
+			name: 'My Board',
+			cards: [makeCard({ id: 'c1', title: 'Open card' })],
+		};
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		fireEvent.click(await screen.findByRole('button', { name: /Delete board/i }));
+		expect(await screen.findByText(/1 card that is not done/i)).toBeInTheDocument();
+		expect(boardApi.delete).not.toHaveBeenCalled();
+
+		// The header trash and the confirm dialog share the label; the dialog's is
+		// the later one.
+		const deleteButtons = screen.getAllByRole('button', { name: /^Delete board$/i });
+		fireEvent.click(deleteButtons[deleteButtons.length - 1]);
+		await waitFor(() => expect(boardApi.delete).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', true));
+	});
+
+	it('turns the "no profiles" hint into a button that opens the Profiles modal', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const hint = await screen.findByRole('button', { name: /Create an Agent Profile first/i });
+		expect(screen.queryByRole('button', { name: /New card/i })).toBeNull();
+
+		fireEvent.click(hint);
+		expect(setProfilesModalOpen).toHaveBeenCalledWith(true);
 	});
 });

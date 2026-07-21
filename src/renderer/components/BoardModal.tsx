@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft, Square } from 'lucide-react';
+import {
+	X,
+	KanbanSquare,
+	Plus,
+	Trash2,
+	RefreshCw,
+	ChevronLeft,
+	Square,
+	Pencil,
+	Check,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import type { AgentProfile } from '../../shared/profiles/types';
 import type { Board, BoardCard, CardPriority, CardStatus } from '../../shared/board/types';
@@ -9,11 +19,14 @@ import { getBlockers, hasCycle } from '../../shared/board/graph';
 import { isPathWithin } from '../../shared/board/pool';
 import { buildCardWorktreeRef } from '../../shared/board/worktree';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
+import { formatElapsedTime } from '../../shared/formatters';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
@@ -25,6 +38,33 @@ export interface BoardModalProps {
 
 /** How long (ms) a tile's delete button stays armed before it disarms itself. */
 const DELETE_DISARM_MS = 4000;
+
+/** Id of the modal title, referenced by `aria-labelledby` on the dialog. */
+const TITLE_ID = 'board-modal-title';
+
+/**
+ * Per-project "last board I had open" memory. A pure UI preference, so it lives
+ * in localStorage next to the other view-state keys (Git diff view mode, History
+ * filters) rather than becoming a real synced setting.
+ */
+const LAST_BOARD_KEY_PREFIX = 'maestro.board.lastBoardId:';
+
+function readLastBoardId(projectRoot: string): string | null {
+	try {
+		return window.localStorage.getItem(LAST_BOARD_KEY_PREFIX + projectRoot);
+	} catch {
+		// localStorage can throw in private mode or when full - non-fatal here.
+		return null;
+	}
+}
+
+function writeLastBoardId(projectRoot: string, boardId: string): void {
+	try {
+		window.localStorage.setItem(LAST_BOARD_KEY_PREFIX + projectRoot, boardId);
+	} catch {
+		// Losing the preference is acceptable; failing the render is not.
+	}
+}
 
 /** Column presentation: label + which theme color keys the status. The columns
  * are a *view* of `card.status`; the DAG + dispatcher are the engine. */
@@ -72,6 +112,11 @@ interface CardDraft {
  * the dispatcher (Phase 3) moves cards automatically, and manual drag-to-move
  * overrides its status via `setCardStatus`.
  *
+ * Keyboard parity with the mouse (Phase 6): tiles are focusable, arrows walk the
+ * grid, Enter opens a card, `m` jumps to the editor's "Move to" picker, and
+ * Delete (twice) removes one. Native HTML5 drag-and-drop stays for pointer users
+ * rather than being reimplemented as an ARIA drag surface.
+ *
  * Click-driven, so the root is `select-none`; the card-body detail view opts
  * back into text selection with `select-text` (per the CLAUDE.md modal rule).
  */
@@ -90,26 +135,43 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				.map((s) => ({ id: s.id, name: s.name, isWorker: s.boardWorker === true })),
 		[allSessions, projectRoot]
 	);
+	// Worker agents are Left Bar agents (session ids), so the name comes from the
+	// session store - NOT from getAgentDisplayName(), which maps agent *type* ids
+	// ('claude-code' -> 'Claude Code'). Falls back to the raw id for an agent that
+	// has since been deleted.
 	const agentName = useCallback(
 		(id: string) => projectAgents.find((a) => a.id === id)?.name ?? id,
 		[projectAgents]
 	);
 
-	const [board, setBoard] = useState<Board | null>(null);
+	const [boards, setBoards] = useState<Board[]>([]);
+	const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
 	const [profiles, setProfiles] = useState<AgentProfile[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [creatingBoard, setCreatingBoard] = useState(false);
 	const [dragCardId, setDragCardId] = useState<string | null>(null);
 	const [dragOverStatus, setDragOverStatus] = useState<CardStatus | null>(null);
 
+	// Board lifecycle UI (Phase 6): inline rename + delete confirmation.
+	const [renaming, setRenaming] = useState(false);
+	const [renameValue, setRenameValue] = useState('');
+	const [pendingBoardDelete, setPendingBoardDelete] = useState(false);
+
 	// Editor state: null = board view, otherwise the card editor is showing.
 	const [draft, setDraft] = useState<CardDraft | null>(null);
 	const [cycleError, setCycleError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
+	/** Set when the editor was opened with `m`, so it lands on the Move to picker. */
+	const [focusMovePicker, setFocusMovePicker] = useState(false);
 	/** The draft exactly as the editor opened it, for the unsaved-changes check. */
 	const draftBaselineRef = useRef<CardDraft | null>(null);
 	/** Which close the user asked for while the editor was dirty, pending confirm. */
 	const [pendingDiscard, setPendingDiscard] = useState<null | 'editor' | 'modal'>(null);
+
+	const board = useMemo(
+		() => boards.find((b) => b.id === selectedBoardId) ?? boards[0] ?? null,
+		[boards, selectedBoardId]
+	);
 
 	// Cheap structural compare: the draft is a flat object of primitives plus a
 	// string array, so serializing both sides is simpler (and less bug-prone) than
@@ -119,35 +181,42 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[draft]
 	);
 
-	const boardIdRef = useRef<string | null>(null);
-	boardIdRef.current = board?.id ?? null;
+	const selectedBoardIdRef = useRef<string | null>(null);
+	selectedBoardIdRef.current = selectedBoardId;
 
 	const profileName = useCallback(
 		(id: string) => profiles.find((p) => p.id === id)?.name ?? id,
 		[profiles]
 	);
 
-	// Load the first board (MVP is single-board per project) plus the profiles
-	// that back card assignees. Reused by the poll and by explicit refresh.
+	// Load every board for the project plus the profiles that back card
+	// assignees. Reused by the push listener and by explicit refresh.
 	const load = useCallback(
 		async (showSpinner = true) => {
 			if (!projectRoot) {
-				setBoard(null);
+				setBoards([]);
 				setProfiles([]);
 				setLoading(false);
 				return;
 			}
 			if (showSpinner) setLoading(true);
 			try {
-				const [boards, profileList] = await Promise.all([
+				const [boardList, profileList] = await Promise.all([
 					window.maestro.board.list(projectRoot),
 					window.maestro.profiles.list(projectRoot),
 				]);
 				setProfiles(profileList);
-				// Keep the currently-open board if it still exists, else first board.
-				const current = boardIdRef.current;
-				const next = boards.find((b) => b.id === current) ?? boards[0] ?? null;
-				setBoard(next);
+				setBoards(boardList);
+				// Keep the currently-open board if it still exists, else the one this
+				// project was last left on, else the first.
+				const current = selectedBoardIdRef.current;
+				const remembered = readLastBoardId(projectRoot);
+				const next =
+					boardList.find((b) => b.id === current) ??
+					boardList.find((b) => b.id === remembered) ??
+					boardList[0] ??
+					null;
+				setSelectedBoardId(next?.id ?? null);
 			} catch (err) {
 				logger.error(`Failed to load board: ${String(err)}`);
 				if (showSpinner) {
@@ -175,6 +244,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		void load(true);
 	}, [load]);
 
+	// Remember the selection so reopening the Board lands on the same one.
+	useEffect(() => {
+		if (projectRoot && selectedBoardId) writeLastBoardId(projectRoot, selectedBoardId);
+	}, [projectRoot, selectedBoardId]);
+
 	// Live updates: the main process pushes `board:changed` after every
 	// `.maestro/board.yaml` write (dispatcher tick, IPC mutation, auto-decompose),
 	// so dispatcher-driven status changes surface without a timer. The refresh runs
@@ -192,9 +266,21 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		if (!projectRoot || creatingBoard) return;
 		setCreatingBoard(true);
 		try {
-			const name = activeSession?.name ? `${activeSession.name} Board` : 'Board';
+			// First board takes the agent's name; later ones are numbered and the
+			// rename field opens straight away so the user can say what it is.
+			const name =
+				boards.length > 0
+					? `Board ${boards.length + 1}`
+					: activeSession?.name
+						? `${activeSession.name} Board`
+						: 'Board';
 			const created = await window.maestro.board.create(projectRoot, name);
-			setBoard(created);
+			setBoards((prev) => [...prev.filter((b) => b.id !== created.id), created]);
+			setSelectedBoardId(created.id);
+			if (boards.length > 0) {
+				setRenameValue(created.name);
+				setRenaming(true);
+			}
 		} catch (err) {
 			logger.error(`Failed to create board: ${String(err)}`);
 			captureException(err, { tags: { operation: 'board:create' } });
@@ -202,12 +288,54 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		} finally {
 			setCreatingBoard(false);
 		}
-	}, [projectRoot, creatingBoard, activeSession?.name]);
+	}, [projectRoot, creatingBoard, activeSession?.name, boards.length]);
+
+	const startRename = useCallback(() => {
+		if (!board) return;
+		setRenameValue(board.name);
+		setRenaming(true);
+	}, [board]);
+
+	const commitRename = useCallback(async () => {
+		const name = renameValue.trim();
+		setRenaming(false);
+		if (!board || !projectRoot || !name || name === board.name) return;
+		try {
+			const updated = await window.maestro.board.rename(projectRoot, board.id, name);
+			setBoards((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+		} catch (err) {
+			logger.error(`Failed to rename board: ${String(err)}`);
+			captureException(err, { tags: { operation: 'board:rename' } });
+			notifyToast({ color: 'red', title: 'Board', message: 'Failed to rename the board.' });
+		}
+	}, [renameValue, board, projectRoot]);
+
+	/** Cards that would be destroyed by deleting the board (the CLI's warning). */
+	const openBoardCards = useMemo(
+		() => (board ? board.cards.filter((c) => c.status !== 'done').length : 0),
+		[board]
+	);
+
+	const handleDeleteBoard = useCallback(async () => {
+		if (!board || !projectRoot) return;
+		try {
+			// The confirm dialog IS the acknowledgment the CLI asks for with --force.
+			const remaining = await window.maestro.board.delete(projectRoot, board.id, true);
+			setBoards(remaining);
+			setSelectedBoardId(remaining[0]?.id ?? null);
+			notifyToast({ color: 'green', title: 'Board', message: `Deleted "${board.name}".` });
+		} catch (err) {
+			logger.error(`Failed to delete board: ${String(err)}`);
+			captureException(err, { tags: { operation: 'board:delete' } });
+			notifyToast({ color: 'red', title: 'Board', message: 'Failed to delete the board.' });
+		}
+	}, [board, projectRoot]);
 
 	// --- Card editor -------------------------------------------------------
 
 	const openNewCard = useCallback(() => {
 		setCycleError(null);
+		setFocusMovePicker(false);
 		const fresh: CardDraft = {
 			id: null,
 			title: '',
@@ -225,8 +353,9 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		setDraft(fresh);
 	}, [profiles]);
 
-	const openEditCard = useCallback((card: BoardCard) => {
+	const openEditCard = useCallback((card: BoardCard, focusMove = false) => {
 		setCycleError(null);
+		setFocusMovePicker(focusMove);
 		const existing: CardDraft = {
 			id: card.id,
 			title: card.title,
@@ -248,6 +377,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const closeEditor = useCallback(() => {
 		setDraft(null);
 		setCycleError(null);
+		setFocusMovePicker(false);
 		draftBaselineRef.current = null;
 		setPendingDiscard(null);
 	}, []);
@@ -262,18 +392,34 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	}, [isDraftDirty, closeEditor]);
 
 	/**
-	 * Escape. Unchanged when there is nothing to lose (it closes the whole modal,
-	 * editor or not); when the editor holds unsaved edits it asks first.
+	 * Escape. An open rename field takes it first (the layer stack listens on
+	 * window in the capture phase, so the input cannot swallow it locally).
+	 * Otherwise it closes the whole modal, asking first when the editor holds
+	 * unsaved edits.
 	 */
 	const handleEscape = useCallback(() => {
+		if (renaming) {
+			setRenaming(false);
+			return;
+		}
 		if (isDraftDirty) {
 			setPendingDiscard('modal');
 			return;
 		}
 		onClose();
-	}, [isDraftDirty, onClose]);
+	}, [renaming, isDraftDirty, onClose]);
 
 	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
+
+	// Initial focus lands on the dialog itself so Tab starts inside the modal and
+	// screen readers announce it. One-shot: the ref flips after mount, so a later
+	// render never yanks focus back off a tile the user arrowed to.
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const initialFocusDone = useRef(false);
+	useFocusAfterRender(dialogRef, !initialFocusDone.current);
+	useEffect(() => {
+		initialFocusDone.current = true;
+	}, []);
 
 	const handleConfirmDiscard = useCallback(() => {
 		const target = pendingDiscard;
@@ -304,6 +450,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			!saving,
 		[draft, projectRoot, board, saving]
 	);
+
+	/** Replace one board in the list (every card mutation returns the whole board). */
+	const applyBoard = useCallback((updated: Board) => {
+		setBoards((prev) =>
+			prev.some((b) => b.id === updated.id)
+				? prev.map((b) => (b.id === updated.id ? updated : b))
+				: [...prev, updated]
+		);
+	}, []);
 
 	const handleSaveCard = useCallback(async () => {
 		if (!draft || !board || !projectRoot || !canSaveDraft) return;
@@ -357,7 +512,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			const updated = isNew
 				? await window.maestro.board.addCard(projectRoot, board.id, card)
 				: await window.maestro.board.updateCard(projectRoot, board.id, card);
-			setBoard(updated);
+			applyBoard(updated);
 			closeEditor();
 			notifyToast({
 				color: 'green',
@@ -368,7 +523,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			const message = err instanceof Error ? err.message : String(err);
 			logger.error(`Failed to save card: ${message}`);
 			captureException(err, { tags: { operation: 'board:saveCard' } });
-			// The storage layer rejects cycles too — surface that inline rather than
+			// The storage layer rejects cycles too - surface that inline rather than
 			// as a generic toast.
 			if (/cycl/i.test(message)) {
 				setCycleError('This parent selection would create a dependency cycle.');
@@ -378,14 +533,14 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		} finally {
 			setSaving(false);
 		}
-	}, [draft, board, projectRoot, canSaveDraft, closeEditor]);
+	}, [draft, board, projectRoot, canSaveDraft, closeEditor, applyBoard]);
 
 	const handleDeleteCard = useCallback(
 		async (cardId: string) => {
 			if (!board || !projectRoot) return;
 			try {
 				const updated = await window.maestro.board.deleteCard(projectRoot, board.id, cardId);
-				setBoard(updated);
+				applyBoard(updated);
 				if (draft?.id === cardId) closeEditor();
 			} catch (err) {
 				logger.error(`Failed to delete card: ${String(err)}`);
@@ -393,7 +548,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to delete card.' });
 			}
 		},
-		[board, projectRoot, draft?.id, closeEditor]
+		[board, projectRoot, draft?.id, closeEditor, applyBoard]
 	);
 
 	const handleCancelCard = useCallback(
@@ -401,7 +556,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			if (!board || !projectRoot) return;
 			try {
 				const updated = await window.maestro.board.cancelCard(projectRoot, board.id, cardId);
-				setBoard(updated);
+				applyBoard(updated);
 				notifyToast({
 					color: 'orange',
 					title: 'Board',
@@ -413,24 +568,24 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to stop the card.' });
 			}
 		},
-		[board, projectRoot]
+		[board, projectRoot, applyBoard]
 	);
 
-	// --- Drag-to-move (manual status override) -----------------------------
+	// --- Moving cards (drag for pointers, "Move to" picker for keyboards) ----
 
-	const handleDrop = useCallback(
-		async (status: CardStatus) => {
-			const cardId = dragCardId;
-			setDragCardId(null);
-			setDragOverStatus(null);
-			if (!cardId || !board || !projectRoot) return;
+	/**
+	 * Persist a manual status override, with the same guards the drop target
+	 * used to carry. Returns true when the card actually moved.
+	 */
+	const moveCard = useCallback(
+		async (cardId: string, status: CardStatus): Promise<boolean> => {
+			if (!board || !projectRoot) return false;
 			const card = board.cards.find((c) => c.id === cardId);
-			// No-op when dropped back on the same column.
-			if (!card || card.status === status) return;
-			// Dragging a running card out of its column used to rewrite the status in
-			// YAML while the agent process kept running - the card looked stopped and
-			// wasn't. Stopping a run is an explicit action now (the stop button), so
-			// refuse the move and say why.
+			// No-op when it is already there.
+			if (!card || card.status === status) return false;
+			// Moving a running card used to rewrite the status in YAML while the agent
+			// process kept running - the card looked stopped and wasn't. Stopping a run
+			// is an explicit action now (the stop button), so refuse and say why.
 			if (card.status === 'running') {
 				notifyToast({
 					color: 'orange',
@@ -438,7 +593,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					message:
 						'This card is running. Use the stop button on the card to end the run before moving it.',
 				});
-				return;
+				return false;
 			}
 			// `ready` and `running` are derived by the dispatcher, so the main
 			// process rejects them. Catch it here too, before the optimistic move,
@@ -449,16 +604,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					title: 'Board',
 					message: `"${STATUS_META[status].label}" is set by the dispatcher. Move the card to "To Do" - it is promoted once its parents are done.`,
 				});
-				return;
+				return false;
 			}
 			if (isCoarsePointer()) triggerHaptic(HAPTIC_PATTERNS.tap);
 			// Optimistic move so the card jumps immediately; the reload below
 			// corrects it if the write fails.
-			setBoard((prev) =>
-				prev
-					? { ...prev, cards: prev.cards.map((c) => (c.id === cardId ? { ...c, status } : c)) }
-					: prev
-			);
+			applyBoard({
+				...board,
+				cards: board.cards.map((c) => (c.id === cardId ? { ...c, status } : c)),
+			});
 			try {
 				const updated = await window.maestro.board.setCardStatus(
 					projectRoot,
@@ -466,15 +620,44 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					cardId,
 					status
 				);
-				setBoard(updated);
+				applyBoard(updated);
+				return true;
 			} catch (err) {
 				logger.error(`Failed to move card: ${String(err)}`);
 				captureException(err, { tags: { operation: 'board:setCardStatus' } });
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to move card.' });
 				void load(false);
+				return false;
 			}
 		},
-		[dragCardId, board, projectRoot, load]
+		[board, projectRoot, load, applyBoard]
+	);
+
+	const handleDrop = useCallback(
+		async (status: CardStatus) => {
+			const cardId = dragCardId;
+			setDragCardId(null);
+			setDragOverStatus(null);
+			if (!cardId) return;
+			await moveCard(cardId, status);
+		},
+		[dragCardId, moveCard]
+	);
+
+	/** Editor "Move to" picker: persists immediately, like a drop would. */
+	const handleMoveDraft = useCallback(
+		async (status: CardStatus) => {
+			if (!draft?.id) return;
+			const moved = await moveCard(draft.id, status);
+			if (!moved) return;
+			// Keep the draft (and its dirty baseline) in step so the picker shows the
+			// new column and the move does not read as an unsaved edit.
+			setDraft((prev) => (prev ? { ...prev, status } : prev));
+			if (draftBaselineRef.current) {
+				draftBaselineRef.current = { ...draftBaselineRef.current, status };
+			}
+		},
+		[draft?.id, moveCard]
 	);
 
 	const inputStyle = {
@@ -492,6 +675,41 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		return map;
 	}, [board]);
 
+	// --- Keyboard grid navigation -------------------------------------------
+
+	/** Live tile elements, keyed by card id, so navigation can move DOM focus. */
+	const tileRefs = useRef(new Map<string, HTMLDivElement>());
+	const registerTile = useCallback((cardId: string, el: HTMLDivElement | null) => {
+		if (el) tileRefs.current.set(cardId, el);
+		else tileRefs.current.delete(cardId);
+	}, []);
+
+	/**
+	 * Arrow-key movement across the kanban grid: up/down within a column, left/
+	 * right to the nearest non-empty neighbouring column (clamping the row).
+	 */
+	const navigateTiles = useCallback(
+		(fromStatus: CardStatus, fromIndex: number, key: string) => {
+			if (key === 'ArrowUp' || key === 'ArrowDown') {
+				const cards = cardsByStatus.get(fromStatus) ?? [];
+				const nextIndex = key === 'ArrowDown' ? fromIndex + 1 : fromIndex - 1;
+				const target = cards[nextIndex];
+				if (target) tileRefs.current.get(target.id)?.focus();
+				return;
+			}
+			const step = key === 'ArrowRight' ? 1 : -1;
+			const from = CARD_STATUSES.indexOf(fromStatus);
+			for (let i = from + step; i >= 0 && i < CARD_STATUSES.length; i += step) {
+				const cards = cardsByStatus.get(CARD_STATUSES[i]) ?? [];
+				if (cards.length === 0) continue;
+				const target = cards[Math.min(fromIndex, cards.length - 1)];
+				tileRefs.current.get(target.id)?.focus();
+				return;
+			}
+		},
+		[cardsByStatus]
+	);
+
 	return createPortal(
 		<div
 			className="fixed inset-0 flex items-center justify-center select-none"
@@ -504,7 +722,12 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			<div className="absolute inset-0 bg-black/50" />
 
 			<div
-				className="relative rounded-xl shadow-2xl flex flex-col"
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={TITLE_ID}
+				tabIndex={-1}
+				className="relative rounded-xl shadow-2xl flex flex-col outline-none"
 				style={{
 					width: '94vw',
 					maxWidth: 1200,
@@ -516,28 +739,119 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			>
 				{/* Header */}
 				<div
-					className="shrink-0 flex items-center justify-between px-5 py-4 border-b"
+					className="shrink-0 flex items-center justify-between px-5 py-4 border-b gap-3"
 					style={{ borderColor: theme.colors.border }}
 				>
 					<div className="flex items-center gap-2 min-w-0">
 						<KanbanSquare className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
-						<h2 className="text-base font-bold truncate" style={{ color: theme.colors.textMain }}>
+						<h2
+							id={TITLE_ID}
+							className="text-base font-bold truncate"
+							style={{ color: theme.colors.textMain }}
+						>
 							{board ? board.name : 'Board'}
 						</h2>
+						{/* Board switcher (Phase 6). Hidden while renaming, which swaps in
+						    the name field in its place. */}
+						{board && !renaming && (
+							<select
+								value={board.id}
+								onChange={(e) => setSelectedBoardId(e.target.value)}
+								aria-label="Select board"
+								title="Switch board"
+								className="rounded-md px-2 py-1 text-xs outline-none max-w-[180px]"
+								style={inputStyle}
+							>
+								{boards.map((b) => (
+									<option key={b.id} value={b.id}>
+										{b.name}
+									</option>
+								))}
+							</select>
+						)}
+						{board && renaming && (
+							<input
+								value={renameValue}
+								autoFocus
+								onChange={(e) => setRenameValue(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') void commitRename();
+								}}
+								aria-label="Board name"
+								className="rounded-md px-2 py-1 text-xs outline-none max-w-[220px]"
+								style={inputStyle}
+							/>
+						)}
 						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 							task DAG · dispatched on the Cue tick
 						</span>
 					</div>
-					<div className="flex items-center gap-1">
+					<div className="flex items-center gap-1 shrink-0">
+						{board &&
+							!draft &&
+							(renaming ? (
+								<button
+									onClick={() => void commitRename()}
+									className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.success }}
+									aria-label="Save board name"
+									title="Save board name"
+								>
+									<Check className="w-4 h-4" />
+								</button>
+							) : (
+								<button
+									onClick={startRename}
+									className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textDim }}
+									aria-label="Rename board"
+									title="Rename this board"
+								>
+									<Pencil className="w-4 h-4" />
+								</button>
+							))}
 						{board && !draft && (
 							<button
+								onClick={() => setPendingBoardDelete(true)}
+								className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textDim }}
+								aria-label="Delete board"
+								title="Delete this board"
+							>
+								<Trash2 className="w-4 h-4" />
+							</button>
+						)}
+						{board && !draft && (
+							<button
+								onClick={() => void handleCreateBoard()}
+								disabled={creatingBoard}
+								className="rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5 disabled:opacity-40"
+								style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
+								title="Create another board for this project"
+							>
+								New board
+							</button>
+						)}
+						{board && !draft && profiles.length > 0 && (
+							<button
 								onClick={openNewCard}
-								disabled={profiles.length === 0}
-								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
 								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-								title={profiles.length === 0 ? 'Create an Agent Profile first' : 'Add a card'}
+								title="Add a card"
 							>
 								<Plus className="w-4 h-4" /> New card
+							</button>
+						)}
+						{/* No profiles yet: the hint is the action. Opens the Profiles modal
+						    (which layers above this one) instead of dead-ending the user. */}
+						{board && !draft && profiles.length === 0 && !loading && (
+							<button
+								onClick={() => getModalActions().setProfilesModalOpen(true)}
+								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
+								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+								title="Cards need a role to run. Opens Agent Profiles."
+							>
+								<Plus className="w-4 h-4" /> Create an Agent Profile first
 							</button>
 						)}
 						<button
@@ -600,6 +914,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							onToggleParent={toggleParent}
 							onSave={() => void handleSaveCard()}
 							onCancel={requestCloseEditor}
+							onMove={(status) => void handleMoveDraft(status)}
+							autoFocusMove={focusMovePicker}
 							profileName={profileName}
 							projectAgents={projectAgents}
 						/>
@@ -616,6 +932,10 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 									return (
 										<div
 											key={status}
+											role="group"
+											aria-label={`${meta.label}, ${cards.length} card${
+												cards.length === 1 ? '' : 's'
+											}`}
 											className="flex flex-col rounded-lg shrink-0"
 											style={{
 												width: 220,
@@ -657,7 +977,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 												</span>
 											</div>
 											<div className="flex-1 overflow-y-auto p-2 space-y-2">
-												{cards.map((card) => (
+												{cards.map((card, index) => (
 													<BoardCardTile
 														key={card.id}
 														theme={theme}
@@ -666,12 +986,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														profileName={profileName}
 														agentName={agentName}
 														dragging={dragCardId === card.id}
+														registerTile={registerTile}
 														onDragStart={() => setDragCardId(card.id)}
 														onDragEnd={() => {
 															setDragCardId(null);
 															setDragOverStatus(null);
 														}}
 														onClick={() => openEditCard(card)}
+														onMoveRequest={() => openEditCard(card, true)}
+														onNavigate={(key) => navigateTiles(status, index, key)}
 														onDelete={() => void handleDeleteCard(card.id)}
 														onCancelRun={() => void handleCancelCard(card.id)}
 													/>
@@ -692,6 +1015,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						</div>
 					)}
 				</div>
+
+				{/* Keyboard hint footer: the mouse affordances (drag, hover trash) are
+				    invisible to keyboard users otherwise. */}
+				{board && !draft && (
+					<div
+						className="shrink-0 px-4 py-2 border-t text-[11px]"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					>
+						Arrow keys move between cards · Enter opens the card · M opens its &quot;Move to&quot;
+						picker · Delete twice removes it
+					</div>
+				)}
 			</div>
 
 			{/* Unsaved-changes gate for Escape / backdrop / "Back to board". One
@@ -706,8 +1041,57 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					onClose={() => setPendingDiscard(null)}
 				/>
 			)}
+
+			{/* Board deletion: same warning the CLI prints before --force. */}
+			{pendingBoardDelete && board && (
+				<ConfirmModal
+					theme={theme}
+					title="Delete board?"
+					message={
+						openBoardCards > 0
+							? `"${board.name}" has ${openBoardCards} card${
+									openBoardCards === 1 ? '' : 's'
+								} that ${openBoardCards === 1 ? 'is' : 'are'} not done. Deleting the board deletes ${
+									openBoardCards === 1 ? 'it' : 'them'
+								} too. This cannot be undone.`
+							: `Delete "${board.name}" and all of its cards? This cannot be undone.`
+					}
+					confirmLabel="Delete board"
+					onConfirm={() => void handleDeleteBoard()}
+					onClose={() => setPendingBoardDelete(false)}
+				/>
+			)}
 		</div>,
 		document.body
+	);
+}
+
+// ---------------------------------------------------------------------------
+
+interface RunElapsedProps {
+	/** ISO timestamp the run started. */
+	startedAt: string;
+	className?: string;
+	style?: React.CSSProperties;
+}
+
+/**
+ * Ticking elapsed-time label for an in-flight run. Isolated in its own component
+ * so the 1-second interval re-renders one label, never the whole board, and it
+ * only exists while a `running` tile is on screen.
+ */
+function RunElapsed({ startedAt, className, style }: RunElapsedProps) {
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, []);
+	const started = Date.parse(startedAt);
+	if (!Number.isFinite(started)) return null;
+	return (
+		<span className={className} style={style}>
+			{formatElapsedTime(Math.max(0, now - started))}
+		</span>
 	);
 }
 
@@ -720,16 +1104,23 @@ interface BoardCardTileProps {
 	profileName: (id: string) => string;
 	agentName: (id: string) => string;
 	dragging: boolean;
+	/** Publishes the tile element so the grid can move focus onto it. */
+	registerTile: (cardId: string, el: HTMLDivElement | null) => void;
 	onDragStart: () => void;
 	onDragEnd: () => void;
 	onClick: () => void;
+	/** Open the editor focused on its "Move to" picker (the `m` shortcut). */
+	onMoveRequest: () => void;
+	/** Arrow-key navigation request; the board decides which tile gets focus. */
+	onNavigate: (key: string) => void;
 	onDelete: () => void;
 	/** Stop the in-flight run. Only rendered on `running` cards. */
 	onCancelRun: () => void;
 }
 
-/** A single draggable card. Shows its title, assignee, parent count, and a
- * "waiting on N" blocker badge (Phase 2 getBlockers). */
+/** A single draggable, focusable card. Shows its title, assignee, parent count,
+ * and a "waiting on N" blocker badge (Phase 2 getBlockers); running cards also
+ * show attempt, elapsed time, and which worker claimed them. */
 function BoardCardTile({
 	theme,
 	card,
@@ -737,9 +1128,12 @@ function BoardCardTile({
 	profileName,
 	agentName,
 	dragging,
+	registerTile,
 	onDragStart,
 	onDragEnd,
 	onClick,
+	onMoveRequest,
+	onNavigate,
 	onDelete,
 	onCancelRun,
 }: BoardCardTileProps) {
@@ -747,6 +1141,7 @@ function BoardCardTile({
 	// "click again to confirm" idiom the browser tab's clear-data button uses.
 	// It disarms itself so a stray click never leaves a live trigger sitting there.
 	const [deleteArmed, setDeleteArmed] = useState(false);
+	const [focused, setFocused] = useState(false);
 	const disarmTimerRef = useRef<number | null>(null);
 	useEffect(
 		() => () => {
@@ -754,23 +1149,61 @@ function BoardCardTile({
 		},
 		[]
 	);
+	/** First call arms, second deletes. Shared by the trash button and Delete key. */
+	const armOrDelete = useCallback(() => {
+		if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current);
+		if (!deleteArmed) {
+			setDeleteArmed(true);
+			disarmTimerRef.current = window.setTimeout(
+				() => setDeleteArmed(false),
+				DELETE_DISARM_MS
+			) as unknown as number;
+			return;
+		}
+		disarmTimerRef.current = null;
+		setDeleteArmed(false);
+		onDelete();
+	}, [deleteArmed, onDelete]);
+
 	const handleDeleteClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current);
-			if (!deleteArmed) {
-				setDeleteArmed(true);
-				disarmTimerRef.current = window.setTimeout(
-					() => setDeleteArmed(false),
-					DELETE_DISARM_MS
-				) as unknown as number;
-				return;
-			}
-			disarmTimerRef.current = null;
-			setDeleteArmed(false);
-			onDelete();
+			armOrDelete();
 		},
-		[deleteArmed, onDelete]
+		[armOrDelete]
+	);
+
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLDivElement>) => {
+			// Never hijack typing inside a nested control (the summary disclosure).
+			if (e.target !== e.currentTarget) return;
+			switch (e.key) {
+				case 'Enter':
+				case ' ':
+					e.preventDefault();
+					onClick();
+					return;
+				case 'm':
+				case 'M':
+					e.preventDefault();
+					onMoveRequest();
+					return;
+				case 'Delete':
+				case 'Backspace':
+					e.preventDefault();
+					armOrDelete();
+					return;
+				case 'ArrowUp':
+				case 'ArrowDown':
+				case 'ArrowLeft':
+				case 'ArrowRight':
+					e.preventDefault();
+					onNavigate(e.key);
+					return;
+				default:
+			}
+		},
+		[onClick, onMoveRequest, onNavigate, armOrDelete]
 	);
 
 	const priorityMeta = PRIORITY_META[card.priority ?? 'normal'];
@@ -801,22 +1234,42 @@ function BoardCardTile({
 	// holds its output - nothing merges or removes it automatically.
 	const runBranch = latestRun?.worktreeBranch;
 	const runWorktreePath = latestRun?.worktreePath;
+	// Phase 6: a running card says how long it has been going, which attempt this
+	// is, and which pooled worker claimed it.
+	const isRunning = card.status === 'running';
+	const workerText = latestRun?.workerAgentId ? agentName(latestRun.workerAgentId) : null;
 	// Assignee label: role (profile) and/or a 📌 pinned agent; "pool" when the
 	// card floats to any free worker.
 	const roleText = card.assigneeProfileId ? profileName(card.assigneeProfileId) : null;
 	const pinText = card.assigneeAgentId ? `📌 ${agentName(card.assigneeAgentId)}` : null;
 	const assigneeText =
 		roleText && pinText ? `${roleText} · ${pinText}` : (roleText ?? pinText ?? 'pool');
+	// The run details disclosure is available WHILE running too, not just after.
+	const showRunDetails = !!latestSummary || !!runBranch || (isRunning && !!latestRun);
 	return (
 		<div
+			ref={(el) => registerTile(card.id, el)}
 			draggable
+			role="button"
+			tabIndex={0}
+			aria-label={`${card.title}, ${STATUS_META[card.status].label}`}
 			onDragStart={onDragStart}
 			onDragEnd={onDragEnd}
 			onClick={onClick}
-			className="group rounded-md px-2.5 py-2 cursor-grab active:cursor-grabbing transition-opacity"
+			onKeyDown={handleKeyDown}
+			onFocus={(e) => {
+				if (e.target === e.currentTarget) setFocused(true);
+			}}
+			onBlur={(e) => {
+				if (e.target === e.currentTarget) setFocused(false);
+			}}
+			className="group rounded-md px-2.5 py-2 cursor-grab active:cursor-grabbing transition-opacity outline-none"
 			style={{
 				backgroundColor: theme.colors.bgMain,
-				border: `1px solid ${theme.colors.border}`,
+				border: `1px solid ${focused ? theme.colors.accent : theme.colors.border}`,
+				// Themed focus ring: inline styles cannot express focus-visible, and the
+				// tile is the keyboard grid's cursor, so the ring has to be explicit.
+				boxShadow: focused ? `0 0 0 2px ${theme.colors.accent}66` : undefined,
 				opacity: dragging ? 0.4 : 1,
 			}}
 		>
@@ -828,7 +1281,7 @@ function BoardCardTile({
 					{card.title}
 				</div>
 				<div className="flex items-center gap-0.5 shrink-0">
-					{card.status === 'running' && (
+					{isRunning && (
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
@@ -874,6 +1327,28 @@ function BoardCardTile({
 				>
 					{assigneeText}
 				</span>
+				{isRunning && latestRun && (
+					<span
+						className="text-[10px] rounded px-1.5 py-0.5"
+						style={{
+							backgroundColor: theme.colors.warning + '22',
+							color: theme.colors.warning,
+						}}
+						title={`Attempt ${latestRun.attempt}, started ${latestRun.startedAt}`}
+					>
+						attempt {latestRun.attempt} ·{' '}
+						<RunElapsed startedAt={latestRun.startedAt} style={{ color: theme.colors.warning }} />
+					</span>
+				)}
+				{isRunning && workerText && (
+					<span
+						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title={`Running on worker "${workerText}"`}
+					>
+						⚙ {workerText}
+					</span>
+				)}
 				{card.parents.length > 0 && (
 					<span
 						className="text-[10px] rounded px-1.5 py-0.5"
@@ -903,7 +1378,7 @@ function BoardCardTile({
 					</span>
 				)}
 			</div>
-			{(latestSummary || runBranch) && (
+			{showRunDetails && latestRun && (
 				<details
 					className="mt-1.5 select-text"
 					// Stop the click bubbling to the tile so toggling the summary doesn't
@@ -914,8 +1389,21 @@ function BoardCardTile({
 						className="text-[10px] cursor-pointer list-none opacity-70 hover:opacity-100"
 						style={{ color: theme.colors.textDim }}
 					>
-						Last run summary
+						{isRunning ? 'Run details' : 'Last run summary'}
 					</summary>
+					{/* Board runs are headless `executeCuePrompt` spawns with no visible
+					    tab, so this is the live view: status, elapsed, worker, branch. */}
+					<div className="mt-1 text-[10px] leading-snug" style={{ color: theme.colors.textDim }}>
+						{isRunning ? 'Running' : (latestRun.outcome ?? 'finished')} · attempt{' '}
+						{latestRun.attempt}
+						{isRunning && (
+							<>
+								{' · '}
+								<RunElapsed startedAt={latestRun.startedAt} />
+							</>
+						)}
+						{workerText ? ` · worker ${workerText}` : ''}
+					</div>
 					{latestSummary && (
 						<div
 							className="mt-1 text-[10px] leading-snug whitespace-pre-wrap"
@@ -955,6 +1443,10 @@ interface CardEditorProps {
 	onToggleParent: (parentId: string) => void;
 	onSave: () => void;
 	onCancel: () => void;
+	/** Persist a column change immediately (existing cards only). */
+	onMove: (status: CardStatus) => void;
+	/** Land focus on the "Move to" picker (the tile's `m` shortcut). */
+	autoFocusMove: boolean;
 	profileName: (id: string) => string;
 	projectAgents: { id: string; name: string; isWorker: boolean }[];
 }
@@ -975,11 +1467,22 @@ function CardEditor({
 	onToggleParent,
 	onSave,
 	onCancel,
+	onMove,
+	autoFocusMove,
 	profileName,
 	projectAgents,
 }: CardEditorProps) {
 	// Candidate parents are every other card (a card cannot depend on itself).
 	const candidateParents = board.cards.filter((c) => c.id !== draft.id);
+	const isExisting = draft.id !== null;
+	const moveRef = useRef<HTMLSelectElement>(null);
+	// One-shot, like the dialog's initial focus: without it every later render
+	// (a `board:changed` push, a keystroke) would yank focus back to the picker.
+	const moveFocusDone = useRef(false);
+	useFocusAfterRender(moveRef, autoFocusMove && isExisting && !moveFocusDone.current);
+	useEffect(() => {
+		moveFocusDone.current = true;
+	}, []);
 
 	return (
 		<div className="flex-1 overflow-y-auto p-5 space-y-4 select-text">
@@ -1088,13 +1591,21 @@ function CardEditor({
 				</label>
 				<label className="block space-y-1 w-40">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Status
+						{isExisting ? 'Move to' : 'Status'}
 					</span>
+					{/* On an existing card this is the keyboard route for what drag-and-drop
+					    does with a mouse: it persists immediately (setCardStatus), with the
+					    same dispatcher guards. On a NEW card there is nothing to move yet,
+					    so it just seeds the draft's starting column. */}
 					<select
+						ref={moveRef}
 						value={draft.status}
-						onChange={(e) =>
-							setDraft((p) => (p ? { ...p, status: e.target.value as CardStatus } : p))
-						}
+						onChange={(e) => {
+							const status = e.target.value as CardStatus;
+							if (isExisting) onMove(status);
+							else setDraft((p) => (p ? { ...p, status } : p));
+						}}
+						aria-label={isExisting ? 'Move to' : 'Status'}
 						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
 						style={inputStyle}
 					>
