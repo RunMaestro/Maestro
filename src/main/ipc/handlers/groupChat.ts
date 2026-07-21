@@ -142,7 +142,7 @@ export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
  */
 export function isExpectedGroomingFailure(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
-	return /Session not found/i.test(message) || /is not available/i.test(message);
+	return /Session not found/i.test(message) || /Agent .* is not available/i.test(message);
 }
 
 /**
