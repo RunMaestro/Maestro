@@ -107,6 +107,18 @@ export interface CardRun {
 	 * legacy single-agent runs.
 	 */
 	workerAgentId?: string;
+	/**
+	 * Absolute path of the isolated git worktree this attempt ran in (Board
+	 * Phase 4). Set only when the card opted into worktree isolation; absent
+	 * means the attempt ran in the shared project root.
+	 */
+	worktreePath?: string;
+	/**
+	 * Branch checked out in {@link worktreePath}. Recorded so a finished card
+	 * tells the user exactly which branch holds its output (the branch is never
+	 * auto-merged or auto-deleted).
+	 */
+	worktreeBranch?: string;
 	/** Free-form dispatcher metadata (session id, tokens, etc.). */
 	metadata?: Record<string, unknown>;
 }
@@ -241,6 +253,10 @@ function validateCardRun(raw: unknown): CardRun | null {
 	if (summary !== undefined) run.summary = summary;
 	const workerAgentId = optionalString(r.workerAgentId);
 	if (workerAgentId !== undefined) run.workerAgentId = workerAgentId;
+	const worktreePath = optionalString(r.worktreePath);
+	if (worktreePath !== undefined) run.worktreePath = worktreePath;
+	const worktreeBranch = optionalString(r.worktreeBranch);
+	if (worktreeBranch !== undefined) run.worktreeBranch = worktreeBranch;
 	if (r.metadata && typeof r.metadata === 'object' && !Array.isArray(r.metadata)) {
 		run.metadata = r.metadata as Record<string, unknown>;
 	}

@@ -88,3 +88,35 @@ describe('validateCardRun outcomes', () => {
 		expect(junk?.runs?.[0].outcome).toBeUndefined();
 	});
 });
+
+describe('validateCardRun worktree fields (Phase 4)', () => {
+	it('round-trips the worktree path and branch of an isolated attempt', () => {
+		const card = validateBoardCard(
+			raw({
+				runs: [
+					{
+						attempt: 1,
+						startedAt: NOW,
+						outcome: 'done',
+						worktreePath: '/repos/worktrees/board/1a2b3c4d/5e6f7a8b',
+						worktreeBranch: 'board/1a2b3c4d/5e6f7a8b',
+					},
+				],
+			})
+		);
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(card)));
+		expect(reloaded?.runs?.[0]).toMatchObject({
+			worktreePath: '/repos/worktrees/board/1a2b3c4d/5e6f7a8b',
+			worktreeBranch: 'board/1a2b3c4d/5e6f7a8b',
+		});
+	});
+
+	it('drops blank or non-string worktree fields instead of rejecting the run', () => {
+		const card = validateBoardCard(
+			raw({ runs: [{ attempt: 1, startedAt: NOW, worktreePath: '   ', worktreeBranch: 42 }] })
+		);
+		expect(card?.runs?.[0].attempt).toBe(1);
+		expect(card?.runs?.[0].worktreePath).toBeUndefined();
+		expect(card?.runs?.[0].worktreeBranch).toBeUndefined();
+	});
+});

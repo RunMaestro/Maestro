@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execFileSync } from 'child_process';
 
 const mockGetSessionById = vi.fn();
 const mockResolveAgentId = vi.fn();
@@ -21,6 +22,13 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: (id: string) => mockGetSessionById(id),
 	resolveAgentId: (partial: string) => mockResolveAgentId(partial),
 	readSessions: () => mockReadSessions(),
+}));
+
+// `board tick` is the only command that spawns; the agent itself is faked so
+// the test asserts WHERE it was told to run (Phase 4 worktree isolation).
+const mockSpawnAgent = vi.fn();
+vi.mock('../../../cli/services/agent-spawner', () => ({
+	spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
 }));
 
 import {
@@ -33,6 +41,7 @@ import {
 	boardUpdateCard,
 	boardRemoveCard,
 	boardSetStatus,
+	boardTick,
 	boardWatch,
 } from '../../../cli/commands/board';
 import { createBoard, addCard, loadBoards } from '../../../main/board/board-storage';
@@ -192,7 +201,7 @@ describe('maestro-cli board', () => {
 		expect(boards[0].cards[0].status).toBe('todo');
 	});
 
-	it('board add-card --worktree records an advisory worktree ref', async () => {
+	it('board add-card --worktree records the conventional worktree ref', async () => {
 		const b = createBoard(projectRoot, 'B');
 		await boardAddCard(b.id, {
 			agent: 'Alpha',
@@ -202,7 +211,11 @@ describe('maestro-cli board', () => {
 			json: true,
 		});
 		const created = loadBoards(projectRoot)[0].cards[0];
-		expect(created.worktree?.path).toContain(path.join('.maestro', 'worktrees'));
+		// Branch `board/<board-8>/<card-8>`, checked out BESIDE the project (a
+		// worktree nested inside the repo is refused by git provisioning).
+		expect(created.worktree?.branch).toBe(`board/${b.id.slice(0, 8)}/${created.id.slice(0, 8)}`);
+		expect(created.worktree?.path).toContain(path.join('worktrees', 'board'));
+		expect(created.worktree?.path.startsWith(projectRoot + path.sep)).toBe(false);
 	});
 
 	it('board add-card --priority stores high/low and drops the default', async () => {
@@ -283,7 +296,7 @@ describe('maestro-cli board', () => {
 		expect(updated.assigneeAgentId).toBe('agent-9');
 		expect(updated.parents).toEqual([]);
 		expect(updated.priority).toBe('high');
-		expect(updated.worktree?.branch).toBe('board/c1');
+		expect(updated.worktree?.branch).toBe(`board/${b.id.slice(0, 8)}/c1`);
 	});
 
 	it('board update-card --priority normal clears an explicit priority', async () => {
@@ -408,6 +421,105 @@ describe('maestro-cli board', () => {
 			await boardWatch({ agent: 'Alpha', interval: '1', json: true });
 			await boardWatch({ agent: 'Alpha', interval: 'soon', json: true });
 			expect(exitSpy).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	// Phase 4: `board tick` provisions a card's isolated worktree before spawning
+	// and hands the agent that checkout as its cwd. Driven against a REAL git repo
+	// (only the agent process is faked) so the provisioning is genuinely exercised.
+	describe('board tick worktree isolation', () => {
+		let repoRoot = '';
+
+		/** git-init a repo with one commit inside the per-test temp dir. */
+		function initRepo(): string {
+			const root = path.join(projectRoot, 'repo');
+			fs.mkdirSync(root);
+			const run = (args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+			run(['init', '-b', 'main']);
+			run(['config', 'user.email', 'test@example.com']);
+			run(['config', 'user.name', 'Test']);
+			fs.writeFileSync(path.join(root, 'README.md'), '# repo\n');
+			run(['add', '.']);
+			run(['commit', '-m', 'init']);
+			return root;
+		}
+
+		beforeEach(() => {
+			repoRoot = initRepo();
+			const session = {
+				id: 'agent-1',
+				name: 'Alpha',
+				toolType: 'claude-code',
+				projectRoot: repoRoot,
+				cwd: repoRoot,
+				boardWorker: true,
+			};
+			mockGetSessionById.mockReturnValue(session);
+			mockReadSessions.mockReturnValue([session]);
+			mockSpawnAgent.mockResolvedValue({
+				success: true,
+				response: '<!-- maestro:card-complete | did it -->',
+			});
+		});
+
+		/** Create a board with one ready card pinned to the agent, optionally isolated. */
+		function seedBoard(worktree?: { path: string; branch: string }) {
+			const board = createBoard(repoRoot, 'Tick board');
+			const { assigneeProfileId: _role, ...pinned } = card('c1', {
+				status: 'ready',
+				assigneeAgentId: 'agent-1',
+			});
+			addCard(repoRoot, board.id, { ...pinned, ...(worktree ? { worktree } : {}) });
+			return board;
+		}
+
+		it('creates the worktree and spawns the agent inside it', async () => {
+			const branch = 'board/tick/c1';
+			const worktreePath = path.join(projectRoot, 'worktrees', branch);
+			seedBoard({ path: worktreePath, branch });
+
+			await boardTick({ agent: 'Alpha', json: true });
+
+			expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+			// spawnAgent(toolType, cwd, prompt, ...) - the cwd is the checkout.
+			expect(mockSpawnAgent.mock.calls[0][1]).toBe(worktreePath);
+			expect(fs.existsSync(path.join(worktreePath, 'README.md'))).toBe(true);
+
+			const stored = loadBoards(repoRoot)[0].cards[0];
+			expect(stored.status).toBe('done');
+			expect(stored.runs?.[0]).toMatchObject({ worktreePath, worktreeBranch: branch });
+		});
+
+		it('spawns in the project root when the card is not isolated', async () => {
+			seedBoard();
+
+			await boardTick({ agent: 'Alpha', json: true });
+
+			expect(mockSpawnAgent.mock.calls[0][1]).toBe(repoRoot);
+			expect(loadBoards(repoRoot)[0].cards[0].runs?.[0].worktreePath).toBeUndefined();
+		});
+
+		it('blocks an isolated card on an SSH remote instead of running in the project root', async () => {
+			const session = {
+				id: 'agent-1',
+				name: 'Alpha',
+				toolType: 'claude-code',
+				projectRoot: repoRoot,
+				cwd: repoRoot,
+				boardWorker: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			};
+			mockGetSessionById.mockReturnValue(session);
+			mockReadSessions.mockReturnValue([session]);
+			const branch = 'board/tick/ssh';
+			seedBoard({ path: path.join(projectRoot, 'worktrees', branch), branch });
+
+			await boardTick({ agent: 'Alpha', json: true });
+
+			expect(mockSpawnAgent).not.toHaveBeenCalled();
+			const stored = loadBoards(repoRoot)[0].cards[0];
+			expect(stored.status).toBe('blocked');
+			expect(stored.runs?.[0].summary).toMatch(/SSH remotes/i);
 		});
 	});
 

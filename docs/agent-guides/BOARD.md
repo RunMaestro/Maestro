@@ -15,12 +15,14 @@ src/shared/board/
 ├── types.ts          # Board / BoardCard / CardStatus / CardRun / WorktreeRef + validators (pure)
 ├── graph.ts          # getEligibleCards / getBlockers / hasCycle (pure DAG helpers)
 ├── cardMarkers.ts    # parseCardMarkers + CARD_HANDOFF_REMINDER (pure)
-└── pool.ts           # Phase 6 worker-pool selection: isPathWithin / selectPoolAgentIds (pure)
+├── pool.ts           # Phase 6 worker-pool selection: isPathWithin / selectPoolAgentIds (pure)
+└── worktree.ts       # per-card worktree branch/path naming (pure)
 
 src/main/board/
 ├── board-storage.ts    # single owner of .maestro/board.yaml (load/save/mutations)
 ├── board-dispatcher.ts # pure-ish orchestrator: promote / claim / apply / reclaim (side effects injected)
 ├── board-spawn.ts      # host wiring: resolve profile -> base agent, run via executeCuePrompt
+├── board-worktree.ts   # per-card worktree provisioning (wraps setupWorktreeLocal)
 └── board-decompose.ts  # OPTIONAL auto-decompose (off by default): parse + fan a triage card
 
 src/shared/profiles/types.ts   # AgentProfile + resolveProfileSpawnOverrides + validator (pure)
@@ -92,6 +94,18 @@ By default (no `assign` dep) the dispatcher runs the **legacy path**: one card r
 - **Assignee resolution** (`resolveCardAssignment` in `board-spawn.ts`, mirrored by `resolveCliAssignment`): a named-but-missing profile -> `unresolvable` (block); a pinned agent (`card.assigneeAgentId`, or a legacy profile's `baseAgentId`) -> a single candidate; a role-only card -> the free project pool. The first candidate **not** already running a board card wins (`computeBusyAgentIds` recomputes the busy set from the persisted board each tick, so "one card per worker" survives restarts - the worker id is stamped on `CardRun.workerAgentId`).
 - **All busy -> wait, don't block.** When every candidate is busy (or the pool is empty), `assign` returns `no-free-worker`; the card stays `ready` and retries on a later tick. Concurrency is bounded by free-worker count **and** the WIP cap (whichever is lower).
 - **Card assignee** (`BoardCard`): `assigneeProfileId` (role) and/or `assigneeAgentId` (pin); at least one is required (`validateBoardCard`). Set from `BoardModal` (Role + "Pin to agent" selects) or the CLI (`board add-card --assignee <profileId> --assignee-agent <agentId>`).
+
+---
+
+## Worktree isolation (per card)
+
+A card carrying a `WorktreeRef` runs in its own checkout instead of the shared project root, so cards dispatched in the same tick cannot collide.
+
+- **One provisioning implementation.** `setupWorktreeLocal` in `src/main/utils/git-worktree.ts` is the only local `git worktree add` in the app: the `git:worktreeSetup` IPC handler (Auto Run) and `ensureCardWorktree` in `board-worktree.ts` (Board) both call it. Do NOT hand-roll git worktree shell calls.
+- **Naming** comes from `src/shared/board/worktree.ts` (pure, so the renderer editor, the CLI `--worktree` flag, and the dispatcher agree): branch `board/<boardId-8>/<cardId-8>`, checked out at `<sibling-of-projectRoot>/worktrees/<branch>`. The sibling layout is mandatory - `setupWorktreeLocal` refuses a worktree nested inside the main repo.
+- **Lifecycle:** created lazily on the first claim that spawns the card, reused by every retry, never auto-deleted and never auto-merged. The branch is surfaced in the completion toast, on the card tile, and in the "Last run summary"; merging is the user's job (see [board.md](../board.md)).
+- **The cwd switch happens in the spawner, not the dispatcher.** `board-spawn.ts` passes the checkout as `CueExecutionConfig.projectRoot` (which IS the spawn cwd); the CLI passes it as `spawnAgent`'s cwd. The resolved path/branch come back on `CardSpawnResult` and `applyCardResult` stamps them onto the `CardRun`.
+- **SSH is refused, not silently downgraded.** An agent with `sshRemoteConfig.enabled` executes on the remote host where a locally created worktree does not exist, so an isolated card on such an agent is blocked with a reason.
 
 ---
 

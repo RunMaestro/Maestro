@@ -7,6 +7,7 @@ import type { Board, BoardCard, CardPriority, CardStatus } from '../../shared/bo
 import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers, hasCycle } from '../../shared/board/graph';
 import { isPathWithin } from '../../shared/board/pool';
+import { buildCardWorktreeRef } from '../../shared/board/worktree';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -56,6 +57,9 @@ interface CardDraft {
 	assigneeAgentId: string; // '' = not pinned; else a specific agent runs this card
 	parents: string[];
 	priority: CardPriority;
+	/** "Run in isolated worktree" (Phase 4). The two fields below are optional
+	 * overrides of the conventional branch/path derived from the board + card id. */
+	worktreeEnabled: boolean;
 	worktreePath: string;
 	worktreeBranch: string;
 	status: CardStatus;
@@ -212,6 +216,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			assigneeAgentId: '',
 			parents: [],
 			priority: 'normal',
+			worktreeEnabled: false,
 			worktreePath: '',
 			worktreeBranch: '',
 			status: 'todo',
@@ -230,6 +235,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			assigneeAgentId: card.assigneeAgentId ?? '',
 			parents: [...card.parents],
 			priority: card.priority ?? 'normal',
+			worktreeEnabled: !!card.worktree,
 			worktreePath: card.worktree?.path ?? '',
 			worktreeBranch: card.worktree?.branch ?? '',
 			status: card.status,
@@ -303,8 +309,13 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		if (!draft || !board || !projectRoot || !canSaveDraft) return;
 
 		const now = new Date().toISOString();
+		const cardId = draft.id ?? generateUUID();
+		// Phase 4: the toggle expresses intent; blank path/branch fields fall back
+		// to the conventional `board/<board>/<card>` naming the CLI and dispatcher
+		// derive from the same helper, so an isolated card is predictable.
+		const autoWorktree = buildCardWorktreeRef(projectRoot, board.id, cardId);
 		const card: BoardCard = {
-			id: draft.id ?? generateUUID(),
+			id: cardId,
 			title: draft.title.trim(),
 			body: draft.body,
 			parents: draft.parents,
@@ -318,11 +329,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			...(draft.assigneeAgentId ? { assigneeAgentId: draft.assigneeAgentId } : {}),
 			// `normal` is the default and is never serialized.
 			...(draft.priority !== 'normal' ? { priority: draft.priority } : {}),
-			...(draft.worktreePath.trim()
+			...(draft.worktreeEnabled
 				? {
 						worktree: {
-							path: draft.worktreePath.trim(),
-							...(draft.worktreeBranch.trim() ? { branch: draft.worktreeBranch.trim() } : {}),
+							path: draft.worktreePath.trim() || autoWorktree.path,
+							branch: draft.worktreeBranch.trim() || autoWorktree.branch,
 						},
 					}
 				: {}),
@@ -784,7 +795,12 @@ function BoardCardTile({
 			: 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100';
 	// The most recent run's handoff summary (from a `card-complete | summary`
 	// marker), surfaced as optional expandable metadata.
-	const latestSummary = card.runs?.[card.runs.length - 1]?.summary;
+	const latestRun = card.runs?.[card.runs.length - 1];
+	const latestSummary = latestRun?.summary;
+	// Phase 4: when the last attempt ran in an isolated worktree, say which branch
+	// holds its output - nothing merges or removes it automatically.
+	const runBranch = latestRun?.worktreeBranch;
+	const runWorktreePath = latestRun?.worktreePath;
 	// Assignee label: role (profile) and/or a 📌 pinned agent; "pool" when the
 	// card floats to any free worker.
 	const roleText = card.assigneeProfileId ? profileName(card.assigneeProfileId) : null;
@@ -877,8 +893,17 @@ function BoardCardTile({
 							: `${card.parents.length} parent${card.parents.length === 1 ? '' : 's'}`}
 					</span>
 				)}
+				{runBranch && (
+					<span
+						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full select-text"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title={`Last run used the worktree at ${runWorktreePath ?? 'an isolated checkout'} on branch ${runBranch}`}
+					>
+						🌳 {runBranch}
+					</span>
+				)}
 			</div>
-			{latestSummary && (
+			{(latestSummary || runBranch) && (
 				<details
 					className="mt-1.5 select-text"
 					// Stop the click bubbling to the tile so toggling the summary doesn't
@@ -891,12 +916,24 @@ function BoardCardTile({
 					>
 						Last run summary
 					</summary>
-					<div
-						className="mt-1 text-[10px] leading-snug whitespace-pre-wrap"
-						style={{ color: theme.colors.textDim }}
-					>
-						{latestSummary}
-					</div>
+					{latestSummary && (
+						<div
+							className="mt-1 text-[10px] leading-snug whitespace-pre-wrap"
+							style={{ color: theme.colors.textDim }}
+						>
+							{latestSummary}
+						</div>
+					)}
+					{runBranch && (
+						<div
+							className="mt-1 text-[10px] leading-snug break-all"
+							style={{ color: theme.colors.textDim }}
+						>
+							Worktree branch <span style={{ color: theme.colors.textMain }}>{runBranch}</span>
+							{runWorktreePath ? ` at ${runWorktreePath}` : ''}. Review and merge it yourself -
+							Maestro never merges or removes a card branch.
+						</div>
+					)}
 				</details>
 			)}
 		</div>
@@ -1070,33 +1107,54 @@ function CardEditor({
 				</label>
 			</div>
 
-			{/* Worktree (optional): the dispatcher fills this when it runs a card,
-			    but a user can pin an explicit worktree path/branch up front. */}
-			<div className="flex gap-3 flex-wrap">
-				<label className="block space-y-1 flex-1 min-w-[180px]">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Worktree path (optional)
-					</span>
+			{/* Worktree isolation (Phase 4). Opt-in: the card runs in its own git
+			    checkout so parallel cards never share a working tree. The path and
+			    branch fields are optional overrides of the conventional naming. */}
+			<div className="space-y-2">
+				<label className="flex items-center gap-2 cursor-pointer">
 					<input
-						value={draft.worktreePath}
-						onChange={(e) => setDraft((p) => (p ? { ...p, worktreePath: e.target.value } : p))}
-						placeholder="dispatcher decides if left blank"
-						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-						style={inputStyle}
+						type="checkbox"
+						checked={draft.worktreeEnabled}
+						onChange={(e) => setDraft((p) => (p ? { ...p, worktreeEnabled: e.target.checked } : p))}
+						className="cursor-pointer"
 					/>
-				</label>
-				<label className="block space-y-1 w-48">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Worktree branch (optional)
+					<span className="text-xs" style={{ color: theme.colors.textMain }}>
+						Run in isolated worktree
 					</span>
-					<input
-						value={draft.worktreeBranch}
-						onChange={(e) => setDraft((p) => (p ? { ...p, worktreeBranch: e.target.value } : p))}
-						placeholder="branch"
-						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-						style={inputStyle}
-					/>
+					<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+						(branch is created on first run and never auto-merged)
+					</span>
 				</label>
+				{draft.worktreeEnabled && (
+					<div className="flex gap-3 flex-wrap">
+						<label className="block space-y-1 flex-1 min-w-[180px]">
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Worktree path (optional)
+							</span>
+							<input
+								value={draft.worktreePath}
+								onChange={(e) => setDraft((p) => (p ? { ...p, worktreePath: e.target.value } : p))}
+								placeholder="auto: sibling worktrees/ folder"
+								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+								style={inputStyle}
+							/>
+						</label>
+						<label className="block space-y-1 w-48">
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Worktree branch (optional)
+							</span>
+							<input
+								value={draft.worktreeBranch}
+								onChange={(e) =>
+									setDraft((p) => (p ? { ...p, worktreeBranch: e.target.value } : p))
+								}
+								placeholder="auto: board/<board>/<card>"
+								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+								style={inputStyle}
+							/>
+						</label>
+					</div>
+				)}
 			</div>
 
 			{/* Parent cards (multi-select). Selecting a set that would create a

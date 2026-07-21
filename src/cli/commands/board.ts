@@ -13,7 +13,6 @@
  * overrides are honored exactly as the desktop dispatcher honors them.
  */
 
-import * as path from 'path';
 import { generateUUID } from '../../shared/uuid';
 import {
 	listBoards,
@@ -48,6 +47,8 @@ import {
 	type ProfileSpawnOverrides,
 } from '../../shared/profiles/types';
 import { selectPoolAgentIds } from '../../shared/board/pool';
+import { buildCardWorktreeRef } from '../../shared/board/worktree';
+import { ensureCardWorktree, WORKTREE_SSH_UNSUPPORTED } from '../../main/board/board-worktree';
 import { listProfiles } from '../../main/profiles/profile-storage';
 import { autoDecomposeBoard, type DecomposeSpawn } from '../../main/board/board-decompose';
 import { readSessions, getSessionById, resolveAgentId } from '../services/storage';
@@ -358,7 +359,8 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 		if (assigneeAgent) card.assigneeAgentId = assigneeAgent;
 		// `normal` is the default and is never serialized.
 		if (priority === 'high' || priority === 'low') card.priority = priority;
-		if (options.worktree) card.worktree = buildWorktreeRef(session.projectRoot, cardId);
+		if (options.worktree)
+			card.worktree = buildCardWorktreeRef(session.projectRoot, board.id, cardId);
 
 		addCard(session.projectRoot, board.id, card);
 
@@ -444,7 +446,7 @@ export async function boardUpdateCard(
 			changed = true;
 		}
 		if (options.worktree === true) {
-			next.worktree = buildWorktreeRef(session.projectRoot, card.id);
+			next.worktree = buildCardWorktreeRef(session.projectRoot, board.id, card.id);
 			changed = true;
 		} else if (options.worktree === false) {
 			delete next.worktree;
@@ -932,21 +934,47 @@ async function spawnCard(
 		: `${CARD_HANDOFF_REMINDER}\n\n---\n\n`;
 	const prompt = `${rolePreamble}${card.title}\n\n${card.body}`.trim();
 
-	const result = await spawnAgent(base.toolType as ToolType, projectRoot, prompt, undefined, {
-		customModel: overrides.customModel,
-		customEffort: overrides.customEffort,
-		customArgs: overrides.customArgs,
-		customEnvVars: base.customEnvVars,
-		sshRemoteConfig: base.sessionSshRemoteConfig,
-		enableMaestroP: base.enableMaestroP,
-		maestroPMode: base.maestroPMode,
-		maestroPPath: base.maestroPPath,
-	});
+	// Phase 4: a card that opted into isolation runs in its own checkout, created
+	// on first claim and reused by later attempts. Same provisioning helper the
+	// desktop path uses, so CLI and desktop cannot drift. A failure blocks the
+	// card rather than silently sharing the project root with other cards.
+	let worktree: { path: string; branch: string } | undefined;
+	if (card.worktree) {
+		if (base.sessionSshRemoteConfig?.enabled) {
+			return { output: `<!-- maestro:card-block: ${WORKTREE_SSH_UNSUPPORTED} -->`, exitCode: 0 };
+		}
+		const ensured = await ensureCardWorktree(projectRoot, card.worktree);
+		if (!ensured.ok) {
+			return {
+				output: `<!-- maestro:card-block: Card worktree unavailable: ${ensured.reason} -->`,
+				exitCode: 0,
+			};
+		}
+		worktree = { path: ensured.path, branch: ensured.branch };
+	}
+
+	const result = await spawnAgent(
+		base.toolType as ToolType,
+		worktree?.path ?? projectRoot,
+		prompt,
+		undefined,
+		{
+			customModel: overrides.customModel,
+			customEffort: overrides.customEffort,
+			customArgs: overrides.customArgs,
+			customEnvVars: base.customEnvVars,
+			sshRemoteConfig: base.sessionSshRemoteConfig,
+			enableMaestroP: base.enableMaestroP,
+			maestroPMode: base.maestroPMode,
+			maestroPPath: base.maestroPPath,
+		}
+	);
 
 	return {
 		output: result.response ?? '',
 		exitCode: result.success ? 0 : 1,
 		error: result.success ? undefined : result.error,
+		...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
 	};
 }
 
@@ -996,18 +1024,6 @@ function parsePriority(raw: string | undefined): string {
 		throw new Error(`Invalid --priority "${raw}". Use one of: high, normal, low.`);
 	}
 	return priority;
-}
-
-/**
- * Advisory worktree intent: a conventional isolated checkout path for a card.
- * The dispatcher currently runs cards in the project root; this ref is metadata
- * the desktop worktree-aware path can honor later.
- */
-function buildWorktreeRef(projectRoot: string, cardId: string): { path: string; branch: string } {
-	return {
-		path: path.join(projectRoot, '.maestro', 'worktrees', cardId),
-		branch: `board/${cardId.slice(0, 8)}`,
-	};
 }
 
 /** Short human-facing assignee label: role profile and/or pinned agent. */

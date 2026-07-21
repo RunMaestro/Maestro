@@ -94,6 +94,30 @@ Precedence: a block marker wins (the card goes to `blocked`); otherwise a comple
 
 With `autoDecompose: true` on a board, the dispatcher may take a `triage` card and run one LLM pass to fan it into a small graph of child cards, with their dependencies wired. It is capped per tick (three triage cards by default) to prevent runaway expansion, and a decomposed triage card is retired to `done` so it is never re-expanded. When the flag is off (the default), `triage` cards simply wait for manual promotion. The decomposition prompt is the editable `board-decompose` core prompt (Settings, Maestro Prompts).
 
+## Worktree cards
+
+A card can run in its own git worktree instead of the shared project directory. Turn on **Run in isolated worktree** in the card editor, or pass `--worktree` to `board add-card` / `board update-card`. Parallel cards then edit different working trees, so two agents dispatched in the same tick cannot collide on each other's files or git state.
+
+What happens:
+
+- The checkout is created on the card's first run, on branch `board/<board-id>/<card-id>` (first eight characters of each id), in a `worktrees/` folder beside your project directory. Set an explicit path or branch on the card to override either.
+- Retries reuse the same worktree, so a second attempt continues the work instead of starting from a clean tree.
+- When the card finishes, the branch name appears in the completion toast, as a badge on the card tile, and under the card's **Last run summary**.
+- Nothing is merged or deleted for you. The branch and its checkout stay exactly where the agent left them.
+
+Merging a finished card branch back yourself:
+
+```bash
+# From your main checkout
+git merge board/1a2b3c4d/5e6f7a8b
+
+# Then, when you no longer need the isolated checkout
+git worktree remove ../worktrees/board/1a2b3c4d/5e6f7a8b
+git branch -d board/1a2b3c4d/5e6f7a8b
+```
+
+Worktree cards are local-only: an agent configured to run over an SSH remote executes on the remote host, where a worktree created on your machine does not exist. Such a card is blocked with a clear reason rather than quietly running in the shared project directory. Clear its worktree setting or move it to a local agent.
+
 ## CLI
 
 The Board and Profiles are fully driveable headlessly with `maestro-cli`, mirroring the in-app actions. Every command resolves the project from a target agent.

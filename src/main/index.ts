@@ -1574,9 +1574,13 @@ app
 				// needs a human, so its toast is sticky; a done card auto-dismisses.
 				notifyCard: (_projectRoot, event) => {
 					const blocked = event.kind === 'blocked';
+					// Phase 4: an isolated card's output lives on its own branch, which
+					// nothing merges automatically - name it so the user can find it.
+					const branchNote = event.worktreeBranch ? ` (branch ${event.worktreeBranch})` : '';
 					safeSend('remote:notifyToast', {
 						title: blocked ? `Card blocked: ${event.cardTitle}` : `Card done: ${event.cardTitle}`,
-						message: event.detail || (blocked ? 'No reason reported.' : 'Run completed.'),
+						message:
+							(event.detail || (blocked ? 'No reason reported.' : 'Run completed.')) + branchNote,
 						color: blocked ? 'red' : 'green',
 						dismissible: blocked,
 						sourceAgent: 'Board',

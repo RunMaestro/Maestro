@@ -58,6 +58,14 @@ export interface CardSpawnResult {
 	exitCode: number | null;
 	/** Set when the spawn itself failed (never started / threw). Forces failure. */
 	error?: string;
+	/**
+	 * Isolated worktree the run actually happened in (Board Phase 4). Stamped
+	 * onto the attempt's {@link CardRun} so a finished card points at the branch
+	 * holding its output. Absent when the card ran in the shared project root.
+	 */
+	worktreePath?: string;
+	/** Branch checked out in {@link worktreePath}. */
+	worktreeBranch?: string;
 }
 
 /** A claimed card plus the resolved profile overrides used to spawn it. */
@@ -99,6 +107,12 @@ export interface CardNotification {
 	cardTitle: string;
 	/** Run summary (`done`) or block reason (`blocked`), when there is one. */
 	detail?: string;
+	/**
+	 * Branch of the isolated worktree the finished attempt ran in (Board Phase 4),
+	 * when the card used one. The host mentions it so the user can find the output:
+	 * nothing merges or removes the branch automatically.
+	 */
+	worktreeBranch?: string;
 }
 
 /** Injected side effects. Fakes for these are all a test needs. */
@@ -427,6 +441,10 @@ export function applyCardResult(
 	if (run) {
 		run.outcome = outcome;
 		if (summary !== undefined) run.summary = summary;
+		// Where the work landed (Phase 4). Recorded on every outcome, including a
+		// failure: the branch still exists and the user may want to inspect it.
+		if (result.worktreePath) run.worktreePath = result.worktreePath;
+		if (result.worktreeBranch) run.worktreeBranch = result.worktreeBranch;
 	}
 	card.status = status;
 	card.updatedAt = nowIso;
@@ -658,11 +676,13 @@ export class BoardDispatcher {
 			// The run summary the marker/exit path just recorded is the useful half of
 			// the message: what got done, or why the card is stuck.
 			const card = board.cards.find((c) => c.id === cardId);
+			const lastRun = card?.runs?.[card.runs.length - 1];
 			this.emitNotification({
 				kind: status,
 				cardId,
 				cardTitle: card?.title ?? cardId,
-				detail: card?.runs?.[card.runs.length - 1]?.summary,
+				detail: lastRun?.summary,
+				...(lastRun?.worktreeBranch ? { worktreeBranch: lastRun.worktreeBranch } : {}),
 			});
 		}
 	}

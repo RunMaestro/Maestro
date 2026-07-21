@@ -281,8 +281,9 @@ describe('BoardModal cycle rejection', () => {
 		const bTile = await screen.findByText('Card B');
 		fireEvent.click(bTile);
 
-		// Candidate parents lists card A; select it (creating the cycle).
-		const checkbox = await screen.findByRole('checkbox');
+		// Candidate parents lists card A; select it (creating the cycle). Named
+		// explicitly because the editor also carries the worktree-isolation toggle.
+		const checkbox = await screen.findByRole('checkbox', { name: /Card A/i });
 		fireEvent.click(checkbox);
 
 		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
@@ -290,5 +291,75 @@ describe('BoardModal cycle rejection', () => {
 		// Inline cycle error is surfaced and nothing is persisted.
 		expect(await screen.findByText(/cycle/i)).toBeInTheDocument();
 		expect(boardApi.updateCard).not.toHaveBeenCalled();
+	});
+});
+
+describe('BoardModal worktree isolation (Phase 4)', () => {
+	it('materializes a WorktreeRef in the addCard payload when the toggle is on', async () => {
+		const board: Board = { id: '1a2b3c4d-b', name: 'My Board', cards: [] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const newCardBtn = await screen.findByRole('button', { name: /New card/i });
+		await waitFor(() => expect(newCardBtn).not.toBeDisabled());
+		fireEvent.click(newCardBtn);
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Isolated work' },
+		});
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.addCard.mock.calls[0][2];
+		// Branch follows `board/<board-id-8>/<card-id-8>`, checked out in a
+		// worktrees folder BESIDE the project (never nested inside it).
+		expect(card.worktree.branch).toBe(`board/1a2b3c4d/${card.id.slice(0, 8)}`);
+		expect(card.worktree.path).toBe(`/test/worktrees/${card.worktree.branch}`);
+	});
+
+	it('omits the worktree entirely when the toggle is off', async () => {
+		const board: Board = { id: 'b1', name: 'My Board', cards: [] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const newCardBtn = await screen.findByRole('button', { name: /New card/i });
+		await waitFor(() => expect(newCardBtn).not.toBeDisabled());
+		fireEvent.click(newCardBtn);
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Shared tree work' },
+		});
+		// The path/branch overrides are hidden until isolation is turned on.
+		expect(screen.queryByPlaceholderText(/auto: board/i)).toBeNull();
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.addCard.mock.calls[0][2].worktree).toBeUndefined();
+	});
+
+	it('badges the tile with the branch the last run used', async () => {
+		const done = makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			status: 'done',
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-07-21T00:00:00.000Z',
+					endedAt: '2026-07-21T00:10:00.000Z',
+					outcome: 'done',
+					worktreePath: '/test/worktrees/board/b1/cardA',
+					worktreeBranch: 'board/b1/cardA',
+				},
+			],
+		});
+		installApis([{ id: 'b1', name: 'My Board', cards: [done] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		expect(await screen.findByText(/🌳 board\/b1\/cardA/)).toBeInTheDocument();
 	});
 });

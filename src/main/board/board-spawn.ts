@@ -10,6 +10,37 @@
  *
  * This module is main-only (it imports the Cue executor). The dispatcher core
  * and its unit tests never touch it - they inject fakes.
+ *
+ * ── Worktree isolation survey (Board Phase 4) ────────────────────────────────
+ * Decision record so later phases and reviewers do not re-litigate it.
+ *
+ * WHICH HELPER. Maestro already provisions worktrees for Auto Run, but the
+ * logic lived inline inside the `git:worktreeSetup` IPC handler. It was lifted
+ * out verbatim into `src/main/utils/git-worktree.ts` (`setupWorktreeLocal` +
+ * `findLocalWorktreeForBranch`); the handler now delegates there, and the Board
+ * calls the same function through `board-worktree.ts` (`ensureCardWorktree`).
+ * There is exactly ONE local `git worktree add` implementation, and it is not
+ * this file. The SSH variant (`worktreeSetupRemote` in `utils/remote-git.ts`)
+ * is NOT used by the Board - see the SSH rule below. `board-worktree.ts` and
+ * the naming helpers in `src/shared/board/worktree.ts` are Electron-free so
+ * `maestro-cli board tick` provisions through the identical code path.
+ *
+ * BRANCH NAMING. `board/<boardId-first-8>/<cardId-first-8>`
+ * (`boardCardBranchName`), checked out at
+ * `<sibling-of-projectRoot>/worktrees/<branch>` (`boardWorktreePath`). The
+ * sibling layout matches Auto Run's and is mandatory: `setupWorktreeLocal`
+ * refuses a worktree nested inside the main repo, because git and the agents
+ * walk upward for `.git` and would resolve to the parent repo.
+ *
+ * LIFECYCLE. Created lazily on the first claim that actually spawns the card;
+ * reused by every later attempt (a retry continues in its own branch rather
+ * than starting from a clean tree); never auto-deleted and never auto-merged.
+ * Finished branches are left for the user - `docs/board.md` documents the
+ * `git merge` / `git worktree remove` commands.
+ *
+ * SSH. Local provisioning on a remote-executing agent would create a checkout
+ * the agent cannot see, so a worktree card on an SSH-enabled agent is BLOCKED
+ * with a clear reason instead of silently running in the project root.
  */
 
 import { listProfiles } from '../profiles/profile-storage';
@@ -21,6 +52,7 @@ import {
 } from '../../shared/profiles/types';
 import type { BoardCard } from '../../shared/board/types';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
+import { ensureCardWorktree, WORKTREE_SSH_UNSUPPORTED } from './board-worktree';
 import type { CardAssignment, CardSpawnRequest, CardSpawnResult } from './board-dispatcher';
 import { executeCuePrompt, stopCueRun } from '../cue/cue-executor';
 import { createCueEvent } from '../cue/cue-types';
@@ -205,7 +237,54 @@ export async function spawnBoardCard(
 	const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
 	const promptText =
 		`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
-	return runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx);
+
+	// Phase 4: a card that opted into isolation runs in its own checkout. The
+	// worktree is created on first claim and reused by every retry.
+	let worktree: { path: string; branch: string } | undefined;
+	if (card.worktree) {
+		const provisioned = await provisionCardWorktree(projectRoot, card, baseSession);
+		if (!provisioned.ok) return provisioned.result;
+		worktree = provisioned.worktree;
+	}
+
+	return runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx, worktree);
+}
+
+/**
+ * Ensure a worktree card's checkout exists, or turn the failure into a `blocked`
+ * spawn result. Blocking (rather than falling back to `projectRoot`) is
+ * deliberate: the user asked for isolation, and quietly running in the shared
+ * tree is exactly the concurrency bug this phase exists to remove.
+ */
+async function provisionCardWorktree(
+	projectRoot: string,
+	card: BoardCard,
+	baseSession: Record<string, any>
+): Promise<
+	{ ok: true; worktree: { path: string; branch: string } } | { ok: false; result: CardSpawnResult }
+> {
+	// SSH agents execute on the remote host; a locally-created worktree is
+	// invisible to them, so refuse the card instead of misleading the user.
+	if (baseSession.sessionSshRemoteConfig?.enabled) {
+		return { ok: false, result: blockedSpawnResult(WORKTREE_SSH_UNSUPPORTED) };
+	}
+	const ensured = await ensureCardWorktree(projectRoot, card.worktree!);
+	if (!ensured.ok) {
+		return {
+			ok: false,
+			result: blockedSpawnResult(`Card worktree unavailable: ${ensured.reason}`),
+		};
+	}
+	return { ok: true, worktree: { path: ensured.path, branch: ensured.branch } };
+}
+
+/**
+ * A spawn result that the dispatcher's marker precedence reads as an explicit
+ * block (no retry, reason kept as the run summary) without a process ever
+ * having started.
+ */
+function blockedSpawnResult(reason: string): CardSpawnResult {
+	return { output: `<!-- maestro:card-block: ${reason} -->`, exitCode: 0 };
 }
 
 /**
@@ -263,6 +342,11 @@ export async function decomposeBoardCard(
  * SAME `executeCuePrompt` plumbing Cue uses (SSH / custom config honored). The
  * caller resolves `baseSession` + `overrides` (pool worker or legacy profile
  * base) so this runner stays assignment-agnostic.
+ *
+ * `worktree` (Phase 4) is the already-provisioned isolated checkout: when
+ * present the agent runs with that path as its cwd, otherwise it runs in the
+ * shared `projectRoot`. `projectRoot` stays the board's project either way -
+ * it is what identifies the board, not where the work happens.
  */
 async function runCardPrompt(
 	projectRoot: string,
@@ -270,8 +354,10 @@ async function runCardPrompt(
 	promptText: string,
 	baseSession: Record<string, any>,
 	overrides: ProfileSpawnOverrides,
-	ctx: BoardSpawnContext
+	ctx: BoardSpawnContext,
+	worktree?: { path: string; branch: string }
 ): Promise<CardSpawnResult> {
+	const runCwd = worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
 	// into both the string `toolType` config field and the enum `session.toolType`
 	// field, exactly as the Cue `onCueRun` path passes it through.
@@ -289,7 +375,7 @@ async function runCardPrompt(
 			id: baseSession.id,
 			name: baseSession.name,
 			toolType,
-			cwd: projectRoot,
+			cwd: runCwd,
 			projectRoot,
 			fullPath: baseSession.fullPath,
 			autoRunFolderPath: baseSession.autoRunFolderPath,
@@ -307,7 +393,7 @@ async function runCardPrompt(
 				id: baseSession.id,
 				name: baseSession.name,
 				toolType,
-				cwd: projectRoot,
+				cwd: runCwd,
 				projectRoot,
 				autoRunFolderPath: baseSession.autoRunFolderPath,
 			},
@@ -320,7 +406,9 @@ async function runCardPrompt(
 			event,
 			promptPath: promptText,
 			toolType,
-			projectRoot,
+			// `CueExecutionConfig.projectRoot` IS the spawn cwd (see
+			// `cue-spawn-builder`), so an isolated card points it at its worktree.
+			projectRoot: runCwd,
 			templateContext,
 			timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
 			// Honor the base agent's SSH + token-source config (never bypass the SSH path).
@@ -343,7 +431,11 @@ async function runCardPrompt(
 			agentConfigValues,
 		});
 
-		return { output: result.stdout, exitCode: result.exitCode };
+		return {
+			output: result.stdout,
+			exitCode: result.exitCode,
+			...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
+		};
 	} finally {
 		// Only clear our own registration: a retry claimed after this run started
 		// would already have replaced the entry with its own run id.

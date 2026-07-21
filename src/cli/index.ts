@@ -700,7 +700,7 @@ board
 	.option('-b, --body <body>', 'Card body / instructions for the assignee')
 	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
 	.option('--priority <level>', 'Dispatch priority: high|normal|low (default normal)')
-	.option('--worktree', 'Record an isolated-worktree intent for this card')
+	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardAddCard);
 
@@ -715,8 +715,8 @@ board
 	.option('--assignee-agent <agentId>', 'Pin the card to a specific agent; pass "" to clear')
 	.option('--parents <ids>', 'Comma-separated parent card ids; pass "" to clear')
 	.option('--priority <level>', 'Dispatch priority: high|normal|low ("normal" clears it)')
-	.option('--worktree', 'Record an isolated-worktree intent for this card')
-	.option('--no-worktree', "Clear the card's worktree intent")
+	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
+	.option('--no-worktree', 'Run this card in the shared project directory')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardUpdateCard);
 

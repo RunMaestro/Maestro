@@ -556,26 +556,26 @@ Add a card to a board
 | `-b, --body <body>`          | Card body / instructions for the assignee                                   | -       |
 | `--parents <ids>`            | Comma-separated parent card ids this card depends on                        | -       |
 | `--priority <level>`         | Dispatch priority: high\|normal\|low (default normal)                       | -       |
-| `--worktree`                 | Record an isolated-worktree intent for this card                            | -       |
+| `--worktree`                 | Run this card in its own git worktree (created on first run)                | -       |
 | `--json`                     | Output as JSON (for scripting)                                              | -       |
 
 ## `maestro-cli board update-card <cardId>`
 
 Edit a card in place (only the flags you pass are changed)
 
-| Option                       | Description                                               | Default |
-| ---------------------------- | --------------------------------------------------------- | ------- |
-| `-a, --agent <id-or-name>`   | Agent whose project owns the card                         | -       |
-| `--board <boardId>`          | Scope the card lookup to a specific board                 | -       |
-| `-t, --title <title>`        | New card title                                            | -       |
-| `-b, --body <body>`          | New card body / instructions                              | -       |
-| `--assignee <profileId>`     | New Agent Profile (role) id; pass "" to clear             | -       |
-| `--assignee-agent <agentId>` | Pin the card to a specific agent; pass "" to clear        | -       |
-| `--parents <ids>`            | Comma-separated parent card ids; pass "" to clear         | -       |
-| `--priority <level>`         | Dispatch priority: high\|normal\|low ("normal" clears it) | -       |
-| `--worktree`                 | Record an isolated-worktree intent for this card          | -       |
-| `--no-worktree`              | Clear the card's worktree intent                          | -       |
-| `--json`                     | Output as JSON (for scripting)                            | -       |
+| Option                       | Description                                                  | Default |
+| ---------------------------- | ------------------------------------------------------------ | ------- |
+| `-a, --agent <id-or-name>`   | Agent whose project owns the card                            | -       |
+| `--board <boardId>`          | Scope the card lookup to a specific board                    | -       |
+| `-t, --title <title>`        | New card title                                               | -       |
+| `-b, --body <body>`          | New card body / instructions                                 | -       |
+| `--assignee <profileId>`     | New Agent Profile (role) id; pass "" to clear                | -       |
+| `--assignee-agent <agentId>` | Pin the card to a specific agent; pass "" to clear           | -       |
+| `--parents <ids>`            | Comma-separated parent card ids; pass "" to clear            | -       |
+| `--priority <level>`         | Dispatch priority: high\|normal\|low ("normal" clears it)    | -       |
+| `--worktree`                 | Run this card in its own git worktree (created on first run) | -       |
+| `--no-worktree`              | Run this card in the shared project directory                | -       |
+| `--json`                     | Output as JSON (for scripting)                               | -       |
 
 ## `maestro-cli board remove-card <cardId>`
 

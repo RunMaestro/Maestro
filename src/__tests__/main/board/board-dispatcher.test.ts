@@ -703,3 +703,77 @@ describe('BoardDispatcher pool lifecycle', () => {
 		expect(h.spawns).toEqual([]);
 	});
 });
+
+describe('worktree metadata (Phase 4)', () => {
+	/** What `board-spawn` returns for a card that ran in an isolated checkout. */
+	const worktreeResult = (): CardSpawnResult => ({
+		output: '<!-- maestro:card-complete | isolated work -->',
+		exitCode: 0,
+		worktreePath: '/repos/worktrees/board/b1/a',
+		worktreeBranch: 'board/b1/a',
+	});
+
+	it('records the worktree path and branch on the attempt', async () => {
+		const h = harness(board([card({ id: 'a' })], 1), () => worktreeResult());
+
+		h.dispatcher.tick();
+		await flush();
+
+		expect(h.status('a')).toBe('done');
+		const run = h.cardById('a').runs?.[0];
+		expect(run).toMatchObject({
+			outcome: 'done',
+			worktreePath: '/repos/worktrees/board/b1/a',
+			worktreeBranch: 'board/b1/a',
+		});
+	});
+
+	it('records the worktree on a failed attempt too (the branch still exists)', async () => {
+		const h = harness(board([card({ id: 'a' })], 1), () => ({
+			output: 'boom',
+			exitCode: 1,
+			worktreePath: '/repos/worktrees/board/b1/a',
+			worktreeBranch: 'board/b1/a',
+		}));
+
+		h.dispatcher.tick();
+		await flush();
+
+		expect(h.status('a')).toBe('ready'); // retried, breaker not tripped yet
+		expect(h.cardById('a').runs?.[0]).toMatchObject({
+			outcome: 'blocked',
+			worktreeBranch: 'board/b1/a',
+		});
+	});
+
+	it('leaves the run clean when the card ran in the shared project root', async () => {
+		const h = harness(board([card({ id: 'a' })], 1), () => completeMarker('done'));
+
+		h.dispatcher.tick();
+		await flush();
+
+		const run = h.cardById('a').runs?.[0];
+		expect(run?.worktreePath).toBeUndefined();
+		expect(run?.worktreeBranch).toBeUndefined();
+	});
+
+	it('names the branch in the completion notification', async () => {
+		const events: CardNotification[] = [];
+		const h = harness(board([card({ id: 'a' })], 1), () => worktreeResult(), {
+			notify: (e) => events.push(e),
+		});
+
+		h.dispatcher.tick();
+		await flush();
+
+		expect(events).toEqual([
+			{
+				kind: 'done',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'isolated work',
+				worktreeBranch: 'board/b1/a',
+			},
+		]);
+	});
+});
