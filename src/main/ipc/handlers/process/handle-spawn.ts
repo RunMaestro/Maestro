@@ -39,6 +39,7 @@ import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
+import { applyTtsrReminders } from './apply-ttsr-reminders';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
@@ -57,6 +58,12 @@ export interface SpawnHandlerDependencies {
 	safeSend?: (channel: string, ...args: unknown[]) => void;
 	sessionsStore: Store<{ sessions: unknown[] }>;
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	/**
+	 * Drain of the TTSR deferred-reminder queue for this conversation, injected
+	 * so the spawn path never imports TTSR. Returns a rendered
+	 * `<system-reminder>` block (or `''`) that is prepended to the next prompt.
+	 */
+	takeTtsrReminders?: (sessionId: string) => string;
 }
 
 /**
@@ -102,6 +109,13 @@ export async function handleProcessSpawn(
 			});
 		}
 	}
+
+	// TTSR (plan Phase 3c): rules that matched without interrupting ride along
+	// with this conversation's next prompt. Applied before anything else reads
+	// `config.prompt`, so arg building, stdin delivery and the replay controller
+	// all see the same prompt.
+	config = applyTtsrReminders(config, deps.takeTtsrReminders);
+
 	// Use INFO level on Windows for better visibility in logs
 
 	const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);

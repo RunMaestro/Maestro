@@ -33,7 +33,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
-import { installTtsrRuntime } from './ttsr';
+import { installTtsrRuntime, type TtsrRuntime } from './ttsr';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -497,6 +497,8 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+/** Time-Traveling Stream Rules runtime; null until the process manager exists. */
+let ttsrRuntime: TtsrRuntime | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
@@ -1017,7 +1019,7 @@ app
 		// Time-Traveling Stream Rules: watch every agent's normalized output
 		// stream and match `.maestro/rules/*.md`. Gated live on the `ttsr` Encore
 		// flag AND the `ttsrEnabled` setting, so it is a no-op while off.
-		installTtsrRuntime(processManager, {
+		ttsrRuntime = installTtsrRuntime(processManager, {
 			isGloballyEnabled: () =>
 				store.get('ttsrEnabled', false) === true &&
 				(store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true,
@@ -3131,6 +3133,9 @@ function setupIpcHandlers() {
 		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
+		// TTSR folds any queued `<system-reminder>` into this conversation's next
+		// prompt. Returns '' while the feature is off, so the spawn path is unchanged.
+		takeTtsrReminders: (sessionId: string) => ttsrRuntime?.takeDeferredReminders(sessionId) ?? '',
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete

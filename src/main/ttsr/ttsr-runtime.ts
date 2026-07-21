@@ -24,6 +24,7 @@ import type {
 import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
+import { renderTtsrReminder } from './ttsr-injection';
 import { TtsrInterruptDriver, type TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrManager, type TtsrMatch } from './ttsr-manager';
 import {
@@ -192,6 +193,9 @@ export class TtsrRuntime {
 			// drops this turn's buffers. Deferred reminders deliberately survive:
 			// they are consumed by the next prompt, not by the turn that queued them.
 			this.manager.endTurn(sessionId, { agentId: meta.agentId, cwd: meta.projectRoot });
+			// Nothing left to say to this conversation: drop its state rather than
+			// retain an entry per turn (Auto Run mints a fresh session id per task).
+			if (!this.manager.hasDeferred(sessionId)) this.manager.dispose(sessionId);
 			this.registry.clear(sessionId);
 		};
 
@@ -232,6 +236,31 @@ export class TtsrRuntime {
 	/** True while a TTSR abort is in flight for this turn (`ttsrAbortPending`). */
 	isAbortPending(sessionId: string): boolean {
 		return this.driver?.isAbortPending(sessionId) ?? false;
+	}
+
+	/**
+	 * Drain this conversation's deferred reminders as one rendered block, ready
+	 * to be prepended to the next prompt (plan Phase 3c).
+	 *
+	 * Non-interrupting matches never abort a turn: Maestro has no tool-result
+	 * hook to fold guidance into in-band, so the guidance waits here until the
+	 * conversation's next prompt is spawned. The read clears the bucket, so a
+	 * reminder is delivered exactly once even though the spawn path may call
+	 * this for turns that never had a match.
+	 *
+	 * Returns `''` when nothing is queued (the overwhelmingly common case) so
+	 * callers can skip the prepend without a null check.
+	 */
+	takeDeferredReminders(sessionId: string): string {
+		if (!this.deps.isGloballyEnabled()) return '';
+		const matches = this.manager.takeDeferred(sessionId);
+		if (matches.length === 0) return '';
+
+		logger.info('TTSR reminders folded into next prompt', LOG_CONTEXT, {
+			sessionId,
+			rules: matches.map((match) => match.rule.name),
+		});
+		return renderTtsrReminder(matches);
 	}
 
 	/** Drop cached rules so the next event re-reads them (rule file edited). */

@@ -44,6 +44,21 @@ const MAX_BUFFER_CHARS = 32_768;
  */
 const SCAN_OVERLAP_CHARS = 1_024;
 
+/**
+ * Deferred reminders held for one conversation before the oldest is dropped.
+ * They ride along with the next prompt, so an unbounded queue would eventually
+ * cost more context than the guidance is worth.
+ */
+const MAX_DEFERRED_PER_SESSION = 10;
+
+/**
+ * Conversations kept alive purely for their queued reminders. Turns that end
+ * with an empty queue are dropped immediately; this bounds the pathological
+ * case (an Auto Run whose per-task session ids are never reused, each leaving a
+ * reminder behind). Oldest-first eviction, since insertion order is age order.
+ */
+const MAX_RETAINED_SESSIONS = 50;
+
 /** What the manager needs to know about the turn producing these events. */
 export interface TtsrObserveContext {
 	agentId: AgentId;
@@ -117,8 +132,17 @@ export class TtsrManager {
 		if (!state) {
 			state = { buffers: new Map(), interrupts: [], deferred: [], astSeen: new Map() };
 			this.sessions.set(sessionId, state);
+			this.evictOldestSessions(sessionId);
 		}
 		return state;
+	}
+
+	/** Keep the tracked-conversation map bounded, never evicting the live one. */
+	private evictOldestSessions(keep: string): void {
+		for (const key of this.sessions.keys()) {
+			if (this.sessions.size <= MAX_RETAINED_SESSIONS) return;
+			if (key !== keep) this.sessions.delete(key);
+		}
 	}
 
 	/** Reset per-turn buffers. Called when a turn is spawned. */
@@ -307,6 +331,11 @@ export class TtsrManager {
 		return out;
 	}
 
+	/** True while this conversation still owes its next prompt a reminder. */
+	hasDeferred(sessionId: string): boolean {
+		return (this.sessions.get(sessionId)?.deferred.length ?? 0) > 0;
+	}
+
 	/** Drop all per-session state (session closed). */
 	dispose(sessionId: string): void {
 		this.sessions.delete(sessionId);
@@ -377,6 +406,11 @@ export class TtsrManager {
 		for (const match of matches) {
 			if (match.disposition === 'interrupt') state.interrupts.push(match);
 			else state.deferred.push(match);
+		}
+		// Oldest guidance loses: the newest violation is the one the agent just
+		// committed, and the block is prepended to a real user prompt.
+		if (state.deferred.length > MAX_DEFERRED_PER_SESSION) {
+			state.deferred = state.deferred.slice(-MAX_DEFERRED_PER_SESSION);
 		}
 
 		if (!this.deps.onMatched) return;

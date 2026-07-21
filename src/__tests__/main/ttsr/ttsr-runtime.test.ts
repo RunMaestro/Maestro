@@ -250,6 +250,67 @@ describe('TtsrRuntime tap', () => {
 	});
 });
 
+describe('TtsrRuntime deferred reminders (Phase 3c)', () => {
+	const deferringRule = (overrides: Partial<LoadedTtsrRule> = {}) =>
+		makeRule({ interruptMode: 'never', ...overrides });
+
+	it('renders one block per fired rule and clears the queue', () => {
+		const { runtime, source } = setup({
+			rules: [
+				deferringRule(),
+				deferringRule({
+					name: 'no-any',
+					condition: ['\\bany\\b'],
+					compiledCondition: [/\bany\b/],
+					content: 'Do not use `any`.',
+					path: '.maestro/rules/no-any.md',
+				}),
+			],
+		});
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-1', textEvent('console.log(x) with any type'));
+
+		const block = runtime.takeDeferredReminders('sess-ai-1');
+		expect(block).toContain('rule="no-console-log"');
+		expect(block).toContain('rule="no-any"');
+		expect(block).toContain('Use the project logger.');
+		expect(block).toContain('Do not use `any`.');
+
+		// Consumed by the read: the next prompt must not repeat it.
+		expect(runtime.takeDeferredReminders('sess-ai-1')).toBe('');
+	});
+
+	it('does not queue reminders for interrupting matches', () => {
+		const { runtime, source } = setup();
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-1', textEvent('console.log(x)'));
+
+		// interruptMode: always -> the rule aborts the turn instead, so its
+		// guidance travels in the `<system-interrupt>` prompt, not here.
+		expect(runtime.takeDeferredReminders('sess-ai-1')).toBe('');
+	});
+
+	it('returns nothing while the feature gate is off', () => {
+		let enabled = true;
+		const runtime = new TtsrRuntime({
+			isGloballyEnabled: () => enabled,
+			loadConfig: () => result([deferringRule()]),
+		});
+		const source = new EventEmitter();
+		runtime.attach(source as unknown as TtsrProcessEventSource);
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-1', textEvent('console.log(x)'));
+
+		enabled = false;
+		expect(runtime.takeDeferredReminders('sess-ai-1')).toBe('');
+	});
+
+	it('is empty for a session that never matched anything', () => {
+		const { runtime } = setup();
+		expect(runtime.takeDeferredReminders('sess-ai-99')).toBe('');
+	});
+});
+
 describe('TtsrRuntime lifecycle wiring', () => {
 	it('folds the provider session id into the registry and repeat state', () => {
 		const { runtime, source } = setup({ rules: [makeRule({ repeatMode: 'once' })] });
@@ -288,6 +349,33 @@ describe('TtsrRuntime lifecycle wiring', () => {
 		// Turn 3: the gap has elapsed, so the rule is eligible again.
 		source.emit('spawn', spawnConfig());
 		expect(runtime.observe('sess-ai-1', textEvent('console.log(c)'))).toHaveLength(1);
+	});
+
+	it('keeps a conversation with queued reminders alive across turns', () => {
+		// interruptMode: never -> the match defers instead of aborting, and the
+		// reminder has to outlive the turn that produced it.
+		const rule = makeRule({ interruptMode: 'never', repeatMode: 'after-gap', repeatGap: 1 });
+		const { runtime, source } = setup({ rules: [rule] });
+
+		source.emit('spawn', spawnConfig());
+		expect(runtime.observe('sess-ai-1', textEvent('console.log(a)'))).toHaveLength(1);
+		expect(runtime.manager.takeInterrupts('sess-ai-1')).toEqual([]);
+		source.emit('exit', 'sess-ai-1', 0);
+
+		expect(runtime.manager.hasDeferred('sess-ai-1')).toBe(true);
+		expect(runtime.takeDeferredReminders('sess-ai-1')).toContain('<system-reminder');
+	});
+
+	it('drops per-session state on exit when nothing is deferred', () => {
+		const { runtime, source } = setup();
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-1', textEvent('nothing to see'));
+		source.emit('exit', 'sess-ai-1', 0);
+
+		// Auto Run mints a fresh session id per task, so a retained entry per turn
+		// would grow without bound.
+		expect(runtime.manager.hasDeferred('sess-ai-1')).toBe(false);
+		expect(runtime.takeDeferredReminders('sess-ai-1')).toBe('');
 	});
 
 	it('detaches its listeners', () => {

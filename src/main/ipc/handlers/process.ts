@@ -84,6 +84,12 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	/**
+	 * Optional drain of TTSR's deferred `<system-reminder>` queue for a
+	 * conversation. Injected (never imported) so the process handlers stay free
+	 * of any TTSR dependency; omitted, spawns simply carry no reminders.
+	 */
+	takeTtsrReminders?: (sessionId: string) => string;
 }
 
 /**
@@ -144,6 +150,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
+				takeTtsrReminders: deps.takeTtsrReminders,
 			})
 		)
 	);
