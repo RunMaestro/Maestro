@@ -1,12 +1,13 @@
 import '@testing-library/jest-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { PluginPanelSlot } from '../PluginPanelSlot';
 import { THEMES } from '../../../constants/themes';
 import type {
 	AggregatedContributions,
 	PanelContribution,
 } from '../../../../shared/plugins/contributions';
+import { useUIStore } from '../../../stores/uiStore';
 
 const theme = THEMES.dracula;
 
@@ -55,6 +56,9 @@ beforeEach(() => {
 	window.maestro.plugins = pluginBridge as unknown as typeof window.maestro.plugins;
 	pluginBridge.contributions.mockReset().mockResolvedValue(EMPTY);
 	pluginBridge.onChanged.mockClear();
+	// The collapsed-panel set is a module-level store singleton; reset it so one
+	// test's hide choice never leaks into the next.
+	useUIStore.setState({ hiddenPluginPanels: [] });
 });
 
 afterEach(() => cleanup());
@@ -122,5 +126,45 @@ describe('PluginPanelSlot', () => {
 		await waitFor(() => expect(screen.getByText('from first')).toBeInTheDocument());
 		expect(container.querySelectorAll('webview')).toHaveLength(1);
 		expect(screen.queryByText('from second')).not.toBeInTheDocument();
+	});
+
+	it('hides a docked panel to a reopen rail and restores it', async () => {
+		pluginBridge.contributions.mockResolvedValue({ ...EMPTY, panels: [panel()] });
+
+		const { container } = render(<PluginPanelSlot theme={theme} placement="left" />);
+		await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+
+		// Hide: the frame unmounts and the slot collapses to the reopen rail.
+		fireEvent.click(screen.getByLabelText('Hide Acme Board panel'));
+		await waitFor(() =>
+			expect(container.querySelector('[data-plugin-panel-collapsed="true"]')).not.toBeNull()
+		);
+		expect(container.querySelector('webview')).toBeNull();
+		expect(useUIStore.getState().hiddenPluginPanels).toContain('acme.tools/board');
+
+		// Restore: the rail's show control remounts the frame.
+		fireEvent.click(screen.getByLabelText('Show Acme Board panel'));
+		await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+		expect(container.querySelector('[data-plugin-panel-collapsed="true"]')).toBeNull();
+		expect(useUIStore.getState().hiddenPluginPanels).not.toContain('acme.tools/board');
+	});
+
+	it('hides one panel via a reopen chip while another stays docked', async () => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			panels: [panel(), panel({ id: 'acme.tools/side', localId: 'side', title: 'Acme Side' })],
+		});
+
+		const { container } = render(<PluginPanelSlot theme={theme} placement="left" />);
+		await waitFor(() => expect(container.querySelectorAll('webview')).toHaveLength(2));
+
+		fireEvent.click(screen.getByLabelText('Hide Acme Board panel'));
+
+		// The other panel keeps rendering; the slot stays a full column, not the rail.
+		await waitFor(() => expect(container.querySelectorAll('webview')).toHaveLength(1));
+		expect(container.querySelector('[data-plugin-panel-collapsed="true"]')).toBeNull();
+		// A reopen chip appears for the hidden panel; the docked panel is untouched.
+		expect(screen.getByTitle('Show Acme Board (from acme.tools)')).toBeInTheDocument();
+		expect(screen.getByLabelText('Hide Acme Side panel')).toBeInTheDocument();
 	});
 });

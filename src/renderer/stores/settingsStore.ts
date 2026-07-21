@@ -2641,6 +2641,13 @@ export async function loadAllSettings(): Promise<void> {
 				hiddenQuotaAccounts: allSettings['hiddenQuotaAccounts'] as Record<string, string[]>,
 			});
 
+		// Collapsed docked plugin panels live in uiStore (toggled from the panel
+		// slot header), so its persisted id list hydrates directly there.
+		if (allSettings['hiddenPluginPanels'] !== undefined)
+			useUIStore.setState({
+				hiddenPluginPanels: allSettings['hiddenPluginPanels'] as string[],
+			});
+
 		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
 		// hidden-account map (both are provider-panel state), so the persisted map
 		// hydrates directly there too.
