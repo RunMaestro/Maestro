@@ -6,7 +6,7 @@
 // every subcommand routes through the desktop app over the WS bridge.
 
 import path from 'path';
-import os from 'os';
+import { expandTilde } from '../../shared/pathUtils';
 import { withMaestroClient } from '../services/maestro-client';
 
 /**
@@ -31,10 +31,7 @@ interface StatusOptions {
 
 /** Expand a leading `~` and resolve to an absolute path against the CLI's cwd. */
 function resolveOutputPath(input: string): string {
-	let p = input.trim();
-	if (p === '~' || p.startsWith('~/')) {
-		p = path.join(os.homedir(), p.slice(1));
-	}
+	const p = expandTilde(input.trim());
 	return path.resolve(process.cwd(), p);
 }
 
@@ -110,6 +107,8 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 				);
 			} else {
 				console.log(`Profile saved: ${result.path}`);
+				// Profiling output intentionally always reports decimal seconds, including
+				// durations that the CLI decimal formatter would render in ms or minutes.
 				if (typeof result.durationMs === 'number') {
 					console.log(`  Recording: ${(result.durationMs / 1000).toFixed(1)}s`);
 				}

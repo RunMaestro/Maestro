@@ -2,8 +2,9 @@
 // Supports --json, --verbose, --keys-only, --defaults, --category filters
 
 import { readSettings } from '../services/storage';
-import { formatSettingsList, formatError, type SettingDisplay } from '../output/formatter';
+import { formatSettingsList, type SettingDisplay } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { reportSettingsCliError } from '../utils/settings-error';
 import {
 	SETTINGS_METADATA,
 	CATEGORY_ORDER,
@@ -91,12 +92,6 @@ export function settingsList(options: SettingsListOptions): void {
 			);
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list settings: ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, 'Failed to list settings');
 	}
 }

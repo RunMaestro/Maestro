@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import type { BatchRunState } from '../types';
 import type { AutoRunTreeNode } from '../hooks/batch/useAutoRunHandlers';
 import { batchReducer, type BatchAction } from '../hooks/batch/batchReducer';
+import { resolveUpdater } from '../utils/resolveUpdater';
 
 // ============================================================================
 // Types
@@ -83,10 +84,6 @@ export type BatchStore = BatchStoreState & BatchStoreActions;
 // Helpers
 // ============================================================================
 
-function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
-	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
-}
-
 function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]): boolean {
 	if (a === b) return true;
 	if (a.length !== b.length) return false;
@@ -128,7 +125,7 @@ export const useBatchStore = create<BatchStore>()((set) => ({
 	// --- AutoRun document actions ---
 	setDocumentList: (v) =>
 		set((s) => {
-			const next = resolve(v, s.documentList);
+			const next = resolveUpdater(v, s.documentList);
 			// Skip update when content is unchanged - prevents reference churn from
 			// SSH polling (every 3s the loader replaces the array with a fresh
 			// reference, retriggering downstream effects like BatchRunnerModal's
@@ -136,11 +133,11 @@ export const useBatchStore = create<BatchStore>()((set) => ({
 			if (shallowArrayEqual(next, s.documentList)) return {};
 			return { documentList: next };
 		}),
-	setDocumentTree: (v) => set((s) => ({ documentTree: resolve(v, s.documentTree) })),
+	setDocumentTree: (v) => set((s) => ({ documentTree: resolveUpdater(v, s.documentTree) })),
 	setIsLoadingDocuments: (v) =>
-		set((s) => ({ isLoadingDocuments: resolve(v, s.isLoadingDocuments) })),
+		set((s) => ({ isLoadingDocuments: resolveUpdater(v, s.isLoadingDocuments) })),
 	setDocumentTaskCounts: (v) =>
-		set((s) => ({ documentTaskCounts: resolve(v, s.documentTaskCounts) })),
+		set((s) => ({ documentTaskCounts: resolveUpdater(v, s.documentTaskCounts) })),
 
 	updateTaskCount: (filename, completed, total) =>
 		set((s) => {
@@ -166,7 +163,7 @@ export const useBatchStore = create<BatchStore>()((set) => ({
 			batchRunStates: batchReducer(s.batchRunStates, action),
 		})),
 
-	setBatchRunStates: (v) => set((s) => ({ batchRunStates: resolve(v, s.batchRunStates) })),
+	setBatchRunStates: (v) => set((s) => ({ batchRunStates: resolveUpdater(v, s.batchRunStates) })),
 
 	setCustomPrompt: (sessionId, prompt) =>
 		set((s) => ({

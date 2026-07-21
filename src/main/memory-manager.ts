@@ -15,8 +15,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
-import { encodeClaudeProjectPath } from '../shared/pathUtils';
+import { getClaudeProjectDir } from './utils/claude-project-path';
 
 export interface MemoryEntry {
 	name: string; // filename, e.g. "MEMORY.md" or "user_role.md"
@@ -48,8 +47,7 @@ export function getMemoryDirectoryPath(
 	if (agentId !== 'claude-code') {
 		throw new Error(`Memory viewer is not supported for agent "${agentId}"`);
 	}
-	const encoded = encodeClaudeProjectPath(projectPath);
-	return path.join(homeDir ?? os.homedir(), '.claude', 'projects', encoded, 'memory');
+	return path.join(getClaudeProjectDir(projectPath, homeDir), 'memory');
 }
 
 function assertSafeFilename(filename: string): void {

@@ -1,5 +1,5 @@
 /**
- * Tests for the Cue Run Manager - direct unit tests for concurrency control,
+ * Tests for the Cue Run Manager — direct unit tests for concurrency control,
  * phase state machine, queue management, and run lifecycle.
  *
  * These tests exercise createCueRunManager() directly (not through CueEngine),
@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueEvent, CueRunResult, CueSettings } from '../../../main/cue/cue-types';
+import { DEFAULT_CUE_SETTINGS } from '../../../shared/cue';
 
 // ─── Mocks ──────────────────────────────────────────���────────────────────────
 
@@ -421,7 +422,7 @@ describe('createCueRunManager', () => {
 			resolveRun!(makeResult());
 			await vi.advanceTimersByTimeAsync(0);
 
-			// Queue a third run - it should dispatch immediately because only 1 slot is occupied
+			// Queue a third run — it should dispatch immediately because only 1 slot is occupied
 			manager.execute('session-1', 'prompt', createEvent(), 'sub-3');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(3);
 		});
@@ -438,7 +439,7 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'prompt', createEvent(), 'poster');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Same subscription fires again - slots 2 and 3 are free, but it must
+			// Same subscription fires again — slots 2 and 3 are free, but it must
 			// NOT overlap the in-flight run, so it queues instead. This is the
 			// double-fire regression guard.
 			manager.execute('session-1', 'prompt', createEvent(), 'poster');
@@ -495,7 +496,7 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
 			await vi.advanceTimersByTimeAsync(0);
 
-			// Third arg is the run's provider session id (undefined here - the
+			// Third arg is the run's provider session id (undefined here — the
 			// mocked result sets none). Fourth is the failure diagnostics: a
 			// completed run has no error message but still carries its exit code.
 			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined, {
@@ -537,11 +538,11 @@ describe('createCueRunManager', () => {
 			manager.reset();
 			expect(manager.getActiveRunMap().size).toBe(0);
 
-			// Now the onCueRun promise resolves - the finally block should bail out
+			// Now the onCueRun promise resolves — the finally block should bail out
 			resolveRun!(makeResult());
 			await vi.advanceTimersByTimeAsync(0);
 
-			// onRunCompleted should NOT be called - the engine was shut down
+			// onRunCompleted should NOT be called — the engine was shut down
 			expect(deps.onRunCompleted).not.toHaveBeenCalled();
 		});
 
@@ -569,7 +570,7 @@ describe('createCueRunManager', () => {
 
 			// DB status MUST be updated to the final result state so the
 			// activity log doesn't show a phantom never-ending run.
-			// Third arg is the run's provider session id (undefined here - the
+			// Third arg is the run's provider session id (undefined here — the
 			// mocked result sets none); passing it through is what lets Cue stats
 			// attribute token usage.
 			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
@@ -589,7 +590,7 @@ describe('createCueRunManager', () => {
 		});
 
 		it('reset during active run: preserves failed status when onCueRun resolves with failure after stop', async () => {
-			// Variant of the above covering the failure path - make sure the
+			// Variant of the above covering the failure path — make sure the
 			// final status propagates to the DB regardless of outcome.
 			let resolveRun: ((val: CueRunResult) => void) | undefined;
 			const deps = createDeps({
@@ -654,7 +655,7 @@ describe('createCueRunManager', () => {
 						// First call (main task) resolves immediately
 						return Promise.resolve(makeResult());
 					}
-					// Second call (output prompt) - we'll stop during this
+					// Second call (output prompt) — we'll stop during this
 					return new Promise<CueRunResult>((resolve) => {
 						resolveSecondRun = resolve;
 					});
@@ -675,7 +676,7 @@ describe('createCueRunManager', () => {
 
 			expect(deps.onRunStopped).toHaveBeenCalledTimes(1);
 
-			// Output prompt resolves after stop - should be ignored
+			// Output prompt resolves after stop — should be ignored
 			resolveSecondRun!(makeResult({ stdout: 'output prompt result' }));
 			await vi.advanceTimersByTimeAsync(0);
 
@@ -710,7 +711,7 @@ describe('createCueRunManager', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			// Main task finished, output prompt is pending. Reset the engine
-			// - this clears activeRuns before the output prompt resolves.
+			// — this clears activeRuns before the output prompt resolves.
 			manager.reset();
 
 			// Output prompt now completes after reset. The inner finally
@@ -721,12 +722,12 @@ describe('createCueRunManager', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			// Expect TWO finalization calls: one for the output run (in the
-			// inner finally - technically via updateCueEventStatus, not the
+			// inner finally — technically via updateCueEventStatus, not the
 			// safe variant, so it won't show here) and one for the PARENT
 			// via safeUpdateCueEventStatus with the main task's status.
 			// Only the parent-side safe call is asserted because that's the
 			// regression we're guarding.
-			// Third arg is the run's provider session id (undefined here - the
+			// Third arg is the run's provider session id (undefined here — the
 			// mocked result sets none); passing it through is what lets Cue stats
 			// attribute token usage.
 			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
@@ -926,7 +927,7 @@ describe('createCueRunManager', () => {
 					if (onCueRunCallCount === 1) {
 						return Promise.resolve(makeResult());
 					}
-					// Output prompt - never resolves
+					// Output prompt — never resolves
 					return new Promise<CueRunResult>(() => {});
 				}),
 			});
@@ -1162,7 +1163,7 @@ describe('createCueRunManager', () => {
 		});
 
 		it('forwards the full stdout to runMaestroCliSend (truncation happens in the CLI helper)', async () => {
-			// The run-manager no longer truncates inline - truncation is owned
+			// The run-manager no longer truncates inline — truncation is owned
 			// by `runMaestroCliSend` in cue-cli-executor (capped at
 			// CLI_SEND_OUTPUT_MAX_CHARS = 100_000). Validate the run-manager
 			// forwards the raw output unchanged so the helper can cap it.
@@ -1216,11 +1217,11 @@ describe('createCueRunManager', () => {
 	// executor is a single-phase spawner; the chained "main task → output
 	// prompt" phase is orchestrated here).
 
-	describe('output prompt phase - failure and stop interactions', () => {
+	describe('output prompt phase — failure and stop interactions', () => {
 		it('preserves main-task stdout when the output prompt returns a non-completed status', async () => {
 			const onCueRun = vi.fn<(req: { subscriptionName: string }) => Promise<CueRunResult>>();
 			// Call 1 = main task (completes with real stdout). Call 2 = output
-			// prompt phase, returns failed - run-manager must fall back to the
+			// prompt phase, returns failed — run-manager must fall back to the
 			// main task output and log a warning instead of overwriting the
 			// result.stdout with the empty output-prompt stdout.
 			onCueRun
@@ -1253,7 +1254,7 @@ describe('createCueRunManager', () => {
 			expect(outputPromptRequest.prompt).toContain('MAIN_TASK_OUTPUT');
 			expect(outputPromptRequest.event.payload.sourceOutput).toBe('MAIN_TASK_OUTPUT');
 			expect(outputPromptRequest.event.payload.outputPromptPhase).toBe(true);
-			// onRunCompleted carries the MAIN task output - not the failed
+			// onRunCompleted carries the MAIN task output — not the failed
 			// output-prompt's empty string.
 			expect(deps.onRunCompleted).toHaveBeenCalledWith(
 				'session-1',
@@ -1283,7 +1284,7 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'main', createEvent(), 'test-sub', 'out-prompt');
 			await vi.advanceTimersByTimeAsync(0);
 
-			// The outer catch treats the rejection as a run failure - main task
+			// The outer catch treats the rejection as a run failure — main task
 			// output is discarded because the `await outputResult` line threw
 			// before the stdout reassignment could happen.
 			expect(deps.onRunCompleted).toHaveBeenCalledWith(
@@ -1342,7 +1343,7 @@ describe('createCueRunManager', () => {
 				expect.objectContaining({ status: 'stopped' })
 			);
 
-			// Output-prompt resolves late - the run-manager must skip
+			// Output-prompt resolves late — the run-manager must skip
 			// onRunCompleted because stopRun already cleaned up.
 			outputDeferred.resolve!(makeResult({ status: 'completed', stdout: 'LATE' }));
 			await vi.advanceTimersByTimeAsync(0);
@@ -1350,7 +1351,7 @@ describe('createCueRunManager', () => {
 		});
 	});
 
-	// Phase 12A - queue persistence wiring
+	// Phase 12A — queue persistence wiring
 	describe('queue persistence (Phase 12A)', () => {
 		function makeMockPersistence() {
 			return {
@@ -1493,12 +1494,12 @@ describe('createCueRunManager', () => {
 		});
 	});
 
-	// Phase 12B - onQueueOverflow wiring
+	// Phase 12B — onQueueOverflow wiring
 	describe('queue overflow (Phase 12B)', () => {
 		it('invokes onQueueOverflow when the queue saturates, before shifting', async () => {
 			const onQueueOverflow = vi.fn();
 			const deps = createDeps({
-				onCueRun: vi.fn(() => new Promise(() => {})), // never resolves - stays active
+				onCueRun: vi.fn(() => new Promise(() => {})), // never resolves — stays active
 				getSessionSettings: vi.fn(() => ({
 					...defaultSettings,
 					max_concurrent: 1,
@@ -1514,7 +1515,7 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'p3', createEvent(), 'sub-3');
 			expect(onQueueOverflow).not.toHaveBeenCalled();
 
-			// Fourth call exceeds queue_size - overflow fires.
+			// Fourth call exceeds queue_size — overflow fires.
 			manager.execute('session-1', 'p4', createEvent(), 'sub-4');
 			expect(onQueueOverflow).toHaveBeenCalledTimes(1);
 			expect(onQueueOverflow).toHaveBeenCalledWith(
@@ -1574,6 +1575,35 @@ describe('createCueRunManager', () => {
 				expect.objectContaining({ subscriptionName: 'sub-incoming' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
+		});
+
+		it('uses DEFAULT_CUE_SETTINGS when session settings are absent while explicit zero still wins', () => {
+			const missingSettings = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => undefined),
+			});
+			const fallbackManager = createCueRunManager(missingSettings);
+			fallbackManager.execute('session-1', 'p1', createEvent(), 'sub-active');
+			fallbackManager.execute('session-1', 'p2', createEvent(), 'sub-queued');
+			expect(missingSettings.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					timeoutMs: DEFAULT_CUE_SETTINGS.timeout_minutes * 60 * 1000,
+				})
+			);
+			expect(fallbackManager.getQueueStatus().get('session-1')).toBe(1);
+			expect(DEFAULT_CUE_SETTINGS.queue_size).toBeGreaterThan(0);
+
+			const explicitZero = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...DEFAULT_CUE_SETTINGS,
+					queue_size: 0,
+				})),
+			});
+			const explicitManager = createCueRunManager(explicitZero);
+			explicitManager.execute('session-1', 'p1', createEvent(), 'sub-active');
+			explicitManager.execute('session-1', 'p2', createEvent(), 'sub-dropped');
+			expect(explicitManager.getQueueStatus().size).toBe(0);
 		});
 	});
 });

@@ -16,6 +16,7 @@ import { permissionRelayServer } from './PermissionRelayServer';
 import { registerSpawn, resolvePending } from './registry';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
 import type { PermissionDecision } from './types';
+import type { PermissionRequestNotification } from '../../shared/permission-relay';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
@@ -53,7 +54,15 @@ export function initPermissionRelay(
 			return;
 		}
 		try {
-			win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
+			const notification: PermissionRequestNotification = {
+				requestId: request.requestId,
+				sessionId: request.sessionId,
+				tabId: request.tabId,
+				toolName: request.toolName,
+				input: request.input,
+				createdAt: request.createdAt,
+			};
+			win.webContents.send(PERMISSION_REQUEST_CHANNEL, notification);
 		} catch (e) {
 			// The destroyed-window guard above covers the realistic case; this
 			// catches a rare teardown race between the check and the send. Deny so

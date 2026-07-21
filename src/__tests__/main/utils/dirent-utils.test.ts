@@ -8,7 +8,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 import fs from 'fs/promises';
-import { resolveDirentType, readDirWithResolvedTypes } from '../../../main/utils/dirent-utils';
+import { resolveDirentType } from '../../../main/utils/dirent-utils';
 
 // Helper to build a Dirent-like object with the flags we care about
 function makeDirent(opts: {
@@ -92,65 +92,5 @@ describe('resolveDirentType', () => {
 			isFile: false,
 			isBrokenSymlink: true,
 		});
-	});
-});
-
-describe('readDirWithResolvedTypes', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
-
-	it('resolves mixed regular + symlink entries and returns full paths', async () => {
-		// Simulate readdir returning: a directory, a file, a symlink-to-dir, and a broken symlink.
-		vi.mocked(fs.readdir).mockResolvedValue([
-			makeDirent({ name: 'src', isDir: true }),
-			makeDirent({ name: 'readme.md', isFile: true }),
-			makeDirent({ name: 'linked-lib', isSymlink: true }),
-			makeDirent({ name: 'dangling', isSymlink: true }),
-		] as any);
-
-		vi.mocked(fs.stat).mockImplementation((p: any) => {
-			if (String(p).replace(/\\/g, '/') === '/proj/linked-lib') {
-				return Promise.resolve({
-					isDirectory: () => true,
-					isFile: () => false,
-				} as any);
-			}
-			return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-		});
-
-		const result = await readDirWithResolvedTypes('/proj');
-
-		expect(fs.readdir).toHaveBeenCalledWith('/proj', { withFileTypes: true });
-		expect(result).toEqual([
-			{
-				name: 'src',
-				fullPath: expect.stringContaining('src'),
-				isDirectory: true,
-				isFile: false,
-				isBrokenSymlink: false,
-			},
-			{
-				name: 'readme.md',
-				fullPath: expect.stringContaining('readme.md'),
-				isDirectory: false,
-				isFile: true,
-				isBrokenSymlink: false,
-			},
-			{
-				name: 'linked-lib',
-				fullPath: expect.stringContaining('linked-lib'),
-				isDirectory: true,
-				isFile: false,
-				isBrokenSymlink: false,
-			},
-			{
-				name: 'dangling',
-				fullPath: expect.stringContaining('dangling'),
-				isDirectory: false,
-				isFile: false,
-				isBrokenSymlink: true,
-			},
-		]);
 	});
 });

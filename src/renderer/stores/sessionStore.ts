@@ -18,6 +18,7 @@ import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
+import { resolveUpdater } from '../utils/resolveUpdater';
 import { useUIStore } from './uiStore';
 import {
 	normalizeGroupHierarchy,
@@ -156,13 +157,6 @@ export type SessionStore = SessionStoreState & SessionStoreActions;
 // Helpers
 // ============================================================================
 
-/**
- * Helper to resolve a value-or-updater argument, matching React's setState signature.
- */
-function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
-	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
-}
-
 // ============================================================================
 // Store Implementation
 // ============================================================================
@@ -183,7 +177,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// Session CRUD
 	setSessions: (v) =>
 		set((s) => {
-			const newSessions = resolve(v, s.sessions);
+			const newSessions = resolveUpdater(v, s.sessions);
 			// Skip if same reference (no-op update)
 			if (newSessions === s.sessions) return s;
 			// Most delete flows (single-agent, group delete) filter the array and
@@ -246,12 +240,12 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
 
 	setActiveSessionIdInternal: (v) =>
-		set((s) => ({ activeSessionId: resolve(v, s.activeSessionId) })),
+		set((s) => ({ activeSessionId: resolveUpdater(v, s.activeSessionId) })),
 
 	// Groups
 	setGroups: (v) =>
 		set((s) => {
-			const newGroups = normalizeGroupHierarchy(resolve(v, s.groups));
+			const newGroups = normalizeGroupHierarchy(resolveUpdater(v, s.groups));
 			if (newGroups === s.groups) return s;
 			return { groups: newGroups };
 		}),
@@ -304,11 +298,11 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		})),
 
 	// Initialization
-	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
+	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolveUpdater(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
-		set((s) => ({ initialLoadComplete: resolve(v, s.initialLoadComplete) })),
+		set((s) => ({ initialLoadComplete: resolveUpdater(v, s.initialLoadComplete) })),
 	setInitialFileTreeReady: (v) =>
-		set((s) => ({ initialFileTreeReady: resolve(v, s.initialFileTreeReady) })),
+		set((s) => ({ initialFileTreeReady: resolveUpdater(v, s.initialFileTreeReady) })),
 
 	// Bookmarks
 	toggleBookmark: (sessionId) =>
@@ -328,7 +322,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
 	setRemovedWorktreePaths: (v) =>
 		set((s) => ({
-			removedWorktreePaths: resolve(v, s.removedWorktreePaths),
+			removedWorktreePaths: resolveUpdater(v, s.removedWorktreePaths),
 		})),
 
 	// Navigation

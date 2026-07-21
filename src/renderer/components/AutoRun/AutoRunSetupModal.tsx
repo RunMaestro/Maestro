@@ -4,6 +4,7 @@ import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { expandHomePath } from '../../../shared/home-path';
 
 interface AutoRunSetupModalProps {
 	theme: Theme;
@@ -36,19 +37,20 @@ export function AutoRunSetupModal({
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
-		window.maestro.fs.homeDir().then(setHomeDir);
+		let cancelled = false;
+		window.maestro.fs.homeDir().then((directory) => {
+			if (!cancelled) {
+				setHomeDir(directory);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
-
-	// Expand tilde in path
-	const expandTilde = (path: string): string => {
-		if (!homeDir) return path;
-		if (path === '~') return homeDir;
-		if (path.startsWith('~/')) return homeDir + path.slice(1);
-		return path;
-	};
 
 	// Validate folder and count markdown documents (debounced)
 	useEffect(() => {
+		let cancelled = false;
 		if (!selectedFolder.trim()) {
 			setFolderValidation({ checking: false, valid: false, docCount: 0 });
 			return;
@@ -62,20 +64,14 @@ export function AutoRunSetupModal({
 
 		// Debounce the validation
 		const timeoutId = setTimeout(async () => {
+			if (cancelled) return;
 			setFolderValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
-				// Expand tilde inline to avoid closure issues
-				let expandedPath = selectedFolder.trim();
-				if (homeDir) {
-					if (expandedPath === '~') {
-						expandedPath = homeDir;
-					} else if (expandedPath.startsWith('~/')) {
-						expandedPath = homeDir + expandedPath.slice(1);
-					}
-				}
+				const expandedPath = expandHomePath(selectedFolder.trim(), homeDir);
 
 				const result = await window.maestro.autorun.listDocs(expandedPath, sshRemoteId);
+				if (cancelled) return;
 
 				if (result.success) {
 					setFolderValidation({
@@ -92,16 +88,21 @@ export function AutoRunSetupModal({
 					});
 				}
 			} catch {
-				setFolderValidation({
-					checking: false,
-					valid: false,
-					docCount: 0,
-					error: 'Failed to access folder',
-				});
+				if (!cancelled) {
+					setFolderValidation({
+						checking: false,
+						valid: false,
+						docCount: 0,
+						error: 'Failed to access folder',
+					});
+				}
 			}
 		}, 300);
 
-		return () => clearTimeout(timeoutId);
+		return () => {
+			cancelled = true;
+			clearTimeout(timeoutId);
+		};
 	}, [selectedFolder, homeDir, sshRemoteId]);
 
 	const handleSelectFolder = async () => {
@@ -118,7 +119,7 @@ export function AutoRunSetupModal({
 	const handleContinue = () => {
 		if (selectedFolder) {
 			// Expand tilde before passing to callback
-			const expandedPath = expandTilde(selectedFolder.trim());
+			const expandedPath = expandHomePath(selectedFolder.trim(), homeDir);
 			onFolderSelected(expandedPath);
 			onClose();
 		}

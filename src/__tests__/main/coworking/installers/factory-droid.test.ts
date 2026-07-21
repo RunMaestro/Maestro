@@ -67,4 +67,28 @@ describe('factoryDroidInstaller', () => {
 		expect(after.mcpServers.other.type).toBe('stdio');
 		expect(after.mcpServers['maestro-coworking']).toBeUndefined();
 	});
+
+	it('preserves comments and appends its owned entry after user-owned servers', async () => {
+		fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
+		fs.writeFileSync(
+			cfgPath(),
+			`// User heading
+{
+	/* Preserve Factory preferences. */
+	"mcpServers": {
+		// Existing server comment.
+		"existing": { "type": "stdio", "command": "noop", "args": [] }
+	}
+}
+`
+		);
+
+		await factoryDroidInstaller.install(SPEC);
+
+		const written = fs.readFileSync(cfgPath(), 'utf8');
+		expect(written).toContain('// User heading');
+		expect(written).toContain('/* Preserve Factory preferences. */');
+		expect(written).toContain('// Existing server comment.');
+		expect(written.indexOf('"existing"')).toBeLessThan(written.indexOf('"maestro-coworking"'));
+	});
 });

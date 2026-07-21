@@ -10,15 +10,19 @@
  * - prompt file write with arbitrary nested paths
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockMkdirSync = vi.fn();
-const mockUnlinkSync = vi.fn();
 const mockReaddirSync = vi.fn();
+const mockWatcher = {
+	on: vi.fn().mockReturnThis(),
+	once: vi.fn().mockReturnThis(),
+	close: vi.fn(),
+};
 const mockRmdirSync = vi.fn();
 
 vi.mock('fs', () => ({
@@ -26,7 +30,6 @@ vi.mock('fs', () => ({
 	readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 	mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
-	unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
 	readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
 	rmdirSync: (...args: unknown[]) => mockRmdirSync(...args),
 }));
@@ -36,26 +39,25 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 vi.mock('chokidar', () => ({
-	watch: vi.fn(() => ({
-		on: vi.fn().mockReturnThis(),
-		close: vi.fn(),
-	})),
+	watch: vi.fn(() => mockWatcher),
 }));
 
 import {
-	deleteCueConfigFile,
 	readCueConfigFile,
 	readCuePromptFile,
 	removeEmptyPromptsDir,
+	removeEmptyMaestroDir,
 	resolveCueConfigPath,
-	writeCueConfigFile,
 	writeCuePromptFile,
+	watchCueConfigFile,
 } from '../../../main/cue/config/cue-config-repository';
+import { captureException } from '../../../main/utils/sentry';
 
 const PROJECT_ROOT = '/projects/test';
 const CANONICAL = path.join(PROJECT_ROOT, '.maestro/cue.yaml');
 const LEGACY = path.join(PROJECT_ROOT, 'maestro-cue.yaml');
 const MAESTRO_DIR = path.join(PROJECT_ROOT, '.maestro');
+const RESOLVED_MAESTRO_DIR = path.resolve(MAESTRO_DIR);
 // Prompt-file operations in the product canonicalize via `path.resolve(...)`
 // for their containment guard, so on Windows these carry the CWD drive letter.
 // Route the expected value through the same primitive so the assertion stays
@@ -65,6 +67,12 @@ const PROMPTS_DIR = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts'));
 describe('cue-config-repository', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockReaddirSync.mockReset();
+		mockRmdirSync.mockReset();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('resolveCueConfigPath', () => {
@@ -119,68 +127,6 @@ describe('cue-config-repository', () => {
 
 			expect(readCueConfigFile(PROJECT_ROOT)).toBeNull();
 			expect(mockReadFileSync).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('writeCueConfigFile', () => {
-		it('writes to the canonical path', () => {
-			mockExistsSync.mockReturnValue(true); // .maestro/ already exists
-
-			const result = writeCueConfigFile(PROJECT_ROOT, 'subscriptions: []');
-
-			expect(result).toBe(CANONICAL);
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'subscriptions: []', 'utf-8');
-		});
-
-		it('creates .maestro/ if missing before writing', () => {
-			mockExistsSync.mockImplementation((p: string) => p !== MAESTRO_DIR);
-
-			writeCueConfigFile(PROJECT_ROOT, 'content');
-
-			expect(mockMkdirSync).toHaveBeenCalledWith(MAESTRO_DIR, { recursive: true });
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'content', 'utf-8');
-		});
-
-		it('always writes the canonical path even when only legacy exists', () => {
-			mockExistsSync.mockImplementation((p: string) => p === LEGACY || p === MAESTRO_DIR);
-
-			writeCueConfigFile(PROJECT_ROOT, 'content');
-
-			expect(mockWriteFileSync).toHaveBeenCalledWith(CANONICAL, 'content', 'utf-8');
-			expect(mockWriteFileSync).not.toHaveBeenCalledWith(
-				LEGACY,
-				expect.anything(),
-				expect.anything()
-			);
-		});
-	});
-
-	describe('deleteCueConfigFile', () => {
-		it('deletes canonical file when present and returns true', () => {
-			mockExistsSync.mockImplementation((p: string) => p === CANONICAL);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(true);
-			expect(mockUnlinkSync).toHaveBeenCalledWith(CANONICAL);
-		});
-
-		it('deletes legacy file when canonical is missing', () => {
-			mockExistsSync.mockImplementation((p: string) => p === LEGACY);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(true);
-			expect(mockUnlinkSync).toHaveBeenCalledWith(LEGACY);
-		});
-
-		it('returns false when no config file exists', () => {
-			mockExistsSync.mockReturnValue(false);
-
-			const result = deleteCueConfigFile(PROJECT_ROOT);
-
-			expect(result).toBe(false);
-			expect(mockUnlinkSync).not.toHaveBeenCalled();
 		});
 	});
 
@@ -312,16 +258,127 @@ describe('cue-config-repository', () => {
 			expect(mockRmdirSync).not.toHaveBeenCalled();
 		});
 
-		it('swallows rmdirSync errors and returns false', () => {
+		it('reports a readdirSync error and returns false', () => {
+			const error = new Error('EACCES');
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockImplementation(() => {
+				throw error;
+			});
+
+			expect(removeEmptyPromptsDir(PROJECT_ROOT)).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'removeEmptyPromptsDir',
+				dir: PROMPTS_DIR,
+			});
+		});
+
+		it('reports an rmdirSync error and returns false', () => {
+			const error = new Error('EACCES');
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([]);
 			mockRmdirSync.mockImplementation(() => {
-				throw new Error('EACCES');
+				throw error;
 			});
 
-			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
-
-			expect(removed).toBe(false);
+			expect(removeEmptyPromptsDir(PROJECT_ROOT)).toBe(false);
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'removeEmptyPromptsDir',
+				dir: PROMPTS_DIR,
+			});
 		});
+	});
+
+	describe('removeEmptyMaestroDir', () => {
+		it('removes .maestro/ when it exists and is empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue([]);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(true);
+			expect(mockRmdirSync).toHaveBeenCalledWith(RESOLVED_MAESTRO_DIR);
+		});
+
+		it('leaves the directory alone when non-empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue(['other-config.yaml']);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the directory does not exist', () => {
+			mockExistsSync.mockReturnValue(false);
+
+			expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+			expect(mockReaddirSync).not.toHaveBeenCalled();
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it.each(['readdirSync', 'rmdirSync'] as const)(
+			'reports a %s error and returns false',
+			(operation) => {
+				const error = new Error('EACCES');
+				mockExistsSync.mockReturnValue(true);
+				mockReaddirSync.mockReturnValue([]);
+				if (operation === 'readdirSync') {
+					mockReaddirSync.mockImplementation(() => {
+						throw error;
+					});
+				} else {
+					mockRmdirSync.mockImplementation(() => {
+						throw error;
+					});
+				}
+
+				expect(removeEmptyMaestroDir(PROJECT_ROOT)).toBe(false);
+				expect(captureException).toHaveBeenCalledWith(error, {
+					operation: 'removeEmptyMaestroDir',
+					dir: RESOLVED_MAESTRO_DIR,
+				});
+			}
+		);
+	});
+});
+
+describe('watchCueConfigFile', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+	});
+
+	function triggerChange(): void {
+		const call = mockWatcher.on.mock.calls.find(([event]) => event === 'change');
+		expect(call).toBeDefined();
+		(call![1] as () => void)();
+	}
+
+	it('is trailing-edge only and reschedules to the final file event', () => {
+		const onChange = vi.fn();
+		watchCueConfigFile(PROJECT_ROOT, onChange);
+
+		triggerChange();
+		vi.advanceTimersByTime(999);
+		expect(onChange).not.toHaveBeenCalled();
+
+		triggerChange();
+		vi.advanceTimersByTime(999);
+		expect(onChange).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(1);
+		expect(onChange).toHaveBeenCalledTimes(1);
+	});
+
+	it('cancels a queued callback during teardown and rejects later events', () => {
+		const onChange = vi.fn();
+		const stop = watchCueConfigFile(PROJECT_ROOT, onChange);
+
+		triggerChange();
+		stop();
+		vi.advanceTimersByTime(1000);
+		triggerChange();
+		vi.advanceTimersByTime(1000);
+
+		expect(onChange).not.toHaveBeenCalled();
+		expect(mockWatcher.close).toHaveBeenCalledOnce();
 	});
 });

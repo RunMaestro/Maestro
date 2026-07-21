@@ -14,6 +14,7 @@ import {
 	formatDurationCompact,
 	formatTimestamp as formatTimestampShared,
 } from '../../shared/formatters';
+import { escapeHtmlText } from './escapeHtmlText';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -24,14 +25,6 @@ marked.setOptions({
 /**
  * Escape HTML special characters
  */
-function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#039;');
-}
 
 /**
  * Format a timestamp for display
@@ -159,7 +152,7 @@ export function generateTabExportHtml(
 			return `
       <div class="message ${isUser ? 'message-user' : 'message-agent'}">
         <div class="message-header">
-          <span class="message-from" style="color: ${color}">${escapeHtml(label)}</span>
+          <span class="message-from" style="color: ${color}">${escapeHtmlText(label)}</span>
           <span class="message-time">${formatTimestamp(log.timestamp)}</span>
           ${log.readOnly ? '<span class="read-only-badge">read-only</span>' : ''}
         </div>
@@ -183,7 +176,7 @@ export function generateTabExportHtml(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(tabName)} - Maestro Tab Export</title>
+  <title>${escapeHtmlText(tabName)} - Maestro Tab Export</title>
   <style>
     :root {
       --bg-primary: ${colors.bgMain};
@@ -673,7 +666,7 @@ export function generateTabExportHtml(
     </div>
 
     <header class="header">
-      <h1>${escapeHtml(tabName)}</h1>
+      <h1>${escapeHtmlText(tabName)}</h1>
       <p class="subtitle">Tab Export - ${formatTimestamp(tab.createdAt)}</p>
     </header>
 
@@ -703,16 +696,16 @@ export function generateTabExportHtml(
 					tab.agentSessionId
 						? `
         <span class="info-label">Session ID</span>
-        <span class="info-value">${escapeHtml(tab.agentSessionId)}</span>
+        <span class="info-value">${escapeHtmlText(tab.agentSessionId)}</span>
         `
 						: ''
 				}
         <span class="info-label">Session Name</span>
-        <span class="info-value">${escapeHtml(session.name)}</span>
+        <span class="info-value">${escapeHtmlText(session.name)}</span>
         <span class="info-label">Agent</span>
-        <span class="info-value">${escapeHtml(session.toolType)}</span>
+        <span class="info-value">${escapeHtmlText(session.toolType)}</span>
         <span class="info-label">Working Directory</span>
-        <span class="info-value">${escapeHtml(session.cwd)}</span>
+        <span class="info-value">${escapeHtmlText(session.cwd)}</span>
         <span class="info-label">Created</span>
         <span class="info-value">${formatTimestamp(tab.createdAt)}</span>
         <span class="info-label">Usage</span>
@@ -729,7 +722,7 @@ export function generateTabExportHtml(
 
     <footer class="footer">
       <p>Exported from <a href="https://runmaestro.ai" target="_blank">Maestro</a> on ${formatTimestamp(Date.now())}</p>
-      <p class="footer-theme">Theme: ${escapeHtml(theme.name)}</p>
+      <p class="footer-theme">Theme: ${escapeHtmlText(theme.name)}</p>
     </footer>
   </div>
 </body>

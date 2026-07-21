@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
+import { debounce } from '../../utils/debounce';
 import {
 	CUE_CONFIG_PATH,
 	CUE_PROMPTS_DIR,
@@ -48,34 +49,16 @@ export function readCueConfigFile(projectRoot: string): { filePath: string; raw:
 	};
 }
 
-/**
- * Write the raw YAML for a project's Cue config to the canonical path.
- * Creates `.maestro/` if it does not exist. Returns the absolute path written.
- *
- * Note: this always writes to the canonical `.maestro/cue.yaml`, never the
- * legacy `maestro-cue.yaml` location, so saves implicitly migrate the file.
- */
-export function writeCueConfigFile(projectRoot: string, content: string): string {
-	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
-	if (!fs.existsSync(maestroDir)) {
-		fs.mkdirSync(maestroDir, { recursive: true });
-	}
-	const filePath = path.join(projectRoot, CUE_CONFIG_PATH);
-	fs.writeFileSync(filePath, content, 'utf-8');
-	return filePath;
-}
-
-/**
- * Delete a project's Cue config file (canonical or legacy, whichever exists).
- * Returns `true` if a file was deleted, `false` if there was nothing to delete.
- */
-export function deleteCueConfigFile(projectRoot: string): boolean {
-	const filePath = resolveCueConfigPath(projectRoot);
-	if (!filePath) {
+function removeEmptyDir(dir: string, operation: string): boolean {
+	if (!fs.existsSync(dir)) return false;
+	try {
+		if (fs.readdirSync(dir).length > 0) return false;
+		fs.rmdirSync(dir);
+		return true;
+	} catch (err) {
+		captureException(err, { operation, dir });
 		return false;
 	}
-	fs.unlinkSync(filePath);
-	return true;
 }
 
 /**
@@ -90,20 +73,10 @@ export function deleteCueConfigFile(projectRoot: string): boolean {
  * cleanup without failing the surrounding operation.
  */
 export function removeEmptyPromptsDir(projectRoot: string): boolean {
-	const promptsDir = path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR));
-	if (!fs.existsSync(promptsDir)) return false;
-	try {
-		const entries = fs.readdirSync(promptsDir);
-		if (entries.length > 0) return false;
-		fs.rmdirSync(promptsDir);
-		return true;
-	} catch (err) {
-		captureException(err, {
-			operation: 'removeEmptyPromptsDir',
-			dir: promptsDir,
-		});
-		return false;
-	}
+	return removeEmptyDir(
+		path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR)),
+		'removeEmptyPromptsDir'
+	);
 }
 
 /**
@@ -117,20 +90,7 @@ export function removeEmptyPromptsDir(projectRoot: string): boolean {
  * errors (reports to Sentry) so callers can use this as best-effort cleanup.
  */
 export function removeEmptyMaestroDir(projectRoot: string): boolean {
-	const maestroDir = path.resolve(path.join(projectRoot, MAESTRO_DIR));
-	if (!fs.existsSync(maestroDir)) return false;
-	try {
-		const entries = fs.readdirSync(maestroDir);
-		if (entries.length > 0) return false;
-		fs.rmdirSync(maestroDir);
-		return true;
-	} catch (err) {
-		captureException(err, {
-			operation: 'removeEmptyMaestroDir',
-			dir: maestroDir,
-		});
-		return false;
-	}
+	return removeEmptyDir(path.resolve(path.join(projectRoot, MAESTRO_DIR)), 'removeEmptyMaestroDir');
 }
 
 /**
@@ -294,7 +254,6 @@ export function watchCueConfigFile(
 	// glob keeps the watch set focused. The directory itself can be missing;
 	// chokidar starts watching once it appears.
 	const promptsGlob = path.join(projectRoot, CUE_PROMPTS_DIR, '*.md');
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 
 	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
@@ -314,29 +273,20 @@ export function watchCueConfigFile(
 
 	const debouncedOnChange = () => {
 		if (torn) return;
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-		}
-		debounceTimer = setTimeout(() => {
-			debounceTimer = null;
-			if (torn) return;
-			onChange();
-		}, 1000);
+		onChange();
 	};
+	const notifyChange = debounce(debouncedOnChange, 1000);
 
-	watcher.on('add', debouncedOnChange);
-	watcher.on('change', debouncedOnChange);
-	watcher.on('unlink', debouncedOnChange);
+	watcher.on('add', notifyChange);
+	watcher.on('change', notifyChange);
+	watcher.on('unlink', notifyChange);
 	if (opts?.onReady) {
 		watcher.once('ready', opts.onReady);
 	}
 
 	return () => {
 		torn = true;
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-			debounceTimer = null;
-		}
+		notifyChange.cancel();
 		watcher.close();
 	};
 }

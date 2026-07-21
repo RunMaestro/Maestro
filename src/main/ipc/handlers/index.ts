@@ -9,7 +9,11 @@
 
 import { BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
-import type { AgentConfigsData, ClaudeSessionOriginsData } from '../../stores/types';
+import type {
+	AgentConfigsData,
+	AgentSessionOriginsData,
+	ClaudeSessionOriginsData,
+} from '../../stores/types';
 import { registerGitHandlers, GitHandlerDependencies } from './git';
 import { registerAutorunHandlers } from './autorun';
 import { registerPlaybooksHandlers } from './playbooks';
@@ -197,6 +201,7 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	agentSessionOriginsStore: Store<AgentSessionOriginsData>;
 	// Multi-window dependencies. Optional during the phased rollout - the
 	// registry and window manager are wired in main/index.ts at app-ready (a
 	// later phase). Until then the windows:* handlers report "not initialized".
@@ -261,6 +266,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	registerClaudeHandlers({
 		claudeSessionOriginsStore: deps.claudeSessionOriginsStore,
+		agentSessionOriginsStore: deps.agentSessionOriginsStore,
 		getMainWindow: deps.getMainWindow,
 	});
 	registerGroupChatHandlers({

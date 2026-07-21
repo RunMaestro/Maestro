@@ -13,7 +13,7 @@ import fs from 'fs/promises';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
-import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
+import type { AgentSessionOriginsData } from '../../../main/stores/types';
 
 // Mock electron-store
 const mockStoreData: Record<string, unknown> = {};
@@ -66,11 +66,6 @@ vi.mock('../../../main/utils/statsCache', () => ({
 	}),
 }));
 
-// Mock pricing
-vi.mock('../../../main/utils/pricing', () => ({
-	calculateClaudeCost: vi.fn(() => 0.05),
-}));
-
 describe('ClaudeSessionStorage', () => {
 	let storage: ClaudeSessionStorage;
 	let mockStore: {
@@ -97,7 +92,7 @@ describe('ClaudeSessionStorage', () => {
 		};
 
 		// Create storage with mock store
-		storage = new ClaudeSessionStorage(mockStore as unknown as Store<ClaudeSessionOriginsData>);
+		storage = new ClaudeSessionStorage(mockStore as unknown as Store<AgentSessionOriginsData>);
 	});
 
 	describe('Origin Management', () => {
@@ -150,8 +145,10 @@ describe('ClaudeSessionStorage', () => {
 				expect(mockStore.set).toHaveBeenCalledWith(
 					'origins',
 					expect.objectContaining({
-						'/project/path': expect.objectContaining({
-							'session-123': 'user',
+						'claude-code': expect.objectContaining({
+							'/project/path': expect.objectContaining({
+								'session-123': { origin: 'user' },
+							}),
 						}),
 					})
 				);
@@ -287,11 +284,12 @@ describe('ClaudeSessionStorage', () => {
 				expect(origins).toEqual({});
 			});
 
-			it('should normalize string origins to SessionOriginInfo format', () => {
-				// Simulate legacy string-only origin stored directly
+			it('reads canonical agent-keyed origin records', () => {
 				mockStoreData['origins'] = {
-					'/project/path': {
-						'session-123': 'user',
+					'claude-code': {
+						'/project/path': {
+							'session-123': { origin: 'user' },
+						},
 					},
 				};
 

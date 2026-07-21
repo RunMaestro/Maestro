@@ -1,6 +1,7 @@
 // Agent Sessions Service for CLI
 // Reads Claude Code session files directly from disk without Electron dependencies.
 // Supports listing sessions for an agent with sorting, limiting, and keyword search.
+import { resolveCliConfigDirectory } from '../utils/environment';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -69,17 +70,12 @@ interface OriginsStore {
 }
 
 function readOriginsStore(): OriginsStore {
-	const platform = os.platform();
-	const home = os.homedir();
-	let configDir: string;
-
-	if (platform === 'darwin') {
-		configDir = path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		configDir = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+	const configDir = resolveCliConfigDirectory(process.env, {
+		platform: os.platform(),
+		home: os.homedir(),
+		cwd: process.cwd(),
+		appName: 'Maestro',
+	});
 
 	const filePath = path.join(configDir, 'claude-session-origins.json');
 

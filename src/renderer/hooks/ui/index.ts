@@ -17,6 +17,17 @@ export type { UseModalLayerOptions } from './useModalLayer';
 export { useClickOutside } from './useClickOutside';
 export type { UseClickOutsideOptions } from './useClickOutside';
 
+// Clipboard feedback lifecycle
+export { useCopyFeedback } from './useCopyFeedback';
+export type { UseCopyFeedbackOptions, UseCopyFeedbackReturn } from './useCopyFeedback';
+
+// Command-panel UI state
+export { useCommandPanelState } from './useCommandPanelState';
+export type {
+	UseCommandPanelStateOptions,
+	UseCommandPanelStateReturn,
+} from './useCommandPanelState';
+
 // Expansion state management (for lists, trees, etc.)
 export { useExpandedSet } from './useExpandedSet';
 export type { UseExpandedSetOptions, UseExpandedSetReturn } from './useExpandedSet';
@@ -28,6 +39,12 @@ export type {
 	UseScrollPositionReturn,
 	ScrollMetrics,
 } from './useScrollPosition';
+
+export { useAutoScrollToBottom } from './useAutoScrollToBottom';
+export type {
+	UseAutoScrollToBottomOptions,
+	UseAutoScrollToBottomReturn,
+} from './useAutoScrollToBottom';
 
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
@@ -53,6 +70,9 @@ export type {
 	UseResizableModalOptions,
 	UseResizableModalReturn,
 } from './useResizableModal';
+
+export { usePointerResize } from './usePointerResize';
+export type { PointerResizeOperation, UsePointerResizeReturn } from './usePointerResize';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

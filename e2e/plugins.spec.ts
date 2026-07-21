@@ -256,14 +256,10 @@ test.describe('plugin system e2e', () => {
 	});
 
 	// FC3: the scheduler polls its trigger set every 30s (PluginSchedulerHost's
-	// non-configurable POLL_MS): first eligible tick SEEDS the interval, the
-	// fire happens once everyMinutes elapses - so the observable deny line lands
-	// ~90-150s after the mint. Deliberately skipped in the default run: the wait
-	// is pure wall-clock (no injectable clock reaches the host from e2e), and a
-	// ~3-minute mostly-idle test makes the suite unbearably slow. Un-skip to
-	// exercise FC3 end-to-end; the body is complete and asserts the exact
-	// contract line.
-	test.skip('scheduler: dispatch trigger without unattended consent notifies instead', async () => {
+	// non-configurable POLL_MS): first eligible tick seeds the interval, then
+	// the trigger fires after everyMinutes elapses. This journey waits for the
+	// observable host output instead of relying on a fixed delay.
+	test('scheduler: dispatch trigger without unattended consent notifies instead', async () => {
 		test.setTimeout(360_000);
 		const seeded = createSeededEnv();
 		await seedAll(seeded, { enabled: true, trusted: true });

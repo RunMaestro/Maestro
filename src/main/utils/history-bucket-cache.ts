@@ -19,6 +19,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { app } from 'electron';
+import type { GraphBucket } from '../../shared/history';
 import { logger } from './logger';
 import { captureException } from './sentry';
 
@@ -26,17 +27,6 @@ const LOG_CONTEXT = '[HistoryBucketCache]';
 
 /** Bump to invalidate every existing cache entry on disk. */
 export const HISTORY_BUCKET_CACHE_VERSION = 2;
-
-/**
- * Single bucket of the activity graph - counts of each entry type within the
- * bucket's time slice. Mirrors `GraphBucket` in director-notes / ActivityGraph
- * so all three layers (cache, IPC, renderer) share the same shape.
- */
-export interface CachedGraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
 
 /**
  * What the cache stores per (cacheKey, sourceFingerprint) pair.
@@ -50,7 +40,7 @@ export interface CachedBucketData {
 	 */
 	sourceFingerprint: string;
 	bucketCount: number;
-	buckets: CachedGraphBucket[];
+	buckets: GraphBucket[];
 	/** Unix ms of the earliest entry observed in the source set. */
 	earliestTimestamp: number;
 	/** Unix ms of the latest entry observed in the source set. */

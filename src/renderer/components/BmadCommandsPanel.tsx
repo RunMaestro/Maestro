@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import {
 	Edit2,
 	Save,
@@ -14,6 +14,7 @@ import { useTemplateAutocomplete } from '../hooks';
 import { captureException } from '../utils/sentry';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { openUrl } from '../utils/openUrl';
+import { useCommandPanelState } from '../hooks/ui/useCommandPanelState';
 
 interface BmadCommandsPanelProps {
 	theme: Theme;
@@ -27,11 +28,20 @@ interface EditingCommand {
 }
 
 export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadCommandsPanelProps) {
-	const [commands, setCommands] = useState<BmadCommand[]>([]);
-	const [metadata, setMetadata] = useState<BmadMetadata | null>(null);
-	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
-	const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
-	const [isLoading, setIsLoading] = useState(true);
+	const {
+		commands,
+		setCommands,
+		metadata,
+		setMetadata,
+		editingCommand,
+		setEditingCommand,
+		expandedCommands,
+		isLoading,
+		setIsLoading,
+		toggleExpanded,
+		replaceCommand,
+		cancelEditing,
+	} = useCommandPanelState<BmadCommand, BmadMetadata, EditingCommand>({ commands: [] });
 
 	const editCommandTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -81,14 +91,11 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 		try {
 			const result = await window.maestro.bmad.savePrompt(editingCommand.id, editingCommand.prompt);
 			if (result.success) {
-				setCommands(
-					commands.map((cmd) =>
-						cmd.id === editingCommand.id
-							? { ...cmd, prompt: editingCommand.prompt, isModified: true }
-							: cmd
-					)
-				);
-				setEditingCommand(null);
+				replaceCommand(editingCommand.id, {
+					prompt: editingCommand.prompt,
+					isModified: true,
+				});
+				cancelEditing();
 			}
 		} catch (error) {
 			captureException(error, { extra: { context: 'BmadCommandsPanel.handleSaveEdit' } });
@@ -99,29 +106,11 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 		try {
 			const result = await window.maestro.bmad.resetPrompt(id);
 			if (result.success && result.prompt) {
-				setCommands(
-					commands.map((cmd) =>
-						cmd.id === id ? { ...cmd, prompt: result.prompt!, isModified: false } : cmd
-					)
-				);
+				replaceCommand(id, { prompt: result.prompt, isModified: false });
 			}
 		} catch (error) {
 			captureException(error, { extra: { context: 'BmadCommandsPanel.handleReset' } });
 		}
-	};
-
-	const handleCancelEdit = () => {
-		setEditingCommand(null);
-	};
-
-	const toggleExpanded = (id: string) => {
-		const newExpanded = new Set(expandedCommands);
-		if (newExpanded.has(id)) {
-			newExpanded.delete(id);
-		} else {
-			newExpanded.add(id);
-		}
-		setExpandedCommands(newExpanded);
 	};
 
 	const formatDate = (isoDate: string) => {
@@ -263,7 +252,7 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 									</span>
 									<div className="flex items-center gap-1">
 										<button
-											onClick={handleCancelEdit}
+											onClick={cancelEditing}
 											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
 											style={{
 												backgroundColor: theme.colors.bgActivity,

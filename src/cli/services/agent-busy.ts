@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveCliConfigDirectory } from '../utils/environment';
 import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
 import { formatWarning, formatInfo } from '../output/formatter';
 
@@ -27,20 +28,12 @@ export interface BusyCheckResult {
  */
 export function isSessionBusyInDesktop(sessionId: string): BusyCheckResult {
 	try {
-		const platform = os.platform();
-		const home = os.homedir();
-		let configDir: string;
-
-		if (platform === 'darwin') {
-			configDir = path.join(home, 'Library', 'Application Support', 'maestro');
-		} else if (platform === 'win32') {
-			configDir = path.join(
-				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
-				'maestro'
-			);
-		} else {
-			configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'maestro');
-		}
+		const configDir = resolveCliConfigDirectory(process.env, {
+			platform: os.platform(),
+			home: os.homedir(),
+			cwd: process.cwd(),
+			appName: 'maestro',
+		});
 
 		const sessionsPath = path.join(configDir, 'maestro-sessions.json');
 		const content = fs.readFileSync(sessionsPath, 'utf-8');

@@ -12,6 +12,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type {
 	PluginListSnapshot,
 	PluginGrantsSnapshot,
@@ -118,19 +119,10 @@ export function createPluginsApi() {
 		 * refresh). The callback receives no payload - it is a signal to re-read
 		 * `list()` / `contributions()`. Returns an unsubscribe function.
 		 */
-		onChanged: (callback: () => void): (() => void) => {
-			const handler = (): void => callback();
-			ipcRenderer.on('plugins:changed', handler);
-			return () => {
-				ipcRenderer.removeListener('plugins:changed', handler);
-			};
-		},
+		onChanged: (callback: () => void): (() => void) => subscribeIpc('plugins:changed', callback),
 
-		onGroupingsChanged: (callback: () => void): (() => void) => {
-			const handler = (): void => callback();
-			ipcRenderer.on('plugins:groupings-changed', handler);
-			return () => ipcRenderer.removeListener('plugins:groupings-changed', handler);
-		},
+		onGroupingsChanged: (callback: () => void): (() => void) =>
+			subscribeIpc('plugins:groupings-changed', callback),
 
 		/**
 		 * Subscribe to the host's `ui.runCommand` round-trip. When a plugin

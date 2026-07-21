@@ -9,7 +9,6 @@
 
 import type { Dirent } from 'fs';
 import fs from 'fs/promises';
-import path from 'path';
 
 /**
  * Resolved type information for a directory entry, with symlinks followed.
@@ -61,23 +60,4 @@ export async function resolveDirentType(
 			isBrokenSymlink: true,
 		};
 	}
-}
-
-/**
- * Read a directory and return entries with symlink-resolved type info.
- * Convenience wrapper that combines `fs.readdir` with `resolveDirentType`.
- *
- * @param dirPath Directory to read
- */
-export async function readDirWithResolvedTypes(
-	dirPath: string
-): Promise<Array<ResolvedDirentType & { name: string; fullPath: string }>> {
-	const entries = await fs.readdir(dirPath, { withFileTypes: true });
-	return Promise.all(
-		entries.map(async (entry) => {
-			const fullPath = path.join(dirPath, entry.name);
-			const resolved = await resolveDirentType(entry, fullPath);
-			return { name: entry.name, fullPath, ...resolved };
-		})
-	);
 }

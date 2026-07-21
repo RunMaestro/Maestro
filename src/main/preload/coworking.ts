@@ -14,6 +14,11 @@ import type {
 	BrowserOpResult,
 	CoworkingBrowserInput,
 } from '../../shared/coworkingBrowser';
+import {
+	isCoworkingResponseChannel,
+	type CoworkingResponseChannel,
+} from '../../shared/coworkingResponseChannel';
+import { subscribeIpc } from './ipcSubscription';
 
 export interface CoworkingTerminalEntry {
 	id: string;
@@ -56,9 +61,17 @@ export interface CoworkingApi {
 	 * because the bridge enforces per-connection session binding at handshake.
 	 */
 	onRequestBuffer(
-		callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
+		callback: (
+			tabUuid: string,
+			sessionId: string,
+			responseChannel: CoworkingResponseChannel<'buffer'>
+		) => void
 	): () => void;
-	sendBufferResponse(responseChannel: string, content: string, ok?: boolean): void;
+	sendBufferResponse(
+		responseChannel: CoworkingResponseChannel<'buffer'>,
+		content: string,
+		ok?: boolean
+	): void;
 
 	// ---- Browser registry sync (renderer → main) ----
 	syncSessionBrowsers(
@@ -82,14 +95,20 @@ export interface CoworkingApi {
 			tabUuid: string,
 			sessionId: string,
 			op: BrowserOp,
-			responseChannel: string,
+			responseChannel: CoworkingResponseChannel<'browser-op'>,
 			needsConfirm?: boolean
 		) => void
 	): () => void;
-	sendBrowserOpResponse(responseChannel: string, result: BrowserOpResult): void;
+	sendBrowserOpResponse(
+		responseChannel: CoworkingResponseChannel<'browser-op'>,
+		result: BrowserOpResult
+	): void;
 }
 
 export function createCoworkingApi(): CoworkingApi {
+	const pendingBufferResponses = new Set<CoworkingResponseChannel<'buffer'>>();
+	const pendingBrowserOpResponses = new Set<CoworkingResponseChannel<'browser-op'>>();
+
 	return {
 		getInstallStatus: () => ipcRenderer.invoke('coworking:getInstallStatus'),
 		install: (agentId) => ipcRenderer.invoke('coworking:install', agentId),
@@ -101,12 +120,21 @@ export function createCoworkingApi(): CoworkingApi {
 		removeSession: (sessionId) => ipcRenderer.invoke('coworking:removeSession', sessionId),
 
 		onRequestBuffer: (callback) => {
-			const handler = (_: unknown, tabUuid: string, sessionId: string, responseChannel: string) =>
-				callback(tabUuid, sessionId, responseChannel);
-			ipcRenderer.on('coworking:requestBuffer', handler);
-			return () => ipcRenderer.removeListener('coworking:requestBuffer', handler);
+			const unsubscribe = subscribeIpc<[string, string, unknown]>(
+				'coworking:requestBuffer',
+				(tabUuid, sessionId, responseChannel) => {
+					if (!isCoworkingResponseChannel(responseChannel, 'buffer')) return;
+					pendingBufferResponses.add(responseChannel);
+					callback(tabUuid, sessionId, responseChannel);
+				}
+			);
+			return () => {
+				pendingBufferResponses.clear();
+				unsubscribe();
+			};
 		},
 		sendBufferResponse: (responseChannel, content, ok) => {
+			if (!pendingBufferResponses.delete(responseChannel)) return;
 			ipcRenderer.send(responseChannel, content, ok);
 		},
 
@@ -121,18 +149,21 @@ export function createCoworkingApi(): CoworkingApi {
 			),
 
 		onRequestBrowserOp: (callback) => {
-			const handler = (
-				_: unknown,
-				tabUuid: string,
-				sessionId: string,
-				op: BrowserOp,
-				responseChannel: string,
-				needsConfirm?: boolean
-			) => callback(tabUuid, sessionId, op, responseChannel, needsConfirm);
-			ipcRenderer.on('coworking:requestBrowserOp', handler);
-			return () => ipcRenderer.removeListener('coworking:requestBrowserOp', handler);
+			const unsubscribe = subscribeIpc<[string, string, BrowserOp, unknown, boolean | undefined]>(
+				'coworking:requestBrowserOp',
+				(tabUuid, sessionId, op, responseChannel, needsConfirm) => {
+					if (!isCoworkingResponseChannel(responseChannel, 'browser-op')) return;
+					pendingBrowserOpResponses.add(responseChannel);
+					callback(tabUuid, sessionId, op, responseChannel, needsConfirm);
+				}
+			);
+			return () => {
+				pendingBrowserOpResponses.clear();
+				unsubscribe();
+			};
 		},
 		sendBrowserOpResponse: (responseChannel, result) => {
+			if (!pendingBrowserOpResponses.delete(responseChannel)) return;
 			ipcRenderer.send(responseChannel, result);
 		},
 	};

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs/promises';
 import type Store from 'electron-store';
-import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
+import type { AgentSessionOriginsData } from '../../../main/stores/types';
 import {
 	AgentSessionStorage,
 	AgentSessionInfo,
@@ -562,10 +562,8 @@ describe('Storage Module Initialization', () => {
 		expect(CodexSessionStorage).toBeDefined();
 	});
 
-	it('should allow creating ClaudeSessionStorage with external store', async () => {
-		// This tests that ClaudeSessionStorage can receive an external store
-		// This prevents the dual-store bug where IPC handlers and storage class
-		// use different electron-store instances
+	it('should allow creating ClaudeSessionStorage with the canonical origins store', async () => {
+		// The storage must receive the same agent-keyed target store as the IPC handlers.
 		const { ClaudeSessionStorage } = await import('../../../main/storage/claude-session-storage');
 
 		// Create a mock store
@@ -577,7 +575,7 @@ describe('Storage Module Initialization', () => {
 
 		// Should be able to create with external store (no throw)
 		const storage = new ClaudeSessionStorage(
-			mockStore as unknown as Store<ClaudeSessionOriginsData>
+			mockStore as unknown as Store<AgentSessionOriginsData>
 		);
 		expect(storage.agentId).toBe('claude-code');
 	});
@@ -591,9 +589,8 @@ describe('Storage Module Initialization', () => {
 		expect(() => storageModule.initializeSessionStorages()).not.toThrow();
 	});
 
-	it('should accept claudeSessionOriginsStore in options', async () => {
-		// This tests the fix for the dual-store bug
-		// When a shared store is passed, it should be used instead of creating a new one
+	it('should accept agentSessionOriginsStore in options', async () => {
+		// The shared target store prevents a provider-specific origins split.
 		const { initializeSessionStorages } = await import('../../../main/storage/index');
 		const { getSessionStorage, clearStorageRegistry } = await import('../../../main/agents');
 
@@ -612,7 +609,7 @@ describe('Storage Module Initialization', () => {
 		// Initialize with the shared store
 		// This mimics what main/index.ts does
 		initializeSessionStorages({
-			claudeSessionOriginsStore: mockStore as unknown as Store<ClaudeSessionOriginsData>,
+			agentSessionOriginsStore: mockStore as unknown as Store<AgentSessionOriginsData>,
 		});
 
 		// Verify ClaudeSessionStorage was registered

@@ -242,31 +242,3 @@ export function parseConfigContent(content: string, homeDir: string): SshConfigH
 
 	return hosts;
 }
-
-/**
- * Get a summary of what an SSH config host provides.
- * Useful for displaying to users what will be auto-filled.
- */
-export function getSshConfigHostSummary(host: SshConfigHost): string {
-	const parts: string[] = [];
-
-	if (host.user && host.hostName) {
-		parts.push(`${host.user}@${host.hostName}`);
-	} else if (host.hostName) {
-		parts.push(host.hostName);
-	} else if (host.user) {
-		parts.push(`${host.user}@...`);
-	}
-
-	if (host.port && host.port !== 22) {
-		parts.push(`port ${host.port}`);
-	}
-
-	if (host.identityFile) {
-		// Show just the filename for brevity
-		const keyName = path.basename(host.identityFile);
-		parts.push(`key: ${keyName}`);
-	}
-
-	return parts.join(', ') || 'No details available';
-}

@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type {
 	QueryEvent,
 	AutoRunSession,
@@ -128,11 +129,7 @@ export function createStatsApi() {
 			ipcRenderer.invoke('stats:export-csv', range),
 
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => {
-			const handler = () => callback();
-			ipcRenderer.on('stats:updated', handler);
-			return () => ipcRenderer.removeListener('stats:updated', handler);
-		},
+		onStatsUpdate: (callback: () => void) => subscribeIpc('stats:updated', callback),
 
 		// Clear old stats data (older than specified number of days)
 		clearOldData: (

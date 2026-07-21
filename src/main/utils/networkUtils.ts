@@ -159,11 +159,3 @@ function isPrivateIp(ip: string): boolean {
 
 	return false;
 }
-
-/**
- * Synchronous version that only uses interface scanning.
- * Use this when async is not available.
- */
-export function getLocalIpAddressSync(): string {
-	return getIpFromInterfaces();
-}

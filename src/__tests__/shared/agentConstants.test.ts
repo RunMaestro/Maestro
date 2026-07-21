@@ -9,7 +9,7 @@ import {
 	COMBINED_CONTEXT_AGENTS,
 	resilienceEnabled,
 } from '../../shared/agentConstants';
-import { AGENT_IDS } from '../../shared/agentIds';
+import { AGENT_IDS } from '../../shared/agentRegistry';
 
 describe('agentConstants', () => {
 	describe('FALLBACK_CONTEXT_WINDOW', () => {

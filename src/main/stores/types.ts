@@ -171,18 +171,24 @@ export interface ClaudeSessionOriginsData {
 }
 
 // ============================================================================
-// Agent Session Origins Store (generic, for non-Claude agents)
+// Agent Session Origins Store (versioned canonical schema)
 // ============================================================================
 
+export interface AgentSessionOriginInfo {
+	origin?: ClaudeSessionOrigin;
+	sessionName?: string;
+	starred?: boolean;
+	/** Retained from Claude's legacy store during the v2 cutover. */
+	contextUsage?: number;
+}
+
 export interface AgentSessionOriginsData {
-	// Structure: { [agentId]: { [projectPath]: { [sessionId]: { origin, sessionName, starred } } } }
-	origins: Record<
-		string,
-		Record<
-			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
-		>
-	>;
+	/** `2` after the Claude origins cutover. Earlier files omit this field. */
+	schemaVersion?: number;
+	/** One-shot migration completion markers, keyed by migration identifier. */
+	migrationMarkers?: Record<string, true>;
+	// Structure: { [agentId]: { [projectPath]: { [sessionId]: origin info } } }
+	origins: Record<string, Record<string, Record<string, AgentSessionOriginInfo>>>;
 }
 
 // ============================================================================

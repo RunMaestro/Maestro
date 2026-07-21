@@ -14,7 +14,8 @@ import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
-import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
+import { GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
+import { extractStreamJsonResult } from '../utils/wizardOutputParsing';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
@@ -443,100 +444,6 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 }
 
 /**
- * Extract the result text from agent JSON output.
- * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex, Grok).
- */
-function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
-	try {
-		const lines = output.split('\n');
-
-		// For OpenCode: concatenate all text parts
-		if (agentType === 'opencode') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'text' && msg.part?.text) {
-						textParts.push(msg.part.text);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
-		}
-
-		// For Codex: look for message content
-		if (agentType === 'codex') {
-			const textParts: string[] = [];
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'agent_message' && msg.content) {
-						for (const block of msg.content) {
-							if (block.type === 'text' && block.text) {
-								textParts.push(block.text);
-							}
-						}
-					}
-					if (msg.type === 'message' && msg.text) {
-						textParts.push(msg.text);
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-			if (textParts.length > 0) {
-				return textParts.join('');
-			}
-		}
-
-		// For Grok: concatenate text deltas only (skip thought/reasoning deltas).
-		// The `end` event has sessionId but no result body, so the full answer is
-		// only available by joining {"type":"text","data":"..."} lines.
-		if (agentType === 'grok') {
-			const grokText = extractGrokTextFromJsonl(lines);
-			if (grokText) return grokText;
-		}
-
-		// For Copilot: final answers arrive as assistant.message with phase=final_answer
-		if (agentType === 'copilot-cli') {
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const msg = JSON.parse(line);
-					if (msg.type === 'assistant.message' && msg.data?.phase === 'final_answer') {
-						return typeof msg.data?.content === 'string' ? msg.data.content : null;
-					}
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
-		}
-
-		// For Claude Code: look for result message
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			try {
-				const msg = JSON.parse(line);
-				if (msg.type === 'result' && msg.result) {
-					return msg.result;
-				}
-			} catch {
-				// Ignore non-JSON lines
-			}
-		}
-	} catch {
-		// Fallback to raw output
-	}
-	return null;
-}
-
-/**
  * Build CLI args for the agent based on its type and capabilities.
  * For wizard conversations, we restrict tool usage to read-only operations
  * to prevent the agent from making changes during the discovery phase.
@@ -822,7 +729,9 @@ export async function sendWizardMessage(
 
 						// Prefer a parseable structured reply even on non-zero exit
 						// (e.g. Grok `--max-turns` can exit 1 after useful text).
-						const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
+						const extractedResult = extractStreamJsonResult(outputBuffer, session.agentType, {
+							allowCopilotFinalAnswer: true,
+						});
 						const textToParse = extractedResult || outputBuffer;
 						const parsedResponse = textToParse.trim() ? parseWizardResponse(textToParse) : null;
 

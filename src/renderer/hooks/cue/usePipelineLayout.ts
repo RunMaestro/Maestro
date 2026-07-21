@@ -205,11 +205,9 @@ export function usePipelineLayout({
 			// root in that case, leaving stale YAML uncleared).
 			writtenRoots: [...lastWrittenRootsRef.current],
 		};
-		cueService
-			.savePipelineLayout(layout as unknown as Record<string, unknown>)
-			.catch((err: unknown) => {
-				captureException(err, { extra: { operation: 'savePipelineLayout' } });
-			});
+		cueService.savePipelineLayout(layout).catch((err: unknown) => {
+			captureException(err, { extra: { operation: 'savePipelineLayout' } });
+		});
 	}, [reactFlowInstance, lastWrittenRootsRef]);
 
 	// Debounced layout persistence (positions + viewport + written roots)
@@ -247,7 +245,7 @@ export function usePipelineLayout({
 		const loadWrittenRoots = async () => {
 			let savedLayout: PipelineLayoutState | null = null;
 			try {
-				savedLayout = (await cueService.loadPipelineLayout()) as PipelineLayoutState | null;
+				savedLayout = await cueService.loadPipelineLayout();
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
 				if (!message.includes('no saved layout') && !message.includes('ENOENT')) {
@@ -293,7 +291,7 @@ export function usePipelineLayout({
 
 			let savedLayout: PipelineLayoutState | null = null;
 			try {
-				savedLayout = (await cueService.loadPipelineLayout()) as PipelineLayoutState | null;
+				savedLayout = await cueService.loadPipelineLayout();
 			} catch (err: unknown) {
 				// loadPipelineLayout may fail if no layout has been saved yet - that's expected.
 				// Report anything else to Sentry.

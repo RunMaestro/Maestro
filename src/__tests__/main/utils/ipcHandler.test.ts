@@ -726,6 +726,24 @@ describe('ipcHandler.ts', () => {
 			});
 		});
 
+		it('should preserve a handler family’s legacy error envelope when configured', async () => {
+			const handler = createIpcHandler(
+				{
+					context: '[Test]',
+					operation: 'legacyError',
+					formatError: (error) => (error instanceof Error ? error.message : String(error)),
+				},
+				async () => {
+					throw new Error('Handler failed');
+				}
+			);
+
+			await expect(handler({})).resolves.toEqual({
+				success: false,
+				error: 'Handler failed',
+			});
+		});
+
 		it('should log success with context and operation', async () => {
 			const handler = createIpcHandler(
 				{ context: '[AutoRun]', operation: 'readDoc' },

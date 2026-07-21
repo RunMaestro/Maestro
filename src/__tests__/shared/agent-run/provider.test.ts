@@ -23,8 +23,9 @@ describe('resolveAgentRunProvider - alias folding', () => {
 		['copilot', 'copilot-cli'],
 		['droid', 'factory-droid'],
 		['factory', 'factory-droid'],
-		['qwen', 'qwen-coder'],
-		['qwen-code', 'qwen-coder'],
+		['qwen', 'qwen3-coder'],
+		['qwen-code', 'qwen3-coder'],
+		['qwen-coder', 'qwen3-coder'],
 	];
 
 	it.each(aliases)('%s -> %s', (alias, canonical) => {
@@ -48,7 +49,7 @@ describe('resolveAgentRunProvider - case-insensitive matching', () => {
 	it('aliases match case-insensitively', () => {
 		expect(resolveAgentRunProvider('Claude')).toBe('claude-code');
 		expect(resolveAgentRunProvider('DROID')).toBe('factory-droid');
-		expect(resolveAgentRunProvider('Qwen-Code')).toBe('qwen-coder');
+		expect(resolveAgentRunProvider('Qwen-Code')).toBe('qwen3-coder');
 	});
 });
 

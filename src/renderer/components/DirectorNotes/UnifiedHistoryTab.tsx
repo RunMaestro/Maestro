@@ -12,6 +12,7 @@ import { Search, X, ArrowUp } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
 import type { FileNode } from '../../types/fileTree';
+import type { GraphBucket, UnifiedHistoryEntry } from '../../../shared/history';
 import {
 	ActivityGraph,
 	HistoryEntryItem,
@@ -23,7 +24,6 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from '../History';
-import type { GraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
@@ -33,6 +33,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
 import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
+import type { LookbackHours } from '../History/lookbackOptions';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
@@ -42,11 +43,6 @@ const PAGE_SIZE = 100;
 /** Distance from bottom (in px) at which to trigger loading the next page */
 const SCROLL_LOAD_THRESHOLD = 500;
 
-interface UnifiedHistoryEntry extends HistoryEntry {
-	agentName?: string;
-	sourceSessionId: string;
-}
-
 interface UnifiedHistoryTabProps {
 	theme: Theme;
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
@@ -54,8 +50,8 @@ interface UnifiedHistoryTabProps {
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
-	lookbackHours: number | null;
-	onLookbackChange: (hours: number | null) => void;
+	lookbackHours: LookbackHours;
+	onLookbackChange: (hours: LookbackHours) => void;
 }
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
@@ -323,7 +319,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// `lookbackHours`). We just clear stats so the bar reflects the new
 		// scope until the next response lands.
 		const handleLookbackChange = useCallback(
-			(hours: number | null) => {
+			(hours: LookbackHours) => {
 				onLookbackChange(hours);
 				setHistoryStats(null);
 			},

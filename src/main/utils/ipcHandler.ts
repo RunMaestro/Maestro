@@ -73,6 +73,11 @@ export interface CreateHandlerOptions {
 	successLogData?: Record<string, unknown>;
 }
 
+export interface CreateIpcHandlerOptions extends CreateHandlerOptions {
+	/** Optional response-envelope formatter for legacy handler families */
+	formatError?: (error: unknown) => string;
+}
+
 /**
  * Creates a wrapped IPC handler that standardizes error handling and logging.
  *
@@ -249,10 +254,10 @@ export function withIpcErrorLogging<TArgs extends unknown[], TResult>(
  * @returns Wrapped handler function compatible with ipcMain.handle
  */
 export function createIpcHandler<TArgs extends unknown[], TResult extends Record<string, unknown>>(
-	options: CreateHandlerOptions,
+	options: CreateIpcHandlerOptions,
 	handler: (...args: TArgs) => Promise<TResult>
 ): (_event: unknown, ...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
-	const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData, formatError = String } = options;
 
 	return async (_event: unknown, ...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
 		try {
@@ -265,7 +270,7 @@ export function createIpcHandler<TArgs extends unknown[], TResult extends Record
 			return { success: true, ...result };
 		} catch (error) {
 			logger.error(`${operation} error`, context, serializeError(error));
-			return { success: false, error: String(error) };
+			return { success: false, error: formatError(error) };
 		}
 	};
 }

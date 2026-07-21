@@ -33,7 +33,6 @@ import {
 	type AggregatedContributions,
 } from '../../shared/plugins/contributions';
 import { isPermitted, type PermissionGrant } from '../../shared/plugins/permissions';
-import { createAgentRegistry, type AgentRegistry } from '../../shared/plugins/agent-registry';
 import {
 	pluginsDir,
 	readPluginState,
@@ -158,17 +157,6 @@ export class PluginManager {
 		return aggregateContributions(manifests, (pluginId, cap) =>
 			isPermitted(getGrants(pluginId), cap)
 		);
-	}
-
-	/**
-	 * The runtime agent registry: built-in agents plus any agents contributed by
-	 * active plugins. Built-ins always win on a collision, so a plugin can never
-	 * shadow a first-party agent. Empty of runtime agents when the Encore flag is
-	 * off. NOTE: this exposes runtime agents for discovery/UI; actually spawning
-	 * one is a separate, security-reviewed step (arbitrary binary execution).
-	 */
-	getAgentRegistry(): AgentRegistry {
-		return createAgentRegistry(this.getContributions().agents);
 	}
 
 	/**

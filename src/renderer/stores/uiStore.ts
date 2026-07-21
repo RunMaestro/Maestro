@@ -13,6 +13,7 @@
 import { create } from 'zustand';
 import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
+import { resolveUpdater } from '../utils/resolveUpdater';
 
 /**
  * Keyboard-selection cursor for the two Left Bar sections that are NOT plain
@@ -225,13 +226,6 @@ export interface UIStoreActions {
 
 export type UIStore = UIStoreState & UIStoreActions;
 
-/**
- * Helper to resolve a value-or-updater argument, matching React's setState signature.
- */
-function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
-	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
-}
-
 const DEFAULT_OUTPUT_SEARCH: OutputSearchSlot = { open: false, query: '', regex: false };
 
 /**
@@ -314,9 +308,11 @@ export const useUIStore = create<UIStore>()((set) => ({
 	usageRefreshIntervals: {},
 
 	// --- Actions ---
-	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
+	setLeftSidebarOpen: (v) =>
+		set((s) => ({ leftSidebarOpen: resolveUpdater(v, s.leftSidebarOpen) })),
 	toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
-	setLeftSidebarHidden: (v) => set((s) => ({ leftSidebarHidden: resolve(v, s.leftSidebarHidden) })),
+	setLeftSidebarHidden: (v) =>
+		set((s) => ({ leftSidebarHidden: resolveUpdater(v, s.leftSidebarHidden) })),
 	// Cycle: full → collapsed → hidden → full. Lets the same control walk
 	// through all three states with a single click.
 	cycleLeftSidebar: () =>
@@ -325,18 +321,18 @@ export const useUIStore = create<UIStore>()((set) => ({
 			if (s.leftSidebarOpen) return { leftSidebarOpen: false, leftSidebarHidden: false };
 			return { leftSidebarOpen: false, leftSidebarHidden: true };
 		}),
-	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
+	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolveUpdater(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
 
-	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
-	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
+	setActiveFocus: (v) => set((s) => ({ activeFocus: resolveUpdater(v, s.activeFocus) })),
+	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolveUpdater(v, s.activeRightTab) })),
 
 	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 	setPaneDrag: (drag) => set({ paneDrag: drag }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
-			const next = resolve(v, s.bookmarksCollapsed);
+			const next = resolveUpdater(v, s.bookmarksCollapsed);
 			persistBookmarksCollapsed(next);
 			return { bookmarksCollapsed: next };
 		}),
@@ -347,17 +343,17 @@ export const useUIStore = create<UIStore>()((set) => ({
 			return { bookmarksCollapsed: next };
 		}),
 
-	setShowUnreadOnly: (v) => set((s) => ({ showUnreadOnly: resolve(v, s.showUnreadOnly) })),
+	setShowUnreadOnly: (v) => set((s) => ({ showUnreadOnly: resolveUpdater(v, s.showUnreadOnly) })),
 	toggleShowUnreadOnly: () => set((s) => ({ showUnreadOnly: !s.showUnreadOnly })),
 	setShowUnreadAgentsOnly: (v) =>
-		set((s) => ({ showUnreadAgentsOnly: resolve(v, s.showUnreadAgentsOnly) })),
+		set((s) => ({ showUnreadAgentsOnly: resolveUpdater(v, s.showUnreadAgentsOnly) })),
 	toggleShowUnreadAgentsOnly: () => set((s) => ({ showUnreadAgentsOnly: !s.showUnreadAgentsOnly })),
 	setPreFilterActiveTabId: (id) => set({ preFilterActiveTabId: id }),
 	setPreTerminalFileTabId: (id) => set({ preTerminalFileTabId: id }),
 	setPianolaView: (view) => set({ pianolaView: view }),
 
 	setSelectedSidebarIndex: (v) =>
-		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
+		set((s) => ({ selectedSidebarIndex: resolveUpdater(v, s.selectedSidebarIndex) })),
 	setSidebarExtraSelection: (selection) => set({ sidebarExtraSelection: selection }),
 
 	setFlashNotification: (v) => {
@@ -374,19 +370,19 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setOutputSearchOpen: (key, v) =>
 		set((s) => ({
 			outputSearchByKey: patchOutputSearchSlot(s.outputSearchByKey, key, {
-				open: resolve(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).open),
+				open: resolveUpdater(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).open),
 			}),
 		})),
 	setOutputSearchQuery: (key, v) =>
 		set((s) => ({
 			outputSearchByKey: patchOutputSearchSlot(s.outputSearchByKey, key, {
-				query: resolve(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).query),
+				query: resolveUpdater(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).query),
 			}),
 		})),
 	setOutputSearchRegex: (key, v) =>
 		set((s) => ({
 			outputSearchByKey: patchOutputSearchSlot(s.outputSearchByKey, key, {
-				regex: resolve(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).regex),
+				regex: resolveUpdater(v, (s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).regex),
 			}),
 		})),
 	toggleOutputSearchRegex: (key) =>
@@ -396,25 +392,30 @@ export const useUIStore = create<UIStore>()((set) => ({
 			}),
 		})),
 
-	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
+	setSessionFilterOpen: (v) =>
+		set((s) => ({ sessionFilterOpen: resolveUpdater(v, s.sessionFilterOpen) })),
 	setHistorySearchFilterOpen: (v) =>
-		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
+		set((s) => ({ historySearchFilterOpen: resolveUpdater(v, s.historySearchFilterOpen) })),
 	setGroupChatHistorySearchFilterOpen: (v) =>
 		set((s) => ({
-			groupChatHistorySearchFilterOpen: resolve(v, s.groupChatHistorySearchFilterOpen),
+			groupChatHistorySearchFilterOpen: resolveUpdater(v, s.groupChatHistorySearchFilterOpen),
 		})),
 
-	setDraggingSessionId: (v) => set((s) => ({ draggingSessionId: resolve(v, s.draggingSessionId) })),
+	setDraggingSessionId: (v) =>
+		set((s) => ({ draggingSessionId: resolveUpdater(v, s.draggingSessionId) })),
 
-	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolve(v, s.editingGroupId) })),
-	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
+	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolveUpdater(v, s.editingGroupId) })),
+	setEditingSessionId: (v) =>
+		set((s) => ({ editingSessionId: resolveUpdater(v, s.editingSessionId) })),
 
-	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
+	setAutoFollowEnabled: (v) =>
+		set((s) => ({ autoFollowEnabled: resolveUpdater(v, s.autoFollowEnabled) })),
 
-	setProfilingActive: (v) => set((s) => ({ profilingActive: resolve(v, s.profilingActive) })),
+	setProfilingActive: (v) =>
+		set((s) => ({ profilingActive: resolveUpdater(v, s.profilingActive) })),
 
 	setUsageDashboardViewMode: (v) =>
-		set((s) => ({ usageDashboardViewMode: resolve(v, s.usageDashboardViewMode) })),
+		set((s) => ({ usageDashboardViewMode: resolveUpdater(v, s.usageDashboardViewMode) })),
 
 	toggleHiddenQuotaAccount: (providerId, accountKey) =>
 		set((s) => {

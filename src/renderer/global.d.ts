@@ -4,12 +4,6 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
-// Vite raw imports for .md files
-declare module '*.md?raw' {
-	const content: string;
-	export default content;
-}
-
 interface HTMLWebViewElement extends HTMLElement {
 	src: string;
 	partition: string;
@@ -98,6 +92,9 @@ type ShellInfo = import('../shared/types').ShellInfo;
 type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
+type PermissionDecision = import('../shared/permission-relay').PermissionDecision;
+type PermissionRequestNotification =
+	import('../shared/permission-relay').PermissionRequestNotification;
 
 /**
  * Result type for reading session messages from agent storage.
@@ -187,6 +184,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { CoworkingResponseChannel } from '../shared/coworkingResponseChannel';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -334,22 +332,8 @@ interface MaestroAPI {
 		) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
-		onPermissionRequest: (
-			callback: (request: {
-				requestId: string;
-				sessionId: string;
-				tabId?: string;
-				toolName: string;
-				input: Record<string, unknown>;
-				createdAt: number;
-			}) => void
-		) => () => void;
-		respondPermission: (
-			requestId: string,
-			decision:
-				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-				| { behavior: 'deny'; message: string }
-		) => Promise<boolean>;
+		onPermissionRequest: (callback: (request: PermissionRequestNotification) => void) => () => void;
+		respondPermission: (requestId: string, decision: PermissionDecision) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
@@ -1786,14 +1770,8 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
-			callback: (deepLink: {
-				action: 'focus' | 'session' | 'group';
-				sessionId?: string;
-				tabId?: string;
-				groupId?: string;
-			}) => void
+			callback: (deepLink: import('../shared/types').ParsedDeepLink) => void
 		) => () => void;
 		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
 	};
@@ -1865,19 +1843,6 @@ interface MaestroAPI {
 			totalSizeBytes: number;
 			isComplete: boolean;
 		}>;
-		onGlobalStatsUpdate: (
-			callback: (stats: {
-				totalSessions: number;
-				totalMessages: number;
-				totalInputTokens: number;
-				totalOutputTokens: number;
-				totalCacheReadTokens: number;
-				totalCacheCreationTokens: number;
-				totalCostUsd: number;
-				totalSizeBytes: number;
-				isComplete: boolean;
-			}) => void
-		) => () => void;
 		getProjectStats: (projectPath: string) => Promise<{
 			totalSessions: number;
 			totalMessages: number;
@@ -2137,8 +2102,6 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean; notificationId?: number; error?: string }>;
 		stopSpeak: (notificationId: number) => Promise<{ success: boolean; error?: string }>;
 		onCommandCompleted: (handler: (notificationId: number) => void) => () => void;
-		/** @deprecated Use onCommandCompleted instead */
-		onTtsCompleted: (handler: (notificationId: number) => void) => () => void;
 	};
 	attachments: {
 		save: (
@@ -3811,69 +3774,10 @@ interface MaestroAPI {
 	};
 
 	// Cue API (event-driven automation)
-	cue: {
-		getSettings: () => Promise<CueSettings>;
-		saveSettings: (settings: CueSettings) => Promise<{ writtenRoots: string[] }>;
-		getStatus: () => Promise<CueSessionStatus[]>;
-		getGraphData: () => Promise<CueGraphSession[]>;
-		getActiveRuns: () => Promise<CueRunResult[]>;
-		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
-		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
-		getEventCount: () => Promise<number>;
-		enable: () => Promise<void>;
-		disable: () => Promise<void>;
-		/**
-		 * Visibility-aware pause. Flip to false while the app is hidden so
-		 * the Cue scanner subsystem skips expensive background work; flip
-		 * back to true on visibility. Different from `disable`, which tears
-		 * the engine down entirely.
-		 */
-		setActive: (active: boolean) => Promise<void>;
-		stopRun: (runId: string) => Promise<boolean>;
-		stopAll: () => Promise<void>;
-		triggerSubscription: (
-			subscriptionName: string,
-			prompt?: string,
-			sourceAgentId?: string
-		) => Promise<boolean>;
-		getQueueStatus: () => Promise<Record<string, number>>;
-		getMetrics: () => Promise<import('../main/cue/cue-metrics').CueMetrics | null>;
-		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
-		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
-		removeSession: (sessionId: string) => Promise<void>;
-		readYaml: (projectRoot: string) => Promise<string | null>;
-		writeYaml: (
-			projectRoot: string,
-			content: string,
-			promptFiles?: Record<string, string>
-		) => Promise<{ changed: boolean }>;
-		deleteYaml: (projectRoot: string) => Promise<boolean>;
-		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
-		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
-		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
-		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
-	};
+	cue: import('../main/preload/cue').CueApi;
 
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
-	cueBackup: {
-		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;
-		list: () => Promise<import('../shared/cue-backup-types').CueBackupSummary[]>;
-		inspect: (filePath: string) => Promise<import('../shared/cue-backup-types').CueBackupManifest>;
-		readFile: (
-			filePath: string,
-			workspaceId: string,
-			relativePath: string
-		) => Promise<string | null>;
-		readLive: (cwd: string, relativePath: string) => Promise<string | null>;
-		restoreFile: (filePath: string, workspaceId: string, relativePath: string) => Promise<void>;
-		restoreAll: (
-			filePath: string
-		) => Promise<import('../shared/cue-backup-types').CueBackupRestoreResult>;
-		getDiffStatus: (
-			filePath: string
-		) => Promise<import('../shared/cue-backup-types').CueBackupDiffStatusMap>;
-		delete: (filePath: string) => Promise<void>;
-	};
+	cueBackup: import('../main/preload/cueBackup').CueBackupApi;
 
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
@@ -4016,6 +3920,7 @@ interface MaestroAPI {
 	};
 
 	// Coworking API (per-agent MCP installer + terminal registry sync)
+
 	coworking: {
 		getInstallStatus: () => Promise<
 			Array<{ agentId: string; configPath: string; installed: boolean }>
@@ -4035,9 +3940,17 @@ interface MaestroAPI {
 		) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		onRequestBuffer: (
-			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
+			callback: (
+				tabUuid: string,
+				sessionId: string,
+				responseChannel: CoworkingResponseChannel<'buffer'>
+			) => void
 		) => () => void;
-		sendBufferResponse: (responseChannel: string, content: string, ok?: boolean) => void;
+		sendBufferResponse: (
+			responseChannel: CoworkingResponseChannel<'buffer'>,
+			content: string,
+			ok?: boolean
+		) => void;
 		syncSessionBrowsers: (
 			sessionId: string,
 			inputs: Array<{
@@ -4059,12 +3972,12 @@ interface MaestroAPI {
 				tabUuid: string,
 				sessionId: string,
 				op: BrowserOp,
-				responseChannel: string,
+				responseChannel: CoworkingResponseChannel<'browser-op'>,
 				needsConfirm?: boolean
 			) => void
 		) => () => void;
 		sendBrowserOpResponse: (
-			responseChannel: string,
+			responseChannel: CoworkingResponseChannel<'browser-op'>,
 			result: {
 				content?: string;
 				dataUrl?: string;

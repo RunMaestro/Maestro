@@ -1,6 +1,7 @@
 import { RotateCcw } from 'lucide-react';
 import type { Theme } from '../../../../../types';
-import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 
 interface AutoResumeSectionProps {
 	theme: Theme;
@@ -23,44 +24,31 @@ export function AutoResumeSection({
 }: AutoResumeSectionProps) {
 	return (
 		<div>
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<RotateCcw className="w-3 h-3" />
-				Auto-Resume on Limit
-			</div>
+			<SettingsSectionHeading icon={RotateCcw}>Auto-Resume on Limit</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div
-					data-setting-id="general-auto-resume"
-					className="flex items-center justify-between cursor-pointer"
-					onClick={() => setAutoResumeOnLimit(!autoResumeOnLimit)}
-					role="button"
-					tabIndex={0}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							setAutoResumeOnLimit(!autoResumeOnLimit);
-						}
-					}}
-				>
-					<div className="flex-1 pr-3">
-						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+				<ToggleSettingRow
+					theme={theme}
+					title={
+						<span className="font-medium" style={{ color: theme.colors.textMain }}>
 							Resume paused sessions when token/API credits are available
-						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						</span>
+					}
+					description={
+						<span style={{ color: theme.colors.textDim }}>
 							Maestro probes every provider on a fixed interval and automatically resumes any queued
 							work once the limit window reopens. Probing is cheap, so the give-up window is
 							intentionally long.
-						</div>
-					</div>
-					<ToggleSwitch
-						checked={autoResumeOnLimit}
-						onChange={setAutoResumeOnLimit}
-						theme={theme}
-						ariaLabel="Resume paused sessions when token/API credits are available"
-					/>
-				</div>
+						</span>
+					}
+					checked={autoResumeOnLimit}
+					onChange={setAutoResumeOnLimit}
+					ariaLabel="Resume paused sessions when token/API credits are available"
+					clickableRow
+					data-setting-id="general-auto-resume"
+				/>
 
 				{autoResumeOnLimit && (
 					<div

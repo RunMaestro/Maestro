@@ -5,7 +5,6 @@
 
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
-import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type {
@@ -13,9 +12,36 @@ import type {
 	ConcertoDesignerActionResult,
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
+import type {
+	AutoRunDocument,
+	CustomAICommand,
+	GroupChatState,
+	GroupData,
+	SessionData,
+	WebSettings,
+} from '../../shared/web-protocol/session';
+import type { CueActivityEntry, CueSubscriptionInfo } from '../../shared/web-protocol/cue';
+import type { GitDiffResult, GitStatusResult } from '../../shared/web-protocol/git';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
+export type {
+	AITabData,
+	AutoRunDocument,
+	AutoRunState,
+	CustomAICommand,
+	GroupChatMessage,
+	GroupChatState,
+	GroupData,
+	LastResponsePreview,
+	NotificationEvent,
+	SessionData,
+	SessionUsageStats,
+	WebSettings,
+} from '../../shared/web-protocol/session';
+export type { CueActivityEntry, CueSubscriptionInfo } from '../../shared/web-protocol/cue';
+export type { GitDiffResult, GitStatusFile, GitStatusResult } from '../../shared/web-protocol/git';
+export type { WebClientMessage } from '../../shared/web-protocol/client-messages';
 
 // =============================================================================
 // Core Types
@@ -24,42 +50,10 @@ export type { Theme } from '../../shared/theme-types';
 /**
  * Usage stats type for session cost/token tracking.
  */
-export interface SessionUsageStats {
-	inputTokens?: number;
-	outputTokens?: number;
-	cacheReadInputTokens?: number;
-	cacheCreationInputTokens?: number;
-	totalCostUsd?: number;
-	contextWindow?: number;
-}
 
 /**
  * Last response type for mobile preview (truncated to save bandwidth).
  */
-export interface LastResponsePreview {
-	/** First 3 lines or ~500 chars of the last AI response */
-	text: string;
-	timestamp: number;
-	source: 'stdout' | 'stderr' | 'system';
-	/** Total length of the original response */
-	fullLength: number;
-}
-
-/**
- * AI Tab type for multi-tab support within a Maestro session.
- */
-export interface AITabData {
-	id: string;
-	agentSessionId: string | null;
-	name: string | null;
-	starred: boolean;
-	inputValue: string;
-	usageStats?: SessionUsageStats | null;
-	createdAt: number;
-	state: 'idle' | 'busy';
-	thinkingStartTime?: number | null;
-	hasUnread?: boolean;
-}
 
 /**
  * Live session info for tracking live-enabled sessions.
@@ -73,12 +67,6 @@ export interface LiveSessionInfo {
 /**
  * Custom AI command definition.
  */
-export interface CustomAICommand {
-	id: string;
-	command: string;
-	description: string;
-	prompt: string;
-}
 
 /**
  * Rate limiting configuration for web server endpoints.
@@ -101,33 +89,6 @@ export interface RateLimitConfig {
 /**
  * Session data returned by getSessions callback.
  */
-export interface SessionData {
-	id: string;
-	name: string;
-	toolType: string;
-	state: string;
-	inputMode: string;
-	cwd: string;
-	groupId: string | null;
-	groupName: string | null;
-	groupEmoji: string | null;
-	usageStats?: SessionUsageStats | null;
-	lastResponse?: LastResponsePreview | null;
-	agentSessionId?: string | null;
-	/** Timestamp when AI started thinking (for elapsed time display) */
-	thinkingStartTime?: number | null;
-	aiTabs?: AITabData[];
-	activeTabId?: string;
-	/** Whether session is bookmarked (shows in Bookmarks group) */
-	bookmarked?: boolean;
-	/** Worktree subagent support */
-	parentSessionId?: string | null;
-	worktreeBranch?: string | null;
-	/** Whether the session's cwd is a git repo (controls Run-in-Worktree visibility on mobile). */
-	isGitRepo?: boolean;
-	/** Base path where worktrees are stored, when configured on the parent session. */
-	worktreeBasePath?: string | null;
-}
 
 /**
  * Session detail type for single session endpoint.
@@ -182,41 +143,6 @@ export interface SessionBroadcastData {
 /**
  * Auto Run state for broadcast messages.
  */
-export interface AutoRunState {
-	isRunning: boolean;
-	totalTasks: number;
-	completedTasks: number;
-	currentTaskIndex: number;
-	isStopping?: boolean;
-	/** Total number of documents in the run (multi-document progress) */
-	totalDocuments?: number;
-	/** Current document being processed (0-based, multi-document progress) */
-	currentDocumentIndex?: number;
-	/** Total tasks across all documents (multi-document progress) */
-	totalTasksAcrossAllDocs?: number;
-	/** Completed tasks across all documents (multi-document progress) */
-	completedTasksAcrossAllDocs?: number;
-	/** True if batch is paused waiting for error resolution (Phase 5.10) */
-	errorPaused?: boolean;
-	/** Human-readable description of the error that paused the run */
-	errorMessage?: string;
-	/** Error type tag (e.g. 'rate_limit', 'auth', 'context_window') */
-	errorType?: string;
-	/** Whether the error is recoverable (resume vs. abort) */
-	errorRecoverable?: boolean;
-	/** Document index that hit the error (for skip-document UI) */
-	errorDocumentIndex?: number;
-	/** Description of the task that failed (for UI display) */
-	errorTaskDescription?: string;
-	/** True when this run pursues a free-text goal instead of documents */
-	goalMode?: boolean;
-	/** Latest self-reported progress toward the goal (0–100) */
-	goalProgress?: number;
-	/** One-line rationale accompanying the latest goal progress report */
-	goalRationale?: string;
-	/** 1-based iteration number the goal loop is on */
-	goalIteration?: number;
-}
 
 /**
  * CLI activity data for session state broadcasts.
@@ -244,16 +170,6 @@ export interface WebClient {
 /**
  * Web client message interface.
  */
-export interface WebClientMessage {
-	type: string;
-	sessionId?: string;
-	tabId?: string;
-	command?: string;
-	mode?: 'ai' | 'terminal';
-	inputMode?: 'ai' | 'terminal';
-	newName?: string;
-	[key: string]: unknown;
-}
 
 // =============================================================================
 // Callback Types
@@ -617,49 +533,6 @@ export type GetWebClientsCallback = () => Map<string, WebClient>;
 export type SettingValue = string | number | boolean | null;
 
 /**
- * Curated subset of settings exposed to the web interface.
- */
-export interface WebSettings {
-	theme: string;
-	fontSize: number;
-	enterToSendAI: boolean;
-	defaultSaveToHistory: boolean;
-	defaultShowThinking: string;
-	autoScroll: boolean;
-	notificationsEnabled: boolean;
-	audioFeedbackEnabled: boolean;
-	colorBlindMode: string;
-	conductorProfile: string;
-	/** Max agent output lines per message before truncation. `null` = All (Infinity serialized). */
-	maxOutputLines: number | null;
-	/** User-customized keyboard shortcuts (partial overrides of DEFAULT_SHORTCUTS). */
-	shortcuts: Record<string, Shortcut>;
-}
-
-/**
- * Group info for web.
- */
-export interface GroupData {
-	id: string;
-	name: string;
-	emoji: string | null;
-	parentGroupId?: string;
-	sessionIds: string[];
-}
-
-/**
- * Auto Run document metadata.
- */
-export interface AutoRunDocument {
-	filename: string;
-	path: string;
-	taskCount: number;
-	completedCount: number;
-	/** Subfolder (relative path without filename), empty string for root */
-	folder?: string;
-}
-
-/**
  * Playbook document entry surfaced to web/CLI clients.
  * Matches PlaybookDocumentEntry in shared/types.ts but kept local to the
  * web-server module to avoid pulling shared types into the web bundle.
@@ -706,33 +579,6 @@ export interface FileContentResult {
 }
 
 /**
- * Git status entry.
- */
-export interface GitStatusFile {
-	path: string;
-	status: string;
-	staged: boolean;
-}
-
-/**
- * Git status response.
- */
-export interface GitStatusResult {
-	branch: string;
-	files: GitStatusFile[];
-	ahead: number;
-	behind: number;
-}
-
-/**
- * Git diff response.
- */
-export interface GitDiffResult {
-	diff: string;
-	files: string[];
-}
-
-/**
  * Notification preferences configuration.
  */
 export interface NotificationPreferences {
@@ -742,22 +588,6 @@ export interface NotificationPreferences {
 	autoRunTaskComplete: boolean;
 	contextWarning: boolean;
 	soundEnabled: boolean;
-}
-
-/**
- * Notification broadcast payload.
- */
-export interface NotificationEvent {
-	eventType:
-		| 'agent_complete'
-		| 'agent_error'
-		| 'autorun_complete'
-		| 'autorun_task_complete'
-		| 'context_warning';
-	sessionId: string;
-	sessionName: string;
-	message: string;
-	severity: 'info' | 'warning' | 'error';
 }
 
 // =============================================================================
@@ -927,30 +757,6 @@ export type ListWorktreesForSessionCallback = (sessionId: string) => Promise<Lis
 // Group Chat Types
 // =============================================================================
 
-/**
- * Group chat message for web interface.
- */
-export interface GroupChatMessage {
-	id: string;
-	participantId: string;
-	participantName: string;
-	content: string;
-	timestamp: number;
-	role: 'user' | 'assistant';
-}
-
-/**
- * Group chat state for web interface.
- */
-export interface GroupChatState {
-	id: string;
-	topic: string;
-	participants: Array<{ sessionId: string; name: string; toolType: string }>;
-	messages: GroupChatMessage[];
-	isActive: boolean;
-	currentTurn?: string;
-}
-
 // =============================================================================
 // Group Chat Callback Types
 // =============================================================================
@@ -986,33 +792,6 @@ export type CreateGistCallback = (
 // =============================================================================
 // Cue Automation Types
 // =============================================================================
-
-/** Web-specific Cue subscription metadata (simplified from engine types) */
-export interface CueSubscriptionInfo {
-	id: string;
-	name: string;
-	eventType: string;
-	pattern?: string;
-	schedule?: string;
-	sessionId: string;
-	sessionName: string;
-	enabled: boolean;
-	lastTriggered?: number;
-	triggerCount: number;
-}
-
-/** Web-specific Cue activity log entry (simplified from engine types) */
-export interface CueActivityEntry {
-	id: string;
-	subscriptionId: string;
-	subscriptionName: string;
-	eventType: string;
-	sessionId: string;
-	timestamp: number;
-	status: 'triggered' | 'running' | 'completed' | 'failed';
-	result?: string;
-	duration?: number;
-}
 
 // =============================================================================
 // Cue Automation Callback Types

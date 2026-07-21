@@ -235,19 +235,5 @@ export function useGitDetail(): GitDetailContextValue {
 	return context;
 }
 
-/**
- * useGitStatus - Legacy hook providing full git status data.
- * For backwards compatibility. New code should prefer focused hooks.
- *
- * @deprecated Use useGitBranch, useGitFileStatus, or useGitDetail instead
- */
-export function useGitStatus(): GitStatusContextValue {
-	const context = useContext(GitStatusContext);
-	if (!context) {
-		throw new Error('useGitStatus must be used within a GitStatusProvider');
-	}
-	return context;
-}
-
 // Re-export types for convenience
 export type { GitStatusData, GitFileChange };

@@ -417,7 +417,6 @@ const mockMaestro = {
 		searchSessions: vi.fn().mockResolvedValue([]),
 		getGlobalStats: vi.fn().mockResolvedValue(null),
 		getProjectStats: vi.fn().mockResolvedValue(undefined),
-		onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		onProjectStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		getAllNamedSessions: vi.fn().mockResolvedValue([]),
 		getSessionOrigins: vi.fn().mockResolvedValue({}),
@@ -571,7 +570,6 @@ const mockMaestro = {
 		speak: vi.fn().mockResolvedValue({ success: true, notificationId: 1 }),
 		stopSpeak: vi.fn().mockResolvedValue({ success: true }),
 		onCommandCompleted: vi.fn().mockReturnValue(() => {}),
-		onTtsCompleted: vi.fn().mockReturnValue(() => {}), // Legacy alias
 		show: vi.fn().mockResolvedValue(undefined),
 	},
 	dialog: {

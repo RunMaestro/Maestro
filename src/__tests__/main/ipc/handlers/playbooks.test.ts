@@ -194,6 +194,22 @@ describe('playbooks IPC handlers', () => {
 
 			expect(result).toEqual({ success: true, playbooks: [] });
 		});
+
+		it('should return empty array when a playbook element lacks its stable identity', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					playbooks: [
+						{ id: 'valid', name: 'Valid' },
+						{ id: 2, name: 'Invalid' },
+					],
+				})
+			);
+
+			const handler = handlers.get('playbooks:list');
+			const result = await handler!({}, 'session-123');
+
+			expect(result).toEqual({ success: true, playbooks: [] });
+		});
 	});
 
 	describe('playbooks:create', () => {

@@ -22,7 +22,7 @@ import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useAgentStore } from '../stores/agentStore';
 import { AGENT_DISPLAY_NAMES, isBetaAgent } from '../../shared/agentMetadata';
-import type { AgentId } from '../../shared/agentIds';
+import type { AgentId } from '../../shared/agentRegistry';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { AgentCapabilitiesSnapshot, AgentStatus } from '../../shared/agentCapabilities';
 

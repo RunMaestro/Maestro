@@ -84,6 +84,17 @@ describe('validateAgentRun', () => {
 		expect(run?.provider).toBe('future-agent-adapter');
 	});
 
+	it.each(['qwen', 'qwen-code', 'qwen-coder', 'qwen3-coder'])(
+		'persists %s as the canonical qwen3-coder provider',
+		(provider) => {
+			const roundTripped = JSON.parse(
+				JSON.stringify(validateAgentRunFile({ runs: [{ ...validRun, provider }] }))
+			);
+
+			expect(roundTripped.runs[0].provider).toBe('qwen3-coder');
+		}
+	);
+
 	it('returns null for malformed runs', () => {
 		expect(validateAgentRun({ ...validRun, id: 12 })).toBeNull();
 		expect(validateAgentRun({ ...validRun, updatedAt: Number.POSITIVE_INFINITY })).toBeNull();

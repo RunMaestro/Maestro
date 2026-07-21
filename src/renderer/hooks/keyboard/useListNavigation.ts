@@ -37,7 +37,7 @@
  * ```
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
 export interface UseListNavigationOptions {
 	/**
@@ -54,6 +54,17 @@ export interface UseListNavigationOptions {
 	 * Initial selected index. Defaults to 0.
 	 */
 	initialIndex?: number;
+
+	/**
+	 * Controlled selected index. When provided, selection changes are reported
+	 * through onSelectedIndexChange instead of being retained by the hook.
+	 */
+	selectedIndex?: number;
+
+	/**
+	 * Receives selection changes for controlled navigation.
+	 */
+	onSelectedIndexChange?: (index: number) => void;
 
 	/**
 	 * Whether selection wraps around at list boundaries.
@@ -178,18 +189,32 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		enabled = true,
 	} = options;
 
-	const [selectedIndex, setSelectedIndex] = useState(
+	const [uncontrolledSelectedIndex, setUncontrolledSelectedIndex] = useState(
 		Math.min(initialIndex, Math.max(0, listLength - 1))
 	);
+	const selectedIndex = options.selectedIndex ?? uncontrolledSelectedIndex;
+	const selectedIndexRef = useRef(selectedIndex);
+	selectedIndexRef.current = selectedIndex;
+	const setSelectedIndex = useCallback<React.Dispatch<React.SetStateAction<number>>>(
+		(value) => {
+			const nextIndex = typeof value === 'function' ? value(selectedIndexRef.current) : value;
+			selectedIndexRef.current = nextIndex;
+			if (options.selectedIndex === undefined) {
+				setUncontrolledSelectedIndex(nextIndex);
+			}
+			options.onSelectedIndexChange?.(nextIndex);
+		},
+		[options.onSelectedIndexChange, options.selectedIndex]
+	);
 
-	// Reset selection when list length changes (e.g., filtering)
+	// Keep selection valid when a dynamic list shrinks.
 	useEffect(() => {
-		setSelectedIndex((prev) => {
-			if (listLength === 0) return 0;
-			if (prev >= listLength) return listLength - 1;
-			return prev;
-		});
-	}, [listLength]);
+		if (listLength === 0) {
+			setSelectedIndex(0);
+		} else if (selectedIndex >= listLength) {
+			setSelectedIndex(listLength - 1);
+		}
+	}, [listLength, selectedIndex, setSelectedIndex]);
 
 	const navigateDown = useCallback(() => {
 		if (listLength === 0) return;

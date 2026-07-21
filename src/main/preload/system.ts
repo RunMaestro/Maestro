@@ -5,6 +5,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
 export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
@@ -146,11 +147,8 @@ export function createUpdatesApi() {
 			ipcRenderer.invoke('updates:download', targetTag),
 		install: (): Promise<void> => ipcRenderer.invoke('updates:install'),
 		getStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:getStatus'),
-		onStatus: (callback: (status: UpdateStatus) => void) => {
-			const handler = (_: any, status: UpdateStatus) => callback(status);
-			ipcRenderer.on('updates:status', handler);
-			return () => ipcRenderer.removeListener('updates:status', handler);
-		},
+		onStatus: (callback: (status: UpdateStatus) => void) =>
+			subscribeIpc('updates:status', callback),
 		setAllowPrerelease: (allow: boolean): Promise<void> =>
 			ipcRenderer.invoke('updates:setAllowPrerelease', allow),
 	};
@@ -161,11 +159,8 @@ export function createUpdatesApi() {
  */
 export function createAppApi() {
 	return {
-		onQuitConfirmationRequest: (callback: () => void) => {
-			const handler = () => callback();
-			ipcRenderer.on('app:requestQuitConfirmation', handler);
-			return () => ipcRenderer.removeListener('app:requestQuitConfirmation', handler);
-		},
+		onQuitConfirmationRequest: (callback: () => void) =>
+			subscribeIpc('app:requestQuitConfirmation', callback),
 		confirmQuit: () => {
 			ipcRenderer.send('app:quitConfirmed');
 		},
@@ -184,11 +179,7 @@ export function createAppApi() {
 		 * Listen for system resume event (after sleep/suspend)
 		 * Used to refresh settings that may have been reset during sleep
 		 */
-		onSystemResume: (callback: () => void) => {
-			const handler = () => callback();
-			ipcRenderer.on('app:systemResume', handler);
-			return () => ipcRenderer.removeListener('app:systemResume', handler);
-		},
+		onSystemResume: (callback: () => void) => subscribeIpc('app:systemResume', callback),
 		/**
 		 * Listen for deep link navigation events (maestro:// URLs)
 		 * Fired when the app is activated via a deep link from OS notification clicks,
@@ -208,26 +199,16 @@ export function createAppApi() {
 				alt: boolean;
 				shift: boolean;
 			}) => void
-		): (() => void) => {
-			const handler = (_: unknown, input: Parameters<typeof callback>[0]) => callback(input);
-			ipcRenderer.on('browser-tab:shortcutKey', handler);
-			return () => ipcRenderer.removeListener('browser-tab:shortcutKey', handler);
-		},
-		onDeepLink: (callback: (deepLink: ParsedDeepLink) => void): (() => void) => {
-			const handler = (_: unknown, deepLink: ParsedDeepLink) => callback(deepLink);
-			ipcRenderer.on('app:deepLink', handler);
-			return () => ipcRenderer.removeListener('app:deepLink', handler);
-		},
+		): (() => void) => subscribeIpc('browser-tab:shortcutKey', callback),
+		onDeepLink: (callback: (deepLink: ParsedDeepLink) => void): (() => void) =>
+			subscribeIpc('app:deepLink', callback),
 		/**
 		 * Listen for global hotkey registration failures (e.g. another app already
 		 * owns the combo). Renderer should surface this to the user so they pick a
 		 * different key.
 		 */
-		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) => {
-			const handler = (_: unknown, keys: string[]) => callback(keys);
-			ipcRenderer.on('globalHotkey:registrationFailed', handler);
-			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
-		},
+		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) =>
+			subscribeIpc('globalHotkey:registrationFailed', callback),
 	};
 }
 

@@ -116,7 +116,6 @@ vi.mock('../../../../main/utils/pricing', () => {
 		return total;
 	};
 	return {
-		calculateClaudeCost: vi.fn(flatCost),
 		calculateModelCost: vi.fn(
 			(tokens: {
 				inputTokens: number;
@@ -153,6 +152,10 @@ describe('Claude IPC handlers', () => {
 		get: ReturnType<typeof vi.fn>;
 		set: ReturnType<typeof vi.fn>;
 	};
+	let mockAgentSessionOriginsStore: {
+		get: ReturnType<typeof vi.fn>;
+		set: ReturnType<typeof vi.fn>;
+	};
 	let mockGetMainWindow: ReturnType<typeof vi.fn>;
 	let mockDependencies: ClaudeHandlerDependencies;
 
@@ -171,12 +174,18 @@ describe('Claude IPC handlers', () => {
 			get: vi.fn().mockReturnValue({}),
 			set: vi.fn(),
 		};
+		mockAgentSessionOriginsStore = {
+			get: vi.fn().mockReturnValue({}),
+			set: vi.fn(),
+		};
 
 		mockGetMainWindow = vi.fn().mockReturnValue(null);
 
 		mockDependencies = {
 			claudeSessionOriginsStore:
 				mockClaudeSessionOriginsStore as unknown as ClaudeHandlerDependencies['claudeSessionOriginsStore'],
+			agentSessionOriginsStore:
+				mockAgentSessionOriginsStore as unknown as ClaudeHandlerDependencies['agentSessionOriginsStore'],
 			getMainWindow: mockGetMainWindow,
 		};
 
@@ -232,6 +241,23 @@ describe('Claude IPC handlers', () => {
 
 			// Verify total count matches - ensures no handlers are added without updating this test
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('canonical origins cutover', () => {
+		it('writes legacy Claude rename metadata to the agent-keyed target store', async () => {
+			const handler = handlers.get('claude:updateSessionName');
+
+			await handler!(undefined, '/test/project', 'session-rename', 'Renamed session');
+
+			expect(mockClaudeSessionOriginsStore.set).not.toHaveBeenCalled();
+			expect(mockAgentSessionOriginsStore.set).toHaveBeenCalledWith('origins', {
+				'claude-code': {
+					'/test/project': {
+						'session-rename': { origin: 'user', sessionName: 'Renamed session' },
+					},
+				},
+			});
 		});
 	});
 

@@ -240,6 +240,96 @@ describe('FileTreeRow', () => {
 		vi.useRealTimers();
 	});
 
+	it('cancels its pending long press when unmounted before expiry', () => {
+		vi.useFakeTimers();
+		const openContextMenuAt = vi.fn();
+		const longPressTimerRef = { current: null as number | null };
+
+		try {
+			const { container, unmount } = render(
+				<FileTreeRow
+					{...defaultProps}
+					openContextMenuAt={openContextMenuAt}
+					longPressTimerRef={longPressTimerRef}
+				/>
+			);
+			fireEvent.touchStart(container.firstElementChild!, {
+				touches: [{ clientX: 100, clientY: 200 }],
+			});
+			unmount();
+			vi.advanceTimersByTime(500);
+
+			expect(openContextMenuAt).not.toHaveBeenCalled();
+			expect(longPressTimerRef.current).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not let an unmounted row cancel a newer row long press', () => {
+		vi.useFakeTimers();
+		const openFirst = vi.fn();
+		const openSecond = vi.fn();
+		const longPressTimerRef = { current: null as number | null };
+		const longPressFiredRef = { current: false };
+		const secondNode: FileNode = { name: 'Other.tsx', type: 'file' };
+
+		const Rows = ({ includeFirst }: { includeFirst: boolean }) => (
+			<>
+				{includeFirst && (
+					<FileTreeRow
+						{...defaultProps}
+						openContextMenuAt={openFirst}
+						longPressTimerRef={longPressTimerRef}
+						longPressFiredRef={longPressFiredRef}
+					/>
+				)}
+				<FileTreeRow
+					{...defaultProps}
+					item={makeItem(secondNode)}
+					openContextMenuAt={openSecond}
+					longPressTimerRef={longPressTimerRef}
+					longPressFiredRef={longPressFiredRef}
+				/>
+			</>
+		);
+
+		try {
+			const { container, rerender } = render(<Rows includeFirst />);
+			const [firstRow, secondRow] = Array.from(container.children);
+			fireEvent.touchStart(firstRow!, { touches: [{ clientX: 10, clientY: 20 }] });
+			fireEvent.touchStart(secondRow!, { touches: [{ clientX: 30, clientY: 40 }] });
+			rerender(<Rows includeFirst={false} />);
+			vi.advanceTimersByTime(500);
+
+			expect(openFirst).not.toHaveBeenCalled();
+			expect(openSecond).toHaveBeenCalledWith(30, 40, secondNode, 'Other.tsx', 0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('removes long-press capture listeners and suppression timer on unmount', () => {
+		vi.useFakeTimers();
+		const removeListener = vi.spyOn(document, 'removeEventListener');
+		const clearTimer = vi.spyOn(window, 'clearTimeout');
+
+		try {
+			const { container, unmount } = render(<FileTreeRow {...defaultProps} />);
+			fireEvent.touchStart(container.firstElementChild!, {
+				touches: [{ clientX: 100, clientY: 200 }],
+			});
+			vi.advanceTimersByTime(500);
+			unmount();
+
+			expect(removeListener).toHaveBeenCalledWith('mousedown', expect.any(Function), true);
+			expect(removeListener).toHaveBeenCalledWith('click', expect.any(Function), true);
+			expect(clearTimer).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('applies keyboard-selected background when globalIndex matches selectedFileIndex', () => {
 		const item: FlattenedNode = { node: fileNode, path: 'App.tsx', depth: 0, globalIndex: 3 };
 		const { container } = render(

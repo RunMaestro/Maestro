@@ -129,7 +129,7 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 
 To add support for a new agent:
 
-1. Add agent ID to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
+1. Add registry entry to `src/shared/agentRegistry.ts` → `AGENT_REGISTRY` (which derives `AGENT_IDS`)
 2. Add agent definition to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS`
 3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (23 boolean flags)
 4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)

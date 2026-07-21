@@ -9,7 +9,8 @@
  */
 
 import * as os from 'os';
-import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage';
+import { loadGroupChat, updateGroupChat } from './group-chat-storage';
+import type { GroupChat } from '../../shared/group-chat-types';
 import { appendToLog, readLog } from './group-chat-log';
 import { getPrompt } from '../prompt-manager';
 import { powerManager } from '../power-manager';

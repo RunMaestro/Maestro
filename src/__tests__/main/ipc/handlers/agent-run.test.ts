@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ipcMain } from 'electron';
 
-const { registeredHandlers, storeMocks, loggerMock } = vi.hoisted(() => ({
+const { registeredHandlers, storeMocks, loggerMock, settingsStore } = vi.hoisted(() => ({
 	registeredHandlers: new Map<string, Function>(),
 	storeMocks: {
 		getAgentRun: vi.fn(),
@@ -16,6 +16,9 @@ const { registeredHandlers, storeMocks, loggerMock } = vi.hoisted(() => ({
 	loggerMock: {
 		info: vi.fn(),
 		error: vi.fn(),
+	},
+	settingsStore: {
+		get: vi.fn(),
 	},
 }));
 
@@ -41,7 +44,7 @@ describe('AgentRun IPC handlers', () => {
 		registeredHandlers.clear();
 		registerAgentRunHandlers({
 			getProcessManager: () => null,
-			settingsStore: {} as never,
+			settingsStore,
 		});
 	});
 
@@ -54,6 +57,7 @@ describe('AgentRun IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('campaign:list', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('campaign:record', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('campaign:show', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:cancel', expect.any(Function));
 	});
 
 	it('lists agent runs with sanitized default options', async () => {
@@ -78,6 +82,31 @@ describe('AgentRun IPC handlers', () => {
 			limit: 5,
 		});
 		expect(result).toEqual({ success: true, runs: [{ id: 'run-1' }] });
+	});
+
+	it('keeps concurrent agent-run list responses isolated by request options', async () => {
+		storeMocks.listAgentRuns.mockImplementation(({ campaignId }: { campaignId?: string }) => [
+			{ id: campaignId ?? 'unfiltered' },
+		]);
+		const handler = registeredHandlers.get('agentRun:list');
+
+		const [first, second] = await Promise.all([
+			handler?.({}, { campaign: 'campaign-a' }),
+			handler?.({}, { campaign: 'campaign-b' }),
+		]);
+
+		expect(first).toEqual({ success: true, runs: [{ id: 'campaign-a' }] });
+		expect(second).toEqual({ success: true, runs: [{ id: 'campaign-b' }] });
+	});
+
+	it('normalizes malformed list options to the established empty-store request', async () => {
+		storeMocks.listAgentRuns.mockReturnValue([]);
+		const handler = registeredHandlers.get('agentRun:list');
+
+		const result = await handler?.({}, null);
+
+		expect(storeMocks.listAgentRuns).toHaveBeenCalledWith({});
+		expect(result).toEqual({ success: true, runs: [] });
 	});
 
 	it('records an agent run through strict store validation', async () => {
@@ -168,6 +197,17 @@ describe('AgentRun IPC handlers', () => {
 		expect(result).toEqual({ success: false, error: 'Campaign not found: missing-campaign' });
 	});
 
+	it('keeps cancellation explicit and gated when the destructive-action setting is disabled', async () => {
+		settingsStore.get.mockReturnValue({});
+		const handler = registeredHandlers.get('agentRun:cancel');
+
+		const result = await handler?.({}, 'run-1');
+
+		expect(settingsStore.get).toHaveBeenCalledWith('encoreFeatures');
+		expect(storeMocks.getAgentRun).not.toHaveBeenCalled();
+		expect(result).toEqual({ success: false, error: 'gated' });
+	});
+
 	it('logs and returns store errors', async () => {
 		storeMocks.listAgentRuns.mockImplementation(() => {
 			throw new Error('read failed');
@@ -177,8 +217,9 @@ describe('AgentRun IPC handlers', () => {
 		const result = await handler?.({}, { status: 'running' });
 
 		expect(loggerMock.error).toHaveBeenCalledWith(
-			'Failed to list agent runs: read failed',
-			'[IPC:AgentRun]'
+			'list agent runs error',
+			'[IPC:AgentRun]',
+			expect.objectContaining({ name: 'Error', message: 'read failed' })
 		);
 		expect(result).toEqual({ success: false, error: 'read failed' });
 	});

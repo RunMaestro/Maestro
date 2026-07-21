@@ -22,30 +22,6 @@ import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
 
-// Helper to create a mock session
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		cwd: '/test/path',
-		projectRoot: '/test/path',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	};
-}
-
 // Helper to create a mock AITab with component-specific defaults (non-null name).
 // Helper to create a mock AITab
 function createMockAITab(overrides: Partial<AITab> = {}): AITab {

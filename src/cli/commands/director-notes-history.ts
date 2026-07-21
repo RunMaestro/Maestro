@@ -3,7 +3,8 @@
 
 import { readSessions, readHistory, readSettings } from '../services/storage';
 import { formatError, formatDirectorNotesHistory } from '../output/formatter';
-import type { HistoryEntry } from '../../shared/types';
+import { formatDurationDecimal } from '../output/duration';
+import type { UnifiedHistoryEntry } from '../../shared/history';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -13,11 +14,6 @@ interface DirectorNotesHistoryOptions {
 	filter?: string;
 	limit?: string;
 	json?: boolean;
-}
-
-interface UnifiedHistoryEntry extends HistoryEntry {
-	agentName?: string;
-	sourceSessionId: string;
 }
 
 function resolveFormat(options: DirectorNotesHistoryOptions): OutputFormat {
@@ -163,7 +159,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 						entry.usageStats?.totalCostUsd !== undefined
 							? `$${entry.usageStats.totalCostUsd.toFixed(4)}`
 							: '-';
-					const duration = entry.elapsedTimeMs ? formatDurationMs(entry.elapsedTimeMs) : '-';
+					const duration = entry.elapsedTimeMs ? formatDurationDecimal(entry.elapsedTimeMs) : '-';
 					lines.push(`| ${date} | ${entry.type} | ${agent} | ${summary} | ${cost} | ${duration} |`);
 				}
 			}
@@ -191,11 +187,4 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		}
 		process.exit(1);
 	}
-}
-
-function formatDurationMs(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
-	return `${(ms / 3600_000).toFixed(1)}h`;
 }

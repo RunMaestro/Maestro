@@ -3,6 +3,7 @@ import * as pty from 'node-pty';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { logger } from '../../utils/logger';
 import { needsWindowsShell } from '../../utils/execFile';
+import { parseQuotedArgs } from '../../utils/agent-args';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import {
@@ -13,6 +14,7 @@ import {
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { createManagedProcessBase } from '../utils/managedProcess';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -60,16 +62,7 @@ export class PtySpawner {
 
 					// Append custom shell arguments from user configuration
 					if (shellArgs && shellArgs.trim()) {
-						const customShellArgsArray = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-						const cleanedArgs = customShellArgsArray.map((arg) => {
-							if (
-								(arg.startsWith('"') && arg.endsWith('"')) ||
-								(arg.startsWith("'") && arg.endsWith("'"))
-							) {
-								return arg.slice(1, -1);
-							}
-							return arg;
-						});
+						const cleanedArgs = parseQuotedArgs(shellArgs);
 						if (cleanedArgs.length > 0) {
 							logger.debug('Appending custom shell args', 'ProcessManager', {
 								shellArgs: cleanedArgs,
@@ -128,16 +121,13 @@ export class PtySpawner {
 			});
 
 			const managedProcess: ManagedProcess = {
-				sessionId,
-				toolType,
+				...createManagedProcessBase(config, {
+					pid: ptyProcess.pid,
+					isTerminal: true,
+					command: ptyCommand,
+					args: ptyArgs,
+				}),
 				ptyProcess,
-				cwd,
-				pid: ptyProcess.pid,
-				isTerminal: true,
-				startTime: Date.now(),
-				command: ptyCommand,
-				args: ptyArgs,
-				// Terminal PTY env only honors shellEnvVars; agents-in-PTY also honor customEnvVars.
 				maestroEnvVars: collectMaestroEnvVars(
 					shellEnvVars,
 					isTerminal ? undefined : customEnvVars,

@@ -12,8 +12,7 @@
  *  - category: logical grouping for organized display
  */
 
-import path from 'path';
-import { isWindows } from './platformDetection';
+import { isMacOS, isWindows } from './platformDetection';
 
 // ============================================================================
 // Types
@@ -48,22 +47,60 @@ export type SettingCategory =
 	| 'advanced'
 	| 'internal';
 
+export interface SettingsDefaultEnvironment {
+	platform?: string;
+	shell?: string;
+}
+
+/** Persistence defaults shared by main, renderer startup, and CLI reset. */
+export const DEFAULT_SSH_REMOTE_IGNORE_PATTERNS = ['.git', '.*cache*'] as const;
+export const DEFAULT_SSH_REMOTE_HONOR_GITIGNORE = false;
+
+/** Native title bars are the default only on Windows. */
+export function getDefaultUseNativeTitleBar(
+	environment: Pick<SettingsDefaultEnvironment, 'platform'> = {}
+): boolean {
+	return (environment.platform ?? getRuntimePlatform()) === 'win32';
+}
+
 // ============================================================================
 // Platform-dependent defaults
 // ============================================================================
 
-function getDefaultShell(): string {
-	if (isWindows()) {
+function getRuntimePlatform(): string {
+	if (isWindows()) return 'win32';
+	return isMacOS() ? 'darwin' : 'linux';
+}
+
+/** Resolve the platform-aware terminal shell without importing Node-only modules. */
+export function resolveDefaultShell(environment: SettingsDefaultEnvironment = {}): string {
+	const platform = environment.platform ?? getRuntimePlatform();
+	if (platform === 'win32') {
 		return 'powershell';
 	}
-	const shellPath = process.env.SHELL;
-	if (shellPath) {
-		const shellName = path.basename(shellPath);
-		if (['bash', 'zsh', 'fish', 'sh', 'tcsh'].includes(shellName)) {
-			return shellName;
-		}
+
+	const shell =
+		environment.shell ??
+		(environment.platform === undefined && typeof process !== 'undefined'
+			? process.env.SHELL
+			: undefined);
+	const shellName = shell?.split(/[\\/]/).pop();
+	if (shellName && ['bash', 'zsh', 'fish', 'sh', 'tcsh'].includes(shellName)) {
+		return shellName;
 	}
-	return 'bash';
+
+	return platform === 'darwin' ? 'zsh' : 'bash';
+}
+
+function resolvePlatformDefault(key: string, environment: SettingsDefaultEnvironment): unknown {
+	switch (key) {
+		case 'defaultShell':
+			return resolveDefaultShell(environment);
+		case 'useNativeTitleBar':
+			return getDefaultUseNativeTitleBar(environment);
+		default:
+			return SETTINGS_METADATA[key]?.default;
+	}
 }
 
 // ============================================================================
@@ -559,7 +596,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'Default shell for terminal sessions. Auto-detected from $SHELL on Unix, PowerShell on Windows.',
 		type: 'string',
-		default: getDefaultShell(),
+		default: 'bash',
 		category: 'shell',
 	},
 	customShellPath: {
@@ -745,13 +782,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	sshRemoteIgnorePatterns: {
 		description: 'Glob patterns to exclude from file indexing on SSH remotes.',
 		type: 'array',
-		default: ['.git', '.*cache*'],
+		default: DEFAULT_SSH_REMOTE_IGNORE_PATTERNS,
 		category: 'ssh',
 	},
 	sshRemoteHonorGitignore: {
 		description: 'Honor .gitignore files when indexing files on SSH remotes.',
 		type: 'boolean',
-		default: false,
+		default: DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
 		category: 'ssh',
 	},
 
@@ -845,6 +882,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Cumulative active usage time in milliseconds (auto-tracked).',
 		type: 'number',
 		default: 0,
+		category: 'internal',
+	},
+	usageRefreshIntervals: {
+		description: 'Per-provider usage refresh intervals maintained by the main process.',
+		type: 'object',
+		default: {},
 		category: 'internal',
 	},
 	autoRunStats: {
@@ -1160,8 +1203,11 @@ export const CATEGORY_ORDER: SettingCategory[] = [
  * Get the default value for a setting key.
  * Returns undefined for unknown keys.
  */
-export function getSettingDefault(key: string): unknown {
-	return SETTINGS_METADATA[key]?.default;
+export function getSettingDefault(
+	key: string,
+	environment: SettingsDefaultEnvironment = {}
+): unknown {
+	return resolvePlatformDefault(key, environment);
 }
 
 /**
@@ -1177,8 +1223,8 @@ export function getSettingMetadata(key: string): SettingMetadata | undefined {
  */
 export function getAllDefaults(): Record<string, unknown> {
 	const defaults: Record<string, unknown> = {};
-	for (const [key, meta] of Object.entries(SETTINGS_METADATA)) {
-		defaults[key] = meta.default;
+	for (const key of Object.keys(SETTINGS_METADATA)) {
+		defaults[key] = getSettingDefault(key);
 	}
 	return defaults;
 }

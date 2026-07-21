@@ -12,6 +12,7 @@ import React, { useState, useCallback, memo } from 'react';
 import { ChevronRight, ChevronDown, Copy, Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useCopyFeedback } from '../hooks/ui/useCopyFeedback';
 
 interface CollapsibleJsonViewerProps {
 	data: unknown;
@@ -103,19 +104,15 @@ function getPreview(value: unknown): string {
  * Copy button component with feedback
  */
 const CopyButton = memo(({ value, theme }: { value: unknown; theme: Theme }) => {
-	const [copied, setCopied] = useState(false);
+	const { copied, copy } = useCopyFeedback(safeClipboardWrite, { duration: 1500 });
 
 	const handleCopy = useCallback(
-		async (e: React.MouseEvent) => {
+		(e: React.MouseEvent) => {
 			e.stopPropagation();
 			const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-			const ok = await safeClipboardWrite(text);
-			if (ok) {
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1500);
-			}
+			void copy(text);
 		},
-		[value]
+		[copy, value]
 	);
 
 	return (

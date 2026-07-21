@@ -2,6 +2,7 @@ import React from 'react';
 import { Bot, User, Zap } from 'lucide-react';
 import type { Theme, HistoryEntryType } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { LOOKBACK_PERIODS, type LookbackHours } from './lookbackOptions';
 
 // Double checkmark SVG component for validated entries
 export const DoubleCheck = ({
@@ -26,23 +27,30 @@ export const DoubleCheck = ({
 	</svg>
 );
 
-// Lookback period options for the activity graph
+// Presentation labels deliberately stay outside the persisted lookback registry.
+const LOOKBACK_LABELS = [
+	'24 hours',
+	'72 hours',
+	'1 week',
+	'2 weeks',
+	'1 month',
+	'6 months',
+	'1 year',
+	'All time',
+] as const;
+
 export type LookbackPeriod = {
 	label: string;
-	hours: number | null; // null = all time
+	hours: LookbackHours;
 	bucketCount: number;
 };
 
-export const LOOKBACK_OPTIONS: LookbackPeriod[] = [
-	{ label: '24 hours', hours: 24, bucketCount: 24 },
-	{ label: '72 hours', hours: 72, bucketCount: 24 },
-	{ label: '1 week', hours: 168, bucketCount: 28 },
-	{ label: '2 weeks', hours: 336, bucketCount: 28 },
-	{ label: '1 month', hours: 720, bucketCount: 30 },
-	{ label: '6 months', hours: 4320, bucketCount: 24 },
-	{ label: '1 year', hours: 8760, bucketCount: 24 },
-	{ label: 'All time', hours: null, bucketCount: 24 },
-];
+export const LOOKBACK_OPTIONS: readonly LookbackPeriod[] = LOOKBACK_PERIODS.map(
+	(period, index) => ({
+		...period,
+		label: LOOKBACK_LABELS[index],
+	})
+);
 
 // CUE_COLOR is imported above from shared/cue-pipeline-types and re-exported for History consumers
 export { CUE_COLOR };

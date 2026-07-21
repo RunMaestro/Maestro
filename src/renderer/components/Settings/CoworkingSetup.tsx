@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Download, Loader2, RefreshCw, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
-import type { AgentId } from '../../../shared/agentIds';
+import type { AgentId } from '../../../shared/agentRegistry';
 import { notifyToast } from '../../stores/notificationStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {

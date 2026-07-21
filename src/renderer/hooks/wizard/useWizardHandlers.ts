@@ -60,7 +60,7 @@ function getAutorunSynopsisPrompt(): string {
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
-import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
+import { DEFAULT_ADAPTIVE_MODE_ENABLED } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { getHomeDir } from '../../utils/homeDir';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
@@ -1245,12 +1245,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const firstDoc = generatedDocuments[0];
 			const autoRunSelectedFile = firstDoc ? firstDoc.filename.replace(/\.md$/, '') : undefined;
 
-			// Claude Token Source: honor the wizard's explicit pick when the user
-			// touched the selector (enableMaestroP defined), otherwise fall back to
-			// the per-agent default. maestroPMode/maestroPPath only matter when the
-			// source isn't pure API, mirroring EditAgentModal's save logic.
-			const resolvedEnableMaestroP =
-				enableMaestroP ?? (isAdaptiveModeDefaultOn(selectedAgent) || undefined);
+			// The explicit token-source choice wins; otherwise persist the
+			// canonical API default so future policy changes cannot reinterpret it.
+			const resolvedEnableMaestroP = enableMaestroP ?? DEFAULT_ADAPTIVE_MODE_ENABLED;
 
 			const newSession: Session = {
 				id: newId,

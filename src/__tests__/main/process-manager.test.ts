@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as PlatformDetection from '../../shared/platformDetection';
 
 // Mock node-pty before importing process-manager (native module)
 vi.mock('node-pty', () => ({
@@ -39,22 +40,22 @@ const { mockIsWindows } = vi.hoisted(() => ({
 	mockIsWindows: vi.fn<() => boolean>().mockImplementation(() => process.platform === 'win32'),
 }));
 
-vi.mock('../../shared/platformDetection', () => ({
-	isWindows: () => mockIsWindows(),
-}));
+vi.mock('../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<PlatformDetection>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
 
 import * as fs from 'fs';
 import { logger } from '../../main/utils/logger';
 
-import {
-	aggregateModelUsage,
-	ProcessManager,
-	detectNodeVersionManagerBinPaths,
-	buildUnixBasePath,
-	type UsageStats,
-	type ModelStats,
-	type AgentError,
-} from '../../main/process-manager';
+import { ProcessManager } from '../../main/process-manager/ProcessManager';
+import { aggregateModelUsage, type ModelStats } from '../../main/parsers/usage-aggregator';
+import { detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
+import { buildUnixBasePath } from '../../main/process-manager/utils/envBuilder';
+import type { AgentError, UsageStats } from '../../shared/types';
 
 describe('process-manager.ts', () => {
 	describe('aggregateModelUsage', () => {

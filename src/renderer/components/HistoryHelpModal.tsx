@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { HelpSection } from './ui/HelpSection';
 import { Modal } from './ui/Modal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
@@ -64,11 +65,14 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 				</section>
 
 				{/* Entry Types */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Entry Types</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<h3 className="font-bold">Entry Types</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 						<div className="flex items-start gap-3">
 							<span
@@ -136,14 +140,17 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							</div>
 						)}
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Success Indicators */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<CheckCircle className="w-5 h-5" style={{ color: theme.colors.success }} />
-						<h3 className="font-bold">Status Indicators</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<CheckCircle className="w-5 h-5" style={{ color: theme.colors.success }} />
+							<h3 className="font-bold">Status Indicators</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							<span style={{ color: theme.colors.warning }}>AUTO</span> entries show a status
@@ -197,14 +204,17 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							<strong style={{ color: theme.colors.textMain }}>Validated</strong> option.
 						</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Detail View */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<Eye className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Viewing Details</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<Eye className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<h3 className="font-bold">Viewing Details</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>Click any history entry to open the full details view, which shows:</p>
 						<ul className="list-disc list-inside space-y-1 ml-2">
@@ -215,14 +225,17 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							<li>Cost for that task</li>
 						</ul>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Resume Session */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<Play className="w-5 h-5" style={{ color: theme.colors.success }} />
-						<h3 className="font-bold">Resuming Sessions</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<Play className="w-5 h-5" style={{ color: theme.colors.success }} />
+							<h3 className="font-bold">Resuming Sessions</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							Each history entry preserves the Claude session ID. Click{' '}
@@ -234,31 +247,37 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							building on the work that was done.
 						</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Time and Cost */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<div className="flex items-center gap-1">
-							<Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
-							<DollarSign className="w-5 h-5" style={{ color: theme.colors.success }} />
-						</div>
-						<h3 className="font-bold">Time & Cost Tracking</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<div className="flex items-center gap-1">
+								<Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
+								<DollarSign className="w-5 h-5" style={{ color: theme.colors.success }} />
+							</div>
+							<h3 className="font-bold">Time &amp; Cost Tracking</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							Each entry displays the elapsed time and cost (when available), helping you understand
 							the resource usage of individual tasks.
 						</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Activity Graph */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<BarChart2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Activity Graph</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<BarChart2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<h3 className="font-bold">Activity Graph</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							The bar graph in the header visualizes your activity over a configurable time period.
@@ -276,14 +295,17 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</p>
 						<p>Hover over any bar to see the exact count and time range.</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Per-Session Storage */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Per-Session Storage</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<h3 className="font-bold">Per-Session Storage</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							History is stored in per-session files with a limit of{' '}
@@ -305,14 +327,17 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							cross-session view of all history for the project.
 						</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Cross-Session Memory */}
-				<section>
-					<div className="flex items-center gap-2 mb-3">
-						<Bot className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Cross-Session Memory</h3>
-					</div>
+				<HelpSection
+					heading={
+						<>
+							<Bot className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<h3 className="font-bold">Cross-Session Memory</h3>
+						</>
+					}
+				>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							AI agents are automatically aware of your history files, giving them a form of{' '}
@@ -330,7 +355,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 							cannot be accessed by agents running on remote hosts.
 						</p>
 					</div>
-				</section>
+				</HelpSection>
 
 				{/* Read more link */}
 				<div

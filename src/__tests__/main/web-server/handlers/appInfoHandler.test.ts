@@ -25,7 +25,7 @@ vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
-import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import type { WebClient } from '../../../../main/web-server/types';
 
 function createMockClient(): WebClient {
 	return {

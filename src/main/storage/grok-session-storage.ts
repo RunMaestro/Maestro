@@ -40,9 +40,9 @@ import { isMacOS } from '../../shared/platformDetection';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { isExpectedRemoteError } from './remote-error-utils';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
 
 const LOG_CONTEXT = '[GrokSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const FIRST_MESSAGE_PREVIEW_LENGTH = 200;
 
 /**

@@ -14,34 +14,29 @@ import {
 	getMemoryDirectoryPath,
 } from '../../memory-manager';
 import { logger } from '../../utils/logger';
+import { createIpcHandler } from '../../utils/ipcHandler';
 
 const LOG_CONTEXT = '[IPC:Memory]';
 
 export function registerMemoryHandlers(): void {
 	ipcMain.handle(
 		'memory:list',
-		async (_event, projectPath: string, agentId: string = 'claude-code') => {
-			try {
-				const result = await listMemoryEntries(projectPath, agentId);
-				return { success: true, ...result };
-			} catch (error) {
-				logger.error(`Failed to list memory entries: ${error}`, LOG_CONTEXT);
-				return { success: false, error: String(error) };
-			}
-		}
+		createIpcHandler(
+			{ context: LOG_CONTEXT, operation: 'list memory entries', logSuccess: false },
+			async (projectPath: string, agentId: string = 'claude-code') => ({
+				...(await listMemoryEntries(projectPath, agentId)),
+			})
+		)
 	);
 
 	ipcMain.handle(
 		'memory:read',
-		async (_event, projectPath: string, filename: string, agentId: string = 'claude-code') => {
-			try {
-				const content = await readMemoryEntry(projectPath, filename, agentId);
-				return { success: true, content };
-			} catch (error) {
-				logger.error(`Failed to read memory ${filename}: ${error}`, LOG_CONTEXT);
-				return { success: false, error: String(error) };
-			}
-		}
+		createIpcHandler(
+			{ context: LOG_CONTEXT, operation: 'read memory entry', logSuccess: false },
+			async (projectPath: string, filename: string, agentId: string = 'claude-code') => ({
+				content: await readMemoryEntry(projectPath, filename, agentId),
+			})
+		)
 	);
 
 	ipcMain.handle(
@@ -97,14 +92,12 @@ export function registerMemoryHandlers(): void {
 
 	ipcMain.handle(
 		'memory:getPath',
-		async (_event, projectPath: string, agentId: string = 'claude-code') => {
-			try {
-				return { success: true, path: getMemoryDirectoryPath(projectPath, agentId) };
-			} catch (error) {
-				logger.error(`Failed to resolve memory path: ${error}`, LOG_CONTEXT);
-				return { success: false, error: String(error) };
-			}
-		}
+		createIpcHandler(
+			{ context: LOG_CONTEXT, operation: 'resolve memory path', logSuccess: false },
+			async (projectPath: string, agentId: string = 'claude-code') => ({
+				path: getMemoryDirectoryPath(projectPath, agentId),
+			})
+		)
 	);
 
 	logger.info('Memory IPC handlers registered', LOG_CONTEXT);

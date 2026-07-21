@@ -99,6 +99,7 @@ export function useWorktreeValidation({
 
 	// Validate worktree path when it changes (debounced 500ms)
 	useEffect(() => {
+		let cancelled = false;
 		// Reset validation state when worktree is disabled or path is empty
 		if (!worktreeEnabled || !worktreePath) {
 			setValidation(INITIAL_VALIDATION_STATE);
@@ -110,9 +111,11 @@ export function useWorktreeValidation({
 
 		// Debounce the validation check
 		const timeoutId = setTimeout(async () => {
+			if (cancelled) return;
 			try {
 				// Check if the path exists and get worktree info
 				const worktreeInfoResult = await window.maestro.git.worktreeInfo(worktreePath, sshRemoteId);
+				if (cancelled) return;
 
 				if (!worktreeInfoResult.success) {
 					setValidation({
@@ -143,6 +146,7 @@ export function useWorktreeValidation({
 				// Path exists - check if it's part of the same repo
 				// If there's no repoRoot, the directory exists but isn't a git repo - that's fine for a new worktree
 				const mainRepoRootResult = await window.maestro.git.getRepoRoot(sessionCwd, sshRemoteId);
+				if (cancelled) return;
 				const sameRepo =
 					!worktreeInfoResult.repoRoot ||
 					(mainRepoRootResult.success && worktreeInfoResult.repoRoot === mainRepoRootResult.root);
@@ -162,6 +166,7 @@ export function useWorktreeValidation({
 						// Use git status to check for uncommitted changes in the worktree
 						// Pass sshRemoteId to support remote worktree validation
 						const statusResult = await window.maestro.git.status(worktreePath, sshRemoteId);
+						if (cancelled) return;
 						hasChanges = hasUncommittedChanges(statusResult.stdout);
 					} catch {
 						// If we can't check, assume no uncommitted changes
@@ -169,6 +174,7 @@ export function useWorktreeValidation({
 					}
 				}
 
+				if (cancelled) return;
 				setValidation({
 					checking: false,
 					exists: true,
@@ -180,6 +186,7 @@ export function useWorktreeValidation({
 					error: !sameRepo ? 'This path contains a worktree for a different repository' : undefined,
 				});
 			} catch (error) {
+				if (cancelled) return;
 				logger.error('Failed to validate worktree path:', undefined, error);
 				setValidation({
 					checking: false,
@@ -193,8 +200,10 @@ export function useWorktreeValidation({
 			}
 		}, VALIDATION_DEBOUNCE_MS);
 
-		// Cleanup timeout on unmount or when dependencies change
-		return () => clearTimeout(timeoutId);
+		return () => {
+			cancelled = true;
+			clearTimeout(timeoutId);
+		};
 	}, [worktreePath, branchName, worktreeEnabled, sessionCwd, sshRemoteId]);
 
 	return { validation };

@@ -8,47 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Auto Run state for broadcasting
- */
-export interface AutoRunState {
-	isRunning: boolean;
-	totalTasks: number;
-	completedTasks: number;
-	currentTaskIndex: number;
-	isStopping?: boolean;
-	totalDocuments?: number;
-	currentDocumentIndex?: number;
-	totalTasksAcrossAllDocs?: number;
-	completedTasksAcrossAllDocs?: number;
-	errorPaused?: boolean;
-	errorMessage?: string;
-	errorType?: string;
-	errorRecoverable?: boolean;
-	errorDocumentIndex?: number;
-	errorTaskDescription?: string;
-	// Goal-Driven mode fields
-	goalMode?: boolean;
-	goalProgress?: number;
-	goalRationale?: string;
-	goalIteration?: number;
-}
-
-/**
- * AI Tab state for broadcasting
- */
-export interface AiTabState {
-	id: string;
-	agentSessionId: string | null;
-	name: string | null;
-	starred: boolean;
-	inputValue: string;
-	usageStats?: any;
-	createdAt: number;
-	state: 'idle' | 'busy';
-	thinkingStartTime?: number | null;
-}
+import type { AITabData, AutoRunState } from '../../shared/web-protocol/session';
 
 /**
  * Creates the web interface API object for preload exposure
@@ -64,7 +24,7 @@ export function createWebApi() {
 			ipcRenderer.invoke('web:broadcastAutoRunState', sessionId, state),
 
 		// Broadcast tab changes to web clients (for tab sync)
-		broadcastTabsChange: (sessionId: string, aiTabs: AiTabState[], activeTabId: string) =>
+		broadcastTabsChange: (sessionId: string, aiTabs: AITabData[], activeTabId: string) =>
 			ipcRenderer.invoke('web:broadcastTabsChange', sessionId, aiTabs, activeTabId),
 
 		// Broadcast session state change to web clients (for real-time busy/idle updates)

@@ -161,6 +161,48 @@ describe('AuthorizationStore - mint / revoke', () => {
 	});
 });
 
+it('makes a duplicate revoke idempotent without changing the sealed ledger bytes', () => {
+	const holder = { value: null as Anchor | null };
+	const store = makeStore(fakeSeal(), fakeAnchor(holder));
+	store.mint('a', caps('net:fetch', 'example.com'), ident('hash-a'));
+	store.revoke('a');
+	const firstRevoke = fs.readFileSync(ledgerPath);
+
+	store.revoke('a');
+
+	expect(fs.readFileSync(ledgerPath)).toEqual(firstRevoke);
+	expect(store.isEnabled('a')).toBe(false);
+	expect(store.readGrants('a')).toEqual([]);
+	expect(store.isTombstoned('a')).toBe(true);
+});
+
+it('allows a tombstone to be replaced only by a fresh mint', () => {
+	const holder = { value: null as Anchor | null };
+	const store = makeStore(fakeSeal(), fakeAnchor(holder));
+	store.mint('a', caps('fs:read', '/before'), ident('hash-a'));
+	store.uninstall('a');
+
+	expect(store.isTombstoned('a')).toBe(true);
+	expect(store.isEnabled('a')).toBe(false);
+
+	store.mint('a', caps('fs:read', '/after'), ident('hash-b'));
+
+	expect(store.isTombstoned('a')).toBe(false);
+	expect(store.isEnabled('a')).toBe(true);
+	expect(store.readGrants('a')).toEqual(caps('fs:read', '/after'));
+});
+
+it('keeps a missing revoke denied without inventing a grant', () => {
+	const holder = { value: null as Anchor | null };
+	const store = makeStore(fakeSeal(), fakeAnchor(holder));
+
+	store.revoke('missing');
+
+	expect(store.isEnabled('missing')).toBe(false);
+	expect(store.readGrants('missing')).toEqual([]);
+	expect(store.isTombstoned('missing')).toBe(false);
+});
+
 describe('AuthorizationStore - persistence', () => {
 	it('persists across instances when sealed + anchored', () => {
 		const holder = { value: null as Anchor | null };
@@ -214,6 +256,17 @@ describe('AuthorizationStore - anti-rollback (the contract)', () => {
 
 		const after = makeStore(fakeSeal(), fakeAnchor(holder));
 		expect(after.isEnabled('a')).toBe(false);
+		expect(after.priorStateDropped()).toBe(true);
+	});
+
+	it('denies when an existing ledger path cannot be read', () => {
+		const holder = { value: { installSecret: 'secret', epoch: 1 } as Anchor | null };
+		fs.mkdirSync(ledgerPath);
+
+		const after = makeStore(fakeSeal(), fakeAnchor(holder));
+
+		expect(after.isEnabled('a')).toBe(false);
+		expect(after.readGrants('a')).toEqual([]);
 		expect(after.priorStateDropped()).toBe(true);
 	});
 
@@ -314,6 +367,33 @@ describe('AuthorizationStore - persist failure (locked keyring) fails safe', () 
 		expect(store.isSessionOnly()).toBe(true);
 		expect(fs.existsSync(ledgerPath)).toBe(false);
 		expect(store.readGrants('b')).toHaveLength(1); // usable in-memory
+	});
+
+	it('keeps a revoked grant denied when persistence fails after an existing write', () => {
+		const holder = { value: null as Anchor | null };
+		const baseSeal = fakeSeal();
+		let sealWrites = 0;
+		const flakySeal: SealProvider = {
+			...baseSeal,
+			seal: (plaintext) => {
+				sealWrites += 1;
+				if (sealWrites === 2) throw new Error('disk failure while revoking');
+				return baseSeal.seal(plaintext);
+			},
+		};
+		const store = makeStore(flakySeal, fakeAnchor(holder));
+		store.mint('a', caps('fs:write', '/data'), ident('hash-a'));
+
+		store.revoke('a');
+
+		expect(store.isSessionOnly()).toBe(true);
+		expect(store.isEnabled('a')).toBe(false);
+		expect(store.readGrants('a')).toEqual([]);
+		expect(store.isTombstoned('a')).toBe(true);
+
+		const reopened = makeStore(fakeSeal(), fakeAnchor(holder));
+		expect(reopened.isEnabled('a')).toBe(false);
+		expect(reopened.readGrants('a')).toEqual([]);
 	});
 });
 

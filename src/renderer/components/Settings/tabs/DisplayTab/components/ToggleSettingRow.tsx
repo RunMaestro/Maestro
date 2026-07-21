@@ -13,6 +13,7 @@ interface ToggleSettingRowProps {
 	clickableRow?: boolean;
 	disabled?: boolean;
 	className?: string;
+	'data-setting-id'?: string;
 }
 
 export function ToggleSettingRow({
@@ -26,6 +27,7 @@ export function ToggleSettingRow({
 	clickableRow = false,
 	disabled = false,
 	className = '',
+	'data-setting-id': dataSettingId,
 }: ToggleSettingRowProps) {
 	const toggle = () => {
 		if (!disabled) onChange(!checked);
@@ -37,6 +39,7 @@ export function ToggleSettingRow({
 				clickableRow ? 'cursor-pointer' : ''
 			} ${className}`}
 			style={{ borderColor: theme.colors.border }}
+			data-setting-id={dataSettingId}
 			onClick={clickableRow ? toggle : undefined}
 			role={clickableRow ? 'button' : undefined}
 			tabIndex={clickableRow ? 0 : undefined}

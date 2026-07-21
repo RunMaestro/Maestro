@@ -12,7 +12,7 @@
 
 import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
-import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
+import { resolveSshSpawn, type SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
 import { logger } from './logger';
 
@@ -102,16 +102,15 @@ export async function wrapSpawnWithSsh(
 		};
 	}
 
-	// Resolve the SSH remote configuration
-	const sshResult = getSshRemoteConfig(sshStore, {
+	const sshResolution = resolveSshSpawn(sshStore, {
 		sessionSshConfig: sshConfig,
 	});
 
-	if (!sshResult.config) {
-		// SSH config not found or disabled - fall back to local execution
-		logger.warn('SSH remote config not found, falling back to local execution', LOG_CONTEXT, {
+	if (sshResolution.mode === 'local') {
+		logger.warn('SSH remote unavailable, falling back to local execution', LOG_CONTEXT, {
 			remoteId: sshConfig.remoteId,
-			source: sshResult.source,
+			source: sshResolution.source,
+			status: sshResolution.status,
 		});
 		return {
 			command: config.command,
@@ -123,10 +122,12 @@ export async function wrapSpawnWithSsh(
 		};
 	}
 
+	const sshRemote = sshResolution.remote;
 	logger.info('Wrapping spawn with SSH remote execution', LOG_CONTEXT, {
-		remoteId: sshResult.config.id,
-		remoteName: sshResult.config.name,
-		host: sshResult.config.host,
+		remoteId: sshRemote.id,
+		remoteName: sshRemote.name,
+		host: sshRemote.host,
+		source: sshResolution.source,
 	});
 
 	// Determine the command to run on the remote host:
@@ -150,7 +151,7 @@ export async function wrapSpawnWithSsh(
 			reason: 'avoid-command-line-length-limit',
 		});
 
-		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
+		const sshCommand = await buildSshCommandWithStdin(sshRemote, {
 			command: remoteCommand,
 			args: [...config.args],
 			cwd: config.cwd,
@@ -166,7 +167,7 @@ export async function wrapSpawnWithSsh(
 			prompt: undefined,
 			sshStdinScript: sshCommand.stdinScript,
 			sshRemoteCommand: sshCommand.remoteCommandLine,
-			sshRemoteUsed: sshResult.config,
+			sshRemoteUsed: sshRemote,
 		};
 	}
 
@@ -182,7 +183,7 @@ export async function wrapSpawnWithSsh(
 		}
 	}
 
-	const sshCommand = await buildSshCommand(sshResult.config, {
+	const sshCommand = await buildSshCommand(sshRemote, {
 		command: remoteCommand,
 		args: sshArgs,
 		cwd: config.cwd,
@@ -204,6 +205,6 @@ export async function wrapSpawnWithSsh(
 		customEnvVars: undefined,
 		prompt: undefined,
 		sshRemoteCommand: sshCommand.remoteCommandLine,
-		sshRemoteUsed: sshResult.config,
+		sshRemoteUsed: sshRemote,
 	};
 }

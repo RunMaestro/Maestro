@@ -7,7 +7,8 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { UseWebSocketReturn, GroupData } from './useWebSocket';
+import type { UseWebSocketReturn } from './useWebSocket';
+import type { GroupData } from '../../shared/web-protocol/session';
 
 /**
  * Return value from useAgentManagement hook.

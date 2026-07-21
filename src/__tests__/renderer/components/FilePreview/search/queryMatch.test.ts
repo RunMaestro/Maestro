@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-	escapeRegExp,
 	compileSearchRegex,
 	parseLineQuery,
 	SEARCH_KIND_CYCLE,
 } from '../../../../../renderer/components/FilePreview/search/queryMatch';
+import { escapeRegExp } from '../../../../../shared/stringUtils';
 
 describe('escapeRegExp', () => {
 	it('escapes regex metacharacters so they match literally', () => {

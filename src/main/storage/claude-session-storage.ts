@@ -12,7 +12,6 @@
  */
 
 import path from 'path';
-import os from 'os';
 import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
@@ -22,6 +21,7 @@ import { computeClaudeUsageCost } from '../utils/pricing';
 import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
+import { getClaudeProjectDir } from '../utils/claude-project-path';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
@@ -34,22 +34,14 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
-import type {
-	ClaudeSessionOrigin,
-	ClaudeSessionOriginInfo,
-	ClaudeSessionOriginsData,
-} from '../stores/types';
+import type { AgentSessionOriginsData, AgentSessionOriginInfo } from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
-export type { ClaudeSessionOriginsData } from '../stores/types';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
 
-/**
- * Origin data structure stored in electron-store
- */
-type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
-
+/** Canonical v2 origin data stored under the `claude-code` agent key. */
+type StoredOriginData = AgentSessionOriginInfo;
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Matches the synthetic placeholder text the harness writes alongside an image
@@ -92,6 +84,19 @@ function extractTextFromContent(content: unknown): string {
 		return textParts.join(' ');
 	}
 	return '';
+}
+
+function parseClaudeTranscript(content: string) {
+	const entries = [];
+	for (const line of content.split('\n')) {
+		if (!line.trim()) continue;
+		try {
+			entries.push(JSON.parse(line));
+		} catch {
+			// Skip malformed JSONL lines.
+		}
+	}
+	return entries;
 }
 
 /**
@@ -281,24 +286,18 @@ async function parseSessionFileRemote(
 export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
 
-	private originsStore: Store<ClaudeSessionOriginsData>;
+	private originsStore: Store<AgentSessionOriginsData>;
 
-	constructor(originsStore?: Store<ClaudeSessionOriginsData>) {
+	constructor(originsStore?: Store<AgentSessionOriginsData>) {
 		super();
-		// Use provided store or create a new one
+		// Use the shared agent-keyed target store; standalone construction keeps
+		// the same target schema rather than creating a second Claude-only file.
 		this.originsStore =
 			originsStore ||
-			new Store<ClaudeSessionOriginsData>({
-				name: 'claude-session-origins',
+			new Store<AgentSessionOriginsData>({
+				name: 'maestro-agent-session-origins',
 				defaults: { origins: {} },
 			});
-	}
-
-	/**
-	 * Get the Claude projects directory path (local)
-	 */
-	private getProjectsDir(): string {
-		return path.join(os.homedir(), '.claude', 'projects');
 	}
 
 	/**
@@ -313,8 +312,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the encoded project directory path (local)
 	 */
 	private getEncodedProjectDir(projectPath: string): string {
-		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return path.join(this.getProjectsDir(), encodedPath);
+		return getClaudeProjectDir(projectPath);
 	}
 
 	/**
@@ -331,7 +329,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private getProjectOrigins(projectPath: string): Record<string, StoredOriginData> {
 		const origins = this.originsStore.get('origins', {});
-		return origins[projectPath] || {};
+		return origins['claude-code']?.[projectPath] || {};
 	}
 
 	/**
@@ -342,9 +340,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		projectOrigins: Record<string, StoredOriginData>
 	): AgentSessionInfo {
 		const originData = projectOrigins[session.sessionId];
-		const origin = typeof originData === 'string' ? originData : originData?.origin;
-		const sessionName = typeof originData === 'object' ? originData?.sessionName : undefined;
-		const starred = typeof originData === 'object' ? originData?.starred : undefined;
+		const origin = originData?.origin;
+		const sessionName = originData?.sessionName;
+		const starred = originData?.starred;
 		return {
 			...session,
 			origin: origin as AgentSessionOrigin | undefined,
@@ -680,80 +678,74 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			content = await fs.readFile(sessionFile, 'utf-8');
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
-
+		const entries = parseClaudeTranscript(content);
 		const messages: SessionMessage[] = [];
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === 'user' || entry.type === 'assistant') {
-					let msgContent = '';
-					let toolUse = undefined;
-					let images: string[] | undefined;
+		for (const entry of entries) {
+			if (entry.type === 'user' || entry.type === 'assistant') {
+				let msgContent = '';
+				let toolUse = undefined;
+				let images: string[] | undefined;
 
-					if (entry.message?.content) {
-						if (typeof entry.message.content === 'string') {
-							msgContent = entry.message.content;
-						} else if (Array.isArray(entry.message.content)) {
-							const textBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'text'
-							);
-							const toolBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'tool_use'
-							);
-							const imageBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'image'
-							);
+				if (entry.message?.content) {
+					if (typeof entry.message.content === 'string') {
+						msgContent = entry.message.content;
+					} else if (Array.isArray(entry.message.content)) {
+						const textBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'text'
+						);
+						const toolBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'tool_use'
+						);
+						const imageBlocks = entry.message.content.filter(
+							(b: { type?: string }) => b.type === 'image'
+						);
 
-							// Reconstruct base64 data URLs from image content blocks so a
-							// resumed tab re-renders the original images instead of falling
-							// back to the harness's synthetic `[Image: ...]` placeholder text.
-							if (imageBlocks.length > 0) {
-								const urls = imageBlocks
-									.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
-										const src = b.source;
-										if (src?.type === 'base64' && src.media_type && src.data) {
-											return `data:${src.media_type};base64,${src.data}`;
-										}
-										return null;
-									})
-									.filter((url: string | null): url is string => url !== null);
-								if (urls.length > 0) {
-									images = urls;
-								}
-							}
-
-							// Always drop the synthetic `[Image: ... Multiply coordinates by
-							// ...]` placeholder lines. They are redundant either way: when the
-							// image is in this same message we render the recovered image, and
-							// when the placeholder arrives as its own follow-up message it is a
-							// text echo of an image already shown in a prior message. Filtering
-							// line-by-line lets a placeholder-only message collapse to empty so
-							// it is dropped entirely below.
-							msgContent = stripImagePlaceholderLines(
-								textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
-							);
-							if (toolBlocks.length > 0) {
-								toolUse = toolBlocks;
+						// Reconstruct base64 data URLs from image content blocks so a
+						// resumed tab re-renders the original images instead of falling
+						// back to the harness's synthetic `[Image: ...]` placeholder text.
+						if (imageBlocks.length > 0) {
+							const urls = imageBlocks
+								.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
+									const src = b.source;
+									if (src?.type === 'base64' && src.media_type && src.data) {
+										return `data:${src.media_type};base64,${src.data}`;
+									}
+									return null;
+								})
+								.filter((url: string | null): url is string => url !== null);
+							if (urls.length > 0) {
+								images = urls;
 							}
 						}
-					}
 
-					if ((msgContent && msgContent.trim()) || toolUse || images) {
-						messages.push({
-							type: entry.type,
-							role: entry.message?.role,
-							content: msgContent,
-							timestamp: entry.timestamp,
-							uuid: entry.uuid,
-							toolUse,
-							...(images && { images }),
-						});
+						// Always drop the synthetic `[Image: ... Multiply coordinates by
+						// ...]` placeholder lines. They are redundant either way: when the
+						// image is in this same message we render the recovered image, and
+						// when the placeholder arrives as its own follow-up message it is a
+						// text echo of an image already shown in a prior message. Filtering
+						// line-by-line lets a placeholder-only message collapse to empty so
+						// it is dropped entirely below.
+						msgContent = stripImagePlaceholderLines(
+							textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
+						);
+						if (toolBlocks.length > 0) {
+							toolUse = toolBlocks;
+						}
 					}
 				}
-			} catch {
-				// Skip malformed lines
+
+				if ((msgContent && msgContent.trim()) || toolUse || images) {
+					messages.push({
+						type: entry.type,
+						role: entry.message?.role,
+						content: msgContent,
+						timestamp: entry.timestamp,
+						uuid: entry.uuid,
+						toolUse,
+						...(images && { images }),
+					});
+				}
 			}
 		}
 
@@ -783,23 +775,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
+		const entries = parseClaudeTranscript(content);
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === 'user' || entry.type === 'assistant') {
-					const textContent = extractTextFromContent(entry.message?.content);
-					if (textContent.trim()) {
-						searchableMessages.push({
-							role: entry.type as 'user' | 'assistant',
-							textContent,
-						});
-					}
+		for (const entry of entries) {
+			if (entry.type === 'user' || entry.type === 'assistant') {
+				const textContent = extractTextFromContent(entry.message?.content);
+				if (textContent.trim()) {
+					searchableMessages.push({
+						role: entry.type as 'user' | 'assistant',
+						textContent,
+					});
 				}
-			} catch {
-				// Skip malformed lines
 			}
 		}
 
@@ -1012,12 +999,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		origin: AgentSessionOrigin,
 		sessionName?: string
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = sessionName ? { origin, sessionName } : { origin };
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(
 			`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 			LOG_CONTEXT
@@ -1025,96 +1009,70 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Update the name of a session
+	 * Update the name of a session.
 	 */
 	updateSessionName(projectPath: string, agentSessionId: string, sessionName: string): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, sessionName };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			sessionName,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(`Updated Claude session name: ${agentSessionId} = ${sessionName}`, LOG_CONTEXT);
 	}
 
 	/**
-	 * Update the starred status of a session
+	 * Update the starred status of a session.
 	 */
 	updateSessionStarred(projectPath: string, agentSessionId: string, starred: boolean): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, starred };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, starred };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', starred };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			starred,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		logger.debug(`Updated Claude session starred: ${agentSessionId} = ${starred}`, LOG_CONTEXT);
 	}
 
 	/**
-	 * Update the context usage percentage of a session
-	 * This persists the last known context window usage so it can be restored on resume
+	 * Update the context usage percentage of a session.
+	 * This persists the last known context window usage so it can be restored on resume.
 	 */
 	updateSessionContextUsage(
 		projectPath: string,
 		agentSessionId: string,
 		contextUsage: number
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-		}
-		this.originsStore.set('origins', origins);
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		projectOrigins[agentSessionId] = {
+			...projectOrigins[agentSessionId],
+			origin: projectOrigins[agentSessionId]?.origin ?? 'user',
+			contextUsage,
+		};
+		this.writeProjectOrigins(projectPath, projectOrigins);
 		// Don't log this - it updates frequently and would spam logs
 	}
 
 	/**
-	 * Get all origin info for a project
+	 * Get all origin info for a project.
 	 */
 	getSessionOrigins(projectPath: string): Record<string, SessionOriginInfo> {
-		const origins = this.originsStore.get('origins', {});
-		const projectOrigins = origins[projectPath] || {};
-
-		// Normalize to SessionOriginInfo format
 		const result: Record<string, SessionOriginInfo> = {};
-		for (const [sessionId, data] of Object.entries(projectOrigins)) {
-			if (typeof data === 'string') {
-				result[sessionId] = { origin: data };
-			} else {
-				result[sessionId] = {
-					origin: data.origin,
-					sessionName: data.sessionName,
-					starred: data.starred,
-					contextUsage: data.contextUsage,
-				};
-			}
+		for (const [sessionId, data] of Object.entries(this.getProjectOrigins(projectPath))) {
+			result[sessionId] = {
+				origin: data.origin as AgentSessionOrigin,
+				sessionName: data.sessionName,
+				starred: data.starred,
+				contextUsage: data.contextUsage,
+			};
 		}
 		return result;
 	}
 
 	/**
-	 * Get all named sessions across all projects
+	 * Get all named sessions across all projects.
 	 */
 	async getAllNamedSessions(): Promise<
 		Array<{
@@ -1125,7 +1083,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			lastActivityAt?: number;
 		}>
 	> {
-		const allOrigins = this.originsStore.get('origins', {});
+		const allOrigins = this.originsStore.get('origins', {})['claude-code'] || {};
 		const namedSessions: Array<{
 			agentSessionId: string;
 			projectPath: string;
@@ -1136,7 +1094,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 
 		for (const [projectPath, sessions] of Object.entries(allOrigins)) {
 			for (const [agentSessionId, info] of Object.entries(sessions)) {
-				if (typeof info === 'object' && info.sessionName) {
+				if (info.sessionName) {
 					let lastActivityAt: number | undefined;
 					try {
 						const sessionFile = this.getSessionPath(projectPath, agentSessionId);
@@ -1170,5 +1128,19 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		return namedSessions;
+	}
+
+	private writeProjectOrigins(
+		projectPath: string,
+		projectOrigins: Record<string, StoredOriginData>
+	): void {
+		const allOrigins = this.originsStore.get('origins', {});
+		this.originsStore.set('origins', {
+			...allOrigins,
+			'claude-code': {
+				...allOrigins['claude-code'],
+				[projectPath]: projectOrigins,
+			},
+		});
 	}
 }

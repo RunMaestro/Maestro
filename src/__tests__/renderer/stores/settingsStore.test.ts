@@ -1603,6 +1603,27 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().settingsLoaded).toBe(true);
 		});
 
+		it('ignores malformed default-policy values and keeps fresh defaults', async () => {
+			const defaults = {
+				defaultShell: useSettingsStore.getState().defaultShell,
+				sshRemoteIgnorePatterns: useSettingsStore.getState().sshRemoteIgnorePatterns,
+				sshRemoteHonorGitignore: useSettingsStore.getState().sshRemoteHonorGitignore,
+				useNativeTitleBar: useSettingsStore.getState().useNativeTitleBar,
+				fontSize: useSettingsStore.getState().fontSize,
+			};
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				defaultShell: Number.NaN,
+				sshRemoteIgnorePatterns: ['.git', 1],
+				sshRemoteHonorGitignore: 'true',
+				useNativeTitleBar: 1,
+				fontSize: Infinity,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState()).toMatchObject(defaults);
+		});
+
 		it('migrates ThinkingMode boolean true to "on"', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				defaultShowThinking: true,

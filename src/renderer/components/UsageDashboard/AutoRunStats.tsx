@@ -19,9 +19,9 @@ import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { ChartTooltip } from './ChartTooltip';
+import { formatUsageShortDate } from './usageDashboardUtils';
 import {
 	computeAutoRunMetrics,
-	formatDateLabel,
 	formatFullDate,
 	getAutoRunChartMax,
 	groupSessionsByDate,
@@ -381,7 +381,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 											whiteSpace: 'nowrap',
 										}}
 									>
-										{showLabel ? formatDateLabel(day.date) : ''}
+										{showLabel ? formatUsageShortDate(day.date) : ''}
 									</div>
 								);
 							})}

@@ -4,9 +4,10 @@
 // same JSON block vocabulary as `view --type view`). Rides the same bridge as
 // notify/view.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
+import { resolveViewBody, sendViewCommand } from './view-command';
 import {
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
@@ -56,21 +57,6 @@ interface MovementInteractOptions {
 	json?: boolean;
 }
 
-/** Read the block spec from --body (inline) or --body-file (a file path). */
-function resolveBody(body: string | undefined, bodyFile: string | undefined): string | undefined {
-	if (bodyFile) {
-		try {
-			return readFileSync(bodyFile, 'utf8');
-		} catch (error) {
-			console.error(
-				`Error: could not read --body-file: ${error instanceof Error ? error.message : String(error)}`
-			);
-			process.exit(1);
-		}
-	}
-	return body;
-}
-
 /** Resolve and validate a Movement's native-view or HTML document mode. */
 function resolveViewType(
 	options: MovementAddOptions,
@@ -95,9 +81,8 @@ function resolveMovementBody(options: MovementAddOptions): string | undefined {
 		console.error('Error: use only one of --body-file or --html-file');
 		process.exit(1);
 	}
-	return resolveBody(options.body, options.htmlFile ?? options.bodyFile);
+	return resolveViewBody(options.body, options.htmlFile ?? options.bodyFile);
 }
-
 /** Parse an optional numeric flag, exiting on a non-number. */
 function parseNum(name: string, raw: string | undefined): number | undefined {
 	if (raw === undefined) return undefined;
@@ -109,7 +94,7 @@ function parseNum(name: string, raw: string | undefined): number | undefined {
 	return n;
 }
 
-/** Send one movement op over the bridge and report the result. */
+/** Validate Movement's explicit operation set before sending its typed payload. */
 async function sendMovement(
 	payload: MovementPayload,
 	json: boolean | undefined,
@@ -119,28 +104,12 @@ async function sendMovement(
 		console.error(`Error: op must be one of: ${MOVEMENT_OPS.join(', ')}`);
 		process.exit(1);
 	}
-	try {
-		const result = await withMaestroClient(async (client) =>
-			client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'movement', ...payload },
-				'movement_result'
-			)
-		);
-		if (result.success) {
-			if (json) console.log(JSON.stringify({ success: true, id: payload.id, op: payload.op }));
-			else console.log(successMessage);
-		} else {
-			const error = result.error || 'Failed to update movement';
-			if (json) console.log(JSON.stringify({ success: false, error }));
-			else console.error(`Error: ${error}`);
-			process.exit(1);
-		}
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (json) console.log(JSON.stringify({ success: false, error: msg }));
-		else console.error(`Error: ${msg}`);
-		process.exit(1);
-	}
+	await sendViewCommand({
+		command: { type: 'movement', payload, responseType: 'movement_result' },
+		json,
+		successMessage,
+		failureMessage: 'Failed to update movement',
+	});
 }
 
 type MovementIdOperation = MovementOp | 'inspect' | 'interact';

@@ -17,7 +17,7 @@ import path from 'path';
 // Mock electron app module
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn().mockReturnValue('/mock/userData'),
+		getPath: vi.fn().mockReturnValue('/temporary-profile'),
 		isPackaged: false,
 	},
 }));
@@ -28,6 +28,7 @@ vi.mock('fs/promises', () => ({
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
 		mkdir: vi.fn(),
+		rm: vi.fn(),
 	},
 }));
 
@@ -56,6 +57,7 @@ import {
 	resetOpenSpecPrompt,
 	getOpenSpecCommand,
 	getOpenSpecCommandBySlash,
+	refreshOpenSpecPrompts,
 	OpenSpecCommand,
 	OpenSpecMetadata,
 } from '../../main/openspec-manager';
@@ -74,6 +76,7 @@ describe('openspec-manager', () => {
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		vi.clearAllMocks();
 	});
 
@@ -500,6 +503,38 @@ describe('openspec-manager', () => {
 			// Custom commands should use bundled, not user prompts directory
 			expect(helpCmd?.prompt).toBe(mockBundledPrompt);
 			expect(implementCmd?.prompt).toBe(mockBundledPrompt);
+		});
+	});
+	describe('refresh', () => {
+		it('preserves a user customization while committing refreshed OpenSpec sources', async () => {
+			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+				if (filePath.toString().includes('openspec-customizations.json')) {
+					return JSON.stringify({
+						metadata: mockMetadata,
+						prompts: { proposal: { content: 'user proposal', isModified: true } },
+					});
+				}
+				throw enoent();
+			});
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string) => {
+					if (url.includes('/releases/latest'))
+						return new Response(JSON.stringify({ tag_name: 'v1.2.3' }));
+					return new Response(
+						'export const workflow = { instructions: `refreshed OpenSpec prompt` };'
+					);
+				})
+			);
+
+			const metadata = await refreshOpenSpecPrompts();
+
+			expect(metadata).toMatchObject({ commitSha: 'v1.2.3', sourceVersion: '1.2.3' });
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				expect.stringContaining('openspec-customizations.json'),
+				expect.stringContaining('user proposal'),
+				'utf-8'
+			);
 		});
 	});
 });

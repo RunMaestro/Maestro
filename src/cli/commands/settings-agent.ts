@@ -11,12 +11,13 @@ import {
 import {
 	formatSettingsList,
 	formatSettingDetail,
-	formatError,
 	formatSuccess,
 	formatWarning,
 	type SettingDisplay,
 } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { reportSettingsCliError } from '../utils/settings-error';
+import { parseSettingsCliValue } from '../utils/settings-value';
 
 // Known agent config keys with descriptions for --verbose mode
 const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string }> = {
@@ -64,27 +65,6 @@ interface AgentSetOptions {
 
 interface AgentResetOptions {
 	json?: boolean;
-}
-
-/**
- * Parse a CLI value string into the appropriate JS type.
- */
-function parseValue(input: string): unknown {
-	if (input === 'true') return true;
-	if (input === 'false') return false;
-	if (input === 'null') return null;
-	if (input !== '' && !/^0\d/.test(input)) {
-		const num = Number(input);
-		if (!isNaN(num) && isFinite(num)) return num;
-	}
-	if (input.startsWith('[') || input.startsWith('{')) {
-		try {
-			return JSON.parse(input);
-		} catch {
-			// Fall through to string
-		}
-	}
-	return input;
 }
 
 /**
@@ -175,13 +155,7 @@ export function settingsAgentList(agentId: string | undefined, options: AgentLis
 			}
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list agent configs: ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, 'Failed to list agent configs');
 	}
 }
 
@@ -222,13 +196,7 @@ export function settingsAgentGet(agentId: string, key: string, options: AgentGet
 			}
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options);
 	}
 }
 
@@ -252,7 +220,7 @@ export function settingsAgentSet(
 				throw new Error(`Invalid JSON in --raw: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		} else {
-			parsedValue = parseValue(value);
+			parsedValue = parseSettingsCliValue(value);
 		}
 
 		writeAgentConfigValue(agentId, key, parsedValue);
@@ -269,13 +237,7 @@ export function settingsAgentSet(
 			console.log(formatSuccess(`${agentId}.${key} = ${JSON.stringify(parsedValue)}`));
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to set "${agentId}.${key}": ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, `Failed to set "${agentId}.${key}"`);
 	}
 }
 
@@ -303,12 +265,6 @@ export function settingsAgentReset(agentId: string, key: string, options: AgentR
 			console.log(formatSuccess(`${agentId}.${key} removed`));
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to reset "${agentId}.${key}": ${message}`));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options, `Failed to reset "${agentId}.${key}"`);
 	}
 }

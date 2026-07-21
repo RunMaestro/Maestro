@@ -7,6 +7,7 @@ import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isAbsolutePath, getBasename } from '../../shared/formatters';
@@ -385,26 +386,33 @@ export function FileSearchModal({
 		onClose();
 	}, [absDisplay, trimmedSearch, onFileSelect, onClose]);
 
+	const { handleKeyDown: handleListKeyDown } = useListNavigation({
+		listLength: filteredFiles.length,
+		onSelect: (index) => {
+			const file = filteredFiles[index];
+			if (file) {
+				handleItemSelect(file);
+			}
+		},
+		selectedIndex,
+		onSelectedIndexChange: setSelectedIndex,
+	});
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === 'Tab') {
 				e.preventDefault();
 				toggleViewMode();
-			} else if (e.key === 'ArrowDown') {
-				e.preventDefault();
-				setSelectedIndex((prev) => Math.min(prev + 1, filteredFiles.length - 1));
-			} else if (e.key === 'ArrowUp') {
-				e.preventDefault();
-				setSelectedIndex((prev) => Math.max(prev - 1, 0));
-			} else if (e.key === 'Enter') {
+				return;
+			}
+
+			if (e.key === 'Enter' && isAbsoluteQuery) {
 				e.preventDefault();
 				e.stopPropagation();
-				if (isAbsoluteQuery) {
-					handleAbsoluteOpen();
-				} else if (filteredFiles[selectedIndex]) {
-					handleItemSelect(filteredFiles[selectedIndex]);
-				}
-			} else if (e.metaKey && ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(e.key)) {
+				handleAbsoluteOpen();
+				return;
+			}
+
+			if (e.metaKey && ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(e.key)) {
 				e.preventDefault();
 				// 1-9 map to positions 1-9, 0 maps to position 10
 				const number = e.key === '0' ? 10 : parseInt(e.key);
@@ -415,16 +423,22 @@ export function FileSearchModal({
 				if (filteredFiles[targetIndex]) {
 					handleItemSelect(filteredFiles[targetIndex]);
 				}
+				return;
 			}
+
+			if (e.key === 'Enter') {
+				e.stopPropagation();
+			}
+			handleListKeyDown(e);
 		},
 		[
 			filteredFiles,
-			selectedIndex,
 			firstVisibleIndex,
-			handleItemSelect,
-			toggleViewMode,
-			isAbsoluteQuery,
 			handleAbsoluteOpen,
+			handleItemSelect,
+			handleListKeyDown,
+			isAbsoluteQuery,
+			toggleViewMode,
 		]
 	);
 

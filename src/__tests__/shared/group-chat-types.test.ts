@@ -15,12 +15,16 @@ import {
 	stripUnmatchedTrailingClosers,
 } from '../../shared/group-chat-types';
 import type {
-	GroupChatParticipant,
 	GroupChat,
-	GroupChatMessage,
-	GroupChatState,
+	GroupChatBase,
 	GroupChatHistoryEntry,
 	GroupChatHistoryEntryType,
+	GroupChatLogMessage,
+	GroupChatMessage,
+	GroupChatParticipant,
+	GroupChatState,
+	GroupChatStorageFields,
+	GroupChatUiFields,
 	ModeratorConfig,
 } from '../../shared/group-chat-types';
 
@@ -311,6 +315,32 @@ describe('GroupChat type', () => {
 			draftMessage: 'Work in progress...',
 		};
 		expect(groupChat.draftMessage).toBe('Work in progress...');
+	});
+
+	it('composes stable, storage, and UI fields without changing persisted fixtures', () => {
+		const base: GroupChatBase = {
+			id: 'gc-123',
+			name: 'Test Group',
+			createdAt: 100,
+			moderatorAgentId: 'claude-code',
+			moderatorSessionId: 'moderator-1',
+			participants: [],
+		};
+		const storage: GroupChatStorageFields = {
+			updatedAt: 200,
+			logPath: '/path/to/chat.log',
+			imagesDir: '/path/to/images',
+		};
+		const ui: GroupChatUiFields = { draftMessage: 'Unsent text' };
+		const composed: GroupChat = { ...base, ...storage, ...ui };
+		const logLine: GroupChatLogMessage = {
+			timestamp: '2024-01-01T00:00:00.000Z',
+			from: 'User',
+			content: 'Persisted message',
+		};
+
+		expect(JSON.parse(JSON.stringify(composed))).toMatchObject(base);
+		expect(JSON.parse(JSON.stringify(logLine))).toEqual(logLine);
 	});
 });
 

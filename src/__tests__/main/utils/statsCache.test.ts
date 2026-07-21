@@ -14,10 +14,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
+import fs from 'fs/promises';
 import {
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
 	PerProjectSessionStats,
+	loadGlobalStatsCache,
+	loadStatsCache,
+	GLOBAL_STATS_CACHE_VERSION,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -97,6 +101,72 @@ describe('SessionStatsCache', () => {
 		 */
 		it('should be version 2 or higher (archive support required)', () => {
 			expect(STATS_CACHE_VERSION).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	describe('Cache readers', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('loads a complete current per-project cache', async () => {
+			const cache: SessionStatsCache = {
+				version: STATS_CACHE_VERSION,
+				lastUpdated: 1,
+				sessions: {
+					current: {
+						messages: 1,
+						costUsd: 0.01,
+						sizeBytes: 10,
+						tokens: 2,
+						oldestTimestamp: '2025-01-01T00:00:00.000Z',
+						fileMtimeMs: 1,
+					},
+				},
+				totals: {
+					totalSessions: 1,
+					totalMessages: 1,
+					totalCostUsd: 0.01,
+					totalSizeBytes: 10,
+					totalTokens: 2,
+					oldestTimestamp: '2025-01-01T00:00:00.000Z',
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cache));
+
+			await expect(loadStatsCache('/project')).resolves.toEqual(cache);
+		});
+
+		it('treats a partial current per-project cache as a safe miss', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ version: STATS_CACHE_VERSION }));
+
+			await expect(loadStatsCache('/project')).resolves.toBeNull();
+		});
+
+		it('loads a complete current global cache', async () => {
+			const cache = {
+				version: GLOBAL_STATS_CACHE_VERSION,
+				lastUpdated: 1,
+				providers: {
+					claude: {
+						sessions: {
+							current: {
+								messages: 1,
+								inputTokens: 2,
+								outputTokens: 3,
+								cacheReadTokens: 4,
+								cacheCreationTokens: 5,
+								cachedInputTokens: 6,
+								sizeBytes: 7,
+								fileMtimeMs: 8,
+							},
+						},
+					},
+				},
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cache));
+
+			await expect(loadGlobalStatsCache()).resolves.toEqual(cache);
 		});
 	});
 

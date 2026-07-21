@@ -5,7 +5,7 @@ vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
-import { detectShells, getShellCommand } from '../../../main/utils/shellDetector';
+import { detectShells } from '../../../main/utils/shellDetector';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 
 const mockedExecFileNoThrow = vi.mocked(execFileNoThrow);
@@ -269,98 +269,6 @@ describe('shellDetector', () => {
 			expect(shells[2].available).toBe(true);
 			expect(shells[3].available).toBe(false);
 			expect(shells[4].available).toBe(true);
-		});
-	});
-
-	describe('getShellCommand', () => {
-		describe('on Unix-like platforms', () => {
-			const originalPlatform = process.platform;
-
-			beforeEach(() => {
-				Object.defineProperty(process, 'platform', { value: 'darwin', writable: true });
-			});
-
-			afterEach(() => {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
-			});
-
-			it('should return the shell ID directly for zsh', () => {
-				expect(getShellCommand('zsh')).toBe('zsh');
-			});
-
-			it('should return the shell ID directly for bash', () => {
-				expect(getShellCommand('bash')).toBe('bash');
-			});
-
-			it('should return the shell ID directly for sh', () => {
-				expect(getShellCommand('sh')).toBe('sh');
-			});
-
-			it('should return the shell ID directly for fish', () => {
-				expect(getShellCommand('fish')).toBe('fish');
-			});
-
-			it('should return the shell ID directly for tcsh', () => {
-				expect(getShellCommand('tcsh')).toBe('tcsh');
-			});
-
-			it('should return any shell ID directly for unknown shells', () => {
-				expect(getShellCommand('custom-shell')).toBe('custom-shell');
-			});
-		});
-
-		describe('on Windows', () => {
-			const originalPlatform = process.platform;
-
-			beforeEach(() => {
-				Object.defineProperty(process, 'platform', { value: 'win32', writable: true });
-			});
-
-			afterEach(() => {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
-			});
-
-			it('should return bash.exe for sh on Windows', () => {
-				expect(getShellCommand('sh')).toBe('bash.exe');
-			});
-
-			it('should return bash.exe for bash on Windows', () => {
-				expect(getShellCommand('bash')).toBe('bash.exe');
-			});
-
-			it('should return powershell.exe for zsh on Windows', () => {
-				expect(getShellCommand('zsh')).toBe('powershell.exe');
-			});
-
-			it('should return powershell.exe for fish on Windows', () => {
-				expect(getShellCommand('fish')).toBe('powershell.exe');
-			});
-
-			it('should return powershell.exe for tcsh on Windows', () => {
-				expect(getShellCommand('tcsh')).toBe('powershell.exe');
-			});
-
-			it('should return powershell.exe for unknown shells on Windows', () => {
-				expect(getShellCommand('custom-shell')).toBe('powershell.exe');
-			});
-		});
-
-		describe('on Linux', () => {
-			const originalPlatform = process.platform;
-
-			beforeEach(() => {
-				Object.defineProperty(process, 'platform', { value: 'linux', writable: true });
-			});
-
-			afterEach(() => {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
-			});
-
-			it('should return the shell ID directly on Linux', () => {
-				expect(getShellCommand('zsh')).toBe('zsh');
-				expect(getShellCommand('bash')).toBe('bash');
-				expect(getShellCommand('sh')).toBe('sh');
-			});
 		});
 	});
 

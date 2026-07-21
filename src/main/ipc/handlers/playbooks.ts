@@ -7,6 +7,7 @@ import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { readKeyedJsonArray } from '../../utils/json-file-readers';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -35,18 +36,33 @@ function getPlaybooksFilePath(app: App, sessionId: string): string {
 }
 
 /**
+ * Playbooks have accumulated optional workflow fields over time. Keep the
+ * persisted boundary compatible with those records while requiring the stable
+ * identity fields every reader uses.
+ */
+function isPersistedPlaybook(value: unknown): value is Record<string, unknown> {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!Array.isArray(value) &&
+		'id' in value &&
+		'name' in value &&
+		typeof value.id === 'string' &&
+		typeof value.name === 'string'
+	);
+}
+
+/**
  * Read playbooks from file
  */
 async function readPlaybooks(app: App, sessionId: string): Promise<any[]> {
-	const filePath = getPlaybooksFilePath(app, sessionId);
-	try {
-		const content = await fs.readFile(filePath, 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.playbooks) ? data.playbooks : [];
-	} catch {
-		// File doesn't exist or is invalid, return empty array
-		return [];
-	}
+	return (
+		(await readKeyedJsonArray(
+			getPlaybooksFilePath(app, sessionId),
+			'playbooks',
+			isPersistedPlaybook
+		)) ?? []
+	);
 }
 
 /**

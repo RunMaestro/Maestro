@@ -37,9 +37,10 @@ import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
+import { MAX_SESSION_FILE_SIZE } from './session-storage-constants';
+import { readVersionedJsonCache } from '../utils/json-file-readers';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Get Codex sessions base directory (platform-specific)
@@ -153,6 +154,19 @@ function extractTextFromContent(content: CodexMessageContent[] | undefined): str
 	return textParts.join(' ');
 }
 
+function parseCodexTranscript(content: string) {
+	const entries = [];
+	for (const line of content.split('\n')) {
+		if (!line.trim()) continue;
+		try {
+			entries.push(JSON.parse(line));
+		} catch {
+			// Skip malformed JSONL lines.
+		}
+	}
+	return entries;
+}
+
 /**
  * Check if text is a system/environment context message that should be skipped for preview
  */
@@ -211,22 +225,93 @@ interface CodexSessionCache {
 	sessions: Record<string, CodexSessionCacheEntry>;
 }
 
+function isCacheRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasFields(
+	value: Record<string, unknown>,
+	stringFields: readonly string[],
+	numberFields: readonly string[]
+): boolean {
+	return (
+		stringFields.every((field) => typeof value[field] === 'string') &&
+		numberFields.every((field) => isFiniteNumber(value[field]))
+	);
+}
+
+function isModelUsage(value: unknown): boolean {
+	if (!isCacheRecord(value)) return false;
+	return (
+		hasFields(
+			value,
+			['model'],
+			['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costUsd']
+		) && typeof value.costEstimated === 'boolean'
+	);
+}
+
+function isAgentSessionInfo(value: unknown): value is AgentSessionInfo {
+	if (!isCacheRecord(value)) return false;
+	if (
+		!hasFields(
+			value,
+			['sessionId', 'projectPath', 'timestamp', 'modifiedAt', 'firstMessage'],
+			[
+				'messageCount',
+				'sizeBytes',
+				'inputTokens',
+				'outputTokens',
+				'cacheReadTokens',
+				'cacheCreationTokens',
+				'durationSeconds',
+			]
+		)
+	) {
+		return false;
+	}
+
+	return (
+		(value.costUsd === undefined || isFiniteNumber(value.costUsd)) &&
+		(value.origin === undefined || value.origin === 'user' || value.origin === 'auto') &&
+		(value.sessionName === undefined || typeof value.sessionName === 'string') &&
+		(value.starred === undefined || typeof value.starred === 'boolean') &&
+		(value.byModel === undefined ||
+			(Array.isArray(value.byModel) && value.byModel.every(isModelUsage)))
+	);
+}
+
+function isCodexSessionCache(value: unknown): value is CodexSessionCache {
+	if (
+		!isCacheRecord(value) ||
+		!isFiniteNumber(value.version) ||
+		!isFiniteNumber(value.lastProcessedAt) ||
+		!isCacheRecord(value.sessions)
+	) {
+		return false;
+	}
+
+	return Object.values(value.sessions).every((entry) => {
+		return (
+			isCacheRecord(entry) && isFiniteNumber(entry.fileMtimeMs) && isAgentSessionInfo(entry.session)
+		);
+	});
+}
+
 function getCodexSessionCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
 }
 
 async function loadCodexSessionCache(): Promise<CodexSessionCache | null> {
-	try {
-		const cachePath = getCodexSessionCachePath();
-		const content = await fs.readFile(cachePath, 'utf-8');
-		const cache = JSON.parse(content) as CodexSessionCache;
-		if (cache.version !== CODEX_SESSION_CACHE_VERSION) {
-			return null;
-		}
-		return cache;
-	} catch {
-		return null;
-	}
+	return readVersionedJsonCache(
+		getCodexSessionCachePath(),
+		CODEX_SESSION_CACHE_VERSION,
+		isCodexSessionCache
+	);
 }
 
 async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
@@ -247,7 +332,8 @@ async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
 async function parseSessionFile(
 	filePath: string,
 	sessionId: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	contentOverride?: string
 ): Promise<AgentSessionInfo | null> {
 	try {
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
@@ -258,7 +344,7 @@ async function parseSessionFile(
 			return null;
 		}
 
-		const content = await fs.readFile(filePath, 'utf-8');
+		const content = contentOverride ?? (await fs.readFile(filePath, 'utf-8'));
 		const lines = content.split('\n').filter((l) => l.trim());
 
 		if (lines.length === 0) {
@@ -659,182 +745,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				return null;
 			}
 
-			const content = result.data;
-			const lines = content.split('\n').filter((l) => l.trim());
-
-			if (lines.length === 0) {
-				return null;
-			}
-
-			// Parse first line as metadata
-			let metadata: CodexSessionMetadata | null = null;
-			let timestamp = new Date(stats.mtimeMs).toISOString();
-			let sessionProjectPath: string | null = null;
-
-			try {
-				const firstLine = JSON.parse(lines[0]);
-				// New format: { type: 'session_meta', payload: { id, cwd, timestamp, ... } }
-				if (firstLine.type === 'session_meta' && firstLine.payload) {
-					metadata = firstLine as CodexSessionMetadata;
-					timestamp = firstLine.payload.timestamp || firstLine.timestamp || timestamp;
-					if (firstLine.payload.cwd) {
-						sessionProjectPath = firstLine.payload.cwd;
-					}
-				}
-				// Legacy format: { id, timestamp, ... } at top level
-				else if (firstLine.id && firstLine.timestamp) {
-					metadata = firstLine as CodexSessionMetadata;
-					timestamp = firstLine.timestamp || timestamp;
-				}
-			} catch {
-				// First line may not be metadata, continue parsing
-			}
-
-			// Count messages and find first assistant response (preferred) or user message (fallback)
-			let firstAssistantMessage = '';
-			let firstUserMessage = '';
-			let userMessageCount = 0;
-			let assistantMessageCount = 0;
-			let totalInputTokens = 0;
-			let totalOutputTokens = 0;
-			let totalCachedTokens = 0;
-			let firstTimestamp = timestamp;
-			let lastTimestamp = timestamp;
-
-			for (let i = 0; i < lines.length; i++) {
-				try {
-					const entry = JSON.parse(lines[i]);
-
-					// Handle turn.completed for usage stats
-					if (entry.type === 'turn.completed' && entry.usage) {
-						totalInputTokens += entry.usage.input_tokens || 0;
-						totalOutputTokens += entry.usage.output_tokens || 0;
-						totalOutputTokens += entry.usage.reasoning_output_tokens || 0;
-						totalCachedTokens += entry.usage.cached_input_tokens || 0;
-					}
-
-					// Handle Codex "event_msg" usage stats
-					if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-						const usage = entry.payload.info?.total_token_usage;
-						if (usage) {
-							totalInputTokens += usage.input_tokens || 0;
-							totalOutputTokens += usage.output_tokens || 0;
-							totalOutputTokens += usage.reasoning_output_tokens || 0;
-							totalCachedTokens += usage.cached_input_tokens || 0;
-						}
-					}
-
-					// Handle message entries (legacy format)
-					if (entry.type === 'message') {
-						if (entry.role === 'user') {
-							userMessageCount++;
-							if (entry.content) {
-								const text = extractTextFromContent(entry.content);
-								if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
-									firstUserMessage = text;
-								}
-								if (!sessionProjectPath) {
-									const cwd = extractCwdFromText(text);
-									if (cwd) {
-										sessionProjectPath = cwd;
-									}
-								}
-							}
-						} else if (entry.role === 'assistant') {
-							assistantMessageCount++;
-							if (!firstAssistantMessage && entry.content) {
-								const text = extractTextFromContent(entry.content);
-								if (text.trim()) {
-									firstAssistantMessage = text;
-								}
-							}
-						}
-					}
-
-					// Handle response_item entries (current Codex format)
-					if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-						if (entry.payload.role === 'user') {
-							userMessageCount++;
-							if (entry.payload.content) {
-								const text = extractTextFromContent(entry.payload.content);
-								if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
-									firstUserMessage = text;
-								}
-								if (!sessionProjectPath) {
-									const cwd = extractCwdFromText(text);
-									if (cwd) {
-										sessionProjectPath = cwd;
-									}
-								}
-							}
-						} else if (entry.payload.role === 'assistant') {
-							assistantMessageCount++;
-							if (!firstAssistantMessage && entry.payload.content) {
-								const text = extractTextFromContent(entry.payload.content);
-								if (text.trim()) {
-									firstAssistantMessage = text;
-								}
-							}
-						}
-					}
-
-					// Handle item.completed for agent messages
-					if (entry.type === 'item.completed' && entry.item) {
-						if (entry.item.type === 'agent_message') {
-							assistantMessageCount++;
-							if (!firstAssistantMessage && entry.item.text) {
-								firstAssistantMessage = entry.item.text;
-							}
-						}
-					}
-
-					// Track timestamps for duration
-					if (entry.timestamp) {
-						const entryTime = new Date(entry.timestamp).getTime();
-						const firstTime = new Date(firstTimestamp).getTime();
-						const lastTime = new Date(lastTimestamp).getTime();
-
-						if (entryTime < firstTime) {
-							firstTimestamp = entry.timestamp;
-						}
-						if (entryTime > lastTime) {
-							lastTimestamp = entry.timestamp;
-						}
-					}
-				} catch {
-					// Skip malformed lines
-				}
-			}
-
-			// Use assistant response as preview if available, otherwise fall back to user message
-			const previewMessage = firstAssistantMessage || firstUserMessage;
-
-			const messageCount = userMessageCount + assistantMessageCount;
-
-			const startTime = new Date(firstTimestamp).getTime();
-			const endTime = new Date(lastTimestamp).getTime();
-			const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-
-			// Extract session ID from metadata (new format uses payload.id, legacy uses id)
-			const metadataSessionId = metadata?.payload?.id || metadata?.id || sessionId;
-
-			return {
-				sessionId: metadataSessionId,
-				projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
-				timestamp: firstTimestamp,
-				modifiedAt: new Date(stats.mtimeMs).toISOString(),
-				firstMessage: previewMessage.slice(
-					0,
-					CODEX_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
-				),
-				messageCount,
-				sizeBytes: stats.size,
-				inputTokens: totalInputTokens,
-				outputTokens: totalOutputTokens,
-				cacheReadTokens: totalCachedTokens,
-				cacheCreationTokens: 0,
-				durationSeconds,
-			};
+			return parseSessionFile(filePath, sessionId, stats, result.data);
 		} catch (error) {
 			logger.error(`Error reading remote Codex session file: ${filePath}`, LOG_CONTEXT, error);
 			captureException(error, { operation: 'codexStorage:readRemoteSessionFile', filePath });
@@ -1015,176 +926,169 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 
 		try {
-			const lines = content.split('\n').filter((l) => l.trim());
-
+			const entries = parseCodexTranscript(content);
 			const messages: SessionMessage[] = [];
 			let messageIndex = 0;
 
-			for (const line of lines) {
-				try {
-					const entry = JSON.parse(line);
+			for (const entry of entries) {
+				// Handle direct message entries
+				if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
+					const textContent = extractTextFromContent(entry.content);
 
-					// Handle direct message entries
-					if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
-						const textContent = extractTextFromContent(entry.content);
+					if (textContent) {
+						messages.push({
+							type: entry.role,
+							role: entry.role,
+							content: textContent,
+							timestamp: entry.timestamp || '',
+							uuid: `codex-msg-${messageIndex}`,
+						});
+						messageIndex++;
+					}
+				}
+
+				// Handle response_item messages (current Codex format)
+				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+					if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
+						const textContent = extractTextFromContent(entry.payload.content);
 
 						if (textContent) {
 							messages.push({
-								type: entry.role,
-								role: entry.role,
+								type: entry.payload.role,
+								role: entry.payload.role,
 								content: textContent,
 								timestamp: entry.timestamp || '',
-								uuid: `codex-msg-${messageIndex}`,
+								uuid: entry.payload.id || `codex-msg-${messageIndex}`,
 							});
 							messageIndex++;
 						}
 					}
+				}
 
-					// Handle response_item messages (current Codex format)
-					if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-						if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
-							const textContent = extractTextFromContent(entry.payload.content);
-
-							if (textContent) {
-								messages.push({
-									type: entry.payload.role,
-									role: entry.payload.role,
-									content: textContent,
-									timestamp: entry.timestamp || '',
-									uuid: entry.payload.id || `codex-msg-${messageIndex}`,
-								});
-								messageIndex++;
-							}
-						}
+				// Handle response_item function_call / custom_tool_call (current Codex format)
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
+				) {
+					let parsedInput: unknown;
+					try {
+						parsedInput = JSON.parse(entry.payload.arguments || '{}');
+					} catch {
+						parsedInput = entry.payload.arguments || {};
 					}
+					const toolInfo: CodexToolUseEntry = {
+						tool: entry.payload.name,
+						args: entry.payload.arguments,
+						state: {
+							status: 'running',
+							input: parsedInput,
+						},
+					};
+					messages.push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.payload.name}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+					messageIndex++;
+				}
 
-					// Handle response_item function_call / custom_tool_call (current Codex format)
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
-					) {
-						let parsedInput: unknown;
-						try {
-							parsedInput = JSON.parse(entry.payload.arguments || '{}');
-						} catch {
-							parsedInput = entry.payload.arguments || {};
+				// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
+				// Merge output into the preceding tool call message instead of creating a new message
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call_output' ||
+						entry.payload?.type === 'custom_tool_call_output')
+				) {
+					const callId = entry.payload.call_id;
+					const outputText = entry.payload.output || '';
+					// Find the matching tool call message by call_id and merge the output
+					const matchingIdx = callId
+						? messages.findIndex((m) => m.uuid === callId && m.toolUse)
+						: -1;
+					if (matchingIdx >= 0) {
+						const matchingMsg = messages[matchingIdx];
+						const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
+						const firstEntry = toolEntries?.[0];
+						if (firstEntry?.state) {
+							// Replace the message immutably with updated tool state
+							const updatedEntry: CodexToolUseEntry = {
+								...firstEntry,
+								state: {
+									...firstEntry.state,
+									status: 'completed',
+									output: outputText,
+								},
+							};
+							messages[matchingIdx] = {
+								...matchingMsg,
+								toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
+							};
 						}
-						const toolInfo: CodexToolUseEntry = {
-							tool: entry.payload.name,
-							args: entry.payload.arguments,
-							state: {
-								status: 'running',
-								input: parsedInput,
-							},
-						};
+					} else {
+						// No matching tool call found - create a standalone message
 						messages.push({
 							type: 'assistant',
 							role: 'assistant',
-							content: `Tool: ${entry.payload.name}`,
+							content: outputText || '[Tool result]',
 							timestamp: entry.timestamp || '',
-							uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
+							uuid: callId || `codex-msg-${messageIndex}`,
 						});
 						messageIndex++;
 					}
+				}
 
-					// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
-					// Merge output into the preceding tool call message instead of creating a new message
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call_output' ||
-							entry.payload?.type === 'custom_tool_call_output')
-					) {
-						const callId = entry.payload.call_id;
-						const outputText = entry.payload.output || '';
-						// Find the matching tool call message by call_id and merge the output
-						const matchingIdx = callId
-							? messages.findIndex((m) => m.uuid === callId && m.toolUse)
-							: -1;
-						if (matchingIdx >= 0) {
-							const matchingMsg = messages[matchingIdx];
-							const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
-							const firstEntry = toolEntries?.[0];
-							if (firstEntry?.state) {
-								// Replace the message immutably with updated tool state
-								const updatedEntry: CodexToolUseEntry = {
-									...firstEntry,
-									state: {
-										...firstEntry.state,
-										status: 'completed',
-										output: outputText,
-									},
-								};
-								messages[matchingIdx] = {
-									...matchingMsg,
-									toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
-								};
-							}
+				// Handle item.completed agent_message events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
+					messages.push({
+						type: 'assistant',
+						role: 'assistant',
+						content: entry.item.text || '',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+					messageIndex++;
+				}
+
+				// Handle item.completed tool_call events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
+					const toolInfo = {
+						tool: entry.item.tool,
+						args: entry.item.args,
+					};
+					messages.push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.item.tool}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+					messageIndex++;
+				}
+
+				// Handle item.completed tool_result events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
+					let resultContent = '';
+					if (entry.item.output) {
+						// Output may be a byte array that needs decoding
+						if (Array.isArray(entry.item.output)) {
+							resultContent = Buffer.from(entry.item.output).toString('utf-8');
 						} else {
-							// No matching tool call found - create a standalone message
-							messages.push({
-								type: 'assistant',
-								role: 'assistant',
-								content: outputText || '[Tool result]',
-								timestamp: entry.timestamp || '',
-								uuid: callId || `codex-msg-${messageIndex}`,
-							});
-							messageIndex++;
+							resultContent = String(entry.item.output);
 						}
 					}
 
-					// Handle item.completed agent_message events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: entry.item.text || '',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_call events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
-						const toolInfo = {
-							tool: entry.item.tool,
-							args: entry.item.args,
-						};
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: `Tool: ${entry.item.tool}`,
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_result events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
-						let resultContent = '';
-						if (entry.item.output) {
-							// Output may be a byte array that needs decoding
-							if (Array.isArray(entry.item.output)) {
-								resultContent = Buffer.from(entry.item.output).toString('utf-8');
-							} else {
-								resultContent = String(entry.item.output);
-							}
-						}
-
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: resultContent || '[Tool result]',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-				} catch {
-					// Skip malformed lines
+					messages.push({
+						type: 'assistant',
+						role: 'assistant',
+						content: resultContent || '[Tool result]',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+					messageIndex++;
 				}
 			}
 
@@ -1219,39 +1123,33 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
+		const entries = parseCodexTranscript(content);
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
+		for (const entry of entries) {
+			let textContent = '';
+			let role: 'user' | 'assistant' | null = null;
 
-				let textContent = '';
-				let role: 'user' | 'assistant' | null = null;
+			// Handle message entries (legacy format)
+			if (entry.type === 'message') {
+				role = entry.role;
+				textContent = extractTextFromContent(entry.content);
+			}
 
-				// Handle message entries (legacy format)
-				if (entry.type === 'message') {
-					role = entry.role;
-					textContent = extractTextFromContent(entry.content);
-				}
+			// Handle response_item messages (current Codex format)
+			if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+				role = entry.payload.role;
+				textContent = extractTextFromContent(entry.payload.content);
+			}
 
-				// Handle response_item messages (current Codex format)
-				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-					role = entry.payload.role;
-					textContent = extractTextFromContent(entry.payload.content);
-				}
+			// Handle item.completed agent_message
+			if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
+				role = 'assistant';
+				textContent = entry.item.text || '';
+			}
 
-				// Handle item.completed agent_message
-				if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
-					role = 'assistant';
-					textContent = entry.item.text || '';
-				}
-
-				if (role && (role === 'user' || role === 'assistant') && textContent.trim()) {
-					searchableMessages.push({ role, textContent });
-				}
-			} catch {
-				// Skip malformed lines
+			if (role && (role === 'user' || role === 'assistant') && textContent.trim()) {
+				searchableMessages.push({ role, textContent });
 			}
 		}
 

@@ -12,29 +12,33 @@ import {
 	useWebSocket,
 	type WebSocketState,
 	type UseWebSocketOptions,
-	type SessionData,
-	type ConnectedMessage,
-	type AuthRequiredMessage,
-	type AuthSuccessMessage,
-	type AuthFailedMessage,
-	type SessionsListMessage,
-	type SessionStateChangeMessage,
-	type SessionAddedMessage,
-	type SessionRemovedMessage,
-	type ActiveSessionChangedMessage,
-	type SessionOutputMessage,
-	type SessionExitMessage,
-	type UserInputMessage,
-	type ThemeMessage,
-	type BionifyReadingModeMessage,
-	type CustomCommandsMessage,
-	type AutoRunStateMessage,
-	type TabsChangedMessage,
-	type ErrorMessage,
-	type CustomCommand,
-	type AITabData,
-	type AutoRunState,
 } from '../../../web/hooks/useWebSocket';
+import type {
+	AITabData,
+	AutoRunState,
+	CustomAICommand,
+	SessionData,
+} from '../../../shared/web-protocol/session';
+import type {
+	ActiveSessionChangedMessage,
+	AuthFailedMessage,
+	AuthRequiredMessage,
+	AuthSuccessMessage,
+	AutoRunStateMessage,
+	BionifyReadingModeMessage,
+	ConnectedMessage,
+	CustomCommandsMessage,
+	ErrorMessage,
+	SessionAddedMessage,
+	SessionExitMessage,
+	SessionOutputMessage,
+	SessionRemovedMessage,
+	SessionsListMessage,
+	SessionStateChangeMessage,
+	TabsChangedMessage,
+	ThemeMessage,
+	UserInputMessage,
+} from '../../../shared/web-protocol/server-messages';
 import type { Theme } from '../../../shared/theme-types';
 
 // Mock the config module
@@ -1007,7 +1011,7 @@ describe('useWebSocket', () => {
 				} as ConnectedMessage);
 			});
 
-			const commands: CustomCommand[] = [
+			const commands: CustomAICommand[] = [
 				{
 					id: 'cmd-1',
 					command: '/deploy',
@@ -1197,7 +1201,7 @@ describe('useWebSocket', () => {
 			expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'connected' }));
 		});
 
-		it('handles unknown message types gracefully', () => {
+		it('rejects unknown message discriminants before notifying handlers', () => {
 			const onMessage = vi.fn();
 			const { result } = renderHook(() => useWebSocket({ handlers: { onMessage } }));
 
@@ -1216,14 +1220,11 @@ describe('useWebSocket', () => {
 				} as ConnectedMessage);
 			});
 
-			// Should not throw
 			act(() => {
 				ws.simulateMessage({ type: 'unknown_message_type' });
 			});
 
-			expect(onMessage).toHaveBeenCalledWith(
-				expect.objectContaining({ type: 'unknown_message_type' })
-			);
+			expect(onMessage).toHaveBeenCalledTimes(1);
 		});
 
 		it('handles invalid JSON gracefully', () => {
@@ -2085,8 +2086,8 @@ describe('Type Exports', () => {
 		expect(state.isRunning).toBe(true);
 	});
 
-	it('exports CustomCommand interface correctly', () => {
-		const cmd: CustomCommand = {
+	it('uses the canonical custom AI command contract', () => {
+		const cmd: CustomAICommand = {
 			id: 'cmd-1',
 			command: '/test',
 			description: 'Test command',

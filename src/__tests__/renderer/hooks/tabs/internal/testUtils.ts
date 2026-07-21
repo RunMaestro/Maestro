@@ -15,6 +15,7 @@ import {
 } from '../../../../helpers/mockTab';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { clearLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
+import { resetStores } from '../../../../helpers/resetStores';
 
 export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 	const id = overrides.id ?? `tab-${Math.random().toString(36).slice(2, 8)}`;
@@ -112,21 +113,7 @@ export function getSession(): Session {
 }
 
 export function resetTabHandlerStores(): void {
-	useSessionStore.setState({
-		sessions: [],
-		activeSessionId: '',
-		groups: [],
-	});
-	useModalStore.setState({
-		modals: new Map(),
-	});
-	useSettingsStore.setState({
-		defaultSaveToHistory: true,
-		defaultShowThinking: undefined,
-		fileTabAutoRefreshEnabled: false,
-		browserHomeUrl: '',
-		enterToSendAI: true,
-	} as any);
+	resetStores(useSessionStore, useModalStore, useSettingsStore);
 	clearLiveDraft('ai-1');
 	clearLiveDraft('ai-2');
 	clearLiveDraft('ai-3');

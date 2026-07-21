@@ -24,6 +24,7 @@ import {
 	type HostResponse,
 	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
+import { serializedJsonByteLength } from '../../shared/plugins/contributions';
 import type { PluginEvent } from '../../shared/plugins/events';
 
 export interface SandboxControlEvent {
@@ -94,6 +95,22 @@ const TOOL_INVOKE_TIMEOUT_MS = 30_000;
 /** Max concurrent in-flight tool invocations per plugin (bounds the pending map
  *  against a stuck/hostile child that never replies). */
 const MAX_PENDING_TOOLS = 64;
+
+/**
+ * Sandbox payload policy: each bounded channel limits the UTF-8 byte length of
+ * its JSON-serialized payload value. This intentionally excludes control
+ * metadata (correlation ids, method names, and event headers), whose bounds are
+ * enforced by their own protocol validators. `null` represents a missing
+ * payload consistently across all channels.
+ */
+function serializedPayloadStatus(
+	payload: unknown,
+	maxBytes: number
+): 'ok' | 'not-serializable' | 'too-large' {
+	const byteLength = serializedJsonByteLength(payload ?? null);
+	if (byteLength === null) return 'not-serializable';
+	return byteLength > maxBytes ? 'too-large' : 'ok';
+}
 
 /** One outstanding `invokeTool` round-trip awaiting the child's `toolResult`. */
 interface PendingTool {
@@ -267,13 +284,9 @@ export class PluginSandboxHost {
 		if (!record) return false;
 		// Cap the host->child payload the same way HostRequest params are bounded:
 		// a non-serializable or oversized args object is dropped, never posted.
-		let serialized: string;
-		try {
-			serialized = JSON.stringify(args ?? null);
-		} catch {
-			return false;
-		}
-		if (serialized.length > MAX_MESSAGE_BYTES) return false;
+		// The command channel is bounded by the UTF-8 bytes of its JSON payload,
+		// before structured-clone forwarding into the child.
+		if (serializedPayloadStatus(args, MAX_MESSAGE_BYTES) !== 'ok') return false;
 		try {
 			record.proc.postMessage({ kind: 'invokeCommand', commandId, args });
 			return true;
@@ -296,13 +309,13 @@ export class PluginSandboxHost {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
-		let serialized: string;
-		try {
-			serialized = JSON.stringify(args ?? null);
-		} catch {
+		// Match the command channel's serialized UTF-8 byte policy while
+		// retaining this channel's stable error envelope.
+		const payloadStatus = serializedPayloadStatus(args, MAX_MESSAGE_BYTES);
+		if (payloadStatus === 'not-serializable') {
 			return Promise.reject(new Error('tool args are not serializable'));
 		}
-		if (serialized.length > MAX_MESSAGE_BYTES) {
+		if (payloadStatus === 'too-large') {
 			return Promise.reject(new Error('tool args exceed size limit'));
 		}
 		if (record.pendingTools.size >= MAX_PENDING_TOOLS) {
@@ -353,6 +366,10 @@ export class PluginSandboxHost {
 	pushEvent(pluginId: string, event: PluginEvent | SandboxControlEvent): boolean {
 		const record = this.running.get(pluginId);
 		if (!record) return false;
+		// Event payloads cross the same hostile child boundary. Bound their
+		// serialized UTF-8 payload before forwarding; event metadata is governed
+		// by the event-bus topic contract rather than this payload policy.
+		if (serializedPayloadStatus(event.payload, MAX_MESSAGE_BYTES) !== 'ok') return false;
 		try {
 			record.proc.postMessage({
 				kind: 'event',
@@ -445,15 +462,14 @@ export class PluginSandboxHost {
 			}
 		}
 
-		// Bound message size from a hostile child.
-		let serializedSize = 0;
-		try {
-			serializedSize = JSON.stringify(request.params ?? null).length;
-		} catch {
+		// The untrusted request channel has the same serialized UTF-8 payload
+		// semantics as host-to-child command and tool calls.
+		const payloadStatus = serializedPayloadStatus(request.params, MAX_MESSAGE_BYTES);
+		if (payloadStatus === 'not-serializable') {
 			respond({ ok: false, error: 'params are not serializable' });
 			return;
 		}
-		if (serializedSize > MAX_MESSAGE_BYTES) {
+		if (payloadStatus === 'too-large') {
 			respond({ ok: false, error: 'request params exceed size limit' });
 			return;
 		}

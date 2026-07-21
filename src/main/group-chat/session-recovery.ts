@@ -15,7 +15,8 @@
  */
 
 import { getErrorPatterns, matchErrorPattern } from '../parsers/error-patterns';
-import { readLog, type GroupChatMessage } from './group-chat-log';
+import { readLog } from './group-chat-log';
+import type { GroupChatMessage } from '../../shared/group-chat-types';
 import { loadGroupChat, updateParticipant, getGroupChatDir } from './group-chat-storage';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';

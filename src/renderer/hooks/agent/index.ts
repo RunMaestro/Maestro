@@ -18,7 +18,6 @@ export {
 	useAgentCapabilities,
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
-	DEFAULT_CAPABILITIES,
 } from './useAgentCapabilities';
 export type { AgentCapabilities, UseAgentCapabilitiesReturn } from './useAgentCapabilities';
 

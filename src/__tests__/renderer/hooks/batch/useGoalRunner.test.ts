@@ -9,18 +9,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import type { Session, Group, BatchRunConfig } from '../../../../renderer/types';
+import type { Session, BatchRunConfig } from '../../../../renderer/types';
 import { useBatchProcessor } from '../../../../renderer/hooks';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { createMockGroup } from '../../../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
 import { GOAL_SYNOPSIS_REQUEST_PROMPT } from '../../../../shared/goalDriven/goalHandoff';
 import {
 	setCapabilitiesCache,
 	clearCapabilitiesCache,
-	DEFAULT_CAPABILITIES,
 } from '../../../../renderer/hooks/agent/useAgentCapabilities';
+import { DEFAULT_CAPABILITIES } from '../../../../shared/types';
 
 // Mock notifyToast so toasts don't blow up and can be inspected if needed.
 const { mockNotifyToast } = vi.hoisted(() => ({ mockNotifyToast: vi.fn() }));
@@ -49,13 +50,6 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			isGitRepo: false, // skip the git-branch fetch path
 			...overrides,
 		});
-
-	const createMockGroup = (overrides?: Partial<Group>): Group => ({
-		id: 'test-group-id',
-		name: 'Test Group',
-		collapsed: false,
-		...overrides,
-	});
 
 	let mockOnUpdateSession: ReturnType<typeof vi.fn>;
 	let mockOnSpawnAgent: ReturnType<typeof vi.fn>;
@@ -176,7 +170,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(100, 'done'),
 		});
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -208,7 +205,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(100, 'done'),
 		});
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -236,7 +236,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: responses[call++],
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -299,7 +302,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: 'Migrated the data layer; UI still pending.\n\n<!-- maestro:progress 40 -->',
 		});
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -339,7 +345,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: responses[call++],
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -369,7 +378,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: responses[call++],
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -411,7 +423,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		const { result } = renderProcessor(
 			[createMockSession({ isGitRepo: true })],
-			[createMockGroup()]
+			[createMockGroup({ id: 'test-group-id' })]
 		);
 
 		await act(async () => {
@@ -447,7 +459,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(100, 'done'),
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -476,7 +491,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		const { result } = renderProcessor(
 			[createMockSession({ isGitRepo: true })],
-			[createMockGroup()]
+			[createMockGroup({ id: 'test-group-id' })]
 		);
 
 		await act(async () => {
@@ -501,7 +516,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(50, 'no movement'),
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -528,7 +546,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: 'Synopsis: I did some work but forgot to report a progress marker.',
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -562,7 +583,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: responses[call++],
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -587,7 +611,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: responses[Math.min(call++, responses.length - 1)],
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -613,7 +640,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(call++ % 2 === 0 ? 50 : 51, 'oscillating'),
 		}));
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -646,7 +676,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		});
 		mockOnSpawnAgent.mockReturnValue(agentPromise);
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		let finished = false;
 		act(() => {
@@ -706,7 +739,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		});
 		mockOnSpawnAgent.mockReturnValueOnce(agentPromise);
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		let finished = false;
 		act(() => {
@@ -752,7 +788,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			response: progressResponse(100, 'done'),
 		});
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(
@@ -777,7 +816,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		const { result } = renderProcessor(
 			[createMockSession({ newSessionMessage: 'Always check linting first.' })],
-			[createMockGroup()]
+			[createMockGroup({ id: 'test-group-id' })]
 		);
 
 		await act(async () => {
@@ -826,7 +865,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			};
 		});
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		let finished = false;
 		act(() => {
@@ -876,7 +918,10 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 	it('does not start when Auto Run is globally disabled', async () => {
 		useSettingsStore.setState({ autoRunDisabled: true });
 
-		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		const { result } = renderProcessor(
+			[createMockSession()],
+			[createMockGroup({ id: 'test-group-id' })]
+		);
 
 		await act(async () => {
 			await result.current.startBatchRun(

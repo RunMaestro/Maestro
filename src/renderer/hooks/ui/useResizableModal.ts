@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, MouseEvent as ReactMouseEvent, RefObject } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { ModalResizeKey, ModalSize } from '../../utils/modalSizing';
 import { clampModalSize, resolveModalSize } from '../../utils/modalSizing';
 import { useEventListener } from '../utils/useEventListener';
 import { useDebouncedCallback } from '../utils/useThrottle';
+import { usePointerResize } from './usePointerResize';
 
 const RESIZE_PERSIST_DEBOUNCE_MS = 300;
 
@@ -24,7 +25,10 @@ export interface UseResizableModalReturn {
 	modalRef: RefObject<HTMLDivElement>;
 	size: ModalSize;
 	isResizing: boolean;
-	onResizeStart: (direction: ModalResizeDirection, event: ReactMouseEvent) => void;
+	onResizeStart: (
+		direction: ModalResizeDirection,
+		event: ReactPointerEvent<HTMLDivElement>
+	) => void;
 	style: CSSProperties;
 }
 
@@ -66,8 +70,7 @@ export function useResizableModal({
 	const [size, setSize] = useState<ModalSize>(() =>
 		resolveModalSize({ savedSize, defaultSize, minSize, maxSize, viewportPadding })
 	);
-	const [isResizing, setIsResizing] = useState(false);
-	const cleanupRef = useRef<(() => void) | null>(null);
+	const { isResizing, startResize } = usePointerResize<ModalSize>();
 	const defaultWidth = defaultSize.width;
 	const defaultHeight = defaultSize.height;
 	const minWidth = minSize?.width;
@@ -141,79 +144,39 @@ export function useResizableModal({
 		{ enabled }
 	);
 
-	useEffect(() => {
-		return () => {
-			cleanupRef.current?.();
-		};
-	}, []);
-
 	const onResizeStart = useCallback(
-		(direction: ModalResizeDirection, event: React.MouseEvent) => {
+		(direction: ModalResizeDirection, event: ReactPointerEvent<HTMLDivElement>) => {
 			if (!enabled) return;
-			event.preventDefault();
-			event.stopPropagation();
-
-			// A previous drag may still have listeners attached if it never received
-			// a mouseup (e.g. focus was lost mid-drag). Tear those down before wiring
-			// up a new drag so they aren't orphaned for the life of the page.
-			cleanupRef.current?.();
-
-			setIsResizing(true);
-
-			const startX = event.clientX;
-			const startY = event.clientY;
 			const startSize = clamp(size);
-			let currentSize = startSize;
-
-			const commit = () => {
-				setIsResizing(false);
-				setSize(currentSize);
-				// Cancel any pending debounced write from the viewport-resize listener
-				// first, so a stale size it captured earlier can't land after this
-				// manual commit and silently overwrite it.
-				cancelPersistResizedSize();
-				setModalSize(resizeKey, currentSize);
-				document.removeEventListener('mousemove', handleMouseMove);
-				document.removeEventListener('mouseup', handleMouseUp);
-				window.removeEventListener('blur', handleWindowBlur);
-				cleanupRef.current = null;
-			};
-
-			const handleMouseMove = (moveEvent: MouseEvent) => {
-				currentSize = clamp(
-					nextSizeForDirection({
-						direction,
-						startSize,
-						deltaX: moveEvent.clientX - startX,
-						deltaY: moveEvent.clientY - startY,
-					})
-				);
-				applySize(currentSize);
-			};
-
-			const handleMouseUp = () => {
-				commit();
-			};
-
-			// Safety net: if the window loses focus mid-drag (e.g. an alt-tab or a
-			// native dialog stealing focus), the mouseup may never reach us. Commit
-			// the in-progress size and tear down listeners instead of leaving the
-			// drag "stuck".
-			const handleWindowBlur = () => {
-				commit();
-			};
-
-			cleanupRef.current = () => {
-				document.removeEventListener('mousemove', handleMouseMove);
-				document.removeEventListener('mouseup', handleMouseUp);
-				window.removeEventListener('blur', handleWindowBlur);
-			};
-
-			document.addEventListener('mousemove', handleMouseMove);
-			document.addEventListener('mouseup', handleMouseUp);
-			window.addEventListener('blur', handleWindowBlur);
+			startResize(event, {
+				value: startSize,
+				getNextValue: (initialSize, deltaX, deltaY) =>
+					clamp(
+						nextSizeForDirection({
+							direction,
+							startSize: initialSize,
+							deltaX,
+							deltaY,
+						})
+					),
+				onResize: applySize,
+				onComplete: (currentSize) => {
+					setSize(currentSize);
+					cancelPersistResizedSize();
+					setModalSize(resizeKey, currentSize);
+				},
+			});
 		},
-		[applySize, cancelPersistResizedSize, clamp, enabled, resizeKey, setModalSize, size]
+		[
+			applySize,
+			cancelPersistResizedSize,
+			clamp,
+			enabled,
+			resizeKey,
+			setModalSize,
+			size,
+			startResize,
+		]
 	);
 
 	return {

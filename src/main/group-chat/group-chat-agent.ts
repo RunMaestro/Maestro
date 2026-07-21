@@ -13,13 +13,13 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import {
-	GroupChatParticipant,
 	loadGroupChat,
 	addParticipantToChat,
 	removeParticipantFromChatWithResult,
 	getParticipant,
 	type ParticipantRemovalResult,
 } from './group-chat-storage';
+import type { GroupChatParticipant } from '../../shared/group-chat-types';
 import { appendToLog } from './group-chat-log';
 import { IProcessManager, isModeratorActive } from './group-chat-moderator';
 import { getPrompt } from '../prompt-manager';

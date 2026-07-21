@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type { Group } from '../../shared/types';
 
 /**
@@ -27,11 +28,7 @@ export function createSettingsApi() {
 		set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
 		getAll: () => ipcRenderer.invoke('settings:getAll'),
 		/** Listen for external settings file changes (e.g., from maestro-cli) */
-		onExternalChange: (handler: () => void) => {
-			const wrappedHandler = () => handler();
-			ipcRenderer.on('settings:externalChange', wrappedHandler);
-			return () => ipcRenderer.removeListener('settings:externalChange', wrappedHandler);
-		},
+		onExternalChange: (handler: () => void) => subscribeIpc('settings:externalChange', handler),
 	};
 }
 

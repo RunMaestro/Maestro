@@ -4,13 +4,11 @@
  * Provides utilities for resolving which SSH remote configuration should
  * be used for agent execution.
  *
- * SSH is SESSION-LEVEL ONLY:
- * - Each session can have its own SSH config (sessionSshRemoteConfig)
- * - If no session SSH config, execution is local
- * - There is NO agent-level or global default SSH
- *
- * This module is used by the process spawn handlers to determine whether
- * an agent command should be executed locally or via SSH on a remote host.
+ * The legacy `resolveSshRemoteConfig` API remains session-only: an enabled
+ * session config selects SSH and otherwise execution is local. The newer
+ * pure ID-policy API separately models explicit, session, default, and local
+ * precedence before typed lookup. Callers choose the policy appropriate to
+ * their execution surface.
  */
 
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
@@ -22,7 +20,7 @@ export interface SshRemoteResolveOptions {
 	/**
 	 * Session-specific SSH remote configuration (optional).
 	 * If provided and enabled, the session will execute via SSH.
-	 * This is the ONLY way to enable SSH - there are no agent-level or global defaults.
+	 * This compatibility API does not consult agent-level or global defaults.
 	 */
 	sessionSshConfig?: AgentSshRemoteConfig;
 }
@@ -56,6 +54,127 @@ export interface SshRemoteSettingsStore {
 	getSshRemotes(): SshRemoteConfig[];
 }
 
+export type SshRemoteLookupResult =
+	| { status: 'enabled'; config: SshRemoteConfig }
+	| { status: 'disabled'; config: SshRemoteConfig }
+	| { status: 'not-found'; config: null };
+
+export type SshRemoteIdSource = 'explicit' | 'session' | 'default' | 'local';
+
+export interface SshRemoteIdResolveOptions {
+	explicitRemoteId?: string | null;
+	sessionSshConfig?: AgentSshRemoteConfig | null;
+	defaultRemoteId?: string | null;
+}
+
+export interface SshRemoteIdResolution {
+	remoteId: string | undefined;
+	source: SshRemoteIdSource;
+}
+
+export type SshSpawnResolution =
+	| {
+			mode: 'remote';
+			remote: SshRemoteConfig;
+			source: Exclude<SshRemoteIdSource, 'local'>;
+			status: 'enabled';
+	  }
+	| {
+			mode: 'local';
+			remote: null;
+			source: SshRemoteIdSource;
+			status: 'disabled' | 'not-found' | 'local';
+	  };
+
+function nonEmptyRemoteId(remoteId: string | null | undefined): string | undefined {
+	const trimmed = remoteId?.trim();
+	return trimmed || undefined;
+}
+
+/** Reports stored enabled state without imposing an execution fallback policy. */
+export function lookupSshRemoteById(
+	store: SshRemoteSettingsStore,
+	remoteId: string
+): SshRemoteLookupResult {
+	const config = store.getSshRemotes().find((remote) => remote.id === remoteId);
+	if (!config) {
+		return { status: 'not-found', config: null };
+	}
+	return config.enabled ? { status: 'enabled', config } : { status: 'disabled', config };
+}
+
+/**
+ * Resolves remote-ID precedence only; lookup and command construction remain
+ * distinct contracts.
+ */
+export function resolveSshRemoteId(options: SshRemoteIdResolveOptions = {}): SshRemoteIdResolution {
+	const explicitRemoteId = nonEmptyRemoteId(options.explicitRemoteId);
+	if (explicitRemoteId) {
+		return { remoteId: explicitRemoteId, source: 'explicit' };
+	}
+
+	if (options.sessionSshConfig) {
+		if (!options.sessionSshConfig.enabled) {
+			return { remoteId: undefined, source: 'local' };
+		}
+		const sessionRemoteId = nonEmptyRemoteId(options.sessionSshConfig.remoteId);
+		return sessionRemoteId
+			? { remoteId: sessionRemoteId, source: 'session' }
+			: { remoteId: undefined, source: 'local' };
+	}
+
+	const defaultRemoteId = nonEmptyRemoteId(options.defaultRemoteId);
+	return defaultRemoteId
+		? { remoteId: defaultRemoteId, source: 'default' }
+		: { remoteId: undefined, source: 'local' };
+}
+
+/**
+ * Resolves a spawn target with provenance. Authentication is a transport
+ * concern: an enabled remote remains remote so SSH can surface that error.
+ */
+export function resolveSshSpawn(
+	store: SshRemoteSettingsStore,
+	options: SshRemoteIdResolveOptions = {}
+): SshSpawnResolution {
+	if (options.sessionSshConfig && !options.sessionSshConfig.enabled) {
+		return { mode: 'local', remote: null, source: 'local', status: 'disabled' };
+	}
+
+	const idResolution = resolveSshRemoteId(options);
+	if (!idResolution.remoteId) {
+		const malformedEnabledSession =
+			!!options.sessionSshConfig?.enabled && !nonEmptyRemoteId(options.sessionSshConfig.remoteId);
+		return {
+			mode: 'local',
+			remote: null,
+			source: idResolution.source,
+			status: malformedEnabledSession ? 'not-found' : 'local',
+		};
+	}
+
+	if (idResolution.source === 'local') {
+		return { mode: 'local', remote: null, source: 'local', status: 'local' };
+	}
+
+	const lookup = lookupSshRemoteById(store, idResolution.remoteId);
+	if (lookup.status === 'enabled') {
+		return {
+			mode: 'remote',
+			remote: lookup.config,
+			source: idResolution.source,
+			status: 'enabled',
+		};
+	}
+
+	return {
+		mode: 'local',
+		remote: null,
+		source: idResolution.source,
+		status: lookup.status,
+	};
+}
+
 /**
  * Resolve the effective SSH remote configuration for agent execution.
  *
@@ -83,39 +202,15 @@ export function getSshRemoteConfig(
 	store: SshRemoteSettingsStore,
 	options: SshRemoteResolveOptions = {}
 ): SshRemoteResolveResult {
-	const { sessionSshConfig } = options;
-
-	// Get all available SSH remotes
-	const sshRemotes = store.getSshRemotes();
-
-	// Check session-specific configuration (the ONLY way to enable SSH)
-	if (sessionSshConfig) {
-		// If explicitly disabled for this session, return null (local execution)
-		if (!sessionSshConfig.enabled) {
-			return {
-				config: null,
-				source: 'disabled',
-			};
-		}
-
-		// If session has a specific remote ID configured, use it
-		if (sessionSshConfig.remoteId) {
-			const config = sshRemotes.find((r) => r.id === sessionSshConfig.remoteId && r.enabled);
-
-			if (config) {
-				return {
-					config,
-					source: 'session',
-				};
-			}
-			// If the specified remote doesn't exist or is disabled, fall through to local execution
-		}
+	const resolution = resolveSshSpawn(store, {
+		sessionSshConfig: options.sessionSshConfig,
+	});
+	if (resolution.mode === 'remote') {
+		return { config: resolution.remote, source: 'session' };
 	}
-
-	// No SSH remote configured - local execution
 	return {
 		config: null,
-		source: 'none',
+		source: options.sessionSshConfig && !options.sessionSshConfig.enabled ? 'disabled' : 'none',
 	};
 }
 

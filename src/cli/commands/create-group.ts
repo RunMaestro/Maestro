@@ -1,7 +1,8 @@
 // Create group command - create a new group in the Maestro desktop app
 
 import { withMaestroClient } from '../services/maestro-client';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
+import { writeCommandError } from '../output/command-error';
 
 interface CreateGroupOptions {
 	emoji?: string;
@@ -12,11 +13,7 @@ interface CreateGroupOptions {
 export async function createGroup(name: string, options: CreateGroupOptions): Promise<void> {
 	if (!name || !name.trim()) {
 		const msg = 'Group name must not be empty';
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
+		writeCommandError(options.json, msg);
 		process.exit(1);
 	}
 
@@ -47,20 +44,12 @@ export async function createGroup(name: string, options: CreateGroupOptions): Pr
 			}
 		} else {
 			const msg = result.error || 'Failed to create group';
-			if (options.json) {
-				console.log(JSON.stringify({ success: false, error: msg }));
-			} else {
-				console.error(formatError(msg));
-			}
+			writeCommandError(options.json, msg);
 			process.exit(1);
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
+		writeCommandError(options.json, msg);
 		process.exit(1);
 	}
 }

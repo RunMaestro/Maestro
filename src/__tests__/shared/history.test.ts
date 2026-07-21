@@ -12,10 +12,13 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	type GraphBucket,
 	type HistoryFileData,
+	type HistoryGraphData,
 	type MigrationMarker,
 	type PaginationOptions,
 	type PaginatedResult,
+	type UnifiedHistoryEntry,
 } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
 
@@ -237,6 +240,35 @@ describe('shared/history', () => {
 				hasMore: true,
 			};
 			expect(result.entries.length).toBe(2);
+		});
+
+		it('keeps graph and unified-entry transport payloads free of cache internals', () => {
+			const bucket: GraphBucket = { auto: 2, user: 1, cue: 0 };
+			const graph: HistoryGraphData = {
+				buckets: [bucket],
+				bucketCount: 1,
+				earliestTimestamp: 100,
+				latestTimestamp: 200,
+				totalCount: 3,
+				autoCount: 2,
+				userCount: 1,
+				cueCount: 0,
+				hostCounts: { __local__: 2, 'remote-host': 1 },
+				cached: true,
+			};
+			const entry: UnifiedHistoryEntry = {
+				...createMockEntry(),
+				sourceSessionId: 'source-session',
+				agentName: 'Agent',
+			};
+
+			const roundTrip = JSON.parse(JSON.stringify({ graph, entry }));
+
+			expect(roundTrip.graph.hostCounts).toEqual({ __local__: 2, 'remote-host': 1 });
+			expect(roundTrip.graph.cached).toBe(true);
+			expect(roundTrip.graph).not.toHaveProperty('version');
+			expect(roundTrip.graph).not.toHaveProperty('sourceFingerprint');
+			expect(roundTrip.entry.sourceSessionId).toBe('source-session');
 		});
 	});
 

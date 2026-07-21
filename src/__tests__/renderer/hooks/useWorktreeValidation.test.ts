@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { useWorktreeValidation } from '../../../renderer/hooks';
 
 // Mock the window.maestro.git object
@@ -399,6 +399,65 @@ describe('useWorktreeValidation', () => {
 				sameRepo: true,
 				hasUncommittedChanges: false,
 			});
+		});
+		it('keeps newer validation state when an older request resolves last', async () => {
+			let resolveFirst!: (value: {
+				success: boolean;
+				exists: boolean;
+				isWorktree: boolean;
+				currentBranch: string;
+				repoRoot: string;
+			}) => void;
+			const first = new Promise<{
+				success: boolean;
+				exists: boolean;
+				isWorktree: boolean;
+				currentBranch: string;
+				repoRoot: string;
+			}>((resolve) => {
+				resolveFirst = resolve;
+			});
+			mockGit.worktreeInfo
+				.mockImplementationOnce(() => first)
+				.mockResolvedValueOnce({ success: true, exists: false, isWorktree: false });
+			mockGit.getRepoRoot.mockResolvedValue({ success: true, root: '/main/repo' });
+			vi.useFakeTimers();
+
+			try {
+				const { result, rerender } = renderHook(
+					({ worktreePath }) =>
+						useWorktreeValidation({
+							worktreePath,
+							branchName: 'feature-branch',
+							worktreeEnabled: true,
+							sessionCwd: '/main/repo',
+						}),
+					{ initialProps: { worktreePath: '/older' } }
+				);
+				await act(async () => {
+					vi.advanceTimersByTime(500);
+				});
+				rerender({ worktreePath: '/newer' });
+				await act(async () => {
+					vi.advanceTimersByTime(500);
+				});
+
+				expect(result.current.validation.exists).toBe(false);
+				await act(async () => {
+					resolveFirst({
+						success: true,
+						exists: true,
+						isWorktree: true,
+						currentBranch: 'feature-branch',
+						repoRoot: '/main/repo',
+					});
+					await Promise.resolve();
+				});
+
+				expect(result.current.validation.exists).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 });

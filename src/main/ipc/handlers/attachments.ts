@@ -19,6 +19,7 @@ import fs from 'fs/promises';
 
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { parseImageDataUrl } from '../../../shared/imageDataUrl';
 
 /**
  * Dependencies required for attachments handlers
@@ -72,17 +73,18 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 				// Ensure the attachments directory exists
 				await fs.mkdir(attachmentsDir, { recursive: true });
 
-				// Extract the base64 content (remove data:image/...;base64, prefix if present)
-				const base64Match = base64Data.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
+				const parsed = base64Data.startsWith('data:') ? parseImageDataUrl(base64Data) : null;
 				let buffer: Buffer;
 				let finalFilename = filename;
 
-				if (base64Match) {
-					const extension = base64Match[1];
-					buffer = Buffer.from(base64Match[2], 'base64');
+				if (base64Data.startsWith('data:')) {
+					if (!parsed) {
+						throw new Error('Invalid image data URL');
+					}
+					buffer = Buffer.from(parsed.bytes);
 					// Update filename with correct extension if not already present
 					if (!filename.includes('.')) {
-						finalFilename = `${filename}.${extension}`;
+						finalFilename = `${filename}.${parsed.extension}`;
 					}
 				} else {
 					// Assume raw base64

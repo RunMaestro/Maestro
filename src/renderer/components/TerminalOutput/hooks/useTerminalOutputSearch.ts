@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useLayerStack } from '../../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { escapeRegExp } from '../../../../shared/stringUtils';
 
 interface UseTerminalOutputSearchOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
@@ -99,7 +100,7 @@ export function useTerminalOutputSearch({
 			if (outputSearchRegex) {
 				regex = new RegExp(query, 'gi');
 			} else {
-				const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				const escaped = escapeRegExp(query);
 				regex = new RegExp(escaped, 'gi');
 			}
 			setRegexError(null);

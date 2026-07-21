@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useThrottledCallback } from '../../../hooks';
+import { useScrollPosition, useThrottledCallback } from '../../../hooks';
 
 /** How long a programmatic bottom-jump keeps its scroll-event guard armed. */
 const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
@@ -46,6 +46,13 @@ export function useTerminalOutputScroll({
 	const tabReadStateRef = useRef<Map<string, number>>(new Map());
 	const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const hasRestoredScrollRef = useRef(false);
+
+	const { getScrollMetrics } = useScrollPosition({
+		containerRef: scrollContainerRef,
+		bottomThreshold: 50,
+		throttleMs: 0,
+		observeChanges: true,
+	});
 
 	const handleScrollInner = useCallback(() => {
 		if (!scrollContainerRef.current) return;
@@ -156,12 +163,7 @@ export function useTerminalOutputScroll({
 	useEffect(() => {
 		const currentCount = filteredLogsLength;
 		if (currentCount > lastLogCountRef.current) {
-			const container = scrollContainerRef.current;
-			let actuallyAtBottom = isAtBottom;
-			if (container) {
-				const { scrollTop, scrollHeight, clientHeight } = container;
-				actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-			}
+			const actuallyAtBottom = getScrollMetrics()?.isAtBottom ?? isAtBottom;
 
 			if (!actuallyAtBottom) {
 				const newCount = currentCount - lastLogCountRef.current;

@@ -6,7 +6,7 @@
  * live here so that adding a new agent requires exactly one update.
  */
 
-import type { AgentId } from './agentIds';
+import type { AgentId } from './agentRegistry';
 
 /**
  * Human-readable display names for every agent.

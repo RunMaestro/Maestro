@@ -30,9 +30,10 @@ import { useEffect, RefObject } from 'react';
 export interface UseClickOutsideOptions {
 	/**
 	 * Event type to listen for. Defaults to 'mousedown'.
-	 * Use 'click' if you need the click to complete (e.g., for button toggles).
+	 * Use 'click' if you need the click to complete, or pointer/touch start to
+	 * match an existing overlay's input contract.
 	 */
-	eventType?: 'mousedown' | 'click';
+	eventType?: 'mousedown' | 'click' | 'pointerdown' | 'touchstart';
 
 	/**
 	 * Whether to delay adding the event listener using setTimeout(0).

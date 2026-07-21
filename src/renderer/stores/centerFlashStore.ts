@@ -24,34 +24,27 @@
  */
 
 import { create } from 'zustand';
+import {
+	NOTIFICATION_COLORS,
+	resolveNotificationColor,
+	type NotificationColor,
+	type NotificationVariant,
+} from '../../shared/notification';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /** Five canonical Center Flash colors. `theme` adapts to the active theme. */
-export type CenterFlashColor = 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+export type CenterFlashColor = NotificationColor;
 
-export const CENTER_FLASH_COLORS: readonly CenterFlashColor[] = [
-	'green',
-	'yellow',
-	'orange',
-	'red',
-	'theme',
-] as const;
+export const CENTER_FLASH_COLORS: readonly CenterFlashColor[] = NOTIFICATION_COLORS;
 
 /**
- * Legacy semantic alias kept for back-compat. Prefer `CenterFlashColor`.
+ * Legacy semantic alias kept for the persisted-data migration window.
  *   success → green, info → theme, warning → yellow, error → red
  */
-export type CenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
-
-const VARIANT_TO_COLOR: Record<CenterFlashVariant, CenterFlashColor> = {
-	success: 'green',
-	info: 'theme',
-	warning: 'yellow',
-	error: 'red',
-};
+export type CenterFlashVariant = NotificationVariant;
 
 export interface CenterFlash {
 	id: number;
@@ -89,14 +82,13 @@ export const useCenterFlashStore = create<CenterFlashStore>()((set) => ({
 export interface NotifyCenterFlashOptions {
 	message: string;
 	detail?: string;
-	/** One of the 5 canonical colors. Default: `'theme'` (matches active theme). */
-	color?: CenterFlashColor;
+	/** Canonical colors and persisted legacy values are normalized on receipt. */
+	color?: string;
 	/**
-	 * @deprecated Use `color`. Accepted for back-compat; mapped to its color
-	 * equivalent (success→green, info→theme, warning→yellow, error→red).
+	 * Legacy semantic alias accepted during the persisted-data migration window.
 	 * If both `color` and `variant` are provided, `color` wins.
 	 */
-	variant?: CenterFlashVariant;
+	variant?: string;
 	/** ms; defaults to 1500. Use 0 for "no auto-dismiss". */
 	duration?: number;
 }
@@ -115,9 +107,8 @@ function clearActiveTimer() {
 }
 
 function resolveColor(opts: NotifyCenterFlashOptions): CenterFlashColor {
-	if (opts.color) return opts.color;
-	if (opts.variant) return VARIANT_TO_COLOR[opts.variant];
-	return DEFAULT_COLOR;
+	const resolution = resolveNotificationColor(opts.color, opts.variant);
+	return resolution.ok ? resolution.color : DEFAULT_COLOR;
 }
 
 /**

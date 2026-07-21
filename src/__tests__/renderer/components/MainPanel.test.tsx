@@ -335,13 +335,6 @@ const resetMockGitStatus = () => {
 
 // Mock GitStatusContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
-	useGitStatus: () => ({
-		gitStatusMap: new Map(Object.entries(mockGitStatusData)),
-		refreshGitStatus: mockRefreshGitStatus,
-		isLoading: false,
-		getFileCount: (sessionId: string) => mockGitStatusData[sessionId]?.fileCount ?? 0,
-		getStatus: (sessionId: string) => mockGitStatusData[sessionId],
-	}),
 	useGitFileStatus: () => ({
 		getFileCount: (sessionId: string) => mockGitStatusData[sessionId]?.fileCount ?? 0,
 		hasChanges: (sessionId: string) => (mockGitStatusData[sessionId]?.fileCount ?? 0) > 0,

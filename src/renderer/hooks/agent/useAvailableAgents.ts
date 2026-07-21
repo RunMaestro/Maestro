@@ -10,8 +10,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { ToolType, Session } from '../../types';
-import type { AgentCapabilities } from './useAgentCapabilities';
-import { DEFAULT_CAPABILITIES } from './useAgentCapabilities';
+import type { AgentCapabilities } from '../../../shared/types';
+import { DEFAULT_CAPABILITIES } from '../../../shared/types';
 import { getAgentIcon } from '../../constants/agentIcons';
 
 // Use AgentConfig from types - it has optional capabilities fields

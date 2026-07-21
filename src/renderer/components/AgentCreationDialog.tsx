@@ -24,7 +24,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
-import { isAdaptiveModeDefaultOn } from '../../shared/agentConstants';
+import { DEFAULT_ADAPTIVE_MODE_ENABLED } from '../../shared/agentConstants';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
 
@@ -281,6 +281,9 @@ export function AgentCreationDialog({
 		setIsCreating(true);
 		setError(null);
 
+		const agentEnableMaestroP =
+			enableMaestroPByAgent[selectedAgent] ?? DEFAULT_ADAPTIVE_MODE_ENABLED;
+
 		try {
 			const result = await onCreateAgent({
 				agentType: selectedAgent,
@@ -292,13 +295,10 @@ export function AgentCreationDialog({
 				customArgs: customAgentArgs[selectedAgent] || undefined,
 				customEnvVars: customAgentEnvVars[selectedAgent] || undefined,
 				agentConfig: agentConfigs[selectedAgent] || undefined,
-				enableMaestroP:
-					(enableMaestroPByAgent[selectedAgent] ?? isAdaptiveModeDefaultOn(selectedAgent)) ||
-					undefined,
-				maestroPMode:
-					(enableMaestroPByAgent[selectedAgent] ?? isAdaptiveModeDefaultOn(selectedAgent))
-						? (maestroPModeByAgent[selectedAgent] ?? 'dynamic')
-						: undefined,
+				enableMaestroP: agentEnableMaestroP,
+				maestroPMode: agentEnableMaestroP
+					? (maestroPModeByAgent[selectedAgent] ?? 'dynamic')
+					: undefined,
 				maestroPPath: maestroPPathByAgent[selectedAgent] || undefined,
 			});
 
@@ -589,7 +589,7 @@ export function AgentCreationDialog({
 														compact
 														showBuiltInEnvVars
 														enableMaestroP={
-															enableMaestroPByAgent[agent.id] ?? isAdaptiveModeDefaultOn(agent.id)
+															enableMaestroPByAgent[agent.id] ?? DEFAULT_ADAPTIVE_MODE_ENABLED
 														}
 														onEnableMaestroPChange={(value) =>
 															setEnableMaestroPByAgent((prev) => ({ ...prev, [agent.id]: value }))

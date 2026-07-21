@@ -16,7 +16,12 @@
 
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
-import { isWindowsPlatform } from '../utils/platformUtils';
+import {
+	DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
+	DEFAULT_SSH_REMOTE_IGNORE_PATTERNS,
+	getDefaultUseNativeTitleBar,
+	resolveDefaultShell,
+} from '../../shared/settingsMetadata';
 import type {
 	LLMProvider,
 	ThemeId,
@@ -45,6 +50,12 @@ import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
 import { sanitizeModalSizes } from '../utils/modalSizing';
+import { readBoolean, readFiniteNumber, readString, readStringArray } from './settingsStoreDecode';
+import { migrateShortcutSettings } from './settingsStoreMigrations';
+import {
+	createInputAndLayoutSetters,
+	createShellAndAppearanceSetters,
+} from './settingsStoreSetters';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -720,22 +731,21 @@ export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
 // Store Implementation
 // ============================================================================
 
-export const useSettingsStore = create<SettingsStore>()((set, get) => {
-	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
-	let persistentWebLinkRequestSeq = 0;
-
+/**
+ * Construct fresh renderer state. Persisted values are applied separately by
+ * loadAllSettings so absent keys retain their product defaults.
+ */
+export function createSettingsStoreDefaults(
+	platform: string | undefined = window.maestro?.platform
+): SettingsStoreState {
 	return {
-		// ============================================================================
-		// State (defaults)
-		// ============================================================================
-
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
 		llmProvider: 'openrouter',
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
-		defaultShell: isWindowsPlatform() ? 'powershell' : 'zsh',
+		defaultShell: resolveDefaultShell({ platform }),
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
@@ -820,8 +830,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		fileExplorerMaxEntries: DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
 		sshReduceEntryCapEnabled: false,
 		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
-		sshRemoteIgnorePatterns: ['.git', '*cache*'],
-		sshRemoteHonorGitignore: true,
+		sshRemoteIgnorePatterns: [...DEFAULT_SSH_REMOTE_IGNORE_PATTERNS],
+		sshRemoteHonorGitignore: DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		htmlDoubleClickOpensInBrowser: false,
@@ -845,7 +855,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
 		wakatimeDetailedTracking: false,
-		useNativeTitleBar: isWindowsPlatform(),
+		useNativeTitleBar: getDefaultUseNativeTitleBar({ platform }),
 		autoHideMenuBar: false,
 		showAgentName: true,
 		showSessionIdPill: false,
@@ -885,6 +895,18 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorTextSize: 24,
 		annotatorTextFont: 'sans-serif',
 		annotatorTextBgColor: '',
+	};
+}
+
+export const useSettingsStore = create<SettingsStore>()((set, get) => {
+	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
+	let persistentWebLinkRequestSeq = 0;
+	const persistSetting = (key: string, value: unknown) => window.maestro.settings.set(key, value);
+
+	return {
+		...createSettingsStoreDefaults(),
+		...createShellAndAppearanceSetters(set, persistSetting),
+		...createInputAndLayoutSetters(set, persistSetting, () => get().modalSizes),
 
 		// ============================================================================
 		// Simple Setters
@@ -914,134 +936,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setApiKey: (value) => {
 			set({ apiKey: value });
 			window.maestro.settings.set('apiKey', value);
-		},
-
-		setDefaultShell: (value) => {
-			set({ defaultShell: value });
-			window.maestro.settings.set('defaultShell', value);
-		},
-
-		setCustomShellPath: (value) => {
-			set({ customShellPath: value });
-			window.maestro.settings.set('customShellPath', value);
-		},
-
-		setShellArgs: (value) => {
-			set({ shellArgs: value });
-			window.maestro.settings.set('shellArgs', value);
-		},
-
-		setShellEnvVars: (value) => {
-			set({ shellEnvVars: value });
-			window.maestro.settings.set('shellEnvVars', value);
-		},
-
-		setGhPath: (value) => {
-			set({ ghPath: value });
-			window.maestro.settings.set('ghPath', value);
-		},
-
-		setFontFamily: (value) => {
-			set({ fontFamily: value });
-			window.maestro.settings.set('fontFamily', value);
-		},
-
-		setFontSize: (value) => {
-			set({ fontSize: value });
-			window.maestro.settings.set('fontSize', value);
-		},
-
-		setActiveThemeId: (value) => {
-			set({ activeThemeId: value });
-			window.maestro.settings.set('activeThemeId', value);
-		},
-
-		setCustomThemeColors: (value) => {
-			set({ customThemeColors: value });
-			window.maestro.settings.set('customThemeColors', value);
-		},
-
-		setCustomThemeBaseId: (value) => {
-			set({ customThemeBaseId: value });
-			window.maestro.settings.set('customThemeBaseId', value);
-		},
-
-		setEnterToSendAI: (value) => {
-			set({ enterToSendAI: value });
-			window.maestro.settings.set('enterToSendAI', value);
-		},
-
-		setEnterToSendAIExpanded: (value) => {
-			set({ enterToSendAIExpanded: value });
-			window.maestro.settings.set('enterToSendAIExpanded', value);
-		},
-
-		setForcedParallelExecution: (value) => {
-			set({ forcedParallelExecution: value });
-			window.maestro.settings.set('forcedParallelExecution', value);
-		},
-
-		setForcedParallelAcknowledged: (value) => {
-			set({ forcedParallelAcknowledged: value });
-			window.maestro.settings.set('forcedParallelAcknowledged', value);
-		},
-
-		setDefaultSaveToHistory: (value) => {
-			set({ defaultSaveToHistory: value });
-			window.maestro.settings.set('defaultSaveToHistory', value);
-		},
-
-		setSynopsisDebounceSeconds: (value) => {
-			const clamped = Math.max(0, Math.round(value));
-			set({ synopsisDebounceSeconds: clamped });
-			window.maestro.settings.set('synopsisDebounceSeconds', clamped);
-		},
-
-		setDefaultShowThinking: (value) => {
-			set({ defaultShowThinking: value });
-			window.maestro.settings.set('defaultShowThinking', value);
-		},
-
-		setLeftSidebarWidth: (value) => {
-			const clamped = Math.max(256, Math.min(600, value));
-			set({ leftSidebarWidth: clamped });
-			window.maestro.settings.set('leftSidebarWidth', clamped);
-		},
-
-		setRightPanelWidth: (value) => {
-			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
-			set({ rightPanelWidth: clamped });
-			window.maestro.settings.set('rightPanelWidth', clamped);
-		},
-
-		setModalSize: (key, value) => {
-			const normalized = sanitizeModalSizes({ [key]: value })[key];
-			if (!normalized) return;
-			const next = {
-				...get().modalSizes,
-				[key]: normalized,
-			};
-			set({ modalSizes: next });
-			window.maestro.settings.set('modalSizes', next);
-		},
-
-		resetModalSizes: () => {
-			set({ modalSizes: {} });
-			window.maestro.settings.set('modalSizes', {});
-		},
-
-		setMarkdownEditMode: (value) => {
-			set({ markdownEditMode: value });
-			window.maestro.settings.set('markdownEditMode', value);
-		},
-
-		setChatRawTextMode: (value) => {
-			set({ chatRawTextMode: value });
-			window.maestro.settings.set('chatRawTextMode', value);
-		},
-		setGroupChatAutoScroll: (value) => {
-			set({ groupChatAutoScroll: value });
-			window.maestro.settings.set('groupChatAutoScroll', value);
 		},
 
 		setBionifyReadingMode: (value) => {
@@ -2184,115 +2078,6 @@ export function selectIsLeaderboardRegistered(s: SettingsStoreState): boolean {
 // Load All Settings
 // ============================================================================
 
-/** macOS Alt+key special character to normal key mapping for shortcut migration */
-const MAC_ALT_CHAR_MAP: Record<string, string> = {
-	'¬': 'l',
-	π: 'p',
-	'†': 't',
-	'∫': 'b',
-	'∂': 'd',
-	ƒ: 'f',
-	'©': 'g',
-	'˙': 'h',
-	ˆ: 'i',
-	'∆': 'j',
-	'˚': 'k',
-	'¯': 'm',
-	'˜': 'n',
-	ø: 'o',
-	'®': 'r',
-	ß: 's',
-	'√': 'v',
-	'∑': 'w',
-	'≈': 'x',
-	'¥': 'y',
-	Ω: 'z',
-};
-
-/**
- * One-time default remaps: when we change a bundled DEFAULT_SHORTCUTS binding,
- * users who still had the OLD default bound get migrated to the NEW default. If
- * they had customized the binding themselves (any other key combo), we leave it
- * alone.
- *
- * Each entry: `shortcut id` → `{ old keys we consider "the old default", new default keys }`.
- */
-const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: string[] }> = {
-	// moveToGroup moved off Cmd+Shift+M to free that combo for openMemoryViewer.
-	moveToGroup: {
-		fromKeys: ['Meta', 'Shift', 'm'],
-		toKeys: ['Alt', 'Meta', 'm'],
-	},
-	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for openBatchRunner.
-	toggleAutoRunExpanded: {
-		fromKeys: ['Meta', 'Shift', '2'],
-		toKeys: ['Meta', 'Shift', 'e'],
-	},
-};
-
-function keysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
-}
-
-/**
- * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
- * default remaps, and merge with current defaults. Returns the merged shortcuts
- * (for store state), the raw migrated map (for persistence write-back), and
- * whether a migration write is needed.
- *
- * `migratedRaw` applies BOTH migrations so writing it back makes `needsMigration`
- * false on the next load. Writing only a partially-migrated map caused an
- * infinite re-persist loop via the settings file watcher.
- */
-function migrateShortcuts(
-	saved: Record<string, Shortcut>,
-	defaults: Record<string, Shortcut>
-): {
-	shortcuts: Record<string, Shortcut>;
-	migratedRaw: Record<string, Shortcut>;
-	needsMigration: boolean;
-} {
-	const migrated: Record<string, Shortcut> = {};
-	let needsMigration = false;
-
-	for (const [id, shortcut] of Object.entries(saved)) {
-		const migratedKeys = shortcut.keys.map((key) => {
-			if (MAC_ALT_CHAR_MAP[key]) {
-				needsMigration = true;
-				return MAC_ALT_CHAR_MAP[key];
-			}
-			return key;
-		});
-		migrated[id] = { ...shortcut, keys: migratedKeys };
-	}
-
-	// Apply one-time default remaps: if the user still has the OLD default keys
-	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
-	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
-		const current = migrated[id];
-		if (current && keysEqual(current.keys, remap.fromKeys)) {
-			migrated[id] = { ...current, keys: remap.toKeys };
-			needsMigration = true;
-		}
-	}
-
-	// Merge: use default labels (in case they changed) but preserve user's custom keys
-	const merged: Record<string, Shortcut> = {};
-	for (const [id, defaultShortcut] of Object.entries(defaults)) {
-		const savedShortcut = migrated[id];
-		merged[id] = {
-			...defaultShortcut,
-			keys: savedShortcut?.keys ?? defaultShortcut.keys,
-		};
-	}
-
-	return { shortcuts: merged, migratedRaw: migrated, needsMigration };
-}
-
 /**
  * Batch-load all settings from electron-store and apply them to the Zustand store.
  * Called once on app startup and again on system resume from sleep.
@@ -2325,8 +2110,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['apiKey'] !== undefined) patch.apiKey = allSettings['apiKey'] as string;
 
-		if (allSettings['defaultShell'] !== undefined)
-			patch.defaultShell = allSettings['defaultShell'] as string;
+		const defaultShell = readString(allSettings, 'defaultShell');
+		if (defaultShell !== undefined) patch.defaultShell = defaultShell;
 
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
@@ -2342,7 +2127,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fontFamily'] !== undefined)
 			patch.fontFamily = allSettings['fontFamily'] as string;
 
-		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
+		const fontSize = readFiniteNumber(allSettings, 'fontSize');
+		if (fontSize !== undefined) patch.fontSize = fontSize;
 
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
@@ -2492,7 +2278,7 @@ export async function loadAllSettings(): Promise<void> {
 		// --- Shortcuts (with Alt-key migration + merge) ---
 
 		if (allSettings['shortcuts'] !== undefined) {
-			const result = migrateShortcuts(
+			const result = migrateShortcutSettings(
 				allSettings['shortcuts'] as Record<string, Shortcut>,
 				DEFAULT_SHORTCUTS
 			);
@@ -2503,7 +2289,7 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		if (allSettings['tabShortcuts'] !== undefined) {
-			const result = migrateShortcuts(
+			const result = migrateShortcutSettings(
 				allSettings['tabShortcuts'] as Record<string, Shortcut>,
 				TAB_SHORTCUTS
 			);
@@ -2798,16 +2584,16 @@ export async function loadAllSettings(): Promise<void> {
 			);
 		}
 
-		// SSH Remote settings (with array validation)
-		if (
-			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
-			Array.isArray(allSettings['sshRemoteIgnorePatterns'])
-		) {
-			patch.sshRemoteIgnorePatterns = allSettings['sshRemoteIgnorePatterns'] as string[];
+		// SSH Remote settings use the canonical persisted-default policy.
+		const sshRemoteIgnorePatterns = readStringArray(allSettings, 'sshRemoteIgnorePatterns');
+		if (sshRemoteIgnorePatterns !== undefined) {
+			patch.sshRemoteIgnorePatterns = sshRemoteIgnorePatterns;
 		}
 
-		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
-			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
+		const sshRemoteHonorGitignore = readBoolean(allSettings, 'sshRemoteHonorGitignore');
+		if (sshRemoteHonorGitignore !== undefined) {
+			patch.sshRemoteHonorGitignore = sshRemoteHonorGitignore;
+		}
 
 		if (allSettings['useSystemBrowser'] !== undefined)
 			patch.useSystemBrowser = allSettings['useSystemBrowser'] as boolean;
@@ -2928,8 +2714,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['wakatimeDetailedTracking'] !== undefined)
 			patch.wakatimeDetailedTracking = allSettings['wakatimeDetailedTracking'] as boolean;
 
-		if (allSettings['useNativeTitleBar'] !== undefined)
-			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
+		const useNativeTitleBar = readBoolean(allSettings, 'useNativeTitleBar');
+		if (useNativeTitleBar !== undefined) patch.useNativeTitleBar = useNativeTitleBar;
 
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;

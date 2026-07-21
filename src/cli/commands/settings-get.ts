@@ -2,8 +2,9 @@
 // Supports dot-notation for nested keys, --json, --verbose
 
 import { readSettingValue } from '../services/storage';
-import { formatSettingDetail, formatError, type SettingDisplay } from '../output/formatter';
+import { formatSettingDetail, type SettingDisplay } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { reportSettingsCliError } from '../utils/settings-error';
 import {
 	SETTINGS_METADATA,
 	CATEGORY_LABELS,
@@ -72,12 +73,6 @@ export function settingsGet(key: string, options: SettingsGetOptions): void {
 			}
 		}
 	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		reportSettingsCliError(error, options);
 	}
 }

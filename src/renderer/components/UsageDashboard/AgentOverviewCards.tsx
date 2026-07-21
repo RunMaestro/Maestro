@@ -15,9 +15,9 @@ import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatAgeShort } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
+import { buildSessionSparkline } from './usageDashboardUtils';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
-	buildSessionSparkline,
 	getSessionAutoPercent,
 	getSessionQueryCount,
 	getStatusColor,

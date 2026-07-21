@@ -150,6 +150,8 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 			console.log(stripMarkdownFormatting(synopsisToReadableMarkdown(result.synopsis)));
 
 			if (result.stats) {
+				// This completion line deliberately stays in seconds and maps zero/absent
+				// values to "unknown", unlike the decimal CLI duration contract.
 				const duration = result.stats.durationMs
 					? `${(result.stats.durationMs / 1000).toFixed(1)}s`
 					: 'unknown';

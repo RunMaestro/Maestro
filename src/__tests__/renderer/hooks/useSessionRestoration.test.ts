@@ -905,6 +905,27 @@ describe('restoreSession - Runtime state reset', () => {
 		expect(restored!.shellLogs).toEqual(shellLogs);
 	});
 
+	it('preserves persisted shellLogs through repeated restart restoration', async () => {
+		const shellLogs = [
+			{ id: 'boot', timestamp: 1, source: 'system' as const, text: 'Shell Session Ready.' },
+			{ id: 'command', timestamp: 2, source: 'user' as const, text: 'git checkout main' },
+			{ id: 'stdout', timestamp: 3, source: 'stdout' as const, text: 'Switched to branch main\n' },
+			{ id: 'stderr', timestamp: 4, source: 'stderr' as const, text: 'warning: detached HEAD\n' },
+		];
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let afterFirstRestart: Session;
+		let afterSecondRestart: Session;
+		await act(async () => {
+			afterFirstRestart = await result.current.restoreSession(
+				createMockSession({ inputMode: 'terminal', shellLogs })
+			);
+			afterSecondRestart = await result.current.restoreSession(afterFirstRestart);
+		});
+
+		expect(afterSecondRestart!.shellLogs).toEqual(shellLogs);
+	});
+
 	it('clears deprecated aiLogs', async () => {
 		const session = createMockSession({
 			aiLogs: [{ id: 'x', timestamp: 1, source: 'system' as const, text: 'old' }] as any,

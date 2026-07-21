@@ -16,6 +16,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import { isWebClientMessage } from '../../../shared/web-protocol/client-messages';
 import { logger } from '../../utils/logger';
 import type {
 	Theme,
@@ -111,6 +112,7 @@ export class WsRoute {
 					type: 'connected',
 					clientId,
 					message: 'Connected to Maestro Web Interface',
+					authenticated: true,
 					subscribedSessionId: sessionId,
 					timestamp: Date.now(),
 				})
@@ -202,7 +204,8 @@ export class WsRoute {
 			// Handle incoming messages
 			connection.socket.on('message', (message) => {
 				try {
-					const data = JSON.parse(message.toString()) as WebClientMessage;
+					const data: unknown = JSON.parse(message.toString());
+					if (!isWebClientMessage(data)) throw new Error('Invalid WebSocket message envelope');
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
 					connection.socket.send(

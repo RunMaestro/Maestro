@@ -42,6 +42,8 @@ vi.mock('fs/promises', () => ({
 }));
 
 import fs from 'fs/promises';
+import { readFileRemote, statRemote } from '../../../main/utils/remote-fs';
+import type { SshRemoteConfig } from '../../../shared/types';
 import { CodexSessionStorage } from '../../../main/storage/codex-session-storage';
 
 /**
@@ -449,5 +451,77 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		const toolUseArr = toolMsg!.toolUse as any[];
 		expect(toolUseArr[0].state.status).toBe('completed');
 		expect(toolUseArr[0].state.output).toBe('');
+	});
+});
+
+describe('CodexSessionStorage - local/remote metadata parity', () => {
+	it('projects remote metadata with the same model usage fields as local sessions', async () => {
+		const storage = new CodexSessionStorage();
+		const content = [
+			JSON.stringify({
+				type: 'session_meta',
+				timestamp: '2026-03-08T03:10:29.069Z',
+				payload: {
+					id: 'remote-session',
+					cwd: '/remote/project',
+					timestamp: '2026-03-08T03:10:28.101Z',
+				},
+			}),
+			JSON.stringify({ type: 'turn_context', payload: { model: 'codex-mini' } }),
+			JSON.stringify({
+				type: 'turn.completed',
+				timestamp: '2026-03-08T03:10:33.000Z',
+				usage: { input_tokens: 12, output_tokens: 8, cached_input_tokens: 3 },
+			}),
+		].join('\n');
+		const remoteFileFinder = storage as unknown as {
+			findAllSessionFilesRemote: () => Promise<Array<{ filePath: string; filename: string }>>;
+		};
+		const sshConfig: SshRemoteConfig = {
+			id: 'test-remote',
+			name: 'Test remote',
+			host: 'remote-host',
+			port: 22,
+			username: 'tester',
+			privateKeyPath: '/test/key',
+			enabled: true,
+		};
+
+		vi.spyOn(remoteFileFinder, 'findAllSessionFilesRemote').mockResolvedValue([
+			{
+				filePath: '~/.codex/sessions/2026/03/08/rollout-remote-session.jsonl',
+				filename: 'rollout-remote-session.jsonl',
+			},
+		]);
+		vi.mocked(statRemote).mockResolvedValue({
+			success: true,
+			data: {
+				size: content.length,
+				isDirectory: false,
+				mtime: Date.parse('2026-03-08T03:10:33.000Z'),
+			},
+		});
+		vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: content });
+
+		const sessions = await storage.listSessions('/remote/project', sshConfig);
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]).toMatchObject({
+			sessionId: 'remote-session',
+			projectPath: expect.stringMatching(/[\\/]remote[\\/]project$/),
+			inputTokens: 12,
+			outputTokens: 8,
+			cacheReadTokens: 3,
+		});
+		expect(sessions[0].byModel).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					model: 'codex-mini',
+					inputTokens: 12,
+					outputTokens: 8,
+					cacheReadTokens: 3,
+				}),
+			])
+		);
 	});
 });

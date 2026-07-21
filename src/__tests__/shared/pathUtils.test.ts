@@ -82,6 +82,49 @@ describe('expandTilde', () => {
 			expect(result).toContain('.config');
 		});
 	});
+
+	describe('home-marker boundary contract', () => {
+		beforeEach(() => {
+			vi.mocked(os.homedir).mockReturnValue('/Users/testuser');
+		});
+		afterEach(() => {
+			vi.mocked(os.homedir).mockReturnValue('/Users/testuser');
+		});
+		it.each([
+			['~', '/Users/testuser'],
+			['~/', '/Users/testuser'],
+			['~\\', '/Users/testuser'],
+			['~/Documents', '/Users/testuser/Documents'],
+			['~\\Documents', '/Users/testuser/Documents'],
+		])('expands %s against a POSIX home', (input, expected) => {
+			expect(expandTilde(input)).toBe(expected);
+		});
+
+		it.each([
+			['~', 'C:\\Users\\testuser'],
+			['~/', 'C:\\Users\\testuser'],
+			['~\\', 'C:\\Users\\testuser'],
+			['~/Documents', 'C:\\Users\\testuser\\Documents'],
+			['~\\Documents', 'C:\\Users\\testuser\\Documents'],
+		])('expands %s against a Windows home', (input, expected) => {
+			expect(expandTilde(input, 'C:\\Users\\testuser')).toBe(expected);
+		});
+
+		it.each(['docs/~draft', '~other/Documents', '~~/Documents'])(
+			'leaves unsupported or non-leading marker %s unchanged',
+			(input) => {
+				expect(expandTilde(input)).toBe(input);
+			}
+		);
+
+		it('leaves home markers unchanged when no home directory is available', () => {
+			vi.mocked(os.homedir).mockReturnValue('');
+
+			expect(expandTilde('~')).toBe('~');
+			expect(expandTilde('~/Documents')).toBe('~/Documents');
+			expect(expandTilde('~\\Documents')).toBe('~\\Documents');
+		});
+	});
 });
 
 describe('compareVersions', () => {

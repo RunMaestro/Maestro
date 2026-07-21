@@ -162,52 +162,6 @@ test.describe('Auto Run Setup Wizard', () => {
 		});
 	});
 
-	test.describe('Directory Selection Screen', () => {
-		test.skip('should allow selecting a project directory', async ({ window }) => {
-			// This test requires dialog mocking
-			// Skip until dialog mocking is implemented
-			// Steps would be:
-			// 1. Navigate to directory selection step
-			// 2. Click "Choose Directory" button
-			// 3. (Mock) Select testProjectDir
-			// 4. Verify the path is displayed
-		});
-
-		test.skip('should validate selected directory is valid', async ({ window }) => {
-			// This test requires dialog mocking
-			// Would verify:
-			// - Invalid paths show error
-			// - Non-existent paths show warning
-			// - Valid paths allow proceeding
-		});
-
-		test.skip('should detect git repository status', async ({ window }) => {
-			// Initialize git in test directory
-			// Navigate to directory selection
-			// Select the directory
-			// Verify git status is detected and displayed
-		});
-	});
-
-	test.describe('Document Creation Flow', () => {
-		test.skip('should create .maestro/playbooks folder in project', async ({ window }) => {
-			// This test requires completing the wizard flow
-			// Would verify:
-			// 1. Complete all wizard steps
-			// 2. '.maestro/playbooks' folder is created in project
-			// 3. Initial documents are created
-		});
-
-		test.skip('should populate initial document with project-specific content', async ({
-			window,
-		}) => {
-			// Would verify:
-			// - Document contains relevant project information
-			// - Tasks are populated based on conversation
-			// - Document follows markdown format
-		});
-	});
-
 	test.describe('Wizard Navigation', () => {
 		test.beforeEach(async ({ window }) => {
 			await window.keyboard.press('Meta+Shift+N');
@@ -254,24 +208,6 @@ test.describe('Auto Run Setup Wizard', () => {
 		});
 	});
 
-	test.describe('Exit Confirmation', () => {
-		test.skip('should show confirmation when exiting after step 1', async ({ window }) => {
-			// Navigate past step 1
-			// Press Escape
-			// Should show confirmation dialog
-			// Options: "Save and Exit", "Quit without Saving", "Cancel"
-		});
-
-		test.skip('should save state when choosing Save and Exit', async ({ window }) => {
-			// Would verify wizard state is persisted
-			// On next open, should offer to resume
-		});
-
-		test.skip('should clear state when choosing Quit without Saving', async ({ window }) => {
-			// Would verify wizard starts fresh on next open
-		});
-	});
-
 	test.describe('Accessibility', () => {
 		test.beforeEach(async ({ window }) => {
 			await window.keyboard.press('Meta+Shift+N');
@@ -298,35 +234,5 @@ test.describe('Auto Run Setup Wizard', () => {
 			const activeElement = await window.evaluate(() => document.activeElement?.tagName);
 			expect(activeElement).toBeTruthy();
 		});
-	});
-});
-
-/**
- * Integration tests that require more complete setup
- * These are marked as skip until the infrastructure supports them
- */
-test.describe.skip('Full Wizard Flow Integration', () => {
-	test('should complete entire wizard and create session with Auto Run', async ({ window }) => {
-		// Complete wizard flow:
-		// 1. Select Claude Code agent
-		// 2. Enter project name
-		// 3. Select directory (requires dialog mock)
-		// 4. Complete conversation (may require AI mock)
-		// 5. Review and accept plan
-		// 6. Verify session is created
-		// 7. Verify Auto Run documents exist
-	});
-
-	test('should handle wizard resume after app restart', async ({ electronApp, window }) => {
-		// Partial completion, exit, relaunch
-		// Should offer to resume
-		// Verify state is correctly restored
-	});
-
-	test('should integrate with main app after completion', async ({ window }) => {
-		// After wizard completes:
-		// - Session should be visible in session list
-		// - Auto Run tab should show documents
-		// - First document should be selected
 	});
 });

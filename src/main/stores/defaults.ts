@@ -5,8 +5,11 @@
  * Separated for easy modification and testing.
  */
 
-import path from 'path';
-import { isWindows } from '../../shared/platformDetection';
+import {
+	DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
+	DEFAULT_SSH_REMOTE_IGNORE_PATTERNS,
+	resolveDefaultShell,
+} from '../../shared/settingsMetadata';
 
 import type {
 	MaestroSettings,
@@ -23,26 +26,8 @@ import type {
 // Utility Functions for Defaults
 // ============================================================================
 
-/**
- * Get the default shell based on the current platform.
- */
-export function getDefaultShell(): string {
-	// Windows: $SHELL doesn't exist; default to PowerShell
-	if (isWindows()) {
-		return 'powershell';
-	}
-	// Unix: Respect user's configured login shell from $SHELL
-	const shellPath = process.env.SHELL;
-	if (shellPath) {
-		const shellName = path.basename(shellPath);
-		// Valid Unix shell IDs from shellDetector.ts
-		if (['bash', 'zsh', 'fish', 'sh', 'tcsh'].includes(shellName)) {
-			return shellName;
-		}
-	}
-	// Fallback to the platform's default shell
-	return process.platform === 'darwin' ? 'zsh' : 'bash';
-}
+/** Shared platform-aware shell resolver, retained as the main-store API. */
+export const getDefaultShell = resolveDefaultShell;
 
 // ============================================================================
 // Store Defaults
@@ -66,8 +51,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	webInterfaceCustomPort: 8080,
 	sshRemotes: [],
 	defaultSshRemoteId: null,
-	sshRemoteIgnorePatterns: ['.git', '.*cache*'],
-	sshRemoteHonorGitignore: false,
+	sshRemoteIgnorePatterns: [...DEFAULT_SSH_REMOTE_IGNORE_PATTERNS],
+	sshRemoteHonorGitignore: DEFAULT_SSH_REMOTE_HONOR_GITIGNORE,
 	installationId: null,
 	wakatimeEnabled: false,
 	wakatimeApiKey: '',

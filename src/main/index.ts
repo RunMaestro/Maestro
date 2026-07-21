@@ -26,7 +26,7 @@ import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
-import type { AgentId } from '../shared/agentIds';
+import type { AgentId } from '../shared/agentRegistry';
 import {
 	initGlobalHotkey,
 	setGlobalShowHotkey,
@@ -3166,6 +3166,7 @@ function setupIpcHandlers() {
 	// Claude Code sessions - extracted to src/main/ipc/handlers/claude.ts
 	registerClaudeHandlers({
 		claudeSessionOriginsStore,
+		agentSessionOriginsStore,
 		getMainWindow: () => mainWindow,
 	});
 
@@ -3174,9 +3175,8 @@ function setupIpcHandlers() {
 	initializeOutputParsers();
 
 	// Initialize session storages and register generic agent sessions handlers
-	// This provides the new window.maestro.agentSessions.* API
-	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
-	initializeSessionStorages({ claudeSessionOriginsStore });
+	// This provides the new window.maestro.agentSessions.* API.
+	initializeSessionStorages({ agentSessionOriginsStore });
 	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
 
 	// Register Group Chat handlers

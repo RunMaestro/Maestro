@@ -82,4 +82,23 @@ describe('DocumentSelector', () => {
 		expect(screen.getByText('2 tasks')).toBeInTheDocument();
 		expect(screen.queryByText('0 tasks')).not.toBeInTheDocument();
 	});
+
+	it('keeps nested dropdown interactions open and removes its outside listener on unmount', () => {
+		const { unmount } = render(
+			<DocumentSelector
+				documents={documents}
+				selectedIndex={0}
+				onSelect={vi.fn()}
+				theme={mockTheme}
+				showTaskCounts
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: /Phase-01.md/i }));
+		fireEvent.mouseDown(screen.getByText('2 tasks'));
+		expect(screen.getByRole('button', { name: /Phase-02.md/i })).toBeInTheDocument();
+
+		unmount();
+		expect(() => fireEvent.mouseDown(document.body)).not.toThrow();
+	});
 });

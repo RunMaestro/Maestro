@@ -149,11 +149,11 @@ describe('Notification Preload API', () => {
 		});
 	});
 
-	describe('onCommandCompleted (legacy: onTtsCompleted)', () => {
+	describe('onCommandCompleted', () => {
 		it('should register event listener and return cleanup function', () => {
 			const callback = vi.fn();
 
-			const cleanup = api.onTtsCompleted(callback);
+			const cleanup = api.onCommandCompleted(callback);
 
 			expect(mockOn).toHaveBeenCalledWith('notification:commandCompleted', expect.any(Function));
 			expect(typeof cleanup).toBe('function');
@@ -169,7 +169,7 @@ describe('Notification Preload API', () => {
 				}
 			);
 
-			api.onTtsCompleted(callback);
+			api.onCommandCompleted(callback);
 
 			// Simulate receiving the event
 			registeredHandler!({}, 789);
@@ -187,7 +187,7 @@ describe('Notification Preload API', () => {
 				}
 			);
 
-			const cleanup = api.onTtsCompleted(callback);
+			const cleanup = api.onCommandCompleted(callback);
 			cleanup();
 
 			expect(mockRemoveListener).toHaveBeenCalledWith(

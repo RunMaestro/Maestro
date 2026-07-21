@@ -18,8 +18,8 @@ and the source files listed below for contract truth.
   methods are intentionally optional until their real dependencies are wired in `src/main/index.ts`.
 - `src/shared/plugins/events.ts` - fixed metadata-only `PLUGIN_EVENT_TOPICS`, `PluginEvent`,
   `PluginEventPayloads`, and the `PluginEventBus` interface the events handlers code against.
-- `src/shared/plugins/contribution-registry.ts` - `mergeContributions` / `mergedItems`: the ONE
-  merge contract (built-in-always-wins, earlier-plugin-wins, dropped-with-error, provenance).
+- `src/shared/plugins/contribution-registry.ts` - `mergeContributions`: the ONE merge contract
+  (built-in-always-wins, earlier-plugin-wins, dropped-with-error, provenance).
 - `src/shared/plugins/contributions.ts` - host-rendered contribution shapes for UI items, panels,
   settings, tools, keybindings, agents, commands, command macros, Cue triggers, themes, prompts, and
   background services.

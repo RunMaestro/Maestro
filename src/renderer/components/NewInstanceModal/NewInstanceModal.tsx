@@ -4,8 +4,9 @@ import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
+import { DEFAULT_ADAPTIVE_MODE_ENABLED, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { expandHomePath } from '../../../shared/home-path';
 import { FormInput } from '../ui/FormInput';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
@@ -103,14 +104,8 @@ export function NewInstanceModal({
 			.catch(() => setDetectedMaestroPPath(undefined));
 	}, []);
 
-	// Expand tilde in path
 	const expandTilde = React.useCallback(
-		(path: string): string => {
-			if (!homeDir) return path;
-			if (path === '~') return homeDir;
-			if (path.startsWith('~/')) return homeDir + path.slice(1);
-			return path;
-		},
+		(path: string): string => expandHomePath(path, homeDir),
 		[homeDir]
 	);
 
@@ -557,16 +552,10 @@ export function NewInstanceModal({
 		// selection naturally overrides those defaults.
 		const targetGroupId = selectedGroupId || undefined;
 
-		// New agents default Adaptive Mode on for Claude Code (isAdaptiveModeDefaultOn);
-		// an explicit toggle in the form (true/false) always wins over the default.
-		// The explicit choice must NOT be collapsed by `|| undefined` - an explicit
-		// `false` (API) has to survive, or over SSH it reverts to the TUI default
-		// and spawns maestro-p on a remote that may not have it (exit 127). Only the
-		// unset->default path keeps the `|| undefined` collapse (a falsy default
-		// stays "unconfigured").
+		// API is the canonical default. An explicit toggle remains authoritative
+		// and is persisted even when it chooses the default API source.
 		const explicitMaestroP = enableMaestroPByAgent[selectedAgent];
-		const agentEnableMaestroP =
-			explicitMaestroP ?? (isAdaptiveModeDefaultOn(selectedAgent) || undefined);
+		const agentEnableMaestroP = explicitMaestroP ?? DEFAULT_ADAPTIVE_MODE_ENABLED;
 		const agentMaestroPPath =
 			agentEnableMaestroP && maestroPPathByAgent[selectedAgent]?.trim()
 				? maestroPPathByAgent[selectedAgent].trim()

@@ -16,15 +16,20 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 import {
-	deleteCueConfigFile,
 	pruneOrphanedPromptFiles,
 	readCueConfigFile,
 	resolveCueConfigPath,
-	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../../main/cue/config/cue-config-repository';
+import { createCueConfigMutationService } from '../../../main/cue/config/cue-config-mutation-service';
 
 let projectRoot = '';
+function writeCueConfigFixture(content: string): string {
+	const configPath = path.join(projectRoot, '.maestro', 'cue.yaml');
+	fs.mkdirSync(path.dirname(configPath), { recursive: true });
+	fs.writeFileSync(configPath, content, 'utf-8');
+	return configPath;
+}
 
 beforeEach(() => {
 	projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-roundtrip-'));
@@ -37,29 +42,29 @@ afterEach(() => {
 });
 
 describe('cue YAML roundtrip', () => {
-	it('write → read returns the exact content with a single trip', () => {
+	it('reads exact content from a canonical fixture', () => {
 		const content =
 			'subscriptions:\n  - name: test-sub\n    event: time.heartbeat\n    interval_minutes: 5\n';
-		writeCueConfigFile(projectRoot, content);
+		writeCueConfigFixture(content);
 
 		const result = readCueConfigFile(projectRoot);
 		expect(result).not.toBeNull();
 		expect(result!.raw).toBe(content);
 	});
 
-	it('write creates .maestro/ directory if missing', () => {
+	it('uses the canonical fixture path', () => {
 		const maestroDir = path.join(projectRoot, '.maestro');
 		expect(fs.existsSync(maestroDir)).toBe(false);
 
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
+		const configPath = writeCueConfigFixture('subscriptions: []');
 
-		expect(fs.existsSync(maestroDir)).toBe(true);
-		expect(fs.existsSync(path.join(maestroDir, 'cue.yaml'))).toBe(true);
+		expect(configPath).toBe(path.join(maestroDir, 'cue.yaml'));
+		expect(fs.existsSync(configPath)).toBe(true);
 	});
 
-	it('roundtrip preserves UTF-8 characters including emoji and CJK', () => {
+	it('reads UTF-8 characters including emoji and CJK', () => {
 		const content = 'subscriptions:\n  - name: "テスト 🎌 中文"\n    event: time.heartbeat\n';
-		writeCueConfigFile(projectRoot, content);
+		writeCueConfigFixture(content);
 		const result = readCueConfigFile(projectRoot);
 		expect(result!.raw).toBe(content);
 	});
@@ -86,16 +91,6 @@ describe('cue YAML roundtrip', () => {
 		const result = readCueConfigFile(projectRoot);
 		expect(result!.raw).toBe('legacy: true');
 		expect(result!.filePath).toBe(legacyPath);
-	});
-
-	it('deleteCueConfigFile removes the file and returns true', () => {
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
-		expect(deleteCueConfigFile(projectRoot)).toBe(true);
-		expect(readCueConfigFile(projectRoot)).toBeNull();
-	});
-
-	it('deleteCueConfigFile returns false when no file exists', () => {
-		expect(deleteCueConfigFile(projectRoot)).toBe(false);
 	});
 });
 
@@ -145,7 +140,7 @@ describe('orphan prompt file pruning', () => {
 	});
 
 	it('preserves non-.md files (only markdown is managed)', () => {
-		// Someone may have dropped a README.txt or similar next to prompts -
+		// Someone may have dropped a README.txt or similar next to prompts —
 		// pruning should not touch anything that isn't a .md file, since only
 		// .md files are produced by the prompt-file writer.
 		writeCuePromptFile(projectRoot, '.maestro/prompts/referenced.md', 'x');
@@ -196,7 +191,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 			'',
 		].join('\n');
 
-		writeCueConfigFile(projectRoot, yaml);
+		writeCueConfigFixture(yaml);
 		writeCuePromptFile(projectRoot, '.maestro/prompts/morning.md', 'morning body');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/output.md', 'output body');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/output-phase2.md', 'phase-2 body');
@@ -215,7 +210,7 @@ describe('yaml + prompt-file full roundtrip', () => {
 			fs.readFileSync(path.join(projectRoot, '.maestro/prompts/output-phase2.md'), 'utf-8')
 		).toBe('phase-2 body');
 
-		// Simulate deleting one subscription and pruning - only referenced files remain
+		// Simulate deleting one subscription and pruning — only referenced files remain
 		const removed = pruneOrphanedPromptFiles(projectRoot, [
 			'.maestro/prompts/morning.md',
 			'.maestro/prompts/output.md',
@@ -227,14 +222,212 @@ describe('yaml + prompt-file full roundtrip', () => {
 
 	it('overwriting YAML+prompts preserves the rest of .maestro/', () => {
 		// User may have unrelated files (e.g. director-notes, other tooling)
-		// in .maestro/ - we must not blow them away.
+		// in .maestro/ — we must not blow them away.
 		const maestroDir = path.join(projectRoot, '.maestro');
 		fs.mkdirSync(maestroDir, { recursive: true });
 		fs.writeFileSync(path.join(maestroDir, 'director-notes.md'), 'notes', 'utf-8');
 
-		writeCueConfigFile(projectRoot, 'subscriptions: []');
+		writeCueConfigFixture('subscriptions: []');
 		writeCuePromptFile(projectRoot, '.maestro/prompts/x.md', 'body');
 
 		expect(fs.readFileSync(path.join(maestroDir, 'director-notes.md'), 'utf-8')).toBe('notes');
+	});
+});
+
+describe('cue YAML mutation service', () => {
+	const golden = `# Pipeline: preserve this comment
+subscriptions:
+  # Preserve this subscription comment
+  - name: morning
+    pipeline_name: Daily
+    event: time.heartbeat
+    enabled: true # inline comment
+    prompt: wake
+    interval_minutes: 30
+    extension_key: preserve-me
+  - name: evening
+    event: time.heartbeat
+    enabled: false
+    prompt: sleep
+    interval_minutes: 60
+settings:
+  # preserve settings comment
+  timeout_minutes: 30
+  timeout_on_fail: break
+  max_concurrent: 1
+  queue_size: 512
+unknown_supported_key:
+  nested: remains
+`;
+
+	it('preserves golden comments and unknown keys through an atomic targeted update', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		const service = createCueConfigMutationService();
+
+		expect(await service.setSubscriptionEnabled(projectRoot, 'Daily', 'morning', false)).toBe(true);
+		const saved = fs.readFileSync(filePath, 'utf8');
+		expect(saved).toContain('# Pipeline: preserve this comment');
+		expect(saved).toContain('# Preserve this subscription comment');
+		expect(saved).toContain('extension_key: preserve-me');
+		expect(saved).toContain('unknown_supported_key:');
+		expect(saved).toContain('enabled: false');
+		expect(fs.readFileSync(`${filePath}.bak`, 'utf8')).toBe(golden);
+	});
+
+	it('serializes concurrent updates and leaves the original intact on a write failure', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		const service = createCueConfigMutationService();
+
+		await Promise.all([
+			service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 45,
+				timeout_on_fail: 'continue',
+				max_concurrent: 2,
+				queue_size: 100,
+			}),
+			service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 60,
+				timeout_on_fail: 'break',
+				max_concurrent: 3,
+				queue_size: 200,
+			}),
+		]);
+		const saved = fs.readFileSync(filePath, 'utf8');
+		expect(saved).toContain('timeout_minutes: 60');
+		expect(saved).toContain('max_concurrent: 3');
+
+		const failing = createCueConfigMutationService({
+			atomicWrite: async () => {
+				throw new Error('injected write failure');
+			},
+		});
+		await expect(
+			failing.replace(
+				projectRoot,
+				golden.replace('enabled: true # inline comment', 'enabled: false')
+			)
+		).rejects.toThrow('injected write failure');
+		expect(fs.readFileSync(filePath, 'utf8')).toBe(saved);
+	});
+
+	it.each([
+		{
+			label: 'one-space',
+			indent: ' ',
+		},
+		{
+			label: 'four-space',
+			indent: '    ',
+		},
+	])(
+		'updates $label settings without duplicate keys or unrelated reformatting',
+		async ({ indent }) => {
+			const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+			const original = [
+				'# keep this comment',
+				'subscriptions: []',
+				'settings:',
+				`${indent}# keep this child comment`,
+				`${indent}timeout_minutes: 30`,
+				`${indent}custom_setting: retain`,
+				'other: unchanged',
+				'',
+			].join('\n');
+			fs.mkdirSync(path.dirname(filePath), { recursive: true });
+			fs.writeFileSync(filePath, original, 'utf8');
+
+			const service = createCueConfigMutationService();
+			await service.updateGlobalSettings(projectRoot, {
+				timeout_minutes: 45,
+				timeout_on_fail: 'continue',
+				max_concurrent: 2,
+				queue_size: 100,
+			});
+
+			const saved = fs.readFileSync(filePath, 'utf8');
+			expect(saved).toContain(`${indent}timeout_minutes: 45`);
+			expect(saved.match(/timeout_minutes:/g)).toHaveLength(1);
+			expect(saved).toContain(`${indent}# keep this child comment`);
+			expect(saved).toContain(`${indent}custom_setting: retain`);
+			expect(saved).toContain('other: unchanged\n');
+		}
+	);
+
+	it('shares a project queue across independent services and keeps prompt references publishable', async () => {
+		const first = createCueConfigMutationService();
+		let releaseFirstWrite: (() => void) | undefined;
+		const second = createCueConfigMutationService({
+			atomicWrite: async (filePath, contents) => {
+				await new Promise<void>((resolve) => {
+					releaseFirstWrite = resolve;
+				});
+				await fs.promises.writeFile(filePath, contents, 'utf8');
+			},
+		});
+		const firstYaml = [
+			'subscriptions:',
+			'  - name: first',
+			'    event: time.heartbeat',
+			'    prompt_file: .maestro/prompts/first.md',
+			'    interval_minutes: 5',
+			'',
+		].join('\n');
+		const secondYaml = [
+			'subscriptions:',
+			'  - name: second',
+			'    event: time.heartbeat',
+			'    prompt_file: .maestro/prompts/second.md',
+			'    interval_minutes: 5',
+			'',
+		].join('\n');
+
+		const firstSave = second.replaceWithPromptFiles(projectRoot, firstYaml, {
+			'.maestro/prompts/first.md': 'first prompt',
+		});
+		await vi.waitFor(() => expect(releaseFirstWrite).toBeTypeOf('function'));
+		const secondSave = first.replaceWithPromptFiles(projectRoot, secondYaml, {
+			'.maestro/prompts/second.md': 'second prompt',
+		});
+		releaseFirstWrite!();
+		await Promise.all([firstSave, secondSave]);
+
+		expect(readCueConfigFile(projectRoot)!.raw).toBe(secondYaml);
+		expect(fs.readFileSync(path.join(projectRoot, '.maestro/prompts/second.md'), 'utf8')).toBe(
+			'second prompt'
+		);
+		expect(fs.existsSync(path.join(projectRoot, '.maestro/prompts/first.md'))).toBe(false);
+	});
+
+	it('applies a targeted runtime mutation after an overlapping editor save', async () => {
+		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, golden, 'utf8');
+		let waitForFirstWrite = true;
+		let releaseEditorWrite: (() => void) | undefined;
+		const editor = createCueConfigMutationService({
+			atomicWrite: async (target, contents) => {
+				if (waitForFirstWrite) {
+					waitForFirstWrite = false;
+					await new Promise<void>((resolve) => {
+						releaseEditorWrite = resolve;
+					});
+				}
+				await fs.promises.writeFile(target, contents, 'utf8');
+			},
+		});
+		const runtime = createCueConfigMutationService();
+		const editorYaml = golden.replace('enabled: true # inline comment', 'enabled: true # saved');
+
+		const editorSave = editor.replaceWithPromptFiles(projectRoot, editorYaml, {});
+		await vi.waitFor(() => expect(releaseEditorWrite).toBeTypeOf('function'));
+		const runtimeMutation = runtime.setSubscriptionEnabled(projectRoot, 'Daily', 'morning', false);
+		releaseEditorWrite!();
+		await Promise.all([editorSave, runtimeMutation]);
+
+		expect(fs.readFileSync(filePath, 'utf8')).toContain('enabled: false');
 	});
 });

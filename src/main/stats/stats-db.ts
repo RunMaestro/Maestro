@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
+import { escapeRegExp } from '../../shared/stringUtils';
 import type {
 	QueryEvent,
 	AutoRunSession,
@@ -423,7 +424,7 @@ export class StatsDB {
 	private rotateOldBackups(keepDays: number): void {
 		try {
 			const dir = path.dirname(this.dbPath);
-			const baseName = path.basename(this.dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const baseName = escapeRegExp(path.basename(this.dbPath));
 			const files = fs.readdirSync(dir);
 
 			const cutoffDate = new Date();
@@ -460,7 +461,7 @@ export class StatsDB {
 	getAvailableBackups(): Array<{ path: string; date: string; size: number }> {
 		try {
 			const dir = path.dirname(this.dbPath);
-			const baseName = path.basename(this.dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const baseName = escapeRegExp(path.basename(this.dbPath));
 			const files = fs.readdirSync(dir);
 			const backups: Array<{ path: string; date: string; size: number }> = [];
 

@@ -10,6 +10,7 @@ import type {
 	AgentCapabilities,
 	AgentConfig as BaseAgentConfig,
 } from '../../shared/types';
+import { AGENT_IDS, type AgentId } from '../../shared/agentRegistry';
 import { isWindows } from '../../shared/platformDetection';
 import {
 	dirsWithAnyAccess,
@@ -164,7 +165,9 @@ export interface AgentConfig extends BaseAgentConfig {
 /**
  * Agent definition without runtime detection state (used for static definitions)
  */
-export type AgentDefinition = Omit<AgentConfig, 'available' | 'path' | 'capabilities'>;
+export type AgentDefinition = Omit<AgentConfig, 'available' | 'path' | 'capabilities' | 'id'> & {
+	id: AgentId;
+};
 
 // ============ Agent Definitions ============
 
@@ -852,7 +855,7 @@ export function getAgentDefinition(agentId: string): AgentDefinition | undefined
  * Get all agent IDs
  */
 export function getAgentIds(): string[] {
-	return AGENT_DEFINITIONS.map((def) => def.id);
+	return [...AGENT_IDS];
 }
 
 /**

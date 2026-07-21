@@ -171,7 +171,8 @@ window.maestro = {
   agents: { detect, get, getConfig, setConfig, getConfigValue, setConfigValue },
 
   // Claude Code integration
-  claude: { listSessions, readSessionMessages, searchSessions, getGlobalStats, onGlobalStatsUpdate },
+  claude: { listSessions, readSessionMessages, searchSessions, getGlobalStats },
+  agentSessions: { getGlobalStats, onGlobalStatsUpdate },
 
   // UI utilities
   dialog: { selectFolder },
@@ -715,13 +716,14 @@ const results = await window.maestro.claude.searchSessions(
 	'all' // 'title' | 'user' | 'assistant' | 'all'
 );
 
-// Get global stats across all Claude projects (with streaming updates)
-const stats = await window.maestro.claude.getGlobalStats();
+// Get global stats across all agent providers (with streaming updates)
+const stats = await window.maestro.agentSessions.getGlobalStats();
 // Returns: { totalSessions, totalMessages, totalInputTokens, totalOutputTokens,
-//            totalCacheReadTokens, totalCacheCreationTokens, totalCostUsd, totalSizeBytes }
+//            totalCacheReadTokens, totalCacheCreationTokens, totalCostUsd, totalSizeBytes,
+//            hasCostData, byProvider }
 
 // Subscribe to streaming updates during stats calculation
-const unsubscribe = window.maestro.claude.onGlobalStatsUpdate((stats) => {
+const unsubscribe = window.maestro.agentSessions.onGlobalStatsUpdate((stats) => {
 	console.log(`Progress: ${stats.totalSessions} sessions, $${stats.totalCostUsd.toFixed(2)}`);
 	if (stats.isComplete) console.log('Stats calculation complete');
 });

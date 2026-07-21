@@ -3,11 +3,11 @@ import type { AutoRunSession, AutoRunTask } from '../../../../shared/stats-types
 import { GOAL_RUN_DOCUMENT_PREFIX } from '../../../../shared/goalDriven/goalRunLabel';
 import {
 	computeAutoRunMetrics,
-	formatDateLabel,
 	formatFullDate,
 	getAutoRunChartMax,
 	groupSessionsByDate,
 } from '../../../../renderer/components/UsageDashboard/autoRunStatsUtils';
+import { formatUsageShortDate } from '../../../../renderer/components/UsageDashboard/usageDashboardUtils';
 import {
 	extractFileName,
 	extractProjectName,
@@ -94,7 +94,7 @@ describe('autoRunStatsUtils', () => {
 
 		expect(grouped).toEqual([{ date: '2026-01-02', count: 3, successCount: 3 }]);
 		expect(getAutoRunChartMax(grouped)).toBe(3);
-		expect(formatDateLabel('2026-01-02')).toBe('Jan 2');
+		expect(formatUsageShortDate('2026-01-02')).toBe('Jan 2');
 		expect(formatFullDate('2026-01-02')).toContain('Jan 2, 2026');
 	});
 });

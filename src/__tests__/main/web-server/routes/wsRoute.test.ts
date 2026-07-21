@@ -248,6 +248,7 @@ describe('WsRoute', () => {
 			const connectedMsg = sentMessages.find((m: any) => m.type === 'connected');
 			expect(connectedMsg).toBeDefined();
 			expect(connectedMsg.clientId).toMatch(/^web-client-/);
+			expect(connectedMsg.authenticated).toBe(true);
 			expect(connectedMsg.subscribedSessionId).toBe('session-123');
 			expect(connectedMsg.timestamp).toBeDefined();
 		});
@@ -387,6 +388,22 @@ describe('WsRoute', () => {
 			const errorMsg = JSON.parse(lastSend[0]);
 			expect(errorMsg.type).toBe('error');
 			expect(errorMsg.message).toBe('Invalid message format');
+		});
+
+		it('should reject unknown and malformed envelopes before dispatch', () => {
+			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const connection = createMockConnection();
+			route!.handler(connection, createMockRequest());
+			connection.socket.send.mockClear();
+
+			connection.socket.emit('message', JSON.stringify({ type: 'unrecognized' }));
+			connection.socket.emit('message', JSON.stringify({ type: 'ping', requestId: 1 }));
+
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.socket.send.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([
+				{ type: 'error', message: 'Invalid message format' },
+				{ type: 'error', message: 'Invalid message format' },
+			]);
 		});
 	});
 

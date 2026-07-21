@@ -271,6 +271,65 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 			return null;
 		}
 	}
+	private projectSessionInfo(
+		sessionId: string,
+		projectPath: string,
+		messages: FactoryMessage[],
+		settings: FactorySettings | null,
+		stats: { sizeBytes: number; createdAt: string; modifiedAt: string }
+	): AgentSessionInfo {
+		let firstMessage = '';
+		for (const message of messages) {
+			if (message.message.role !== 'user') continue;
+			const textContent = extractTextFromContent(message.message.content);
+			if (textContent.trim()) {
+				firstMessage = textContent.slice(0, 200);
+				break;
+			}
+		}
+
+		let durationSeconds = 0;
+		if (settings?.assistantActiveTimeMs) {
+			durationSeconds = Math.round(settings.assistantActiveTimeMs / 1000);
+		} else if (messages.length >= 2) {
+			const firstTime = new Date(messages[0].timestamp).getTime();
+			const lastTime = new Date(messages[messages.length - 1].timestamp).getTime();
+			durationSeconds = Math.max(0, Math.floor((lastTime - firstTime) / 1000));
+		}
+
+		const modelAcc = new ModelUsageAccumulator();
+		if (
+			settings?.tokenUsage?.inputTokens ||
+			settings?.tokenUsage?.outputTokens ||
+			settings?.tokenUsage?.cacheReadTokens ||
+			settings?.tokenUsage?.cacheCreationTokens
+		) {
+			modelAcc.add(settings.model, {
+				inputTokens: settings.tokenUsage?.inputTokens || 0,
+				outputTokens: settings.tokenUsage?.outputTokens || 0,
+				cacheReadTokens: settings.tokenUsage?.cacheReadTokens || 0,
+				cacheCreationTokens: settings.tokenUsage?.cacheCreationTokens || 0,
+			});
+		}
+
+		return {
+			sessionId,
+			projectPath,
+			timestamp: messages[0]?.timestamp || stats.createdAt,
+			modifiedAt: messages[messages.length - 1]?.timestamp || stats.modifiedAt,
+			firstMessage: firstMessage || 'Factory Droid session',
+			messageCount: messages.filter(
+				(message) => message.message.role === 'user' || message.message.role === 'assistant'
+			).length,
+			sizeBytes: stats.sizeBytes,
+			inputTokens: settings?.tokenUsage?.inputTokens || 0,
+			outputTokens: settings?.tokenUsage?.outputTokens || 0,
+			cacheReadTokens: settings?.tokenUsage?.cacheReadTokens || 0,
+			cacheCreationTokens: settings?.tokenUsage?.cacheCreationTokens || 0,
+			durationSeconds,
+			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
+		};
+	}
 
 	/**
 	 * List sessions from remote host via SSH
@@ -317,52 +376,13 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 				// Load messages to get first message and count
 				const messages = await this.loadSessionMessagesRemote(jsonlPath, sshConfig);
 
-				// Get first user message for preview
-				let firstMessage = '';
-				for (const msg of messages) {
-					if (msg.message.role === 'user') {
-						const textContent = extractTextFromContent(msg.message.content);
-						if (textContent.trim()) {
-							firstMessage = textContent.slice(0, 200);
-							break;
-						}
-					}
-				}
-
-				// Count user and assistant messages
-				const messageCount = messages.filter(
-					(m) => m.message.role === 'user' || m.message.role === 'assistant'
-				).length;
-
-				// Calculate duration from settings or timestamps
-				let durationSeconds = 0;
-				if (settings?.assistantActiveTimeMs) {
-					durationSeconds = Math.round(settings.assistantActiveTimeMs / 1000);
-				} else if (messages.length >= 2) {
-					const firstTime = new Date(messages[0].timestamp).getTime();
-					const lastTime = new Date(messages[messages.length - 1].timestamp).getTime();
-					durationSeconds = Math.max(0, Math.floor((lastTime - firstTime) / 1000));
-				}
-
-				// Get timestamps from messages or file stat
-				const createdAt = messages[0]?.timestamp || new Date(statResult.data.mtime).toISOString();
-				const modifiedAt =
-					messages[messages.length - 1]?.timestamp || new Date(statResult.data.mtime).toISOString();
-
-				sessions.push({
-					sessionId,
-					projectPath,
-					timestamp: createdAt,
-					modifiedAt,
-					firstMessage: firstMessage || 'Factory Droid session',
-					messageCount,
-					sizeBytes: statResult.data.size,
-					inputTokens: settings?.tokenUsage?.inputTokens || 0,
-					outputTokens: settings?.tokenUsage?.outputTokens || 0,
-					cacheReadTokens: settings?.tokenUsage?.cacheReadTokens || 0,
-					cacheCreationTokens: settings?.tokenUsage?.cacheCreationTokens || 0,
-					durationSeconds,
-				});
+				sessions.push(
+					this.projectSessionInfo(sessionId, projectPath, messages, settings, {
+						sizeBytes: statResult.data.size,
+						createdAt: new Date(statResult.data.mtime).toISOString(),
+						modifiedAt: new Date(statResult.data.mtime).toISOString(),
+					})
+				);
 			} catch (e) {
 				void captureException(e);
 				logger.warn(`Error reading remote Factory Droid session ${sessionId}`, LOG_CONTEXT, {
@@ -415,74 +435,14 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					readJsonFile<FactorySettings>(settingsPath),
 				]);
 
-				// Load messages to get first message and count
 				const messages = await this.loadSessionMessages(jsonlPath);
-
-				// Get first user message for preview
-				let firstMessage = '';
-				for (const msg of messages) {
-					if (msg.message.role === 'user') {
-						const textContent = extractTextFromContent(msg.message.content);
-						if (textContent.trim()) {
-							firstMessage = textContent.slice(0, 200);
-							break;
-						}
-					}
-				}
-
-				// Count user and assistant messages
-				const messageCount = messages.filter(
-					(m) => m.message.role === 'user' || m.message.role === 'assistant'
-				).length;
-
-				// Calculate duration from settings or timestamps
-				let durationSeconds = 0;
-				if (settings?.assistantActiveTimeMs) {
-					durationSeconds = Math.round(settings.assistantActiveTimeMs / 1000);
-				} else if (messages.length >= 2) {
-					const firstTime = new Date(messages[0].timestamp).getTime();
-					const lastTime = new Date(messages[messages.length - 1].timestamp).getTime();
-					durationSeconds = Math.max(0, Math.floor((lastTime - firstTime) / 1000));
-				}
-
-				// Get timestamps
-				const createdAt = messages[0]?.timestamp || jsonlStat.birthtime.toISOString();
-				const modifiedAt =
-					messages[messages.length - 1]?.timestamp || jsonlStat.mtime.toISOString();
-
-				// Factory Droid is single-model per session with a flat, pre-aggregated
-				// tokenUsage; attribute the whole bucket to settings.model.
-				const modelAcc = new ModelUsageAccumulator();
-				if (
-					settings?.tokenUsage?.inputTokens ||
-					settings?.tokenUsage?.outputTokens ||
-					settings?.tokenUsage?.cacheReadTokens ||
-					settings?.tokenUsage?.cacheCreationTokens
-				) {
-					modelAcc.add(settings.model, {
-						inputTokens: settings.tokenUsage?.inputTokens || 0,
-						outputTokens: settings.tokenUsage?.outputTokens || 0,
-						cacheReadTokens: settings.tokenUsage?.cacheReadTokens || 0,
-						cacheCreationTokens: settings.tokenUsage?.cacheCreationTokens || 0,
-					});
-				}
-
-				sessions.push({
-					sessionId,
-					projectPath,
-					timestamp: createdAt,
-					modifiedAt,
-					firstMessage: firstMessage || 'Factory Droid session',
-					messageCount,
-					sizeBytes: jsonlStat.size,
-					inputTokens: settings?.tokenUsage?.inputTokens || 0,
-					outputTokens: settings?.tokenUsage?.outputTokens || 0,
-					cacheReadTokens: settings?.tokenUsage?.cacheReadTokens || 0,
-					cacheCreationTokens: settings?.tokenUsage?.cacheCreationTokens || 0,
-					durationSeconds,
-					byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
-					// Factory Droid doesn't provide cost in settings.json
-				});
+				sessions.push(
+					this.projectSessionInfo(sessionId, projectPath, messages, settings, {
+						sizeBytes: jsonlStat.size,
+						createdAt: jsonlStat.birthtime.toISOString(),
+						modifiedAt: jsonlStat.mtime.toISOString(),
+					})
+				);
 			} catch (e) {
 				void captureException(e);
 				logger.warn(`Error reading Factory Droid session ${sessionId}`, LOG_CONTEXT, { error: e });

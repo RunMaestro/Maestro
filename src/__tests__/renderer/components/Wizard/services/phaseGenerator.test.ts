@@ -15,8 +15,8 @@ import {
 	splitIntoPhases,
 	countTasks,
 	validateDocuments,
-	sanitizeFilename,
 } from '../../../../../renderer/components/Wizard/services/phaseGenerator';
+import { sanitizeFilename } from '../../../../../renderer/utils/sanitizeFilename';
 
 describe('phaseGenerator', () => {
 	describe('parseGeneratedDocuments', () => {

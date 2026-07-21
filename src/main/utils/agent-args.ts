@@ -54,18 +54,26 @@ type AgentConfigResolution = {
 	modelSource: 'session' | 'agent' | 'default';
 };
 
-/** Parse a space-separated custom args string into an array, respecting quoted segments. */
-function parseCustomArgs(customArgs?: string): string[] {
-	if (!customArgs || typeof customArgs !== 'string') {
+/**
+ * Split a space-separated argument string while preserving the established
+ * quote-only grouping contract. This is intentionally not shell parsing:
+ * backslashes are literal, quotes are only stripped when they wrap a token,
+ * and unmatched opening quotes fall back to ordinary non-whitespace tokens.
+ */
+export function parseQuotedArgs(value?: string): string[] {
+	if (!value || typeof value !== 'string') {
 		return [];
 	}
 
-	const customArgsArray = customArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-	return customArgsArray.map((arg) => {
-		if ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'"))) {
-			return arg.slice(1, -1);
+	const tokens = value.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+	return tokens.map((token) => {
+		if (
+			(token.startsWith('"') && token.endsWith('"')) ||
+			(token.startsWith("'") && token.endsWith("'"))
+		) {
+			return token.slice(1, -1);
 		}
-		return arg;
+		return token;
 	});
 }
 
@@ -281,7 +289,7 @@ export function applyAgentConfigOverrides(
 			? 'agent'
 			: 'none';
 
-	const parsedCustomArgs = parseCustomArgs(effectiveCustomArgs);
+	const parsedCustomArgs = parseQuotedArgs(effectiveCustomArgs);
 	if (parsedCustomArgs.length > 0) {
 		finalArgs = [...finalArgs, ...parsedCustomArgs];
 	} else {

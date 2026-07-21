@@ -16,7 +16,7 @@
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
-import { isValidAgentId } from '../../shared/agentIds';
+import { isValidAgentId } from '../../shared/agentRegistry';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[AgentSessionStorage]';

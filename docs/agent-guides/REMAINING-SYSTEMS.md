@@ -21,12 +21,11 @@ The dividing line: contexts own _derived/polled data_ or _popup/modal coordinati
 
 Centralizes git status polling for all sessions. Splits data into three focused sub-contexts to minimize re-renders:
 
-| Context                     | Hook                 | Data                                                    | Update Frequency    |
-| --------------------------- | -------------------- | ------------------------------------------------------- | ------------------- |
-| `GitBranchContext`          | `useGitBranch()`     | branch name, remote, ahead/behind                       | Rarely              |
-| `GitFileStatusContext`      | `useGitFileStatus()` | file count, `hasChanges()`                              | On file operations  |
-| `GitDetailContext`          | `useGitDetail()`     | file changes, additions/deletions, `refreshGitStatus()` | Active session only |
-| `GitStatusContext` (legacy) | `useGitStatus()`     | full `gitStatusMap`, everything                         | Deprecated          |
+| Context                | Hook                 | Data                                                    | Update Frequency    |
+| ---------------------- | -------------------- | ------------------------------------------------------- | ------------------- |
+| `GitBranchContext`     | `useGitBranch()`     | branch name, remote, ahead/behind                       | Rarely              |
+| `GitFileStatusContext` | `useGitFileStatus()` | file count, `hasChanges()`                              | On file operations  |
+| `GitDetailContext`     | `useGitDetail()`     | file changes, additions/deletions, `refreshGitStatus()` | Active session only |
 
 **Provider props:** `sessions: Session[]`, `activeSessionId?: string`, `options?: UseGitStatusPollingOptions`
 
@@ -35,7 +34,6 @@ Centralizes git status polling for all sessions. Splits data into three focused 
 - `useGitFileStatus` - 3 consumers (GitStatusWidget, MainPanel, SessionList)
 - `useGitDetail` - 2 consumers (GitStatusWidget, MainPanel)
 - `useGitBranch` - 1 consumer (MainPanel)
-- `useGitStatus` (legacy) - 0 external consumers (deprecated, safe to remove)
 
 The underlying data comes from `useGitStatusPolling` hook which polls via IPC.
 

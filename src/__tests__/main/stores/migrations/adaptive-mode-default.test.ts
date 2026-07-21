@@ -9,7 +9,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 import {
-	migrateAdaptiveModeDefault,
+	migrateLegacyAdaptiveModeDefaultV1,
 	ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER,
 } from '../../../../main/stores/migrations/adaptive-mode-default';
 import { getSessionsStore } from '../../../../main/stores/getters';
@@ -28,16 +28,13 @@ function makeStore(initial: Record<string, any> = {}) {
 	};
 }
 
-describe('migrateAdaptiveModeDefault', () => {
+describe('migrateLegacyAdaptiveModeDefaultV1', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	// rc keeps Adaptive Mode default OFF for every agent type
-	// (`isAdaptiveModeDefaultOn` returns false - the maestro-p TUI path has been a
-	// recurring source of trouble, so we never flip anyone onto it automatically).
-	// With the default off the migration backfills nobody: it leaves every
-	// agent's explicit/undefined choice untouched and only stamps the marker.
+	// The historical v1 marker remains readable, but current policy is API by
+	// default. Recording this migration must never alter session token choices.
 	it('does not backfill any agent while the Adaptive Mode default is off, but still sets the marker', () => {
 		const sessionsStore = makeStore({
 			sessions: [
@@ -52,7 +49,7 @@ describe('migrateAdaptiveModeDefault', () => {
 		mockedGetSessionsStore.mockReturnValue(sessionsStore as any);
 		const settingsStore = makeStore();
 
-		migrateAdaptiveModeDefault(settingsStore as any);
+		migrateLegacyAdaptiveModeDefaultV1(settingsStore as any);
 
 		expect(sessionsStore.set).not.toHaveBeenCalled();
 		expect(settingsStore.data[ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER]).toBe(true);
@@ -68,7 +65,7 @@ describe('migrateAdaptiveModeDefault', () => {
 		mockedGetSessionsStore.mockReturnValue(sessionsStore as any);
 		const settingsStore = makeStore();
 
-		migrateAdaptiveModeDefault(settingsStore as any);
+		migrateLegacyAdaptiveModeDefaultV1(settingsStore as any);
 
 		expect(sessionsStore.set).not.toHaveBeenCalled();
 		expect(settingsStore.data[ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER]).toBe(true);
@@ -81,7 +78,7 @@ describe('migrateAdaptiveModeDefault', () => {
 		mockedGetSessionsStore.mockReturnValue(sessionsStore as any);
 		const settingsStore = makeStore();
 
-		migrateAdaptiveModeDefault(settingsStore as any);
+		migrateLegacyAdaptiveModeDefaultV1(settingsStore as any);
 
 		expect(sessionsStore.set).not.toHaveBeenCalled();
 		expect(settingsStore.data[ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER]).toBe(true);
@@ -94,7 +91,7 @@ describe('migrateAdaptiveModeDefault', () => {
 		mockedGetSessionsStore.mockReturnValue(sessionsStore as any);
 		const settingsStore = makeStore({ [ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER]: true });
 
-		migrateAdaptiveModeDefault(settingsStore as any);
+		migrateLegacyAdaptiveModeDefaultV1(settingsStore as any);
 
 		expect(mockedGetSessionsStore).not.toHaveBeenCalled();
 		expect(sessionsStore.set).not.toHaveBeenCalled();

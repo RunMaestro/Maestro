@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useAgentExecution } from '../../../renderer/hooks';
-import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/types';
+import {
+	useAgentExecution,
+	type UseAgentExecutionDeps,
+} from '../../../renderer/hooks/agent/useAgentExecution';
+import type {
+	AgentCapabilities,
+	AgentConfig,
+	Session,
+	AITab,
+	UsageStats,
+	QueuedItem,
+} from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { dismissCenterFlash, useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -48,7 +59,7 @@ describe('useAgentExecution', () => {
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
 	let onSessionIdHandler: ((sid: string, sessionId: string) => void) | undefined;
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
-	let onExitHandler: ((sid: string) => void) | undefined;
+	let onExitHandler: ((sid: string, code?: number) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -119,9 +130,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
@@ -186,9 +195,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
@@ -230,9 +237,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
@@ -265,8 +270,8 @@ describe('useAgentExecution', () => {
 			id: 'codex',
 			command: 'codex',
 			args: ['exec', '--json'],
-			capabilities: { supportsStreamJsonInput: false },
-		});
+			capabilities: { supportsStreamJsonInput: false } as AgentCapabilities,
+		} as AgentConfig);
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
@@ -274,9 +279,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
@@ -311,8 +314,8 @@ describe('useAgentExecution', () => {
 			id: 'codex',
 			command: 'codex',
 			args: ['exec', '--json'],
-			capabilities: { supportsStreamJsonInput: false },
-		});
+			capabilities: { supportsStreamJsonInput: false } as AgentCapabilities,
+		} as AgentConfig);
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
@@ -320,9 +323,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
@@ -364,9 +365,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnAgentForSession(
@@ -411,9 +410,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		const spawnPromise = result.current.spawnBackgroundSynopsis(
@@ -465,12 +462,11 @@ describe('useAgentExecution', () => {
 		});
 	});
 
-	it('auto-dismisses flash notifications', () => {
+	it('delegates replacement and dismissal to the shared flash timer owner', () => {
 		vi.useFakeTimers();
+		dismissCenterFlash();
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
-		const setFlashNotification = vi.fn();
-		const setSuccessFlashNotification = vi.fn();
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
@@ -478,25 +474,28 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
-				setFlashNotification,
-				setSuccessFlashNotification,
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		act(() => {
 			result.current.showFlashNotification('Saved');
-			result.current.showSuccessFlash('Done');
 		});
-
-		expect(setFlashNotification).toHaveBeenCalledWith('Saved');
-		expect(setSuccessFlashNotification).toHaveBeenCalledWith('Done');
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			message: 'Saved',
+			color: 'yellow',
+			duration: 2000,
+		});
 
 		act(() => {
-			vi.advanceTimersByTime(2000);
+			result.current.showSuccessFlash('Done');
+			vi.advanceTimersByTime(1999);
 		});
+		expect(useCenterFlashStore.getState().active?.message).toBe('Done');
 
-		expect(setFlashNotification).toHaveBeenCalledWith(null);
-		expect(setSuccessFlashNotification).toHaveBeenCalledWith(null);
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+		expect(useCenterFlashStore.getState().active).toBeNull();
 	});
 
 	it('cancels pending synopsis sessions when cancelPendingSynopsis is called', async () => {
@@ -513,9 +512,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef: { current: null },
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		// Spawn a synopsis session (don't wait for it to complete)
@@ -540,14 +537,72 @@ describe('useAgentExecution', () => {
 		expect(mockKill).toHaveBeenCalledTimes(1);
 		expect(mockKill.mock.calls[0][0]).toMatch(new RegExp(`^${session.id}-synopsis-\\d+$`));
 
-		// Clean up: trigger exit so the promise resolves
-		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
-		const targetSessionId = spawnConfig.sessionId as string;
-		act(() => {
-			onExitHandler?.(targetSessionId);
+		const cancellation = await spawnPromise;
+		expect(cancellation).toMatchObject({ success: false, errorKind: 'cancelled' });
+	});
+
+	it('cancels each synopsis owner once and disposes every listener once', async () => {
+		const mockKill = vi.fn().mockResolvedValue(true);
+		const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+		window.maestro.process.kill = mockKill;
+		mockProcess.onData.mockReturnValueOnce(unsubscribers[0]);
+		mockProcess.onSessionId.mockReturnValueOnce(unsubscribers[1]);
+		mockProcess.onUsage.mockReturnValueOnce(unsubscribers[2]);
+		mockProcess.onExit.mockReturnValueOnce(unsubscribers[3]);
+		const session = createMockSession();
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+			} satisfies UseAgentExecutionDeps)
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session'
+		);
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledOnce());
+		await act(async () => {
+			await result.current.cancelPendingSynopsis(session.id);
+			await result.current.cancelPendingSynopsis(session.id);
 		});
 
-		await spawnPromise;
+		expect(mockKill).toHaveBeenCalledOnce();
+		for (const unsubscribe of unsubscribers) expect(unsubscribe).toHaveBeenCalledOnce();
+		await expect(spawnPromise).resolves.toMatchObject({ success: false, errorKind: 'cancelled' });
+	});
+
+	it('kills and settles active batch work on unmount without applying a stale exit state', async () => {
+		const mockKill = vi.fn().mockResolvedValue(true);
+		const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+		window.maestro.process.kill = mockKill;
+		mockProcess.onData.mockReturnValueOnce(unsubscribers[0]);
+		mockProcess.onSessionId.mockReturnValueOnce(unsubscribers[1]);
+		mockProcess.onUsage.mockReturnValueOnce(unsubscribers[2]);
+		mockProcess.onExit.mockReturnValueOnce(unsubscribers[3]);
+		const session = createMockSession({ state: 'busy' });
+		const setSessions = vi.fn();
+		const { result, unmount } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				setSessions,
+				processQueuedItemRef: { current: null },
+			} satisfies UseAgentExecutionDeps)
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Work');
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledOnce());
+		unmount();
+		expect(mockKill).toHaveBeenCalledOnce();
+
+		for (const unsubscribe of unsubscribers) expect(unsubscribe).toHaveBeenCalledOnce();
+		await expect(spawnPromise).resolves.toMatchObject({ success: false, errorKind: 'cancelled' });
+		expect(setSessions).not.toHaveBeenCalled();
 	});
 
 	it('does nothing when cancelPendingSynopsis is called with no pending synopses', async () => {
@@ -563,9 +618,7 @@ describe('useAgentExecution', () => {
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
+			} satisfies UseAgentExecutionDeps)
 		);
 
 		// Cancel with no pending synopses
@@ -595,9 +648,7 @@ describe('useAgentExecution', () => {
 					sessionsRef: { current: [session] },
 					setSessions: vi.fn(),
 					processQueuedItemRef: { current: null },
-					setFlashNotification: vi.fn(),
-					setSuccessFlashNotification: vi.fn(),
-				})
+				} satisfies UseAgentExecutionDeps)
 			);
 		}
 

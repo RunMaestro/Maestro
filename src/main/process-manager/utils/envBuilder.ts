@@ -1,7 +1,6 @@
 import * as os from 'os';
-import * as path from 'path';
 import { STANDARD_UNIX_PATHS } from '../constants';
-import { detectNodeVersionManagerBinPaths } from '../../../shared/pathUtils';
+import { detectNodeVersionManagerBinPaths, expandTilde } from '../../../shared/pathUtils';
 import { isWindows } from '../../../shared/platformDetection';
 import { buildSpawnPath } from '../../utils/spawnPath';
 
@@ -104,7 +103,7 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	if (shellEnvVars && Object.keys(shellEnvVars).length > 0) {
 		const homeDir = os.homedir();
 		for (const [key, value] of Object.entries(shellEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value;
+			env[key] = expandTilde(value, homeDir);
 		}
 	}
 
@@ -241,8 +240,7 @@ export function collectMaestroEnvVars(
 	isResuming?: boolean
 ): Record<string, string> {
 	const home = os.homedir();
-	const expand = (value: string): string =>
-		value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	const expand = (value: string): string => expandTilde(value, home);
 	const result: Record<string, string> = {};
 	if (globalShellEnvVars) {
 		for (const [key, value] of Object.entries(globalShellEnvVars)) {
@@ -303,14 +301,14 @@ export function buildChildProcessEnv(
 	const home = os.homedir();
 	if (globalShellEnvVars && Object.keys(globalShellEnvVars).length > 0) {
 		for (const [key, value] of Object.entries(globalShellEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+			env[key] = expandTilde(value, home);
 		}
 	}
 
 	// Apply session-level custom environment variables (highest priority - override global)
 	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
 		for (const [key, value] of Object.entries(customEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+			env[key] = expandTilde(value, home);
 		}
 	}
 

@@ -18,6 +18,7 @@ import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
+import { createManagedProcessBase } from '../utils/managedProcess';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -423,24 +424,21 @@ export class ChildProcessSpawner {
 			});
 
 			const managedProcess: ManagedProcess = {
-				sessionId,
-				toolType,
+				...createManagedProcessBase(config, {
+					pid: childProcess.pid || -1,
+					isTerminal: false,
+					args: finalArgs,
+				}),
 				childProcess,
-				cwd,
-				pid: childProcess.pid || -1,
-				isTerminal: false,
 				isBatchMode,
 				isStreamJsonMode,
 				jsonBuffer: isBatchMode ? '' : undefined,
-				startTime: Date.now(),
 				outputParser,
 				stderrBuffer: '',
 				stdoutBuffer: '',
 				contextWindow,
 				ompModelCatalogKey,
 				tempImageFiles: tempImageFiles.length > 0 ? tempImageFiles : undefined,
-				command,
-				args: finalArgs,
 				querySource: config.querySource,
 				tabId: config.tabId,
 				projectPath: config.projectPath,

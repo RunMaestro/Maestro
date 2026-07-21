@@ -238,7 +238,7 @@ subscriptions:
 
 ## Template Variables
 
-All prompts support `{{VARIABLE}}` syntax. Variables are replaced with event payload data before the prompt is sent to the agent.
+All prompts support `{{VARIABLE}}` syntax. The canonical general-variable reference is [Prompt Customization → Template Variables](./prompt-customization#template-variables), while the event-specific tables below are intentionally retained here because each value is available only when Cue assembles that event payload at runtime from `src/shared/templateVariables.ts`.
 
 ### Common Variables (All Events)
 
@@ -300,7 +300,7 @@ All prompts support `{{VARIABLE}}` syntax. Variables are replaced with event pay
 
 ### Standard Variables
 
-Cue prompts also have access to all standard Maestro template variables (like `{{PROJECT_ROOT}}`, `{{TIMESTAMP}}`, etc.) - the same variables available in Auto Run playbooks and system prompts.
+Cue prompts also have the standard Maestro variables listed in [Prompt Customization → Template Variables](./prompt-customization#template-variables). The Cue event-variable tables above are a distinct runtime context, not a second general-variable catalog.
 
 ## Concurrency Control
 

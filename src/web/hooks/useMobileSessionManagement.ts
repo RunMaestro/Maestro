@@ -35,7 +35,8 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { Session } from './useSessions';
-import type { WebSocketState, AITabData, AutoRunState, CustomCommand } from './useWebSocket';
+import type { WebSocketState } from './useWebSocket';
+import type { AITabData, AutoRunState, CustomAICommand } from '../../shared/web-protocol/session';
 import { buildApiUrl, getMaestroConfig, updateUrlForSessionTab } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import type { Theme } from '../../shared/theme-types';
@@ -97,7 +98,7 @@ export interface UseMobileSessionManagementDeps {
 	/** Callback when the global Bionify reading-mode setting updates from the server */
 	onBionifyReadingModeUpdate?: (enabled: boolean) => void;
 	/** Callback when custom commands are received */
-	onCustomCommands?: (commands: CustomCommand[]) => void;
+	onCustomCommands?: (commands: CustomAICommand[]) => void;
 	/** Callback when AutoRun state changes */
 	onAutoRunStateChange?: (sessionId: string, state: AutoRunState | null) => void;
 }
@@ -145,7 +146,7 @@ export interface MobileSessionHandlers {
 	onUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
 	onThemeUpdate: (theme: Theme) => void;
 	onBionifyReadingModeUpdate: (enabled: boolean) => void;
-	onCustomCommands: (commands: CustomCommand[]) => void;
+	onCustomCommands: (commands: CustomAICommand[]) => void;
 	onAutoRunStateChange: (sessionId: string, state: AutoRunState | null) => void;
 	onTabsChanged: (sessionId: string, aiTabs: AITabData[], newActiveTabId: string) => void;
 }
@@ -768,7 +769,7 @@ export function useMobileSessionManagement(
 				webLogger.debug(`Bionify reading mode update received: ${enabled}`, 'Mobile');
 				onBionifyReadingModeUpdate?.(enabled);
 			},
-			onCustomCommands: (commands: CustomCommand[]) => {
+			onCustomCommands: (commands: CustomAICommand[]) => {
 				// Custom slash commands from desktop app
 				webLogger.debug(`Custom commands received: ${commands.length}`, 'Mobile');
 				onCustomCommands?.(commands);

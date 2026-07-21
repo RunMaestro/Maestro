@@ -16,12 +16,6 @@ export type BaseLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type MainLogLevel = BaseLogLevel | 'toast' | 'autorun' | 'cue';
 
 /**
- * Log level type alias for backwards compatibility.
- * Use MainLogLevel for main process, BaseLogLevel for renderer/web.
- */
-export type LogLevel = MainLogLevel;
-
-/**
  * Priority mapping for log levels used in filtering.
  * Lower numbers = more verbose, higher numbers = more severe.
  */

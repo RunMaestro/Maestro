@@ -175,7 +175,7 @@ See [Event Types](./maestro-cue-events) for detailed documentation and examples 
 
 ## Template Variables
 
-Prompts support `{{VARIABLE}}` syntax for injecting event data. When Cue fires a subscription, it replaces template variables with the actual event payload before sending the prompt to the agent.
+Prompts support `{{VARIABLE}}` syntax for injecting event data. General variables are documented in [Prompt Customization → Template Variables](./prompt-customization#template-variables); Cue event-payload variables are intentionally documented in [Advanced Patterns](./maestro-cue-advanced#template-variables) because their availability depends on the triggering event.
 
 ```yaml
 prompt: |
@@ -186,8 +186,6 @@ prompt: |
 
   Please review this PR and provide feedback.
 ```
-
-See [Advanced Patterns](./maestro-cue-advanced) for the complete template variable reference.
 
 ## Advanced Features
 

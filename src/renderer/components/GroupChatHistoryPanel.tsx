@@ -17,29 +17,19 @@ import type {
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
 import { formatTimestamp } from '../../shared/formatters';
+import { DEFAULT_LOOKBACK_HOURS, type LookbackHours } from './History/lookbackOptions';
+import { LOOKBACK_OPTIONS } from './History/historyConstants';
 
-// Lookback period options for the activity graph
-type LookbackPeriod = {
-	label: string;
-	hours: number | null; // null = all time
-	bucketCount: number;
-};
-
-const LOOKBACK_OPTIONS: LookbackPeriod[] = [
-	{ label: '24 hours', hours: 24, bucketCount: 24 },
-	{ label: '72 hours', hours: 72, bucketCount: 24 },
-	{ label: '1 week', hours: 168, bucketCount: 28 },
-	{ label: '2 weeks', hours: 336, bucketCount: 28 },
-	{ label: '1 month', hours: 720, bucketCount: 30 },
-	{ label: 'All time', hours: null, bucketCount: 24 },
-];
+const GROUP_CHAT_LOOKBACK_OPTIONS = LOOKBACK_OPTIONS.filter(
+	(option) => option.hours === null || option.hours <= 720
+);
 
 interface GroupChatActivityGraphProps {
 	entries: GroupChatHistoryEntry[];
 	theme: Theme;
 	participantColors: Record<string, string>;
-	lookbackHours: number | null;
-	onLookbackChange: (hours: number | null) => void;
+	lookbackHours: LookbackHours;
+	onLookbackChange: (hours: LookbackHours) => void;
 	onBarClick?: (bucketStartTime: number, bucketEndTime: number) => void;
 }
 
@@ -66,7 +56,9 @@ function GroupChatActivityGraph({
 
 	// Get the current lookback config
 	const lookbackConfig = useMemo(
-		() => LOOKBACK_OPTIONS.find((o) => o.hours === lookbackHours) || LOOKBACK_OPTIONS[0],
+		() =>
+			GROUP_CHAT_LOOKBACK_OPTIONS.find((option) => option.hours === lookbackHours) ??
+			GROUP_CHAT_LOOKBACK_OPTIONS[0],
 		[lookbackHours]
 	);
 
@@ -249,7 +241,7 @@ function GroupChatActivityGraph({
 					>
 						Lookback Period
 					</div>
-					{LOOKBACK_OPTIONS.map((option) => (
+					{GROUP_CHAT_LOOKBACK_OPTIONS.map((option) => (
 						<button
 							key={option.label}
 							className="w-full px-3 py-1.5 text-left text-xs hover:bg-white/10 transition-colors flex items-center justify-between"
@@ -447,7 +439,7 @@ export function GroupChatHistoryPanel({
 	participantColors,
 	onJumpToMessage,
 }: GroupChatHistoryPanelProps): JSX.Element {
-	const [lookbackHours, setLookbackHours] = useState<number | null>(24);
+	const [lookbackHours, setLookbackHours] = useState<LookbackHours>(DEFAULT_LOOKBACK_HOURS);
 	const [searchFilter, setSearchFilter] = useState('');
 	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(
 		new Set(ALL_ENTRY_TYPES)
@@ -468,14 +460,14 @@ export function GroupChatHistoryPanel({
 			const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 			const saved = await window.maestro.settings.get(settingsKey);
 			if (saved !== undefined) {
-				setLookbackHours(saved as number | null);
+				setLookbackHours(saved as LookbackHours);
 			}
 		};
 		loadLookbackPreference();
 	}, [groupChatId]);
 
 	// Handler to update lookback and persist
-	const handleLookbackChange = (hours: number | null) => {
+	const handleLookbackChange = (hours: LookbackHours) => {
 		setLookbackHours(hours);
 		const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 		window.maestro.settings.set(settingsKey, hours);

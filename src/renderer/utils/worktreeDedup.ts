@@ -11,10 +11,11 @@
  */
 
 import type { Session } from '../types';
+import { normalizeWorktreePathForComparison } from '../../shared/comparison-path';
 
 /** Normalize a file path for comparison: forward slashes, no duplicate or trailing slashes. */
 export function normalizePath(p: string): string {
-	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+	return normalizeWorktreePathForComparison(p);
 }
 
 /**

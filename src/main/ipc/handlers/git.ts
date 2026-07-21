@@ -1513,11 +1513,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		createIpcHandler(
 			handlerOpts('watchWorktreeDirectory'),
 			async (sessionId: string, worktreePath: string, sshRemoteId?: string) => {
-				// TODO: Remove debug logging after worktree detection is confirmed working
-				logger.warn(
-					`[WT-DEBUG] watchWorktreeDirectory called: session=${sessionId} path=${worktreePath} ssh=${sshRemoteId}`
-				);
-
 				// SSH remote: file watching is not supported
 				// Return success with isRemote flag so UI knows to poll instead
 				if (sshRemoteId) {
@@ -1570,8 +1565,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 
 					// Handler for directory additions
 					watcher.on('addDir', async (dirPath: string) => {
-						// TODO: Remove debug logging after worktree detection is confirmed working
-						logger.warn(`[WT-DEBUG] addDir event: ${dirPath}`);
 						// Skip the root directory itself
 						if (dirPath === worktreePath) return;
 
@@ -1593,9 +1586,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								dirPath
 							);
 							if (isInsideWorkTree.exitCode !== 0) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
-								);
 								return;
 							}
 
@@ -1606,9 +1596,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								dirPath
 							);
 							if (toplevelResult.exitCode !== 0) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
-								);
 								return;
 							}
 							// Use realpath so symlinked base paths (e.g. /home/user/work →
@@ -1619,9 +1606,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								.realpath(toplevelResult.stdout.trim())
 								.catch(() => path.resolve(toplevelResult.stdout.trim()));
 							if (resolvedDir !== resolvedToplevel) {
-								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
-								);
 								return;
 							}
 
@@ -1635,13 +1619,8 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 
 							// Skip main/master/HEAD branches
 							if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
-								logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
 								return;
 							}
-
-							logger.warn(
-								`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
-							);
 
 							// Emit event to the renderer and web-desktop bridge clients
 							safeSend('worktree:discovered', {
@@ -1671,7 +1650,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					watcher.on('unlinkDir', (dirPath: string) => {
 						if (dirPath === worktreePath) return;
 
-						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
 						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
 
 						// A deleted worktree is no longer a valid jump/diff target; flag
@@ -1715,10 +1693,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	ipcMain.handle(
 		'git:unwatchWorktreeDirectory',
 		createIpcHandler(handlerOpts('unwatchWorktreeDirectory'), async (sessionId: string) => {
-			// TODO: Remove debug logging after worktree detection is confirmed working
-			logger.warn(
-				`[WT-DEBUG] unwatchWorktreeDirectory called: session=${sessionId} hasWatcher=${worktreeWatchers.has(sessionId)}`
-			);
 			const watcher = worktreeWatchers.get(sessionId);
 			if (watcher) {
 				// Delete from map BEFORE awaiting close to prevent a race condition:

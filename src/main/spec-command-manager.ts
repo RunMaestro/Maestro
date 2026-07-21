@@ -51,6 +51,21 @@ export interface StoredData {
 }
 
 /**
+ * Source locations supplied to domain hooks. Hooks keep source precedence and
+ * malformed-file policy visible in the manager that owns those semantics.
+ */
+export interface SpecCommandStoragePaths {
+	bundledPromptsDir: string;
+	userPromptsDir: string;
+	customizationsPath: string;
+}
+
+export interface RefreshedSpecPrompt {
+	id: string;
+	content: string;
+}
+
+/**
  * Configuration for a spec command manager instance.
  * Provides the per-source values that differentiate SpecKit from OpenSpec.
  */
@@ -72,6 +87,19 @@ export interface SpecCommandManagerConfig {
 	commands: readonly SpecCommandDefinition[];
 	/** Default metadata returned if neither user nor bundled metadata files exist. */
 	defaultMetadata: SpecMetadata;
+	/** Domain-owned command spelling when the standard `/${filePrefix}.${id}` is not applicable. */
+	commandForDefinition?: (command: SpecCommandDefinition) => string;
+	/** Domain-owned source precedence and prompt read-error policy. */
+	loadPrompt?: (
+		command: SpecCommandDefinition,
+		paths: SpecCommandStoragePaths
+	) => Promise<string | null>;
+	/** Domain-owned metadata source precedence and malformed-file policy. */
+	loadMetadata?: (paths: SpecCommandStoragePaths, fallback: SpecMetadata) => Promise<SpecMetadata>;
+	/** Domain-owned customization read policy, including diagnostics. */
+	loadCustomizations?: (customizationsPath: string) => Promise<StoredData | null>;
+	/** Domain-owned serialization policy for customization mutations. */
+	withCustomizationLock?: <T>(mutation: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -89,6 +117,13 @@ export interface SpecCommandManager {
 	loadUserCustomizations(): Promise<StoredData | null>;
 	saveUserCustomizations(data: StoredData): Promise<void>;
 	getBundledMetadata(): Promise<SpecMetadata>;
+	/**
+	 * Commits refreshed source files, metadata, and customization metadata as one
+	 * rollback unit. Existing customization prompt bodies are preserved.
+	 */
+	commitRefresh(prompts: readonly RefreshedSpecPrompt[], metadata: SpecMetadata): Promise<void>;
+	/** Runs a complete domain refresh under its established mutation policy. */
+	runCustomizationMutation<T>(mutation: () => Promise<T>): Promise<T>;
 }
 
 /**
@@ -103,24 +138,15 @@ export function createSpecCommandManager(config: SpecCommandManagerConfig): Spec
 		userPromptsDirName,
 		commands,
 		defaultMetadata,
+		commandForDefinition = (command) => `/${filePrefix}.${command.id}`,
+		loadPrompt,
+		loadMetadata,
+		loadCustomizations,
+		withCustomizationLock = async <T>(mutation: () => Promise<T>): Promise<T> => mutation(),
 	} = config;
 
 	function getUserDataPath(): string {
 		return path.join(app.getPath('userData'), customizationsFileName);
-	}
-
-	async function loadUserCustomizations(): Promise<StoredData | null> {
-		try {
-			const content = await fs.readFile(getUserDataPath(), 'utf-8');
-			return JSON.parse(content);
-		} catch (error: unknown) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			return null;
-		}
-	}
-
-	async function saveUserCustomizations(data: StoredData): Promise<void> {
-		await fs.writeFile(getUserDataPath(), JSON.stringify(data, null, 2), 'utf-8');
 	}
 
 	function getBundledPromptsPath(): string {
@@ -134,95 +160,102 @@ export function createSpecCommandManager(config: SpecCommandManagerConfig): Spec
 		return path.join(app.getPath('userData'), userPromptsDirName);
 	}
 
+	function getStoragePaths(): SpecCommandStoragePaths {
+		return {
+			bundledPromptsDir: getBundledPromptsPath(),
+			userPromptsDir: getUserPromptsPath(),
+			customizationsPath: getUserDataPath(),
+		};
+	}
+
+	async function loadUserCustomizations(): Promise<StoredData | null> {
+		if (loadCustomizations) {
+			return loadCustomizations(getUserDataPath());
+		}
+
+		try {
+			const content = await fs.readFile(getUserDataPath(), 'utf-8');
+			return JSON.parse(content);
+		} catch (error: unknown) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			return null;
+		}
+	}
+
+	async function saveUserCustomizations(data: StoredData): Promise<void> {
+		await fs.writeFile(getUserDataPath(), JSON.stringify(data, null, 2), 'utf-8');
+	}
+
+	async function loadDefaultPrompt(
+		command: SpecCommandDefinition,
+		paths: SpecCommandStoragePaths
+	): Promise<string | null> {
+		if (!command.isCustom) {
+			try {
+				return await fs.readFile(
+					path.join(paths.userPromptsDir, `${filePrefix}.${command.id}.md`),
+					'utf-8'
+				);
+			} catch (error: unknown) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
+		}
+
+		try {
+			return await fs.readFile(
+				path.join(paths.bundledPromptsDir, `${filePrefix}.${command.id}.md`),
+				'utf-8'
+			);
+		} catch (error) {
+			logger.warn(`Failed to load bundled prompt for ${command.id}: ${error}`, logContext);
+			return null;
+		}
+	}
+
 	async function getBundledPrompts(): Promise<
 		Record<string, { prompt: string; description: string; isCustom: boolean }>
 	> {
-		const bundledPromptsDir = getBundledPromptsPath();
-		const userPromptsDir = getUserPromptsPath();
+		const paths = getStoragePaths();
 		const result: Record<string, { prompt: string; description: string; isCustom: boolean }> = {};
 
-		for (const cmd of commands) {
-			// For custom commands, always use bundled
-			if (cmd.isCustom) {
-				try {
-					const promptPath = path.join(bundledPromptsDir, `${filePrefix}.${cmd.id}.md`);
-					const prompt = await fs.readFile(promptPath, 'utf-8');
-					result[cmd.id] = {
-						prompt,
-						description: cmd.description,
-						isCustom: cmd.isCustom,
-					};
-				} catch (error) {
-					logger.warn(`Failed to load bundled prompt for ${cmd.id}: ${error}`, logContext);
-					result[cmd.id] = {
-						prompt: `# ${cmd.id}\n\nPrompt not available.`,
-						description: cmd.description,
-						isCustom: cmd.isCustom,
-					};
-				}
-				continue;
-			}
-
-			// For upstream commands, check user prompts directory first (downloaded updates)
-			try {
-				const userPromptPath = path.join(userPromptsDir, `${filePrefix}.${cmd.id}.md`);
-				const prompt = await fs.readFile(userPromptPath, 'utf-8');
-				result[cmd.id] = {
-					prompt,
-					description: cmd.description,
-					isCustom: cmd.isCustom,
-				};
-				continue;
-			} catch (error: unknown) {
-				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-				// User prompt not found, try bundled
-			}
-
-			// Fall back to bundled prompts
-			try {
-				const promptPath = path.join(bundledPromptsDir, `${filePrefix}.${cmd.id}.md`);
-				const prompt = await fs.readFile(promptPath, 'utf-8');
-				result[cmd.id] = {
-					prompt,
-					description: cmd.description,
-					isCustom: cmd.isCustom,
-				};
-			} catch (error) {
-				logger.warn(`Failed to load bundled prompt for ${cmd.id}: ${error}`, logContext);
-				result[cmd.id] = {
-					prompt: `# ${cmd.id}\n\nPrompt not available.`,
-					description: cmd.description,
-					isCustom: cmd.isCustom,
-				};
-			}
+		for (const command of commands) {
+			const prompt = await (loadPrompt ?? loadDefaultPrompt)(command, paths);
+			result[command.id] = {
+				prompt: prompt ?? `# ${command.id}\n\nPrompt not available.`,
+				description: command.description,
+				isCustom: command.isCustom,
+			};
 		}
 
 		return result;
 	}
 
+	async function loadDefaultMetadata(
+		paths: SpecCommandStoragePaths,
+		fallback: SpecMetadata
+	): Promise<SpecMetadata> {
+		try {
+			const content = await fs.readFile(path.join(paths.userPromptsDir, 'metadata.json'), 'utf-8');
+			return JSON.parse(content);
+		} catch (error: unknown) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		}
+
+		try {
+			const content = await fs.readFile(
+				path.join(paths.bundledPromptsDir, 'metadata.json'),
+				'utf-8'
+			);
+			return JSON.parse(content);
+		} catch (error: unknown) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			return { ...fallback };
+		}
+	}
+
 	async function getBundledMetadata(): Promise<SpecMetadata> {
-		const bundledPromptsDir = getBundledPromptsPath();
-		const userPromptsDir = getUserPromptsPath();
-
-		// Check user prompts directory first (downloaded updates)
-		try {
-			const userMetadataPath = path.join(userPromptsDir, 'metadata.json');
-			const content = await fs.readFile(userMetadataPath, 'utf-8');
-			return JSON.parse(content);
-		} catch (error: unknown) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			// User metadata not found, try bundled
-		}
-
-		// Fall back to bundled metadata
-		try {
-			const metadataPath = path.join(bundledPromptsDir, 'metadata.json');
-			const content = await fs.readFile(metadataPath, 'utf-8');
-			return JSON.parse(content);
-		} catch (error: unknown) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			return { ...defaultMetadata };
-		}
+		const paths = getStoragePaths();
+		return (loadMetadata ?? loadDefaultMetadata)(paths, defaultMetadata);
 	}
 
 	async function getMetadata(): Promise<SpecMetadata> {
@@ -237,68 +270,130 @@ export function createSpecCommandManager(config: SpecCommandManagerConfig): Spec
 		const bundled = await getBundledPrompts();
 		const customizations = await loadUserCustomizations();
 
-		const result: SpecCommand[] = [];
-
-		for (const [id, data] of Object.entries(bundled)) {
+		return Object.entries(bundled).map(([id, data]) => {
 			const customPrompt = customizations?.prompts?.[id];
 			const isModified = customPrompt?.isModified ?? false;
-			const prompt = isModified && customPrompt ? customPrompt.content : data.prompt;
-
-			result.push({
+			return {
 				id,
-				command: `/${filePrefix}.${id}`,
+				command: commandForDefinition(commands.find((command) => command.id === id)!),
 				description: data.description,
-				prompt,
+				prompt: isModified && customPrompt ? customPrompt.content : data.prompt,
 				isCustom: data.isCustom,
 				isModified,
-			});
-		}
-
-		return result;
+			};
+		});
 	}
 
 	async function savePrompt(id: string, content: string): Promise<void> {
-		const customizations = (await loadUserCustomizations()) ?? {
-			metadata: await getBundledMetadata(),
-			prompts: {},
-		};
-
-		customizations.prompts[id] = {
-			content,
-			isModified: true,
-			modifiedAt: new Date().toISOString(),
-		};
-
-		await saveUserCustomizations(customizations);
-		logger.info(`Saved customization for ${filePrefix}.${id}`, logContext);
+		return withCustomizationLock(async () => {
+			const customizations = (await loadUserCustomizations()) ?? {
+				metadata: await getBundledMetadata(),
+				prompts: {},
+			};
+			customizations.prompts[id] = {
+				content,
+				isModified: true,
+				modifiedAt: new Date().toISOString(),
+			};
+			await saveUserCustomizations(customizations);
+			logger.info(`Saved customization for ${filePrefix}.${id}`, logContext);
+		});
 	}
 
 	async function resetPrompt(id: string): Promise<string> {
-		const bundled = await getBundledPrompts();
-		const defaultPrompt = bundled[id];
+		return withCustomizationLock(async () => {
+			const bundled = await getBundledPrompts();
+			const defaultPrompt = bundled[id];
+			if (!defaultPrompt) {
+				throw new Error(`Unknown ${filePrefix} command: ${id}`);
+			}
 
-		if (!defaultPrompt) {
-			throw new Error(`Unknown ${filePrefix} command: ${id}`);
-		}
-
-		const customizations = await loadUserCustomizations();
-		if (customizations?.prompts?.[id]) {
-			delete customizations.prompts[id];
-			await saveUserCustomizations(customizations);
-			logger.info(`Reset ${filePrefix}.${id} to bundled default`, logContext);
-		}
-
-		return defaultPrompt.prompt;
+			const customizations = await loadUserCustomizations();
+			if (customizations?.prompts?.[id]) {
+				delete customizations.prompts[id];
+				await saveUserCustomizations(customizations);
+				logger.info(`Reset ${filePrefix}.${id} to bundled default`, logContext);
+			}
+			return defaultPrompt.prompt;
+		});
 	}
 
 	async function getCommand(id: string): Promise<SpecCommand | null> {
 		const all = await getPrompts();
-		return all.find((cmd) => cmd.id === id) ?? null;
+		return all.find((command) => command.id === id) ?? null;
 	}
 
 	async function getCommandBySlash(slashCommand: string): Promise<SpecCommand | null> {
 		const all = await getPrompts();
-		return all.find((cmd) => cmd.command === slashCommand) ?? null;
+		return all.find((command) => command.command === slashCommand) ?? null;
+	}
+
+	async function snapshot(pathname: string): Promise<Buffer | null> {
+		try {
+			return await fs.readFile(pathname);
+		} catch (error: unknown) {
+			if (
+				(error as NodeJS.ErrnoException).code === 'ENOENT' ||
+				(error instanceof Error && /ENOENT/.test(error.message))
+			) {
+				return null;
+			}
+			throw error;
+		}
+	}
+
+	async function commitRefresh(
+		prompts: readonly RefreshedSpecPrompt[],
+		metadata: SpecMetadata
+	): Promise<void> {
+		const paths = getStoragePaths();
+		const knownIds = new Set(commands.map((command) => command.id));
+		if (
+			prompts.some((prompt) => !knownIds.has(prompt.id)) ||
+			new Set(prompts.map((prompt) => prompt.id)).size !== prompts.length
+		) {
+			throw new Error(`Invalid ${filePrefix} refresh prompt set`);
+		}
+
+		const refreshPaths = [
+			...prompts.map((prompt) => path.join(paths.userPromptsDir, `${filePrefix}.${prompt.id}.md`)),
+			path.join(paths.userPromptsDir, 'metadata.json'),
+			paths.customizationsPath,
+		];
+		const previous = await Promise.all(
+			refreshPaths.map(async (pathname) => [pathname, await snapshot(pathname)] as const)
+		);
+
+		try {
+			await fs.mkdir(paths.userPromptsDir, { recursive: true });
+			for (const prompt of prompts) {
+				await fs.writeFile(
+					path.join(paths.userPromptsDir, `${filePrefix}.${prompt.id}.md`),
+					prompt.content,
+					'utf-8'
+				);
+			}
+			await fs.writeFile(
+				path.join(paths.userPromptsDir, 'metadata.json'),
+				JSON.stringify(metadata, null, 2),
+				'utf-8'
+			);
+
+			const customizations = (await loadUserCustomizations()) ?? { metadata, prompts: {} };
+			customizations.metadata = metadata;
+			await saveUserCustomizations(customizations);
+		} catch (error) {
+			await Promise.all(
+				previous.map(async ([pathname, content]) => {
+					if (content === null) {
+						await fs.rm(pathname, { force: true });
+						return;
+					}
+					await fs.writeFile(pathname, content);
+				})
+			);
+			throw error;
+		}
 	}
 
 	return {
@@ -312,5 +407,7 @@ export function createSpecCommandManager(config: SpecCommandManagerConfig): Spec
 		loadUserCustomizations,
 		saveUserCustomizations,
 		getBundledMetadata,
+		commitRefresh,
+		runCustomizationMutation: withCustomizationLock,
 	};
 }

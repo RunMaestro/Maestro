@@ -17,6 +17,7 @@ import { WizardMessageBubble, type WizardMessageBubbleMessage } from './WizardMe
 import { getNextFillerPhrase } from '../Wizard/services/fillerPhrases';
 import { TypingIndicator } from '../Wizard/shared/TypingIndicator';
 import { formatAgentName, getToolDetail } from '../Wizard/shared/wizardHelpers';
+import { useAutoScrollToBottom } from '../../hooks/ui/useAutoScrollToBottom';
 
 /**
  * Ready confidence threshold for "Let's Go" button (matches READY_CONFIDENCE_THRESHOLD)
@@ -424,83 +425,31 @@ export function WizardConversationView({
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const [fillerPhrase, setFillerPhrase] = useState(() => getNextFillerPhrase());
 
-	// Track whether user has scrolled away from the bottom.
-	// When true, we suppress auto-scroll so the user can read history.
-	const userScrolledUpRef = useRef(false);
-	// Guard to distinguish programmatic scrolls from user scrolls
-	const isProgrammaticScrollRef = useRef(false);
+	const { forceScrollToBottom, handleScroll } = useAutoScrollToBottom({
+		containerRef,
+		contentDependencies: [
+			conversationHistory,
+			isLoading,
+			streamingText,
+			thinkingContent,
+			toolExecutions,
+			error,
+		],
+		bottomThreshold: 80,
+	});
 
-	// Detect user scroll to decide whether to auto-scroll
-	useEffect(() => {
-		const container = containerRef.current;
-		if (!container) return;
-
-		const handleScroll = () => {
-			// Ignore programmatic scrolls
-			if (isProgrammaticScrollRef.current) return;
-
-			const { scrollTop, scrollHeight, clientHeight } = container;
-			// Consider "near bottom" if within 80px of the bottom
-			const isNearBottom = scrollHeight - scrollTop - clientHeight < 80;
-			userScrolledUpRef.current = !isNearBottom;
-		};
-
-		container.addEventListener('scroll', handleScroll, { passive: true });
-		return () => container.removeEventListener('scroll', handleScroll);
-	}, []);
-
-	// Auto-scroll to bottom on new messages or when loading state changes,
-	// but only if the user hasn't scrolled up to read history.
-	const scrollToBottom = useCallback(() => {
-		if (userScrolledUpRef.current) return;
-		const container = containerRef.current;
-		if (!container) return;
-
-		isProgrammaticScrollRef.current = true;
-		container.scrollTo({
-			top: container.scrollHeight,
-			behavior: 'auto',
-		});
-		// Reset guard after browser paints
-		requestAnimationFrame(() => {
-			isProgrammaticScrollRef.current = false;
-		});
-	}, []);
-
-	useEffect(() => {
-		scrollToBottom();
-	}, [
-		conversationHistory,
-		isLoading,
-		streamingText,
-		thinkingContent,
-		toolExecutions,
-		error,
-		scrollToBottom,
-	]);
-
-	// Always scroll to bottom when a new user message is added (they just sent it)
+	// A newly submitted user message intentionally resumes the conversation.
 	const prevHistoryLenRef = useRef(conversationHistory.length);
 	useEffect(() => {
-		const prevLen = prevHistoryLenRef.current;
+		const previousLength = prevHistoryLenRef.current;
 		prevHistoryLenRef.current = conversationHistory.length;
-
-		if (conversationHistory.length > prevLen) {
-			const lastMsg = conversationHistory[conversationHistory.length - 1];
-			if (lastMsg?.role === 'user') {
-				// User just sent a message - scroll to bottom regardless of scroll position
-				userScrolledUpRef.current = false;
-				const container = containerRef.current;
-				if (container) {
-					isProgrammaticScrollRef.current = true;
-					container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-					requestAnimationFrame(() => {
-						isProgrammaticScrollRef.current = false;
-					});
-				}
-			}
+		if (
+			conversationHistory.length > previousLength &&
+			conversationHistory[conversationHistory.length - 1]?.role === 'user'
+		) {
+			forceScrollToBottom();
 		}
-	}, [conversationHistory]);
+	}, [conversationHistory, forceScrollToBottom]);
 
 	// Get a new filler phrase when requested by the TypingIndicator
 	const handleRequestNewPhrase = useCallback(() => {
@@ -517,6 +466,7 @@ export function WizardConversationView({
 	return (
 		<div
 			ref={containerRef}
+			onScroll={handleScroll}
 			className={`flex-1 min-h-0 overflow-y-auto px-6 py-4 ${className}`}
 			style={{ backgroundColor: theme.colors.bgMain }}
 			data-testid="wizard-conversation-view"

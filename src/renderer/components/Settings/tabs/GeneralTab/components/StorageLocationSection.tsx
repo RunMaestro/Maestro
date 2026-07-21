@@ -1,6 +1,7 @@
 import { Check, Cloud, ExternalLink, Folder, FolderSync, RotateCcw, X } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { getOpenInLabel } from '../../../../../utils/platformUtils';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import type { SyncStorageState } from '../types';
 
 interface StorageLocationSectionProps {
@@ -23,10 +24,7 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 
 	return (
 		<div data-setting-id="general-storage">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<FolderSync className="w-3 h-3" />
-				Storage Location
-			</div>
+			<SettingsSectionHeading icon={FolderSync}>Storage Location</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}

@@ -437,6 +437,6 @@ Any search or filter input that is dismissible via Escape **must** display an in
 3. The pill is a `<button>` (focusable, click-dismissible), not decorative text.
 4. For inputs inside modals registered with the LayerStack, the pill still belongs - Escape closes the layer, the pill mirrors that.
 
-**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `AgentSessionsModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
+**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
 
 When adding any new search/filter input, include the ESC pill from the start.

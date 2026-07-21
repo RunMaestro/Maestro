@@ -16,7 +16,7 @@ import {
 	requireProcessManager,
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
-import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { createSshRemoteStoreAdapter, resolveSshSpawn } from '../../utils/ssh-remote-resolver';
 import { shellEscape } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -370,15 +370,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// SSH remote support for terminal tabs
 				if (config.sessionSshRemoteConfig?.enabled) {
-					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+					const sshResolution = resolveSshSpawn(createSshRemoteStoreAdapter(settingsStore), {
 						sessionSshConfig: config.sessionSshRemoteConfig,
 					});
-					if (sshResult.config) {
+					if (sshResolution.mode === 'remote') {
+						const sshRemote = sshResolution.remote;
 						logger.info(`Terminal tab will connect via SSH`, LOG_CONTEXT, {
 							sessionId: config.sessionId,
-							remoteName: sshResult.config.name,
-							remoteHost: sshResult.config.host,
+							remoteName: sshRemote.name,
+							remoteHost: sshRemote.host,
 							hasWorkingDirOverride: !!config.sessionSshRemoteConfig.workingDirOverride,
 						});
 						// For SSH terminal tabs we spawn ssh interactively so xterm.js can interact
@@ -389,11 +389,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						sshArgs.push('-o', 'ConnectTimeout=10');
 						sshArgs.push('-o', 'ClearAllForwardings=yes');
 
-						if (sshResult.config.privateKeyPath) {
-							sshArgs.push('-i', sshResult.config.privateKeyPath);
+						if (sshRemote.privateKeyPath) {
+							sshArgs.push('-i', sshRemote.privateKeyPath);
 						}
-						if (sshResult.config.port && sshResult.config.port !== 22) {
-							sshArgs.push('-p', String(sshResult.config.port));
+						if (sshRemote.port && sshRemote.port !== 22) {
+							sshArgs.push('-p', String(sshRemote.port));
 						}
 
 						// -t forces PTY allocation, required for interactive SSH terminals
@@ -404,9 +404,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Destination: user@host or just host
 						sshArgs.push(
-							sshResult.config.username
-								? `${sshResult.config.username}@${sshResult.config.host}`
-								: sshResult.config.host
+							sshRemote.username ? `${sshRemote.username}@${sshRemote.host}` : sshRemote.host
 						);
 
 						// Build remote command parts
@@ -512,18 +510,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let sshRemoteConfig: SshRemoteConfig | null = null;
 
 				if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
-					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+					const sshResolution = resolveSshSpawn(createSshRemoteStoreAdapter(settingsStore), {
 						sessionSshConfig: config.sessionSshRemoteConfig,
 					});
 
-					if (sshResult.config) {
-						sshRemoteConfig = sshResult.config;
+					if (sshResolution.mode === 'remote') {
+						sshRemoteConfig = sshResolution.remote;
 						logger.info(`Terminal command will execute via SSH`, LOG_CONTEXT, {
 							sessionId: config.sessionId,
-							remoteName: sshResult.config.name,
-							remoteHost: sshResult.config.host,
-							source: sshResult.source,
+							remoteName: sshRemoteConfig.name,
+							remoteHost: sshRemoteConfig.host,
+							source: sshResolution.source,
 						});
 					}
 				}

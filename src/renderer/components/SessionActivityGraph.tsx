@@ -2,24 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-
-// Lookback period options for the activity graph
-export type LookbackPeriod = {
-	label: string;
-	hours: number | null; // null = all time
-	bucketCount: number;
-};
-
-export const LOOKBACK_OPTIONS: LookbackPeriod[] = [
-	{ label: '24 hours', hours: 24, bucketCount: 24 },
-	{ label: '72 hours', hours: 72, bucketCount: 24 },
-	{ label: '1 week', hours: 168, bucketCount: 28 },
-	{ label: '2 weeks', hours: 336, bucketCount: 28 },
-	{ label: '1 month', hours: 720, bucketCount: 30 },
-	{ label: '6 months', hours: 4320, bucketCount: 24 },
-	{ label: '1 year', hours: 8760, bucketCount: 24 },
-	{ label: 'All time', hours: null, bucketCount: 24 },
-];
+import { LOOKBACK_OPTIONS } from './History/historyConstants';
+import type { LookbackHours } from './History/lookbackOptions';
+import { buildActivityGraphAxisLabels } from './History/activityGraphAxis';
 
 // Generic entry type - just needs timestamp
 export interface ActivityEntry {
@@ -30,8 +15,8 @@ interface SessionActivityGraphProps {
 	entries: ActivityEntry[];
 	theme: Theme;
 	onBarClick?: (bucketStartTime: number, bucketEndTime: number) => void;
-	lookbackHours: number | null; // null = all time
-	onLookbackChange: (hours: number | null) => void;
+	lookbackHours: LookbackHours;
+	onLookbackChange: (hours: LookbackHours) => void;
 	className?: string;
 }
 
@@ -183,45 +168,14 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 	}, [contextMenu]);
 
 	// Generate labels for the x-axis
-	const getAxisLabels = () => {
-		if (lookbackHours === null) {
-			// All time - show start and end dates
-			return [
-				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
-					index: 0,
-				},
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		} else if (lookbackHours <= 24) {
-			return [
-				{ label: `${lookbackHours}h`, index: 0 },
-				{ label: `${Math.floor((lookbackHours * 2) / 3)}h`, index: Math.floor(bucketCount / 3) },
-				{ label: `${Math.floor(lookbackHours / 3)}h`, index: Math.floor((bucketCount * 2) / 3) },
-				{ label: '0h', index: bucketCount - 1 },
-			];
-		} else if (lookbackHours <= 168) {
-			// Up to 1 week - show days
-			const days = Math.floor(lookbackHours / 24);
-			return [
-				{ label: `${days}d`, index: 0 },
-				{ label: `${Math.floor(days / 2)}d`, index: Math.floor(bucketCount / 2) },
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		} else {
-			// Longer periods - show start/end
-			const startLabel = new Date(startTime).toLocaleDateString([], {
-				month: 'short',
-				day: 'numeric',
-			});
-			return [
-				{ label: startLabel, index: 0 },
-				{ label: 'Now', index: bucketCount - 1 },
-			];
-		}
-	};
-
-	const axisLabels = getAxisLabels();
+	const axisLabels = buildActivityGraphAxisLabels({
+		range: { start: startTime, end: endTime },
+		bucketCount,
+		lookbackHours,
+		timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+		formatDate: (date, timeZone) =>
+			date.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone }),
+	});
 
 	return (
 		<div

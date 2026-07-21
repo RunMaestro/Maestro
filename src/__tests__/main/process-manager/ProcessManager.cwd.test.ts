@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess, SpawnOptionsWithoutStdio } from 'child_process';
 
@@ -30,6 +31,7 @@ vi.mock('../../../main/utils/logger', () => ({
 
 vi.mock('../../../shared/platformDetection', () => ({
 	isWindows: () => false,
+	isMacOS: () => false,
 }));
 
 vi.mock('../../../main/coworking/coworking-socket-path', () => ({
@@ -98,7 +100,7 @@ describe('ProcessManager cwd tilde expansion', () => {
 	it('expands a leading ~/ cwd before spawning a PTY process', () => {
 		const pm = new ProcessManager();
 		const cwd = '~/Documents/x';
-		const expandedCwd = `${os.homedir()}/Documents/x`;
+		const expandedCwd = path.join(os.homedir(), 'Documents', 'x');
 
 		const result = spawnTerminal(pm, cwd, 'pty-leading-tilde');
 
@@ -132,7 +134,7 @@ describe('ProcessManager cwd tilde expansion', () => {
 	it('records the expanded cwd on the tracked managed process', () => {
 		const pm = new ProcessManager();
 		const sessionId = 'tracked-expanded-cwd';
-		const expandedCwd = `${os.homedir()}/Documents/x`;
+		const expandedCwd = path.join(os.homedir(), 'Documents', 'x');
 
 		spawnTerminal(pm, '~/Documents/x', sessionId);
 
@@ -141,7 +143,7 @@ describe('ProcessManager cwd tilde expansion', () => {
 
 	it('expands cwd before the non-PTY child_process spawn path receives it', () => {
 		const pm = new ProcessManager();
-		const expandedCwd = `${os.homedir()}/Documents/x`;
+		const expandedCwd = path.join(os.homedir(), 'Documents', 'x');
 
 		const result = pm.spawn({
 			sessionId: 'child-expanded-cwd',

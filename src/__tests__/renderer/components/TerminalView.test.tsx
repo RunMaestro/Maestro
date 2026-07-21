@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalView } from '../../../renderer/components/TerminalView';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { Theme } from '../../../renderer/types';
+import { installCoarsePointerMatchMedia } from '../../helpers/coarsePointerMatchMedia';
 
 // ---------------------------------------------------------------------------
 // Mock XTerminal - the real component requires canvas/WebGL which jsdom lacks.
@@ -776,33 +777,16 @@ describe('TerminalView - no refresh when no tabs', () => {
 });
 
 describe('TerminalView - touch key bar (coarse pointer)', () => {
-	const originalMatchMedia = window.matchMedia;
+	let restoreCoarsePointerMatchMedia: (() => void) | undefined;
 
-	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so
-	// the touch-only key bar renders. jsdom's default mock returns matches:false.
 	function setCoarsePointer(coarse: boolean) {
-		Object.defineProperty(window, 'matchMedia', {
-			writable: true,
-			configurable: true,
-			value: (query: string) => ({
-				matches: coarse,
-				media: query,
-				onchange: null,
-				addEventListener: vi.fn(),
-				removeEventListener: vi.fn(),
-				addListener: vi.fn(),
-				removeListener: vi.fn(),
-				dispatchEvent: vi.fn(),
-			}),
-		});
+		restoreCoarsePointerMatchMedia?.();
+		restoreCoarsePointerMatchMedia = installCoarsePointerMatchMedia(coarse);
 	}
 
 	afterEach(() => {
-		Object.defineProperty(window, 'matchMedia', {
-			writable: true,
-			configurable: true,
-			value: originalMatchMedia,
-		});
+		restoreCoarsePointerMatchMedia?.();
+		restoreCoarsePointerMatchMedia = undefined;
 	});
 
 	it('does not render the key bar on a fine (mouse) pointer', () => {

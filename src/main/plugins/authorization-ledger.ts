@@ -312,6 +312,21 @@ export class AuthorizationStore {
 	}
 
 	/**
+	 * Commit one authoritative removal. The caller owns its precondition; this
+	 * mutation owns the epoch, entry removal, tombstone replacement and atomic
+	 * persistence together so revoke and uninstall cannot drift. Replacing an
+	 * existing tombstone puts the current authoritative removal last in the audit
+	 * order.
+	 */
+	private upsertTombstone(pluginId: string): void {
+		this.bump();
+		delete this.ledger.entries[pluginId];
+		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
+		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
+		this.persist();
+	}
+
+	/**
 	 * Mint an authorization for one plugin: enable it with EXACTLY the approved
 	 * capability set, bound to the plugin's identity (content digest + signature/
 	 * trust). The ONLY path that creates trust; callers (the consent IPC handler)
@@ -336,11 +351,7 @@ export class AuthorizationStore {
 	revoke(pluginId: string): void {
 		this.ensureLoaded();
 		if (!this.ledger.entries[pluginId]) return;
-		this.bump();
-		delete this.ledger.entries[pluginId];
-		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
-		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
-		this.persist();
+		this.upsertTombstone(pluginId);
 	}
 
 	/** Uninstall: an AUTHORITATIVE user removal. Always records a tombstone at a
@@ -352,11 +363,7 @@ export class AuthorizationStore {
 		const hadEntry = !!this.ledger.entries[pluginId];
 		const alreadyTombstoned = this.ledger.tombstones.some((t) => t.pluginId === pluginId);
 		if (!hadEntry && alreadyTombstoned) return; // already authoritatively removed
-		this.bump();
-		delete this.ledger.entries[pluginId];
-		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
-		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
-		this.persist();
+		this.upsertTombstone(pluginId);
 	}
 
 	/** The granted capabilities for a plugin - the broker's live source of truth.

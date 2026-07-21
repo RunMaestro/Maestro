@@ -11,13 +11,13 @@
  */
 
 import type { HistoryEntry } from '../../shared/types';
-import type { CachedGraphBucket } from './history-bucket-cache';
+import type { GraphBucket } from '../../shared/history';
 
 /** Synthetic key for entries that have no `hostname` field (i.e. local). */
 export const LOCAL_HOST_AGG_KEY = '__local__';
 
 export interface BucketAggregateResult {
-	buckets: CachedGraphBucket[];
+	buckets: GraphBucket[];
 	earliestTimestamp: number;
 	latestTimestamp: number;
 	totalCount: number;
@@ -117,7 +117,7 @@ export function buildBucketAggregate(
 	const span = Math.max(rangeEnd - rangeStart, 1);
 	const msPerBucket = span / safeBucketCount;
 
-	const buckets: CachedGraphBucket[] = Array.from({ length: safeBucketCount }, () => ({
+	const buckets: GraphBucket[] = Array.from({ length: safeBucketCount }, () => ({
 		auto: 0,
 		user: 0,
 		cue: 0,

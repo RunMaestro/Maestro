@@ -58,6 +58,15 @@ vi.mock('../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
+// Mock fork setup so workflow tests remain focused on handler orchestration.
+vi.mock('../../main/utils/symphony-fork', () => ({
+	ensureForkSetup: vi.fn(),
+}));
+
+vi.mock('../../main/utils/cliDetection', () => ({
+	resolveGhPath: vi.fn(),
+}));
+
 // Mock logger (not an external service, but avoid console noise)
 vi.mock('../../main/utils/logger', () => ({
 	logger: {
@@ -74,6 +83,8 @@ global.fetch = mockFetch;
 
 // Import mocked functions
 import { execFileNoThrow } from '../../main/utils/execFile';
+import { ensureForkSetup } from '../../main/utils/symphony-fork';
+import { resolveGhPath } from '../../main/utils/cliDetection';
 
 // ============================================================================
 // Test Utilities
@@ -164,6 +175,8 @@ function createGitHubIssueResponse(
 	}));
 }
 
+let storedSessions: Array<{ id: string }> = [];
+
 /**
  * Helper to invoke a registered IPC handler.
  */
@@ -175,6 +188,19 @@ async function invokeHandler(
 	const handler = handlers.get(channel);
 	if (!handler) {
 		throw new Error(`No handler registered for channel: ${channel}`);
+	}
+	// Registering an active contribution follows session creation in production.
+	// Model that prerequisite so reads exercise the non-orphaned state contract.
+	const [params] = args;
+	if (
+		channel === 'symphony:registerActive' &&
+		params &&
+		typeof params === 'object' &&
+		'sessionId' in params &&
+		typeof params.sessionId === 'string' &&
+		!storedSessions.some((session) => session.id === params.sessionId)
+	) {
+		storedSessions.push({ id: params.sessionId });
 	}
 	// IPC handlers receive (event, ...args) but our handlers unwrap the args
 	return await handler({}, ...args);
@@ -204,6 +230,7 @@ describe('Symphony Integration Tests', () => {
 
 		// Create a fresh temp directory for each test to ensure isolation
 		testTempDir = await createTempDir();
+		storedSessions = [];
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -224,10 +251,16 @@ describe('Symphony Integration Tests', () => {
 			},
 		} as unknown as BrowserWindow;
 
-		// Setup mock sessions store (returns empty by default - no sessions)
+		// Setup mock sessions store. Handler reads are backed by this mutable
+		// collection so each test can model the live session lifecycle.
 		const mockSessionsStore = {
-			get: vi.fn().mockReturnValue([]),
+			get: vi.fn((key: string, defaultValue: unknown) =>
+				key === 'sessions' ? storedSessions : defaultValue
+			),
 			set: vi.fn(),
+		};
+		const mockSettingsStore = {
+			get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
 		};
 
 		// Setup dependencies
@@ -235,7 +268,10 @@ describe('Symphony Integration Tests', () => {
 			app: mockApp,
 			getMainWindow: () => mockMainWindow,
 			sessionsStore: mockSessionsStore as any,
+			settingsStore: mockSettingsStore as any,
 		};
+		vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false });
+		vi.mocked(resolveGhPath).mockResolvedValue('gh');
 
 		// Default fetch mock (successful responses)
 		mockFetch.mockImplementation(async (url: string) => {
@@ -265,6 +301,10 @@ describe('Symphony Integration Tests', () => {
 			// gh auth status - authenticated
 			if (cmd === 'gh' && args?.[0] === 'auth' && args?.[1] === 'status') {
 				return { stdout: 'Logged in to github.com', stderr: '', exitCode: 0 };
+			}
+			// Fork setup confirms the authenticated user owns this fixture repository.
+			if (cmd === 'gh' && args?.[0] === 'api' && args?.[1] === 'user') {
+				return { stdout: 'test-owner', stderr: '', exitCode: 0 };
 			}
 			// git clone
 			if (cmd === 'git' && args?.[0] === 'clone') {
@@ -553,6 +593,9 @@ describe('Symphony Integration Tests', () => {
 					agentType: 'claude-code',
 				});
 			}
+			storedSessions = contributions.map((contributionId) => ({
+				id: `session-${contributionId}`,
+			}));
 
 			// Verify all contributions are tracked
 			const activeResult = (await invokeHandler(handlers, 'symphony:getActive')) as {
@@ -598,6 +641,7 @@ describe('Symphony Integration Tests', () => {
 				documentPaths: ['docs/task.md'],
 				agentType: 'claude-code',
 			});
+			storedSessions = [{ id: 'session-recovery' }];
 
 			// Simulate app restart by re-registering handlers (new handler instance)
 			handlers.clear();
@@ -634,6 +678,7 @@ describe('Symphony Integration Tests', () => {
 				documentPaths: [],
 				agentType: 'claude-code',
 			});
+			storedSessions = [{ id: 'session-1' }];
 
 			// Re-register handlers (simulates module reload)
 			handlers.clear();
@@ -1639,14 +1684,13 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 		});
 
 		it('should handle streak calculation across year boundary', async () => {
-			// Test streak that spans December 31 -> January 1
+			// Streaks are tracked by ISO week. Seed the last contribution in
+			// 2025-W1, which begins across the 2024/2025 year boundary.
 			const state = (await invokeHandler(handlers, 'symphony:getState')) as {
 				state: SymphonyState;
 			};
 
-			// Set last contribution to December 31, 2024
-			const dec31 = new Date('2024-12-31T23:59:59Z');
-			state.state.stats.lastContributionDate = dec31.toDateString();
+			state.state.stats.lastContributionDate = '2025-W1';
 			state.state.stats.currentStreak = 5;
 			state.state.stats.longestStreak = 5;
 			state.state.stats.totalContributions = 5;
@@ -1709,19 +1753,19 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				draftPrUrl: 'https://github.com/owner/year-repo/pull/42',
 			});
 
-			// Mock the date to be January 1, 2025 (one day after Dec 31)
+			// Complete in the following ISO week.
 			const originalDate = global.Date;
 			const mockDate = class extends Date {
 				constructor(...args: Parameters<typeof Date>) {
 					if (args.length === 0) {
-						super('2025-01-01T12:00:00Z');
+						super('2025-01-06T12:00:00Z');
 					} else {
 						// @ts-expect-error - spread args
 						super(...args);
 					}
 				}
 				static now() {
-					return new Date('2025-01-01T12:00:00Z').getTime();
+					return new Date('2025-01-06T12:00:00Z').getTime();
 				}
 			};
 			// @ts-expect-error - mock Date
@@ -1748,7 +1792,7 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 					state: SymphonyState;
 				};
 
-				// Streak should have increased since Jan 1 is the day after Dec 31
+				// The next ISO week extends the streak across the year boundary.
 				expect(finalState.state.stats.currentStreak).toBe(6);
 				expect(finalState.state.stats.longestStreak).toBe(6);
 			} finally {
@@ -1762,9 +1806,9 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				state: SymphonyState;
 			};
 
-			// Last contribution was "today" according to local time
-			const today = new Date();
-			state.state.stats.lastContributionDate = today.toDateString();
+			// The previous contribution is in the same ISO week as the fixed
+			// completion timestamp below.
+			state.state.stats.lastContributionDate = '2025-W1';
 			state.state.stats.currentStreak = 3;
 			state.state.stats.longestStreak = 10;
 
@@ -1818,28 +1862,46 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 				draftPrUrl: 'https://github.com/owner/tz-repo/pull/99',
 			});
 
-			// Complete on the same day - streak should stay the same (not increment)
-			await invokeHandler(handlers, 'symphony:complete', {
-				contributionId: 'tz_contrib',
-				stats: {
-					inputTokens: 500,
-					outputTokens: 250,
-					estimatedCost: 0.02,
-					timeSpentMs: 30000,
-					documentsProcessed: 1,
-					tasksCompleted: 2,
-				},
-			});
-
-			const finalState = (await invokeHandler(handlers, 'symphony:getState')) as {
-				state: SymphonyState;
+			const originalDate = global.Date;
+			const mockDate = class extends Date {
+				constructor(...args: Parameters<typeof Date>) {
+					if (args.length === 0) {
+						super('2025-01-01T00:30:00Z');
+					} else {
+						// @ts-expect-error - spread args
+						super(...args);
+					}
+				}
+				static now() {
+					return new Date('2025-01-01T00:30:00Z').getTime();
+				}
 			};
+			// @ts-expect-error - mock Date
+			global.Date = mockDate;
 
-			// Same day contribution should increment streak (behavior: today or yesterday counts)
-			// The implementation checks: if lastDate === yesterday || lastDate === today, increment
-			expect(finalState.state.stats.currentStreak).toBe(4);
-			// Longest streak should not change since current < longest
-			expect(finalState.state.stats.longestStreak).toBe(10);
+			try {
+				// A second completion in the same ISO week keeps the streak stable.
+				await invokeHandler(handlers, 'symphony:complete', {
+					contributionId: 'tz_contrib',
+					stats: {
+						inputTokens: 500,
+						outputTokens: 250,
+						estimatedCost: 0.02,
+						timeSpentMs: 30000,
+						documentsProcessed: 1,
+						tasksCompleted: 2,
+					},
+				});
+
+				const finalState = (await invokeHandler(handlers, 'symphony:getState')) as {
+					state: SymphonyState;
+				};
+
+				expect(finalState.state.stats.currentStreak).toBe(3);
+				expect(finalState.state.stats.longestStreak).toBe(10);
+			} finally {
+				global.Date = originalDate;
+			}
 		});
 
 		it('should handle concurrent state updates without file corruption', async () => {

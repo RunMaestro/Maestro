@@ -23,6 +23,12 @@ import { getExpandedEnv } from '../../agents/path-prober';
 import { resolveGhPath } from '../../utils/cliDetection';
 import { ensureForkSetup } from '../../utils/symphony-fork';
 import {
+	validateDocumentReferences,
+	validateGitHubUrl,
+	validateRepoSlug,
+} from './symphony-document-validation';
+import { buildSymphonyGitHubHeaders } from './symphony-github-headers';
+import {
 	SYMPHONY_REGISTRY_URL,
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
@@ -81,55 +87,6 @@ function sanitizeRepoName(repoName: string): string {
 }
 
 /**
- * Validate that a URL is a GitHub repository URL.
- * Only allows HTTPS URLs to github.com.
- */
-function validateGitHubUrl(url: string): { valid: boolean; error?: string } {
-	try {
-		const parsed = new URL(url);
-		if (parsed.protocol !== 'https:') {
-			return { valid: false, error: 'Only HTTPS URLs are allowed' };
-		}
-		if (parsed.hostname !== 'github.com' && parsed.hostname !== 'www.github.com') {
-			return { valid: false, error: 'Only GitHub repositories are allowed' };
-		}
-		// Check for valid repo path format (owner/repo)
-		const pathParts = parsed.pathname.split('/').filter(Boolean);
-		if (pathParts.length < 2) {
-			return { valid: false, error: 'Invalid repository path' };
-		}
-		return { valid: true };
-	} catch {
-		return { valid: false, error: 'Invalid URL format' };
-	}
-}
-
-/**
- * Validate repository slug format (owner/repo).
- */
-function validateRepoSlug(slug: string): { valid: boolean; error?: string } {
-	if (!slug || typeof slug !== 'string') {
-		return { valid: false, error: 'Repository slug is required' };
-	}
-	const parts = slug.split('/');
-	if (parts.length !== 2) {
-		return { valid: false, error: 'Invalid repository slug format (expected owner/repo)' };
-	}
-	const [owner, repo] = parts;
-	if (!owner || !repo) {
-		return { valid: false, error: 'Owner and repository name are required' };
-	}
-	// GitHub username/repo name rules
-	if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(owner)) {
-		return { valid: false, error: 'Invalid owner name' };
-	}
-	if (!/^[a-zA-Z0-9._-]+$/.test(repo)) {
-		return { valid: false, error: 'Invalid repository name' };
-	}
-	return { valid: true };
-}
-
-/**
  * Validate contribution start parameters.
  */
 function validateContributionParams(params: {
@@ -139,13 +96,12 @@ function validateContributionParams(params: {
 	issueNumber: number;
 	documentPaths: DocumentReference[];
 }): { valid: boolean; error?: string } {
-	// Validate repo slug
+	// Validate repository identity
 	const slugValidation = validateRepoSlug(params.repoSlug);
 	if (!slugValidation.valid) {
 		return slugValidation;
 	}
 
-	// Validate URL
 	const urlValidation = validateGitHubUrl(params.repoUrl);
 	if (!urlValidation.valid) {
 		return urlValidation;
@@ -161,35 +117,9 @@ function validateContributionParams(params: {
 		return { valid: false, error: 'Invalid issue number' };
 	}
 
-	// Validate document paths (check for path traversal in repo-relative paths)
-	for (const doc of params.documentPaths) {
-		if (doc.isExternal) {
-			// Validate external URLs are from trusted domains (GitHub)
-			try {
-				const parsed = new URL(doc.path);
-				if (parsed.protocol !== 'https:') {
-					return { valid: false, error: `External document URL must use HTTPS: ${doc.path}` };
-				}
-				// Allow GitHub domains for external documents (attachments, raw content, etc.)
-				const allowedHosts = [
-					'github.com',
-					'www.github.com',
-					'raw.githubusercontent.com',
-					'user-images.githubusercontent.com',
-					'camo.githubusercontent.com',
-				];
-				if (!allowedHosts.includes(parsed.hostname)) {
-					return { valid: false, error: `External document URL must be from GitHub: ${doc.path}` };
-				}
-			} catch {
-				return { valid: false, error: `Invalid external document URL: ${doc.path}` };
-			}
-		} else {
-			// Check repo-relative paths for path traversal
-			if (doc.path.includes('..') || doc.path.startsWith('/')) {
-				return { valid: false, error: `Invalid document path: ${doc.path}` };
-			}
-		}
+	const documentValidation = validateDocumentReferences(params.documentPaths);
+	if (!documentValidation.valid) {
+		return documentValidation;
 	}
 
 	return { valid: true };
@@ -485,10 +415,7 @@ async function fetchStarCounts(repoSlugs: string[]): Promise<Record<string, numb
 		const results = await Promise.allSettled(
 			batch.map(async (slug) => {
 				const response = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
-					headers: {
-						Accept: 'application/vnd.github.v3+json',
-						'User-Agent': 'Maestro-Symphony',
-					},
+					headers: buildSymphonyGitHubHeaders(),
 				});
 				if (!response.ok) return { slug, stars: 0 };
 				const data = (await response.json()) as { stargazers_count?: number };
@@ -514,10 +441,7 @@ async function fetchIssues(repoSlug: string): Promise<SymphonyIssue[]> {
 	try {
 		const url = `${GITHUB_API_BASE}/repos/${repoSlug}/issues?labels=${encodeURIComponent(SYMPHONY_ISSUE_LABEL)}&state=open`;
 		const response = await fetch(url, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
-			},
+			headers: buildSymphonyGitHubHeaders(),
 		});
 
 		if (!response.ok) {
@@ -592,10 +516,7 @@ async function fetchIssueCounts(repoSlugs: string[]): Promise<Record<string, num
 	while (true) {
 		const url = `${GITHUB_API_BASE}/search/issues?q=${query}&per_page=100&page=${page}`;
 		const response = await fetch(url, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
-			},
+			headers: buildSymphonyGitHubHeaders(),
 		});
 
 		if (!response.ok) {
@@ -635,10 +556,7 @@ async function enrichIssuesWithPRStatus(repoSlug: string, issues: SymphonyIssue[
 		// Fetch open PRs for the repository
 		const prsUrl = `${GITHUB_API_BASE}/repos/${repoSlug}/pulls?state=open&per_page=100`;
 		const response = await fetch(prsUrl, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
-			},
+			headers: buildSymphonyGitHubHeaders(),
 		});
 
 		if (!response.ok) {
@@ -911,10 +829,7 @@ async function discoverPRByBranch(
 		const apiUrl = `${GITHUB_API_BASE}/repos/${repoSlug}/pulls?head=${encodeURIComponent(headRef)}&state=all&per_page=1`;
 
 		const response = await fetch(apiUrl, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
-			},
+			headers: buildSymphonyGitHubHeaders(),
 		});
 
 		if (!response.ok) {
@@ -2084,10 +1999,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 						// Fetch PR status from GitHub API
 						const prUrl = `${GITHUB_API_BASE}/repos/${completed.repoSlug}/pulls/${completed.prNumber}`;
 						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
-							},
+							headers: buildSymphonyGitHubHeaders(),
 						});
 
 						if (!response.ok) {
@@ -2216,10 +2128,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					try {
 						const prUrl = `${GITHUB_API_BASE}/repos/${contribution.repoSlug}/pulls/${contribution.draftPrNumber}`;
 						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
-							},
+							headers: buildSymphonyGitHubHeaders(),
 						});
 
 						if (!response.ok) {
@@ -2426,10 +2335,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					if (contribution.draftPrNumber) {
 						const prUrl = `${GITHUB_API_BASE}/repos/${contribution.repoSlug}/pulls/${contribution.draftPrNumber}`;
 						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
-							},
+							headers: buildSymphonyGitHubHeaders(),
 						});
 
 						if (response.ok) {
@@ -2644,41 +2550,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 					return { success: false, error: 'Invalid issue number' };
 				}
 
-				// Validate document paths
-				for (const doc of documentPaths) {
-					if (doc.isExternal) {
-						// Validate external URLs are from trusted domains (GitHub)
-						try {
-							const parsed = new URL(doc.path);
-							if (parsed.protocol !== 'https:') {
-								return {
-									success: false,
-									error: `External document URL must use HTTPS: ${doc.path}`,
-								};
-							}
-							// Allow GitHub domains for external documents (attachments, raw content, etc.)
-							const allowedHosts = [
-								'github.com',
-								'www.github.com',
-								'raw.githubusercontent.com',
-								'user-images.githubusercontent.com',
-								'camo.githubusercontent.com',
-							];
-							if (!allowedHosts.includes(parsed.hostname)) {
-								return {
-									success: false,
-									error: `External document URL must be from GitHub: ${doc.path}`,
-								};
-							}
-						} catch {
-							return { success: false, error: `Invalid external document URL: ${doc.path}` };
-						}
-					} else {
-						// Check repo-relative paths for path traversal
-						if (doc.path.includes('..') || doc.path.startsWith('/')) {
-							return { success: false, error: `Invalid document path: ${doc.path}` };
-						}
-					}
+				const documentValidation = validateDocumentReferences(documentPaths);
+				if (!documentValidation.valid) {
+					return { success: false, error: documentValidation.error };
 				}
 
 				// Check gh CLI authentication (needed later for PR creation)
@@ -2763,9 +2637,15 @@ This PR will be updated automatically when the Auto Run completes.`;
 								});
 							}
 						} else {
-							// Repo-internal doc - verify it exists and reference in place
-							const resolvedSource = path.resolve(localPath, doc.path);
-							if (!resolvedSource.startsWith(localPath)) {
+							// Repo-internal doc - resolve and retain only real paths contained by the repository.
+							const repositoryRoot = path.resolve(localPath);
+							const resolvedSource = path.resolve(repositoryRoot, doc.path);
+							const relativeSource = path.relative(repositoryRoot, resolvedSource);
+							if (
+								relativeSource === '..' ||
+								relativeSource.startsWith(`..${path.sep}`) ||
+								path.isAbsolute(relativeSource)
+							) {
 								logger.error('Attempted path traversal in document path', LOG_CONTEXT, {
 									docPath: doc.path,
 								});
@@ -2773,11 +2653,26 @@ This PR will be updated automatically when the Auto Run completes.`;
 							}
 							try {
 								await fs.access(resolvedSource);
+								const [realRepositoryRoot, realSource] = await Promise.all([
+									fs.realpath(repositoryRoot),
+									fs.realpath(resolvedSource),
+								]);
+								const relativeRealSource = path.relative(realRepositoryRoot, realSource);
+								if (
+									relativeRealSource === '..' ||
+									relativeRealSource.startsWith(`..${path.sep}`) ||
+									path.isAbsolute(relativeRealSource)
+								) {
+									logger.error('Document symlink resolves outside repository', LOG_CONTEXT, {
+										docPath: doc.path,
+									});
+									continue;
+								}
 								logger.info('Using repo document', LOG_CONTEXT, {
 									name: doc.name,
-									path: resolvedSource,
+									path: realSource,
 								});
-								resolvedDocs.push({ name: doc.name, path: resolvedSource, isExternal: false });
+								resolvedDocs.push({ name: doc.name, path: realSource, isExternal: false });
 							} catch (e) {
 								logger.warn('Document not found in repo', LOG_CONTEXT, {
 									docPath: doc.path,

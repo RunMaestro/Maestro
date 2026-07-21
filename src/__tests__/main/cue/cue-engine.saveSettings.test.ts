@@ -62,23 +62,49 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
-// Mock the config repository - saveSettings reads and writes through this.
+// Mock the config repository consumed by Cue session lifecycle setup.
 const mockReadCueConfigFile = vi.fn<(root: string) => { filePath: string; raw: string } | null>();
-const mockWriteCueConfigFile = vi.fn<(root: string, content: string) => string>();
+const mockPersistMutationResult = vi.fn<(root: string, content: string) => string>();
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: (...args: unknown[]) => mockReadCueConfigFile(args[0] as string),
-	writeCueConfigFile: (...args: unknown[]) =>
-		mockWriteCueConfigFile(args[0] as string, args[1] as string),
 	// resolveCueConfigPath is consumed by cue-session-runtime-service to gate
 	// which sessions get a cue.yaml watcher set up. Return a synthetic path so
 	// every session passes the gate during engine.start().
 	resolveCueConfigPath: (root: string) => `${root}/.maestro/cue.yaml`,
 	watchCueConfigFile: vi.fn(() => () => {}),
 	writeCuePromptFile: vi.fn(),
-	deleteCueConfigFile: vi.fn(),
 	pruneOrphanedPromptFiles: vi.fn(() => []),
 	removeEmptyPromptsDir: vi.fn(() => false),
 	removeEmptyMaestroDir: vi.fn(() => false),
+}));
+
+const mockUpdateGlobalSettings = vi.fn(
+	async (
+		root: string,
+		settings: {
+			timeout_minutes: number;
+			timeout_on_fail: 'break' | 'continue';
+			max_concurrent: number;
+			queue_size: number;
+		}
+	) => {
+		const file = mockReadCueConfigFile(root);
+		if (!file) return false;
+		const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
+		parsed.settings = { ...(parsed.settings as Record<string, unknown>), ...settings };
+		mockPersistMutationResult(root, yaml.dump(parsed));
+		return true;
+	}
+);
+vi.mock('../../../main/cue/config/cue-config-mutation-service', () => ({
+	createCueConfigMutationService: () => ({
+		setSubscriptionEnabled: vi.fn(),
+		removeSubscription: vi.fn(),
+		updateGlobalSettings: (...args: Parameters<typeof mockUpdateGlobalSettings>) =>
+			mockUpdateGlobalSettings(...args),
+		delete: vi.fn(),
+		replace: vi.fn(),
+	}),
 }));
 
 // Mock sentry so caught errors don't try to invoke the real exporter.
@@ -97,7 +123,7 @@ beforeEach(() => {
 		return config ? { ok: true, config, warnings: [] } : { ok: false, reason: 'missing' };
 	});
 	mockWatchCueYaml.mockReturnValue(() => {});
-	mockWriteCueConfigFile.mockReturnValue('/written');
+	mockPersistMutationResult.mockReturnValue('/written');
 });
 
 function startEngineWithSessions(
@@ -115,7 +141,7 @@ function startEngineWithSessions(
 }
 
 describe('CueEngine.saveSettings', () => {
-	it('writes the settings block to every unique config root', () => {
+	it('writes the settings block to every unique config root', async () => {
 		const cfg1 = createMockConfig();
 		const cfg2 = createMockConfig();
 		const engine = startEngineWithSessions([
@@ -136,7 +162,7 @@ describe('CueEngine.saveSettings', () => {
 			}),
 		}));
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 99,
 			timeout_on_fail: 'continue',
 			max_concurrent: 4,
@@ -145,10 +171,10 @@ describe('CueEngine.saveSettings', () => {
 
 		expect(result.writtenRoots).toHaveLength(2);
 		expect(result.writtenRoots).toEqual(expect.arrayContaining(['/proj1', '/proj2']));
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(2);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(2);
 	});
 
-	it('dedupes when two sessions share the same projectRoot', () => {
+	it('dedupes when two sessions share the same projectRoot', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/shared', config: cfg },
@@ -160,7 +186,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: yaml.dump({ settings: {}, subscriptions: [] }),
 		});
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 45,
 			timeout_on_fail: 'break',
 			max_concurrent: 2,
@@ -168,10 +194,10 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/shared']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
 	});
 
-	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', () => {
+	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([{ id: 's1', projectRoot: '/proj', config: cfg }]);
 
@@ -192,15 +218,15 @@ describe('CueEngine.saveSettings', () => {
 			raw: existingYaml,
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 60,
 			timeout_on_fail: 'continue',
 			max_concurrent: 3,
 			queue_size: 99,
 		});
 
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-		const writtenContent = mockWriteCueConfigFile.mock.calls[0][1];
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
+		const writtenContent = mockPersistMutationResult.mock.calls[0][1];
 		const reparsed = yaml.load(writtenContent) as Record<string, unknown>;
 		expect(reparsed.settings).toMatchObject({
 			timeout_minutes: 60,
@@ -214,7 +240,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.no_ancestor_fallback).toBe(true);
 	});
 
-	it('never propagates owner_agent_id and preserves each root’s existing one', () => {
+	it('never propagates owner_agent_id and preserves each root’s existing one', async () => {
 		// Regression: owner_agent_id is per-root. Broadcasting an incoming
 		// owner_agent_id into every cue.yaml flagged unrelated single-agent
 		// projects with a bogus "does not match any agent" warning. saveSettings
@@ -240,7 +266,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: existingYaml,
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 60,
 			timeout_on_fail: 'continue',
 			max_concurrent: 3,
@@ -249,7 +275,7 @@ describe('CueEngine.saveSettings', () => {
 			owner_agent_id: 'some-other-agent-uuid',
 		});
 
-		const writtenContent = mockWriteCueConfigFile.mock.calls[0][1];
+		const writtenContent = mockPersistMutationResult.mock.calls[0][1];
 		const reparsed = yaml.load(writtenContent) as { settings: Record<string, unknown> };
 		// Global fields updated...
 		expect(reparsed.settings.timeout_minutes).toBe(60);
@@ -257,7 +283,7 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.settings.owner_agent_id).toBe('this-roots-own-owner');
 	});
 
-	it('mirrors new settings into in-memory state so getSettings() returns them immediately', () => {
+	it('mirrors new settings into in-memory state so getSettings() returns them immediately', async () => {
 		const cfg = createMockConfig({
 			settings: {
 				timeout_minutes: 30,
@@ -273,7 +299,7 @@ describe('CueEngine.saveSettings', () => {
 			raw: yaml.dump({ settings: {}, subscriptions: [] }),
 		});
 
-		engine.saveSettings({
+		await engine.saveSettings({
 			timeout_minutes: 77,
 			timeout_on_fail: 'continue',
 			max_concurrent: 5,
@@ -288,12 +314,12 @@ describe('CueEngine.saveSettings', () => {
 		});
 	});
 
-	it('returns an empty writtenRoots list when no sessions are registered', () => {
+	it('returns an empty writtenRoots list when no sessions are registered', async () => {
 		// Engine constructed but never started → registry empty.
 		const deps = createMockDeps({ getSessions: vi.fn(() => []) });
 		const engine = new CueEngine(deps);
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,
@@ -302,10 +328,10 @@ describe('CueEngine.saveSettings', () => {
 
 		expect(result.writtenRoots).toEqual([]);
 		expect(mockReadCueConfigFile).not.toHaveBeenCalled();
-		expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		expect(mockPersistMutationResult).not.toHaveBeenCalled();
 	});
 
-	it('skips a root when readCueConfigFile returns null (no yaml on disk yet)', () => {
+	it('skips a root when readCueConfigFile returns null (no yaml on disk yet)', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/has-yaml', config: cfg },
@@ -320,7 +346,7 @@ describe('CueEngine.saveSettings', () => {
 			};
 		});
 
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,
@@ -328,11 +354,11 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/has-yaml']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledWith('/has-yaml', expect.any(String));
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledWith('/has-yaml', expect.any(String));
 	});
 
-	it('isolates errors per root and reports the failure to sentry', () => {
+	it('isolates errors per root and reports the failure to sentry', async () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([
 			{ id: 's1', projectRoot: '/good', config: cfg },
@@ -350,7 +376,7 @@ describe('CueEngine.saveSettings', () => {
 		// Reset before exercising saveSettings - captureException may be called
 		// during engine.start() bootstrap noise we don't care about here.
 		mockCaptureException.mockClear();
-		const result = engine.saveSettings({
+		const result = await engine.saveSettings({
 			timeout_minutes: 30,
 			timeout_on_fail: 'break',
 			max_concurrent: 1,
@@ -358,7 +384,7 @@ describe('CueEngine.saveSettings', () => {
 		});
 
 		expect(result.writtenRoots).toEqual(['/good']);
-		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+		expect(mockPersistMutationResult).toHaveBeenCalledTimes(1);
 		expect(mockCaptureException).toHaveBeenCalledTimes(1);
 		const [err, ctx] = mockCaptureException.mock.calls[0];
 		expect(err).toBeInstanceOf(Error);

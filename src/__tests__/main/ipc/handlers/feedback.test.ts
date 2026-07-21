@@ -67,7 +67,7 @@ import {
 	isGhInstalled,
 	setCachedGhStatus,
 } from '../../../../main/utils/cliDetection';
-import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { execFileNoThrow, type ExecResult } from '../../../../main/utils/execFile';
 import {
 	cleanupTempFiles,
 	saveImageToTempFile,
@@ -149,13 +149,45 @@ describe('feedback handlers', () => {
 				additionalContext: 'Occurs on the first submit attempt.',
 				agentProvider: 'codex',
 				sshRemoteEnabled: false,
-				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }],
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
 			}
 		);
 		const bodyWriteCall = vi
 			.mocked(fs.writeFile)
 			.mock.calls.find(([targetPath]) => String(targetPath).includes('maestro-feedback-body-'));
 		const writtenBody = String(bodyWriteCall?.[1] ?? '');
+		const contentWriteCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([targetPath]) => String(targetPath).includes('maestro-feedback-content-'));
+		const contentUploadCall = vi
+			.mocked(execFileNoThrow)
+			.mock.calls.find(([, args]) =>
+				args[1]?.startsWith('repos/jeffscottward/maestro-feedback-attachments/contents/')
+			);
+		expect(JSON.parse(String(contentWriteCall?.[1]))).toEqual({
+			message: expect.stringMatching(/^Add feedback screenshot \d+-0$/),
+			content: 'aGVsbG8=',
+			branch: 'main',
+		});
+		expect(contentUploadCall).toEqual([
+			'gh',
+			[
+				'api',
+				expect.stringMatching(
+					/^repos\/jeffscottward\/maestro-feedback-attachments\/contents\/feedback\/\d+-0-bug\.png$/
+				),
+				'--method',
+				'PUT',
+				'-H',
+				'Accept: application/vnd.github+json',
+				'-H',
+				'X-GitHub-Api-Version: 2022-11-28',
+				'--input',
+				expect.stringMatching(/maestro-feedback-content-\d+\.json$/),
+			],
+			undefined,
+			{ PATH: '/usr/bin' },
+		]);
 
 		expect(saveImageToTempFile).not.toHaveBeenCalled();
 		expect(fs.writeFile).toHaveBeenCalled();
@@ -190,6 +222,40 @@ describe('feedback handlers', () => {
 		);
 		expect(mockProcessManager.write).not.toHaveBeenCalled();
 		expect(result).toEqual({ success: true });
+	});
+
+	it.each([
+		['401', 'gh: Bad credentials (HTTP 401)'],
+		['403', 'gh: Resource not accessible by integration (HTTP 403)'],
+		['404', 'gh: Not Found (HTTP 404)'],
+		['409', 'gh: SHA does not match (HTTP 409)'],
+	])('preserves upload %s errors in the submit response envelope', async (_status, uploadError) => {
+		const loginResult: ExecResult = { exitCode: 0, stdout: 'jeffscottward', stderr: '' };
+		const repositoryResult: ExecResult = { exitCode: 0, stdout: '{}', stderr: '' };
+		const uploadResult: ExecResult = { exitCode: 1, stdout: '', stderr: uploadError };
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce(loginResult)
+			.mockResolvedValueOnce(repositoryResult)
+			.mockResolvedValueOnce(uploadResult);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:submit');
+		const result = await handler!(
+			{},
+			{
+				sessionId: 'session-123',
+				category: 'bug_report',
+				summary: 'Feedback modal crashes',
+				expectedBehavior: 'The issue should be created successfully.',
+				details: 'The modal closes without creating a GitHub issue.',
+				reproductionSteps: '1. Open Maestro\n2. Click Feedback\n3. Click Send Feedback',
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
+			}
+		);
+
+		expect(result).toEqual({ success: false, error: uploadError });
+		expect(execFileNoThrow).toHaveBeenCalledTimes(3);
 	});
 
 	it('creates a structured feature request issue without screenshots', async () => {
@@ -274,7 +340,7 @@ describe('feedback handlers', () => {
 			{},
 			{
 				feedbackText: 'Please include the screenshot.',
-				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }],
+				attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }],
 			}
 		);
 
@@ -469,6 +535,95 @@ describe('feedback handlers', () => {
 		expect(setCachedGhStatus).toHaveBeenCalledWith(true, true);
 		expect(result).toEqual({ authenticated: true });
 	});
+
+	it('cleans a cancelled performance-trace upload exactly once', async () => {
+		const abortError = new Error('upload cancelled');
+		abortError.name = 'AbortError';
+		vi.mocked(fs.readFile).mockRejectedValue(abortError);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockImplementation((_command, args) => {
+			if (args.includes('issue') && args.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/456',
+					stderr: '',
+				});
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' });
+		});
+
+		const handler = registeredHandlers.get('feedback:submit-conversation');
+		await handler!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Trace upload cancelled',
+				expectedBehavior: 'The issue should still be created.',
+				actualBehavior: 'The trace upload was cancelled.',
+				performanceTracePath: '/tmp/maestro-performance-trace.zip',
+			}
+		);
+
+		expect(
+			vi
+				.mocked(fs.unlink)
+				.mock.calls.filter(([targetPath]) => targetPath === '/tmp/maestro-performance-trace.zip')
+		).toHaveLength(1);
+	});
+
+	it('cleans a successfully uploaded performance trace exactly once', async () => {
+		vi.mocked(fs.readFile).mockImplementation((targetPath) =>
+			Promise.resolve(
+				String(targetPath) === '/tmp/maestro-performance-trace.zip'
+					? Buffer.from('zip')
+					: JSON.stringify({ issues: [] })
+			)
+		);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		vi.mocked(execFileNoThrow).mockImplementation((_command, args) => {
+			if (args.includes('user')) {
+				return Promise.resolve({ exitCode: 0, stdout: 'maestro-owner', stderr: '' });
+			}
+			if (args.includes('issue') && args.includes('create')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: 'https://github.com/RunMaestro/Maestro/issues/457',
+					stderr: '',
+				});
+			}
+			if (args.includes('PUT')) {
+				return Promise.resolve({
+					exitCode: 0,
+					stdout: JSON.stringify({
+						content: { download_url: 'https://example.test/feedback/trace.zip' },
+					}),
+					stderr: '',
+				});
+			}
+			return Promise.resolve({ exitCode: 0, stdout: '{}', stderr: '' });
+		});
+
+		const handler = registeredHandlers.get('feedback:submit-conversation');
+		const result = await handler!(
+			{},
+			{
+				category: 'bug_report',
+				summary: 'Trace uploaded',
+				expectedBehavior: 'The issue should include the trace.',
+				actualBehavior: 'The trace upload completed.',
+				performanceTracePath: '/tmp/maestro-performance-trace.zip',
+			}
+		);
+
+		expect(result.success).toBe(true);
+		expect(
+			vi
+				.mocked(fs.unlink)
+				.mock.calls.filter(([targetPath]) => targetPath === '/tmp/maestro-performance-trace.zip')
+		).toHaveLength(1);
+	});
 });
 
 describe('feedback drafts handlers', () => {
@@ -526,6 +681,15 @@ describe('feedback drafts handlers', () => {
 		const result = await handler!({});
 
 		expect(result.drafts.map((d: { id: string }) => d.id)).toEqual(['newer', 'older']);
+	});
+
+	it('treats a drafts array containing an invalid element as an empty fallback', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(
+			JSON.stringify({ drafts: [sampleDraft, { ...sampleDraft, id: 2 }] })
+		);
+
+		const handler = registeredHandlers.get('feedback:drafts:list');
+		await expect(handler!({})).resolves.toEqual({ drafts: [] });
 	});
 
 	it('saves a new draft and writes it with timestamps', async () => {

@@ -96,8 +96,8 @@ import {
 	deleteGroupChat,
 	loadGroupChat,
 	getGroupChatHistory,
-	GroupChatParticipant,
 } from '../../../main/group-chat/group-chat-storage';
+import type { GroupChatParticipant } from '../../../shared/group-chat-types';
 import { readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';

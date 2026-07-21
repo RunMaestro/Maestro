@@ -16,6 +16,7 @@
  */
 
 import React from 'react';
+import { escapeRegExp } from '../../shared/stringUtils';
 import {
 	Star,
 	Play,
@@ -95,7 +96,7 @@ function renderHighlightedPreview(
 	accentColor: string
 ): React.ReactNode {
 	if (!query) return preview;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const escaped = escapeRegExp(query);
 	const regex = new RegExp(`(${escaped})`, 'gi');
 	const parts = preview.split(regex);
 	if (parts.length === 1) return preview;

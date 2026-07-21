@@ -11,6 +11,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { generateUUID } from '../../../shared/uuid';
+import { parseImageDataUrl } from '../../../shared/imageDataUrl';
+import { uploadFeedbackGitHubContent } from './feedbackGithubContents';
 import { logger } from '../../utils/logger';
 import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -24,6 +26,7 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { readKeyedJsonArray } from '../../utils/json-file-readers';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -177,6 +180,92 @@ function isFeedbackCategory(value: unknown): value is FeedbackCategory {
 	);
 }
 
+function isPersistedRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasPersistedFields(
+	value: Record<string, unknown>,
+	stringFields: readonly string[],
+	numberFields: readonly string[]
+): boolean {
+	return (
+		stringFields.every((field) => typeof value[field] === 'string') &&
+		numberFields.every((field) => typeof value[field] === 'number' && Number.isFinite(value[field]))
+	);
+}
+
+function isFeedbackDraftMessage(value: unknown): boolean {
+	if (!isPersistedRecord(value) || !hasPersistedFields(value, ['role', 'content'], ['timestamp'])) {
+		return false;
+	}
+	return (
+		(value.role === 'user' || value.role === 'assistant' || value.role === 'system') &&
+		(value.confidence === undefined ||
+			(typeof value.confidence === 'number' && Number.isFinite(value.confidence))) &&
+		(value.category === undefined || isFeedbackCategory(value.category)) &&
+		(value.summary === undefined || typeof value.summary === 'string')
+	);
+}
+
+function isFeedbackDraftAttachment(value: unknown): boolean {
+	return (
+		isPersistedRecord(value) && hasPersistedFields(value, ['id', 'name', 'dataUrl'], ['sizeBytes'])
+	);
+}
+
+function isFeedbackDraftResponse(value: unknown): boolean {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(value, ['message', 'summary'], ['confidence']) ||
+		typeof value.ready !== 'boolean' ||
+		!isFeedbackCategory(value.category) ||
+		!isPersistedRecord(value.structured)
+	) {
+		return false;
+	}
+	return hasPersistedFields(
+		value.structured,
+		['expectedBehavior', 'actualBehavior', 'reproductionSteps', 'additionalContext'],
+		[]
+	);
+}
+
+function isFeedbackDraft(value: unknown): value is FeedbackDraft {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(
+			value,
+			['id', 'suggestedName', 'summary', 'agentType', 'inputDraft'],
+			['confidence', 'createdAt', 'updatedAt']
+		) ||
+		!isFeedbackCategory(value.category) ||
+		typeof value.includeDebugPackage !== 'boolean' ||
+		!Array.isArray(value.messages) ||
+		!Array.isArray(value.attachments)
+	) {
+		return false;
+	}
+	return (
+		value.messages.every(isFeedbackDraftMessage) &&
+		value.attachments.every(isFeedbackDraftAttachment) &&
+		(value.lastResponse === undefined ||
+			value.lastResponse === null ||
+			isFeedbackDraftResponse(value.lastResponse))
+	);
+}
+
+function isSubmittedIssue(value: unknown): value is SubmittedIssue {
+	if (
+		!isPersistedRecord(value) ||
+		!hasPersistedFields(value, ['url', 'title'], ['number', 'submittedAt', 'lastCheckedAt']) ||
+		!isFeedbackCategory(value.category)
+	) {
+		return false;
+	}
+	return value.state === 'open' || value.state === 'closed';
+}
+
 function sanitizeTextInput(value: string): string {
 	return value
 		.replace(/\r\n/g, '\n')
@@ -249,13 +338,7 @@ const enqueueDraftWrite = <T>(fn: () => Promise<T>): Promise<T> =>
  * missing or malformed, matching readPlaybooks() in playbooks.ts.
  */
 async function readDrafts(): Promise<FeedbackDraft[]> {
-	try {
-		const content = await fs.readFile(getDraftsFilePath(), 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.drafts) ? data.drafts : [];
-	} catch {
-		return [];
-	}
+	return (await readKeyedJsonArray(getDraftsFilePath(), 'drafts', isFeedbackDraft)) ?? [];
 }
 
 /**
@@ -281,13 +364,7 @@ const enqueueSubmittedIssuesWrite = <T>(fn: () => Promise<T>): Promise<T> =>
 	submittedIssuesWriteQueue.enqueue(SUBMITTED_ISSUES_FILE_NAME, fn);
 
 async function readSubmittedIssues(): Promise<SubmittedIssue[]> {
-	try {
-		const content = await fs.readFile(getSubmittedIssuesFilePath(), 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.issues) ? data.issues : [];
-	} catch {
-		return [];
-	}
+	return (await readKeyedJsonArray(getSubmittedIssuesFilePath(), 'issues', isSubmittedIssue)) ?? [];
 }
 
 async function writeSubmittedIssues(issues: SubmittedIssue[]): Promise<void> {
@@ -550,18 +627,17 @@ async function getGitHubLogin(): Promise<string> {
 }
 
 function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
-	base64: string;
+	bytes: Uint8Array;
 	filename: string;
 } {
-	const match = attachment.dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
-	if (!match) {
+	const parsed = parseImageDataUrl(attachment.dataUrl, { filename: attachment.name });
+	if (!parsed) {
 		throw new Error(`Unsupported image data for ${attachment.name}.`);
 	}
 
-	const extension = match[1].replace('jpeg', 'jpg');
 	const hasExtension = /\.[a-zA-Z0-9]+$/.test(attachment.name);
-	const filename = hasExtension ? attachment.name : `${attachment.name}.${extension}`;
-	return { base64: match[2], filename };
+	const filename = hasExtension ? attachment.name : `${attachment.name}.${parsed.extension}`;
+	return { bytes: parsed.bytes, filename };
 }
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {
@@ -612,42 +688,20 @@ async function uploadAttachments(
 	const uploadedMarkdown: string[] = [];
 	for (let index = 0; index < attachments.length; index += 1) {
 		const attachment = attachments[index];
-		const { base64, filename } = parseAttachmentDataUrl(attachment);
+		const { bytes, filename } = parseAttachmentDataUrl(attachment);
 		const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '-');
 		const repoPath = `feedback/${Date.now()}-${index}-${safeFilename}`;
-		const payloadPath = path.join(
-			os.tmpdir(),
-			`maestro-feedback-upload-${Date.now()}-${index}.json`
-		);
-		await fs.writeFile(
-			payloadPath,
-			JSON.stringify({
+		const { rawUrl } = await uploadFeedbackGitHubContent(
+			{
+				owner,
+				repository: ATTACHMENTS_REPO,
+				path: repoPath,
 				message: `Add feedback screenshot ${Date.now()}-${index}`,
-				content: base64,
-			}),
-			'utf8'
+				bytes,
+				branch: 'main',
+			},
+			(args) => execFileNoThrow('gh', args, undefined, getExpandedEnv())
 		);
-		const uploadResult = await execFileNoThrow(
-			'gh',
-			[
-				'api',
-				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-				'--method',
-				'PUT',
-				'--input',
-				payloadPath,
-			],
-			undefined,
-			getExpandedEnv()
-		);
-		await fs.unlink(payloadPath).catch(() => {});
-		if (uploadResult.exitCode !== 0) {
-			throw new Error(uploadResult.stderr || `Failed to upload screenshot ${attachment.name}.`);
-		}
-		const uploadJson = JSON.parse(uploadResult.stdout);
-		const rawUrl =
-			uploadJson.content?.download_url ||
-			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
 		uploadedMarkdown.push(`![${attachment.name}](${rawUrl})`);
 	}
 
@@ -661,44 +715,37 @@ async function uploadAttachments(
  */
 async function uploadFeedbackZip(zipPath: string, linkText: string): Promise<string> {
 	const zipData = await fs.readFile(zipPath);
-	const zipBase64 = zipData.toString('base64');
 	const owner = await getGitHubLogin();
 	await ensureAttachmentsRepo(owner);
 	const zipFilename = path.basename(zipPath);
 	const repoPath = `feedback/${Date.now()}-${zipFilename}`;
-	const payloadPath = path.join(os.tmpdir(), `maestro-feedback-zip-${Date.now()}.json`);
-	await fs.writeFile(
-		payloadPath,
-		JSON.stringify({
-			message: `Add feedback attachment ${Date.now()}`,
-			content: zipBase64,
-		}),
-		'utf8'
-	);
 	try {
-		const uploadResult = await execFileNoThrow(
-			'gh',
-			[
-				'api',
-				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
-				'--method',
-				'PUT',
-				'--input',
-				payloadPath,
-			],
-			undefined,
-			getExpandedEnv()
+		const { rawUrl } = await uploadFeedbackGitHubContent(
+			{
+				owner,
+				repository: ATTACHMENTS_REPO,
+				path: repoPath,
+				message: `Add feedback attachment ${Date.now()}`,
+				bytes: zipData,
+				branch: 'main',
+			},
+			(args) => execFileNoThrow('gh', args, undefined, getExpandedEnv())
 		);
-		if (uploadResult.exitCode !== 0) {
-			return '';
-		}
-		const uploadJson = JSON.parse(uploadResult.stdout);
-		const rawUrl =
-			uploadJson.content?.download_url ||
-			`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
 		return `[${linkText}](${rawUrl})`;
+	} catch {
+		return '';
+	}
+}
+
+/**
+ * Upload a temporary feedback archive and consume it regardless of whether the
+ * upload succeeds, fails, or is cancelled.
+ */
+async function uploadAndCleanupFeedbackZip(zipPath: string, linkText: string): Promise<string> {
+	try {
+		return await uploadFeedbackZip(zipPath, linkText);
 	} finally {
-		await fs.unlink(payloadPath).catch(() => {});
+		await fs.unlink(zipPath).catch(() => {});
 	}
 }
 
@@ -1129,7 +1176,15 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					sshRemoteEnabled: typeof sshRemoteEnabled === 'boolean' ? sshRemoteEnabled : undefined,
 					attachments: normalizedAttachments,
 				};
-				const { markdown } = await uploadAttachments(normalizedAttachments);
+				let markdown: string;
+				try {
+					({ markdown } = await uploadAttachments(normalizedAttachments));
+				} catch (error) {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 				await ensureFeedbackLabel();
 				const environment = buildEnvironmentSummary(normalizedPayload);
 
@@ -1276,7 +1331,15 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 								a.dataUrl.startsWith('data:image/')
 						)
 					: [];
-				const { markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments);
+				let attachmentMarkdown: string;
+				try {
+					({ markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments));
+				} catch (error) {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 
 				// Generate and upload debug package if requested
 				let debugPackageMarkdown = '';
@@ -1284,14 +1347,10 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					try {
 						const packageResult = await generateDebugPackage(os.tmpdir(), _deps.debugPackageDeps);
 						if (packageResult.success && packageResult.path) {
-							try {
-								debugPackageMarkdown = await uploadFeedbackZip(
-									packageResult.path,
-									'maestro-debug-package.zip'
-								);
-							} finally {
-								await fs.unlink(packageResult.path).catch(() => {});
-							}
+							debugPackageMarkdown = await uploadAndCleanupFeedbackZip(
+								packageResult.path,
+								'maestro-debug-package.zip'
+							);
 						}
 					} catch (e) {
 						void captureException(e);
@@ -1304,15 +1363,13 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				let performanceTraceMarkdown = '';
 				if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
 					try {
-						performanceTraceMarkdown = await uploadFeedbackZip(
+						performanceTraceMarkdown = await uploadAndCleanupFeedbackZip(
 							payload.performanceTracePath,
 							'maestro-performance-trace.zip'
 						);
 					} catch (e) {
 						void captureException(e);
 						logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
-					} finally {
-						await fs.unlink(payload.performanceTracePath).catch(() => {});
 					}
 				}
 

@@ -11,7 +11,7 @@
  * file is the I/O shell: WebSocket polling, dispatch, and console output.
  */
 
-import { readSettingValue } from '../services/storage';
+import { createPianolaPollingGate, ensurePianolaEnabled, pianolaEnabledNow } from './pianola-gate';
 import {
 	readPianolaRules,
 	readPianolaRulesResult,
@@ -50,7 +50,6 @@ import type {
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
 
-const DEFAULT_INTERVAL_SECONDS = 5;
 const POLL_TAIL = 40;
 
 export interface PianolaWatchOptions {
@@ -82,29 +81,6 @@ interface SessionHistoryResponse {
 	messages?: PianolaMessage[];
 }
 
-/** Exit with a clear message if the Pianola Encore feature is disabled. */
-export function ensurePianolaEnabled(json?: boolean): void {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	if (flags?.pianola === true) return;
-	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message, code: 'PIANOLA_DISABLED' }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
-}
-
-/**
- * Non-throwing Encore check, re-read each poll so revoking consent in Settings
- * actually halts an in-flight watcher (the startup `ensurePianolaEnabled` guard
- * only runs once).
- */
-function pianolaEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true;
-}
-
 /** Build the desktop toast for a blocking ask the user must see. */
 function buildNotifyToastCommand(event: PianolaNotifyEvent): Record<string, unknown> {
 	const topic = event.classification.topic || 'a decision';
@@ -131,18 +107,6 @@ function buildNotifyToastCommand(event: PianolaNotifyEvent): Record<string, unkn
 			tabId: event.target.tabId,
 		},
 	};
-}
-
-/** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
-function parseIntervalSeconds(raw?: string): number {
-	if (!raw) return DEFAULT_INTERVAL_SECONDS;
-	const match = raw.trim().match(/^(\d+)s?$/i);
-	if (!match) return DEFAULT_INTERVAL_SECONDS;
-	return Math.max(1, parseInt(match[1], 10));
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -193,7 +157,8 @@ function buildPianolaHandoffPrompt(request: PianolaJudgmentRequest): string {
 export async function pianolaWatch(tabId: string, options: PianolaWatchOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
 
-	const intervalMs = parseIntervalSeconds(options.interval) * 1000;
+	const gate = createPianolaPollingGate(options.interval);
+	const intervalMs = gate.intervalMs;
 	const dryRun = !!options.dryRun;
 	const once = !!options.once;
 
@@ -228,9 +193,8 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	}
 
 	let state: WatchState = initialWatchState();
-	let stopped = false;
 	const onSignal = (): void => {
-		stopped = true;
+		gate.stop();
 	};
 	process.on('SIGINT', onSignal);
 
@@ -273,6 +237,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		for (;;) {
 			// Re-check consent each poll: if Pianola was toggled off in Settings,
 			// stop acting immediately rather than running until the process is killed.
+			if (gate.stopped) break;
 			if (!pianolaEnabledNow()) {
 				console.error('[pianola] Pianola disabled in Settings; stopping watch.');
 				break;
@@ -287,15 +252,15 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(`[pianola] poll failed: ${message}`);
-				if (once || stopped) break;
-				await sleep(intervalMs);
+				if (once || gate.stopped) break;
+				await gate.wait();
 				continue;
 			}
 
 			if (!resp.success) {
 				console.error(`[pianola] ${resp.error ?? 'session history unavailable'}`);
-				if (once || stopped) break;
-				await sleep(intervalMs);
+				if (once || gate.stopped) break;
+				await gate.wait();
 				continue;
 			}
 
@@ -317,10 +282,11 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 				console.error(`[pianola] iteration error: ${message}`);
 			}
 
-			if (once || stopped) break;
-			await sleep(intervalMs);
+			if (once || gate.stopped) break;
+			await gate.wait();
 		}
 	} finally {
+		gate.stop();
 		process.off('SIGINT', onSignal);
 		client.disconnect();
 	}

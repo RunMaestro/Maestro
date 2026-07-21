@@ -101,10 +101,11 @@ Share files directly as GitHub Gists from the File Preview:
 3. Use `Cmd+K` / `Ctrl+K` → "Publish Document as GitHub Gist"
 
 **Visibility options:**
-| Option | Description |
-|--------|-------------|
+
+| Option                       | Description                                                                |
+| ---------------------------- | -------------------------------------------------------------------------- |
 | **Publish Secret** (default) | Creates an unlisted gist - not searchable, only accessible via direct link |
-| **Publish Public** | Creates a public gist - visible on your profile and searchable |
+| **Publish Public**           | Creates a public gist - visible on your profile and searchable             |
 
 The confirmation modal focuses "Publish Secret" by default, so you can press `Enter` to quickly publish. Press `Esc` to cancel.
 
@@ -335,20 +336,9 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 ### Creating Agents
 
-**To create a new agent:**
+[Getting Started → Create an agent](./getting-started#2-create-an-agent) is the canonical desktop creation guide. It covers Manual and Guided Setup, the working directory, provider selection, and wizard behavior. [Provider Notes → Custom Configuration](./provider-notes#custom-configuration) owns provider-specific paths, arguments, environment variables, models, and effort settings.
 
-1. Press `Cmd+N` / `Ctrl+N`, or click the **New Agent** button in the bottom-left sidebar
-2. Choose **Manual Setup** or **Guided Setup** (Wizard) - see [Getting Started](./getting-started) for details on each path
-3. For Manual Setup: select an available AI provider (Claude Code, Codex, OpenCode, or Factory Droid), choose a working directory, and optionally name the agent
-
-**Advanced configuration options:**
-
-- **New Session Message** - A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
-- **Nudge Message** - A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages - they are not included in Auto Run tasks.
-- **Custom Path** - Override the default executable path
-- **Custom Arguments** - Additional command-line arguments
-- **Environment Variables** - Custom environment variables for the agent process
-- **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
+This page retains agent-management behavior below rather than repeating creation facts, so configuration guidance stays synchronized with the provider registry.
 
 ### Editing Agents
 
@@ -451,12 +441,13 @@ When you send your first message to a new tab, Maestro automatically generates a
 4. If you've already renamed the tab, automatic naming is skipped
 
 **Examples of generated tab names:**
-| Your message | Generated name |
-|--------------|----------------|
+
+| Your message                                     | Generated name          |
+| ------------------------------------------------ | ----------------------- |
 | "Help me implement user authentication with JWT" | JWT Auth Implementation |
-| "Fix the bug in the checkout flow" | Checkout Bug Fix |
-| "Add dark mode support to the app" | Dark Mode Support |
-| "Refactor the database queries" | Database Query Refactor |
+| "Fix the bug in the checkout flow"               | Checkout Bug Fix        |
+| "Add dark mode support to the app"               | Dark Mode Support       |
+| "Refactor the database queries"                  | Database Query Refactor |
 
 **Configuring automatic tab naming:**
 

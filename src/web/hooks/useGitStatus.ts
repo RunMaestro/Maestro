@@ -7,33 +7,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { UseWebSocketReturn } from './useWebSocket';
-
-/**
- * Git file status entry.
- */
-export interface GitStatusFile {
-	path: string;
-	status: string;
-	staged: boolean;
-}
-
-/**
- * Git status result from the server.
- */
-export interface GitStatusResult {
-	branch: string;
-	files: GitStatusFile[];
-	ahead: number;
-	behind: number;
-}
-
-/**
- * Git diff result from the server.
- */
-export interface GitDiffResult {
-	diff: string;
-	files: string[];
-}
+import type { GitDiffResult, GitStatusResult } from '../../shared/web-protocol/git';
 
 /**
  * Return value from useGitStatus hook.

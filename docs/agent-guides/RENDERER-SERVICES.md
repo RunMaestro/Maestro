@@ -235,27 +235,15 @@ Generates Auto Run documents from wizard conversation results. The largest servi
 
 ---
 
-### speckit.ts (~57 lines)
+### speckit.ts
 
-SpecKit slash command service. Wraps `window.maestro.speckit.*`:
-
-- `getSpeckitCommands()` - Get all spec-kit commands
-- `getSpeckitMetadata()` - Get version and refresh date
-- `getSpeckitCommand(slashCommand)` - Get single command by slash string
-
-Uses manual try/catch (does not use `createIpcMethod`).
+SpecKit slash command service. `getSpeckitCommands()` wraps `window.maestro.speckit.getPrompts()` with a safe empty-array fallback.
 
 ---
 
-### openspec.ts (~57 lines)
+### openspec.ts
 
-OpenSpec slash command service. Wraps `window.maestro.openspec.*`:
-
-- `getOpenSpecCommands()` - Get all OpenSpec commands
-- `getOpenSpecMetadata()` - Get version and refresh date
-- `getOpenSpecCommand(slashCommand)` - Get single command by slash string
-
-Structurally identical to speckit.ts - same 3 functions, same error handling pattern, same return types. Only the IPC namespace differs.
+OpenSpec slash command service. `getOpenSpecCommands()` wraps `window.maestro.openspec.getPrompts()` with a safe empty-array fallback.
 
 ---
 

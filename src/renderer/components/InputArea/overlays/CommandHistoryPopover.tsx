@@ -1,5 +1,6 @@
 import React, { memo, useCallback } from 'react';
 import type { Theme } from '../../../types';
+import { useListNavigation } from '../../../hooks/keyboard/useListNavigation';
 
 interface CommandHistoryPopoverProps {
 	isOpen: boolean;
@@ -31,18 +32,31 @@ export const CommandHistoryPopover = memo(function CommandHistoryPopover({
 	const focusFilterRef = useCallback((el: HTMLInputElement | null) => {
 		el?.focus();
 	}, []);
-
-	if (!isOpen) {
-		return null;
-	}
+	const visibleHistory = filteredHistory.slice(0, 5);
 
 	const closeAndFocusInput = () => {
 		setOpen(false);
 		setFilter('');
 		setTimeout(() => inputRef.current?.focus(), 0);
 	};
-	const visibleHistory = filteredHistory.slice(0, 5);
 
+	const { handleKeyDown: handleListKeyDown } = useListNavigation({
+		listLength: visibleHistory.length,
+		onSelect: (index) => {
+			const command = visibleHistory[index];
+			if (command) {
+				setInputValue(command);
+				closeAndFocusInput();
+			}
+		},
+		selectedIndex,
+		onSelectedIndexChange: setSelectedIndex,
+		enabled: isOpen,
+	});
+
+	if (!isOpen) {
+		return null;
+	}
 	return (
 		<div
 			className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl max-h-64 overflow-hidden"
@@ -62,23 +76,13 @@ export const CommandHistoryPopover = memo(function CommandHistoryPopover({
 						setSelectedIndex(0);
 					}}
 					onKeyDown={(e) => {
-						if (e.key === 'ArrowDown') {
-							e.preventDefault();
-							setSelectedIndex(Math.min(selectedIndex + 1, Math.max(visibleHistory.length - 1, 0)));
-						} else if (e.key === 'ArrowUp') {
-							e.preventDefault();
-							setSelectedIndex(Math.max(selectedIndex - 1, 0));
-						} else if (e.key === 'Enter') {
-							e.preventDefault();
-							if (visibleHistory[selectedIndex]) {
-								setInputValue(visibleHistory[selectedIndex]);
-								closeAndFocusInput();
-							}
-						} else if (e.key === 'Escape') {
+						if (e.key === 'Escape') {
 							e.preventDefault();
 							e.stopPropagation();
 							closeAndFocusInput();
+							return;
 						}
+						handleListKeyDown(e);
 					}}
 				/>
 			</div>

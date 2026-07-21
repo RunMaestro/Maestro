@@ -10,24 +10,24 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
-- `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
+- `PluginManager.getActiveRecords()` and `getContributions()` return empty when the flag is off, regardless of what is on disk.
 - `HOST_API_VERSION = '1.13.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
 Pure, bundle-safe contracts (no Electron, no fs) in `src/shared/plugins/`:
 
-| File                                                                                                   | Owns                                                                                                                                        |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plugin-manifest.ts`                                                                                   | `PluginManifest`, `PluginTier`, `PLUGIN_ID_PATTERN`, `validatePluginManifest`, entry-traversal guard                                        |
-| `permissions.ts`                                                                                       | `PluginCapability`, `PLUGIN_CAPABILITIES`, risk/scope maps, `PermissionRequest`/`PermissionGrant`, `isPermitted` (the default-deny matcher) |
-| `contributions.ts`                                                                                     | every contribution interface, host-view block-size contract, `collectContributions`, `aggregateContributions` (built-in-wins merge)         |
-| `events.ts`                                                                                            | `PLUGIN_EVENT_TOPICS`, `PluginEventPayloads` (metadata only)                                                                                |
-| `host-api.ts`                                                                                          | `HOST_API_VERSION`, `isHostApiCompatible` (semver gate)                                                                                     |
-| `rpc-protocol.ts`                                                                                      | `HOST_API` method->capability table, `HostRequest`/`HostResponse`/`HostControlMessage`, `extractTarget`                                     |
-| `signing.ts`                                                                                           | `SIGNATURE_FILENAME`, `SignatureStatus`, canonical signing payload                                                                          |
-| `capability-policy.ts`                                                                                 | cross-capability rules (`transcripts:read` + egress mutual-exclusion)                                                                       |
-| `contribution-registry.ts`, `plugin-registry.ts`, `agent-registry.ts`, `storage.ts`, `theme-bridge.ts` | registry merge + record/storage shapes                                                                                                      |
+| File                                                                              | Owns                                                                                                                                        |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin-manifest.ts`                                                              | `PluginManifest`, `PluginTier`, `PLUGIN_ID_PATTERN`, `validatePluginManifest`, entry-traversal guard                                        |
+| `permissions.ts`                                                                  | `PluginCapability`, `PLUGIN_CAPABILITIES`, risk/scope maps, `PermissionRequest`/`PermissionGrant`, `isPermitted` (the default-deny matcher) |
+| `contributions.ts`                                                                | every contribution interface, host-view block-size contract, `collectContributions`, `aggregateContributions` (built-in-wins merge)         |
+| `events.ts`                                                                       | `PLUGIN_EVENT_TOPICS`, `PluginEventPayloads` (metadata only)                                                                                |
+| `host-api.ts`                                                                     | `HOST_API_VERSION`, `isHostApiCompatible` (semver gate)                                                                                     |
+| `rpc-protocol.ts`                                                                 | `HOST_API` method->capability table, `HostRequest`/`HostResponse`/`HostControlMessage`, `extractTarget`                                     |
+| `signing.ts`                                                                      | `SIGNATURE_FILENAME`, `SignatureStatus`, canonical signing payload                                                                          |
+| `capability-policy.ts`                                                            | cross-capability rules (`transcripts:read` + egress mutual-exclusion)                                                                       |
+| `contribution-registry.ts`, `plugin-registry.ts`, `storage.ts`, `theme-bridge.ts` | registry merge + record/storage shapes                                                                                                      |
 
 Main-process runtime in `src/main/plugins/`:
 
@@ -145,7 +145,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 
 - Every contributed id is namespaced `<pluginId>/<localId>`. The manifest author writes the bare local `id`; the loader stores both `localId` and the namespaced `id`.
 - Invalid individual items are dropped with a recorded error rather than failing the whole plugin (a typo in one theme must not hide good prompts).
-- On a namespaced-id collision the first wins (defended even though ids are plugin-scoped). For runtime agents, built-in agents always win, so a plugin can never shadow a first-party agent.
+- On a namespaced-id collision the first contribution wins (defended even though ids are plugin-scoped).
 - Contribution types: `themes`, `iconPacks`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip, and (when `plugins` is on) is exposed to a spawned agent's model over MCP via `maestro-cli mcp serve` (claude/codex auto-injected, others best-guess), each model call risk-gated. A `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`keybindings` does NOT by itself wire spawning / chord-binding - each is a separate step.
 - `iconPacks` is a tier-0 contribution: the host validates SVG path data and hex colors, namespaces pack entries, and renders paths only through host-owned SVG markup in the group appearance picker.
 

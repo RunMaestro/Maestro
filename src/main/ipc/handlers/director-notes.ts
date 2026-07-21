@@ -14,8 +14,16 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, ToolType } from '../../../shared/types';
-import { paginateEntries } from '../../../shared/history';
-import type { PaginatedResult } from '../../../shared/history';
+import {
+	paginateEntries,
+	type GraphBucket,
+	type HistoryGraphData,
+	type PaginatedResult,
+	type UnifiedHistoryEntry,
+	type UnifiedHistoryFilter,
+	type UnifiedHistoryOptions,
+	type UnifiedHistoryStats,
+} from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore } from '../../stores';
 import {
@@ -40,14 +48,8 @@ import {
 	HISTORY_BUCKET_CACHE_VERSION,
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate } from '../../utils/history-bucket-builder';
-import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
-
-/** Filter accepted by the unified-history IPCs: a single type, an array of
- *  types to include, or null/undefined for "all types". An empty array means
- *  "no types selected" and therefore matches nothing. */
-type UnifiedHistoryFilter = 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
 
 /** Whether an entry's type passes the given filter. */
 function entryPassesFilter(type: HistoryEntry['type'], filter: UnifiedHistoryFilter): boolean {
@@ -118,41 +120,6 @@ export interface DirectorNotesHandlerDependencies {
 	 * them alongside the desktop renderer.
 	 */
 	getMainWindow: () => BrowserWindow | null;
-}
-
-export interface UnifiedHistoryOptions {
-	lookbackDays: number;
-	// A single type, an array of types to include, or null for "all".
-	// An empty array selects nothing.
-	filter?: UnifiedHistoryFilter;
-	/** Number of entries to return per page (default: 100) */
-	limit?: number;
-	/** Number of entries to skip for pagination (default: 0) */
-	offset?: number;
-	/** Number of buckets for the activity graph (passed from frontend lookback config) */
-	graphBucketCount?: number;
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
-
-export interface UnifiedHistoryEntry extends HistoryEntry {
-	agentName?: string; // The Maestro session name for display
-	sourceSessionId: string; // Which session this entry came from
-}
-
-/** Aggregate stats returned alongside unified history (computed from the full unfiltered set) */
-export interface UnifiedHistoryStats {
-	agentCount: number; // Distinct Maestro agents with history
-	sessionCount: number; // Distinct provider sessions across all agents
-	autoCount: number; // Total AUTO entries
-	userCount: number; // Total USER entries
-	cueCount: number; // Total CUE entries
-	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
 /** Options for the deterministic Rich Overview stats IPC */

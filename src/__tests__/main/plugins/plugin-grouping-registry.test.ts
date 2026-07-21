@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+	MAX_GROUPING_PAYLOAD_BYTES,
 	PluginGroupingRegistry,
 	validatePublishedGrouping,
 } from '../../../main/plugins/plugin-grouping-registry';
+import { serializedJsonByteLength } from '../../../shared/plugins/contributions';
 
 function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -16,7 +18,47 @@ function payload(overrides: Record<string, unknown> = {}): Record<string, unknow
 	};
 }
 
+function payloadAtByteLength(byteLength: number): Record<string, unknown> {
+	const base = payload({ groups: [], assignments: { 'session-1': '' } });
+	const baseBytes = serializedJsonByteLength(base);
+	if (baseBytes === null) throw new Error('test payload must be serializable');
+	return payload({
+		groups: [],
+		assignments: { 'session-1': 'x'.repeat(byteLength - baseBytes) },
+	});
+}
+
 describe('validatePublishedGrouping', () => {
+	it('measures multibyte payloads by their serialized UTF-8 byte length', () => {
+		const input = payload({
+			groups: [],
+			assignments: { 'session-1': '😀'.repeat(Math.ceil(MAX_GROUPING_PAYLOAD_BYTES / 4)) },
+		});
+
+		expect(serializedJsonByteLength(input)).toBeGreaterThan(MAX_GROUPING_PAYLOAD_BYTES);
+		expect(() => validatePublishedGrouping('com.acme', 'by-agent-type', input)).toThrow(
+			'grouping payload exceeds size cap'
+		);
+	});
+
+	it('accepts a payload at the exact serialized byte limit', () => {
+		const input = payloadAtByteLength(MAX_GROUPING_PAYLOAD_BYTES);
+
+		expect(serializedJsonByteLength(input)).toBe(MAX_GROUPING_PAYLOAD_BYTES);
+		expect(validatePublishedGrouping('com.acme', 'by-agent-type', input)).toMatchObject({
+			id: 'com.acme/by-agent-type',
+		});
+	});
+
+	it('preserves the grouping-specific error for unserializable payloads', () => {
+		const input = payload();
+		(input.assignments as Record<string, unknown>).loop = input;
+
+		expect(() => validatePublishedGrouping('com.acme', 'by-agent-type', input)).toThrow(
+			'grouping payload must be JSON serializable'
+		);
+	});
+
 	it('preserves a fake session id in snapshot readback without checking host sessions', () => {
 		const registry = new PluginGroupingRegistry();
 		registry.publish(

@@ -3,7 +3,7 @@
  * Cross-platform script to set VITE_APP_VERSION environment variable
  * with the local git hash. Works on Windows, macOS, and Linux.
  *
- * Usage: node scripts/set-version.mjs <command> [args...]
+ * Usage: bun scripts/set-version.mjs <command> [args...]
  * Example: bun scripts/set-version.mjs bun run build
  */
 
@@ -57,8 +57,8 @@ const command = args[0];
 const commandArgs = args.slice(1);
 
 const child = spawn(command, commandArgs, {
+	cwd: process.cwd(),
 	stdio: 'inherit',
-	shell: true,
 	env: { ...process.env, VITE_APP_VERSION: version },
 });
 

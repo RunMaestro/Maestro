@@ -12,9 +12,6 @@ export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] =
 	{ value: 'auto', label: 'Auto %' },
 ];
 
-const SPARKLINE_DAYS = 7;
-type SessionByDayEntry = StatsAggregation['bySessionByDay'][string][number];
-
 export function getStatusColor(state: SessionState, theme: Theme): string {
 	switch (state) {
 		case 'idle':
@@ -26,15 +23,6 @@ export function getStatusColor(state: SessionState, theme: Theme): string {
 		default:
 			return theme.colors.textDim;
 	}
-}
-
-export function buildSessionSparkline(sessionByDay: SessionByDayEntry[] | undefined): number[] {
-	if (!sessionByDay || sessionByDay.length === 0) {
-		return new Array(SPARKLINE_DAYS).fill(0);
-	}
-	const counts = sessionByDay.slice(-SPARKLINE_DAYS).map((day) => day.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
 }
 
 export function getSessionQueryCount(

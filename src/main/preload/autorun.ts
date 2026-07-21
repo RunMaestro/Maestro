@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 
 /**
  * Playbook document configuration
@@ -98,14 +99,7 @@ export function createAutorunApi() {
 
 		onFileChanged: (
 			handler: (data: { folderPath: string; filename: string; eventType: string }) => void
-		) => {
-			const wrappedHandler = (
-				_event: Electron.IpcRendererEvent,
-				data: { folderPath: string; filename: string; eventType: string }
-			) => handler(data);
-			ipcRenderer.on('autorun:fileChanged', wrappedHandler);
-			return () => ipcRenderer.removeListener('autorun:fileChanged', wrappedHandler);
-		},
+		) => subscribeIpc('autorun:fileChanged', handler),
 
 		createBackup: (folderPath: string, filename: string, sshRemoteId?: string) =>
 			ipcRenderer.invoke('autorun:createBackup', folderPath, filename, sshRemoteId),
@@ -191,11 +185,8 @@ export function createMarketplaceApi() {
 				sshRemoteId
 			),
 
-		onManifestChanged: (handler: () => void) => {
-			const wrappedHandler = () => handler();
-			ipcRenderer.on('marketplace:manifestChanged', wrappedHandler);
-			return () => ipcRenderer.removeListener('marketplace:manifestChanged', wrappedHandler);
-		},
+		onManifestChanged: (handler: () => void) =>
+			subscribeIpc('marketplace:manifestChanged', handler),
 	};
 }
 

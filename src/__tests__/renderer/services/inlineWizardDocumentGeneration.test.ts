@@ -8,7 +8,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
 	parseGeneratedDocuments,
 	splitIntoPhases,
-	sanitizeFilename,
 	generateWizardFolderBaseName,
 	countTasks,
 	generateDocumentPrompt,
@@ -18,6 +17,7 @@ import {
 	type DocumentGenerationConfig,
 	type PlaybookDocumentEmitter,
 } from '../../../renderer/services/inlineWizardDocumentGeneration';
+import { sanitizeFilename } from '../../../renderer/utils/sanitizeFilename';
 import type { InlineGeneratedDocument } from '../../../renderer/hooks/batch/useInlineWizard';
 
 describe('inlineWizardDocumentGeneration', () => {

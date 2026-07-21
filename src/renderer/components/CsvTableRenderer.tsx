@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, type ReactNode } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
+import { escapeRegExp } from '../../shared/stringUtils';
 
 interface CsvTableRendererProps {
 	content: string;
@@ -142,7 +143,7 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
  */
 function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
 	if (!query) return text;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const escaped = escapeRegExp(query);
 	const regex = new RegExp(`(${escaped})`, 'gi');
 	const parts = text.split(regex);
 	if (parts.length === 1) return text;

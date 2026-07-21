@@ -2,7 +2,7 @@ import { ExternalLink } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
-import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 import { DEFAULT_BROWSER_HOME_URL } from '../utils';
 
 type BrowserKeepAliveMode = 'off' | 'recent' | 'all';
@@ -45,36 +45,26 @@ export function BrowserSection({
 				onChange={setUseSystemBrowser}
 				theme={theme}
 			/>
-			<div
-				data-setting-id="general-html-double-click"
-				className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
-				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-				onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
-				role="button"
-				tabIndex={0}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser);
-					}
-				}}
-			>
-				<div className="flex-1 pr-3">
-					<div className="font-medium" style={{ color: theme.colors.textMain }}>
+			<ToggleSettingRow
+				theme={theme}
+				title={
+					<span className="font-medium" style={{ color: theme.colors.textMain }}>
 						Open HTML files in Maestro Browser on double-click
-					</div>
-					<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+					</span>
+				}
+				description={
+					<span style={{ color: theme.colors.textDim }}>
 						When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro
 						browser instead of the file preview. Right-click for the full menu either way.
-					</div>
-				</div>
-				<ToggleSwitch
-					checked={htmlDoubleClickOpensInBrowser}
-					onChange={setHtmlDoubleClickOpensInBrowser}
-					theme={theme}
-					ariaLabel="Open HTML files in Maestro Browser on double-click"
-				/>
-			</div>
+					</span>
+				}
+				checked={htmlDoubleClickOpensInBrowser}
+				onChange={setHtmlDoubleClickOpensInBrowser}
+				ariaLabel="Open HTML files in Maestro Browser on double-click"
+				clickableRow
+				data-setting-id="general-html-double-click"
+				className="mt-3 p-3 rounded border hover:bg-opacity-10"
+			/>
 			<div
 				className="mt-3 p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}

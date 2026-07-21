@@ -27,10 +27,9 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	WebSocketMessageHandler,
-	type WebClient,
-	type WebClientMessage,
 	type MessageHandlerCallbacks,
 } from '../../../../main/web-server/handlers/messageHandlers';
+import type { WebClient, WebClientMessage } from '../../../../main/web-server/types';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
@@ -3016,6 +3015,290 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			expect(callbacks.createGroup).not.toHaveBeenCalled();
+		});
+	});
+	describe('Notification color compatibility', () => {
+		function lastResponse(): Record<string, unknown> {
+			const calls = (client.socket.send as unknown as { mock: { calls: string[][] } }).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		}
+
+		it('normalizes persisted toast and flash aliases before forwarding', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				toastType: 'success',
+			} as WebClientMessage);
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Heads up',
+				variant: 'warning',
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'green' })
+				);
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'yellow' })
+				);
+			});
+		});
+
+		it('prefers canonical colors and defaults omitted colors to theme', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				color: 'orange',
+				toastType: 'success',
+			} as WebClientMessage);
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'orange' })
+				);
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'theme' })
+				);
+			});
+		});
+
+		it('rejects invalid explicit colors without falling back to a legacy alias', () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				color: 'blue',
+				toastType: 'success',
+			} as WebClientMessage);
+
+			expect(callbacks.notifyToast).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_toast_result',
+				success: false,
+				error: 'Invalid toast color: blue. Must be one of: green, yellow, orange, red, theme',
+			});
+		});
+
+		it('preserves toast seconds and accepts its upper duration bound', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				duration: 60,
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: 60 })
+				);
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Completed',
+				message: 'Task finished',
+				duration: 0,
+			} as WebClientMessage);
+
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_toast_result',
+				success: false,
+				error:
+					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)',
+			});
+		});
+
+		it('preserves flash milliseconds and enforces its duration bounds', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 5000,
+			} as WebClientMessage);
+
+			await vi.waitFor(() => {
+				expect(callbacks.notifyCenterFlash).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: 5000 })
+				);
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 0,
+			} as WebClientMessage);
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_center_flash_result',
+				success: false,
+				error: 'duration must be a positive number of milliseconds',
+			});
+
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Saved',
+				duration: 5001,
+			} as WebClientMessage);
+			expect(lastResponse()).toMatchObject({
+				type: 'notify_center_flash_result',
+				success: false,
+				error: 'duration cannot exceed 5000 ms for externally-triggered flashes',
+			});
+		});
+	});
+
+	describe('Cadenza and Movement transport', () => {
+		function responses(): Array<Record<string, unknown>> {
+			const sendMock = client.socket.send as unknown as { mock: { calls: string[][] } };
+			return sendMock.mock.calls.map(([payload]) => JSON.parse(payload));
+		}
+
+		it('preserves each validated payload and correlated response under concurrent dispatch', async () => {
+			const cadenzaView = vi.fn().mockResolvedValue(true);
+			const movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ cadenzaView, movementView });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'cadenza-1',
+				op: 'open',
+				id: 'review',
+				viewType: 'decision',
+				title: 'Review',
+				body: 'Choose',
+				options: [{ label: 'Ship', value: 'ship' }],
+				color: 'green',
+				sessionId: 'agent-1',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'movement-1',
+				op: 'add',
+				id: 'task-1',
+				x: 12,
+				y: 24,
+				width: 300,
+				height: 100,
+				title: 'Ship',
+				body: '{"type":"text"}',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(cadenzaView).toHaveBeenCalledWith({
+				op: 'open',
+				id: 'review',
+				viewType: 'decision',
+				title: 'Review',
+				body: 'Choose',
+				path: undefined,
+				options: [{ label: 'Ship', value: 'ship' }],
+				color: 'green',
+				sessionId: 'agent-1',
+			});
+			expect(movementView).toHaveBeenCalledWith({
+				op: 'add',
+				id: 'task-1',
+				x: 12,
+				y: 24,
+				width: 300,
+				height: 100,
+				title: 'Ship',
+				body: '{"type":"text"}',
+			});
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: true,
+						requestId: 'cadenza-1',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: true,
+						requestId: 'movement-1',
+					}),
+				])
+			);
+		});
+
+		it('preserves malformed operation errors without invoking a callback', () => {
+			const cadenzaView = vi.fn().mockResolvedValue(true);
+			const movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ cadenzaView, movementView });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'bad-cadenza',
+				op: 'unknown',
+				id: 'review',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'bad-movement',
+				op: 'unknown',
+				id: 'task-1',
+			});
+
+			expect(cadenzaView).not.toHaveBeenCalled();
+			expect(movementView).not.toHaveBeenCalled();
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: false,
+						error: 'Invalid or missing op. Must be one of: open, update, close',
+						requestId: 'bad-cadenza',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: false,
+						error: 'Invalid or missing op. Must be one of: add, update, move, remove, clear',
+						requestId: 'bad-movement',
+					}),
+				])
+			);
+		});
+		it('preserves rejection errors and sends on a disconnected client', async () => {
+			handler.setCallbacks({
+				cadenzaView: vi.fn().mockRejectedValue(new Error('cadenza unavailable')),
+				movementView: vi.fn().mockRejectedValue(new Error('movement unavailable')),
+			});
+			Object.assign(client.socket, { readyState: WebSocket.CLOSED });
+
+			handler.handleMessage(client, {
+				type: 'cadenza',
+				requestId: 'reject-cadenza',
+				op: 'close',
+				id: 'review',
+			});
+			handler.handleMessage(client, {
+				type: 'movement',
+				requestId: 'reject-movement',
+				op: 'clear',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(responses()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'cadenza_result',
+						success: false,
+						error: 'Failed to update cadenza view: cadenza unavailable',
+						requestId: 'reject-cadenza',
+					}),
+					expect.objectContaining({
+						type: 'movement_result',
+						success: false,
+						error: 'Failed to update movement: movement unavailable',
+						requestId: 'reject-movement',
+					}),
+				])
+			);
 		});
 	});
 });

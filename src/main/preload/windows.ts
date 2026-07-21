@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import { subscribeIpc } from './ipcSubscription';
 import type {
 	WindowBounds,
 	WindowHighlightDropZonePayload,
@@ -128,13 +129,8 @@ export function createWindowsApi() {
 		 * @param callback - Invoked with the change payload on every broadcast
 		 * @returns An unsubscribe function
 		 */
-		onSessionMoved: (callback: (payload: WindowSessionMovedPayload) => void): (() => void) => {
-			const handler = (_event: unknown, payload: WindowSessionMovedPayload) => callback(payload);
-			ipcRenderer.on('windows:sessionMoved', handler);
-			return () => {
-				ipcRenderer.removeListener('windows:sessionMoved', handler);
-			};
-		},
+		onSessionMoved: (callback: (payload: WindowSessionMovedPayload) => void): (() => void) =>
+			subscribeIpc('windows:sessionMoved', callback),
 
 		/**
 		 * Toggle the drop-zone highlight on a target window's tab bar while a tab is
@@ -156,14 +152,7 @@ export function createWindowsApi() {
 		 */
 		onHighlightDropZone: (
 			callback: (payload: WindowHighlightDropZonePayload) => void
-		): (() => void) => {
-			const handler = (_event: unknown, payload: WindowHighlightDropZonePayload) =>
-				callback(payload);
-			ipcRenderer.on('windows:highlightDropZone', handler);
-			return () => {
-				ipcRenderer.removeListener('windows:highlightDropZone', handler);
-			};
-		},
+		): (() => void) => subscribeIpc('windows:highlightDropZone', callback),
 	};
 }
 

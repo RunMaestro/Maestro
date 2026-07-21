@@ -35,7 +35,6 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { app } from 'electron';
-import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { getCommitHash } from '../../utils/build-info';
@@ -70,40 +69,13 @@ import type {
 	NotifyToastClickAction,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
-	NotifyToastKind,
-	NotifyToastColor,
-	NotifyCenterFlashColor,
-	NotifyCenterFlashVariant,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
 	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 } from '../types';
-
-/** Canonical Toast / Center Flash color set (shared design language). */
-const NOTIFY_COLORS: readonly NotifyCenterFlashColor[] = [
-	'green',
-	'yellow',
-	'orange',
-	'red',
-	'theme',
-];
-const NOTIFY_FLASH_COLORS = NOTIFY_COLORS;
-const NOTIFY_TOAST_COLORS = NOTIFY_COLORS;
-
-const NOTIFY_TOAST_KINDS: readonly NotifyToastKind[] = ['success', 'info', 'warning', 'error'];
-
-/**
- * Legacy variant/type → color mapping. Lets older CLI scripts keep working
- * while we transition external integrations to `--color`.
- */
-const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor> = {
-	success: 'green',
-	info: 'theme',
-	warning: 'yellow',
-	error: 'red',
-};
+import type { LiveSessionInfo, WebClient, WebClientMessage } from '../types';
 
 /**
  * Hard upper bound on flash duration for **externally-triggered** flashes
@@ -121,7 +93,14 @@ const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
 const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
-import { AGENT_IDS } from '../../../shared/agentIds';
+import {
+	isNotificationTimeoutWithinLimit,
+	NOTIFICATION_COLORS,
+	NOTIFICATION_VARIANT_COLORS,
+	parseNotificationTimeout,
+	resolveNotificationColor,
+} from '../../../shared/notification';
+import { AGENT_IDS } from '../../../shared/agentRegistry';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
@@ -153,36 +132,17 @@ import type {
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
 
-/**
- * Web client message interface
- */
-export interface WebClientMessage {
-	type: string;
-	requestId?: string;
-	sessionId?: string;
-	tabId?: string;
-	command?: string;
-	mode?: 'ai' | 'terminal';
-	inputMode?: 'ai' | 'terminal';
-	newName?: string;
-	filePath?: string;
-	focus?: boolean;
-	force?: boolean;
-	background?: boolean;
-	[key: string]: unknown;
+type ViewCommandResponseType = 'cadenza_result' | 'movement_result';
+
+interface ViewCommandRegistration<TPayload> {
+	responseType: ViewCommandResponseType;
+	execute?: (payload: TPayload) => Promise<boolean>;
+	unavailableError: string;
+	failureError: string;
 }
 
 /**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-}
 
-/**
  * Session detail for command validation
  */
 export interface SessionDetailForHandler {
@@ -193,15 +153,6 @@ export interface SessionDetailForHandler {
 	/** Currently active AI tab id; surfaced in send_command responses so callers
 	 *  (`maestro-cli dispatch`) can address the same tab on follow-up calls. */
 	activeTabId?: string;
-}
-
-/**
- * Live session info for enriching sessions
- */
-export interface LiveSessionInfo {
-	sessionId: string;
-	agentSessionId?: string;
-	enabledAt: number;
 }
 
 /**
@@ -449,6 +400,34 @@ export class WebSocketMessageHandler {
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
+	}
+
+	/**
+	 * Send one validated Concerto mutation through its explicitly registered
+	 * callback. Cadenza and Movement retain separate validation and payload types.
+	 */
+	private dispatchViewCommand<TPayload>(
+		client: WebClient,
+		message: WebClientMessage,
+		payload: TPayload,
+		registration: ViewCommandRegistration<TPayload>
+	): void {
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: registration.responseType,
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+		if (!registration.execute) {
+			sendResult(false, registration.unavailableError);
+			return;
+		}
+		registration
+			.execute(payload)
+			.then((success) => sendResult(success, success ? undefined : registration.failureError))
+			.catch((error) => sendResult(false, `${registration.failureError}: ${error.message}`));
 	}
 
 	/**
@@ -4442,26 +4421,23 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Resolve color: explicit `color` wins over deprecated `toastType`. Default `theme`.
-		let color: NotifyToastColor;
-		if (rawColor !== undefined) {
-			if (!NOTIFY_TOAST_COLORS.includes(rawColor as NotifyToastColor)) {
+		const colorResolution = resolveNotificationColor(
+			rawColor,
+			rawType,
+			NOTIFICATION_VARIANT_COLORS
+		);
+		if (!colorResolution.ok) {
+			if (colorResolution.source === 'color') {
 				sendResult(
 					false,
-					`Invalid toast color: ${rawColor}. Must be one of: ${NOTIFY_TOAST_COLORS.join(', ')}`
+					`Invalid toast color: ${rawColor}. Must be one of: ${NOTIFICATION_COLORS.join(', ')}`
 				);
-				return;
-			}
-			color = rawColor as NotifyToastColor;
-		} else if (rawType !== undefined) {
-			if (!NOTIFY_TOAST_KINDS.includes(rawType as NotifyToastKind)) {
+			} else {
 				sendResult(false, `Invalid toast type: ${rawType}`);
-				return;
 			}
-			color = VARIANT_TO_COLOR[rawType as NotifyCenterFlashVariant];
-		} else {
-			color = 'theme';
+			return;
 		}
+		const color = colorResolution.color;
 
 		// Validate clickAction (data-driven click intent). Each kind has its
 		// own required fields; bad shapes are rejected so the CLI surfaces a
@@ -4512,14 +4488,14 @@ export class WebSocketMessageHandler {
 		// Duration validation: reject 0 (use --dismissible instead) and cap at 60 s.
 		// Skipped entirely when `dismissible: true` (the toast is sticky).
 		if (!dismissible && duration !== undefined) {
-			if (!Number.isFinite(duration) || duration <= 0) {
+			if (parseNotificationTimeout(duration) === null) {
 				sendResult(
 					false,
 					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)'
 				);
 				return;
 			}
-			if (duration > EXTERNAL_TOAST_MAX_DURATION_SECONDS) {
+			if (!isNotificationTimeoutWithinLimit(duration, EXTERNAL_TOAST_MAX_DURATION_SECONDS)) {
 				sendResult(
 					false,
 					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_SECONDS} seconds for externally-triggered toasts (use dismissible:true to make it sticky)`
@@ -4619,14 +4595,14 @@ export class WebSocketMessageHandler {
 			body,
 		};
 
-		if (!this.callbacks.movementView) {
-			sendResult(false, 'Movement not configured');
-			return;
-		}
-		this.callbacks
-			.movementView(payload)
-			.then((success) => sendResult(success, success ? undefined : 'Failed to update movement'))
-			.catch((error) => sendResult(false, `Failed to update movement: ${error.message}`));
+		this.dispatchViewCommand(client, message, payload, {
+			responseType: 'movement_result',
+			execute: this.callbacks.movementView
+				? (viewPayload) => this.callbacks.movementView!(viewPayload)
+				: undefined,
+			unavailableError: 'Movement not configured',
+			failureError: 'Failed to update movement',
+		});
 	}
 
 	/**
@@ -4847,15 +4823,14 @@ export class WebSocketMessageHandler {
 			sessionId: typeof message.sessionId === 'string' ? message.sessionId : undefined,
 		};
 
-		if (!this.callbacks.cadenzaView) {
-			sendResult(false, 'Cadenza views not configured');
-			return;
-		}
-
-		this.callbacks
-			.cadenzaView(payload)
-			.then((success) => sendResult(success, success ? undefined : 'Failed to update cadenza view'))
-			.catch((error) => sendResult(false, `Failed to update cadenza view: ${error.message}`));
+		this.dispatchViewCommand(client, message, payload, {
+			responseType: 'cadenza_result',
+			execute: this.callbacks.cadenzaView
+				? (viewPayload) => this.callbacks.cadenzaView!(viewPayload)
+				: undefined,
+			unavailableError: 'Cadenza views not configured',
+			failureError: 'Failed to update cadenza view',
+		});
 	}
 
 	/**
@@ -4882,36 +4857,33 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Resolve color: explicit `color` wins over deprecated `variant`. Default `theme`.
-		let color: NotifyCenterFlashColor;
-		if (rawColor !== undefined) {
-			if (!NOTIFY_FLASH_COLORS.includes(rawColor as NotifyCenterFlashColor)) {
+		const colorResolution = resolveNotificationColor(
+			rawColor,
+			rawVariant,
+			NOTIFICATION_VARIANT_COLORS
+		);
+		if (!colorResolution.ok) {
+			if (colorResolution.source === 'color') {
 				sendResult(
 					false,
-					`Invalid flash color: ${rawColor}. Must be one of: ${NOTIFY_FLASH_COLORS.join(', ')}`
+					`Invalid flash color: ${rawColor}. Must be one of: ${NOTIFICATION_COLORS.join(', ')}`
 				);
-				return;
-			}
-			color = rawColor as NotifyCenterFlashColor;
-		} else if (rawVariant !== undefined) {
-			if (!(rawVariant in VARIANT_TO_COLOR)) {
+			} else {
 				sendResult(false, `Invalid flash variant: ${rawVariant}`);
-				return;
 			}
-			color = VARIANT_TO_COLOR[rawVariant as NotifyCenterFlashVariant];
-		} else {
-			color = 'theme';
+			return;
 		}
+		const color = colorResolution.color;
 
 		// External flashes must be (0, 5000 ms] - `0` (never auto-dismiss) is rejected so
 		// external scripts can't stick a permanent overlay on the user. In-app callers
 		// using `notifyCenterFlash()` directly are not capped.
 		if (duration !== undefined) {
-			if (!Number.isFinite(duration) || duration <= 0) {
+			if (parseNotificationTimeout(duration) === null) {
 				sendResult(false, 'duration must be a positive number of milliseconds');
 				return;
 			}
-			if (duration > EXTERNAL_FLASH_MAX_DURATION_MS) {
+			if (!isNotificationTimeoutWithinLimit(duration, EXTERNAL_FLASH_MAX_DURATION_MS)) {
 				sendResult(
 					false,
 					`duration cannot exceed ${EXTERNAL_FLASH_MAX_DURATION_MS} ms for externally-triggered flashes`

@@ -17,17 +17,17 @@
 		"maestro-p": "./dist/cli/maestro-p.js"
 	},
 	"scripts": {
-		"dev": "node scripts/dev.mjs",
-		"dev:prod-data": "cross-env USE_PROD_DATA=1 node scripts/dev.mjs",
+		"dev": "bun scripts/dev.mjs",
+		"dev:prod-data": "cross-env USE_PROD_DATA=1 bun scripts/dev.mjs",
 		"dev:demo": "node scripts/dev-demo.mjs",
 		"dev:group-chat-load": "node scripts/group-chat-load-demo.mjs",
-		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development electron .",
-		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
+		"dev:main": "tsc -p tsconfig.main.json && bun run build:preload && cross-env NODE_ENV=development electron .",
+		"dev:main:prod-data": "tsc -p tsconfig.main.json && bun run build:preload && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:permission-relay-bridge",
+		"build": "bun run build:main && bun run build:preload && bun run build:renderer && bun run build:web-desktop && bun run build:cli && bun run build:maestro-p && bun run build:permission-relay-bridge",
 		"build:main": "tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
@@ -35,10 +35,10 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
-		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
-		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
-		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
+		"package": "bun scripts/set-version.mjs bun run build && bun scripts/set-version.mjs bunx electron-builder --mac --win --linux",
+		"package:mac": "bun scripts/set-version.mjs bun run build && bun scripts/set-version.mjs bunx electron-builder --mac",
+		"package:win": "bun scripts/set-version.mjs bun run build && bun scripts/set-version.mjs bunx electron-builder --win",
+		"package:linux": "bun scripts/set-version.mjs bun run build && bun scripts/set-version.mjs bunx electron-builder --linux",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
@@ -89,6 +89,51 @@
 			"dist/**/*",
 			"package.json"
 		],
+		"extraResources": [
+			{
+				"from": "dist/cli/maestro-cli.js",
+				"to": "maestro-cli.js"
+			},
+			{
+				"from": "dist/cli/maestro-p.js",
+				"to": "maestro-p.js"
+			},
+			{
+				"from": "dist/cli/permission-relay-bridge.js",
+				"to": "permission-relay-bridge.js"
+			},
+			{
+				"from": "src/prompts",
+				"to": "prompts/core",
+				"filter": [
+					"*.md"
+				]
+			},
+			{
+				"from": "src/prompts/speckit",
+				"to": "prompts/speckit",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
+			},
+			{
+				"from": "src/prompts/openspec",
+				"to": "prompts/openspec",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
+			},
+			{
+				"from": "src/prompts/bmad",
+				"to": "prompts/bmad",
+				"filter": [
+					"*.md",
+					"metadata.json"
+				]
+			}
+		],
 		"asarUnpack": [
 			"node_modules/node-pty/**/*",
 			"node_modules/better-sqlite3/**/*",
@@ -109,40 +154,7 @@
 				"zip"
 			],
 			"artifactName": "${name}-${version}-${arch}-mac.${ext}",
-			"icon": "build/icon.icns",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.icns"
 		},
 		"afterSign": "scripts/notarize.js",
 		"win": {
@@ -160,40 +172,7 @@
 					]
 				}
 			],
-			"icon": "build/icon.ico",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.ico"
 		},
 		"linux": {
 			"target": [
@@ -203,40 +182,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/icon.png",
-			"extraResources": [
-				{
-					"from": "dist/cli/maestro-cli.js",
-					"to": "maestro-cli.js"
-				},
-				{
-					"from": "dist/cli/maestro-p.js",
-					"to": "maestro-p.js"
-				},
-				{
-					"from": "dist/cli/permission-relay-bridge.js",
-					"to": "permission-relay-bridge.js"
-				},
-				{
-					"from": "src/prompts",
-					"to": "prompts/core",
-					"filter": [
-						"*.md"
-					]
-				},
-				{
-					"from": "src/prompts/speckit",
-					"to": "prompts/speckit"
-				},
-				{
-					"from": "src/prompts/openspec",
-					"to": "prompts/openspec"
-				},
-				{
-					"from": "src/prompts/bmad",
-					"to": "prompts/bmad"
-				}
-			]
+			"icon": "build/icon.png"
 		},
 		"deb": {
 			"depends": [
@@ -317,7 +263,6 @@
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-search": "^0.16.0",
 		"@xterm/addon-unicode11": "^0.9.0",
-		"@xterm/addon-web-links": "^0.12.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^6.0.0",
 		"adm-zip": "^0.5.16",
@@ -393,9 +338,7 @@
 		"@vitest/coverage-v8": "^4.1.5",
 		"@welldone-software/why-did-you-render": "^8.0.3",
 		"autoprefixer": "^10.4.16",
-		"baseline-browser-mapping": "^2.9.17",
 		"canvas": "^3.2.0",
-		"concurrently": "^8.2.2",
 		"cross-env": "^7.0.3",
 		"electron": "^41.5.0",
 		"electron-builder": "^26.8.1",
@@ -407,13 +350,12 @@
 		"eslint-plugin-react": "^7.37.5",
 		"eslint-plugin-react-hooks": "^7.0.1",
 		"globals": "^16.5.0",
-		"husky": "^9.1.7",
 		"jsdom": "^27.2.0",
 		"lucide-react": "^0.303.0",
 		"patch-package": "^8.0.1",
 		"playwright": "^1.59.1",
 		"postcss": "^8.4.33",
-		"prettier": "^3.8.0",
+		"prettier": "3.8.3",
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
 		"tailwindcss": "^3.4.1",

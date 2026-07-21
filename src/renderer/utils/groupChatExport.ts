@@ -12,7 +12,9 @@ import {
 	formatDurationCompact,
 	formatTimestamp as formatTimestampShared,
 } from '../../shared/formatters';
+import { escapeRegExp } from '../../shared/stringUtils';
 import { logger } from './logger';
+import { escapeHtmlText } from './escapeHtmlText';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -23,14 +25,6 @@ marked.setOptions({
 /**
  * Escape HTML special characters
  */
-function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#039;');
-}
 
 /**
  * Format a timestamp for display
@@ -61,13 +55,6 @@ function getParticipantColor(groupChat: GroupChat, from: string, theme: Theme): 
 		(p) => p.name.toLowerCase() === from.toLowerCase()
 	);
 	return participant?.color || theme.colors.textDim;
-}
-
-/**
- * Escape special regex characters in a string
- */
-function escapeRegExp(string: string): string {
-	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -130,7 +117,7 @@ export function generateGroupChatExportHtml(
 			return `
       <div class="message ${isUser ? 'message-user' : 'message-agent'}">
         <div class="message-header">
-          <span class="message-from" style="color: ${color}">${escapeHtml(msg.from)}</span>
+          <span class="message-from" style="color: ${color}">${escapeHtmlText(msg.from)}</span>
           <span class="message-time">${formatTimestamp(msg.timestamp)}</span>
           ${msg.readOnly ? '<span class="read-only-badge">read-only</span>' : ''}
         </div>
@@ -145,8 +132,8 @@ export function generateGroupChatExportHtml(
 			return `
       <div class="participant">
         <span class="participant-color" style="background-color: ${p.color || theme.colors.textDim}"></span>
-        <span class="participant-name">${escapeHtml(p.name)}</span>
-        <span class="participant-agent">${escapeHtml(p.agentId)}</span>
+        <span class="participant-name">${escapeHtmlText(p.name)}</span>
+        <span class="participant-agent">${escapeHtmlText(p.agentId)}</span>
       </div>`;
 		})
 		.join('\n');
@@ -163,7 +150,7 @@ export function generateGroupChatExportHtml(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(groupChat.name)} - Maestro Group Chat Export</title>
+  <title>${escapeHtmlText(groupChat.name)} - Maestro Group Chat Export</title>
   <style>
     :root {
       --bg-primary: ${colors.bgMain};
@@ -684,7 +671,7 @@ export function generateGroupChatExportHtml(
     </div>
 
     <header class="header">
-      <h1>${escapeHtml(groupChat.name)}</h1>
+      <h1>${escapeHtmlText(groupChat.name)}</h1>
       <p class="subtitle">Group Chat Export - ${formatTimestamp(groupChat.createdAt)}</p>
     </header>
 
@@ -711,11 +698,11 @@ export function generateGroupChatExportHtml(
       <h2 class="section-title">Details</h2>
       <div class="info-grid">
         <span class="info-label">Group Chat ID</span>
-        <span class="info-value">${escapeHtml(groupChat.id)}</span>
+        <span class="info-value">${escapeHtmlText(groupChat.id)}</span>
         <span class="info-label">Created</span>
         <span class="info-value">${formatTimestamp(groupChat.createdAt)}</span>
         <span class="info-label">Moderator</span>
-        <span class="info-value">${escapeHtml(groupChat.moderatorAgentId)}</span>
+        <span class="info-value">${escapeHtmlText(groupChat.moderatorAgentId)}</span>
       </div>
     </section>
 
@@ -741,7 +728,7 @@ export function generateGroupChatExportHtml(
 
     <footer class="footer">
       <p>Exported from <a href="https://runmaestro.ai" target="_blank">Maestro</a> on ${formatTimestamp(Date.now())}</p>
-      <p class="footer-theme">Theme: ${escapeHtml(theme.name)}</p>
+      <p class="footer-theme">Theme: ${escapeHtmlText(theme.name)}</p>
     </footer>
   </div>
 </body>

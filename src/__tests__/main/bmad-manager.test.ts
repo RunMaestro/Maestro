@@ -12,7 +12,7 @@ import fs from 'fs/promises';
 
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn().mockReturnValue('/mock/userData'),
+		getPath: vi.fn().mockReturnValue('/temporary-profile'),
 		isPackaged: false,
 	},
 }));
@@ -22,6 +22,7 @@ vi.mock('fs/promises', () => ({
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
 		mkdir: vi.fn(),
+		rm: vi.fn(),
 	},
 }));
 
@@ -41,6 +42,7 @@ import {
 	resetBmadPrompt,
 	getBmadCommand,
 	getBmadCommandBySlash,
+	refreshBmadPrompts,
 	type BmadMetadata,
 } from '../../main/bmad-manager';
 
@@ -58,6 +60,7 @@ describe('bmad-manager', () => {
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		vi.clearAllMocks();
 	});
 
@@ -199,6 +202,37 @@ describe('bmad-manager', () => {
 
 			expect(byId?.command).toBe('/bmad-help');
 			expect(bySlash?.id).toBe('help');
+		});
+	});
+	describe('refresh', () => {
+		it('preserves a user customization while committing refreshed BMAD sources', async () => {
+			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
+				if (filePath.toString().includes('bmad-customizations.json')) {
+					return JSON.stringify({
+						metadata: mockMetadata,
+						prompts: { help: { content: 'user help', isModified: true } },
+					});
+				}
+				throw new Error('ENOENT');
+			});
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string) => {
+					if (url.includes('/commits/')) return new Response(JSON.stringify({ sha: 'abcdef1234' }));
+					if (url.endsWith('/package.json'))
+						return new Response(JSON.stringify({ version: '6.2.0' }));
+					return new Response('# refreshed BMAD prompt');
+				})
+			);
+
+			const metadata = await refreshBmadPrompts();
+
+			expect(metadata).toMatchObject({ commitSha: 'abcdef1', sourceVersion: '6.2.0' });
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				expect.stringContaining('bmad-customizations.json'),
+				expect.stringContaining('user help'),
+				'utf-8'
+			);
 		});
 	});
 });

@@ -2,12 +2,13 @@ import React, { memo, useMemo, useCallback } from 'react';
 import { Calendar } from 'lucide-react';
 import type { Theme } from '../../types';
 import { LOOKBACK_OPTIONS } from './historyConstants';
+import type { LookbackHours } from './lookbackOptions';
 
 export interface LookbackSelectorProps {
 	/** Current lookback in hours, or null for "all time" */
-	lookbackHours: number | null;
+	lookbackHours: LookbackHours;
 	/** Called when the user selects a new lookback period */
-	onLookbackChange: (hours: number | null) => void;
+	onLookbackChange: (hours: LookbackHours) => void;
 	theme: Theme;
 	/** Whether the control is disabled */
 	disabled?: boolean;

@@ -40,6 +40,8 @@ import {
 import { getCustomSyncPath } from './utils';
 import { migrateWindowStateToMultiWindow } from './migrations/multi-window-state';
 import { readExistingAgentIds } from '../window-state-persistence';
+import { migrateClaudeOriginsStore } from './migrations/claude-origins';
+import { logger } from '../utils/logger';
 
 function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
 	return parseJsonWithBom<T>(value);
@@ -171,6 +173,20 @@ export function initializeStores(options: StoreInitOptions): {
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
 		deserialize: deserializeStoreJson,
 	});
+
+	// Keep the legacy file through the release window. The migration only writes
+	// the agent-keyed target after validating and byte-backing up the source.
+	try {
+		const result = migrateClaudeOriginsStore({
+			legacyStore: _claudeSessionOriginsStore,
+			targetStore: _agentSessionOriginsStore,
+		});
+		if (result.status !== 'migrated' && result.status !== 'already-current') {
+			logger.warn(`Claude origins migration deferred: ${result.status}`, 'Migration');
+		}
+	} catch (error) {
+		logger.error('Claude origins migration failed', 'Migration', error);
+	}
 
 	return {
 		syncPath: _syncPath,

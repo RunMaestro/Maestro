@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentSessionsSearch } from '../../../../../renderer/components/AgentSessionsBrowser/hooks/useAgentSessionsSearch';
+import type { SearchResult } from '../../../../../renderer/components/AgentSessionsBrowser/types';
 
 const mockSearch = vi.fn();
 
@@ -79,6 +80,44 @@ describe('useAgentSessionsSearch', () => {
 		await vi.runAllTimersAsync();
 		expect(mockSearch).toHaveBeenCalledTimes(1);
 		expect(mockSearch).toHaveBeenCalledWith('claude-code', '/project', 'world', 'user', undefined);
+	});
+	it('keeps newer search results when an older request resolves last', async () => {
+		let resolveFirst!: (value: SearchResult[]) => void;
+		let resolveSecond!: (value: SearchResult[]) => void;
+		const first = new Promise<SearchResult[]>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const second = new Promise<SearchResult[]>((resolve) => {
+			resolveSecond = resolve;
+		});
+		mockSearch.mockImplementationOnce(() => first).mockImplementationOnce(() => second);
+
+		const { result, rerender } = renderHook((args) => useAgentSessionsSearch(args), {
+			initialProps: defaults,
+		});
+		await act(async () => {
+			vi.advanceTimersByTime(300);
+		});
+		rerender({ ...defaults, search: 'newer' });
+		await act(async () => {
+			vi.advanceTimersByTime(300);
+		});
+
+		await act(async () => {
+			resolveSecond([
+				{ sessionId: 'new', matchType: 'user', matchPreview: 'newer', matchCount: 1 },
+			]);
+			await Promise.resolve();
+		});
+		await act(async () => {
+			resolveFirst([{ sessionId: 'old', matchType: 'user', matchPreview: 'older', matchCount: 1 }]);
+			await Promise.resolve();
+		});
+
+		expect(result.current.searchResults).toEqual([
+			{ sessionId: 'new', matchType: 'user', matchPreview: 'newer', matchCount: 1 },
+		]);
+		expect(result.current.isSearching).toBe(false);
 	});
 
 	it('IPC call includes all required parameters', async () => {

@@ -44,32 +44,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      # CRITICAL: Do NOT use setup-node's built-in npm cache for Linux builds.
-      # The cache key doesn't include architecture, so x64 and arm64 share the same cache.
-      # This causes ARM64 prebuilds to contaminate x64 builds (GitHub issue #116).
-      - name: Setup Node.js (Linux - no cache)
-        if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
+      # Keep the package cache architecture-specific so native prebuilds from
+      # Linux x64 and arm64 release runners cannot contaminate each other.
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          # Explicitly no cache to prevent cross-architecture contamination
 
-      - name: Setup Node.js (non-Linux - with cache)
-        if: matrix.platform != 'linux' && matrix.platform != 'linux-arm64'
-        uses: actions/setup-node@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
-      # Use architecture-specific cache for Linux builds
-      - name: Cache npm dependencies (Linux)
-        if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
+      - name: Cache Bun packages
         uses: actions/cache@v5
         with:
-          path: ~/.npm
-          key: npm-linux-${{ matrix.arch }}-${{ hashFiles('**/package-lock.json') }}
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            npm-linux-${{ matrix.arch }}-
+            bun-${{ runner.os }}-${{ matrix.arch }}-
 
       # Extra safety: Clear any prebuild cache that might have wrong-arch binaries
       - name: Clear prebuild cache (Linux)
@@ -154,7 +147,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          node -e "
+          bun -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             pkg.version = process.env.VERSION;
@@ -163,10 +156,10 @@ jobs:
           echo "Updated package.json to version $VERSION"
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
-      # Clean any prebuilt binaries that may have been downloaded for wrong architecture
-      # This is critical: prebuild-install downloads binaries during npm ci, which may be wrong
+      # Clean any prebuilt binaries that may have been downloaded for the wrong architecture.
+      # This is critical because install-time prebuild resolution may select host binaries.
       - name: Clean prebuilt binaries (Linux x64)
         if: matrix.platform == 'linux'
         run: |
@@ -191,7 +184,7 @@ jobs:
       # Rebuild native modules for the target platform
       - name: Rebuild native modules (Linux x64)
         if: matrix.platform == 'linux'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
           npm_config_arch: x64
@@ -199,7 +192,7 @@ jobs:
 
       - name: Rebuild native modules (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
           npm_config_arch: arm64
@@ -207,7 +200,7 @@ jobs:
 
       - name: Rebuild native modules (Windows)
         if: matrix.platform == 'win'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
 
@@ -217,14 +210,14 @@ jobs:
       # Verify native module architectures after initial rebuild (Linux only - macOS rebuilds per-arch before packaging)
       - name: Verify native module architecture (Linux x64)
         if: matrix.platform == 'linux'
-        run: .github/scripts/verify-native-arch.sh x64
+        run: .github/scripts/verify-native-arch.sh --arch x64 --platform linux
 
       - name: Verify native module architecture (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: .github/scripts/verify-native-arch.sh arm64
+        run: .github/scripts/verify-native-arch.sh --arch arm64 --platform linux
 
       - name: Build application
-        run: npm run build
+        run: bun run build
         env:
           VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
 
@@ -272,8 +265,8 @@ jobs:
           npm_config_build_from_source: true
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          .github/scripts/rebuild-and-verify-native.sh x64
-          npx electron-builder --mac --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          .github/scripts/verify-native-arch.sh --rebuild --arch x64 --platform mac
+          bunx electron-builder --mac --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for macOS arm64
         if: matrix.platform == 'mac'
@@ -287,46 +280,21 @@ jobs:
           npm_config_build_from_source: true
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          .github/scripts/rebuild-and-verify-native.sh arm64
-          npx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          .github/scripts/verify-native-arch.sh --rebuild --arch arm64 --platform mac
+          bunx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
-        run: npx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        run: bunx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 
       # Verify native modules are correctly included in unpacked resources (Windows x64)
       - name: Verify native modules in package (Windows)
         if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          $unpackedDir = "release/win-unpacked/resources/app.asar.unpacked"
-          # node-pty on Windows uses ConPTY: ships conpty.node + conpty_console_list.node, not pty.node
-          $nativeModules = @(
-            "node_modules/node-pty/build/Release/conpty.node",
-            "node_modules/node-pty/build/Release/conpty_console_list.node",
-            "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-          )
-
-          foreach ($relativePath in $nativeModules) {
-            $nativePath = Join-Path $unpackedDir $relativePath
-            Write-Host "Checking for $relativePath in unpacked resources..."
-            if (Test-Path $nativePath) {
-              Get-Item $nativePath | Format-List FullName,Length
-            } else {
-              Write-Error "ERROR: $relativePath not found in unpacked resources"
-              Write-Host "Available native modules:"
-              if (Test-Path $unpackedDir) {
-                Get-ChildItem -Path $unpackedDir -Filter *.node -Recurse -ErrorAction SilentlyContinue |
-                  Select-Object -ExpandProperty FullName
-              } else {
-                Write-Host "Directory not found: $unpackedDir"
-              }
-              exit 1
-            }
-          }
+        shell: bash
+        run: .github/scripts/verify-native-arch.sh --arch x64 --platform win --root release/win-unpacked/resources/app.asar.unpacked
 
       # Linux/macOS: Rebuild native modules for the target arch, verify, then package.
       # npmRebuild: false in package.json prevents electron-builder from re-running npm rebuild,
@@ -340,8 +308,8 @@ jobs:
           npm_config_build_from_source: true
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          .github/scripts/rebuild-and-verify-native.sh x64
-          npx electron-builder --linux --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          .github/scripts/verify-native-arch.sh --rebuild --arch x64 --platform linux
+          bunx electron-builder --linux --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for Linux ARM64
         if: matrix.platform == 'linux-arm64'
@@ -353,99 +321,18 @@ jobs:
           USE_SYSTEM_FPM: 'true'
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          .github/scripts/rebuild-and-verify-native.sh arm64
-          npx electron-builder --linux --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          .github/scripts/verify-native-arch.sh --rebuild --arch arm64 --platform linux
+          bunx electron-builder --linux --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       # Verify native modules are correctly included in unpacked resources (Linux x64)
       - name: Verify native modules in package (Linux x64)
         if: matrix.platform == 'linux'
-        run: |
-          UNPACKED_DIR="release/linux-unpacked/resources/app.asar.unpacked"
-
-          # Verify pty.node
-          echo "Checking for pty.node in unpacked resources..."
-          PTY_NODE="$UNPACKED_DIR/node_modules/node-pty/build/Release/pty.node"
-          if [ -f "$PTY_NODE" ]; then
-            echo "✓ pty.node found at: $PTY_NODE"
-            file "$PTY_NODE"
-            ls -la "$PTY_NODE"
-            # Double-check architecture - FAIL if wrong architecture
-            if file "$PTY_NODE" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ Architecture verified: x64"
-            else
-              echo "✗ ERROR: Architecture mismatch in packaged pty.node!"
-              file "$PTY_NODE"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: pty.node not found in unpacked resources!"
-            echo "Contents of app.asar.unpacked:"
-            find "$UNPACKED_DIR" -name "*.node" -o -name "pty*" 2>/dev/null || echo "Directory not found"
-            exit 1
-          fi
-
-          # Verify better_sqlite3.node
-          echo "Checking for better_sqlite3.node in unpacked resources..."
-          SQLITE_NODE="$UNPACKED_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-          if [ -f "$SQLITE_NODE" ]; then
-            echo "✓ better_sqlite3.node found at: $SQLITE_NODE"
-            file "$SQLITE_NODE"
-            ls -la "$SQLITE_NODE"
-            # Double-check architecture - FAIL if wrong architecture
-            if file "$SQLITE_NODE" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ Architecture verified: x64"
-            else
-              echo "✗ ERROR: Architecture mismatch in packaged better_sqlite3.node!"
-              file "$SQLITE_NODE"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: better_sqlite3.node not found in unpacked resources!"
-            echo "Contents of app.asar.unpacked:"
-            find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
-            exit 1
-          fi
+        run: .github/scripts/verify-native-arch.sh --arch x64 --platform linux --root release/linux-unpacked/resources/app.asar.unpacked
 
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: |
-          UNPACKED_DIR="release/linux-arm64-unpacked/resources/app.asar.unpacked"
-
-          # Verify pty.node
-          echo "Checking for pty.node in unpacked resources..."
-          PTY_NODE="$UNPACKED_DIR/node_modules/node-pty/build/Release/pty.node"
-          if [ -f "$PTY_NODE" ]; then
-            echo "✓ pty.node found at: $PTY_NODE"
-            file "$PTY_NODE"
-            ls -la "$PTY_NODE"
-            # Double-check architecture
-            if file "$PTY_NODE" | grep -q "ARM\|aarch64"; then
-              echo "✓ Architecture verified: ARM64"
-            else
-              echo "✗ WARNING: Architecture mismatch in packaged binary!"
-              file "$PTY_NODE"
-            fi
-          else
-            echo "✗ ERROR: pty.node not found in unpacked resources!"
-            echo "Contents of app.asar.unpacked:"
-            find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
-            exit 1
-          fi
-
-          # Verify better_sqlite3.node
-          echo "Checking for better_sqlite3.node in unpacked resources..."
-          SQLITE_NODE="$UNPACKED_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-          if [ -f "$SQLITE_NODE" ]; then
-            echo "✓ better_sqlite3.node found at: $SQLITE_NODE"
-            file "$SQLITE_NODE"
-            ls -la "$SQLITE_NODE"
-          else
-            echo "✗ ERROR: better_sqlite3.node not found in unpacked resources!"
-            echo "Contents of app.asar.unpacked:"
-            find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
-            exit 1
-          fi
+        run: .github/scripts/verify-native-arch.sh --arch arm64 --platform linux --root release/linux-arm64-unpacked/resources/app.asar.unpacked
 
       # List what was built for debugging
       - name: List release artifacts

@@ -106,6 +106,45 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 		await expect(host.invokeTool('missing', 'lookup', {})).rejects.toThrow(/not running/);
 	});
 
+	it('rejects a multibyte JSON args payload over the byte limit without posting', async () => {
+		const multibyte = '💣'.repeat(250_000);
+
+		await expect(host.invokeTool('p', 'lookup', { nested: multibyte })).rejects.toThrow(
+			'tool args exceed size limit'
+		);
+		expect(proc.postMessage).not.toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'invokeTool' })
+		);
+	});
+
+	it('rejects oversized nested child params before authorization or forwarding', async () => {
+		emit('message', {
+			id: 7,
+			method: 'storage.get',
+			params: { nested: { multibyte: '💣'.repeat(250_000) } },
+		});
+
+		await Promise.resolve();
+		expect(proc.postMessage).toHaveBeenCalledWith({
+			id: 7,
+			ok: false,
+			error: 'request params exceed size limit',
+		});
+	});
+
+	it('treats missing child params as the bounded null payload', async () => {
+		const accepting = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: { 'storage.get': async () => 'ok' },
+		});
+		accepting.start('missing-params', dir, 'entry.js');
+
+		emit('message', { id: 8, method: 'storage.get' });
+
+		await Promise.resolve();
+		expect(proc.postMessage).toHaveBeenCalledWith({ id: 8, ok: true, result: 'ok' });
+	});
+
 	it('rejects outstanding invocations when the child exits first', async () => {
 		const p = host.invokeTool('p', 'lookup', {});
 		emit('exit', 1);

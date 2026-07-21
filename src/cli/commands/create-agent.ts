@@ -2,8 +2,14 @@
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
-import { formatError, formatSuccess } from '../output/formatter';
-import { AGENT_IDS } from '../../shared/agentIds';
+import { formatSuccess } from '../output/formatter';
+import { writeCommandError } from '../output/command-error';
+import {
+	parseEnvironmentAssignments,
+	parseEnvironmentBoolean,
+	parsePositiveInteger,
+} from '../utils/environment';
+import { AGENT_IDS } from '../../shared/agentRegistry';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -27,58 +33,38 @@ interface CreateAgentOptions {
 	json?: boolean;
 }
 
-// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
-function parseBool(value: string, flag: string): boolean {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new Error(`${flag} expects true or false, got "${value}"`);
+function exitWithCommandError(message: string, options: CreateAgentOptions): never {
+	writeCommandError(options.json, message);
+	return process.exit(1);
 }
 
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
 	if (!VALID_TYPES.has(options.type)) {
-		const msg = `Invalid agent type "${options.type}". Must be one of: ${[...VALID_TYPES].join(', ')}`;
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
-		process.exit(1);
+		exitWithCommandError(
+			`Invalid agent type "${options.type}". Must be one of: ${[...VALID_TYPES].join(', ')}`,
+			options
+		);
 	}
 
 	const cwd = path.resolve(options.cwd);
 
-	// Parse --env KEY=VALUE pairs into a Record
+	// Parse --env KEY=VALUE pairs into a Record.
 	let customEnvVars: Record<string, string> | undefined;
 	if (options.env && options.env.length > 0) {
-		customEnvVars = {};
-		for (const entry of options.env) {
-			const eqIndex = entry.indexOf('=');
-			if (eqIndex === -1) {
-				const msg = `Invalid --env format "${entry}". Expected KEY=VALUE`;
-				if (options.json) {
-					console.log(JSON.stringify({ success: false, error: msg }));
-				} else {
-					console.error(formatError(msg));
-				}
-				process.exit(1);
-			}
-			customEnvVars[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
+		try {
+			customEnvVars = parseEnvironmentAssignments(options.env);
+		} catch (error) {
+			exitWithCommandError(error instanceof Error ? error.message : String(error), options);
 		}
 	}
 
-	// Parse context window
+	// Parse context window.
 	let customContextWindow: number | undefined;
 	if (options.contextWindow !== undefined) {
-		customContextWindow = parseInt(options.contextWindow, 10);
-		if (isNaN(customContextWindow) || customContextWindow < 1) {
-			const msg = '--context-window must be a positive integer';
-			if (options.json) {
-				console.log(JSON.stringify({ success: false, error: msg }));
-			} else {
-				console.error(formatError(msg));
-			}
-			process.exit(1);
+		try {
+			customContextWindow = parsePositiveInteger(options.contextWindow, '--context-window');
+		} catch (error) {
+			exitWithCommandError(error instanceof Error ? error.message : String(error), options);
 		}
 	}
 
@@ -87,15 +73,12 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	let syncHistory: boolean | undefined;
 	if (options.syncHistoryToRemote !== undefined) {
 		try {
-			syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+			syncHistory = parseEnvironmentBoolean(
+				options.syncHistoryToRemote,
+				'--sync-history-to-remote'
+			);
 		} catch (error) {
-			const msg = error instanceof Error ? error.message : String(error);
-			if (options.json) {
-				console.log(JSON.stringify({ success: false, error: msg }));
-			} else {
-				console.error(formatError(msg));
-			}
-			process.exit(1);
+			exitWithCommandError(error instanceof Error ? error.message : String(error), options);
 		}
 	}
 
@@ -118,13 +101,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 			syncHistory,
 		};
 	} else if (syncHistory !== undefined) {
-		const msg = '--sync-history-to-remote requires --ssh-remote';
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
-		process.exit(1);
+		exitWithCommandError('--sync-history-to-remote requires --ssh-remote', options);
 	}
 
 	// Build the WebSocket message payload
@@ -170,21 +147,9 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 				console.log(`  CWD: ${cwd}`);
 			}
 		} else {
-			const msg = result.error || 'Failed to create agent';
-			if (options.json) {
-				console.log(JSON.stringify({ success: false, error: msg }));
-			} else {
-				console.error(formatError(msg));
-			}
-			process.exit(1);
+			exitWithCommandError(result.error || 'Failed to create agent', options);
 		}
 	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
-		process.exit(1);
+		exitWithCommandError(error instanceof Error ? error.message : String(error), options);
 	}
 }

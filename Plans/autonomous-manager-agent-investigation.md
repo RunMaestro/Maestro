@@ -157,7 +157,7 @@ Relevant files/docs:
 
 - `AGENT_SUPPORT.md`
 - `docs/agent-guides/AGENT-INFRA.md`
-- `src/shared/agentIds.ts`
+- `src/shared/agentRegistry.ts`
 - `src/main/agents/definitions.ts`
 - `src/main/agents/capabilities.ts`
 - `src/main/storage/index.ts`

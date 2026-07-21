@@ -12,7 +12,7 @@
 import { IProcessManager } from './group-chat-moderator';
 import { getContextWindowValue } from '../utils/agent-args';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
-import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { resolveSshSpawn, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import type { AgentConfig } from '../agents/definitions';
@@ -123,11 +123,11 @@ export async function spawnGroupChatAgent(
 	// selection falls back to API instead of exiting 127 when maestro-p isn't
 	// installed on the remote (the resolver reads this from the cache).
 	if (sshRemoteConfig?.enabled && sshStore) {
-		const sshRemote = getSshRemoteConfig(sshStore, {
+		const sshResolution = resolveSshSpawn(sshStore, {
 			sessionSshConfig: sshRemoteConfig,
-		}).config;
-		if (sshRemote) {
-			await ensureRemoteMaestroPProbed(sshRemote);
+		});
+		if (sshResolution.mode === 'remote') {
+			await ensureRemoteMaestroPProbed(sshResolution.remote);
 		}
 	}
 

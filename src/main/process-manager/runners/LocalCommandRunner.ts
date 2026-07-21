@@ -1,7 +1,6 @@
 // src/main/process-manager/runners/LocalCommandRunner.ts
 
 import { spawn } from 'child_process';
-import * as path from 'path';
 import * as os from 'os';
 import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
@@ -14,6 +13,7 @@ import {
 	buildWrappedCommand,
 } from '../utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
+import { expandTilde } from '../../../shared/pathUtils';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
@@ -99,7 +99,7 @@ export class LocalCommandRunner {
 			if (shellEnvVars && Object.keys(shellEnvVars).length > 0) {
 				const homeDir = os.homedir();
 				for (const [key, value] of Object.entries(shellEnvVars)) {
-					env[key] = value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value;
+					env[key] = expandTilde(value, homeDir);
 				}
 				logger.debug(
 					'[ProcessManager] Applied custom shell env vars to runCommand',

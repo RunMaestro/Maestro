@@ -14,11 +14,21 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npx prettier --check .
-      - run: npx eslint src/
-      - run: npm run lint # TypeScript type checking
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bunx prettier --check .
+      - run: bunx eslint src/
+      - run: bun run lint # TypeScript type checking
 
   test:
     name: Test (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
@@ -34,6 +44,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run test -- --shard=${{ matrix.shard }}/2
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run test -- --shard=${{ matrix.shard }}/2

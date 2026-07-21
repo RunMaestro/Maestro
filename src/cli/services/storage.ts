@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveCliConfigDirectory } from '../utils/environment';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_VERSION,
@@ -18,21 +19,13 @@ import {
 
 // Get the Maestro config directory path
 function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-	const platform = os.platform();
-	const home = os.homedir();
-
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+	return resolveCliConfigDirectory(process.env, {
+		platform: os.platform(),
+		home: os.homedir(),
+		cwd: process.cwd(),
+		appName: 'Maestro',
+		userDataKey: 'MAESTRO_USER_DATA',
+	});
 }
 
 /**

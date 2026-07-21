@@ -9,17 +9,11 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
 	useWebSocket,
-	type SessionData,
 	type UseWebSocketOptions,
 	type UseWebSocketReturn,
 	type WebSocketState,
-	type UsageStats,
-	type LastResponsePreview,
-	type AITabData,
 } from './useWebSocket';
-
-// Re-export types for components
-export type { UsageStats, LastResponsePreview, AITabData };
+import type { AITabData, SessionData } from '../../shared/web-protocol/session';
 import type { Theme } from '../../shared/theme-types';
 
 /**

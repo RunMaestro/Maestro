@@ -10,7 +10,10 @@ import { describe, it, expect, vi } from 'vitest';
 import {
 	getSshRemoteConfig,
 	createSshRemoteStoreAdapter,
-	SshRemoteSettingsStore,
+	lookupSshRemoteById,
+	resolveSshRemoteId,
+	resolveSshSpawn,
+	type SshRemoteSettingsStore,
 } from '../../../main/utils/ssh-remote-resolver';
 import type { SshRemoteConfig } from '../../../shared/types';
 
@@ -260,5 +263,115 @@ describe('integration with getSshRemoteConfig', () => {
 		// No session config = local execution
 		expect(result.config).toBeNull();
 		expect(result.source).toBe('none');
+	});
+});
+
+describe('lookupSshRemoteById', () => {
+	const enabledRemote: SshRemoteConfig = {
+		id: 'enabled',
+		name: 'Enabled',
+		host: 'enabled.example.com',
+		port: 22,
+		username: 'user',
+		privateKeyPath: '',
+		enabled: true,
+	};
+	const disabledRemote: SshRemoteConfig = { ...enabledRemote, id: 'disabled', enabled: false };
+	const store: SshRemoteSettingsStore = {
+		getSshRemotes: () => [enabledRemote, disabledRemote],
+	};
+
+	it.each([
+		['enabled', 'enabled'],
+		['disabled', 'disabled'],
+		['missing', 'not-found'],
+	] as const)('reports %s as %s without applying a caller policy', (remoteId, status) => {
+		expect(lookupSshRemoteById(store, remoteId).status).toBe(status);
+	});
+});
+
+describe('resolveSshRemoteId', () => {
+	it.each([
+		[
+			'explicit overrides session and default',
+			{
+				explicitRemoteId: 'explicit',
+				sessionSshConfig: { enabled: true, remoteId: 'session' },
+				defaultRemoteId: 'default',
+			},
+			{ remoteId: 'explicit', source: 'explicit' },
+		],
+		[
+			'enabled session overrides default',
+			{
+				sessionSshConfig: { enabled: true, remoteId: 'session' },
+				defaultRemoteId: 'default',
+			},
+			{ remoteId: 'session', source: 'session' },
+		],
+		[
+			'disabled session blocks default',
+			{
+				sessionSshConfig: { enabled: false, remoteId: 'session' },
+				defaultRemoteId: 'default',
+			},
+			{ remoteId: undefined, source: 'local' },
+		],
+		[
+			'default is used without session policy',
+			{ defaultRemoteId: 'default' },
+			{ remoteId: 'default', source: 'default' },
+		],
+		['no candidate remains local', {}, { remoteId: undefined, source: 'local' }],
+	] as const)('%s', (_name, options, expected) => {
+		expect(resolveSshRemoteId(options)).toEqual(expected);
+	});
+});
+
+describe('resolveSshSpawn', () => {
+	const enabledRemote: SshRemoteConfig = {
+		id: 'remote-1',
+		name: 'Enabled',
+		host: 'enabled.example.com',
+		port: 22,
+		username: 'user',
+		privateKeyPath: '',
+		enabled: true,
+	};
+	const disabledRemote: SshRemoteConfig = {
+		...enabledRemote,
+		id: 'remote-disabled',
+		enabled: false,
+	};
+	const store: SshRemoteSettingsStore = {
+		getSshRemotes: () => [enabledRemote, disabledRemote],
+	};
+
+	it.each([
+		[
+			'enabled remote remains remote for SSH transport authentication errors',
+			{ sessionSshConfig: { enabled: true, remoteId: 'remote-1' } },
+			{ mode: 'remote', source: 'session', status: 'enabled' },
+		],
+		[
+			'disabled remote',
+			{ sessionSshConfig: { enabled: true, remoteId: 'remote-disabled' } },
+			{ mode: 'local', source: 'session', status: 'disabled' },
+		],
+		[
+			'unknown remote',
+			{ sessionSshConfig: { enabled: true, remoteId: 'missing' } },
+			{ mode: 'local', source: 'session', status: 'not-found' },
+		],
+		[
+			'malformed enabled config',
+			{ sessionSshConfig: { enabled: true, remoteId: null } },
+			{ mode: 'local', source: 'local', status: 'not-found' },
+		],
+	] as const)('%s preserves provenance and fallback policy', (_name, options, expected) => {
+		const result = resolveSshSpawn(store, options);
+		expect(result.mode).toBe(expected.mode);
+		expect(result.source).toBe(expected.source);
+		expect(result.status).toBe(expected.status);
 	});
 });

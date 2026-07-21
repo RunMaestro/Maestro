@@ -9,9 +9,7 @@ import * as path from 'path';
 import {
 	parseSshConfig,
 	parseConfigContent,
-	getSshConfigHostSummary,
-	SshConfigHost,
-	SshConfigParserDeps,
+	type SshConfigParserDeps,
 } from '../../../main/utils/ssh-config-parser';
 
 describe('ssh-config-parser', () => {
@@ -281,90 +279,6 @@ Host dev
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Permission denied');
 			expect(result.hosts).toHaveLength(0);
-		});
-	});
-
-	describe('getSshConfigHostSummary', () => {
-		it('should format user@hostname', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-				user: 'admin',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('admin@server.example.com');
-		});
-
-		it('should include non-default port', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-				user: 'admin',
-				port: 2222,
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('admin@server.example.com, port 2222');
-		});
-
-		it('should exclude default port 22', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-				user: 'admin',
-				port: 22,
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('admin@server.example.com');
-		});
-
-		it('should include identity file basename', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-				identityFile: '/home/user/.ssh/id_ed25519',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('server.example.com, key: id_ed25519');
-		});
-
-		it('should show user@... when only user is available', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				user: 'admin',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('admin@...');
-		});
-
-		it('should show hostname when only hostname is available', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('server.example.com');
-		});
-
-		it('should return fallback when no details available', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe('No details available');
-		});
-
-		it('should combine all available information', () => {
-			const host: SshConfigHost = {
-				host: 'myserver',
-				hostName: 'server.example.com',
-				user: 'admin',
-				port: 2222,
-				identityFile: '/home/user/.ssh/custom_key',
-			};
-
-			expect(getSshConfigHostSummary(host)).toBe(
-				'admin@server.example.com, port 2222, key: custom_key'
-			);
 		});
 	});
 });

@@ -369,6 +369,53 @@ describe('CueYamlEditor', () => {
 
 			vi.useRealTimers();
 		});
+
+		it('keeps newer debounced validation when an older request resolves last', async () => {
+			let resolveOlder!: (value: { valid: boolean; errors: string[] }) => void;
+			let resolveNewer!: (value: { valid: boolean; errors: string[] }) => void;
+			const older = new Promise<{ valid: boolean; errors: string[] }>((resolve) => {
+				resolveOlder = resolve;
+			});
+			const newer = new Promise<{ valid: boolean; errors: string[] }>((resolve) => {
+				resolveNewer = resolve;
+			});
+			mockReadYaml.mockResolvedValue('initial');
+			mockValidateYaml
+				.mockResolvedValueOnce({ valid: true, errors: [] })
+				.mockImplementationOnce(() => older)
+				.mockImplementationOnce(() => newer);
+
+			render(<CueYamlEditor {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('yaml-editor')).toBeInTheDocument();
+			});
+			vi.useFakeTimers();
+
+			try {
+				const editor = screen.getByTestId('yaml-editor');
+				fireEvent.change(editor, { target: { value: 'older' } });
+				await act(async () => {
+					vi.advanceTimersByTime(500);
+				});
+				fireEvent.change(editor, { target: { value: 'newer' } });
+				await act(async () => {
+					vi.advanceTimersByTime(500);
+				});
+
+				await act(async () => {
+					resolveNewer({ valid: false, errors: ['New validation error'] });
+					await Promise.resolve();
+				});
+				await act(async () => {
+					resolveOlder({ valid: true, errors: [] });
+					await Promise.resolve();
+				});
+
+				expect(screen.getByText('New validation error')).toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	describe('AI assist chat', () => {

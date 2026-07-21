@@ -1,7 +1,7 @@
-import { LOOKBACK_OPTIONS } from '../History';
+import { LOOKBACK_PERIODS, type LookbackHours } from '../History/lookbackOptions';
 
 /** Convert lookbackHours to lookbackDays for the IPC call. null => 0 (all time). */
-export function lookbackHoursToDays(hours: number | null): number {
+export function lookbackHoursToDays(hours: LookbackHours): number {
 	if (hours === null) return 0;
 	return Math.ceil(hours / 24);
 }
@@ -11,16 +11,16 @@ export function lookbackHoursToDays(hours: number | null): number {
  * lookback option carries its own preferred resolution (24 for short windows,
  * 28 for "1 week", 30 for "1 month", etc.); unknown windows fall back to 24.
  */
-export function bucketCountForLookback(hours: number | null): number {
-	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
+export function bucketCountForLookback(hours: LookbackHours): number {
+	const config = LOOKBACK_PERIODS.find((option) => option.hours === hours);
 	return config?.bucketCount ?? 24;
 }
 
-/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. 0 => null (All time). */
-export function daysToLookbackHours(days: number): number | null {
+/** Find the smallest stored lookback value that covers the given days. 0 => all time. */
+export function daysToLookbackHours(days: number): LookbackHours {
 	if (days <= 0) return null;
 	const targetHours = days * 24;
-	for (const option of LOOKBACK_OPTIONS) {
+	for (const option of LOOKBACK_PERIODS) {
 		if (option.hours !== null && option.hours >= targetHours) return option.hours;
 	}
 	return null;
@@ -46,7 +46,7 @@ function ordinalSuffix(n: number): string {
  * Returns null for "All time" (no cutoff to display).
  */
 export function formatLookbackSinceDate(
-	hours: number | null,
+	hours: LookbackHours,
 	now: number = Date.now()
 ): string | null {
 	if (hours === null) return null;

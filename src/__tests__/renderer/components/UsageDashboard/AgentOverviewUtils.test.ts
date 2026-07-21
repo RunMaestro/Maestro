@@ -3,13 +3,13 @@ import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
 import {
-	buildSessionSparkline,
 	getSessionAutoPercent,
 	getSessionQueryCount,
 	getStatusColor,
 	isSessionHighlighted,
 	sortAgentOverviewSessions,
 } from '../../../../renderer/components/UsageDashboard/agentOverviewUtils';
+import { buildSessionSparkline } from '../../../../renderer/components/UsageDashboard/usageDashboardUtils';
 
 const theme = THEMES.dracula;
 

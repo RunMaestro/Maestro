@@ -17,7 +17,6 @@
 // ============ Capabilities ============
 export {
 	type AgentCapabilities,
-	DEFAULT_CAPABILITIES,
 	AGENT_CAPABILITIES,
 	getAgentCapabilities,
 	hasCapability,

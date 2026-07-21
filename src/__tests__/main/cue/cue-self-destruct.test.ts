@@ -2,10 +2,9 @@
  * Unit tests for `removeSubscriptionFromYaml` - the rewriter that powers
  * `time.once` self-destruct after a fire.
  *
- * Uses a real temp directory so we exercise the actual on-disk write path
- * (atomic rename, leading-comment preservation). Filesystem failures are
- * simulated by `vi.spyOn(fs.promises, ...)` rather than full module mocks
- * so the rest of the module - path resolution, yaml dump - runs unmodified.
+ * Uses a real temp directory so we exercise the mutation service's on-disk
+ * comment-preserving removal path. Fault injection lives with that service's
+ * filesystem fixtures, where it can exercise the atomic-write seam directly.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -88,6 +87,26 @@ describe('removeSubscriptionFromYaml', () => {
 		expect(names).toEqual(['heartbeat-1', 'task-2026-05-22-1500-bbbb2222-notify']);
 	});
 
+	it('leaves a valid empty subscriptions array when removing the final sub', async () => {
+		writeYaml({
+			subscriptions: [
+				{
+					name: 'task-x',
+					event: 'time.heartbeat',
+					interval_minutes: 5,
+					prompt: 'tick',
+				},
+			],
+		});
+
+		const result = await removeSubscriptionFromYaml(projectRoot, 'task-x');
+
+		expect(result.removed).toBe(true);
+		const { raw, parsed } = readYaml();
+		expect(parsed.subscriptions).toEqual([]);
+		expect(raw).toContain('subscriptions: []');
+	});
+
 	it('preserves the leading `# Pipeline:` comment header', async () => {
 		writeYaml(
 			{
@@ -150,31 +169,6 @@ describe('removeSubscriptionFromYaml', () => {
 		const result = await removeSubscriptionFromYaml(projectRoot, 'whatever');
 		expect(result.removed).toBe(false);
 		expect(result.reason).toMatch(/cue\.yaml not found/);
-	});
-
-	it('returns removed: false when fs.readFile throws', async () => {
-		writeYaml({
-			subscriptions: [
-				{
-					name: 'task-x',
-					event: 'time.once',
-					action: 'notify',
-					agent_id: 'a',
-					fire_at: '2026-05-22T14:00:00Z',
-					notify: { message: 'r' },
-				},
-			],
-		});
-
-		const readSpy = vi
-			.spyOn(fs.promises, 'readFile')
-			.mockRejectedValueOnce(new Error('EIO: simulated read failure'));
-
-		const result = await removeSubscriptionFromYaml(projectRoot, 'task-x');
-		expect(result.removed).toBe(false);
-		expect(result.reason).toMatch(/read failed:.*EIO: simulated read failure/);
-		// Make sure we actually intercepted the call we meant to.
-		expect(readSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it('returns removed: false with a parse reason on malformed YAML', async () => {

@@ -16,7 +16,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
-import { AGENT_IDS } from '../../shared/agentIds';
+import { AGENT_IDS } from '../../shared/agentRegistry';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).

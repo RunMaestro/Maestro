@@ -55,7 +55,12 @@ vi.mock('../../../../main/utils/agent-args', () => ({
 
 // Mock SSH utilities
 vi.mock('../../../../main/utils/ssh-remote-resolver', () => ({
-	getSshRemoteConfig: vi.fn(() => ({ config: null, source: 'none' })),
+	resolveSshSpawn: vi.fn(() => ({
+		mode: 'local',
+		remote: null,
+		source: 'local',
+		status: 'local',
+	})),
 	createSshRemoteStoreAdapter: vi.fn(() => ({
 		getSshRemotes: vi.fn(() => []),
 	})),
@@ -922,11 +927,13 @@ describe('Tab Naming IPC Handlers', () => {
 			const { isWindows } = await import('../../../../shared/platformDetection');
 			(isWindows as Mock).mockReturnValue(true);
 
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { resolveSshSpawn } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: { id: 'r1', host: 'h', port: 22 },
+			(resolveSshSpawn as Mock).mockReturnValue({
+				mode: 'remote',
+				remote: { id: 'r1', host: 'h', port: 22 },
 				source: 'session',
+				status: 'enabled',
 			});
 			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: [] });
 
@@ -962,17 +969,19 @@ describe('Tab Naming IPC Handlers', () => {
 
 		it('uses stdin for prompt when SSH remote is configured', async () => {
 			// Import and mock the SSH utilities
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { resolveSshSpawn } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
 
 			// Mock SSH config resolution to return a valid config
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: {
+			(resolveSshSpawn as Mock).mockReturnValue({
+				mode: 'remote',
+				remote: {
 					id: 'test-remote',
 					host: 'test.example.com',
 					port: 22,
 				},
 				source: 'session',
+				status: 'enabled',
 			});
 
 			// Mock buildSshCommand to return SSH-wrapped command
@@ -1049,12 +1058,14 @@ describe('Tab Naming IPC Handlers', () => {
 			// remote bash (not into the wrapped command), so copilot never sees the
 			// prompt. The tab-naming spawn just times out and the spinner clears with
 			// no rename. See tabNaming.ts SSH branch.
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { resolveSshSpawn } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
 
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: { id: 'test-remote', host: 'test.example.com', port: 22 },
+			(resolveSshSpawn as Mock).mockReturnValue({
+				mode: 'remote',
+				remote: { id: 'test-remote', host: 'test.example.com', port: 22 },
 				source: 'session',
+				status: 'enabled',
 			});
 			(buildSshCommand as Mock).mockResolvedValue({
 				command: '/usr/bin/ssh',
@@ -1279,11 +1290,13 @@ describe('Tab Naming IPC Handlers', () => {
 			// selection: TUI routes to maestro-p on the REMOTE host (driving the
 			// remote claude TUI on the Max plan), realized by swapping the SSH
 			// remote command to `maestro-p` and prepending the interactive flags.
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { resolveSshSpawn } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: { id: 'r1', host: 'h', port: 22 },
+			(resolveSshSpawn as Mock).mockReturnValue({
+				mode: 'remote',
+				remote: { id: 'r1', host: 'h', port: 22 },
 				source: 'session',
+				status: 'enabled',
 			});
 			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
 
@@ -1319,11 +1332,13 @@ describe('Tab Naming IPC Handlers', () => {
 		});
 
 		it('spawns plain claude over SSH when the agent is API-only (enableMaestroP false)', async () => {
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { resolveSshSpawn } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: { id: 'r1', host: 'h', port: 22 },
+			(resolveSshSpawn as Mock).mockReturnValue({
+				mode: 'remote',
+				remote: { id: 'r1', host: 'h', port: 22 },
 				source: 'session',
+				status: 'enabled',
 			});
 			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
 

@@ -60,6 +60,33 @@ export interface DebugPackageDependencies {
 	bootstrapStore?: Store<any>;
 }
 
+type DebugPackageCollectionState = {
+	contents: Partial<PackageContents>;
+	filesIncluded: string[];
+	errors: string[];
+};
+
+/**
+ * Runs one named collector without allowing a failed category to prevent the
+ * remaining diagnostic categories from being packaged.
+ */
+async function collectCategory(
+	state: DebugPackageCollectionState,
+	filename: keyof PackageContents,
+	errorLabel: string,
+	logMessage: string,
+	collector: () => unknown | Promise<unknown>
+): Promise<void> {
+	try {
+		state.contents[filename] = await collector();
+		state.filesIncluded.push(filename);
+	} catch (error) {
+		const errMsg = error instanceof Error ? error.message : String(error);
+		state.errors.push(`${errorLabel}: ${errMsg}`);
+		logger.error(logMessage, 'DebugPackage', error);
+	}
+}
+
 /**
  * Generate a debug package containing sanitized diagnostic information.
  * The package is saved as a zip file to the specified output directory.
@@ -78,191 +105,134 @@ export async function generateDebugPackage(
 		...options,
 	};
 
-	const filesIncluded: string[] = [];
-	const contents: Partial<PackageContents> = {};
-	const errors: string[] = [];
+	const state: DebugPackageCollectionState = {
+		contents: {},
+		filesIncluded: [],
+		errors: [],
+	};
 
 	logger.info('Starting debug package generation', 'DebugPackage');
 
 	// Collect system info (always included)
-	try {
-		const systemInfo = collectSystemInfo();
-		contents['system-info.json'] = systemInfo;
-		filesIncluded.push('system-info.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`system-info: ${errMsg}`);
-		logger.error('Failed to collect system info', 'DebugPackage', error);
-	}
+	await collectCategory(
+		state,
+		'system-info.json',
+		'system-info',
+		'Failed to collect system info',
+		() => collectSystemInfo()
+	);
 
 	// Collect settings (always included)
-	try {
-		const settings = await collectSettings(deps.settingsStore, deps.bootstrapStore);
-		contents['settings.json'] = settings;
-		filesIncluded.push('settings.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`settings: ${errMsg}`);
-		logger.error('Failed to collect settings', 'DebugPackage', error);
-	}
+	await collectCategory(state, 'settings.json', 'settings', 'Failed to collect settings', () =>
+		collectSettings(deps.settingsStore, deps.bootstrapStore)
+	);
 
 	// Collect agent configurations (always included)
-	try {
-		const agentDetector = deps.getAgentDetector();
-		const agents = await collectAgents(agentDetector);
-		contents['agents.json'] = agents;
-		filesIncluded.push('agents.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`agents: ${errMsg}`);
-		logger.error('Failed to collect agent info', 'DebugPackage', error);
-	}
+	await collectCategory(state, 'agents.json', 'agents', 'Failed to collect agent info', () =>
+		collectAgents(deps.getAgentDetector())
+	);
 
 	// Collect external tools (always included)
-	try {
-		const externalTools = await collectExternalTools();
-		contents['external-tools.json'] = externalTools;
-		filesIncluded.push('external-tools.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`external-tools: ${errMsg}`);
-		logger.error('Failed to collect external tools info', 'DebugPackage', error);
-	}
+	await collectCategory(
+		state,
+		'external-tools.json',
+		'external-tools',
+		'Failed to collect external tools info',
+		() => collectExternalTools()
+	);
 
 	// Collect Windows-specific diagnostics (always included, minimal on non-Windows)
-	try {
-		const windowsDiagnostics = await collectWindowsDiagnostics();
-		contents['windows-diagnostics.json'] = windowsDiagnostics;
-		filesIncluded.push('windows-diagnostics.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`windows-diagnostics: ${errMsg}`);
-		logger.error('Failed to collect Windows diagnostics', 'DebugPackage', error);
-	}
+	await collectCategory(
+		state,
+		'windows-diagnostics.json',
+		'windows-diagnostics',
+		'Failed to collect Windows diagnostics',
+		() => collectWindowsDiagnostics()
+	);
 
 	// Collect groups (always included)
-	try {
-		const groupsData = deps.groupsStore.get('groups', []);
-		contents['groups.json'] = groupsData;
-		filesIncluded.push('groups.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`groups: ${errMsg}`);
-		logger.error('Failed to collect groups', 'DebugPackage', error);
-	}
+	await collectCategory(state, 'groups.json', 'groups', 'Failed to collect groups', () =>
+		deps.groupsStore.get('groups', [])
+	);
 
 	// Collect sessions (optional)
 	if (opts.includeSessions) {
-		try {
-			const sessions = await collectSessions(deps.sessionsStore);
-			contents['sessions.json'] = sessions;
-			filesIncluded.push('sessions.json');
-		} catch (error) {
-			const errMsg = error instanceof Error ? error.message : String(error);
-			errors.push(`sessions: ${errMsg}`);
-			logger.error('Failed to collect sessions', 'DebugPackage', error);
-		}
+		await collectCategory(state, 'sessions.json', 'sessions', 'Failed to collect sessions', () =>
+			collectSessions(deps.sessionsStore)
+		);
 	}
 
 	// Collect processes (always included)
-	try {
-		const processManager = deps.getProcessManager();
-		const processes = await collectProcesses(processManager);
-		contents['processes.json'] = processes;
-		filesIncluded.push('processes.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`processes: ${errMsg}`);
-		logger.error('Failed to collect processes', 'DebugPackage', error);
-	}
+	await collectCategory(state, 'processes.json', 'processes', 'Failed to collect processes', () =>
+		collectProcesses(deps.getProcessManager())
+	);
 
 	// Collect logs (optional)
 	if (opts.includeLogs) {
-		try {
-			const logs = collectLogs(500);
-			contents['logs.json'] = logs;
-			filesIncluded.push('logs.json');
-		} catch (error) {
-			const errMsg = error instanceof Error ? error.message : String(error);
-			errors.push(`logs: ${errMsg}`);
-			logger.error('Failed to collect logs', 'DebugPackage', error);
-		}
+		await collectCategory(state, 'logs.json', 'logs', 'Failed to collect logs', () =>
+			collectLogs(500)
+		);
 	}
 
 	// Collect errors (optional)
 	if (opts.includeErrors) {
-		try {
-			const errorsInfo = collectErrors(deps.sessionsStore);
-			contents['errors.json'] = errorsInfo;
-			filesIncluded.push('errors.json');
-		} catch (error) {
-			const errMsg = error instanceof Error ? error.message : String(error);
-			errors.push(`errors: ${errMsg}`);
-			logger.error('Failed to collect errors', 'DebugPackage', error);
-		}
+		await collectCategory(state, 'errors.json', 'errors', 'Failed to collect errors', () =>
+			collectErrors(deps.sessionsStore)
+		);
 	}
 
 	// Collect web server info (always included)
-	try {
-		const webServer = deps.getWebServer();
-		const webServerInfo = await collectWebServer(webServer);
-		contents['web-server.json'] = webServerInfo;
-		filesIncluded.push('web-server.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`web-server: ${errMsg}`);
-		logger.error('Failed to collect web server info', 'DebugPackage', error);
-	}
+	await collectCategory(
+		state,
+		'web-server.json',
+		'web-server',
+		'Failed to collect web server info',
+		() => collectWebServer(deps.getWebServer())
+	);
 
 	// Collect storage info (always included)
-	try {
-		const storageInfo = await collectStorage(deps.bootstrapStore);
-		contents['storage-info.json'] = storageInfo;
-		filesIncluded.push('storage-info.json');
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		errors.push(`storage-info: ${errMsg}`);
-		logger.error('Failed to collect storage info', 'DebugPackage', error);
-	}
+	await collectCategory(
+		state,
+		'storage-info.json',
+		'storage-info',
+		'Failed to collect storage info',
+		() => collectStorage(deps.bootstrapStore)
+	);
 
 	// Collect group chats (optional)
 	if (opts.includeGroupChats) {
-		try {
-			const groupChats = await collectGroupChats();
-			contents['group-chats.json'] = groupChats;
-			filesIncluded.push('group-chats.json');
-		} catch (error) {
-			const errMsg = error instanceof Error ? error.message : String(error);
-			errors.push(`group-chats: ${errMsg}`);
-			logger.error('Failed to collect group chats', 'DebugPackage', error);
-		}
+		await collectCategory(
+			state,
+			'group-chats.json',
+			'group-chats',
+			'Failed to collect group chats',
+			() => collectGroupChats()
+		);
 	}
 
 	// Collect batch state (optional)
 	if (opts.includeBatchState) {
-		try {
-			const batchState = collectBatchState(deps.sessionsStore);
-			contents['batch-state.json'] = batchState;
-			filesIncluded.push('batch-state.json');
-		} catch (error) {
-			const errMsg = error instanceof Error ? error.message : String(error);
-			errors.push(`batch-state: ${errMsg}`);
-			logger.error('Failed to collect batch state', 'DebugPackage', error);
-		}
+		await collectCategory(
+			state,
+			'batch-state.json',
+			'batch-state',
+			'Failed to collect batch state',
+			() => collectBatchState(deps.sessionsStore)
+		);
 	}
 
 	// Add collection errors to the package if any occurred
-	if (errors.length > 0) {
-		contents['collection-errors.json'] = {
+	if (state.errors.length > 0) {
+		state.contents['collection-errors.json'] = {
 			timestamp: Date.now(),
-			errors,
+			errors: state.errors,
 		};
-		filesIncluded.push('collection-errors.json');
+		state.filesIncluded.push('collection-errors.json');
 	}
 
 	// Create the zip package
 	try {
-		const result = await createZipPackage(outputDir, contents);
+		const result = await createZipPackage(outputDir, state.contents);
 		logger.info(
 			`Debug package created: ${result.path} (${result.sizeBytes} bytes)`,
 			'DebugPackage'
@@ -271,7 +241,7 @@ export async function generateDebugPackage(
 		return {
 			success: true,
 			path: result.path,
-			filesIncluded,
+			filesIncluded: state.filesIncluded,
 			totalSizeBytes: result.sizeBytes,
 		};
 	} catch (error) {
