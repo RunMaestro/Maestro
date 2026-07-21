@@ -195,6 +195,59 @@ describe('TtsrRuntime tap', () => {
 
 		expect(runtime.observe('sess-ai-1', textEvent('console.log(x)'))).toEqual([]);
 	});
+
+	it('drives astCondition rules off the synchronous path', async () => {
+		const rule = makeRule({
+			name: 'no-console-log-ast',
+			condition: [],
+			astCondition: ['console.log($$$ARGS)'],
+			scope: ['tool:write'],
+		});
+		const { runtime, matched, source } = setup({ rules: [rule] });
+		source.emit('spawn', spawnConfig());
+
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Write',
+					id: 't1',
+					input: { file_path: '/repo/src/f.ts', content: 'console.log(1);' },
+				},
+			],
+		};
+
+		// The tap returns only the synchronous regex verdict; the structural match
+		// settles afterwards and lands in the same interrupt bucket.
+		expect(runtime.observe('sess-ai-1', event)).toEqual([]);
+		expect(matched).toEqual([]);
+
+		await runtime.flushAst();
+
+		expect(matched).toHaveLength(1);
+		expect(matched[0].source).toBe('tool:write');
+		expect(runtime.manager.takeInterrupts('sess-ai-1')).toHaveLength(1);
+	});
+
+	it('does no AST work when no rule declares an astCondition', async () => {
+		const { runtime, source } = setup();
+		source.emit('spawn', spawnConfig());
+
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Write',
+					id: 't1',
+					input: { file_path: '/repo/src/f.ts', content: 'console.log(1);' },
+				},
+			],
+		};
+		runtime.observe('sess-ai-1', event);
+
+		await runtime.flushAst();
+		expect(runtime.manager.takeInterrupts('sess-ai-1')).toEqual([]);
+	});
 });
 
 describe('TtsrRuntime lifecycle wiring', () => {

@@ -19,6 +19,7 @@
 import type { AgentId } from '../../shared/agentIds';
 import type { LoadedTtsrRule, TtsrMatchedPayload, TtsrRuleRef } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
+import { createTtsrAstMatcher, type TtsrAstMatcher } from './ttsr-ast';
 import {
 	classifyMatch,
 	findRegexMatch,
@@ -75,6 +76,8 @@ export interface TtsrManagerDeps {
 	onMatched?(payload: TtsrMatchedPayload): void;
 	/** Shared across sessions; defaults to a fresh in-memory store. */
 	store?: TtsrStateStore;
+	/** Structural matcher for `astCondition` rules; defaults to the ast-grep one. */
+	astMatcher?: TtsrAstMatcher;
 }
 
 interface StreamBuffer {
@@ -88,6 +91,11 @@ interface SessionState {
 	providerSessionId?: string;
 	interrupts: TtsrMatch[];
 	deferred: TtsrMatch[];
+	/**
+	 * Last AST-scanned content per `${source}:${filePath}`, so a re-emitted or
+	 * repeated tool payload is not re-parsed (the plan's AST throttle).
+	 */
+	astSeen: Map<string, string>;
 }
 
 function toRuleRef(rule: LoadedTtsrRule): TtsrRuleRef {
@@ -97,15 +105,17 @@ function toRuleRef(rule: LoadedTtsrRule): TtsrRuleRef {
 export class TtsrManager {
 	private readonly sessions = new Map<string, SessionState>();
 	readonly store: TtsrStateStore;
+	private readonly astMatcher: TtsrAstMatcher;
 
 	constructor(private readonly deps: TtsrManagerDeps) {
 		this.store = deps.store ?? new TtsrStateStore();
+		this.astMatcher = deps.astMatcher ?? createTtsrAstMatcher();
 	}
 
 	private session(sessionId: string): SessionState {
 		let state = this.sessions.get(sessionId);
 		if (!state) {
-			state = { buffers: new Map(), interrupts: [], deferred: [] };
+			state = { buffers: new Map(), interrupts: [], deferred: [], astSeen: new Map() };
 			this.sessions.set(sessionId, state);
 		}
 		return state;
@@ -115,6 +125,7 @@ export class TtsrManager {
 	beginTurn(sessionId: string, providerSessionId?: string): void {
 		const state = this.session(sessionId);
 		state.buffers.clear();
+		state.astSeen.clear();
 		state.interrupts = [];
 		if (providerSessionId) this.setProviderSessionId(sessionId, providerSessionId);
 	}
@@ -177,6 +188,80 @@ export class TtsrManager {
 	}
 
 	/**
+	 * Cheap synchronous gate for {@link observeAst}, so the hot path allocates no
+	 * promise for the overwhelming majority of events (no tool payload, or no
+	 * `astCondition` rule in the project).
+	 */
+	needsAstCheck(event: ParsedEvent, ctx: TtsrObserveContext): boolean {
+		if (!event.toolName && !event.toolUseBlocks?.length) return false;
+		if (!this.deps.isEnabled(ctx.cwd)) return false;
+		return this.deps.getRules(ctx.cwd).some((rule) => rule.astCondition.length > 0);
+	}
+
+	/**
+	 * Async companion to {@link observe}: run `astCondition` patterns over the
+	 * edit/write content this event carries. Kept off the synchronous path so a
+	 * parse never stalls the agent's stream (Phase 2 anti-pattern guard).
+	 *
+	 * Matches land in the same interrupt/deferred buckets as regex hits, so
+	 * Phase 3 drains one queue regardless of how a rule fired.
+	 */
+	async observeAst(
+		sessionId: string,
+		event: ParsedEvent,
+		ctx: TtsrObserveContext
+	): Promise<TtsrMatch[]> {
+		if (!this.deps.isEnabled(ctx.cwd)) return [];
+
+		const astRules = this.deps.getRules(ctx.cwd).filter((rule) => rule.astCondition.length > 0);
+		if (astRules.length === 0) return [];
+
+		const state = this.session(sessionId);
+		const matches: TtsrMatch[] = [];
+
+		for (const snapshot of extractEditSnapshots(event)) {
+			if (!this.astMatcher.supports(snapshot.filePath)) continue;
+
+			// Skip a payload identical to the last one seen for the same target: an
+			// agent that re-emits a partial tool call must not re-parse it.
+			const seenKey = `${snapshot.source}:${snapshot.filePath ?? ''}`;
+			if (state.astSeen.get(seenKey) === snapshot.content) continue;
+			state.astSeen.set(seenKey, snapshot.content);
+
+			const matchCtx = {
+				agentId: ctx.agentId,
+				source: snapshot.source,
+				filePath: snapshot.filePath,
+				cwd: ctx.cwd,
+			};
+			const key = this.keyFor(sessionId);
+
+			for (const rule of astRules) {
+				if (!ruleAppliesToContext(rule, matchCtx)) continue;
+				if (!this.store.isEligible(rule, key)) continue;
+				const matchedText = await this.astMatcher.find(
+					rule.astCondition,
+					snapshot.content,
+					snapshot.filePath
+				);
+				if (matchedText === null) continue;
+
+				this.store.noteInjection(key, rule.name);
+				matches.push({
+					rule,
+					source: snapshot.source,
+					disposition: classifyMatch(rule, snapshot.source),
+					matchedText,
+					filePath: snapshot.filePath,
+				});
+			}
+		}
+
+		if (matches.length > 0) this.record(sessionId, ctx, matches);
+		return matches;
+	}
+
+	/**
 	 * Tier B fallback: match the accumulated final text at turn end for agents
 	 * with no live prose stream (opencode), then advance the turn counter that
 	 * `after-gap` eligibility is measured in.
@@ -195,7 +280,9 @@ export class TtsrManager {
 			}
 		}
 		this.store.noteTurnEnd(this.keyFor(sessionId));
-		this.session(sessionId).buffers.clear();
+		const state = this.session(sessionId);
+		state.buffers.clear();
+		state.astSeen.clear();
 		return matches;
 	}
 

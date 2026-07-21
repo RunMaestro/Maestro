@@ -66,6 +66,8 @@ export class TtsrRuntime {
 	private readonly cache = new Map<string, RuleCacheEntry>();
 	private readonly loadConfig: (projectRoot: string) => LoadTtsrConfigResult;
 	private detach: (() => void) | null = null;
+	/** In-flight `astCondition` passes, awaited by {@link flushAst}. */
+	private readonly pendingAst = new Set<Promise<TtsrMatch[]>>();
 
 	constructor(private readonly deps: TtsrRuntimeDeps) {
 		this.loadConfig = deps.loadConfig ?? loadTtsrConfigDetailed;
@@ -90,11 +92,28 @@ export class TtsrRuntime {
 		const meta = this.registry.get(sessionId);
 		if (!meta) return [];
 
-		const matches = this.manager.observe(sessionId, event, {
+		const observeCtx = {
 			agentId: meta.agentId,
 			cwd: meta.projectRoot,
 			providerSessionId: meta.providerSessionId,
-		});
+		};
+		const matches = this.manager.observe(sessionId, event, observeCtx);
+
+		// Structural matching is parsed off the stream's synchronous path; hits
+		// land in the manager's buckets, which Phase 3 drains.
+		if (this.manager.needsAstCheck(event, observeCtx)) {
+			const pending = this.manager
+				.observeAst(sessionId, event, observeCtx)
+				.catch((err: unknown) => {
+					logger.warn('TTSR AST pass failed', LOG_CONTEXT, {
+						sessionId,
+						error: err instanceof Error ? err.message : String(err),
+					});
+					return [] as TtsrMatch[];
+				})
+				.finally(() => this.pendingAst.delete(pending));
+			this.pendingAst.add(pending);
+		}
 
 		// The manager learns the provider id from the stream's `init` event; mirror
 		// it onto the registry so Phase 3's reinject payload can read one source.
@@ -141,6 +160,17 @@ export class TtsrRuntime {
 			this.detach = null;
 		};
 		return this.detach;
+	}
+
+	/**
+	 * Settle every in-flight structural match. Phase 3 awaits this before acting
+	 * on a turn's interrupts so an AST hit is not missed by a race with `exit`;
+	 * tests use it to make the async pass deterministic.
+	 */
+	async flushAst(): Promise<void> {
+		while (this.pendingAst.size > 0) {
+			await Promise.all([...this.pendingAst]);
+		}
 	}
 
 	/** Drop cached rules so the next event re-reads them (rule file edited). */
