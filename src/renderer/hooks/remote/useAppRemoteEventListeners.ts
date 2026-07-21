@@ -42,6 +42,7 @@ import {
 	canCreateGroupInside,
 	removeGroupAndPromoteChildren,
 } from '../../../shared/groupHierarchy';
+import { countMarkdownTasks, uncheckAllMarkdownTasks } from '../../../shared/markdownTaskScan';
 
 // ============================================================================
 // Dependencies interface
@@ -1063,10 +1064,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 							sshRemoteId
 						);
 						if (result?.content) {
-							const unchecked = result.content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
-							const checked = result.content.match(/^[\s]*-\s*\[x\]\s*.+$/gim);
-							taskCount = (unchecked?.length || 0) + (checked?.length || 0);
-							completedCount = checked?.length || 0;
+							const counts = countMarkdownTasks(result.content);
+							taskCount = counts.total;
+							completedCount = counts.checked;
 						}
 					} catch {
 						// If reading fails, leave counts at 0
@@ -1162,12 +1162,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			const original: string = readResult.content ?? '';
-			// Reset all completed task checkboxes (both `[x]` and `[X]`) back to `[ ]`
-			// while preserving leading whitespace and the rest of the line. The
-			// trailing whitespace group is `\s?` (not `\s`) so malformed lines like
-			// `- [x]Task` (no space after the bracket) still get unchecked - the
-			// desktop's uncheckAllTasks() behaves the same way.
-			const reset = original.replace(/^(\s*[-*]\s*)\[[xX]\](\s?)/gm, '$1[ ]$2');
+			const reset = uncheckAllMarkdownTasks(original);
 			if (reset === original) {
 				// Nothing to reset - still report success so the UI doesn't show an error.
 				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, true);

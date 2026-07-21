@@ -544,14 +544,17 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 Fence-aware primitives every Auto Run document scanner rides. Shared because the desktop engine (`src/renderer/hooks/batch/`) and the CLI engine (`src/cli/services/batch-processor.ts`, which cannot import from the renderer) must read a document identically.
 
-| Function / Constant                   | Signature                                            | Purpose                                                                             |
-| ------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `forEachMarkdownLine(content, visit)` | `(string, (line, index) => boolean \| void) => void` | Walk lines, skipping fenced code blocks. Return `false` from `visit` to stop early. |
-| `UNCHECKED_TASK_REGEX`                | `RegExp`                                             | An unchecked checkbox: `- [ ] task` (also `*`, `+`).                                |
-| `CHECKED_TASK_COUNT_REGEX`            | `RegExp`                                             | A checked checkbox: `- [x] task` (also `X`, `✓`, `✔`).                              |
-| `CHECKED_TASK_REGEX`                  | `RegExp` (global)                                    | Rewrite checked boxes back to unchecked (reset-on-completion).                      |
+| Function / Constant                   | Signature                                            | Purpose                                                                          |
+| ------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `forEachMarkdownLine(content, visit)` | `(string, (line, index) => boolean \| void) => void` | Walk lines outside CommonMark fences. Return `false` from `visit` to stop early. |
+| `countMarkdownTasks(content)`         | `(string) => { checked, unchecked, total }`          | Count all supported task markers outside fenced examples.                        |
+| `extractUncheckedMarkdownTasks`       | `(string) => string[]`                               | Extract trimmed unchecked task text outside fenced examples.                     |
+| `uncheckAllMarkdownTasks`             | `(string) => string`                                 | Reset checked tasks outside fences while preserving original line endings.       |
+| `UNCHECKED_TASK_REGEX`                | `RegExp`                                             | An unchecked checkbox: `- [ ] task` (also `*`, `+`).                             |
+| `CHECKED_TASK_COUNT_REGEX`            | `RegExp`                                             | A checked checkbox: `- [x] task` (also `X`, `✓`, `✔`).                           |
+| `CHECKED_TASK_REGEX`                  | `RegExp` (global)                                    | Match checked boxes for reset-on-completion.                                     |
 
-Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping fires on a playbook that merely DOCUMENTS the marker syntax, and hand-rolled copies drift on closing-fence length, tilde fences, and CRLF.
+Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping fires on a playbook that merely DOCUMENTS the marker syntax, and hand-rolled copies drift on indentation, info strings, closing-fence length, tilde fences, and CRLF.
 
 ---
 
