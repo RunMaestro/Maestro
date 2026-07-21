@@ -2642,10 +2642,14 @@ export async function loadAllSettings(): Promise<void> {
 			});
 
 		// Collapsed docked plugin panels live in uiStore (toggled from the panel
-		// slot header), so its persisted id list hydrates directly there.
-		if (allSettings['hiddenPluginPanels'] !== undefined)
+		// slot header), so its persisted id list hydrates directly there. Validate
+		// it is an array of strings first: a malformed stored value (null/object)
+		// would otherwise reach PluginPanelSlot, which calls `.includes()` on it.
+		if (Array.isArray(allSettings['hiddenPluginPanels']))
 			useUIStore.setState({
-				hiddenPluginPanels: allSettings['hiddenPluginPanels'] as string[],
+				hiddenPluginPanels: (allSettings['hiddenPluginPanels'] as unknown[]).filter(
+					(id): id is string => typeof id === 'string'
+				),
 			});
 
 		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
