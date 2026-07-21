@@ -156,24 +156,25 @@ export function useTerminalOutputScroll({
 	useEffect(() => {
 		const currentCount = filteredLogsLength;
 		if (currentCount > lastLogCountRef.current) {
-			const container = scrollContainerRef.current;
-			let actuallyAtBottom = isAtBottom;
-			if (container) {
-				const { scrollTop, scrollHeight, clientHeight } = container;
-				actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-			}
-
-			if (!actuallyAtBottom) {
+			// A newly-appended entry (e.g. a tall tool badge) must not pause a user
+			// who is already following the bottom. Re-measuring the container here
+			// would read the PRE-scroll position - the MutationObserver's rAF jump
+			// has not run yet - so any entry taller than the 50px slack looks like a
+			// scroll-up and spuriously pauses follow, and the stream then stops
+			// sticking to the bottom. Trust the tracked follow state instead: while
+			// following, mark the new content read and let the observer pin to the new
+			// bottom; only raise the "new messages" pill when genuinely paused.
+			if (isAtBottomRef.current) {
+				if (activeTabId) tabReadStateRef.current.set(activeTabId, currentCount);
+			} else {
 				const newCount = currentCount - lastLogCountRef.current;
 				setHasNewMessages(true);
 				setNewMessageCount((prev) => prev + newCount);
 				setIsAtBottom(false);
-			} else if (activeTabId) {
-				tabReadStateRef.current.set(activeTabId, currentCount);
 			}
 		}
 		lastLogCountRef.current = currentCount;
-	}, [filteredLogsLength, isAtBottom, activeTabId, scrollContainerRef]);
+	}, [filteredLogsLength, activeTabId]);
 
 	useEffect(() => {
 		const container = scrollContainerRef.current;
