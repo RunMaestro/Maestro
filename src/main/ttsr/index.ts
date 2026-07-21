@@ -13,6 +13,7 @@ import type {
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
+import { emitTtsrTriggeredToast } from './ttsr-notify';
 import { TtsrRuntime } from './ttsr-runtime';
 import { createTtsrStatePersistence, type TtsrStatePersistence } from './ttsr-state-persistence';
 import type { TtsrProcessEventSource } from './ttsr-spawn-registry';
@@ -21,6 +22,7 @@ export { TtsrRuntime } from './ttsr-runtime';
 export { TtsrManager } from './ttsr-manager';
 export { TtsrInterruptDriver } from './ttsr-interrupt-driver';
 export { TtsrSpawnRegistry } from './ttsr-spawn-registry';
+export { buildTtsrToast, emitTtsrTriggeredToast, type TtsrToastParams } from './ttsr-notify';
 export { TtsrStateStore } from './ttsr-state-store';
 export {
 	createTtsrStatePersistence,
@@ -51,6 +53,11 @@ export interface InstallTtsrOptions {
 	 * `once`/`after-gap` resetting with the process is acceptable.
 	 */
 	persistence?: TtsrStatePersistence | null;
+	/**
+	 * Raise a toast when a turn is interrupted (default on). Off only for
+	 * headless hosts with no renderer to notify.
+	 */
+	notifyOnInterrupt?: boolean;
 }
 
 /**
@@ -76,7 +83,12 @@ export function installTtsrRuntime(
 		// turn, so the interrupt surface is wired only when a push channel exists.
 		interruptTarget: safeSend ? processManager : undefined,
 		onTriggered: safeSend
-			? (payload: TtsrTriggeredPayload) => safeSend('ttsr:triggered', payload)
+			? (payload: TtsrTriggeredPayload) => {
+					// The corrective respawn comes first: the toast is advisory, and the
+					// renderer should be reinjecting before the user is told about it.
+					safeSend('ttsr:triggered', payload);
+					if (options.notifyOnInterrupt !== false) emitTtsrTriggeredToast(safeSend, payload);
+				}
 			: undefined,
 		onAbortPending: safeSend
 			? (payload: TtsrAbortPendingPayload) => safeSend('ttsr:abortPending', payload)
