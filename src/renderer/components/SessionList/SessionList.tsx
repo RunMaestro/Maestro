@@ -1419,6 +1419,22 @@ function SessionListInner(props: SessionListProps) {
 						</label>
 					)}
 
+					{/* PIANOLA - the single pinned manager agent, rendered as one clean row at
+					    the very top of the list (no section header or bordered box, so it reads
+					    as "the manager, pinned" rather than a category). A pin marker on the row
+					    distinguishes it; a divider sets it apart from the sections below. Gated by
+					    the pianola Encore flag. Stays pinned at the top even while filtering by
+					    unread agents (it is the control surface, always reachable), rendered before
+					    the empty state so it is not pushed down. Excluded from all normal categories. */}
+					{pianolaEnabled && pianolaSession && (
+						<div className="mb-1">
+							{renderSessionWithWorktrees(pianolaSession, 'flat', {
+								keyPrefix: 'pianola',
+							})}
+							<div className="mx-3 mt-1 border-t" style={{ borderColor: theme.colors.border }} />
+						</div>
+					)}
+
 					{/* Empty state for unread agents filter */}
 					{showUnreadAgentsOnly && sortedFilteredSessions.length === 0 && (
 						<div
@@ -1427,21 +1443,6 @@ function SessionListInner(props: SessionListProps) {
 						>
 							<Bot className="w-8 h-8 opacity-30" />
 							<span className="text-xs italic">No unread, working, or errored agents</span>
-						</div>
-					)}
-
-					{/* PIANOLA - the single pinned manager agent, rendered as one clean row at
-					    the very top of the list (no section header or bordered box, so it reads
-					    as "the manager, pinned" rather than a category). A pin marker on the row
-					    distinguishes it; a divider sets it apart from the sections below. Gated by
-					    the pianola Encore flag; hidden when filtering by unread agents. Excluded
-					    from all normal categories. */}
-					{pianolaEnabled && pianolaSession && !showUnreadAgentsOnly && (
-						<div className="mb-1">
-							{renderSessionWithWorktrees(pianolaSession, 'flat', {
-								keyPrefix: 'pianola',
-							})}
-							<div className="mx-3 mt-1 border-t" style={{ borderColor: theme.colors.border }} />
 						</div>
 					)}
 

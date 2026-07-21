@@ -817,6 +817,63 @@ describe('SessionList', () => {
 		});
 	});
 
+	describe('Pianola Pinned Agent', () => {
+		const enablePianola = () =>
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			});
+
+		it('keeps Pianola pinned when the unread agents filter is active', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.getByText('Maestro Pianola')).toBeInTheDocument();
+		});
+
+		it('renders Pianola above the unread-filter empty state so it is not pushed down', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			const pianolaRow = screen.getByText('Maestro Pianola');
+			const emptyState = screen.getByText('No unread or working agents');
+			// Pianola (a plain block) must come before the flex-1 empty state in DOM
+			// order; otherwise the empty state grows and shoves Pianola to the bottom.
+			expect(
+				pianolaRow.compareDocumentPosition(emptyState) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('hides Pianola when the pianola Encore flag is off, even under the unread filter', () => {
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.queryByText('Maestro Pianola')).toBeNull();
+		});
+	});
+
 	// ============================================================================
 	// Groups Section Tests
 	// ============================================================================
