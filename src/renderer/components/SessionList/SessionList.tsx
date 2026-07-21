@@ -44,6 +44,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -73,19 +74,20 @@ import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 // ============================================================================
 
 interface SessionListProps {
-	// Computed values (not in stores - remain as props)
+	// Computed values (not in stores - remain as props). Sort/nav/starred default
+	// to sidebarNavStore when omitted so App need not plumb them.
 	theme: Theme;
-	sortedSessions: Session[];
+	sortedSessions?: Session[];
 	navIndexMap?: Map<string, number>;
 	isLiveMode: boolean;
 	webInterfaceUrl: string | null;
 	showSessionJumpNumbers?: boolean;
 	visibleSessions?: Session[];
 
-	// Starred Sessions rows + activation. Computed in App by useStarredItems so the
-	// Left Bar render and Cmd+[ / Cmd+] cycling traverse the exact same list.
-	starredItems: StarredItem[];
-	activateStarredItem: (item: StarredItem) => void | Promise<void>;
+	/** @deprecated Prefer sidebarNavStore; optional when sync host is mounted. */
+	starredItems?: StarredItem[];
+	/** @deprecated Prefer sidebarNavStore; optional when sync host is mounted. */
+	activateStarredItem?: (item: StarredItem) => void | Promise<void>;
 
 	// Ref for the sidebar container (for focus management)
 	sidebarContainerRef?: React.RefObject<HTMLDivElement>;
@@ -133,15 +135,8 @@ interface SessionListProps {
 	// Maestro Cue
 	onConfigureCue?: (session: Session) => void;
 
-	// Starred sessions cross-agent jump. Resolves to `false` when the session can
-	// no longer be loaded (aged out), so the click handler can offer to unstar it.
-	onJumpToStarredSession?: (
-		agentId: string,
-		projectPath: string,
-		agentSessionId: string,
-		sessionName: string,
-		parentSessionId: string
-	) => Promise<boolean>;
+	// Starred Sessions: activation uses sidebarNavStore (jump registered from App).
+	// Do not plumb onJumpToStarredSession - unused and unstable identity busts memo.
 
 	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
@@ -332,10 +327,12 @@ function SessionListInner(props: SessionListProps) {
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
 	}, [sessions.length]);
-	// Starred Sessions rows + activation come from App (useStarredItems) so the
-	// Left Bar render and Cmd+[ / Cmd+] cycling share one list. Only the section's
-	// collapse toggle is local UI state.
-	const { starredItems, activateStarredItem } = props;
+	// Starred Sessions: prefer sidebarNavStore (shared with Cmd+[ / ] cycling).
+	// Props remain for tests that inject fixtures without mounting SidebarNavSync.
+	const storeStarredItems = useSidebarNavStore((s) => s.starredItems);
+	const storeActivateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
+	const starredItems = props.starredItems ?? storeStarredItems;
+	const activateStarredItem = props.activateStarredItem ?? storeActivateStarredItem;
 	const setStarredSectionCollapsed = useSettingsStore.getState().setStarredSessionsCollapsed;
 
 	const groupChats = useGroupChatStore((s) => s.groupChats);
@@ -398,10 +395,14 @@ function SessionListInner(props: SessionListProps) {
 		setRenameInstanceSessionId,
 	} = getModalActions();
 
+	const storeSortedSessions = useSidebarNavStore((s) => s.sortedSessions);
+	const storeNavIndexMap = useSidebarNavStore((s) => s.navIndexMap);
+	const storeVisibleSessions = useSidebarNavStore((s) => s.visibleSessions);
+
 	const {
 		theme,
-		sortedSessions: sortedSessionsAll,
-		navIndexMap,
+		sortedSessions: sortedSessionsProp,
+		navIndexMap: navIndexMapProp,
 		isLiveMode,
 		webInterfaceUrl,
 		toggleGlobalLive,
@@ -431,7 +432,7 @@ function SessionListInner(props: SessionListProps) {
 		onDeleteWorktree,
 		onConfigureCue,
 		showSessionJumpNumbers = false,
-		visibleSessions = [],
+		visibleSessions: visibleSessionsProp,
 		openWizard,
 		startTour,
 		sidebarContainerRef,
@@ -443,6 +444,10 @@ function SessionListInner(props: SessionListProps) {
 		onArchiveGroupChat,
 		onDeleteAllArchivedGroupChats,
 	} = props;
+
+	const sortedSessionsAll = sortedSessionsProp ?? storeSortedSessions;
+	const navIndexMap = navIndexMapProp ?? storeNavIndexMap;
+	const visibleSessions = visibleSessionsProp ?? storeVisibleSessions;
 
 	// Scope the sorted agent list the same way as the store list (see
 	// scopeSessionsToWindow above): a secondary window only categorizes/renders the

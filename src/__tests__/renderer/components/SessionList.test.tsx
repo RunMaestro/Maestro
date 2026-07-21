@@ -16,6 +16,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { seedSidebarNav, resetSidebarNavStore } from '../../helpers/seedSidebarNav';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -236,52 +237,74 @@ const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
 });
 
 // Create default handler props (state is read from stores)
-const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]> = {}) => ({
-	theme: defaultTheme,
-	sortedSessions: [] as Session[],
-	isLiveMode: false,
-	webInterfaceUrl: null,
-	showSessionJumpNumbers: false,
-	visibleSessions: [] as Session[],
-	starredItems: [],
-	activateStarredItem: vi.fn(),
-	toggleGlobalLive: vi.fn(),
-	restartWebServer: vi.fn().mockResolvedValue(null),
-	toggleGroup: vi.fn(),
-	handleDragStart: vi.fn(),
-	handleDragOver: vi.fn(),
-	handleDropOnGroup: vi.fn(),
-	handleDropOnUngrouped: vi.fn(),
-	finishRenamingGroup: vi.fn(),
-	finishRenamingSession: vi.fn(),
-	startRenamingGroup: vi.fn(),
-	startRenamingSession: vi.fn(),
-	showConfirmation: vi.fn(),
-	createNewGroup: vi.fn(),
-	setGroupParent: vi.fn(),
-	onCreateGroupAndMove: vi.fn(),
-	addNewSession: vi.fn(),
-	onDeleteWorktreeGroup: vi.fn(),
-	onEditAgent: vi.fn(),
-	onNewAgentSession: vi.fn(),
-	onToggleWorktreeExpanded: vi.fn(),
-	onOpenCreatePR: vi.fn(),
-	onQuickCreateWorktree: vi.fn(),
-	onOpenWorktreeConfig: vi.fn(),
-	onDeleteWorktree: vi.fn(),
-	openWizard: vi.fn(),
-	startTour: vi.fn(),
-	onOpenGroupChat: vi.fn(),
-	onNewGroupChat: vi.fn(),
-	onEditGroupChat: vi.fn(),
-	onRenameGroupChat: vi.fn(),
-	onDeleteGroupChat: vi.fn(),
-	...overrides,
-});
+type SessionListNavOverrides = {
+	sortedSessions?: Session[];
+	visibleSessions?: Session[];
+	starredItems?: any[];
+	activateStarredItem?: (...args: any[]) => any;
+};
+
+const createDefaultProps = (
+	overrides: Partial<Parameters<typeof SessionList>[0]> & SessionListNavOverrides = {}
+) => {
+	const {
+		sortedSessions = [],
+		visibleSessions = sortedSessions,
+		starredItems = [],
+		activateStarredItem = vi.fn(),
+		...rest
+	} = overrides;
+	seedSidebarNav({
+		sortedSessions,
+		visibleSessions,
+		navSessions: sortedSessions,
+		starredItems,
+		activateStarredItem,
+	});
+	return {
+		theme: defaultTheme,
+		isLiveMode: false,
+		webInterfaceUrl: null,
+		showSessionJumpNumbers: false,
+		toggleGlobalLive: vi.fn(),
+		restartWebServer: vi.fn().mockResolvedValue(null),
+		toggleGroup: vi.fn(),
+		handleDragStart: vi.fn(),
+		handleDragOver: vi.fn(),
+		handleDropOnGroup: vi.fn(),
+		handleDropOnUngrouped: vi.fn(),
+		finishRenamingGroup: vi.fn(),
+		finishRenamingSession: vi.fn(),
+		startRenamingGroup: vi.fn(),
+		startRenamingSession: vi.fn(),
+		showConfirmation: vi.fn(),
+		createNewGroup: vi.fn(),
+		setGroupParent: vi.fn(),
+		onCreateGroupAndMove: vi.fn(),
+		addNewSession: vi.fn(),
+		onDeleteWorktreeGroup: vi.fn(),
+		onEditAgent: vi.fn(),
+		onNewAgentSession: vi.fn(),
+		onToggleWorktreeExpanded: vi.fn(),
+		onOpenCreatePR: vi.fn(),
+		onQuickCreateWorktree: vi.fn(),
+		onOpenWorktreeConfig: vi.fn(),
+		onDeleteWorktree: vi.fn(),
+		openWizard: vi.fn(),
+		startTour: vi.fn(),
+		onOpenGroupChat: vi.fn(),
+		onNewGroupChat: vi.fn(),
+		onEditGroupChat: vi.fn(),
+		onRenameGroupChat: vi.fn(),
+		onDeleteGroupChat: vi.fn(),
+		...rest,
+	};
+};
 
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetSidebarNavStore();
 		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
 		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
 		vi.mocked(window.maestro.plugins.onChanged).mockImplementation(() => () => {});

@@ -19,7 +19,7 @@ import type { AdditionalDirectory, ToolType, Session, AITab } from '../../types'
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useModalStore } from '../../stores/modalStore';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
@@ -121,7 +121,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId, setGroups } = useSessionStore.getState();
 	const { setEditingSessionId, setDraggingSessionId, setActiveFocus } = useUIStore.getState();
-	const { setDeleteAgentSession } = getModalActions();
+	// PERF: Do not call getModalActions() at render time for deleteSession deps -
+	// it returns fresh wrapper functions every call and would bust SessionList memo.
 
 	// Multi-window: claim a newly-created agent for the window that created it so
 	// it never momentarily surfaces in the primary's catch-all (spawn flicker).
@@ -339,14 +340,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// ========================================================================
 	// deleteSession - opens the delete agent confirmation modal
 	// ========================================================================
-	const deleteSession = useCallback(
-		(id: string) => {
-			const session = selectSessionById(id)(useSessionStore.getState());
-			if (!session) return;
-			setDeleteAgentSession(session);
-		},
-		[setDeleteAgentSession]
-	);
+	const deleteSession = useCallback((id: string) => {
+		const session = selectSessionById(id)(useSessionStore.getState());
+		if (!session) return;
+		// Event-time modal open - stable callback identity for SessionList memo.
+		useModalStore.getState().openModal('deleteAgent', { session });
+	}, []);
 
 	// ========================================================================
 	// deleteWorktreeGroup - removes group + all agents

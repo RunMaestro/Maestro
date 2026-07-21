@@ -9,14 +9,9 @@ import { mockTheme } from '../../../helpers/mockTheme';
 function createDeps(overrides: Partial<UseSessionListPropsDeps> = {}): UseSessionListPropsDeps {
 	return {
 		theme: mockTheme,
-		sortedSessions: [],
 		isLiveMode: false,
 		webInterfaceUrl: null,
 		showSessionJumpNumbers: false,
-		visibleSessions: [],
-		navIndexMap: new Map(),
-		starredItems: [],
-		activateStarredItem: vi.fn(),
 		sidebarContainerRef: { current: null },
 		toggleGlobalLive: vi.fn().mockResolvedValue(undefined),
 		restartWebServer: vi.fn().mockResolvedValue(null),
@@ -44,7 +39,6 @@ function createDeps(overrides: Partial<UseSessionListPropsDeps> = {}): UseSessio
 		handleToggleWorktreeExpanded: vi.fn(),
 		handleConfigureCue: vi.fn(),
 		maestroCueEnabled: false,
-		handleJumpToStarredSession: vi.fn().mockResolvedValue(false),
 		openWizardModal: vi.fn(),
 		handleOpenFeedbackModal: vi.fn(),
 		handleStartTour: vi.fn(),
