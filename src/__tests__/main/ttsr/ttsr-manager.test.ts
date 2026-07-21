@@ -244,6 +244,83 @@ describe('TtsrManager tool-source matching', () => {
 	});
 });
 
+describe('TtsrManager shell command matching', () => {
+	// The rule shape a user reaches for when they mean "never do X".
+	const bashRule = makeRule({
+		name: 'no-force-push',
+		condition: ['git push .*--force'],
+		compiledCondition: [/git push .*--force/],
+		scope: ['tool:bash'],
+		content: 'Never force-push a shared branch.',
+	});
+
+	it('matches the command a claude-code Bash call is about to run', () => {
+		const { manager } = setup([bashRule]);
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', input: { command: 'git push --force origin main' } }],
+		};
+
+		const matches = manager.observe('s1', event, ctx('claude-code'));
+
+		expect(matches).toHaveLength(1);
+		expect(matches[0].source).toBe('tool:bash');
+		expect(matches[0].disposition).toBe('interrupt');
+		expect(matches[0].matchedText).toBe('git push --force');
+	});
+
+	it('matches a codex shell call', () => {
+		const { manager } = setup([bashRule]);
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'shell',
+			toolState: { status: 'running', input: { command: 'git push --force' } },
+		};
+
+		expect(manager.observe('s1', event, ctx('codex'))).toHaveLength(1);
+	});
+
+	it('does not match the same command against a prose rule', () => {
+		const proseRule = makeRule({
+			name: 'prose-only-rule',
+			condition: ['git push .*--force'],
+			compiledCondition: [/git push .*--force/],
+			scope: ['text', 'thinking'],
+		});
+		const { manager } = setup([proseRule]);
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', input: { command: 'git push --force origin main' } }],
+		};
+
+		// Scope narrowing is the whole point: a prose rule must not silently start
+		// matching commands, nor the reverse.
+		expect(manager.observe('s1', event, ctx('claude-code'))).toEqual([]);
+	});
+
+	it('ignores globs on a shell rule instead of silently never firing', () => {
+		const { manager } = setup([makeRule({ ...bashRule, globs: ['src/**/*.ts'] })]);
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', input: { command: 'git push --force origin main' } }],
+		};
+
+		// A command has no path, so globs cannot narrow it. Fail-closed would mean
+		// the rule never fires and the user never learns why.
+		expect(manager.observe('s1', event, ctx('claude-code'))).toHaveLength(1);
+	});
+
+	it('treats a shell match as tool-source for interruptMode', () => {
+		const { manager } = setup([makeRule({ ...bashRule, interruptMode: 'prose-only' })]);
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [{ name: 'Bash', input: { command: 'git push --force' } }],
+		};
+
+		expect(manager.observe('s1', event, ctx('claude-code'))[0].disposition).toBe('deferred-tool');
+	});
+});
+
 describe('TtsrManager buckets and provider session id', () => {
 	it('splits interrupts from deferred reminders and clears each on read', () => {
 		const interrupting = makeRule({ name: 'interrupting' });

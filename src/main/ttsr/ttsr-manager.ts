@@ -2,8 +2,8 @@
  * `TtsrManager` - the per-session stream matcher.
  *
  * Fed by the `StdoutHandler.handleParsedEvent` tap (Phase 2a), it accumulates
- * prose/thinking buffers, evaluates rules against each delta plus edit/write
- * tool content, applies the repeat policy from the main-authoritative
+ * prose/thinking buffers, evaluates rules against each delta plus tool content
+ * (file writes and shell commands), applies the repeat policy from the main-authoritative
  * {@link TtsrStateStore}, and classifies every hit into an interrupt or a
  * deferred reminder.
  *
@@ -29,7 +29,7 @@ import {
 	type TtsrMatchSource,
 } from './ttsr-matcher';
 import { TtsrStateStore, ttsrConversationKey } from './ttsr-state-store';
-import { extractEditSnapshots } from './ttsr-tool-extract';
+import { extractToolSnapshots } from './ttsr-tool-extract';
 
 /**
  * Largest prose buffer retained per stream. Long turns keep only the tail; a
@@ -195,8 +195,8 @@ export class TtsrManager {
 			matches.push(...this.evaluate(sessionId, rules, scanText, { agentId: ctx.agentId, source }));
 		}
 
-		// ── Edit/write tool content ──
-		for (const snapshot of extractEditSnapshots(event)) {
+		// ── Tool content: what is being written, or the command being run ──
+		for (const snapshot of extractToolSnapshots(event)) {
 			matches.push(
 				...this.evaluate(sessionId, rules, snapshot.content, {
 					agentId: ctx.agentId,
@@ -243,7 +243,7 @@ export class TtsrManager {
 		const state = this.session(sessionId);
 		const matches: TtsrMatch[] = [];
 
-		for (const snapshot of extractEditSnapshots(event)) {
+		for (const snapshot of extractToolSnapshots(event)) {
 			if (!this.astMatcher.supports(snapshot.filePath)) continue;
 
 			// Skip a payload identical to the last one seen for the same target: an

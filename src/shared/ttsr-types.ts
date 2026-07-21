@@ -15,9 +15,19 @@ import { AGENT_IDS, type AgentId } from './agentIds';
 
 // ── Rule enums ───────────────────────────────────────────────────────────────
 
-/** Which stream a rule is allowed to match against. */
-export const TTSR_SCOPES = ['text', 'thinking', 'tool:edit', 'tool:write'] as const;
+/**
+ * Which stream a rule is allowed to match against.
+ *
+ * `tool:bash` matches the *command* a shell tool call is about to run, which is
+ * how a rule expresses "never do X" for actions rather than file content. Like
+ * the edit scopes it is observed as the tool call streams, so the interrupt is
+ * corrective rather than preventive - a fast command may already have run.
+ */
+export const TTSR_SCOPES = ['text', 'thinking', 'tool:edit', 'tool:write', 'tool:bash'] as const;
 export type TtsrScope = (typeof TTSR_SCOPES)[number];
+
+/** Tool scopes that name a file, and so can be narrowed by a rule's `globs`. */
+export const TTSR_PATH_SCOPES: readonly TtsrScope[] = ['tool:edit', 'tool:write'];
 
 /**
  * Whether a match aborts the in-flight turn.
@@ -244,6 +254,12 @@ export interface TtsrAgentCapability {
 	endOfTurnText: boolean;
 	/** Tool-call events carry a file path. */
 	toolEvents: boolean;
+	/**
+	 * Shell tool calls surface the command being run, so `tool:bash` rules can
+	 * match it. Separate from {@link toolEvents}: an agent could in principle
+	 * report edits without reporting commands.
+	 */
+	shellEvents: boolean;
 	/** Edit/write content available for ast-grep. */
 	ast: TtsrAstSupport;
 	/** The in-flight process can be interrupted. */
@@ -262,6 +278,7 @@ const UNSUPPORTED: TtsrAgentCapability = {
 	liveThinking: false,
 	endOfTurnText: false,
 	toolEvents: false,
+	shellEvents: false,
 	ast: 'none',
 	interrupt: false,
 	resume: 'none',
@@ -283,6 +300,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: true,
 		endOfTurnText: true,
 		toolEvents: true,
+		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
 		resume: 'clean',
@@ -293,6 +311,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: true,
 		endOfTurnText: true,
 		toolEvents: true,
+		shellEvents: true,
 		ast: 'partial',
 		interrupt: true,
 		resume: 'clean',
@@ -303,6 +322,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: false,
 		endOfTurnText: true,
 		toolEvents: true,
+		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
 		resume: 'clean',
@@ -313,6 +333,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: false,
 		endOfTurnText: true,
 		toolEvents: false,
+		shellEvents: false,
 		ast: 'none',
 		interrupt: true,
 		resume: 'clean',
@@ -323,6 +344,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: true,
 		endOfTurnText: true,
 		toolEvents: true,
+		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
 		resume: 'degraded',
@@ -333,6 +355,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		liveThinking: true,
 		endOfTurnText: true,
 		toolEvents: false,
+		shellEvents: false,
 		ast: 'none',
 		interrupt: true,
 		resume: 'degraded',
@@ -364,6 +387,16 @@ export function supportsTtsrAst(agentId: AgentId): boolean {
 	return cap.toolEvents && cap.ast !== 'none';
 }
 
+/** True when the agent reports the command a shell tool call is about to run. */
+export function supportsTtsrShell(agentId: AgentId): boolean {
+	return TTSR_AGENT_CAPABILITIES[agentId].shellEvents;
+}
+
+/** True for a tool scope whose matches carry a file path (so `globs` apply). */
+export function ttsrScopeCarriesPath(scope: TtsrScope): boolean {
+	return TTSR_PATH_SCOPES.includes(scope);
+}
+
 /**
  * Default `agents` set for a rule that omits the field: every supported agent
  * whose control surface can actually evaluate the rule's declared match modes.
@@ -377,12 +410,14 @@ export function defaultTtsrAgentsForRule(input: {
 	scope: TtsrScope[];
 }): AgentId[] {
 	const needsAst = input.astCondition.length > 0;
-	const needsTool = input.scope.some((s) => s.startsWith('tool:'));
+	const needsFileTool = input.scope.some((s) => ttsrScopeCarriesPath(s));
+	const needsShell = input.scope.includes('tool:bash');
 	const needsProse = input.condition.length > 0 && input.scope.some((s) => !s.startsWith('tool:'));
 
 	return TTSR_SUPPORTED_AGENTS.filter((id) => {
 		if (needsAst && !supportsTtsrAst(id)) return false;
-		if (needsTool && !TTSR_AGENT_CAPABILITIES[id].toolEvents) return false;
+		if (needsFileTool && !TTSR_AGENT_CAPABILITIES[id].toolEvents) return false;
+		if (needsShell && !supportsTtsrShell(id)) return false;
 		if (needsProse && !supportsTtsrProse(id)) return false;
 		return true;
 	});

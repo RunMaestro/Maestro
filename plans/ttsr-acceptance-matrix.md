@@ -39,19 +39,20 @@ binaries remains unperformed.
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prose`  | `live` when the abort is signalled before the turn's final event; `end-of-turn` when the only matchable prose is the closing event                                           |
 | `ast`    | `full` when the edit snapshot recovers the whole written text; `partial` when only part survives (codex ships a patch, not a file); `none` when no tool content reaches TTSR |
+| `shell`  | `yes` when the command a shell tool is about to run reaches the matcher, which is what makes a "never run X" rule expressible; `none` when the agent reports no tool calls   |
 | `resume` | `clean` when the corrective turn re-attaches with `providerSessionId`; `degraded` when it must respawn fresh with the goal restated                                          |
 
 ## Recorded matrix
 
-| Agent         | Prose detection | AST on edits              | Interrupt + reinject | Status       |
-| ------------- | --------------- | ------------------------- | -------------------- | ------------ |
-| claude-code   | live            | full                      | clean resume         | **pass**     |
-| codex         | live            | partial (patch additions) | clean resume         | **pass**     |
-| opencode      | end-of-turn     | full                      | clean resume         | **pass**     |
-| factory-droid | live            | none (no tool events)     | clean resume         | **pass**     |
-| copilot-cli   | live            | full                      | degraded (fresh)     | **degraded** |
-| grok          | live (thinking) | none (no tool events)     | degraded (fresh)     | **degraded** |
-| terminal      | n/a             | n/a                       | n/a                  | **excluded** |
+| Agent         | Prose detection | AST on edits              | Shell commands        | Interrupt + reinject | Status       |
+| ------------- | --------------- | ------------------------- | --------------------- | -------------------- | ------------ |
+| claude-code   | live            | full                      | yes (`Bash`)          | clean resume         | **pass**     |
+| codex         | live            | partial (patch additions) | yes (`shell`)         | clean resume         | **pass**     |
+| opencode      | end-of-turn     | full                      | yes (`bash`)          | clean resume         | **pass**     |
+| factory-droid | live            | none (no tool events)     | none (no tool events) | clean resume         | **pass**     |
+| copilot-cli   | live            | full                      | yes (`shell`)         | degraded (fresh)     | **degraded** |
+| grok          | live (thinking) | none (no tool events)     | none (no tool events) | degraded (fresh)     | **degraded** |
+| terminal      | n/a             | n/a                       | n/a                   | n/a                  | **excluded** |
 
 Notes on the two degraded rows: copilot-cli and grok publish their provider
 session id only on the turn's final event, which an aborted turn never reaches.
@@ -97,6 +98,11 @@ every few turns and each aborted turn advances that counter itself.
    land at tool-call time.
 4. **terminal is out of v1.** Raw batched PTY output only, and not a resumable
    conversation.
+5. **`tool:bash` is corrective, not preventive.** The command is matched as the
+   tool call streams, which for a fast command is after it has already run. TTSR
+   cannot block a command the way a permission prompt can - it interrupts the
+   turn and makes the agent answer for it. factory-droid and grok report no tool
+   calls at all, so "never run X" is not expressible for them.
 
 ## Feature-off safety
 

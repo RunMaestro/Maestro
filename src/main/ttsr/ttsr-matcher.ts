@@ -10,7 +10,12 @@
 import * as path from 'path';
 import picomatch from 'picomatch';
 import type { AgentId } from '../../shared/agentIds';
-import type { LoadedTtsrRule, TtsrInterruptMode, TtsrScope } from '../../shared/ttsr-types';
+import {
+	ttsrScopeCarriesPath,
+	type LoadedTtsrRule,
+	type TtsrInterruptMode,
+	type TtsrScope,
+} from '../../shared/ttsr-types';
 
 /** Which stream a candidate match came from. Same vocabulary as `scope`. */
 export type TtsrMatchSource = TtsrScope;
@@ -101,10 +106,12 @@ export function matchesGlobs(globs: string[], filePath: string, cwd?: string): b
 
 /**
  * Whether a rule may be evaluated against this delta at all: the agent gate
- * (Gate A), scope narrowing, and the glob path gate for tool sources.
+ * (Gate A), scope narrowing, and the glob path gate for file-bearing sources.
  *
- * A tool-scoped rule with `globs` but no file path in the context is skipped -
- * an unlocatable edit cannot be proven to be in scope.
+ * `globs` narrow by file path, so they only apply to sources that name a file
+ * (`tool:edit` / `tool:write`). Prose and `tool:bash` have no path and ignore
+ * them - a shell command is not "in" a file. A file-bearing match whose path is
+ * unknown is skipped: an unlocatable edit cannot be proven to be in scope.
  */
 export function ruleAppliesToContext(
 	rule: Pick<LoadedTtsrRule, 'agents' | 'scope' | 'globs'>,
@@ -112,7 +119,7 @@ export function ruleAppliesToContext(
 ): boolean {
 	if (!rule.agents.includes(ctx.agentId)) return false;
 	if (!rule.scope.includes(ctx.source)) return false;
-	if (isProseSource(ctx.source) || rule.globs.length === 0) return true;
+	if (!ttsrScopeCarriesPath(ctx.source) || rule.globs.length === 0) return true;
 	if (!ctx.filePath) return false;
 	return matchesGlobs(rule.globs, ctx.filePath, ctx.cwd);
 }

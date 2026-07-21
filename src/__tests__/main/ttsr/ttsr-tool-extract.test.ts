@@ -1,17 +1,17 @@
 /**
- * Tests for TTSR edit/write snapshot extraction across the per-agent tool
- * event shapes described by Gate A.
+ * Tests for TTSR tool snapshot extraction (file writes + shell commands)
+ * across the per-agent tool event shapes described by Gate A.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
-	extractEditSnapshots,
+	extractToolSnapshots,
 	extractPatchAdditions,
 	extractPatchPath,
 } from '../../../main/ttsr/ttsr-tool-extract';
 import type { ParsedEvent } from '../../../main/parsers/agent-output-parser';
 
-describe('extractEditSnapshots', () => {
+describe('extractToolSnapshots', () => {
 	it('extracts a claude-code Write block', () => {
 		const event: ParsedEvent = {
 			type: 'tool_use',
@@ -20,7 +20,7 @@ describe('extractEditSnapshots', () => {
 			],
 		};
 
-		expect(extractEditSnapshots(event)).toEqual([
+		expect(extractToolSnapshots(event)).toEqual([
 			{ source: 'tool:write', toolName: 'Write', filePath: 'src/a.ts', content: 'const a = 1;' },
 		]);
 	});
@@ -33,7 +33,7 @@ describe('extractEditSnapshots', () => {
 			],
 		};
 
-		expect(extractEditSnapshots(event)[0]).toMatchObject({
+		expect(extractToolSnapshots(event)[0]).toMatchObject({
 			source: 'tool:edit',
 			content: 'b',
 		});
@@ -53,7 +53,7 @@ describe('extractEditSnapshots', () => {
 			],
 		};
 
-		expect(extractEditSnapshots(event)[0].content).toBe('first\nsecond');
+		expect(extractToolSnapshots(event)[0].content).toBe('first\nsecond');
 	});
 
 	it('extracts an opencode toolState write', () => {
@@ -63,7 +63,7 @@ describe('extractEditSnapshots', () => {
 			toolState: { status: 'running', input: { filePath: 'src/b.ts', content: 'x' } },
 		};
 
-		expect(extractEditSnapshots(event)).toEqual([
+		expect(extractToolSnapshots(event)).toEqual([
 			{ source: 'tool:write', toolName: 'write', filePath: 'src/b.ts', content: 'x' },
 		]);
 	});
@@ -84,7 +84,7 @@ describe('extractEditSnapshots', () => {
 			toolState: { status: 'running', input: patch },
 		};
 
-		expect(extractEditSnapshots(event)).toEqual([
+		expect(extractToolSnapshots(event)).toEqual([
 			{
 				source: 'tool:edit',
 				toolName: 'apply_patch',
@@ -96,18 +96,95 @@ describe('extractEditSnapshots', () => {
 
 	it('ignores non-mutating tools and payloads with no content', () => {
 		expect(
-			extractEditSnapshots({
+			extractToolSnapshots({
 				type: 'tool_use',
 				toolUseBlocks: [{ name: 'Read', input: { file_path: 'src/a.ts' } }],
 			})
 		).toEqual([]);
 		expect(
-			extractEditSnapshots({
+			extractToolSnapshots({
 				type: 'tool_use',
 				toolUseBlocks: [{ name: 'Write', input: { file_path: 'src/a.ts' } }],
 			})
 		).toEqual([]);
-		expect(extractEditSnapshots({ type: 'text', text: 'hi' })).toEqual([]);
+		expect(extractToolSnapshots({ type: 'text', text: 'hi' })).toEqual([]);
+	});
+});
+
+describe('shell command extraction', () => {
+	it('extracts a claude-code Bash command', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Bash',
+					id: 't1',
+					input: { command: 'git push --force origin main', description: 'push' },
+				},
+			],
+		};
+
+		expect(extractToolSnapshots(event)).toEqual([
+			{ source: 'tool:bash', toolName: 'Bash', content: 'git push --force origin main' },
+		]);
+	});
+
+	it('extracts a codex shell command', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'shell',
+			toolState: { status: 'running', input: { command: 'rm -rf build' } },
+		};
+
+		expect(extractToolSnapshots(event)[0]).toEqual({
+			source: 'tool:bash',
+			toolName: 'shell',
+			content: 'rm -rf build',
+		});
+	});
+
+	it('extracts an opencode bash command', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'bash',
+			toolState: { status: 'running', input: { command: 'npm publish' } },
+		};
+
+		expect(extractToolSnapshots(event)[0]).toMatchObject({
+			source: 'tool:bash',
+			content: 'npm publish',
+		});
+	});
+
+	it('joins an argv array into one matchable command line', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'local_shell',
+			toolState: { status: 'running', input: { command: ['git', 'push', '--force'] } },
+		};
+
+		expect(extractToolSnapshots(event)[0].content).toBe('git push --force');
+	});
+
+	it('never reports a file path for a command', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolName: 'bash',
+			toolState: { status: 'running', input: { command: 'cat src/a.ts', path: 'src/a.ts' } },
+		};
+
+		// A command is not "in" a file, so globs must not be able to narrow it.
+		expect(extractToolSnapshots(event)[0].filePath).toBeUndefined();
+	});
+
+	it('ignores a shell call with no command', () => {
+		expect(
+			extractToolSnapshots({
+				type: 'tool_use',
+				toolName: 'bash',
+				toolState: { status: 'running', input: { description: 'nothing to run' } },
+			})
+		).toEqual([]);
 	});
 });
 

@@ -220,6 +220,68 @@ describe('loadTtsrConfigDetailed', () => {
 		expect(result.warnings.some((w) => w.includes('unknown agent "not-a-real-agent"'))).toBe(true);
 	});
 
+	it('drops agents that do not report their shell commands from a tool:bash rule', () => {
+		writeRule(
+			'no-force-push.md',
+			[
+				'---',
+				'description: Never force-push',
+				'condition: "git push .*--force"',
+				'scope: [tool:bash]',
+				'---',
+				'Never force-push a shared branch.',
+			].join('\n')
+		);
+
+		const rule = loadTtsrConfigDetailed(projectRoot).rules[0];
+
+		// factory-droid and grok emit no tool events at all, so a command rule can
+		// never fire for them - it must not silently default onto them.
+		expect(rule.agents).toEqual(['claude-code', 'codex', 'opencode', 'copilot-cli']);
+	});
+
+	it('explains why a listed agent cannot evaluate a tool:bash rule', () => {
+		writeRule(
+			'no-rm-rf.md',
+			[
+				'---',
+				'description: Never rm -rf',
+				'condition: "rm -rf"',
+				'scope: [tool:bash]',
+				'agents: [claude-code, grok]',
+				'---',
+				'Body.',
+			].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		expect(result.rules[0].agents).toEqual(['claude-code']);
+		expect(result.warnings.join('\n')).toContain('does not report the shell commands it runs');
+	});
+
+	it('warns that globs are ignored on a rule with no file-bearing scope', () => {
+		writeRule(
+			'globbed-bash.md',
+			[
+				'---',
+				'description: Command rule that also declares globs',
+				'condition: "rm -rf"',
+				'scope: [tool:bash]',
+				'globs: ["src/**/*.ts"]',
+				'---',
+				'Body.',
+			].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		// The rule still works; the contradiction is surfaced rather than silently
+		// making it never match.
+		expect(result.rules[0].globs).toEqual(['src/**/*.ts']);
+		expect(result.warnings.join('\n')).toContain('only narrows tool:edit / tool:write');
+	});
+
 	it('excludes rules listed in disabledRules', () => {
 		writeRule(
 			'keep-me.md',

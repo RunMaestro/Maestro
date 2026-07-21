@@ -23,6 +23,8 @@ import {
 	defaultTtsrAgentsForRule,
 	supportsTtsrAst,
 	supportsTtsrProse,
+	supportsTtsrShell,
+	ttsrScopeCarriesPath,
 	TTSR_AGENT_CAPABILITIES,
 	type LoadedTtsrRule,
 	type TtsrContextMode,
@@ -179,6 +181,14 @@ export function parseTtsrRule(raw: string, relativePath: string): ParsedTtsrRule
 	}
 
 	const globs = toStringArray(fm.globs);
+	// `globs` narrow by file path, and a shell command has none. Said out loud
+	// here because the alternative - silently never matching - is the kind of
+	// thing a user would spend an hour debugging.
+	if (globs.length > 0 && !scope.some((s) => ttsrScopeCarriesPath(s))) {
+		warnings.push(
+			`${label}: "globs" only narrows tool:edit / tool:write matches and is ignored by this rule's scope`
+		);
+	}
 
 	const interruptMode = toEnum<TtsrInterruptMode>(
 		fm.interruptMode,
@@ -269,8 +279,11 @@ function unsupportedAgentReason(
 	if (rule.astCondition.length > 0 && !supportsTtsrAst(agentId)) {
 		return 'agent surfaces no edit content for AST matching';
 	}
-	if (rule.scope.some((s) => s.startsWith('tool:')) && !cap.toolEvents) {
+	if (rule.scope.some((s) => ttsrScopeCarriesPath(s)) && !cap.toolEvents) {
 		return 'agent emits no tool events';
+	}
+	if (rule.scope.includes('tool:bash') && !supportsTtsrShell(agentId)) {
+		return 'agent does not report the shell commands it runs';
 	}
 	if (
 		rule.condition.length > 0 &&

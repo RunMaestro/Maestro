@@ -9,12 +9,14 @@
  * happens and only then compared to the plan's scope table, so a parser change
  * that silently downgrades an agent fails here instead of shipping.
  *
- * Three axes are measured, each with an empirical discriminator:
+ * Four axes are measured, each with an empirical discriminator:
  * - **prose**: `live` when the abort lands before the turn's final event,
  *   `end-of-turn` when the only matchable prose is the closing event.
  * - **ast**: `full` when the edit snapshot recovers the whole written text,
  *   `partial` when only part of it survives (codex ships patches, not files),
  *   `none` when the agent emits no tool content at all.
+ * - **shell**: `yes` when the command a shell tool is about to run reaches the
+ *   matcher, which is what makes a "never run X" rule expressible.
  * - **resume**: `clean` when the corrective turn re-attaches to the provider
  *   conversation, `degraded` when it must respawn fresh with the goal restated.
  */
@@ -22,7 +24,7 @@
 import { EventEmitter } from 'events';
 import { describe, it, expect } from 'vitest';
 import { TtsrRuntime } from '../../../main/ttsr/ttsr-runtime';
-import { extractEditSnapshots } from '../../../main/ttsr/ttsr-tool-extract';
+import { extractToolSnapshots } from '../../../main/ttsr/ttsr-tool-extract';
 import type { LoadTtsrConfigResult } from '../../../main/ttsr/config/ttsr-config-loader';
 import type { TtsrProcessEventSource } from '../../../main/ttsr/ttsr-spawn-registry';
 import type { AgentOutputParser, ParsedEvent } from '../../../main/parsers/agent-output-parser';
@@ -46,6 +48,9 @@ const GOAL = 'Refactor the auth module';
 /** The written file both the regex and the ast rule are aimed at. */
 const EDIT_PATH = '/repo/src/a.ts';
 const FULL_EDIT = 'const x = 1;\nconsole.log(x);';
+
+/** The command the tool:bash rule is aimed at. */
+const SHELL_COMMAND = 'git push --force origin main';
 
 // ── rules ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +90,13 @@ const AST_RULE = rule({
 	astCondition: ['console.log($$$ARGS)'],
 	scope: ['tool:edit', 'tool:write'],
 	path: '.maestro/rules/no-console-log-ast.md',
+});
+const BASH_RULE = rule({
+	name: 'no-force-push',
+	condition: ['git push .*--force'],
+	scope: ['tool:bash'],
+	content: 'Never force-push a shared branch.',
+	path: '.maestro/rules/no-force-push.md',
 });
 
 // ── harness ──────────────────────────────────────────────────────────────────
@@ -187,6 +199,8 @@ interface AgentFixture {
 	prose: unknown[];
 	/** Raw stdout line carrying an edit of {@link FULL_EDIT}, when the agent emits one. */
 	edit?: unknown;
+	/** Raw stdout line carrying a run of {@link SHELL_COMMAND}, when the agent emits one. */
+	shell?: unknown;
 }
 
 const FIXTURES: AgentFixture[] = [
@@ -214,6 +228,21 @@ const FIXTURES: AgentFixture[] = [
 						id: 'toolu_1',
 						name: 'Write',
 						input: { file_path: EDIT_PATH, content: FULL_EDIT },
+					},
+				],
+			},
+		},
+		shell: {
+			type: 'assistant',
+			session_id: 'claude-prov-1',
+			message: {
+				role: 'assistant',
+				content: [
+					{
+						type: 'tool_use',
+						id: 'toolu_2',
+						name: 'Bash',
+						input: { command: SHELL_COMMAND, description: 'push the branch' },
 					},
 				],
 			},
@@ -248,6 +277,10 @@ const FIXTURES: AgentFixture[] = [
 				}),
 			},
 		},
+		shell: {
+			type: 'item.started',
+			item: { id: 'i2', type: 'command_execution', command: SHELL_COMMAND },
+		},
 	},
 	{
 		agentId: 'opencode',
@@ -270,6 +303,11 @@ const FIXTURES: AgentFixture[] = [
 				tool: 'write',
 				state: { status: 'running', input: { path: EDIT_PATH, content: FULL_EDIT } },
 			},
+		},
+		shell: {
+			type: 'tool_use',
+			sessionID: 'oc-prov-1',
+			part: { tool: 'bash', state: { status: 'running', input: { command: SHELL_COMMAND } } },
 		},
 	},
 	{
@@ -306,6 +344,10 @@ const FIXTURES: AgentFixture[] = [
 				],
 			},
 		},
+		shell: {
+			type: 'tool.execution_start',
+			data: { toolCallId: 'call_2', toolName: 'shell', arguments: { command: SHELL_COMMAND } },
+		},
 	},
 	{
 		agentId: 'grok',
@@ -322,34 +364,52 @@ const FIXTURES: AgentFixture[] = [
 
 type ProseAxis = 'live' | 'end-of-turn' | 'none';
 type AstAxis = 'full' | 'partial' | 'none';
+type ShellAxis = 'yes' | 'none';
 type ResumeAxis = 'clean' | 'degraded' | 'none';
 type Status = 'pass' | 'degraded' | 'excluded';
 
 interface MatrixRow {
 	prose: ProseAxis;
 	ast: AstAxis;
+	shell: ShellAxis;
 	resume: ResumeAxis;
 	status: Status;
 }
 
 /** The plan's scope summary table, as the acceptance criteria. */
 const EXPECTED_MATRIX: Record<string, MatrixRow> = {
-	'claude-code': { prose: 'live', ast: 'full', resume: 'clean', status: 'pass' },
-	codex: { prose: 'live', ast: 'partial', resume: 'clean', status: 'pass' },
-	opencode: { prose: 'end-of-turn', ast: 'full', resume: 'clean', status: 'pass' },
-	'factory-droid': { prose: 'live', ast: 'none', resume: 'clean', status: 'pass' },
-	'copilot-cli': { prose: 'live', ast: 'full', resume: 'degraded', status: 'degraded' },
-	grok: { prose: 'live', ast: 'none', resume: 'degraded', status: 'degraded' },
-	terminal: { prose: 'none', ast: 'none', resume: 'none', status: 'excluded' },
+	'claude-code': { prose: 'live', ast: 'full', shell: 'yes', resume: 'clean', status: 'pass' },
+	codex: { prose: 'live', ast: 'partial', shell: 'yes', resume: 'clean', status: 'pass' },
+	opencode: { prose: 'end-of-turn', ast: 'full', shell: 'yes', resume: 'clean', status: 'pass' },
+	'factory-droid': { prose: 'live', ast: 'none', shell: 'none', resume: 'clean', status: 'pass' },
+	'copilot-cli': {
+		prose: 'live',
+		ast: 'full',
+		shell: 'yes',
+		resume: 'degraded',
+		status: 'degraded',
+	},
+	grok: { prose: 'live', ast: 'none', shell: 'none', resume: 'degraded', status: 'degraded' },
+	terminal: { prose: 'none', ast: 'none', shell: 'none', resume: 'none', status: 'excluded' },
 };
 
 /** Measure the ast axis from what the extractor actually recovers. */
 function measureAst(fixture: AgentFixture): AstAxis {
 	if (!fixture.edit) return 'none';
 	const event = fixture.parser().parseJsonObject(fixture.edit as Record<string, unknown>);
-	const snapshots = event ? extractEditSnapshots(event) : [];
+	const snapshots = event ? extractToolSnapshots(event) : [];
 	if (snapshots.length === 0) return 'none';
 	return snapshots[0].content === FULL_EDIT ? 'full' : 'partial';
+}
+
+/** Measure the shell axis from whether the command actually reaches TTSR. */
+function measureShell(fixture: AgentFixture): ShellAxis {
+	if (!fixture.shell) return 'none';
+	const event = fixture.parser().parseJsonObject(fixture.shell as Record<string, unknown>);
+	const snapshots = event ? extractToolSnapshots(event) : [];
+	return snapshots.some((s) => s.source === 'tool:bash' && s.content.includes(SHELL_COMMAND))
+		? 'yes'
+		: 'none';
 }
 
 describe('TTSR Gate A acceptance matrix', () => {
@@ -386,6 +446,7 @@ describe('TTSR Gate A acceptance matrix', () => {
 			recorded[fixture.agentId] = {
 				prose: turn.abortedAt < turn.lineCount - 1 ? 'live' : 'end-of-turn',
 				ast: measureAst(fixture),
+				shell: measureShell(fixture),
 				resume: payload.mode === 'resume' ? 'clean' : 'degraded',
 				status: payload.mode === 'resume' ? 'pass' : 'degraded',
 			};
@@ -413,6 +474,28 @@ describe('TTSR Gate A acceptance matrix', () => {
 			expect(turn.triggered[0].rules.map((ref) => ref.name)).toEqual(['no-console-log-ast']);
 		});
 
+		it('matches shell commands exactly where the parser surfaces them', async () => {
+			const shell = measureShell(fixture);
+			const turn = await runTurn(
+				fixture.agentId,
+				fixture.parser(),
+				fixture.shell ? [fixture.shell] : [],
+				[BASH_RULE]
+			);
+
+			if (shell === 'none') {
+				// factory-droid and grok emit no tool events, so "never run X" is not
+				// expressible for them - a stated Gate A limit, not a regression.
+				expect(turn.signal).toBeNull();
+				expect(turn.triggered).toEqual([]);
+				return;
+			}
+
+			expect(turn.signal).toBe('interrupt');
+			expect(turn.triggered).toHaveLength(1);
+			expect(turn.triggered[0].rules.map((ref) => ref.name)).toEqual(['no-force-push']);
+		});
+
 		it('is a total no-op with the feature gate off', async () => {
 			const lines = fixture.edit ? [...fixture.prose, fixture.edit] : fixture.prose;
 			const turn = await runTurn(fixture.agentId, fixture.parser(), lines, [PROSE_RULE, AST_RULE], {
@@ -437,7 +520,13 @@ describe('TTSR Gate A acceptance matrix', () => {
 
 		expect(turn.signal).toBeNull();
 		expect(turn.triggered).toEqual([]);
-		recorded.terminal = { prose: 'none', ast: 'none', resume: 'none', status: 'excluded' };
+		recorded.terminal = {
+			prose: 'none',
+			ast: 'none',
+			shell: 'none',
+			resume: 'none',
+			status: 'excluded',
+		};
 	});
 
 	it('records the matrix the plan promises, measured rather than declared', () => {
@@ -449,6 +538,13 @@ describe('TTSR Gate A acceptance matrix', () => {
 			const cap = TTSR_AGENT_CAPABILITIES[agentId as AgentId];
 			expect({ agentId, ast: row.ast }).toEqual({ agentId, ast: cap.ast });
 			expect({ agentId, resume: row.resume }).toEqual({ agentId, resume: cap.resume });
+			// `shellEvents` is what the loader defaults a tool:bash rule's agents
+			// from, so a parser that stops surfacing commands must fail here rather
+			// than leave those rules silently inert.
+			expect({ agentId, shell: row.shell === 'yes' }).toEqual({
+				agentId,
+				shell: cap.shellEvents,
+			});
 			if (row.status !== 'excluded') {
 				expect({ agentId, live: row.prose === 'live' }).toEqual({
 					agentId,
