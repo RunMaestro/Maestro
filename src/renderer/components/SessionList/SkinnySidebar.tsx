@@ -35,7 +35,10 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	const visibleSessions = showUnreadAgentsOnly
 		? sortedSessions.filter(
 				(s) =>
-					s.id === activeSessionId || s.state === 'busy' || s.aiTabs?.some((tab) => tab.hasUnread)
+					s.id === activeSessionId ||
+					s.state === 'busy' ||
+					s.state === 'error' ||
+					s.aiTabs?.some((tab) => tab.hasUnread)
 			)
 		: sortedSessions;
 

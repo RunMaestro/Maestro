@@ -147,21 +147,25 @@ export function useSessionCategories(
 			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
 				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
 				const isBusy = s.state === 'busy';
+				// An agent in an error state needs attention, so keep it visible.
+				const isError = s.state === 'error';
 				const isAutoRunning = batchSessionIds.has(s.id);
 				// A stuck (auto-retrying) agent needs attention just like an unread
 				// one, so keep it visible under the unread filter.
 				const isStuck = stuckOutageSessionIds.has(s.id);
 				// Also check if any worktree children have unread, are busy, are
-				// auto-running, or are stuck in an outage.
+				// auto-running, are stuck in an outage, or are in an error state.
 				const children = worktreeChildrenByParentId.get(s.id);
 				const hasActiveChildren = children?.some(
 					(child) =>
 						child.aiTabs?.some((tab) => tab.hasUnread) ||
 						child.state === 'busy' ||
+						child.state === 'error' ||
 						batchSessionIds.has(child.id) ||
 						stuckOutageSessionIds.has(child.id)
 				);
-				if (!hasUnread && !isBusy && !isAutoRunning && !isStuck && !hasActiveChildren) continue;
+				if (!hasUnread && !isBusy && !isError && !isAutoRunning && !isStuck && !hasActiveChildren)
+					continue;
 			}
 
 			if (!query) {

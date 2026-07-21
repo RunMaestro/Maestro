@@ -487,8 +487,9 @@ function SessionListInner(props: SessionListProps) {
 	const stuckOutageSignature = useActiveOutageSessionSignature();
 	const hasUnreadAgents = useMemo(
 		() =>
-			sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy') ||
-			stuckOutageSignature !== '',
+			sessions.some(
+				(s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy' || s.state === 'error'
+			) || stuckOutageSignature !== '',
 		[sessions, stuckOutageSignature]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -959,13 +960,14 @@ function SessionListInner(props: SessionListProps) {
 	) => {
 		const allWorktreeChildren = getWorktreeChildren(session.id);
 		// When filtering unread, only show worktree children that are unread, busy,
-		// or stuck auto-retrying an outage (all "needs attention").
+		// in an error state, or stuck auto-retrying an outage (all "needs attention").
 		const worktreeChildren = showUnreadAgentsOnly
 			? allWorktreeChildren.filter(
 					(child) =>
 						child.id === activeSessionId ||
 						child.aiTabs?.some((tab) => tab.hasUnread) ||
 						child.state === 'busy' ||
+						child.state === 'error' ||
 						stuckOutageSignature.split(',').includes(child.id)
 				)
 			: allWorktreeChildren;
@@ -1418,7 +1420,7 @@ function SessionListInner(props: SessionListProps) {
 							style={{ color: theme.colors.textDim }}
 						>
 							<Bot className="w-8 h-8 opacity-30" />
-							<span className="text-xs italic">No unread or working agents</span>
+							<span className="text-xs italic">No unread, working, or errored agents</span>
 						</div>
 					)}
 
