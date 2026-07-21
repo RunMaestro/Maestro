@@ -390,6 +390,14 @@ export const RightPanel = memo(
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
 
+		// The Rules tab exists only while the TTSR gate is on. Turning the Encore
+		// plugin (or `ttsrEnabled`) off while it is active would otherwise leave the
+		// body empty: the tab button is gone, but nothing moved the selection off it.
+		// Same shape as App.tsx's resets for the other Encore flags.
+		useEffect(() => {
+			if (activeRightTab === 'rules' && !ttsrEnabled) setActiveRightTab('files');
+		}, [activeRightTab, ttsrEnabled, setActiveRightTab]);
+
 		// Focus the auto run panel when switching to autorun tab
 		useEffect(() => {
 			if (activeRightTab === 'autorun' && rightPanelOpen && activeFocus === 'right') {

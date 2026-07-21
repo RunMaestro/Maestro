@@ -172,6 +172,35 @@ describe('TtsrManager gating', () => {
 		);
 		expect(matched).toEqual([]);
 	});
+
+	// The runtime resolves the gate and rules once per event and threads them
+	// through the context; the deps are only a fallback for callers that do not.
+	it('uses a pre-resolved gate and rule set without touching the deps', () => {
+		const { manager, getRules } = setup([], { enabled: false });
+		const resolved = { enabled: true, rules: [makeRule()] };
+
+		const matches = manager.observe(
+			's1',
+			{ type: 'text', text: 'console.log(x)' },
+			{ ...ctx('claude-code'), resolved }
+		);
+
+		expect(matches).toHaveLength(1);
+		expect(getRules).not.toHaveBeenCalled();
+	});
+
+	it('honours a pre-resolved disabled gate over enabled deps', () => {
+		const { manager, getRules } = setup([makeRule()]);
+
+		expect(
+			manager.observe(
+				's1',
+				{ type: 'text', text: 'console.log(x)' },
+				{ ...ctx('claude-code'), resolved: { enabled: false, rules: [makeRule()] } }
+			)
+		).toEqual([]);
+		expect(getRules).not.toHaveBeenCalled();
+	});
 });
 
 describe('TtsrManager tool-source matching', () => {

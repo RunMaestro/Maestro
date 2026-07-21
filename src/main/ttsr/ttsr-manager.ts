@@ -59,6 +59,20 @@ const MAX_DEFERRED_PER_SESSION = 10;
  */
 const MAX_RETAINED_SESSIONS = 50;
 
+/**
+ * The gate + rule set for one project root, resolved once per observed event.
+ *
+ * Threaded through {@link TtsrObserveContext} so a single event does not re-ask
+ * for them per manager callback: resolving means a rule-cache lookup in the
+ * runtime and, behind that, a settings read.
+ */
+export interface TtsrResolvedRules {
+	/** Global gate AND the project's own `enabled` switch. */
+	enabled: boolean;
+	/** Active rules for the project, already filtered by the disabled list. */
+	rules: LoadedTtsrRule[];
+}
+
 /** What the manager needs to know about the turn producing these events. */
 export interface TtsrObserveContext {
 	agentId: AgentId;
@@ -66,6 +80,12 @@ export interface TtsrObserveContext {
 	cwd: string;
 	/** Provider conversation id, once the `session-id` event has landed. */
 	providerSessionId?: string;
+	/**
+	 * Pre-resolved gate + rules for this event. Callers on the hot path (the
+	 * runtime) always pass it; without it the manager falls back to its
+	 * `isEnabled` / `getRules` deps, one resolution per call.
+	 */
+	resolved?: TtsrResolvedRules;
 }
 
 /** One fired rule. */
@@ -79,12 +99,15 @@ export interface TtsrMatch {
 }
 
 export interface TtsrManagerDeps {
-	/** Active rule set for a project root. Implementations should cache. */
+	/**
+	 * Active rule set for a project root. Implementations should cache. Only
+	 * consulted when the caller did not pass a resolved pair on the context.
+	 */
 	getRules(cwd: string): LoadedTtsrRule[];
 	/**
 	 * Master gate: global `ttsrEnabled` AND the `ttsr` Encore flag AND the
 	 * project's `.maestro/ttsr.yaml` `enabled`. When false, `observe` is a
-	 * no-op before any work is done.
+	 * no-op before any work is done. Same fallback role as {@link getRules}.
 	 */
 	isEnabled(cwd: string): boolean;
 	/** Optional observability sink for `ttsr:matched`. */
@@ -177,10 +200,8 @@ export class TtsrManager {
 	 * it short-circuits when TTSR is off or the agent has no applicable rules.
 	 */
 	observe(sessionId: string, event: ParsedEvent, ctx: TtsrObserveContext): TtsrMatch[] {
-		if (!this.deps.isEnabled(ctx.cwd)) return [];
-
-		const rules = this.deps.getRules(ctx.cwd);
-		if (rules.length === 0) return [];
+		const { enabled, rules } = this.resolve(ctx);
+		if (!enabled || rules.length === 0) return [];
 
 		if (event.type === 'init' && event.sessionId) {
 			this.setProviderSessionId(sessionId, event.sessionId);
@@ -218,8 +239,9 @@ export class TtsrManager {
 	 */
 	needsAstCheck(event: ParsedEvent, ctx: TtsrObserveContext): boolean {
 		if (!event.toolName && !event.toolUseBlocks?.length) return false;
-		if (!this.deps.isEnabled(ctx.cwd)) return false;
-		return this.deps.getRules(ctx.cwd).some((rule) => rule.astCondition.length > 0);
+		const { enabled, rules } = this.resolve(ctx);
+		if (!enabled) return false;
+		return rules.some((rule) => rule.astCondition.length > 0);
 	}
 
 	/**
@@ -235,9 +257,10 @@ export class TtsrManager {
 		event: ParsedEvent,
 		ctx: TtsrObserveContext
 	): Promise<TtsrMatch[]> {
-		if (!this.deps.isEnabled(ctx.cwd)) return [];
+		const { enabled, rules } = this.resolve(ctx);
+		if (!enabled) return [];
 
-		const astRules = this.deps.getRules(ctx.cwd).filter((rule) => rule.astCondition.length > 0);
+		const astRules = rules.filter((rule) => rule.astCondition.length > 0);
 		if (astRules.length === 0) return [];
 
 		const state = this.session(sessionId);
@@ -354,6 +377,17 @@ export class TtsrManager {
 	}
 
 	// ── internals ──
+
+	/**
+	 * Gate + rules for this event: the caller's pre-resolved pair when it has one,
+	 * otherwise the deps, gate first so a disabled project never pays for a rule
+	 * load.
+	 */
+	private resolve(ctx: TtsrObserveContext): TtsrResolvedRules {
+		if (ctx.resolved) return ctx.resolved;
+		if (!this.deps.isEnabled(ctx.cwd)) return { enabled: false, rules: [] };
+		return { enabled: true, rules: this.deps.getRules(ctx.cwd) };
+	}
 
 	/**
 	 * Append a delta and return the slice worth scanning: the new text plus a

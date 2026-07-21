@@ -34,7 +34,11 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { installTtsrRuntime, type TtsrRuntime } from './ttsr';
-import { DEFAULT_TTSR_CONTEXT_MODE, isTtsrContextMode } from '../shared/ttsr-types';
+import {
+	DEFAULT_TTSR_CONTEXT_MODE,
+	isTtsrContextMode,
+	type TtsrContextMode,
+} from '../shared/ttsr-types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -730,6 +734,38 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
+// ── TTSR gate snapshot ──
+// These four values are read from the stdout hot path: `TtsrRuntime.observe`
+// consults the gate for EVERY parsed event of EVERY agent, and the enabled path
+// re-reads the rest several times per event. electron-store (conf 10.x) re-reads
+// and re-parses the whole settings JSON file on every `get`, so reading them live
+// would mean synchronous disk I/O per token. Snapshot them here and refresh on
+// change, so the deps handed to `installTtsrRuntime` only ever read memory and a
+// toggle still takes effect without an app restart.
+let ttsrEnabledSetting = store.get('ttsrEnabled', false) === true;
+let ttsrEncoreFlag = (store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true;
+let ttsrDisabledRuleNames = store.get('ttsrDisabledRules', []) as string[];
+let ttsrContextModeSetting: TtsrContextMode = readTtsrContextMode(
+	store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE)
+);
+
+function readTtsrContextMode(value: unknown): TtsrContextMode {
+	return isTtsrContextMode(value) ? value : DEFAULT_TTSR_CONTEXT_MODE;
+}
+
+store.onDidChange('ttsrEnabled', (value) => {
+	ttsrEnabledSetting = value === true;
+});
+store.onDidChange('encoreFeatures', (value) => {
+	ttsrEncoreFlag = (value as Record<string, boolean> | undefined)?.ttsr === true;
+});
+store.onDidChange('ttsrDisabledRules', (value) => {
+	ttsrDisabledRuleNames = Array.isArray(value) ? (value as string[]) : [];
+});
+store.onDidChange('ttsrContextMode', (value) => {
+	ttsrContextModeSetting = readTtsrContextMode(value);
+});
+
 // A `decision` cadenza's chosen option replies to the owning agent: inject the
 // value as a live prompt into that agent's session via the main renderer's
 // existing remote-command path (the same one `maestro-cli dispatch` uses). The
@@ -1022,16 +1058,14 @@ app
 		// stream and match `.maestro/rules/*.md`. Gated live on the `ttsr` Encore
 		// flag AND the `ttsrEnabled` setting, so it is a no-op while off.
 		ttsrRuntime = installTtsrRuntime(processManager, {
-			isGloballyEnabled: () =>
-				store.get('ttsrEnabled', false) === true &&
-				(store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true,
-			getDisabledRules: () => store.get('ttsrDisabledRules', []) as string[],
+			// In-memory reads only (see the TTSR gate snapshot above): these run on
+			// the stdout hot path, so a `store.get` here would be a disk read per
+			// parsed event.
+			isGloballyEnabled: () => ttsrEnabledSetting && ttsrEncoreFlag,
+			getDisabledRules: () => ttsrDisabledRuleNames,
 			// Fallback teardown mode for projects whose `.maestro/ttsr.yaml` does
 			// not name one; a project that does still wins.
-			getContextMode: () => {
-				const stored = store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE);
-				return isTtsrContextMode(stored) ? stored : DEFAULT_TTSR_CONTEXT_MODE;
-			},
+			getContextMode: () => ttsrContextModeSetting,
 			safeSend,
 		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)

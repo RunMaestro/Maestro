@@ -28,7 +28,7 @@ import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
 import { renderTtsrReminder } from './ttsr-injection';
 import { TtsrInterruptDriver, type TtsrInterruptTarget } from './ttsr-interrupt-driver';
-import { TtsrManager, type TtsrMatch } from './ttsr-manager';
+import { TtsrManager, type TtsrMatch, type TtsrObserveContext } from './ttsr-manager';
 import type { TtsrStatePersistence } from './ttsr-state-persistence';
 import { TtsrStateStore } from './ttsr-state-store';
 import {
@@ -105,9 +105,21 @@ interface RuleCacheEntry {
 	/**
 	 * The `ttsrDisabledRules` setting this entry was filtered with. Disk changes
 	 * are picked up by the watcher, but a settings change has no file event, so
-	 * the entry is rebuilt when this no longer matches.
+	 * the entry is rebuilt when this no longer matches. Held as the list itself
+	 * rather than a joined key: this is compared on the hot path, and building a
+	 * string there would allocate per event.
 	 */
-	disabledKey: string;
+	disabled: readonly string[];
+}
+
+/** Cheap equality for the disabled-rule list: same reference, else same names. */
+function sameDisabledList(a: readonly string[], b: readonly string[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
 }
 
 export class TtsrRuntime {
@@ -155,6 +167,8 @@ export class TtsrRuntime {
 		this.stateStore = stateStore;
 		this.manager = new TtsrManager({
 			store: stateStore,
+			// Fallbacks only: `observe` resolves both once per event and threads the
+			// pair through the context, so nothing on the hot path reaches these.
 			getRules: (projectRoot) => this.entry(projectRoot).rules,
 			isEnabled: (projectRoot) =>
 				this.deps.isGloballyEnabled() && this.entry(projectRoot).settings.enabled,
@@ -175,10 +189,15 @@ export class TtsrRuntime {
 		const meta = this.registry.get(sessionId);
 		if (!meta) return [];
 
-		const observeCtx = {
+		// Resolved once for the whole pass and threaded into every manager call:
+		// each resolution costs a rule-cache lookup plus a disabled-list read, and
+		// the manager callbacks would otherwise re-ask 6-9 times per event.
+		const entry = this.entry(meta.projectRoot);
+		const observeCtx: TtsrObserveContext = {
 			agentId: meta.agentId,
 			cwd: meta.projectRoot,
 			providerSessionId: meta.providerSessionId,
+			resolved: { enabled: entry.settings.enabled, rules: entry.rules },
 		};
 		const matches = this.manager.observe(sessionId, event, observeCtx);
 
@@ -219,6 +238,11 @@ export class TtsrRuntime {
 		this.detach?.();
 
 		const onSpawn = (config: TtsrSpawnConfigLike) => {
+			// The gate comes first: with TTSR off, registering the turn would create
+			// conversation state and advance counters (and so schedule a write of
+			// `ttsr-state.json`) for a feature that can never fire. A turn spawned
+			// while off simply goes untracked, even if the flag flips mid-turn.
+			if (!this.deps.isGloballyEnabled()) return;
 			const meta = this.registry.noteSpawn(config);
 			if (!meta) return;
 			this.manager.beginTurn(meta.sessionId, meta.providerSessionId);
@@ -226,7 +250,7 @@ export class TtsrRuntime {
 			// synchronous disk I/O (readdir + read + YAML parse + regex compile per
 			// rule file), and doing it lazily would put that first read inside
 			// `StdoutHandler.handleParsedEvent`.
-			if (this.deps.isGloballyEnabled()) this.entry(meta.projectRoot);
+			this.entry(meta.projectRoot);
 		};
 		const onSessionId = (sessionId: string, providerSessionId: string) => {
 			if (!this.registry.get(sessionId)) return;
@@ -236,9 +260,18 @@ export class TtsrRuntime {
 		const onExit = (sessionId: string) => {
 			const meta = this.registry.get(sessionId);
 			if (!meta) return;
-			// Unblocks a driver waiting on this abort. Must run before the registry
-			// entry is dropped so the corrective payload still has its spawn meta.
+			// Unblocks a driver waiting on this abort. Runs before the gate check so
+			// an abort announced while TTSR was on still completes rather than
+			// leaving the renderer with an orphaned `ttsr:abortPending`, and before
+			// the registry entry is dropped so the corrective payload keeps its meta.
 			this.driver?.noteExit(sessionId);
+			// Turned off mid-turn: release the turn without advancing the counter or
+			// otherwise touching persisted state.
+			if (!this.deps.isGloballyEnabled()) {
+				this.manager.dispose(sessionId);
+				this.registry.clear(sessionId);
+				return;
+			}
 			// Advances the turn counter `after-gap` eligibility is measured in and
 			// drops this turn's buffers. Deferred reminders deliberately survive:
 			// they are consumed by the next prompt, not by the turn that queued them.
@@ -413,9 +446,8 @@ export class TtsrRuntime {
 	 */
 	private entry(projectRoot: string): RuleCacheEntry {
 		const disabled = this.deps.getDisabledRules?.() ?? [];
-		const disabledKey = disabled.join('\n');
 		const cached = this.cache.get(projectRoot);
-		if (cached && cached.disabledKey === disabledKey) return cached;
+		if (cached && sameDisabledList(cached.disabled, disabled)) return cached;
 
 		this.watch(projectRoot);
 
@@ -426,7 +458,7 @@ export class TtsrRuntime {
 			entry = {
 				rules: result.rules.filter((rule) => !globallyDisabled.has(rule.name)),
 				settings: result.settings,
-				disabledKey,
+				disabled,
 			};
 			// `missing` is the overwhelmingly common case (no rules in the project);
 			// only a real config problem is worth a log line.
@@ -448,7 +480,7 @@ export class TtsrRuntime {
 			entry = {
 				rules: [],
 				settings: { ...DEFAULT_TTSR_PROJECT_SETTINGS },
-				disabledKey,
+				disabled,
 			};
 		}
 

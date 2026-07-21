@@ -60,16 +60,36 @@ function setup(
 	} = {}
 ) {
 	const matched: TtsrMatchedPayload[] = [];
+	const persistence = {
+		hydrate: vi.fn(),
+		scheduleSave: vi.fn(),
+		flush: vi.fn(),
+		dispose: vi.fn(),
+	};
 	const loadConfig = vi.fn(() => result(options.rules ?? [makeRule()], options.projectEnabled));
+	// Spied so tests can assert how often the hot path consults the gate: in
+	// production these deps read a settings snapshot, and every extra call used to
+	// mean another settings-file read.
+	const isGloballyEnabled = vi.fn(() => options.enabled !== false);
+	const getDisabledRules = vi.fn(() => options.disabledRules ?? []);
 	const runtime = new TtsrRuntime({
-		isGloballyEnabled: () => options.enabled !== false,
-		getDisabledRules: () => options.disabledRules ?? [],
+		isGloballyEnabled,
+		getDisabledRules,
 		onMatched: (payload) => matched.push(payload),
 		loadConfig,
+		persistence,
 	});
 	const source = new EventEmitter() as unknown as TtsrProcessEventSource;
 	runtime.attach(source);
-	return { runtime, matched, loadConfig, source: source as unknown as EventEmitter };
+	return {
+		runtime,
+		matched,
+		loadConfig,
+		isGloballyEnabled,
+		getDisabledRules,
+		persistence,
+		source: source as unknown as EventEmitter,
+	};
 }
 
 const spawnConfig = (overrides: Record<string, unknown> = {}) => ({
@@ -207,6 +227,89 @@ describe('TtsrRuntime tap', () => {
 		expect(runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'))).toEqual([]);
 		expect(loadConfig).not.toHaveBeenCalled();
 		expect(matched).toEqual([]);
+	});
+
+	// The turn lifecycle is the other half of the gate: registering a spawn would
+	// create a conversation record and advance its turn counter, which schedules a
+	// write of `ttsr-state.json` about a second later - for a feature that is off.
+	it('creates and persists nothing across a full turn while the gate is off', () => {
+		const { runtime, persistence, source } = setup({ enabled: false });
+
+		source.emit('spawn', spawnConfig());
+		runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'));
+		source.emit('session-id', 'sess-ai-tab-1', 'prov-1');
+		source.emit('exit', 'sess-ai-tab-1', 0);
+
+		expect(runtime.registry.size).toBe(0);
+		expect(runtime.stateStore.snapshot()).toEqual({});
+		expect(persistence.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	// Toggled off mid-turn: the turn still has to be released, but its exit must
+	// not advance the counter or write anything.
+	it('releases a turn that outlived the gate without touching state', () => {
+		let enabled = true;
+		const persistence = {
+			hydrate: vi.fn(),
+			scheduleSave: vi.fn(),
+			flush: vi.fn(),
+			dispose: vi.fn(),
+		};
+		const runtime = new TtsrRuntime({
+			isGloballyEnabled: () => enabled,
+			loadConfig: () => result([makeRule()]),
+			persistence,
+		});
+		const source = new EventEmitter();
+		runtime.attach(source as unknown as TtsrProcessEventSource);
+
+		source.emit('spawn', spawnConfig());
+		enabled = false;
+		persistence.scheduleSave.mockClear();
+		source.emit('exit', 'sess-ai-tab-1', 0);
+
+		expect(runtime.registry.size).toBe(0);
+		expect(runtime.stateStore.getMessageCount('sess-ai-tab-1|-')).toBe(0);
+		expect(persistence.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	// The gate deps read a settings snapshot in production, so "how often" is the
+	// whole point: the disabled path must cost exactly one boolean check per event.
+	it('consults the gate once per event while off, and reads nothing else', () => {
+		const { runtime, isGloballyEnabled, getDisabledRules, source } = setup({ enabled: false });
+		source.emit('spawn', spawnConfig());
+		isGloballyEnabled.mockClear();
+
+		runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'));
+		runtime.observe('sess-ai-tab-1', textEvent('console.log(y)'));
+
+		expect(isGloballyEnabled).toHaveBeenCalledTimes(2);
+		expect(getDisabledRules).not.toHaveBeenCalled();
+	});
+
+	// Same accounting on the enabled path: one `observe` resolves the gate and the
+	// rule set once and threads them through, rather than re-resolving per manager
+	// callback (which used to mean 6-9 resolutions per event).
+	it('resolves the gate and the rule set once per observed event when on', () => {
+		const rule = makeRule({
+			astCondition: ['console.log($$$ARGS)'],
+			scope: ['text', 'tool:write'],
+		});
+		const { runtime, isGloballyEnabled, getDisabledRules, source } = setup({ rules: [rule] });
+		source.emit('spawn', spawnConfig());
+		isGloballyEnabled.mockClear();
+		getDisabledRules.mockClear();
+
+		// A tool event: the most expensive shape, since it also drives the AST pass.
+		runtime.observe('sess-ai-tab-1', {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{ name: 'Write', id: 't1', input: { file_path: '/repo/src/f.ts', content: 'x' } },
+			],
+		});
+
+		expect(isGloballyEnabled).toHaveBeenCalledTimes(1);
+		expect(getDisabledRules).toHaveBeenCalledTimes(1);
 	});
 
 	it('is a no-op for an unregistered session (terminal, or events after exit)', () => {
