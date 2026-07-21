@@ -2,6 +2,9 @@
 
 # Shared Utilities Reference
 
+Markdown task-list parsing is centralized in `src/shared/markdownTasks.ts`. Use its count,
+extract, and reset helpers so fenced code examples are excluded consistently.
+
 All utilities in Maestro organized by category. Each entry lists the file path, function name, signature, purpose, and which process it runs in (Main, Renderer, or Both via `src/shared/`).
 
 ---
