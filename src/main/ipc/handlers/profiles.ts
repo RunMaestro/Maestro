@@ -16,6 +16,7 @@ import {
 	deleteProfile,
 	listProfiles,
 	upsertProfile,
+	enqueueProfileWrite,
 } from '../../profiles/profile-storage';
 import type { AgentProfile } from '../../../shared/profiles/types';
 
@@ -48,11 +49,10 @@ export function registerProfileHandlers(): void {
 		'profiles:upsert',
 		withIpcErrorLogging(
 			handlerOpts('upsert'),
-			async (options: {
-				projectRoot: string;
-				profile: AgentProfile;
-			}): Promise<AgentProfile[]> => {
-				return upsertProfile(options.projectRoot, options.profile);
+			async (options: { projectRoot: string; profile: AgentProfile }): Promise<AgentProfile[]> => {
+				return enqueueProfileWrite(options.projectRoot, () =>
+					upsertProfile(options.projectRoot, options.profile)
+				);
 			}
 		)
 	);
@@ -63,7 +63,9 @@ export function registerProfileHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('delete'),
 			async (options: { projectRoot: string; profileId: string }): Promise<AgentProfile[]> => {
-				return deleteProfile(options.projectRoot, options.profileId);
+				return enqueueProfileWrite(options.projectRoot, () =>
+					deleteProfile(options.projectRoot, options.profileId)
+				);
 			}
 		)
 	);

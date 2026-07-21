@@ -125,9 +125,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				setBoard(next);
 			} catch (err) {
 				logger.error(`Failed to load board: ${String(err)}`);
-				captureException(err, { tags: { operation: 'board:list' } });
 				if (showSpinner) {
-					notifyToast({ color: 'red', title: 'Board', message: 'Failed to load board.' });
+					// A corrupt board.yaml / profiles.yaml now fails closed in the main
+					// process instead of loading as empty, so surface the real reason -
+					// the user has to repair the file by hand. Only reported on an
+					// explicit load: the background poll would otherwise re-report the
+					// same user-data problem every few seconds.
+					captureException(err, { tags: { operation: 'board:list' } });
+					notifyToast({
+						color: 'red',
+						title: 'Board',
+						message: `Failed to load board: ${err instanceof Error ? err.message : String(err)}`,
+						dismissible: true,
+					});
 				}
 			} finally {
 				if (showSpinner) setLoading(false);
@@ -322,6 +332,17 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			const card = board.cards.find((c) => c.id === cardId);
 			// No-op when dropped back on the same column.
 			if (!card || card.status === status) return;
+			// `ready` and `running` are derived by the dispatcher, so the main
+			// process rejects them. Catch it here too, before the optimistic move,
+			// so the card doesn't visibly jump columns and snap back.
+			if (status === 'ready' || status === 'running') {
+				notifyToast({
+					color: 'orange',
+					title: 'Board',
+					message: `"${STATUS_META[status].label}" is set by the dispatcher. Move the card to "To Do" - it is promoted once its parents are done.`,
+				});
+				return;
+			}
 			if (isCoarsePointer()) triggerHaptic(HAPTIC_PATTERNS.tap);
 			// Optimistic move so the card jumps immediately; the poll/reconcile
 			// corrects it if the write fails.

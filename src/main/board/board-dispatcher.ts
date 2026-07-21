@@ -274,7 +274,10 @@ export function reclaimStaleRunning(
 		if (Number.isFinite(startedMs) && nowMs - startedMs < staleMs) continue;
 		if (run && !run.endedAt) {
 			run.endedAt = nowIso;
-			run.outcome = 'error';
+			// `reclaimed`, NOT `error`: the host abandoned the attempt, the card did
+			// not fail. Recording an error here made two engine restarts during one
+			// long card trip the retry circuit breaker and force-block it.
+			run.outcome = 'reclaimed';
 			run.summary = 'Reclaimed: running with no live process (engine restart).';
 		}
 		card.status = 'ready';
@@ -284,11 +287,18 @@ export function reclaimStaleRunning(
 	return reclaimed;
 }
 
-/** Count trailing (most-recent-first) runs that did not succeed. */
+/**
+ * Count trailing (most-recent-first) runs that the card is accountable for
+ * failing. A `done` run resets the count. `reclaimed` runs are skipped entirely
+ * rather than counted or treated as a reset: the host abandoned those attempts
+ * (engine restart), so they say nothing about whether the card can succeed, but
+ * they also must not paper over genuine failures on either side of them.
+ */
 function trailingFailureCount(card: BoardCard): number {
 	const runs = card.runs ?? [];
 	let count = 0;
 	for (let i = runs.length - 1; i >= 0; i--) {
+		if (runs[i].outcome === 'reclaimed') continue;
 		if (runs[i].outcome === 'done') break;
 		count++;
 	}
@@ -514,7 +524,7 @@ export class BoardDispatcher {
 	 */
 	private finalize(cardId: string, result: CardSpawnResult): void {
 		this.inFlight.delete(cardId);
-		const board = this.deps.loadBoard();
+		const board = this.loadBoardOrSkip('finalize');
 		if (!board) return;
 		const status = applyCardResult(board, cardId, result, this.now(), this.maxFailures);
 		if (status === null) return;
@@ -529,7 +539,7 @@ export class BoardDispatcher {
 	 */
 	private blockCardImmediately(cardId: string, reason: string): void {
 		this.inFlight.delete(cardId);
-		const board = this.deps.loadBoard();
+		const board = this.loadBoardOrSkip('blockCardImmediately');
 		if (!board) return;
 		const card = board.cards.find((c) => c.id === cardId);
 		if (!card) return;
@@ -543,6 +553,25 @@ export class BoardDispatcher {
 		card.updatedAt = this.now();
 		this.deps.saveBoard(board);
 		this.log('info', `card "${cardId}" -> blocked (${reason})`);
+	}
+
+	/**
+	 * Load the board for a completion callback, swallowing a load failure into a
+	 * logged skip. `finalize` and `blockCardImmediately` run from resolved spawn
+	 * promises, so letting a `BoardStorageError` escape would surface as an
+	 * unhandled rejection instead of anything actionable. Skipping is the
+	 * fail-closed outcome we want either way: nothing is written over the damaged
+	 * file, and the card is left `running` for the stale-reclaim pass to recover
+	 * once the file is fixed. `tick()` still propagates, so the caller (the Cue
+	 * engine, or the CLI) can surface the failure to the user.
+	 */
+	private loadBoardOrSkip(context: string): Board | null {
+		try {
+			return this.deps.loadBoard();
+		} catch (err) {
+			this.log('error', `${context}: cannot read board - ${(err as Error).message}`);
+			return null;
+		}
 	}
 
 	private log(level: 'info' | 'warn' | 'error', message: string): void {

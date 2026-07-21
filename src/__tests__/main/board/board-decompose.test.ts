@@ -222,3 +222,108 @@ describe('autoDecomposeBoard - enabled', () => {
 		expect(spawn).not.toHaveBeenCalled();
 	});
 });
+
+describe('autoDecomposeBoard - reload before merge (stale-snapshot clobber)', () => {
+	/**
+	 * A fake board store standing in for `.maestro/board.yaml`: `reload` hands
+	 * back a deep copy so the caller cannot mutate the "persisted" state by
+	 * reference, exactly like re-reading the YAML from disk.
+	 */
+	function store(initial: Board) {
+		let persisted: Board = structuredClone(initial);
+		return {
+			reload: () => structuredClone(persisted),
+			save: (b: Board) => {
+				persisted = structuredClone(b);
+			},
+			read: () => structuredClone(persisted),
+		};
+	}
+
+	it('preserves a dispatcher status change made while the LLM pass was running', async () => {
+		const triage = card({ id: 't1', status: 'triage' });
+		const other = card({ id: 'other', status: 'todo' });
+		const snapshot = board([triage, other], true);
+		const disk = store(snapshot);
+
+		// The dispatcher promotes and claims `other` while the decompose spawn is
+		// still awaiting - a write that lands strictly between tick start and
+		// decompose completion.
+		const spawn = vi.fn().mockImplementation(async () => {
+			const live = disk.read();
+			live.cards.find((c) => c.id === 'other')!.status = 'running';
+			disk.save(live);
+			return '[{"title":"Sub","body":"s","dependsOn":[]}]';
+		});
+
+		// NOTE: `snapshot` is the stale tick-start board, deliberately passed as-is.
+		const count = await autoDecomposeBoard(snapshot, {
+			spawn,
+			now: () => NOW,
+			reload: disk.reload,
+			save: disk.save,
+		});
+
+		expect(count).toBe(1);
+		const final = disk.read();
+		// The dispatcher's change survived instead of being reverted to `todo`.
+		expect(final.cards.find((c) => c.id === 'other')!.status).toBe('running');
+		// And the decomposition still landed.
+		expect(final.cards.find((c) => c.title === 'Sub')).toBeDefined();
+		expect(final.cards.find((c) => c.id === 't1')!.status).toBe('done');
+	});
+
+	it('discards the result when the triage card left triage while decomposing', async () => {
+		const triage = card({ id: 't1', status: 'triage' });
+		const snapshot = board([triage], true);
+		const disk = store(snapshot);
+
+		const spawn = vi.fn().mockImplementation(async () => {
+			const live = disk.read();
+			live.cards.find((c) => c.id === 't1')!.status = 'done';
+			disk.save(live);
+			return '[{"title":"Sub","body":"s","dependsOn":[]}]';
+		});
+
+		const count = await autoDecomposeBoard(snapshot, {
+			spawn,
+			now: () => NOW,
+			reload: disk.reload,
+			save: disk.save,
+		});
+
+		expect(count).toBe(0);
+		expect(disk.read().cards.map((c) => c.id)).toEqual(['t1']);
+	});
+
+	it('discards the result when the triage card was deleted while decomposing', async () => {
+		const snapshot = board([card({ id: 't1', status: 'triage' })], true);
+		const disk = store(snapshot);
+
+		const spawn = vi.fn().mockImplementation(async () => {
+			disk.save({ ...disk.read(), cards: [] });
+			return '[{"title":"Sub","body":"s","dependsOn":[]}]';
+		});
+
+		const count = await autoDecomposeBoard(snapshot, {
+			spawn,
+			now: () => NOW,
+			reload: disk.reload,
+			save: disk.save,
+		});
+
+		expect(count).toBe(0);
+		expect(disk.read().cards).toEqual([]);
+	});
+
+	it('falls back to mutating the passed board when reload/save are not wired (CLI path)', async () => {
+		const b = board([card({ id: 't1', status: 'triage' })], true);
+		const spawn = vi.fn().mockResolvedValue('[{"title":"Sub","body":"s","dependsOn":[]}]');
+
+		const count = await autoDecomposeBoard(b, { spawn, now: () => NOW });
+
+		expect(count).toBe(1);
+		expect(b.cards.find((c) => c.title === 'Sub')).toBeDefined();
+		expect(b.cards.find((c) => c.id === 't1')!.status).toBe('done');
+	});
+});

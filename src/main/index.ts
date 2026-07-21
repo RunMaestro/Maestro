@@ -1562,18 +1562,25 @@ app
 				// and fans triage cards into child cards via the same spawn plumbing.
 				decompose: async (projectRoot, board) => {
 					const template = getPrompt(PROMPT_IDS.BOARD_DECOMPOSE);
-					const count = await autoDecomposeBoard(board, {
+					// `board` here is the snapshot the tick loaded, and each LLM pass
+					// takes minutes, so the children are merged into a board re-read
+					// from disk and persisted per card (reload + save below) rather
+					// than by writing this stale snapshot back afterwards - which used
+					// to revert every status change the dispatcher made in between.
+					return await autoDecomposeBoard(board, {
 						promptTemplate: template,
 						spawn: (prompt, card) =>
 							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext),
+						reload: () => listBoards(projectRoot).find((b) => b.id === board.id) ?? null,
+						save: (merged) => {
+							saveBoard(projectRoot, merged);
+						},
 						onLog: (level, message) => {
 							if (level === 'error') logger.error(message, 'Board');
 							else if (level === 'warn') logger.warn(message, 'Board');
 							else logger.cue(message, 'Board');
 						},
 					});
-					if (count > 0) saveBoard(projectRoot, board);
-					return count;
 				},
 			},
 		});

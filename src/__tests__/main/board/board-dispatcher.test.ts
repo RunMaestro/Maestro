@@ -172,6 +172,56 @@ describe('applyCardResult', () => {
 		b.cards[0].runs?.push({ attempt: 2, startedAt: NOW });
 		expect(applyCardResult(b, 'a', failure(), NOW, 2)).toBe('blocked');
 	});
+
+	it('does NOT count reclaimed runs toward the breaker (engine restarts are not failures)', () => {
+		// Two engine restarts mid-run used to record two `error` runs and
+		// force-block a card that had never actually failed.
+		const b = board([
+			card({
+				id: 'a',
+				status: 'running',
+				runs: [
+					{ attempt: 1, startedAt: NOW, endedAt: NOW, outcome: 'reclaimed' },
+					{ attempt: 2, startedAt: NOW, endedAt: NOW, outcome: 'reclaimed' },
+					{ attempt: 3, startedAt: NOW },
+				],
+			}),
+		]);
+		// The third attempt is this card's FIRST real failure, so it retries.
+		expect(applyCardResult(b, 'a', failure(), NOW, 2)).toBe('ready');
+	});
+
+	it('still trips the breaker on genuine failures interleaved with reclaims', () => {
+		const b = board([
+			card({
+				id: 'a',
+				status: 'running',
+				runs: [
+					{ attempt: 1, startedAt: NOW, endedAt: NOW, outcome: 'error' },
+					{ attempt: 2, startedAt: NOW, endedAt: NOW, outcome: 'reclaimed' },
+					{ attempt: 3, startedAt: NOW },
+				],
+			}),
+		]);
+		// A reclaim between two real failures must not reset the count either.
+		expect(applyCardResult(b, 'a', failure(), NOW, 2)).toBe('blocked');
+	});
+
+	it('a successful run still resets the breaker across earlier reclaims', () => {
+		const b = board([
+			card({
+				id: 'a',
+				status: 'running',
+				runs: [
+					{ attempt: 1, startedAt: NOW, endedAt: NOW, outcome: 'error' },
+					{ attempt: 2, startedAt: NOW, endedAt: NOW, outcome: 'done' },
+					{ attempt: 3, startedAt: NOW, endedAt: NOW, outcome: 'reclaimed' },
+					{ attempt: 4, startedAt: NOW },
+				],
+			}),
+		]);
+		expect(applyCardResult(b, 'a', failure(), NOW, 2)).toBe('ready');
+	});
 });
 
 describe('reclaimStaleRunning', () => {
@@ -187,7 +237,9 @@ describe('reclaimStaleRunning', () => {
 		const reclaimed = reclaimStaleRunning(b, new Set(), 30 * 60 * 1000, later, NOW);
 		expect(reclaimed.map((c) => c.id)).toEqual(['a']);
 		expect(b.cards[0].status).toBe('ready');
-		expect(b.cards[0].runs?.[0]).toMatchObject({ outcome: 'error' });
+		// `reclaimed`, not `error`: the host abandoned the attempt, the card did
+		// not fail, so this must not feed the retry circuit breaker.
+		expect(b.cards[0].runs?.[0]).toMatchObject({ outcome: 'reclaimed' });
 	});
 
 	it('does not reclaim a card that is still live (in flight)', () => {

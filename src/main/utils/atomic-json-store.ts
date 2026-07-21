@@ -28,6 +28,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 
 /**
  * Guard a serialized JSON payload before it can replace an on-disk file.
@@ -96,6 +97,34 @@ export async function atomicWriteFile(
 			}
 			throw err;
 		}
+	}
+}
+
+/**
+ * Synchronous twin of {@link atomicWriteFile}: write `contents` to a sibling
+ * `.tmp` file, then `renameSync` over the target. A crash (or a concurrent
+ * reader) mid-write sees either the whole old file or the whole new file, never
+ * a truncated one. On failure the temp file is removed on a best-effort basis
+ * and the error is rethrown so the caller can surface it - the original file is
+ * left intact either way.
+ *
+ * Exists because several stores (`.maestro/cue.yaml`, `.maestro/board.yaml`,
+ * `.maestro/profiles.yaml`) are read and written synchronously by the CLI, the
+ * dispatcher, and IPC alike; making them async would cascade through those
+ * call chains for no correctness gain.
+ */
+export function atomicWriteFileSync(filePath: string, contents: string): void {
+	const tmpPath = `${filePath}.tmp`;
+	try {
+		fsSync.writeFileSync(tmpPath, contents, 'utf-8');
+		fsSync.renameSync(tmpPath, filePath);
+	} catch (err) {
+		try {
+			fsSync.unlinkSync(tmpPath);
+		} catch {
+			// ignore - the original file is still intact
+		}
+		throw err;
 	}
 }
 

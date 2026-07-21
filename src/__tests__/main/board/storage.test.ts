@@ -20,8 +20,28 @@ import {
 	updateCard,
 	updateCardStatus,
 	deleteCard,
+	enqueueBoardWrite,
+	BoardStorageError,
 } from '../../../main/board/board-storage';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
+
+const renameFailure = vi.hoisted(() => ({ active: false }));
+
+// Partial `fs` mock so the crash-safety test can fail the rename step only.
+// vi.spyOn cannot patch an ESM namespace export, and the whole point of the
+// atomic write is what happens when the process dies between temp-write and
+// rename, so this is the only way to exercise it.
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		default: actual,
+		renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+			if (renameFailure.active) throw new Error('simulated crash before rename');
+			return actual.renameSync(from, to);
+		},
+	};
+});
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -122,6 +142,31 @@ describe('board-storage round-trip', () => {
 		expect(loadBoards(projectRoot)[0].autoDecompose).toBeUndefined();
 	});
 
+	it('round-trips every CardRun outcome, including `reclaimed`', () => {
+		// `reclaimed` is the newest member of the union; if the validator did not
+		// know it, the outcome would be silently dropped on load and a reclaimed
+		// run would read back as an unexplained failure.
+		saveBoards(projectRoot, [
+			board([
+				card({
+					id: 'a',
+					runs: [
+						{ attempt: 1, startedAt: '2026-07-10T00:00:00.000Z', outcome: 'reclaimed' },
+						{ attempt: 2, startedAt: '2026-07-10T00:00:00.000Z', outcome: 'error' },
+						{ attempt: 3, startedAt: '2026-07-10T00:00:00.000Z', outcome: 'blocked' },
+						{ attempt: 4, startedAt: '2026-07-10T00:00:00.000Z', outcome: 'done' },
+					],
+				}),
+			]),
+		]);
+		expect(loadBoards(projectRoot)[0].cards[0].runs?.map((r) => r.outcome)).toEqual([
+			'reclaimed',
+			'error',
+			'blocked',
+			'done',
+		]);
+	});
+
 	it('getBoard returns a single board by id or null', () => {
 		saveBoards(projectRoot, [board([card({ id: 'a' })])]);
 		expect(getBoard(projectRoot, 'b1')?.id).toBe('b1');
@@ -187,9 +232,9 @@ describe('board-storage malformed handling', () => {
 		expect(loadBoards(projectRoot)).toEqual([]);
 	});
 
-	it('returns an empty list on unparseable YAML', () => {
+	it('throws (fails closed) on unparseable YAML instead of reading as empty', () => {
 		writeRawYaml(':\n\t- broken: [unbalanced');
-		expect(loadBoards(projectRoot)).toEqual([]);
+		expect(() => loadBoards(projectRoot)).toThrow(BoardStorageError);
 	});
 
 	it('drops duplicate board ids, keeping the first', () => {
@@ -203,6 +248,121 @@ describe('board-storage malformed handling', () => {
 		const boards = loadBoards(projectRoot);
 		expect(boards).toHaveLength(1);
 		expect(boards[0].name).toBe('First');
+	});
+});
+
+describe('board-storage fail-closed loads', () => {
+	const CORRUPT = ':\n\t- broken: [unbalanced';
+
+	it('still returns [] when the file is simply missing', () => {
+		expect(loadBoards(projectRoot)).toEqual([]);
+	});
+
+	it('treats an empty file and an absent `boards:` key as "no boards yet"', () => {
+		writeRawYaml('');
+		expect(loadBoards(projectRoot)).toEqual([]);
+		writeRawYaml('somethingElse: true\n');
+		expect(loadBoards(projectRoot)).toEqual([]);
+	});
+
+	it('throws a typed BoardStorageError naming the file on corrupt YAML', () => {
+		writeRawYaml(CORRUPT);
+		try {
+			loadBoards(projectRoot);
+			throw new Error('expected loadBoards to throw');
+		} catch (err) {
+			expect(err).toBeInstanceOf(BoardStorageError);
+			expect((err as BoardStorageError).filePath).toBe(path.join(projectRoot, BOARD_CONFIG_PATH));
+		}
+	});
+
+	it('throws when `boards:` is present but is not a list', () => {
+		writeRawYaml('boards: not-a-list\n');
+		expect(() => loadBoards(projectRoot)).toThrow(BoardStorageError);
+	});
+
+	it('does NOT truncate the corrupt file when a mutation is attempted', () => {
+		writeRawYaml(CORRUPT);
+		const filePath = path.join(projectRoot, BOARD_CONFIG_PATH);
+
+		// This is the data-loss bug: load used to return [], so the save that
+		// followed wrote an empty board list over the user's whole board.
+		expect(() => addCard(projectRoot, 'b1', card({ id: 'x' }))).toThrow(BoardStorageError);
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(CORRUPT);
+	});
+
+	it('propagates from every mutation path without writing', () => {
+		writeRawYaml(CORRUPT);
+		const filePath = path.join(projectRoot, BOARD_CONFIG_PATH);
+
+		expect(() => createBoard(projectRoot, 'New')).toThrow(BoardStorageError);
+		expect(() => updateCard(projectRoot, 'b1', card({ id: 'a' }))).toThrow(BoardStorageError);
+		expect(() => updateCardStatus(projectRoot, 'b1', 'a', 'done')).toThrow(BoardStorageError);
+		expect(() => deleteCard(projectRoot, 'b1', 'a')).toThrow(BoardStorageError);
+		expect(() => getBoard(projectRoot, 'b1')).toThrow(BoardStorageError);
+		expect(() => listBoards(projectRoot)).toThrow(BoardStorageError);
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(CORRUPT);
+	});
+});
+
+describe('board-storage atomic + serialized writes', () => {
+	it('writes via a temp file that is renamed away, leaving no .tmp behind', () => {
+		const filePath = saveBoards(projectRoot, [board([card({ id: 'a' })])]);
+		expect(fs.existsSync(filePath)).toBe(true);
+		expect(fs.existsSync(`${filePath}.tmp`)).toBe(false);
+	});
+
+	it('leaves the previous file fully intact when the write fails mid-way', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a' })], { name: 'Original' })]);
+		const filePath = path.join(projectRoot, BOARD_CONFIG_PATH);
+		const before = fs.readFileSync(filePath, 'utf-8');
+
+		// Simulate a crash between "temp file written" and "rename over target".
+		renameFailure.active = true;
+		expect(() =>
+			saveBoards(projectRoot, [board([card({ id: 'b' })], { name: 'Replacement' })])
+		).toThrow(/simulated crash/);
+		renameFailure.active = false;
+
+		// The old content survived byte-for-byte - never truncated, never partial.
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(before);
+		expect(loadBoards(projectRoot)[0].name).toBe('Original');
+		// And the aborted temp file was cleaned up.
+		expect(fs.existsSync(`${filePath}.tmp`)).toBe(false);
+	});
+
+	it('applies two racing enqueued saves in call order', async () => {
+		saveBoards(projectRoot, [board([])]);
+		const order: string[] = [];
+
+		// The first job yields before writing; without serialization the second
+		// would land first and then be clobbered by the first job's stale write.
+		const first = enqueueBoardWrite(projectRoot, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			order.push('first');
+			addCard(projectRoot, 'b1', card({ id: 'first' }));
+		});
+		const second = enqueueBoardWrite(projectRoot, async () => {
+			order.push('second');
+			addCard(projectRoot, 'b1', card({ id: 'second' }));
+		});
+		await Promise.all([first, second]);
+
+		expect(order).toEqual(['first', 'second']);
+		// Both writes survive: neither read-modify-write cycle saw stale state.
+		expect(loadBoards(projectRoot)[0].cards.map((c) => c.id)).toEqual(['first', 'second']);
+	});
+
+	it('does not let a rejected job poison the ones queued behind it', async () => {
+		saveBoards(projectRoot, [board([])]);
+		const failed = enqueueBoardWrite(projectRoot, () => {
+			throw new Error('boom');
+		});
+		await expect(failed).rejects.toThrow(/boom/);
+
+		await enqueueBoardWrite(projectRoot, () => addCard(projectRoot, 'b1', card({ id: 'after' })));
+		expect(loadBoards(projectRoot)[0].cards.map((c) => c.id)).toEqual(['after']);
 	});
 });
 
@@ -237,6 +397,24 @@ describe('board-storage card mutations', () => {
 		expect(() => updateCardStatus(projectRoot, 'b1', 'ghost', 'done')).toThrow(/not found/i);
 	});
 
+	it.each(['ready', 'running'] as const)(
+		'updateCardStatus rejects the dispatcher-derived status "%s"',
+		(derived) => {
+			expect(() => updateCardStatus(projectRoot, 'b1', 'a', derived)).toThrow(
+				/set by the dispatcher/i
+			);
+			// Rejected before any write: the card keeps its previous status.
+			expect(loadBoards(projectRoot)[0].cards[0].status).toBe('done');
+		}
+	);
+
+	it.each(['triage', 'todo', 'blocked', 'done'] as const)(
+		'updateCardStatus still accepts the author-owned status "%s"',
+		(manual) => {
+			expect(updateCardStatus(projectRoot, 'b1', 'a', manual).cards[0].status).toBe(manual);
+		}
+	);
+
 	it('updateCard replaces fields in place and preserves createdAt', () => {
 		const updated = updateCard(
 			projectRoot,
@@ -254,5 +432,73 @@ describe('board-storage card mutations', () => {
 		const updated = deleteCard(projectRoot, 'b1', 'a');
 		expect(updated.cards.map((c) => c.id)).toEqual(['b']);
 		expect(loadBoards(projectRoot)[0].cards.map((c) => c.id)).toEqual(['b']);
+	});
+});
+
+describe('deleteCard referential integrity', () => {
+	it('splices the deleted id out of every other card`s parents', () => {
+		saveBoards(projectRoot, [
+			board([
+				card({ id: 'a', status: 'done' }),
+				card({ id: 'b', parents: ['a'] }),
+				card({ id: 'c', parents: ['a'] }),
+			]),
+		]);
+		deleteCard(projectRoot, 'b1', 'a');
+		const cards = loadBoards(projectRoot)[0].cards;
+		// No child is left pointing at a card that no longer exists - a dangling
+		// parent id reads as a permanent blocker and wedges the child forever.
+		expect(cards.find((c) => c.id === 'b')!.parents).toEqual([]);
+		expect(cards.find((c) => c.id === 'c')!.parents).toEqual([]);
+	});
+
+	it('reattaches the deleted card`s parents to its children (grandparent adoption)', () => {
+		// A -> B -> C. Deleting the middle card must not let C run before A.
+		saveBoards(projectRoot, [
+			board([
+				card({ id: 'a' }),
+				card({ id: 'b', parents: ['a'] }),
+				card({ id: 'c', parents: ['b'] }),
+			]),
+		]);
+		deleteCard(projectRoot, 'b1', 'b');
+		const cards = loadBoards(projectRoot)[0].cards;
+		expect(cards.map((c) => c.id)).toEqual(['a', 'c']);
+		expect(cards.find((c) => c.id === 'c')!.parents).toEqual(['a']);
+	});
+
+	it('does not duplicate a parent the child already had', () => {
+		saveBoards(projectRoot, [
+			board([
+				card({ id: 'a' }),
+				card({ id: 'b', parents: ['a'] }),
+				card({ id: 'c', parents: ['a', 'b'] }),
+			]),
+		]);
+		deleteCard(projectRoot, 'b1', 'b');
+		expect(loadBoards(projectRoot)[0].cards.find((c) => c.id === 'c')!.parents).toEqual(['a']);
+	});
+
+	it('never makes a card its own parent, and keeps the graph acyclic', () => {
+		// Deleting `b` would hand `c` a parent list containing `c` itself if the
+		// self-edge were not filtered - and saveBoards would then reject the write.
+		saveBoards(projectRoot, [
+			board([
+				card({ id: 'c' }),
+				card({ id: 'b', parents: ['c'] }),
+				card({ id: 'd', parents: ['b'] }),
+			]),
+		]);
+		deleteCard(projectRoot, 'b1', 'b');
+		const cards = loadBoards(projectRoot)[0].cards;
+		expect(cards.find((c) => c.id === 'd')!.parents).toEqual(['c']);
+		expect(cards.find((c) => c.id === 'c')!.parents).toEqual([]);
+	});
+
+	it('leaves unrelated cards untouched and is a no-op for an unknown id', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a' }), card({ id: 'b', parents: ['a'] })])]);
+		const before = fs.readFileSync(path.join(projectRoot, BOARD_CONFIG_PATH), 'utf-8');
+		deleteCard(projectRoot, 'b1', 'ghost');
+		expect(fs.readFileSync(path.join(projectRoot, BOARD_CONFIG_PATH), 'utf-8')).toBe(before);
 	});
 });

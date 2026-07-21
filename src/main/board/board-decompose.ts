@@ -48,6 +48,24 @@ export interface AutoDecomposeDeps {
 	maxPerTick?: number;
 	/** Optional structured log sink. */
 	onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
+	/**
+	 * Re-read the board from its source of truth. Supply this (together with
+	 * {@link save}) whenever OTHER writers can touch the board while an LLM pass
+	 * is in flight - which is the case on the desktop, where the dispatcher
+	 * persists card status changes on every heartbeat.
+	 *
+	 * An LLM pass takes minutes. Without a reload we would append the children to
+	 * the snapshot loaded at tick start and persist THAT, silently reverting every
+	 * status change the dispatcher made in the meantime. Same reload-before-save
+	 * pattern the dispatcher's own `finalize()` uses.
+	 *
+	 * When omitted, the mutations are applied to the passed-in `board` and the
+	 * caller persists it (the CLI's single-shot `board tick`, where nothing else
+	 * is writing during the pass).
+	 */
+	reload?: () => Board | null;
+	/** Persist a merged board. Required when {@link reload} is supplied. */
+	save?: (board: Board) => void;
 }
 
 /** One parsed child card from the LLM output. */
@@ -148,7 +166,11 @@ function extractJsonArray(output: string): string | null {
  * number of triage cards that were successfully decomposed.
  *
  * STRICT GATE: returns 0 immediately when `board.autoDecompose` is not `true`.
- * The board is expected to be persisted by the caller after this resolves.
+ *
+ * Persistence depends on the injected deps: with `reload`/`save` wired, each
+ * decomposition is merged into a freshly-read board and persisted here (see
+ * {@link AutoDecomposeDeps.reload}); without them, mutations land on the passed
+ * `board` and the caller persists it once this resolves.
  */
 export async function autoDecomposeBoard(board: Board, deps: AutoDecomposeDeps): Promise<number> {
 	if (board.autoDecompose !== true) return 0;
@@ -182,12 +204,59 @@ export async function autoDecomposeBoard(board: Board, deps: AutoDecomposeDeps):
 			continue;
 		}
 
-		appendChildren(board, card, children, now());
+		if (!applyDecomposition(board, card, children, now(), deps)) continue;
 		decomposed++;
 		deps.onLog?.('info', `decomposed "${card.title}" into ${children.length} child card(s)`);
 	}
 
 	return decomposed;
+}
+
+/**
+ * Merge one card's children into the board and (when reloading) persist.
+ * Returns false when the decomposition was dropped, so the caller does not
+ * count it.
+ *
+ * With `reload`/`save` wired, the merge lands on a board read fresh from disk
+ * rather than on the minutes-old snapshot this pass started from - everything
+ * the dispatcher persisted in between survives. The freshly-read triage card is
+ * re-checked before appending: if it is gone, or no longer `triage` (a human
+ * moved it, or a racing pass already expanded it), the result is discarded
+ * rather than resurrecting a retired card or double-expanding it.
+ */
+function applyDecomposition(
+	board: Board,
+	card: BoardCard,
+	children: DecomposedChild[],
+	nowIso: string,
+	deps: AutoDecomposeDeps
+): boolean {
+	if (!deps.reload || !deps.save) {
+		appendChildren(board, card, children, nowIso);
+		return true;
+	}
+
+	const fresh = deps.reload();
+	if (!fresh) {
+		deps.onLog?.('warn', `decompose: board vanished before "${card.id}" could be merged`);
+		return false;
+	}
+	const freshTriage = fresh.cards.find((c) => c.id === card.id);
+	if (!freshTriage) {
+		deps.onLog?.('warn', `decompose: card "${card.id}" was deleted while decomposing`);
+		return false;
+	}
+	if (freshTriage.status !== 'triage') {
+		deps.onLog?.(
+			'warn',
+			`decompose: card "${card.id}" left triage while decomposing - discarding result`
+		);
+		return false;
+	}
+
+	appendChildren(fresh, freshTriage, children, nowIso);
+	deps.save(fresh);
+	return true;
 }
 
 /**

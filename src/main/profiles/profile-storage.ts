@@ -24,11 +24,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { MAESTRO_DIR, PROFILES_CONFIG_PATH } from '../../shared/maestro-paths';
-import {
-	validateAgentProfile,
-	type AgentProfile,
-} from '../../shared/profiles/types';
+import { validateAgentProfile, type AgentProfile } from '../../shared/profiles/types';
 import { logger } from '../utils/logger';
+import { atomicWriteFileSync, createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 const LOG_CONTEXT = 'Profiles';
 
@@ -38,18 +36,62 @@ function profilesConfigPath(projectRoot: string): string {
 }
 
 /**
- * Load and validate all profiles for a project. Returns an empty array when the
- * file is missing or unparseable. Malformed individual entries are skipped with
- * a logged warning; valid entries are still returned.
+ * Thrown when profiles.yaml exists but cannot be read or parsed. Mirrors
+ * `BoardStorageError`: a missing file is normal and returns `[]`, but a damaged
+ * one must fail closed. Returning `[]` here would let the next `saveProfiles`
+ * overwrite the file with an empty list and destroy every profile - and because
+ * cards resolve their overrides by profile id, it would silently force-block
+ * every board card at the same time.
+ */
+export class ProfileStorageError extends Error {
+	readonly filePath: string;
+
+	constructor(filePath: string, cause: unknown) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		super(`Failed to read profiles file ${filePath}: ${detail}`);
+		this.name = 'ProfileStorageError';
+		this.filePath = filePath;
+	}
+}
+
+/**
+ * Per-file write chain for profiles.yaml, keyed by the absolute file path.
+ * Same rationale as the board's queue: the mutations below are synchronous and
+ * cannot interleave within a tick, but an async caller doing read -> await ->
+ * write can, and would silently drop the other writer's update.
+ */
+const profileWriteQueue = createKeyedWriteQueue();
+
+/**
+ * Run `work` serialized against every other queued mutation for this project's
+ * profiles.yaml. Required for callers that read-modify-write across an `await`.
+ */
+export function enqueueProfileWrite<T>(
+	projectRoot: string,
+	work: () => T | Promise<T>
+): Promise<T> {
+	return profileWriteQueue.enqueue(profilesConfigPath(projectRoot), async () => work());
+}
+
+/**
+ * Load and validate all profiles for a project.
+ *
+ * Same three-way split as `loadBoards`: a missing file returns `[]`, a read or
+ * parse failure throws {@link ProfileStorageError} so no mutation path can
+ * overwrite a damaged file, and a valid file loads with individual malformed
+ * entries skipped and logged.
  */
 export function loadProfiles(projectRoot: string): AgentProfile[] {
 	const filePath = profilesConfigPath(projectRoot);
 	let raw: string;
 	try {
 		raw = fs.readFileSync(filePath, 'utf-8');
-	} catch {
+	} catch (err) {
 		// Missing file is the common case (no profiles yet) - not an error.
-		return [];
+		if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+			return [];
+		}
+		throw new ProfileStorageError(filePath, err);
 	}
 
 	let parsed: unknown;
@@ -60,16 +102,23 @@ export function loadProfiles(projectRoot: string): AgentProfile[] {
 			`Failed to parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
 			LOG_CONTEXT
 		);
-		return [];
+		throw new ProfileStorageError(filePath, err);
 	}
 
-	if (!parsed || typeof parsed !== 'object') {
+	// An empty file legitimately means "no profiles yet".
+	if (parsed === null || parsed === undefined) {
 		return [];
+	}
+	if (typeof parsed !== 'object') {
+		throw new ProfileStorageError(filePath, new Error('expected a mapping at the top level'));
 	}
 
 	const list = (parsed as { profiles?: unknown }).profiles;
-	if (!Array.isArray(list)) {
+	if (list === undefined || list === null) {
 		return [];
+	}
+	if (!Array.isArray(list)) {
+		throw new ProfileStorageError(filePath, new Error('`profiles` is present but is not a list'));
 	}
 
 	const profiles: AgentProfile[] = [];
@@ -110,7 +159,9 @@ export function saveProfiles(projectRoot: string, profiles: AgentProfile[]): str
 		.map((p) => validateAgentProfile(p))
 		.filter((p): p is AgentProfile => p !== null);
 	const content = yaml.dump({ profiles: valid }, { lineWidth: -1 });
-	fs.writeFileSync(filePath, content, 'utf-8');
+	// Atomic (temp file + rename): a crash mid-write leaves the previous
+	// profiles.yaml intact instead of a truncated file that would load as empty.
+	atomicWriteFileSync(filePath, content);
 	return filePath;
 }
 

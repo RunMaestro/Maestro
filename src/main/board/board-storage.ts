@@ -28,6 +28,11 @@
  * cards with a logged warning, so one bad entry never blocks the rest. Save
  * refuses to persist a board whose parent graph contains a cycle (Phase 3
  * relies on the DAG being acyclic).
+ *
+ * Writes are atomic (temp file + rename via `atomicWriteFileSync`) so a crash
+ * or a concurrent reader never observes a truncated board.yaml, and async
+ * read-modify-write callers serialize per file through
+ * {@link enqueueBoardWrite}.
  */
 
 import * as fs from 'fs';
@@ -44,12 +49,56 @@ import {
 import { hasCycle } from '../../shared/board/graph';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
+import { atomicWriteFileSync, createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 const LOG_CONTEXT = 'Board';
+
+/**
+ * Per-file write chain for board.yaml, keyed by the absolute file path (so two
+ * projects never block each other). The storage mutations below are synchronous
+ * and therefore cannot interleave with each other inside a single tick, but an
+ * async caller that does its own read → await → write cycle can. Route those
+ * through {@link enqueueBoardWrite} so the whole cycle is serialized against
+ * every other queued mutation on the same file.
+ *
+ * Uses the shared `createKeyedWriteQueue` rather than a bespoke chain; Cue's
+ * `enqueueYamlWrite` (cue-engine.ts) predates it and can adopt the same helper.
+ */
+const boardWriteQueue = createKeyedWriteQueue();
+
+/**
+ * Run `work` serialized against every other queued mutation for this project's
+ * board.yaml. Callers that read-modify-write across an `await` MUST use this;
+ * purely synchronous callers do not need it.
+ */
+export function enqueueBoardWrite<T>(projectRoot: string, work: () => T | Promise<T>): Promise<T> {
+	return boardWriteQueue.enqueue(boardConfigPath(projectRoot), async () => work());
+}
 
 /** Absolute path to a project's board.yaml (may not exist yet). */
 function boardConfigPath(projectRoot: string): string {
 	return path.join(projectRoot, BOARD_CONFIG_PATH);
+}
+
+/**
+ * Thrown when board.yaml exists but cannot be read or parsed.
+ *
+ * This is deliberately NOT the same as "no board yet". A missing file returns
+ * `[]`; an unreadable or malformed one throws, because the alternative (the old
+ * behavior) was catastrophic: `loadBoards` returned `[]`, the very next
+ * `saveBoards` wrote that empty list over the top, and every board the user had
+ * was gone. Failing closed keeps the damaged file on disk where a human can fix
+ * it, at the cost of the Board being unavailable until they do.
+ */
+export class BoardStorageError extends Error {
+	readonly filePath: string;
+
+	constructor(filePath: string, cause: unknown) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		super(`Failed to read board file ${filePath}: ${detail}`);
+		this.name = 'BoardStorageError';
+		this.filePath = filePath;
+	}
 }
 
 /** ISO timestamp. Kept as a helper so tests can reason about the shape. */
@@ -58,19 +107,30 @@ function nowIso(): string {
 }
 
 /**
- * Load and validate all boards for a project. Returns an empty array when the
- * file is missing or unparseable. Malformed cards are skipped with a logged
- * warning; valid boards/cards are still returned. Duplicate board ids keep the
- * first occurrence.
+ * Load and validate all boards for a project.
+ *
+ * Three distinct outcomes, and the distinction matters:
+ *  - **Missing file** -> `[]`. The normal "no board yet" case.
+ *  - **Read or parse failure** -> throws {@link BoardStorageError}. Every
+ *    mutation path funnels through here, so a damaged file blocks writes rather
+ *    than being silently replaced by an empty board.
+ *  - **Valid file** -> the boards. Individual malformed cards are still skipped
+ *    with a logged warning (one bad card never blocks the rest), and duplicate
+ *    board ids keep the first occurrence.
  */
 export function loadBoards(projectRoot: string): Board[] {
 	const filePath = boardConfigPath(projectRoot);
 	let raw: string;
 	try {
 		raw = fs.readFileSync(filePath, 'utf-8');
-	} catch {
-		// Missing file is the common case (no board yet) - not an error.
-		return [];
+	} catch (err) {
+		// Missing file is the common case (no board yet) - not an error. Anything
+		// else (permissions, a directory in the way, I/O failure) is real and must
+		// not be mistaken for "no boards".
+		if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+			return [];
+		}
+		throw new BoardStorageError(filePath, err);
 	}
 
 	let parsed: unknown;
@@ -81,16 +141,25 @@ export function loadBoards(projectRoot: string): Board[] {
 			`Failed to parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
 			LOG_CONTEXT
 		);
-		return [];
+		throw new BoardStorageError(filePath, err);
 	}
 
-	if (!parsed || typeof parsed !== 'object') {
+	// An empty file parses to null/undefined - treat that as "no boards yet"
+	// rather than corruption, since that is what an empty `.maestro/board.yaml`
+	// legitimately means.
+	if (parsed === null || parsed === undefined) {
 		return [];
+	}
+	if (typeof parsed !== 'object') {
+		throw new BoardStorageError(filePath, new Error('expected a mapping at the top level'));
 	}
 
 	const list = (parsed as { boards?: unknown }).boards;
-	if (!Array.isArray(list)) {
+	if (list === undefined || list === null) {
 		return [];
+	}
+	if (!Array.isArray(list)) {
+		throw new BoardStorageError(filePath, new Error('`boards` is present but is not a list'));
 	}
 
 	const boards: Board[] = [];
@@ -152,7 +221,9 @@ export function saveBoards(projectRoot: string, boards: Board[]): string {
 	}
 	const filePath = boardConfigPath(projectRoot);
 	const content = yaml.dump({ boards: valid }, { lineWidth: -1 });
-	fs.writeFileSync(filePath, content, 'utf-8');
+	// Atomic (temp file + rename): a crash mid-write leaves the previous
+	// board.yaml intact instead of a truncated file that would load as empty.
+	atomicWriteFileSync(filePath, content);
 	return filePath;
 }
 
@@ -219,8 +290,22 @@ export function addCard(projectRoot: string, boardId: string, card: BoardCard): 
 }
 
 /**
+ * Statuses the dispatcher DERIVES and therefore owns. `ready` is computed from
+ * the DAG (`todo` with all parents `done`) and `running` is stamped when a card
+ * is claimed and an agent is actually spawned for it. Accepting either from IPC
+ * or the CLI produces a card the engine's own bookkeeping disagrees with: a
+ * hand-set `running` card has no open run, so the dispatcher's stale-reclaim
+ * pass eventually drags it back, and a hand-set `ready` card jumps the DAG gate
+ * and can dispatch before its parents are done.
+ *
+ * Authors write `todo`; the engine does the rest.
+ */
+const DERIVED_STATUSES: ReadonlySet<CardStatus> = new Set<CardStatus>(['ready', 'running']);
+
+/**
  * Update a card's status. Stamps `updatedAt`. Throws if the board or card is
- * missing. Returns the updated board.
+ * missing, or if the caller tried to set a dispatcher-derived status (see
+ * {@link DERIVED_STATUSES}). Returns the updated board.
  */
 export function updateCardStatus(
 	projectRoot: string,
@@ -228,6 +313,12 @@ export function updateCardStatus(
 	cardId: string,
 	status: CardStatus
 ): Board {
+	if (DERIVED_STATUSES.has(status)) {
+		throw new Error(
+			`updateCardStatus: "${status}" is set by the dispatcher, not manually. ` +
+				`Move the card to "todo" instead - it is promoted to "ready" once its parents are done.`
+		);
+	}
 	const boards = loadBoards(projectRoot);
 	const board = requireBoard(boards, boardId);
 	const card = board.cards.find((c) => c.id === cardId);
@@ -266,16 +357,45 @@ export function updateCard(projectRoot: string, boardId: string, card: BoardCard
 }
 
 /**
- * Delete a card from a board by id. Returns the updated board. A no-op (and no
- * write) when no card matches. Throws if the board is missing.
+ * Delete a card from a board by id, keeping the DAG referentially intact.
+ * Returns the updated board. A no-op (and no write) when no card matches.
+ * Throws if the board is missing.
+ *
+ * Referential integrity, in two parts:
+ *
+ *  1. **Detach.** The deleted id is spliced out of every other card's `parents`.
+ *     `getBlockers` and `getEligibleCards` treat a parent id with no matching
+ *     card as a permanent blocker (deliberately - a dependency that does not
+ *     exist yet cannot be satisfied), so leaving the dangling id behind wedged
+ *     every child of a deleted card forever, with nothing in the UI explaining
+ *     why they never promoted.
+ *
+ *  2. **Grandparent adoption.** The deleted card's own parents are reattached to
+ *     its children. Deleting a middle card would otherwise sever the ordering it
+ *     encoded (`A -> B -> C`, delete `B`, and `C` becomes runnable before `A` is
+ *     done). Adoption preserves reachability, and cannot introduce a cycle: the
+ *     new edges are a subset of paths that already existed through the deleted
+ *     card, so an acyclic board stays acyclic.
+ *
+ * A card is never made its own parent (a self-edge, if the deleted card somehow
+ * listed one of its own children as a parent).
  */
 export function deleteCard(projectRoot: string, boardId: string, cardId: string): Board {
 	const boards = loadBoards(projectRoot);
 	const board = requireBoard(boards, boardId);
-	const before = board.cards.length;
+	const doomed = board.cards.find((c) => c.id === cardId);
+	if (!doomed) return board;
+
+	const inheritedParents = doomed.parents.filter((id) => id !== cardId);
 	board.cards = board.cards.filter((c) => c.id !== cardId);
-	if (board.cards.length !== before) {
-		saveBoards(projectRoot, boards);
+	for (const card of board.cards) {
+		if (!card.parents.includes(cardId)) continue;
+		const rest = card.parents.filter((id) => id !== cardId);
+		card.parents = Array.from(new Set([...rest, ...inheritedParents])).filter(
+			(id) => id !== card.id
+		);
+		card.updatedAt = nowIso();
 	}
+	saveBoards(projectRoot, boards);
 	return board;
 }

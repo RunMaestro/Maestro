@@ -42,8 +42,16 @@ export interface WorktreeRef {
 	branch?: string;
 }
 
-/** The terminal outcome a dispatcher records for one attempt at a card. */
-export type CardRunOutcome = 'done' | 'blocked' | 'error';
+/**
+ * The terminal outcome a dispatcher records for one attempt at a card.
+ *
+ * `reclaimed` is deliberately distinct from `error`: it means the attempt was
+ * abandoned by the HOST (the engine restarted mid-run and the process is gone),
+ * not that the work failed. It is excluded from the retry circuit breaker's
+ * trailing-failure count, because two app restarts during a long-running card
+ * would otherwise force-block a perfectly healthy card.
+ */
+export type CardRunOutcome = 'done' | 'blocked' | 'error' | 'reclaimed';
 
 /**
  * Bookkeeping for a single dispatch attempt of a card. A card accumulates one
@@ -186,7 +194,12 @@ function validateCardRun(raw: unknown): CardRun | null {
 	const run: CardRun = { attempt, startedAt };
 	const endedAt = optionalString(r.endedAt);
 	if (endedAt !== undefined) run.endedAt = endedAt;
-	if (r.outcome === 'done' || r.outcome === 'blocked' || r.outcome === 'error') {
+	if (
+		r.outcome === 'done' ||
+		r.outcome === 'blocked' ||
+		r.outcome === 'error' ||
+		r.outcome === 'reclaimed'
+	) {
 		run.outcome = r.outcome;
 	}
 	const summary = optionalString(r.summary);

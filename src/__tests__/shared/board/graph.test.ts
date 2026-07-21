@@ -33,10 +33,7 @@ describe('getEligibleCards', () => {
 	});
 
 	it('excludes a card whose parent is not done', () => {
-		const b = board([
-			card({ id: 'a', status: 'todo' }),
-			card({ id: 'c', parents: ['a'] }),
-		]);
+		const b = board([card({ id: 'a', status: 'todo' }), card({ id: 'c', parents: ['a'] })]);
 		// a is eligible (no parents), c is not (a not done).
 		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['a']);
 	});
@@ -78,10 +75,7 @@ describe('getEligibleCards', () => {
 
 describe('getBlockers', () => {
 	it('returns an empty array when all parents are done', () => {
-		const b = board([
-			card({ id: 'a', status: 'done' }),
-			card({ id: 'c', parents: ['a'] }),
-		]);
+		const b = board([card({ id: 'a', status: 'done' }), card({ id: 'c', parents: ['a'] })]);
 		const c = b.cards.find((x) => x.id === 'c')!;
 		expect(getBlockers(c, b)).toEqual([]);
 	});
@@ -97,7 +91,10 @@ describe('getBlockers', () => {
 	});
 
 	it('counts a missing parent id as a blocker', () => {
-		const b = board([card({ id: 'c', parents: ['ghost', 'a'] }), card({ id: 'a', status: 'done' })]);
+		const b = board([
+			card({ id: 'c', parents: ['ghost', 'a'] }),
+			card({ id: 'a', status: 'done' }),
+		]);
 		const c = b.cards.find((x) => x.id === 'c')!;
 		expect(getBlockers(c, b)).toEqual(['ghost']);
 	});
@@ -115,10 +112,7 @@ describe('hasCycle', () => {
 	});
 
 	it('detects a direct two-node cycle', () => {
-		const b = board([
-			card({ id: 'a', parents: ['b'] }),
-			card({ id: 'b', parents: ['a'] }),
-		]);
+		const b = board([card({ id: 'a', parents: ['b'] }), card({ id: 'b', parents: ['a'] })]);
 		expect(hasCycle(b)).toBe(true);
 	});
 
@@ -163,5 +157,41 @@ describe('hasCycle', () => {
 			card({ id: 'd', parents: ['b', 'c'] }),
 		]);
 		expect(hasCycle(b)).toBe(false);
+	});
+});
+
+describe('eligibility after a parent is deleted', () => {
+	it('a dangling parent id permanently blocks the child (why deleteCard must detach)', () => {
+		// This is the failure mode `deleteCard`'s referential integrity prevents:
+		// if the deleted id is left in `parents`, the child is never eligible and
+		// nothing in the UI explains why.
+		const b = board([card({ id: 'child', status: 'todo', parents: ['deleted'] })]);
+		expect(getBlockers(b.cards[0], b)).toEqual(['deleted']);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('becomes eligible once the dangling parent is spliced out', () => {
+		const b = board([card({ id: 'child', status: 'todo', parents: [] })]);
+		expect(getBlockers(b.cards[0], b)).toEqual([]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['child']);
+	});
+
+	it('stays blocked by an adopted grandparent that is not done yet', () => {
+		// A -> (B deleted, C adopts A). C must still wait for A.
+		const b = board([
+			card({ id: 'a', status: 'todo' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['a']);
+	});
+
+	it('runs once the adopted grandparent is done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getBlockers(b.cards[1], b)).toEqual([]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
 	});
 });

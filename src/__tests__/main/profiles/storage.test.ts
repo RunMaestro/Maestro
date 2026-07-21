@@ -16,8 +16,28 @@ import {
 	listProfiles,
 	upsertProfile,
 	deleteProfile,
+	enqueueProfileWrite,
+	ProfileStorageError,
 } from '../../../main/profiles/profile-storage';
 import type { AgentProfile } from '../../../shared/profiles/types';
+
+const renameFailure = vi.hoisted(() => ({ active: false }));
+
+// Partial `fs` mock so the crash-safety test can fail the rename step only.
+// vi.spyOn cannot patch an ESM namespace export, and the whole point of the
+// atomic write is what happens when the process dies between temp-write and
+// rename, so this is the only way to exercise it.
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		default: actual,
+		renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+			if (renameFailure.active) throw new Error('simulated crash before rename');
+			return actual.renameSync(from, to);
+		},
+	};
+});
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -91,6 +111,105 @@ describe('profile-storage round-trip', () => {
 	});
 });
 
+describe('profile-storage fail-closed loads', () => {
+	const CORRUPT = ':\n\t- broken: [unbalanced';
+
+	it('still returns [] when the file is simply missing', () => {
+		expect(loadProfiles(projectRoot)).toEqual([]);
+	});
+
+	it('treats an empty file and an absent `profiles:` key as "no profiles yet"', () => {
+		writeRawYaml('');
+		expect(loadProfiles(projectRoot)).toEqual([]);
+		writeRawYaml('somethingElse: true\n');
+		expect(loadProfiles(projectRoot)).toEqual([]);
+	});
+
+	it('throws a typed ProfileStorageError naming the file on corrupt YAML', () => {
+		writeRawYaml(CORRUPT);
+		try {
+			loadProfiles(projectRoot);
+			throw new Error('expected loadProfiles to throw');
+		} catch (err) {
+			expect(err).toBeInstanceOf(ProfileStorageError);
+			expect((err as ProfileStorageError).filePath).toBe(
+				path.join(projectRoot, PROFILES_CONFIG_PATH)
+			);
+		}
+	});
+
+	it('throws when `profiles:` is present but is not a list', () => {
+		writeRawYaml('profiles: not-a-list\n');
+		expect(() => loadProfiles(projectRoot)).toThrow(ProfileStorageError);
+	});
+
+	it('does NOT truncate the corrupt file when a mutation is attempted', () => {
+		writeRawYaml(CORRUPT);
+		const filePath = path.join(projectRoot, PROFILES_CONFIG_PATH);
+
+		expect(() => upsertProfile(projectRoot, profile({ id: 'x', name: 'X' }))).toThrow(
+			ProfileStorageError
+		);
+		expect(() => deleteProfile(projectRoot, 'x')).toThrow(ProfileStorageError);
+		expect(() => listProfiles(projectRoot)).toThrow(ProfileStorageError);
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(CORRUPT);
+	});
+});
+
+describe('profile-storage atomic + serialized writes', () => {
+	it('writes via a temp file that is renamed away, leaving no .tmp behind', () => {
+		const filePath = saveProfiles(projectRoot, [profile({ id: 'a', name: 'A' })]);
+		expect(fs.existsSync(filePath)).toBe(true);
+		expect(fs.existsSync(`${filePath}.tmp`)).toBe(false);
+	});
+
+	it('leaves the previous file fully intact when the write fails mid-way', () => {
+		saveProfiles(projectRoot, [profile({ id: 'a', name: 'Original' })]);
+		const filePath = path.join(projectRoot, PROFILES_CONFIG_PATH);
+		const before = fs.readFileSync(filePath, 'utf-8');
+
+		renameFailure.active = true;
+		expect(() => saveProfiles(projectRoot, [profile({ id: 'b', name: 'Replacement' })])).toThrow(
+			/simulated crash/
+		);
+		renameFailure.active = false;
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(before);
+		expect(loadProfiles(projectRoot)[0].name).toBe('Original');
+		expect(fs.existsSync(`${filePath}.tmp`)).toBe(false);
+	});
+
+	it('applies two racing enqueued saves in call order', async () => {
+		const order: string[] = [];
+		const first = enqueueProfileWrite(projectRoot, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			order.push('first');
+			upsertProfile(projectRoot, profile({ id: 'first', name: 'First' }));
+		});
+		const second = enqueueProfileWrite(projectRoot, async () => {
+			order.push('second');
+			upsertProfile(projectRoot, profile({ id: 'second', name: 'Second' }));
+		});
+		await Promise.all([first, second]);
+
+		expect(order).toEqual(['first', 'second']);
+		expect(loadProfiles(projectRoot).map((p) => p.id)).toEqual(['first', 'second']);
+	});
+
+	it('does not let a rejected job poison the ones queued behind it', async () => {
+		const failed = enqueueProfileWrite(projectRoot, () => {
+			throw new Error('boom');
+		});
+		await expect(failed).rejects.toThrow(/boom/);
+
+		await enqueueProfileWrite(projectRoot, () =>
+			upsertProfile(projectRoot, profile({ id: 'after', name: 'After' }))
+		);
+		expect(loadProfiles(projectRoot).map((p) => p.id)).toEqual(['after']);
+	});
+});
+
 describe('profile-storage malformed handling', () => {
 	it('skips malformed entries but keeps valid ones (incl. base-agent-less pool roles)', () => {
 		const raw = yaml.dump({
@@ -109,9 +228,9 @@ describe('profile-storage malformed handling', () => {
 		expect(loaded.find((p) => p.id === 'pool-role')?.baseAgentId).toBeUndefined();
 	});
 
-	it('returns an empty list on unparseable YAML', () => {
+	it('throws (fails closed) on unparseable YAML instead of reading as empty', () => {
 		writeRawYaml(':\n\t- broken: [unbalanced');
-		expect(loadProfiles(projectRoot)).toEqual([]);
+		expect(() => loadProfiles(projectRoot)).toThrow(ProfileStorageError);
 	});
 
 	it('drops duplicate ids, keeping the first', () => {

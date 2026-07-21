@@ -20,6 +20,7 @@ import {
 	updateCard,
 	updateCardStatus,
 	deleteCard,
+	enqueueBoardWrite,
 } from '../../board/board-storage';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
 
@@ -64,7 +65,9 @@ export function registerBoardHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('create'),
 			async (options: { projectRoot: string; name: string }): Promise<Board> => {
-				return createBoard(options.projectRoot, options.name);
+				return enqueueBoardWrite(options.projectRoot, () =>
+					createBoard(options.projectRoot, options.name)
+				);
 			}
 		)
 	);
@@ -79,7 +82,9 @@ export function registerBoardHandlers(): void {
 				boardId: string;
 				card: BoardCard;
 			}): Promise<Board> => {
-				return addCard(options.projectRoot, options.boardId, options.card);
+				return enqueueBoardWrite(options.projectRoot, () =>
+					addCard(options.projectRoot, options.boardId, options.card)
+				);
 			}
 		)
 	);
@@ -94,7 +99,9 @@ export function registerBoardHandlers(): void {
 				boardId: string;
 				card: BoardCard;
 			}): Promise<Board> => {
-				return updateCard(options.projectRoot, options.boardId, options.card);
+				return enqueueBoardWrite(options.projectRoot, () =>
+					updateCard(options.projectRoot, options.boardId, options.card)
+				);
 			}
 		)
 	);
@@ -110,11 +117,8 @@ export function registerBoardHandlers(): void {
 				cardId: string;
 				status: CardStatus;
 			}): Promise<Board> => {
-				return updateCardStatus(
-					options.projectRoot,
-					options.boardId,
-					options.cardId,
-					options.status
+				return enqueueBoardWrite(options.projectRoot, () =>
+					updateCardStatus(options.projectRoot, options.boardId, options.cardId, options.status)
 				);
 			}
 		)
@@ -126,7 +130,9 @@ export function registerBoardHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('deleteCard'),
 			async (options: { projectRoot: string; boardId: string; cardId: string }): Promise<Board> => {
-				return deleteCard(options.projectRoot, options.boardId, options.cardId);
+				return enqueueBoardWrite(options.projectRoot, () =>
+					deleteCard(options.projectRoot, options.boardId, options.cardId)
+				);
 			}
 		)
 	);
